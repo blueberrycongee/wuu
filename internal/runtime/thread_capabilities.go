@@ -54,6 +54,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			return nil, err
 		}
 	}
+	documents, sessions, host := s.Documents, s.Sessions, s.PluginHost
 	generation := s.pluginGeneration
 	generation.retain()
 	dispatcher := s.HookDispatcher
@@ -70,6 +71,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	result := &ThreadRuntime{
 		Toolkit: kit, ActivityRegistry: s.ActivityRegistry,
 		Selection: selection, PluginGeneration: generation,
+		Documents: documents, Sessions: sessions, PluginHost: host,
 	}
 	if kit == nil {
 		retained = true
@@ -95,7 +97,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 	kit.SetSessionID(id)
 	kit.SetSessionDir(artifactDir)
-	kit.SetSessionsDir(s.SessionDir)
+	kit.SetSessionStore(sessions)
 	kit.SetWorkingNotesHome(wuuHome)
 	kit.SetBrowserTabs(tools.NewBrowserTabStore(statepath.ThreadBrowserTabsPath(stateDir, id)))
 	kit.SetImageInputSupported(true)

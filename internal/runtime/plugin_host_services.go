@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // pluginHostServices is bound to exactly one installed plugin generation. It
@@ -30,6 +31,7 @@ type pluginHostServices struct {
 	projectRoot string
 	wuuHome     string
 	settings    map[string]pluginpkg.SettingDefinition
+	sessions    *session.Store
 	turnRouter  *PluginSessionRouter
 	fileLocks   map[string]func()
 	lockContext context.Context
@@ -178,7 +180,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := readPluginSessionHistory(ctx, s.wuuHome, s.pluginID, params)
+		result, err := readPluginSessionHistory(ctx, s.sessions, s.pluginID, params)
 		if err != nil {
 			return nil, err
 		}
@@ -188,7 +190,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := searchPluginSessionHistory(ctx, s.wuuHome, s.pluginID, params)
+		result, err := searchPluginSessionHistory(ctx, s.sessions, s.pluginID, params)
 		if err != nil {
 			return nil, err
 		}
@@ -398,6 +400,7 @@ type kernelHostServices struct {
 	wuuHome           string
 	modelSession      *Session
 	modelHost         *pluginhost.Host
+	state             *runtimeState
 	providers         map[string]nativeServiceRegistration
 }
 

@@ -27,8 +27,8 @@ func startPluginClient(ctx context.Context, cfg pluginhost.ProcessConfig) (plugi
 	return pluginhost.Start(ctx, cfg)
 }
 
-func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string) (*pluginhost.Host, *kernelHostServices, error) {
-	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, selection, driverProfile)
+func startPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (*pluginhost.Host, *kernelHostServices, error) {
+	host, kernel, err := buildPluginHost(plugins, projectRoot, workspaceID, wuuHome, workspaceStateDir, nil, startPluginClient, turnRouter, userQuestions, selection, driverProfile, factories...)
 	if err != nil {
 		// A fatal negotiation closes the entire prepared generation. Preserve
 		// each unavailable runtime and the graph so initial-session consumers
@@ -52,8 +52,12 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 	return host.Activate(ctx)
 }
 
-func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string) (*pluginhost.Host, *kernelHostServices, error) {
-	plugins, resolved, err := selectCompositionPlugins(selection, plugins)
+func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (*pluginhost.Host, *kernelHostServices, error) {
+	factoryIDs := make([]string, 0, len(factories))
+	for _, factory := range factories {
+		factoryIDs = append(factoryIDs, factory.ID)
+	}
+	plugins, resolved, err := selectCompositionPlugins(selection, plugins, factoryIDs...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -72,6 +76,12 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return epoch
 	}, host)
 	nativeConsumers := runtimeServiceConsumers(driverProfile)
+	if resolved.Includes(sessionStateConsumer) {
+		kernel.state = newRuntimeState(registry, inferenceJournalWorkspaceScope(workspaceID, projectRoot))
+		kernel.state.sessDir = statepath.SessionsDir(wuuHome)
+		kernel.state.host = host
+		nativeConsumers = append(nativeConsumers, kernel.state)
+	}
 	required = maps.Clone(required)
 	if required == nil {
 		required = make(map[string]bool)
@@ -100,11 +110,11 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			required[loopdriver.DefaultDriverID] = true
 		}
 	}
-	if resolved.Modules != nil {
+	{
 		for _, provider := range []struct{ id, backend string }{
 			{persistence.SQLiteModule, "sqlite"}, {persistence.JSONLModule, "jsonl"},
 		} {
-			if resolved.Includes(provider.id) {
+			if resolved.Includes(provider.id) && (resolved.Modules != nil || provider.backend == "sqlite") {
 				if strings.TrimSpace(wuuHome) == "" {
 					return nil, nil, errors.New("state provider requires a resolved Wuu home")
 				}
@@ -119,9 +129,39 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			required[consumer.ID()] = true
 		}
 	}
+
+	for _, factory := range factories {
+		if !resolved.Includes(factory.ID) || (resolved.Modules == nil && !factory.DefaultEnabled) {
+			continue
+		}
+		input := NativeProviderContext{Registry: registry, WuuHome: wuuHome, RootDir: projectRoot, WorkspaceID: workspaceID}
+		if kernel.state != nil {
+			input.Documents, input.Sessions = kernel.state.documents, kernel.state.sessions
+		}
+		module, err := factory.Build(input)
+		if err != nil {
+			return nil, nil, err
+		}
+		if module.ID() != factory.ID {
+			return nil, nil, fmt.Errorf("native provider %q returned identity %q", factory.ID, module.ID())
+		}
+		nativeModules = append(nativeModules, module)
+		required[module.ID()] = true
+	}
+	packageRequirements := make(map[string][]string)
+	for _, item := range plugins {
+		packageRequirements[item.ID] = item.RequiredPluginIDs()
+	}
+	for _, id := range []string{kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer} {
+		if resolved.Includes(id) {
+			packageRequirements[id] = append(packageRequirements[id], sessionStateConsumer)
+		}
+	}
+	host.SetPackageRequirements(packageRequirements)
 	for _, module := range nativeModules {
 		host.Add(module)
 	}
+
 	diagnostic := pluginhost.CompositionSnapshot{Profile: resolved.Profile, ModuleSource: resolved.ModuleSource, Layers: resolved.Layers}
 	for _, module := range nativeModules {
 		diagnostic.Modules = append(diagnostic.Modules, pluginhost.CompositionModuleSnapshot{ID: module.ID(), Source: resolved.SourceForModule(module.ID()), Version: currentWuuVersion()})
@@ -161,6 +201,9 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		var onClose func()
 		if resolved.Includes(kernel.ID()) {
 			handler := newPluginHostServices(item, projectRoot, wuuHome, turnRouter)
+			if kernel.state != nil {
+				handler.sessions = kernel.state.sessions
+			}
 			kernel.add(item.ID, handler)
 			onClose = handler.close
 		}
@@ -237,12 +280,13 @@ func runtimeComposition(selection *composition.Config, safeMode bool) *compositi
 
 // Apply the same module selection before package capabilities and runtime
 // processes are materialized. An explicit list never enables an untrusted package.
-func selectCompositionPlugins(selection *composition.Config, candidates []pluginpkg.Plugin) ([]pluginpkg.Plugin, composition.Resolved, error) {
+func selectCompositionPlugins(selection *composition.Config, candidates []pluginpkg.Plugin, nativeProviderIDs ...string) ([]pluginpkg.Plugin, composition.Resolved, error) {
 	resolved, err := selection.Resolve()
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{defaultShellModule, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{sessionStateConsumer, defaultShellModule, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available = append(available, nativeProviderIDs...)
 	identities := map[string]bool{}
 	for _, id := range available {
 		identities[id] = true

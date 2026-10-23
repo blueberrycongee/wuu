@@ -37,6 +37,7 @@ import (
 // a structured revocation report.
 type PluginGeneration struct {
 	id                string
+	state             *runtimeState
 	settings          config.Config
 	plugins           []pluginpkg.Plugin
 	active            []pluginpkg.Plugin
@@ -311,7 +312,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile, s.nativeProviders...)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
@@ -347,6 +348,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
 		id:                generationID,
+		state:             kernel.state,
 		settings:          cfg,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
 		active:            append([]pluginpkg.Plugin(nil), active...),
@@ -765,6 +767,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
 		id:                generationID,
+		state:             &runtimeState{documents: s.Documents, sessions: s.Sessions, journal: s.InferenceJournalRuntime},
 		settings:          config.Config{Extensions: s.ExtensionSettings},
 		plugins:           append([]pluginpkg.Plugin(nil), s.Plugins...),
 		active:            append([]pluginpkg.Plugin(nil), s.ActivePlugins...),
@@ -796,6 +799,11 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.ActivePlugins = append([]pluginpkg.Plugin(nil), generation.active...)
 	s.ExtensionSettings = generation.settings.Extensions
 	s.PluginHost = generation.host
+	if generation.state != nil {
+		s.Documents, s.Sessions, s.InferenceJournalRuntime = generation.state.documents, generation.state.sessions, generation.state.journal
+	} else {
+		s.Documents, s.Sessions, s.InferenceJournalRuntime = nil, nil, nil
+	}
 	s.systemPrompts = generation.systemPrompts
 	if s.StreamRunner != nil {
 		s.StreamRunner.Tools = replacePluginToolBindings(s.StreamRunner.Tools, generation.host, generation.hooks, "", s.RootDir)
@@ -804,6 +812,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
+		s.StreamRunner.InferenceJournal = s.InferenceJournalForOwner("workspace-runtime")
 		// Only a managed composition owns this binding. Embedded runtimes keep
 		// the driver explicitly supplied with their runner.
 		if generation.driverGateways != nil {

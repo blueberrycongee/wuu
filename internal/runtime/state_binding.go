@@ -4,6 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/toolstate"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
@@ -20,13 +25,28 @@ type runtimeState struct {
 	mu        sync.Mutex
 	status    pluginhost.State
 	scope     string
+	sessDir   string
+	host      *pluginhost.Host
 	documents persistence.Documents
 	sessions  *session.Store
-	journal   *session.DocumentInferenceRuntime
+	journal   *session.InferenceJournalRuntime
 }
 
 func newRuntimeState(registry *pluginhost.ServiceRegistry, workspaceScope string) *runtimeState {
+	var state *runtimeState
 	documents := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+		if state != nil && state.host != nil {
+			state.mu.Lock()
+			active := state.status == pluginhost.StateActive
+			state.mu.Unlock()
+			if active {
+				result, err := state.host.CallService(ctx, sessionStateConsumer, persistence.ServiceName, method, params)
+				if err != nil {
+					return nil, err
+				}
+				return result, nil
+			}
+		}
 		result, err := registry.Call(ctx, sessionStateConsumer, pluginhost.ServiceCallParams{
 			Service: persistence.ServiceName, Method: method, Params: params,
 		})
@@ -35,8 +55,9 @@ func newRuntimeState(registry *pluginhost.ServiceRegistry, workspaceScope string
 		}
 		return result, nil
 	})
-	return &runtimeState{status: pluginhost.StatePrepared, scope: workspaceScope,
+	state = &runtimeState{status: pluginhost.StatePrepared, scope: workspaceScope,
 		documents: documents, sessions: session.NewStore(context.Background(), documents)}
+	return state
 }
 
 func (s *runtimeState) ID() string { return sessionStateConsumer }
@@ -55,11 +76,22 @@ func (s *runtimeState) RequiredServices() []pluginhost.ServiceRequirement {
 
 func (s *runtimeState) Activate(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.status != pluginhost.StatePrepared {
+	prepared := s.status == pluginhost.StatePrepared
+	s.mu.Unlock()
+	if !prepared {
 		return errors.New("session state consumer is not prepared")
 	}
+	if s.sessDir != "" {
+		if err := initializeSessionState(ctx, s.sessDir, s.documents, s.sessions); err != nil {
+			s.mu.Lock()
+			s.status = pluginhost.StateFailed
+			s.mu.Unlock()
+			return err
+		}
+	}
 	journal, err := s.sessions.WithContext(ctx).NewInferenceJournalRuntime(s.scope)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err != nil {
 		s.status = pluginhost.StateFailed
 		return err
@@ -71,10 +103,36 @@ func (s *runtimeState) Activate(ctx context.Context) error {
 
 func (s *runtimeState) Close(context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.status = pluginhost.StateStopped
-	if s.journal == nil {
+	journal := s.journal
+	s.mu.Unlock()
+	if journal == nil {
 		return nil
 	}
-	return s.journal.Close()
+	return journal.Close()
+}
+
+func initializeSessionState(ctx context.Context, dir string, documents persistence.Documents, store *session.Store) error {
+	lease, first, err := session.AcquireAppServerPresence(dir)
+	if err != nil {
+		return err
+	}
+	defer lease.Release()
+	if _, err := os.Stat(filepath.Join(dir, "sessions.sqlite3")); err == nil {
+		if !first {
+			migrated, err := session.LegacySQLiteMigrationRecorded(ctx, documents)
+			if err != nil {
+				return err
+			}
+			if !migrated {
+				return fmt.Errorf("%w: stop live app-servers before importing legacy sessions", persistence.ErrMigrationRequired)
+			}
+		}
+		if _, err := session.MigrateLegacySQLite(ctx, dir, documents, session.NewLegacyInferenceConverter(), toolstate.NewLegacyConverter(), execution.NewLegacyConverter()); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return store.WithContext(ctx).RebuildSessionIndexes()
 }

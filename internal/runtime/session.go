@@ -38,6 +38,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
@@ -58,7 +59,8 @@ import (
 // The shape is intentionally UI-neutral so desktop and protocol clients can
 // attach without rebuilding the agent.
 type Options struct {
-	RootDir string
+	NativeProviders []NativeProviderFactory
+	RootDir         string
 	// Host is immutable process metadata supplied by the shell or cloud
 	// control plane. Its zero value resolves to a local host.
 	Host Host
@@ -118,6 +120,9 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	Documents                persistence.Documents
+	Sessions                 *session.Store
+	nativeProviders          []NativeProviderFactory
 	ProviderName             string
 	Model                    string
 	RootDir                  string
@@ -230,6 +235,7 @@ func (s *Session) cloneForThreadModel() (*Session, error) {
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
 	clone := &Session{
+		Documents: s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
 		RootDir:                     s.RootDir,
@@ -319,6 +325,9 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
+	PluginHost   *pluginhost.Host
+	Documents    persistence.Documents
+	Sessions     *session.Store
 	StreamRunner *agent.StreamRunner
 	// CapabilityTools exposes host capabilities to an external engine without
 	// creating an in-process model runner or worker runtime.
@@ -411,17 +420,6 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, fmt.Errorf("resolve workspace state directory: %w", err)
 	}
 	sessionDir := statepath.SessionsDir(wuuHome)
-	journalRuntime, err := session.NewInferenceJournalRuntime(sessionDir, inferenceJournalWorkspaceScope(workspaceID, rootDir))
-	if err != nil {
-		return nil, fmt.Errorf("initialize inference journal: %w", err)
-	}
-	journalOwned := true
-	defer func() {
-		if journalOwned {
-			_ = journalRuntime.Close()
-		}
-	}()
-	workspaceJournal := journalRuntime.ForOwner("workspace-runtime")
 	permissions := config.ResolveAgentPermissions(cfg.Agent)
 
 	providerCfg, resolvedName, err := cfg.ResolveProvider(opts.ProviderName)
@@ -511,9 +509,29 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile)
+	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile, opts.NativeProviders...)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
+	}
+
+	graphOwned := true
+	defer func() {
+		if graphOwned {
+			_ = pluginHost.Close(context.Background())
+		}
+	}()
+	var documents persistence.Documents
+	var sessions *session.Store
+	var journalRuntime *session.InferenceJournalRuntime
+	if pluginKernel.state != nil {
+		documents, sessions, journalRuntime = pluginKernel.state.documents, pluginKernel.state.sessions, pluginKernel.state.journal
+	}
+	if !safeMode && journalRuntime == nil {
+		return nil, errors.New("selected composition has no active session state consumer")
+	}
+	var workspaceJournal providers.InferenceJournal
+	if journalRuntime != nil {
+		workspaceJournal = journalRuntime.ForOwner("workspace-runtime")
 	}
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
@@ -551,6 +569,7 @@ func NewSession(opts Options) (*Session, error) {
 			return nil, newErr
 		}
 		kit.SetStateDir(workspaceStateDir)
+		kit.SetSessionStore(sessions)
 		kit.SetWorkingNotesHome(wuuHome)
 		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
 		kit.SetWorkspaceID(workspaceID)
@@ -715,11 +734,11 @@ func NewSession(opts Options) (*Session, error) {
 				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{CWD: rootDir, AgentID: agentID})
 				return err
 			},
-			ParticipantStore: sessionParticipantStore{sessDir: statepath.SessionsDir(wuuHome)},
+			ParticipantStore: sessionParticipantStore{sessions: sessions},
 			MaxParallel:      cfg.Agent.MaxParallelValue(),
 			InferenceJournal: workspaceJournal,
 			ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
-				return toolledger.New(sessionDir, ownerID)
+				return toolledger.New(documents, ownerID)
 			},
 		})
 		if cerr == nil {
@@ -777,6 +796,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 
 	runtimeSession = &Session{
+		Documents: documents, Sessions: sessions, nativeProviders: append([]NativeProviderFactory(nil), opts.NativeProviders...),
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,
@@ -839,8 +859,8 @@ func NewSession(opts Options) (*Session, error) {
 	// engine factory, starting with this one.
 	runtimeSession.engines = agentengine.NewRegistry()
 	if err := runtimeSession.engines.Register(NewWuuEngine(runtimeSession)); err != nil {
-		journalOwned = false
-		_ = journalRuntime.Close()
+		graphOwned = false
+		_ = pluginHost.Close(context.Background())
 		return nil, fmt.Errorf("register built-in agent engine: %w", err)
 	}
 	// The codex engine hosts the codex CLI app-server as an external agent.
@@ -894,6 +914,7 @@ func NewSession(opts Options) (*Session, error) {
 	initialHooks.Replace(hookDispatcher)
 	generationID := newPluginGenerationID(wuuHome)
 	runtimeSession.pluginGeneration = &PluginGeneration{
+		state:         pluginKernel.state,
 		id:            generationID,
 		ownedRoots:    initialSnapshotRoots,
 		settings:      cfg,
@@ -929,7 +950,7 @@ func NewSession(opts Options) (*Session, error) {
 	// The legacy/root control remains dormant until SetSessionID binds its real
 	// artifact directories. Per-thread controls created by NewThreadRuntime are
 	// likewise started only after app-server installs their terminal finalizer.
-	journalOwned = false
+	graphOwned = false
 	return runtimeSession, nil
 }
 
@@ -1369,7 +1390,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetApproveForMe(false)
 		kit.SetSessionID(id)
 		kit.SetSessionDir(artifactDir)
-		kit.SetSessionsDir(s.SessionDir)
+		kit.SetSessionStore(s.Sessions)
 		kit.SetWorkingNotesHome(wuuHome)
 		kit.SetBrowserTabs(browserTabs)
 		kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
@@ -1388,7 +1409,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 	}
 
-	toolLedger, err := toolledger.New(s.SessionDir, id)
+	toolLedger, err := toolledger.New(s.Documents, id)
 	if err != nil {
 		return nil, fmt.Errorf("open tool ledger: %w", err)
 	}
@@ -1510,11 +1531,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					_, err := dispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
 					return err
 				},
-				ParticipantStore: sessionParticipantStore{sessDir: statepath.SessionsDir(wuuHome)},
+				ParticipantStore: sessionParticipantStore{sessions: s.Sessions},
 				MaxParallel:      s.MaxParallel(),
 				InferenceJournal: s.InferenceJournalForOwner(id),
 				ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
-					return toolledger.New(s.SessionDir, ownerID)
+					return toolledger.New(s.Documents, ownerID)
 				},
 			})
 			if controlErr != nil {
@@ -1559,11 +1580,11 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 	runner.PromptCacheKey = strings.TrimSpace(id)
 	runner.InferenceJournal = s.InferenceJournalForOwner(id)
-	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
-	runner.DriverBindingStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
+	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
+	runner.DriverBindingStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	runner.AcquireLoopDriver = s.driverResolver(generation)
-	runner.RequestContextStore = sessionRequestContextStore{sessDir: s.SessionDir, sessionID: id}
-	runner.CompactionNoteStore = sessionCompactionNoteStore{sessDir: s.SessionDir, sessionID: id}
+	runner.RequestContextStore = sessionRequestContextStore{sessions: s.Sessions, sessionID: id}
+	runner.CompactionNoteStore = sessionCompactionNoteStore{sessions: s.Sessions, sessionID: id}
 	if kit != nil {
 		kit.SetContextWindowToolsEnabled(runner.ContextWindowsAvailable())
 	}
@@ -1594,6 +1615,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		ModelBudget:       s.ModelBudget,
 		WorkerModelBudget: s.WorkerModelBudget,
 		PluginGeneration:  generation,
+		Documents:         s.Documents, Sessions: s.Sessions, PluginHost: s.PluginHost,
 		// Direct callers get the session's own identity as the stamp;
 		// NewThreadRuntimeForRootModel overwrites it with the thread's
 		// requested selection so reuse comparisons stay in thread terms.
@@ -1608,12 +1630,12 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 }
 
 type sessionDriverCheckpointStore struct {
-	sessDir   string
+	sessions  *session.Store
 	sessionID string
 }
 
 type sessionCompactionNoteStore struct {
-	sessDir   string
+	sessions  *session.Store
 	sessionID string
 }
 
@@ -1627,7 +1649,7 @@ func (store sessionCompactionNoteStore) RecordContextNoteMetric(ctx context.Cont
 	}
 	// Separate from token_usage: turn totals already include drained background
 	// usage. This audit record also survives a fork finishing after the last turn.
-	return session.AppendHistoryRecord(store.sessDir, store.sessionID, session.HistoryRecord{
+	return store.sessions.WithContext(ctx).AppendHistoryRecord(store.sessionID, session.HistoryRecord{
 		Role: "meta", Name: "context_note_attempt", Content: string(data),
 	})
 }
@@ -1636,7 +1658,7 @@ func (store sessionCompactionNoteStore) LoadCompactionNote(ctx context.Context, 
 	if err := ctx.Err(); err != nil {
 		return agent.CompactionNote{}, false, err
 	}
-	record, ok, err := session.LoadCompactionNote(store.sessDir, store.sessionID, providerKey)
+	record, ok, err := store.sessions.WithContext(ctx).LoadCompactionNote(store.sessionID, providerKey)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return agent.CompactionNote{}, false, nil
 	}
@@ -1652,7 +1674,7 @@ func (store sessionCompactionNoteStore) StoreCompactionNote(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	err := session.StoreCompactionNote(store.sessDir, session.CompactionNote{
+	err := store.sessions.WithContext(ctx).StoreCompactionNote(session.CompactionNote{
 		SessionID: store.sessionID, ProviderKey: providerKey, Markdown: note.Markdown,
 		CoveredMessages: note.CoveredMessages, CoveredHash: note.CoveredHash,
 	})
@@ -1666,7 +1688,7 @@ func (store sessionCompactionNoteStore) CompareAndSwapCompactionNote(ctx context
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	stored, err := session.CompareAndSwapCompactionNote(store.sessDir, session.CompactionNote{
+	stored, err := store.sessions.WithContext(ctx).CompareAndSwapCompactionNote(session.CompactionNote{
 		SessionID: store.sessionID, ProviderKey: providerKey, Markdown: expected.Markdown,
 		CoveredMessages: expected.CoveredMessages, CoveredHash: expected.CoveredHash,
 	}, expectedExists, session.CompactionNote{
@@ -1680,7 +1702,7 @@ func (store sessionCompactionNoteStore) CompareAndSwapCompactionNote(ctx context
 }
 
 type sessionModelInputReceiptStore struct {
-	sessDir   string
+	sessions  *session.Store
 	sessionID string
 }
 
@@ -1695,7 +1717,7 @@ func (store sessionModelInputReceiptStore) SaveModelInputReceipt(ctx context.Con
 	if err != nil {
 		return fmt.Errorf("encode model input receipt: %w", err)
 	}
-	err = session.SaveModelInputReceipt(store.sessDir, store.sessionID, session.ModelInputReceiptRecord{
+	err = store.sessions.WithContext(ctx).SaveModelInputReceipt(store.sessionID, session.ModelInputReceiptRecord{
 		OperationID:     receipt.OperationID,
 		ContractVersion: receipt.ContractVersion,
 		DriverID:        receipt.DriverID,
@@ -1713,18 +1735,18 @@ func (store sessionDriverCheckpointStore) LoadBinding(ctx context.Context) (loop
 	if err := ctx.Err(); err != nil {
 		return loopdriver.Binding{}, false, err
 	}
-	return session.LoadDriverBinding(store.sessDir, store.sessionID)
+	return store.sessions.WithContext(ctx).LoadDriverBinding(store.sessionID)
 }
 
 func (store sessionDriverCheckpointStore) Bind(ctx context.Context, binding loopdriver.Binding) error {
-	return session.BindDriver(ctx, store.sessDir, store.sessionID, binding)
+	return store.sessions.WithContext(ctx).BindDriver(store.sessionID, binding)
 }
 
 func (store sessionDriverCheckpointStore) Load(ctx context.Context) (loopdriver.Checkpoint, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return loopdriver.Checkpoint{}, false, err
 	}
-	record, ok, err := session.LoadDriverCheckpoint(store.sessDir, store.sessionID)
+	record, ok, err := store.sessions.WithContext(ctx).LoadDriverCheckpoint(store.sessionID)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return loopdriver.Checkpoint{}, false, nil
 	}
@@ -1743,7 +1765,7 @@ func (store sessionDriverCheckpointStore) Save(ctx context.Context, checkpoint l
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return session.SaveDriverCheckpoint(store.sessDir, store.sessionID, session.DriverCheckpointRecord{
+	return store.sessions.WithContext(ctx).SaveDriverCheckpoint(store.sessionID, session.DriverCheckpointRecord{
 		ContractVersion: checkpoint.ContractVersion,
 		DriverID:        checkpoint.DriverID,
 		DriverVersion:   checkpoint.DriverVersion,
@@ -1862,11 +1884,11 @@ func (s *Session) threadProcessManagerPool() *threadProcessManagers {
 // agentcontrol.ParticipantStore so spawned workers get durable
 // participant identities.
 type sessionParticipantStore struct {
-	sessDir string
+	sessions *session.Store
 }
 
 func (s sessionParticipantStore) Upsert(p participant.Participant) error {
-	return session.UpsertParticipant(s.sessDir, p)
+	return s.sessions.UpsertParticipant(p)
 }
 
 func cleanRuntimeRoot(root string) string {
@@ -2099,10 +2121,8 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 			cleanupErr = errors.Join(cleanupErr, manager.Close())
 		}
 	}
-	if s.InferenceJournalRuntime != nil {
-		cleanupErr = errors.Join(cleanupErr, s.InferenceJournalRuntime.Close())
-		s.InferenceJournalRuntime = nil
-	}
+	s.InferenceJournalRuntime = nil
+	s.Sessions, s.Documents = nil, nil
 	if s.UserQuestions != nil {
 		s.UserQuestions.Close()
 		s.UserQuestions = nil
@@ -2998,13 +3018,16 @@ func workerToolSurfaceForToolkit(kit *tools.Toolkit, providerName, model string,
 	return surface, err
 }
 
-type sessionRequestContextStore struct{ sessDir, sessionID string }
+type sessionRequestContextStore struct {
+	sessions  *session.Store
+	sessionID string
+}
 
 func (store sessionRequestContextStore) Load(ctx context.Context) (agent.RequestContextCheckpoint, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return agent.RequestContextCheckpoint{}, false, err
 	}
-	raw, err := session.LoadRequestContextCheckpoint(store.sessDir, store.sessionID)
+	raw, err := store.sessions.WithContext(ctx).LoadRequestContextCheckpoint(store.sessionID)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return agent.RequestContextCheckpoint{}, false, nil
 	}
@@ -3026,7 +3049,7 @@ func (store sessionRequestContextStore) Save(ctx context.Context, checkpoint age
 	if err != nil {
 		return fmt.Errorf("encode request context checkpoint: %w", err)
 	}
-	err = session.SaveRequestContextCheckpoint(store.sessDir, store.sessionID, payload)
+	err = store.sessions.WithContext(ctx).SaveRequestContextCheckpoint(store.sessionID, payload)
 	if errors.Is(err, session.ErrSessionNotFound) {
 		return nil
 	}
