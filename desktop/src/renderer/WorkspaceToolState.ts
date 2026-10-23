@@ -134,18 +134,14 @@ export function useWorkspaceToolState({
     setRightPanelOpenWithMotion(true);
   }
 
-  // The final tool returns to the conversation: beside a docked panel, or
-  // through the pinned conversation tab while the workspace is expanded.
+  // Closing the final tool ends the workspace view, including full-panel mode.
   function closeWorkspaceViewTab(id: string): void {
     const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
     if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") restoreArtifactPreviewFocus(tab.origin);
     const willEmpty =
       workspaceViewTabs.length === 1 && workspaceViewTabs[0]?.id === id;
     closeTab(id);
-    if (willEmpty) {
-      if (rightPanelGlobalized) focusWorkspaceConversation();
-      else setRightPanelOpenWithMotion(false);
-    }
+    if (willEmpty) setRightPanelOpenWithMotion(false);
   }
 
   function closeWorkspaceViewTabsWhere(
@@ -154,10 +150,7 @@ export function useWorkspaceToolState({
     const willEmpty =
       workspaceViewTabs.length > 0 && workspaceViewTabs.every(predicate);
     closeTabsWhere(predicate);
-    if (willEmpty) {
-      if (rightPanelGlobalized) focusWorkspaceConversation();
-      else setRightPanelOpenWithMotion(false);
-    }
+    if (willEmpty) setRightPanelOpenWithMotion(false);
   }
 
   return {

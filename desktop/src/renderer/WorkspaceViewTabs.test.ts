@@ -325,7 +325,7 @@ describe("openViewTab", () => {
 });
 
 describe("closeViewTab", () => {
-  it("restores the Files browser after closing the final file tab", () => {
+  it("removes the final file tab without opening another tool", () => {
     const file = workspaceFileViewTab({ context: projectContext, path: "src/App.tsx" });
     let state = openViewTab(initialWorkspaceViewTabsState, workspaceToolViewTab("files"));
     state = openViewTab(state, file);
@@ -333,8 +333,8 @@ describe("closeViewTab", () => {
     expect(state.tabs.map((tab) => tab.id)).toEqual([file.id]);
     state = closeViewTab(state, file.id);
 
-    expect(state.tabs.map((tab) => tab.id)).toEqual(["files"]);
-    expect(state.activeTabID).toBe("files");
+    expect(state.tabs).toEqual([]);
+    expect(state.activeTabID).toBeUndefined();
     expect(state.activeFileTabID).toBeUndefined();
   });
 

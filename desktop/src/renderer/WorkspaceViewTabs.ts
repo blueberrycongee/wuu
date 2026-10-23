@@ -277,24 +277,8 @@ export function focusViewTab(state: WorkspaceViewTabsState, id: string | undefin
  * back to the tool picker (`activeTabID: undefined`) if there is none.
  */
 export function closeViewTab(state: WorkspaceViewTabsState, id: string): WorkspaceViewTabsState {
-  const closingTab = state.tabs.find((tab) => tab.id === id);
-  let tabs = state.tabs.filter((tab) => tab.id !== id);
-  if (
-    closingTab?.kind === "file" &&
-    state.activeTabID === id &&
-    !tabs.some((tab) => tab.kind === "file")
-  ) {
-    tabs = [...tabs, workspaceToolViewTab("files")];
-    return {
-      tabs,
-      activeTabID: "files",
-      activeFileTabID: undefined,
-      activationHistory: state.activationHistory.filter(
-        (entry) => entry !== id && tabs.some((tab) => tab.id === entry),
-      ),
-    };
-  }
-  const activeFileTabID = state.activeFileTabID === id
+  const tabs = state.tabs.filter((tab) => tab.id !== id);
+  let activeFileTabID = state.activeFileTabID === id
     ? tabs.findLast((tab) => tab.kind === "file")?.id
     : state.activeFileTabID;
   let activationHistory = state.activationHistory.filter((entry) => entry !== id);
@@ -309,6 +293,9 @@ export function closeViewTab(state: WorkspaceViewTabsState, id: string): Workspa
       activeTabID = candidate;
       break;
     }
+  }
+  if (tabs.some((tab) => tab.id === activeTabID && tab.kind === "file")) {
+    activeFileTabID = activeTabID;
   }
   return { tabs, activationHistory, activeTabID, activeFileTabID };
 }

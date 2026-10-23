@@ -131,6 +131,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Return to the conversation and exit full-panel mode when the last workspace tab closes. Closing a file no longer creates a replacement Files tab, and restoring a previous file keeps its selected tab and editor content aligned.
+
 - Keep Recent conversation positions stable after reading or switching sessions. Completed work stays immediately below remaining running conversations, including results read in the active conversation; only new activity changes priority until the window is reopened.
 
 - Release native engine session resources after their active turn and workers finish cleanup. `Open` and `Resume` retain their provider generation until `Close` drains the owned runtime; canceling the close wait no longer reports premature completion or abandons cleanup.
