@@ -175,7 +175,6 @@ import {
   updateThreadByID,
   upsertThread,
   upsertTurn,
-  withExtensionInventoryForContext,
   withLoadedRuntimeSessionTab,
   workspaceNameForContext,
   workspacePanelContext,
@@ -4254,9 +4253,7 @@ export function App({ application: providedApplication }: { application?: Applic
   async function updateExtensionPackage(
     update: ExtensionPackageUpdateParams,
   ): Promise<void> {
-    const context = appStateRef.current.activeContext;
-    const result = await window.wuu.updateExtensionPackage(update);
-    setState((current) => withExtensionInventoryForContext(current, context, result.extension_inventory));
+    await window.wuu.updateExtensionPackage(update);
   }
 
   async function refreshExtensionCatalog(): Promise<SkillSummary[] | undefined> {
@@ -4265,7 +4262,6 @@ export function App({ application: providedApplication }: { application?: Applic
     if (!sameRuntimeContext(appStateRef.current.activeContext, context)) {
       return undefined;
     }
-    setState((current) => withExtensionInventoryForContext(current, context, result.extension_inventory));
     return result.skills;
   }
 
@@ -4275,9 +4271,6 @@ export function App({ application: providedApplication }: { application?: Applic
     if (!result || !sameRuntimeContext(appStateRef.current.activeContext, context)) {
       return undefined;
     }
-    setState((current) =>
-      withExtensionInventoryForContext(current, context, result.extension_inventory),
-    );
     return result;
   }
 
@@ -4289,9 +4282,6 @@ export function App({ application: providedApplication }: { application?: Applic
     if (!sameRuntimeContext(appStateRef.current.activeContext, context)) {
       return undefined;
     }
-    setState((current) =>
-      withExtensionInventoryForContext(current, context, result.extension_inventory),
-    );
     return result;
   }
 

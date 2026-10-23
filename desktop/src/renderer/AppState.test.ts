@@ -68,7 +68,6 @@ import {
   threadSessionTabID,
   turnStreamStatusForThread,
   turnPreview,
-  withExtensionInventoryForContext,
   workspacePanelContext,
   type AppState,
   type ComposerDraftState,
@@ -3873,7 +3872,6 @@ describe("threadNeedsResumeOnReselect", () => {
 });
 
 describe("extension inventory context", () => {
-  const workspaceA: RuntimeContext = { kind: "project", project_id: "a", cwd: "/a" };
   const workspaceB: RuntimeContext = { kind: "project", project_id: "b", cwd: "/b" };
   const oldInventory: ExtensionInventoryRecord[] = [{
     id: "old",
@@ -3890,18 +3888,7 @@ describe("extension inventory context", () => {
     state: "pending",
   }];
 
-  it("applies inventory only to the runtime that requested it", () => {
-    const state = {
-      ...initialState,
-      activeContext: workspaceB,
-      initialized: { extension_inventory: oldInventory },
-    } as AppState;
-
-    expect(withExtensionInventoryForContext(state, workspaceA, nextInventory)).toBe(state);
-    expect(withExtensionInventoryForContext(state, workspaceB, nextInventory).initialized?.extension_inventory).toEqual(nextInventory);
-  });
-
-  it("applies a live plugin generation inventory notification", () => {
+  it.each([null, { plugin_id: "research", generation: "source", provider_id: "ui.shell" }])("publishes inventory and selected shell coherently (%j)", (selection) => {
     const state = {
       ...initialState,
       activeContext: workspaceB,
@@ -3915,13 +3902,14 @@ describe("extension inventory context", () => {
         method: "plugin/inventory/changed",
         params: {
           epoch: 2,
+          application_shell: selection,
           extension_inventory: nextInventory,
           skills: [],
         },
       },
     });
 
-    expect(next.initialized?.extension_inventory).toEqual(nextInventory);
+    expect(next.initialized).toMatchObject({ extension_inventory: nextInventory, application_shell: selection });
   });
 
   it("ignores malformed live plugin inventory notifications", () => {
