@@ -749,6 +749,9 @@ export function App({ application: providedApplication }: { application?: Applic
   const setCatalogSection = useCallback((catalogSection: SkillsCatalogSection) => {
     setState(current => ({ ...current, catalogSection }));
   }, [setState]);
+  const setCatalogPluginID = useCallback((catalogPluginID: string) => {
+    setState(current => ({ ...current, catalogPluginID }));
+  }, [setState]);
   const [catalogPluginRequest, setCatalogPluginRequest] = useState<{ id: string; request: number }>();
   const [catalogVisited, setCatalogVisited] = useState(false);
   const pageWorkbench = useSyncExternalStore(desktopWorkbenchController.subscribe,
@@ -6081,6 +6084,8 @@ export function App({ application: providedApplication }: { application?: Applic
               active={!settingsOpen && showingManagementCatalog && !showingPrimaryPluginView}
               section={catalogSection}
               onSectionChange={setCatalogSection}
+              selectedPluginID={state.catalogPluginID ?? ""}
+              onSelectPlugin={setCatalogPluginID}
               activeContext={state.activeContext}
               extensionInventory={state.initialized.extension_inventory}
               onTrySkill={trySkillFromCatalog}

@@ -136,6 +136,7 @@ type AppState = {
   // Page selection outlives shell activations, including catalog refreshes.
   nativeSection?: "conversations" | "catalog";
   catalogSection?: "plugins" | "skills";
+  catalogPluginID?: string;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProjectId?: string;

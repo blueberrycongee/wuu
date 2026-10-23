@@ -13,6 +13,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ExtensionCatalogRefreshResult,
+  ExtensionInventoryRecord,
   InitializeResult,
   ServerEvent,
   Thread,
@@ -252,6 +253,63 @@ describe("sidebar collapse-state independence", () => {
       expect(container.querySelector('.catalog-section-pane:not([hidden])')).not.toBeNull();
       expect(container.querySelector('.sidebar-section-item[aria-current="page"]')?.getAttribute("aria-label")).toBe(selectedLabel);
       expect(container.querySelector('.catalog-refresh')?.getAttribute("aria-busy")).toBe("false");
+    } finally {
+      act(() => { root?.unmount(); });
+      root = null;
+      await host.unloadAndWait("shell");
+      shared.mockRestore();
+    }
+  });
+
+  it("keeps plugin details actionable through disable and re-enable shell activations", async () => {
+    installWuuApi();
+    let record: ExtensionInventoryRecord = {
+      id: "plugin:user:route-probe", name: "Route probe", kind: "plugin", state: "active",
+      fingerprint: "unchanged", enabled: true, approval_state: "granted", runtime_state: "active",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "route-probe" },
+    };
+    vi.mocked(window.wuu.initialize).mockResolvedValue({ ...initialized(), extension_inventory: [record] });
+    window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
+    const controller = new applicationState.ApplicationController();
+    const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
+    window.wuu.updateExtensionPackage = vi.fn(async ({ action }) => {
+      record = { ...record, enabled: action === "enable", runtime_state: action === "enable" ? "active" : "inactive" };
+      controller.updateState(current => ({ ...current, initialized: { ...current.initialized!, extension_inventory: [record] } }));
+      await activate();
+      return { extension_inventory: [record], skills: [] };
+    });
+    const click = async (selector: string) => {
+      const button = container.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    try {
+      await activate();
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+      });
+      await flushAsync();
+      await click('[data-ribbon-id="catalog"]');
+      await click('.catalog-row-open');
+      for (const [action, checked] of [["disable", "false"], ["enable", "true"]] as const) {
+        await click('[data-wuu-component="plugin-detail"] [role="switch"]');
+        expect(window.wuu.updateExtensionPackage).toHaveBeenLastCalledWith({ id: record.id, fingerprint: record.fingerprint, action });
+        expect(container.querySelector('[data-wuu-component="plugin-detail"]')?.getAttribute("aria-label")).toBe(record.name);
+        expect(container.querySelector('[data-wuu-component="plugin-detail"] [role="switch"]')?.getAttribute("aria-checked")).toBe(checked);
+      }
+      await click('.sidebar-section-navigation > button:nth-of-type(2)');
+      await click('.sidebar-section-navigation > button:nth-of-type(1)');
+      expect(container.querySelector('[data-wuu-component="plugin-detail"]')).toBeNull();
+      await click('.catalog-row-open');
+      await click('[data-testid="plugin-page-back"]');
+      await act(async () => { await activate(); });
+      expect(container.querySelector('[data-wuu-component="plugin-detail"]')).toBeNull();
+      expect(container.querySelector('.catalog-row-open')).not.toBeNull();
     } finally {
       act(() => { root?.unmount(); });
       root = null;
