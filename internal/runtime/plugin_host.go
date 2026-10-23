@@ -5,17 +5,20 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
 type pluginClientStarter func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error)
@@ -88,6 +91,19 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}))
 		if resolved.Modules != nil {
 			required[loopdriver.DefaultDriverID] = true
+		}
+	}
+	if resolved.Modules != nil {
+		for _, provider := range []struct{ id, backend string }{
+			{persistence.SQLiteModule, "sqlite"}, {persistence.JSONLModule, "jsonl"},
+		} {
+			if resolved.Includes(provider.id) {
+				if strings.TrimSpace(wuuHome) == "" {
+					return nil, nil, errors.New("state provider requires a resolved Wuu home")
+				}
+				nativeModules = append(nativeModules, persistence.NewService(provider.id, filepath.Join(statepath.SessionsDir(wuuHome), "documents"), provider.backend))
+				required[provider.id] = true
+			}
 		}
 	}
 	for _, consumer := range nativeConsumers {
@@ -210,7 +226,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer}
+	available := []string{kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	identities := map[string]bool{}
 	for _, id := range available {
 		identities[id] = true

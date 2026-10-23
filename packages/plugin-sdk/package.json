@@ -27,7 +27,9 @@
     "dist/process.js",
     "dist/process.d.ts",
     "dist/driver.js",
-    "dist/driver.d.ts"
+    "dist/driver.d.ts",
+    "dist/persistence.js",
+    "dist/persistence.d.ts"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

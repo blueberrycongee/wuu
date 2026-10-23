@@ -66,6 +66,11 @@ func run(args []string) error {
 		return executionworker.Serve(context.Background(), os.Stdin, os.Stdout)
 	}
 
+	// Explicit store maintenance must not initialize or alter the app home.
+	if args[0] == "state" {
+		return runState(args[1:])
+	}
+
 	// Pre-launch installs left credential-bearing files at 0o644 / 0o755.
 	// Normalize them once, then rely on private-state writers for new paths.
 	// Rewalking a large session home on every command makes even
@@ -2269,6 +2274,7 @@ Usage:
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]
   wuu plugin dev [--watch=false] [--poll DURATION] FILE.ts|DIRECTORY
+  wuu state check|export|import|migrate --dir DIRECTORY [flags]
   wuu debug app-server initialize [flags]
   wuu debug app-server send [flags] METHOD [JSON]
   wuu debug protocol events [flags] THREAD_ID

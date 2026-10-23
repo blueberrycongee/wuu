@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add opt-in SQLite and JSONL providers for the public `state.documents` contract, with atomic revision checks, durable retry receipts, explicit migration, portable exports/imports and provider revocation. Add SDK helpers and independent process/CLI verification. Conversation persistence migration remains separate.
+
 - Move the default multi-round algorithm into an ordinary driver provider using `driver.turn` 4.0 for model, tool, context, compaction and observation effects. Remove the whole-loop host gateway and migrate embedded callers. Driver service version 2 preserves typed terminal failures and recovery evidence; existing default checkpoint identity and format remain compatible. The SDK exposes the same resources to independent process drivers.
 
 - Compose named profiles from ordered reusable bundles, profile patches and user overrides with composition version 2; version 1 inline configurations remain supported. Patches can select or exclude modules and replace or remove service bindings; diagnostics show applied layers and individual selection sources. Explicit empty compositions remain empty after saving.

@@ -170,6 +170,25 @@ Bundle 是可复用的静态配置。例如，多个 profile 可以共享同一�
 
 包依赖与所选服务依赖使用同一张 generation 生命周期图。提供者先于消费者激活，清理按相反顺序进行，期间提供者资源保持可用。必需服务缺失、主版本不兼容或提供者失败会阻止依赖链上的消费者运行。可选服务缺失不会阻止激活；存在时仍参与生命周期排序。跨越包与服务的依赖循环会在激活前导致准备失败。新版本改变依赖时，仍被保留的 generation 使用自己的解析结果。移除提供者会停止必需消费者，独立插件继续运行。
 
+按需启用的 `wuu.state.sqlite` 和 `wuu.state.jsonl` 模块均提供 `state.documents` 版本 1。可在显式组合中选择其中一个，或绑定实现相同服务的外部提供者。它们在激活时打开存储，使用普通依赖图，移除后停止。数据位于会话目录的 `documents` 子目录。当前文档服务与已有会话数据库分开；选择它尚不会迁移会话历史或执行日志。
+
+消费者声明 `requireDocumentStore()`，通过 `documentStore(host).read(query)`、`.commit(transaction)` 或 `.export()` 调用；提供者声明 `documentStoreDescriptor()`。每份文档包含命名空间、键和 JSON 值。读取返回一致的存储修订号及按键排序的文档；前缀与可选键集合取交集，空键集合不返回文档。修订号使用十进制字符串，TypeScript 中也不转换为数值。提交包含唯一的 `id`、`expected_revision` 和跨任意命名空间的非空、不重复写入集合。每项写入设置 JSON 值或显式删除键。整个存储的修订号必须仍然匹配，否则返回 `state_conflict` 且不写入；这也能检测新插入的键及其他命名空间的变化。
+
+成功提交在确认前完成原子持久化。I/O 结果不确定或响应丢失后，以完全相同的操作 ID 和意图重试，持久回执会返回原修订号。同一 ID 携带不同意图时返回 `state_operation_conflict`。写入接纳前取消不会产生写入；接纳后即使调用者断开，也会完成持久化屏障。取消不会撤销已提交数据或外部效果。`read` 和 `commit` 在依赖消费者清理期间仍可调用，提供者会保留到清理完成。
+
+SQLite 使用完整同步的 WAL 事务。JSONL 追加带校验和的记录，并从日志重建索引；只丢弃不完整的末尾记录，完整但损坏的记录返回 `state_corrupt`。两者均通过操作系统锁串行执行操作，并验证同一个持久权威指针。迁移先准备并检查新 generation，再原子发布该指针。之后所有旧句柄，包括其他进程中的句柄，都返回 `state_binding_changed`。直接选择另一后端会返回 `state_migration_required`。应停止业务消费者、迁移，再选择并启动目标提供者。发布前中断时原存储仍是权威；发布后目标存储成为权威。旧 generation 保留用于检查，不进行双写。非空目录丢失权威指针时明确失败，不会悄悄创建空库。
+
+管理命令显式指定文档存储目录：
+
+```sh
+wuu state check --dir "$STORE_DIR"
+wuu state export --dir "$STORE_DIR" --file snapshot.json
+wuu state import --dir "$NEW_STORE_DIR" --backend jsonl --file snapshot.json
+wuu state migrate --dir "$STORE_DIR" --from sqlite --to jsonl
+```
+
+快照包含文档和完整持久回执序列。导入要求空目标目录，在发布前检查恢复数据，不覆盖已有状态。`check` 校验数据并报告数量与绑定身份，不输出文档值。文件系统屏障必须成功；不支持目录同步时返回错误，指针发布后的错误明确报告已提交的绑定。这些持久化检查已在 macOS 验证；这两个按需提供者的 Windows 持久化尚未验收。回执完整保留、不裁剪，导出会将整个存储载入内存。运行 `node scripts/document-state-e2e.mjs` 可在独立目录仅安装公开 SDK，验证[进程消费者](../../../examples/plugins/document-state/runtime.ts)、重启重试、后端迁移、撤销和 CLI 数据转移。可复查证据保存在 `.tmp/e2e/document-state/`。
+
 空驱动 profile 通过服务图选择 `driver.default`。原生 `wuu.default-loop` 模块与外部提供者使用相同的驱动协议、声明式依赖、取消和清理路径。排除该模块会停止其驱动；组合可以改为包含提供 `driver.default` 的外部插件。没有提供者时，新回合会明确失败。实验性的 `driver.<profile>` 桥接将提供者和回调表固定在同一 generation。描述信息、创建和恢复调用遵循回合取消。描述信息须包含非空 ID 与语义化版本，读取失败会在创建实例前返回错误。创建、恢复及终态 checkpoint 须匹配所选驱动的 ID、版本和 checkpoint 契约。未知终态或不兼容 checkpoint 会明确失败，保留最近接受的状态。取消后迟到的实例会收到有时限的关闭请求。回合在保存 checkpoint 后失败或取消时，返回结果会保留最近接受的 checkpoint，防止应用终结流程将它覆盖为实例初始状态。即使取消导致终态回执未能送达，执行中已观察到的历史仍可用于最终持久化。`driver.<profile>` 版本 2 在失败状态、回执和 checkpoint 之外返回结构化 `failure`，保留取消、期限到期、空回答、摘要输出超限、提供者分类及已消耗的恢复预算。使用 `driverServiceDescriptor(profile)` 并返回 `DriverRunResult`；服务版本 2 与驱动身份和 checkpoint 版本独立。
 
 会话在创建或恢复驱动实例之前，持久化绑定服务 profile、提供者 ID、驱动 ID/版本及 checkpoint 契约。更改默认配置不会替换这一身份。重建运行时使用保存的 profile，在推理前拒绝不同提供者或不兼容版本。组合仍须为该服务选择已保存的提供者；改变同一服务的绑定后，旧会话保持只读，直到恢复原来的选择。绑定与 checkpoint 写入在事务中校验已保存身份。会话不存在或写入失败时，不会确认 checkpoint 已保存。Fork 创建在同一事务中继承来源绑定，并以空的执行 checkpoint 开始。明确标记为临时的会话在内存中保存绑定与 checkpoint，运行时重建会保留它们；关闭会话或进程会丢弃这些状态。

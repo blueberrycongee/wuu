@@ -1,0 +1,154 @@
+package persistence
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"sync"
+
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+)
+
+const (
+	SQLiteModule = "wuu.state.sqlite"
+	JSONLModule  = "wuu.state.jsonl"
+)
+
+// Service is a native provider using the same declarations, invocation and
+// lifecycle as a process provider. Preparing a composition does not open files.
+type Service struct {
+	mu            sync.Mutex
+	id, dir, kind string
+	state         pluginhost.State
+	store         *Store
+}
+
+func NewService(id, dir, kind string) *Service {
+	return &Service{id: id, dir: dir, kind: kind, state: pluginhost.StatePrepared}
+}
+func (s *Service) ID() string { return s.id }
+func (s *Service) Status() pluginhost.Status {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return pluginhost.Status{ID: s.id, State: s.state}
+}
+func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
+	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
+		{Name: "read", InputSchema: "state.documents.read.input.v1", OutputSchema: "state.documents.read.output.v1", Cleanup: true},
+		{Name: "commit", InputSchema: "state.documents.commit.input.v1", OutputSchema: "state.documents.commit.output.v1", Cleanup: true},
+		{Name: "export", InputSchema: "state.documents.export.input.v1", OutputSchema: "state.documents.export.output.v1"},
+	}}}
+}
+func (s *Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
+
+func (s *Service) Prepare(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	current, err := readBinding(s.dir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := requireEmptyDirectory(s.dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: authority is missing in a nonempty store: %v", ErrCorrupt, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current.Backend != s.kind {
+		return ErrMigrationRequired
+	}
+	return nil
+}
+func (s *Service) Activate(ctx context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != pluginhost.StatePrepared {
+		return fmt.Errorf("state provider cannot activate from %s", s.state)
+	}
+	store, err := Open(ctx, s.dir, s.kind)
+	if err != nil {
+		s.state = pluginhost.StateFailed
+		return err
+	}
+	s.store = store
+	s.state = pluginhost.StateActive
+	return nil
+}
+func (s *Service) Close(context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state = pluginhost.StateStopped
+	if s.store == nil {
+		return nil
+	}
+	err := s.store.Close()
+	s.store = nil
+	return err
+}
+
+func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != pluginhost.StateActive {
+		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "state provider is not active"}
+	}
+	var result any
+	var err error
+	switch params.Method {
+	case "read":
+		var query Query
+		if err = decode(params.Params, &query); err == nil {
+			result, err = s.store.Read(ctx, query)
+		}
+	case "commit":
+		var request Transaction
+		if err = decode(params.Params, &request); err == nil {
+			result, err = s.store.Commit(ctx, request)
+		}
+	case "export":
+		var request struct{}
+		if err = decode(params.Params, &request); err == nil {
+			result, err = s.store.Export(ctx)
+		}
+	default:
+		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown state provider method"}
+	}
+	if err != nil {
+		code := "state_io_error"
+		switch {
+		case errors.Is(err, ErrConflict):
+			code = "state_conflict"
+		case errors.Is(err, ErrOperationConflict):
+			code = "state_operation_conflict"
+		case errors.Is(err, ErrBindingChanged):
+			code = "state_binding_changed"
+		case errors.Is(err, ErrMigrationRequired):
+			code = "state_migration_required"
+		case errors.Is(err, ErrCorrupt):
+			code = "state_corrupt"
+		case errors.Is(err, ErrInvalid):
+			code = "invalid_request"
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			code = "request_cancelled"
+		}
+		return nil, &pluginhost.HostServiceError{Code: code, Message: err.Error()}
+	}
+	return json.Marshal(result)
+}
+
+func decode(raw json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return fmt.Errorf("%w: expected one request object", ErrInvalid)
+	}
+	return nil
+}
