@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/worktree"
@@ -286,7 +287,7 @@ func (s *ProjectCoordinationProvider) projectWork(ctx context.Context, actorID, 
 	if err != nil {
 		return nil, err
 	}
-	s.startBackground(func() { s.owner.kickProjectInboxDrain(w.ProjectID) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.kickProjectInboxDrain(w.ProjectID) })
 
 	// Requirement corrections fence writes immediately and interrupt stale execution.
 	// Execution leases remain held until the owning processes really exit.
@@ -359,11 +360,11 @@ func (s *ProjectCoordinationProvider) interruptWorkMember(ctx context.Context, i
 	if id == "" {
 		return nil
 	}
-	s.revokeSessionInputs(id)
+	s.revokeSessionInputs(s.binding, id)
 	return s.interruptManagedSession(ctx, id)
 }
 func (s *ProjectCoordinationProvider) currentProjectWorkTurn(id string) (string, error) {
-	th, err := s.ensureThreadLoaded(id)
+	th, err := s.ensureThreadLoaded(s.binding, id)
 	if err != nil {
 		return "", err
 	}
@@ -492,7 +493,7 @@ func (s *ProjectCoordinationProvider) reconcileProjectWork(ctx context.Context, 
 		if err := s.store.EnqueueInbox(session.InboxMessage{ClientID: fmt.Sprintf("project-work-result:%s:%d", w.ID, w.Version), SessionID: w.ProjectID, RelatedSessionID: w.LeadID, Cause: projectCauseResult, Content: message, Wake: true, WorkID: w.ID, WorkRevision: w.Revision, WorkVersion: w.Version}); err != nil {
 			return err
 		}
-		s.startBackground(func() { s.owner.drainSessionInbox(w.ProjectID) })
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(w.ProjectID) })
 	}
 	return nil
 }
@@ -547,7 +548,7 @@ func (s *ProjectCoordinationProvider) enqueueWorkBrief(w session.ProjectWork, ta
 	if err := s.store.EnqueueInbox(message); err != nil {
 		return err
 	}
-	s.startBackground(func() { s.owner.drainSessionInbox(target) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(target) })
 	return nil
 }
 
@@ -735,7 +736,7 @@ func (s *ProjectCoordinationProvider) recoverProjectWork(projectID string) error
 
 // The desktop exposes only user status and explicit control actions. Technical
 // lifecycle transitions remain attributed to the responsible model session.
-func (s *Server) handleProjectWork(req Request) error {
+func (s *Server) handleProjectWork(binding *runtime.State, req Request) error {
 	var p struct {
 		ProjectID string `json:"project_id"`
 		RequestID string `json:"request_id"`
@@ -754,10 +755,10 @@ func (s *Server) handleProjectWork(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("desktop work control supports list, get, stop and resume"))
 	}
 	if p.Operation == "list" {
-		result, err := s.listProjectWork(p.ProjectID, true)
+		result, err := s.listProjectWork(binding, p.ProjectID, true)
 		return s.writeResponse(req.ID, result, err)
 	}
 
-	result, err := s.projectWork(context.Background(), p.ProjectID, "desktop:"+p.RequestID, p.ProjectWorkRequest)
+	result, err := s.projectWork(binding, context.Background(), p.ProjectID, "desktop:"+p.RequestID, p.ProjectWorkRequest)
 	return s.writeResponse(req.ID, result, err)
 }

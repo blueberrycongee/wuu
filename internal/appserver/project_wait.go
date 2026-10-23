@@ -71,7 +71,7 @@ func (s *ProjectCoordinationProvider) waitProjectSession(ctx context.Context, pr
 	// fences without generating model polling turns.
 	recheck := time.NewTicker(100 * time.Millisecond)
 	defer recheck.Stop()
-	th, err := s.ensureThreadLoaded(metadata.ID)
+	th, err := s.ensureThreadLoaded(s.binding, metadata.ID)
 	if err != nil {
 		return nil, err
 	}

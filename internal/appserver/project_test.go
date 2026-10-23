@@ -179,7 +179,7 @@ func projectManagedSessions(t *testing.T, client *rpcClient, projectID string) [
 
 func deliveredClientIDs(t *testing.T, rt *runtime.Session, threadID, prefix string) []string {
 	t.Helper()
-	history, err := loadChatMessages(rt.SessionDir, threadID)
+	history, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 				t.Fatalf("queued = %+v, %v", queued, err)
 			}
 			if stop {
-				if err := srv.takeSessionControl(worker.SessionID, session.ControlPaused); err != nil {
+				if err := srv.takeSessionControl(testRuntimeState(t, srv.rt), worker.SessionID, session.ControlPaused); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -259,7 +259,7 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 			}
 			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
-			reopened.recoverProjectInbox()
+			reopened.projectTestRecoverInbox()
 			if stop {
 				pending, err := rt.Sessions.PendingInbox(worker.SessionID)
 				if err != nil || len(pending) != 0 {
@@ -274,7 +274,7 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 			waitForThread(t, reopened, worker.SessionID, func(th Thread) bool {
 				return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != completed.LatestCompletedTurnID
 			})
-			reopened.recoverProjectInbox()
+			reopened.projectTestRecoverInbox()
 			if ids := deliveredClientIDs(t, rt, worker.SessionID, "project:"+lead.ID+":queued-followup"); len(ids) != 1 {
 				t.Fatalf("recovered deliveries = %v", ids)
 			}
@@ -299,7 +299,7 @@ func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testin
 	side := projectManagedSessions(t, client, lead.ID)[0]
 	initial.response <- providersResponse("Prior output is not the correction")
 	calls.next(t, "Requested correction output").response <- providersResponse("Requested correction completed")
-	project, _ := srv.projectCoordinator(lead.ID)
+	project, _ := srv.projectTestCoordinator(lead.ID)
 	value, err = srv.waitProjectSession(context.Background(), project, project, tools.ProjectSessionRequest{SessionID: side.ID}, "project:"+lead.ID+":correct-side")
 	if err != nil || value.(projectSessionView).FinalOutput != "Requested correction completed" {
 		t.Fatalf("host receipt: %+v %v", value, err)
@@ -310,7 +310,7 @@ func TestProjectCorrectionReturnsBeforeExecutionAndRetainsExactReceipt(t *testin
 // tool surface, which deliberately rejects waits.
 func hostProjectWait(srv *Server, projectID string) tools.ProjectSessionHandler {
 	return func(ctx context.Context, _ string, r tools.ProjectSessionRequest) (any, error) {
-		project, _ := srv.projectCoordinator(projectID)
+		project, _ := srv.projectTestCoordinator(projectID)
 		return srv.waitProjectSession(ctx, project, project, r, "")
 	}
 }
@@ -459,7 +459,7 @@ func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
 
 	observer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
-	observer.recoverProjectInbox()
+	observer.projectTestRecoverInbox()
 	resultID := projectResultClientID(worker.SessionID, worker.TurnID)
 	if found, err := rt.Sessions.InboxHas(resultID); err != nil || found {
 		t.Fatalf("unfinished remote turn was reported as a project result: found=%v, err=%v", found, err)
@@ -469,7 +469,7 @@ func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
 func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Unsettled result")
-	member, err := srv.createHostSessionThread(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+	member, err := srv.createHostSessionThread(testRuntimeState(t, srv.rt), projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
 		RequestID: "unsettled-member", Name: "Unsettled worker", ParentSessionID: lead.ID,
 		Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh, Workspace: "shared",
 		WorkspaceID: rt.WorkspaceID, ProjectRole: "worker",
@@ -521,7 +521,7 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 func TestProjectCreationPersistsInitialDispatch(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Atomic launch")
-	th, err := srv.createHostSessionThread(projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
+	th, err := srv.createHostSessionThread(testRuntimeState(t, srv.rt), projectSessionOwner, projectSessionSource, "", hostSessionCreateParams{
 		RequestID: "atomic-launch", Name: "Atomic worker", ParentSessionID: lead.ID,
 		Visibility: sessionVisibilityUser, ContextSource: sessionContextFresh, Workspace: "shared",
 		WorkspaceID: rt.WorkspaceID, ProjectRole: "worker",
@@ -543,7 +543,7 @@ func TestProjectCreationPersistsInitialDispatch(t *testing.T) {
 	t.Cleanup(reopened.Close)
 	calls.next(t, "Recover initial dispatch").response <- providersResponse("Initial dispatch recovered")
 	waitForThread(t, reopened, th.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, th.ID, "atomic-launch"); len(ids) != 1 {
 		t.Fatalf("initial dispatch deliveries = %v", ids)
 	}
@@ -558,11 +558,6 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	lead := startProject(t, client, "Role model choices")
-	cfg, _, err := rt.LoadEffectiveConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	rt.ProjectModels = cfg.Agent.ProjectModels
 	handler := srv.projectSessionHandler(lead.ID)
 	for _, tc := range []struct{ role, alias, model string }{
 		{"side", "", "side-model"}, {"worker", "", "worker-model"}, {"worker", "override", "override-model"},
@@ -645,7 +640,7 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	srv.Close()
 	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, coordinator.ID, "project-result:"+worker.ID); len(ids) != 1 {
 		t.Fatalf("result deliveries after restart = %v", ids)
 	}
@@ -740,7 +735,7 @@ func TestProjectReportsUserTurns(t *testing.T) {
 	srv.Close()
 	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 1 {
 		t.Fatalf("user result was lost or duplicated on restart: %v", ids)
 	}
@@ -823,7 +818,7 @@ func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T)
 		t.Fatalf("stopped member cannot collaborate: %v", err)
 	}
 	// Recovery must neither wake the lead nor replay an old automatic input.
-	srv.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
 	srv.drainSessionInbox(worker.ID)
 	calls.assertIdle(t)
 	if ids := deliveredClientIDs(t, srv.rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 0 {
@@ -1112,9 +1107,9 @@ func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
 	srv.Close()
 	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	settleCoordinator(t, reopened, calls, lead.ID, "Ready.", "Recovered.", clientID, "project-message:"+member.ID+":information")
-	reopened.recoverProjectInbox()
+	reopened.projectTestRecoverInbox()
 	if ids := deliveredClientIDs(t, rt, lead.ID, clientID); len(ids) != 1 {
 		t.Fatalf("recovered message occurrences: %v", ids)
 	}
@@ -1142,7 +1137,7 @@ func TestProjectInterruptedSideWorkDoesNotWakeRecipients(t *testing.T) {
 	calls.next(t, "Hold worker")
 	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: workerID}, nil)
 	waitForThread(t, srv, workerID, func(th Thread) bool { return th.LatestCompletedTurnID != "" && th.Status == ThreadStatusIdle })
-	srv.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
 	calls.assertIdle(t)
 	for _, target := range []string{lead.ID, sideID} {
 		pending, err := rt.Sessions.PendingInbox(target)
@@ -1222,6 +1217,9 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			held.response <- providersResponse("Ready.")
 			member := waitForThread(t, srv, memberID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 			calls.assertIdle(t)
+			if _, err := rt.Sessions.CreateInitialized(session.Session{ID: "plugin-member", Source: "plugin", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil); err != nil {
+				t.Fatal(err)
+			}
 			plugin, err := rt.Sessions.ChangeControl("plugin-member", "plugin:example", state, 0)
 			if err != nil {
 				t.Fatal(err)
@@ -1248,7 +1246,7 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			}
 			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
-			reopened.recoverProjectInbox()
+			reopened.projectTestRecoverInbox()
 			for _, resultID := range []string{projectResultClientID(memberID, member.LatestCompletedTurnID), projectResultClientID(memberID, member.LatestCompletedTurnID) + ":" + sideID} {
 				settled, err := rt.Sessions.InboxHas(resultID)
 				if err != nil || !settled {

@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -35,22 +37,25 @@ func TestProjectCoordinationProviderLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bridge := NewProjectCoordinatorBridge()
-	bridge.Bind(srv)
-	mechanism, err := bridge.MechanismFactory().Build(runtime.NativeProviderContext{Sessions: store, Registry: registry})
+	bridge := native.bridge
+	mechanism, err := bridge.MechanismFactory().Build(runtime.NativeProviderContext{Sessions: store, Registry: registry, RetainState: func() (*runtime.State, error) { return native.retainState() }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	native.registry = registry
 	background := &projectBackgroundTestService{}
 	stateProvider := persistence.NewService(persistence.SQLiteModule, t.TempDir(), "sqlite")
-	conflicts := registry.RegisterClients(native, consumer, stateProvider, mechanism, background)
+	cfg := config.Default()
+	cfg.Agent.ProjectMaxParallel = 2
+	configuration := config.NewMemoryService("independent.config", cfg)
+	conflicts := registry.RegisterClients(native, consumer, stateProvider, mechanism, background, configuration)
 	if len(conflicts) != 0 {
 		t.Fatalf("conflicts: %v", conflicts)
 	}
-	host := pluginhost.New(native, consumer, stateProvider, mechanism, background)
+	host := pluginhost.New(native, consumer, stateProvider, mechanism, background, configuration)
 	background.host = host
 	host.AttachServiceRegistry(registry, conflicts)
+	bindProjectTestGraph(t, native, host)
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -64,9 +69,13 @@ func TestProjectCoordinationProviderLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	output, callErr := host.CallService(context.Background(), ProjectCoordinationConsumer, ProjectCoordinationService, "instructions", raw)
+	output, callErr := host.CallService(srv.projectServiceContext(context.Background(), native.binding), ProjectCoordinationConsumer, ProjectCoordinationService, "instructions", raw)
 	if callErr != nil || len(output) == 0 {
 		t.Fatalf("native policy: %s %v", output, callErr)
+	}
+	var admission ProjectAdmissionPolicy
+	if err := callProjectCoordination(srv.projectServiceContext(context.Background(), native.binding), host, "admission", ProjectCoordinationRequest{}, &admission); err != nil || admission.MaxParallel != 2 {
+		t.Fatalf("admission did not use selected configuration: %+v %v", admission, err)
 	}
 	timerFired := make(chan func(), 1)
 	var stopped atomic.Bool
@@ -82,7 +91,7 @@ func TestProjectCoordinationProviderLifecycle(t *testing.T) {
 	if err := documents.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := callProjectCoordination(context.Background(), host, "schedule", ProjectCoordinationRequest{ProjectID: "retry-storage"}, nil); err != nil {
+	if err := callProjectCoordination(srv.projectServiceContext(context.Background(), native.binding), host, "schedule", ProjectCoordinationRequest{ProjectID: "retry-storage"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	fire := <-timerFired
@@ -95,7 +104,7 @@ func TestProjectCoordinationProviderLifecycle(t *testing.T) {
 	if native.lifetime.closed.Load() {
 		t.Fatal("background stop closed retained foreground provider")
 	}
-	if _, err := native.InvokeService(context.Background(), pluginhost.ServiceInvokeParams{Service: ProjectCoordinationService, Method: "instructions", Params: raw}); err != nil {
+	if _, err := native.InvokeService(srv.projectServiceContext(context.Background(), native.binding), pluginhost.ServiceInvokeParams{Service: ProjectCoordinationService, Method: "instructions", Params: raw}); err != nil {
 		t.Fatalf("retained foreground policy unavailable: %v", err)
 	}
 	if _, ok := host.RetirePlugin(context.Background(), native.ID(), errors.New("disabled")); !ok {
@@ -113,11 +122,11 @@ func TestProjectCoordinationProviderLifecycle(t *testing.T) {
 	if !native.lifetime.closed.Load() {
 		t.Fatal("provider lifecycle remained active")
 	}
-	_, callErr = host.CallService(context.Background(), ProjectCoordinationConsumer, ProjectCoordinationService, "instructions", raw)
+	_, callErr = host.CallService(srv.projectServiceContext(context.Background(), native.binding), ProjectCoordinationConsumer, ProjectCoordinationService, "instructions", raw)
 	if callErr == nil {
 		t.Fatal("disabled provider still handled request")
 	}
-	if native.startBackground(func() { t.Error("stopped scheduler ran") }) {
+	if native.startBackground(func(*ProjectCoordinationProvider) { t.Error("stopped scheduler ran") }) {
 		t.Fatal("accepted background work after stop")
 	}
 }
@@ -134,7 +143,7 @@ func TestProjectCoordinationBridgeDefersAndFencesActivation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = documents.Close() })
 	bridge := NewProjectCoordinatorBridge()
-	client, err := bridge.ProviderFactory().Build(runtime.NativeProviderContext{Sessions: session.NewStore(context.Background(), documents), Registry: pluginhost.NewServiceRegistry()})
+	client, err := bridge.ProviderFactory().Build(runtime.NativeProviderContext{Sessions: session.NewStore(context.Background(), documents), Registry: pluginhost.NewServiceRegistry(), RetainState: func() (*runtime.State, error) { return nil, errors.New("not published") }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +151,7 @@ func TestProjectCoordinationBridgeDefersAndFencesActivation(t *testing.T) {
 	if err := provider.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if provider.startBackground(func() { t.Error("unbound provider scheduled") }) {
+	if provider.startBackground(func(*ProjectCoordinationProvider) { t.Error("unbound provider scheduled") }) {
 		t.Fatal("accepted work before binding")
 	}
 	if err := provider.Close(context.Background()); err != nil {
@@ -151,7 +160,7 @@ func TestProjectCoordinationBridgeDefersAndFencesActivation(t *testing.T) {
 	srv := New(newTestRuntime(t, &fakeClient{}), &lockedBuffer{})
 	t.Cleanup(srv.Close)
 	bridge.Bind(srv)
-	if provider.startBackground(func() { t.Error("retired provider scheduled") }) {
+	if provider.startBackground(func(*ProjectCoordinationProvider) { t.Error("retired provider scheduled") }) {
 		t.Fatal("binding revived provider")
 	}
 }
@@ -210,17 +219,24 @@ func TestProjectCoordinationRetainedCompletionPersistsWithoutDispatch(t *testing
 			t.Fatal(err)
 		}
 	}
-	srv.addLoadedThread(&threadState{ID: "retained-member", Source: projectSessionSource, ProjectID: "retained-project", Title: "Retained member"})
 	provider := srv.NewProjectCoordinationProvider(store)
+	registry := pluginhost.NewServiceRegistry()
+	host := pluginhost.New()
+	host.AttachServiceRegistry(registry, nil)
+	provider.registry = registry
+	bindProjectTestGraph(t, provider, host)
 	provider.lifetime.active.Store(true)
 	provider.stopScheduling()
 	defer provider.Close(context.Background())
 	raw, _ := json.Marshal(ProjectCoordinationRequest{SessionID: "retained-member", Turn: Turn{ID: "retained-turn", Status: TurnStatusCompleted, Items: []ThreadItem{{Type: ThreadItemAgentMessage, Text: "Completed in original generation"}}}})
-	if _, err := provider.InvokeService(context.Background(), pluginhost.ServiceInvokeParams{Service: ProjectCoordinationService, Method: "turn", Params: raw}); err != nil {
+	ctx := srv.projectServiceContext(context.Background(), provider.binding)
+	ctx.Value(projectCallScopeKey{}).(*projectCallScope).thread = &threadState{ID: "retained-member", Source: projectSessionSource, ProjectID: "retained-project", Title: "Original admitted title", state: provider.binding}
+	srv.Close()
+	if _, err := provider.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ProjectCoordinationService, Method: "turn", Params: raw}); err != nil {
 		t.Fatal(err)
 	}
 	pending, err := store.PendingInbox("retained-project")
-	if err != nil || len(pending) != 1 || pending[0].RelatedSessionID != "retained-member" {
+	if err != nil || len(pending) != 1 || pending[0].RelatedSessionID != "retained-member" || !strings.Contains(pending[0].Content, "Original admitted title") {
 		t.Fatalf("retained completion was lost: %+v %v", pending, err)
 	}
 	if len(provider.lifetime.projectInboxDrains) != 0 {
@@ -230,6 +246,76 @@ func TestProjectCoordinationRetainedCompletionPersistsWithoutDispatch(t *testing
 
 func (s *Server) NewProjectCoordinationProvider(store *session.Store) *ProjectCoordinationProvider {
 	p := newProjectCoordinationProvider(store)
-	p.bindServer(s)
+	bridge := NewProjectCoordinatorBridge()
+	if _, err := bridge.Bind(s); err != nil {
+		panic(err)
+	}
+	p.bridge, p.Server = bridge, s
 	return p
+}
+
+func bindProjectTestGraph(t *testing.T, provider *ProjectCoordinationProvider, host *pluginhost.Host) {
+	t.Helper()
+	binding := &runtime.State{Documents: provider.rt.Documents, Sessions: provider.rt.Sessions, Host: host}
+	provider.binding = binding
+	provider.retainState = func() (*runtime.State, error) { return binding.Retain(), nil }
+	t.Cleanup(func() { _ = binding.Close() })
+}
+
+// The last background reference can synchronously retire its own generation.
+// Provider shutdown must not wait on the same pass that is releasing that ref.
+func TestProjectBackgroundFinalReferenceDoesNotWaitOnItself(t *testing.T) {
+	if !projectAgentEnabled {
+		t.Skip("project_agent build only")
+	}
+	rt := newTestRuntime(t, &fakeClient{})
+	server := New(rt, &lockedBuffer{})
+	t.Cleanup(server.Close)
+	provider := server.NewProjectCoordinationProvider(rt.Sessions)
+	provider.lifetime.active.Store(true)
+	close(provider.lifetime.schedulerReady)
+	registry := pluginhost.NewServiceRegistry()
+	closed := make(chan error, 1)
+	observed := &projectCloseResultProbe{ProjectCoordinationProvider: provider, result: closed}
+	conflicts := registry.RegisterClients(observed)
+	if len(conflicts) != 0 {
+		t.Fatalf("graph: %v", conflicts)
+	}
+	host := pluginhost.New(observed)
+	host.AttachServiceRegistry(registry, conflicts)
+	provider.registry = registry
+	rt.PluginHost = host
+	provider.retainState = rt.RetainState
+	entered := make(chan *runtime.PluginGeneration, 1)
+	finish := make(chan struct{})
+	if !provider.startBackground(func(operation *ProjectCoordinationProvider) {
+		entered <- operation.binding.Generation
+		<-finish
+	}) {
+		t.Fatal("background pass rejected")
+	}
+	generation := <-entered
+	// Drop the publishing Session reference while the admitted pass still owns
+	// its reference, exactly as replacement does before asynchronous teardown.
+	generation.Release()
+	close(finish)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("final background reference blocked its own shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("generation did not finish shutting down")
+	}
+}
+
+type projectCloseResultProbe struct {
+	*ProjectCoordinationProvider
+	result chan<- error
+}
+
+func (p *projectCloseResultProbe) Close(ctx context.Context) error {
+	err := p.ProjectCoordinationProvider.Close(ctx)
+	p.result <- err
+	return err
 }

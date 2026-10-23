@@ -44,18 +44,20 @@ type ManagedSessionSubmission struct {
 // control, while graph edges retain these mechanisms through provider cleanup.
 func (b *ProjectCoordinatorBridge) MechanismFactory() runtime.NativeProviderFactory {
 	return runtime.NativeProviderFactory{ID: ManagedSessionModule, DefaultEnabled: true, Build: func(input runtime.NativeProviderContext) (pluginhost.Client, error) {
-		if input.Registry == nil {
-			return nil, errors.New("managed sessions require a captured service graph")
+		if input.Registry == nil || input.RetainState == nil {
+			return nil, errors.New("managed sessions require a captured service graph and state factory")
 		}
-		return &managedSessionMechanisms{bridge: b, store: projectProviderStore(input.Registry, ManagedSessionModule)}, nil
+		return &managedSessionMechanisms{bridge: b, registry: input.Registry, retainState: input.RetainState, store: projectProviderStore(input.Registry, ManagedSessionModule)}, nil
 	}}
 }
 
 type managedSessionMechanisms struct {
-	bridge *ProjectCoordinatorBridge
-	store  *session.Store
-	active atomic.Bool
-	closed atomic.Bool
+	bridge      *ProjectCoordinatorBridge
+	registry    *pluginhost.ServiceRegistry
+	retainState func() (*runtime.State, error)
+	store       *session.Store
+	active      atomic.Bool
+	closed      atomic.Bool
 }
 
 func (m *managedSessionMechanisms) ID() string { return ManagedSessionModule }
@@ -103,12 +105,41 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 	if !m.active.Load() || m.closed.Load() {
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "managed session mechanisms are stopped"}
 	}
-	m.bridge.mu.Lock()
-	s := m.bridge.server
-	m.bridge.mu.Unlock()
-	if s == nil {
-		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "managed session mechanisms are not bound"}
+	background := pluginhost.IsBackgroundExecution(ctx)
+	if call.CallerScope != nil {
+		background = background || pluginhost.IsBackgroundExecution(call.CallerScope.Context)
 	}
+	var scope *projectCallScope
+	var binding *runtime.State
+	var err error
+	if background {
+		// Autonomous callbacks borrow a connection only for this operation,
+		// even when their starting provenance contained a foreground scope.
+		var release func()
+		scope, ctx, release, err = m.bridge.acquireBackground(ctx, m.registry, m.retainState)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		binding = scope.state
+	} else {
+		scope, err = projectScopeForCall(ctx, call)
+		if err != nil {
+			return nil, err
+		}
+		binding, err = scope.retain(m.registry, m.bridge, false)
+		if err != nil {
+			return nil, err
+		}
+		defer binding.Close()
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		stop := context.AfterFunc(scope.registration.ctx, cancel)
+		defer stop()
+		defer cancel()
+	}
+	s := scope.registration.server
+	ctx = context.WithValue(ctx, projectCallScopeKey{}, scope)
 	ctx = context.WithValue(ctx, projectExecutionContextKey{}, call.ExecutionID)
 	store := m.store.WithContext(ctx)
 	switch call.Method {
@@ -122,7 +153,7 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 		}
 		params := hostSessionCreateParamsFromPlugin(input.SessionCreateParams)
 		params.ProjectRole, params.SharedWorkspaceSessionID, params.InitialInput = input.Role, input.SharedWorkspaceSessionID, input.InitialInput
-		th, err := s.createHostSessionThreadWithStore(store, input.Owner, input.Source, input.SessionID, params)
+		th, err := s.createHostSessionThreadWithStore(binding, store, input.Owner, input.Source, input.SessionID, params)
 		if err != nil {
 			return nil, err
 		}
@@ -151,7 +182,7 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 				return nil, err
 			}
 		}
-		th, err := s.ensureThreadLoaded(input.SessionID)
+		th, err := s.ensureThreadLoaded(binding, input.SessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +217,7 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 		} else if !found {
 			return nil, session.ErrSessionNotFound
 		}
-		if err := s.interruptOwnedThreadExecution(input.SessionID); err != nil {
+		if err := s.interruptOwnedThreadExecution(binding, input.SessionID); err != nil {
 			return nil, err
 		}
 		return json.RawMessage(`{}`), nil
@@ -224,7 +255,7 @@ func (p *ProjectCoordinationProvider) createManagedSession(ctx context.Context, 
 	if err := p.callManagedSession(ctx, "create", input, &result); err != nil {
 		return nil, err
 	}
-	return p.ensureThreadLoaded(result.SessionID)
+	return p.ensureThreadLoaded(p.binding, result.SessionID)
 }
 func (p *ProjectCoordinationProvider) interruptManagedSession(ctx context.Context, id string) error {
 	if id == "" {

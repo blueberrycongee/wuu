@@ -26,12 +26,6 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			lead := startProject(t, client, "Schema continuation")
 			worker := capacityWorker(t, srv, lead.ID, "schema-worker", "worker")
 			holder := capacityWorker(t, srv, lead.ID, "schema-holder", "worker")
-			journal, err := rt.Sessions.NewInferenceJournalRuntime("schema-capacity-test")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer journal.Close()
-			rt.InferenceJournalRuntime = journal
 			rt.ActivityRegistry = activity.NewRegistry()
 			runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
 			if err != nil {
@@ -110,8 +104,14 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				}
 			case "close":
 				srv.Close()
+				interrupted, err := runStore.Get(context.Background(), run.ID)
+				if err != nil || interrupted.Status != execution.StatusInterrupted || srv.executionRunAttached(run.ID) {
+					t.Fatalf("server close left Run=%+v error=%v", interrupted, err)
+				}
+				// Project timers belong to the provider, which can serve another connection.
+				stopProjectFixture(srv)
 				if !timer.stopped.Load() {
-					t.Fatal("Close did not cancel the schema capacity timer")
+					t.Fatal("provider Close did not cancel the schema capacity timer")
 				}
 			}
 			if err := lease.Release(); err != nil {
@@ -198,12 +198,6 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 				t.Fatalf("hold coordinator: %v %v", acquired, err)
 			}
 			defer leadLease.Release()
-			journal, err := rt.Sessions.NewInferenceJournalRuntime("schema-stop-test")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer journal.Close()
-			rt.InferenceJournalRuntime = journal
 			rt.ActivityRegistry = activity.NewRegistry()
 			runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
 			if err != nil {

@@ -45,13 +45,16 @@ func (s *ProjectCoordinationProvider) drainSessionInbox(target string) {
 	}
 	s.lifetime.projectInboxMu.Unlock()
 	if done != nil {
-		<-done
+		select {
+		case <-done:
+		case <-s.ctx.Done():
+			return
+		}
 	}
 	s.drainSessionInboxTarget(target, false)
 }
 
 func (s *ProjectCoordinationProvider) kickProjectInboxDrain(projectID string) {
-	s = s.owner
 	if s == nil || !projectAgentEnabled || !s.schedulingAllowed() || projectID == "" {
 		return
 	}
@@ -81,6 +84,10 @@ func (s *ProjectCoordinationProvider) runProjectInboxDrain(projectID string, sta
 		pending := s.drainProjectInboxPass(projectID)
 		s.lifetime.projectInboxMu.Lock()
 		if !s.schedulingAllowed() || s.lifetime.projectInboxDrains[projectID] != state {
+			if s.lifetime.projectInboxDrains[projectID] == state {
+				delete(s.lifetime.projectInboxDrains, projectID)
+			}
+			state.running = false
 			close(state.done)
 			s.lifetime.projectInboxMu.Unlock()
 			return
@@ -106,7 +113,7 @@ func (s *ProjectCoordinationProvider) runProjectInboxDrain(projectID string, sta
 		}
 		retry := func() {
 			s.lifetime.projectInboxMu.Lock()
-			if !s.schedulingAllowed() || s.lifetime.projectInboxDrains[projectID] != state {
+			if !s.owner.schedulingAllowed() || s.lifetime.projectInboxDrains[projectID] != state {
 				s.lifetime.projectInboxMu.Unlock()
 				return
 			}
@@ -115,8 +122,11 @@ func (s *ProjectCoordinationProvider) runProjectInboxDrain(projectID string, sta
 			state.done = make(chan struct{})
 			done := state.done
 			s.lifetime.projectInboxMu.Unlock()
-			if !s.startBackground(func() { s.owner.runProjectInboxDrain(projectID, state) }) {
+			if !s.startBackground(func(operation *ProjectCoordinationProvider) { operation.runProjectInboxDrain(projectID, state) }) {
 				s.lifetime.projectInboxMu.Lock()
+				if s.lifetime.projectInboxDrains[projectID] == state {
+					delete(s.lifetime.projectInboxDrains, projectID)
+				}
 				state.running = false
 				close(done)
 				s.lifetime.projectInboxMu.Unlock()
@@ -145,7 +155,7 @@ func (s *ProjectCoordinationProvider) drainProjectInboxPass(projectID string) bo
 			return true
 		} else {
 			for _, w := range work {
-				if err := s.reconcileProjectWork(s.lifetime.ctx, w); err != nil {
+				if err := s.reconcileProjectWork(s.ctx, w); err != nil {
 					providers.DebugLogf("reconcile work outbox: %v", err)
 				}
 			}
@@ -236,15 +246,15 @@ func (s *ProjectCoordinationProvider) drainProjectInboxPass(projectID string) bo
 		s.lifetime.projectInboxMu.Unlock()
 		retry := callbacks[key]
 		if retry.kind == "queued" {
-			full = s.tryDrainQueuedTurns(retry.threadID, true)
+			full = s.tryDrainQueuedTurns(s.binding, retry.threadID, true)
 		} else {
-			full = s.tryDrainAgentCompletionTurns(retry.threadID, true)
+			full = s.tryDrainAgentCompletionTurns(s.binding, retry.threadID, true)
 		}
 	}
 	if !s.schedulingAllowed() {
 		return false
 	}
-	schemaPending, _ := s.drainExecutionSchemaRetries(projectID, !full)
+	schemaPending, _ := s.drainExecutionSchemaRetries(s.binding, projectID, !full)
 	pending = pending || schemaPending
 	s.lifetime.projectInboxMu.Lock()
 	pending = pending || len(s.lifetime.projectCapacityRetries[projectID]) > 0
@@ -294,6 +304,6 @@ func (s *ProjectCoordinationProvider) deferProjectCapacityRetry(threadID, kind s
 	}
 	s.lifetime.projectCapacityRetries[projectID][threadID+":"+kind] = projectCapacityRetry{threadID, kind}
 	s.lifetime.projectInboxMu.Unlock()
-	s.startBackground(func() { s.owner.kickProjectInboxDrain(projectID) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.kickProjectInboxDrain(projectID) })
 	return true
 }

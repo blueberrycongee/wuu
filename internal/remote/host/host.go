@@ -24,6 +24,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -69,13 +70,15 @@ type Options struct {
 	// AppServer connects an authenticated device to an existing execution host.
 	// When omitted, standalone hosts create their own app-server connection.
 	AppServer func(context.Context, io.Reader, io.Writer) error
-	Workdir   string
-	Runtime   *runtime.Session
-	Store     *Store
-	RelayURL  string // overrides the store's relay URL
-	HostName  string // overrides the store's host name
-	Pairing   *PairingConfig
-	Logf      func(format string, args ...any)
+	// AppServerOptions bind each standalone connection to the runtime composition.
+	AppServerOptions []appserver.ServerOption
+	Workdir          string
+	Runtime          *runtime.Session
+	Store            *Store
+	RelayURL         string // overrides the store's relay URL
+	HostName         string // overrides the store's host name
+	Pairing          *PairingConfig
+	Logf             func(format string, args ...any)
 	// OnConnected runs after the relay authenticates and registers this host.
 	OnConnected func()
 
@@ -99,18 +102,19 @@ type pairingState struct {
 
 // Host runs the desktop side of remote control.
 type Host struct {
-	appServer       func(context.Context, io.Reader, io.Writer) error
-	workdir         string
-	rt              *runtime.Session
-	store           *Store
-	relayURL        string
-	hostName        string
-	logf            func(format string, args ...any)
-	onConnected     func()
-	reconnectMin    time.Duration
-	reconnectMax    time.Duration
-	pushMinInterval time.Duration
-	pusher          HostPusher
+	appServer        func(context.Context, io.Reader, io.Writer) error
+	appServerOptions []appserver.ServerOption
+	workdir          string
+	rt               *runtime.Session
+	store            *Store
+	relayURL         string
+	hostName         string
+	logf             func(format string, args ...any)
+	onConnected      func()
+	reconnectMin     time.Duration
+	reconnectMax     time.Duration
+	pushMinInterval  time.Duration
+	pusher           HostPusher
 
 	baseCtx context.Context
 
@@ -159,19 +163,20 @@ func New(opts Options) (*Host, error) {
 		pusher = NewExpoPusher()
 	}
 	h := &Host{
-		appServer:       opts.AppServer,
-		workdir:         opts.Workdir,
-		rt:              opts.Runtime,
-		store:           opts.Store,
-		relayURL:        relayURL,
-		hostName:        hostName,
-		logf:            logf,
-		onConnected:     opts.OnConnected,
-		reconnectMin:    opts.ReconnectMin,
-		reconnectMax:    opts.ReconnectMax,
-		pushMinInterval: opts.PushMinInterval,
-		pusher:          pusher,
-		sessions:        map[string]*deviceSession{},
+		appServer:        opts.AppServer,
+		appServerOptions: append([]appserver.ServerOption(nil), opts.AppServerOptions...),
+		workdir:          opts.Workdir,
+		rt:               opts.Runtime,
+		store:            opts.Store,
+		relayURL:         relayURL,
+		hostName:         hostName,
+		logf:             logf,
+		onConnected:      opts.OnConnected,
+		reconnectMin:     opts.ReconnectMin,
+		reconnectMax:     opts.ReconnectMax,
+		pushMinInterval:  opts.PushMinInterval,
+		pusher:           pusher,
+		sessions:         map[string]*deviceSession{},
 	}
 	if h.reconnectMin <= 0 {
 		h.reconnectMin = time.Second

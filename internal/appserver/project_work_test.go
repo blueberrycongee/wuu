@@ -22,7 +22,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	root := startProject(t, client, "Responsive project")
 	act := func(actor, id string, r tools.ProjectWorkRequest) projectWorkView {
 		t.Helper()
-		v, err := srv.projectWork(context.Background(), actor, id, r)
+		v, err := srv.projectTestWork(context.Background(), actor, id, r)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -52,7 +52,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	leadCall.response <- providersResponse("Execution dispatched.")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(executorID, "submit", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: 1, Summary: "Implemented pagination", Evidence: "go test ./... passed; artifact: test.log", CodeRef: "working-tree:pagination-v1"})
-	if _, err := srv.projectWork(context.Background(), executorID, "self-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Evidence: "self checked", CodeRef: w.CodeRef}); err == nil {
+	if _, err := srv.projectTestWork(context.Background(), executorID, "self-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Evidence: "self checked", CodeRef: w.CodeRef}); err == nil {
 		t.Fatal("executor accepted itself")
 	}
 	executorCall.response <- providersResponse("Ready for technical review.")
@@ -76,11 +76,11 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	if w.Revision != 2 || w.Review != "" || w.Phase != "planning" {
 		t.Fatalf("correction retained acceptance: %+v", w)
 	}
-	if _, err := srv.projectWork(context.Background(), root.ID, "stale-delivery", tools.ProjectWorkRequest{Operation: "deliver", WorkID: w.ID, Revision: 1, Delivery: "local worktree"}); err == nil {
+	if _, err := srv.projectTestWork(context.Background(), root.ID, "stale-delivery", tools.ProjectWorkRequest{Operation: "deliver", WorkID: w.ID, Revision: 1, Delivery: "local worktree"}); err == nil {
 		t.Fatal("stale delivery accepted")
 	}
 	w = act(root.ID, "stop-work", tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: 2})
-	srv.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
 	reopened, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || reopened.Phase != "stopped" {
 		t.Fatalf("stopped work revived: %+v %v", reopened, err)
@@ -93,7 +93,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	root := startProject(t, client, "Stop control")
-	value, err := srv.projectWork(context.Background(), root.ID, "new", tools.ProjectWorkRequest{Operation: "create", Brief: "Review stop behavior", Acceptance: "No resurrection", Authority: "Local only"})
+	value, err := srv.projectTestWork(context.Background(), root.ID, "new", tools.ProjectWorkRequest{Operation: "create", Brief: "Review stop behavior", Acceptance: "No resurrection", Authority: "Local only"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 		t.Fatalf("stop released live writer: %v %v", acquired, err)
 	}
 	held.response <- providersResponse("Late completion")
-	srv.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
 	current, err = rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Phase != "stopped" {
 		t.Fatalf("late result revived work: %+v %v", current, err)
@@ -159,7 +159,7 @@ func TestProjectWorkRecoveryDoesNotInventSuccess(t *testing.T) {
 func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	root := startProject(t, client, "Direct correction")
-	value, err := srv.projectWork(context.Background(), root.ID, "create-direct", tools.ProjectWorkRequest{Operation: "create", Brief: "Preserve API", Acceptance: "Callers still work", Authority: "Local only"})
+	value, err := srv.projectTestWork(context.Background(), root.ID, "create-direct", tools.ProjectWorkRequest{Operation: "create", Brief: "Preserve API", Acceptance: "Callers still work", Authority: "Local only"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,15 +173,15 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 		{Role: "user", Name: wuucontext.AgentNotificationMessageName, Content: "Agent finished"},
 		{Role: "user", ReadOnly: true, Content: "Merged completion evidence"},
 	} {
-		srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
+		srv.projectTestNoticeUserMessage(srv.thread(w.LeadID), message)
 	}
 	unchanged, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || unchanged.Version != w.Version || unchanged.Brief != w.Brief {
 		t.Fatalf("generated evidence changed the user contract: %+v %v", unchanged, err)
 	}
 	message := providers.ChatMessage{Role: "user", Origin: "user", ClientID: "direct-correction", Content: "Leave the database index alone"}
-	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
-	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
+	srv.projectTestNoticeUserMessage(srv.thread(w.LeadID), message)
+	srv.projectTestNoticeUserMessage(srv.thread(w.LeadID), message)
 	current, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Revision != 2 || current.Review != "" || current.LeadInput == nil {
 		t.Fatalf("direct intervention: %+v %v", current, err)
@@ -215,7 +215,7 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 			root := startProject(t, client, "Background verification")
 			act := func(actor, id string, request tools.ProjectWorkRequest) projectWorkView {
 				t.Helper()
-				value, err := srv.projectWork(context.Background(), actor, id, request)
+				value, err := srv.projectTestWork(context.Background(), actor, id, request)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -296,7 +296,7 @@ func TestProjectWorkDelegatesAuthorizedDelivery(t *testing.T) {
 	root := startProject(t, client, "Deliver outcome")
 	act := func(actor, id string, r tools.ProjectWorkRequest) projectWorkView {
 		t.Helper()
-		v, err := srv.projectWork(context.Background(), actor, id, r)
+		v, err := srv.projectTestWork(context.Background(), actor, id, r)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -324,7 +324,7 @@ func TestProjectWorkDelegatesAuthorizedDelivery(t *testing.T) {
 func TestProjectWorkConcurrentRecoveryKeepsOneDispatch(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	root := startProject(t, client, "Recover outbox")
-	project, _ := srv.projectCoordinator(root.ID)
+	project, _ := srv.projectTestCoordinator(root.ID)
 	w := session.ProjectWork{ID: session.NewID(), ProjectID: root.ID, LeadID: session.NewID(), Revision: 1, Phase: "planning", Workspace: "worktree", Title: "Recovered work", Brief: "Replay-safe work", Acceptance: "One dispatch", Authority: "Local only", LeadModel: runtimeSelectionFromSession(project)}
 	w.LeadInput = srv.workInput(w, "recoverable-input", root.ID, workContract(w))
 	var err error
@@ -352,14 +352,14 @@ func TestProjectWorkConcurrentRecoveryKeepsOneDispatch(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	srv.kickProjectInboxDrain(root.ID)
+	srv.projectTestKickInboxDrain(root.ID)
 
 	calls.next(t, "Replay-safe work")
 	members, err := srv.projectSessions(root.ID)
 	if err != nil || len(members) != 1 || members[0].ID != w.LeadID {
 		t.Fatalf("duplicate/replaced work member: %+v %v", members, err)
 	}
-	history, err := loadChatMessages(rt.SessionDir, w.LeadID)
+	history, err := loadChatMessages(rt.Sessions, w.LeadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
 	root := startProject(t, client, "Failed submission")
 	act := func(actor, id string, request tools.ProjectWorkRequest) projectWorkView {
 		t.Helper()
-		value, err := srv.projectWork(context.Background(), actor, id, request)
+		value, err := srv.projectTestWork(context.Background(), actor, id, request)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -428,9 +428,9 @@ func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
 	}
 	for _, recover := range []bool{false, true} {
 		if recover {
-			srv.recoverProjectInbox()
+			srv.projectTestRecoverInbox()
 		}
-		_, err = srv.projectWork(context.Background(), w.LeadID, "reject-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Ready", Evidence: "Inspected test.log", CodeRef: w.CodeRef})
+		_, err = srv.projectTestWork(context.Background(), w.LeadID, "reject-review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Ready", Evidence: "Inspected test.log", CodeRef: w.CodeRef})
 		if err == nil {
 			t.Fatalf("failed submission accepted (recovery=%v)", recover)
 		}

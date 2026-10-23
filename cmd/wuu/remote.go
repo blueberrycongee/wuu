@@ -168,14 +168,16 @@ func runRemoteHost(args []string) error {
 		if err != nil {
 			return err
 		}
+		bindings := appserver.NewRuntimeBindings()
 		rt, err = runtime.NewSession(runtime.Options{
-			RootDir:       rootDir,
-			WorkspaceID:   *workspaceID,
-			HomeDir:       homeDir,
-			ConfigPath:    configPath,
-			Config:        cfg,
-			ProviderName:  *providerName,
-			ModelOverride: *modelOverride,
+			NativeProviders: bindings.NativeProviders(),
+			RootDir:         rootDir,
+			WorkspaceID:     *workspaceID,
+			HomeDir:         homeDir,
+			ConfigPath:      configPath,
+			Config:          cfg,
+			ProviderName:    *providerName,
+			ModelOverride:   *modelOverride,
 		})
 		if err != nil {
 			return err
@@ -183,6 +185,7 @@ func runRemoteHost(args []string) error {
 		defer func() { _, _ = rt.Cleanup() }()
 
 		opts.Runtime = rt
+		opts.AppServerOptions = []appserver.ServerOption{appserver.WithRuntimeBindings(bindings)}
 	}
 	if *pair {
 		opts.Pairing = &host.PairingConfig{

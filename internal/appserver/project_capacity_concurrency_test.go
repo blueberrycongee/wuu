@@ -95,7 +95,7 @@ func TestProjectCapacityUsesDurableMembership(t *testing.T) {
 		t.Fatalf("unrelated admission rejection: %+v", failure)
 	}
 	calls.assertIdle(t)
-	history, err := loadChatMessages(rt.SessionDir, th.ID)
+	history, err := loadChatMessages(rt.Sessions, th.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestProjectCapacityCrossServerLastSlot(t *testing.T) {
 			if !strings.Contains(r.failure.Message, session.ErrProjectWorkerCapacity.Error()) {
 				t.Fatalf("unrelated cross-server rejection: %+v", r.failure)
 			}
-			history, err := loadChatMessages(rt.SessionDir, ids[r.index])
+			history, err := loadChatMessages(rt.Sessions, ids[r.index])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -209,7 +209,7 @@ func TestProjectCapacityPrelaunchRollback(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		th, err := srv.ensureThreadLoaded(id)
+		th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), id)
 		if err != nil {
 			t.Fatal(err)
 		}

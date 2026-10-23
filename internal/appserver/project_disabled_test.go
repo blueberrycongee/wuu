@@ -38,7 +38,7 @@ func TestProjectAgentDisabled(t *testing.T) {
 		if failure := client.call(t, MethodTurnStart, TurnStartParams{ThreadID: id, Prompt: "run"}, nil); failure == nil {
 			t.Fatalf("release build executed %s", id)
 		}
-		srv.drainSessionInboxForHost(id, rt.PluginHost)
+		srv.drainSessionInboxForState(id, testRuntimeState(t, rt))
 		pending, err := rt.Sessions.PendingInbox(id)
 		if err != nil || len(pending) != 1 {
 			t.Fatalf("pending work changed for %s: %v, %v", id, pending, err)

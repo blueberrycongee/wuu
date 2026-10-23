@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/worktree"
@@ -129,8 +130,8 @@ func (s *ProjectCoordinationProvider) projectSessionHandler(actorID string) tool
 			if err != nil {
 				return nil, err
 			}
-			s.revokeSessionInputs(request.SessionID)
-			s.publishSessionControl(request.SessionID)
+			s.revokeSessionInputs(s.binding, request.SessionID)
+			s.publishSessionControl(s.binding, request.SessionID)
 			if err := s.interruptManagedSession(ctx, request.SessionID); err != nil {
 				return nil, err
 			}
@@ -209,7 +210,7 @@ func (s *ProjectCoordinationProvider) messageProjectSession(actorID, callID stri
 	if err != nil {
 		return nil, err
 	}
-	s.startBackground(func() { s.owner.drainSessionInbox(request.SessionID) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(request.SessionID) })
 	return map[string]string{"session_id": request.SessionID, "state": "queued", "client_id": message.ClientID}, nil
 }
 
@@ -306,16 +307,20 @@ func (s *ProjectCoordinationProvider) createProjectSession(ctx context.Context, 
 	if workspace != "shared" && workspace != "worktree" {
 		return nil, errors.New("workspace must be worktree or shared")
 	}
-	coordinator, err := s.ensureThreadLoaded(project.ID)
+	coordinator, err := s.ensureThreadLoaded(s.binding, project.ID)
 	if err != nil {
 		return nil, err
 	}
 	coordinator.mu.Lock()
 	provider, model, variant, effort := coordinator.ModelProvider, coordinator.Model, coordinator.ModelVariant, coordinator.ModelEffort
 	coordinator.mu.Unlock()
-	selection := s.rt.ProjectModels.Worker
+	cfg, err := s.loadProjectConfig(ctx)
+	if err != nil {
+		return nil, err
+	}
+	selection := cfg.Agent.ProjectModels.Worker
 	if role == "side" {
-		selection = s.rt.ProjectModels.Side
+		selection = cfg.Agent.ProjectModels.Side
 	}
 	if selection.Provider != "" {
 		provider, model, variant, effort = selection.Provider, selection.Model, selection.Variant, selection.Effort
@@ -342,7 +347,7 @@ func (s *ProjectCoordinationProvider) createProjectSession(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	s.publishSessionControl(th.ID)
+	s.publishSessionControl(s.binding, th.ID)
 	metadata, _, err := s.store.Find(th.ID)
 	if err != nil {
 		return nil, err
@@ -370,7 +375,7 @@ func (s *ProjectCoordinationProvider) sendProjectSession(ctx context.Context, pr
 	if !ok || control.ManagerID != project.ID || control.State != session.ControlActive {
 		return nil, session.ErrControlChanged
 	}
-	th, err := s.ensureThreadLoaded(metadata.ID)
+	th, err := s.ensureThreadLoaded(s.binding, metadata.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -406,7 +411,7 @@ func (s *ProjectCoordinationProvider) projectDispatchReceipt(metadata session.Se
 	}
 	view.ClientID = clientID
 	view.DeliveryState = "queued"
-	th, err := s.ensureThreadLoaded(metadata.ID)
+	th, err := s.ensureThreadLoaded(s.binding, metadata.ID)
 	if err != nil {
 		return view, err
 	}
@@ -456,7 +461,7 @@ func (s *ProjectCoordinationProvider) projectDispatchReceipt(metadata session.Se
 	return view, nil
 }
 
-func (s *Server) handleProjectSession(req Request) error {
+func (s *Server) handleProjectSession(binding *runtime.State, req Request) error {
 	if !projectAgentEnabled {
 		return s.writeResponse(req.ID, nil, errProjectAgentDisabled)
 	}
@@ -468,20 +473,20 @@ func (s *Server) handleProjectSession(req Request) error {
 	var err error
 	switch p.Action {
 	case "adopt":
-		metadata, err = s.adoptProjectSession(strings.TrimSpace(p.ProjectID), strings.TrimSpace(p.SessionID))
+		metadata, err = s.adoptProjectSession(binding, strings.TrimSpace(p.ProjectID), strings.TrimSpace(p.SessionID))
 	case "release":
-		metadata, err = s.releaseProjectSession(strings.TrimSpace(p.ProjectID), strings.TrimSpace(p.SessionID))
+		metadata, err = s.releaseProjectSession(binding, strings.TrimSpace(p.ProjectID), strings.TrimSpace(p.SessionID))
 	default:
 		err = errors.New("action must be adopt or release")
 	}
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	thread, err := s.threadAfterMetadataUpdate(metadata)
+	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.notifyThreadUpdated(thread); err != nil {
+	if err := s.notifyThreadUpdated(binding, thread); err != nil {
 		providers.DebugLogf("announce project membership of %q: %v", thread.ID, err)
 	}
 	return s.writeResponse(req.ID, ProjectSessionResult{Thread: thread}, nil)
@@ -550,7 +555,7 @@ func (s *ProjectCoordinationProvider) releaseProjectSession(projectID, sessionID
 	if w, found, err := s.workForMember(projectID, sessionID); err != nil {
 		return session.Session{}, err
 	} else if found && w.Phase != "stopped" {
-		if _, err := s.projectWork(context.Background(), projectID, "release-work:"+sessionID, tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: w.Revision}); err != nil {
+		if _, err := s.projectWork(s.ctx, projectID, "release-work:"+sessionID, tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: w.Revision}); err != nil {
 			return session.Session{}, err
 		}
 	}
@@ -577,7 +582,7 @@ func (s *ProjectCoordinationProvider) releaseProjectSession(projectID, sessionID
 	if err != nil {
 		return session.Session{}, err
 	}
-	s.revokeSessionInputs(sessionID)
+	s.revokeSessionInputs(s.binding, sessionID)
 	notice := fmt.Sprintf("The user removed session %q from this project. It is an ordinary conversation now, and you can no longer instruct it.", metadata.Title)
 	s.enqueueProjectInput(projectID, sessionID, fmt.Sprintf("project-release:%s:%d", sessionID, control.Revision), projectCauseReleased, notice, false)
 	return released, nil

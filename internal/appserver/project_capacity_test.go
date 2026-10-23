@@ -62,7 +62,7 @@ func capacityWorker(t *testing.T, s *Server, lead, id, role string) *threadState
 	if _, err = s.rt.Sessions.CreateInitialized(metadata, nil); err != nil {
 		t.Fatal(err)
 	}
-	th, err := s.ensureThreadLoaded(id)
+	th, err := s.ensureThreadLoaded(testRuntimeState(t, s.rt), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,9 @@ func TestProjectInboxCoalescesRetriesAndClose(t *testing.T) {
 		t.Fatalf("backoff=%v", next.delay)
 	}
 	calls.assertIdle(t)
-	srv.Close()
+	if err := projectFixtureProvider(srv).Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if !next.stopped.Load() {
 		t.Fatal("Close did not stop pending timer")
 	}
@@ -222,7 +224,7 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 	if !srv.enqueueQueuedUserTurn(b.ID, queuedTurn{id: "queued-capacity", msg: providers.ChatMessage{Role: "user", Content: "queued-capacity", ClientID: "queued-capacity"}}) {
 		t.Fatal("enqueue")
 	}
-	srv.tryDrainQueuedTurns(b.ID, true)
+	srv.tryDrainQueuedTurns(testRuntimeState(t, srv.rt), b.ID, true)
 	if !srv.hasQueuedUserTurns(b.ID) {
 		t.Fatal("capacity discarded queue")
 	}
@@ -287,7 +289,7 @@ func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
 	if failure := <-rejected; failure == nil {
 		t.Fatal("hook rejection not reported")
 	}
-	history, err := loadChatMessages(rt.SessionDir, a.ID)
+	history, err := loadChatMessages(rt.Sessions, a.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,8 +406,8 @@ func TestProjectCapacityBacklogReplayStopAndFailure(t *testing.T) {
 			t.Fatalf("%s deliveries=%v", id, delivered)
 		}
 	}
-	srv.recoverProjectInbox()
-	peer.recoverProjectInbox()
+	srv.projectTestRecoverInbox()
+	peer.projectTestRecoverInbox()
 	calls.assertIdle(t)
 	if delivered := deliveredClientIDs(t, rt, stopped.ID, "stopped-input"); len(delivered) != 0 {
 		t.Fatal("stopped backlog ran")

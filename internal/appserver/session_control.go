@@ -74,8 +74,8 @@ func (s *Server) threadSessionControl(binding *runtime.State, _ string, c sessio
 	}
 	name := c.ManagerID
 	if !strings.HasPrefix(c.ManagerID, "plugin:") {
-		project, live := s.projectCoordinator(binding, c.ManagerID)
-		if !live {
+		project, found, err := binding.Sessions.Find(c.ManagerID)
+		if err != nil || !found || project.Source != projectSource || project.ArchivedAt != nil {
 			return nil
 		}
 		name = project.Title

@@ -6,12 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -41,7 +44,8 @@ func (s *Server) workInput(w session.ProjectWork, id, sender, brief string) *ses
 	return projectFixtureProvider(s).workInput(w, id, sender, brief)
 }
 func (s *Server) reconcileProjectWork(w session.ProjectWork) error {
-	return projectFixtureProvider(s).reconcileProjectWork(context.Background(), w)
+	p := projectFixtureProvider(s)
+	return p.reconcileProjectWork(p.ctx, w)
 }
 func (s *Server) projectSessions(id string) ([]session.Session, error) {
 	return projectFixtureProvider(s).projectSessions(id)
@@ -58,7 +62,6 @@ func stopProjectFixture(s *Server) {
 func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.Writer) *Server {
 	t.Helper()
 	rt := &runtime.Session{ProviderName: source.ProviderName, Model: source.Model, RootDir: source.RootDir, WorkspaceID: source.WorkspaceID, StateDir: source.StateDir, ConfigPath: source.ConfigPath, HomeDir: source.HomeDir, WuuHome: source.WuuHome, ConfigLoadMode: source.ConfigLoadMode, SessionDir: source.SessionDir, StreamRunner: source.StreamRunner, Toolkit: source.Toolkit, HookDispatcher: source.HookDispatcher, ProjectModels: source.ProjectModels}
-	registerTestWuuEngine(t, rt)
 	registry := pluginhost.NewServiceRegistry()
 	state := persistence.NewService(persistence.SQLiteModule, filepath.Join(rt.SessionDir, "documents"), "sqlite")
 	documents := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
@@ -70,16 +73,24 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	})
 	rt.Documents = documents
 	rt.Sessions = session.NewStore(context.Background(), documents)
-	native := newProjectCoordinationProvider(rt.Sessions)
-	native.registry = registry
+	registerTestWuuEngine(t, rt)
 	bridge := NewProjectCoordinatorBridge()
-	mechanism, err := bridge.MechanismFactory().Build(runtime.NativeProviderContext{Sessions: rt.Sessions, Registry: registry})
+	nativeClient, err := bridge.ProviderFactory().Build(runtime.NativeProviderContext{Documents: documents, Sessions: rt.Sessions, Registry: registry, RetainState: rt.RetainState})
+	if err != nil {
+		t.Fatal(err)
+	}
+	native := nativeClient.(*ProjectCoordinationProvider)
+	mechanism, err := bridge.MechanismFactory().Build(runtime.NativeProviderContext{Sessions: rt.Sessions, Registry: registry, RetainState: rt.RetainState})
 	if err != nil {
 		t.Fatal(err)
 	}
 	consumer := NewProjectCoordinationConsumer()
 	background := &projectBackgroundTestService{}
-	clients := []pluginhost.Client{background, native, state, consumer, mechanism}
+	configuration := config.NewService(config.Module, rt.ConfigPath, "")
+	stateConsumer := &configSourceConsumer{}
+	home := os.Getenv("HOME")
+	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
+	clients := []pluginhost.Client{background, native, state, consumer, mechanism, configuration, credentials, stateConsumer}
 	conflicts := registry.RegisterClients(clients...)
 	if len(conflicts) != 0 {
 		t.Fatalf("project fixture graph: %v", conflicts)
@@ -87,22 +98,37 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	host := pluginhost.New(clients...)
 	background.host = host
 	host.AttachServiceRegistry(registry, conflicts)
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	rt.PluginHost = host
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	rt.PluginHost = host
-	server := New(rt, out)
-	projectFixtureProviders.Store(server, native)
-	bridge.Bind(server)
-	if err := native.bindServer(server); err != nil {
+	// Server captures the generation, so its journal must already be bound.
+	journal, err := rt.Sessions.NewInferenceJournalRuntime("project-fixture")
+	if err != nil {
 		t.Fatal(err)
 	}
+	rt.InferenceJournalRuntime = journal
+	t.Cleanup(func() { _ = journal.Close() })
+	server := New(rt, out)
+	if _, err := bridge.Bind(server); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := *native
+	view.Server, view.binding = server, binding
+	view.ctx = server.projectServiceContext(context.Background(), binding)
+	view.store = native.store.WithContext(view.ctx)
+	projectFixtureProviders.Store(server, &view)
+	t.Cleanup(func() { server.Close(); stopProjectFixture(server); _ = binding.Close() })
 	select {
 	case <-native.lifetime.schedulerReady:
 	case <-time.After(5 * time.Second):
 		t.Fatal("scheduler did not start")
 	}
-	t.Cleanup(func() { server.Close(); stopProjectFixture(server); _ = host.Close(context.Background()) })
 	return server
 }
 
@@ -126,9 +152,64 @@ func (s *Server) recoverProjectWork(id string) error {
 }
 
 func (s *Server) projectSessionHandler(id string) tools.ProjectSessionHandler {
-	return s.projectSessionHandlerForHost(id, s.rt.PluginHost)
+	return func(ctx context.Context, callID string, request tools.ProjectSessionRequest) (any, error) {
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			return nil, err
+		}
+		defer binding.Close()
+		return s.projectSessionHandlerForState(id, binding)(ctx, callID, request)
+	}
 }
-func (s *Server) drainSessionInbox(id string) { s.drainSessionInboxForHost(id, s.rt.PluginHost) }
+func (s *Server) projectFixtureBinding() *runtime.State {
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		panic(err)
+	}
+	return binding
+}
+func (s *Server) drainSessionInbox(id string) {
+	binding := s.projectFixtureBinding()
+	defer binding.Close()
+	s.drainSessionInboxForState(id, binding)
+}
 func (s *Server) acquireProjectWorkTool(member session.Session, call providers.ToolCall, base agent.ToolExecutor) (func(), error) {
-	return s.acquireProjectWorkToolForBinding(member, call, base, s.rt.PluginHost, s.rt.Sessions)
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return nil, err
+	}
+	release, err := s.acquireProjectWorkToolForBinding(binding, member, call, base)
+	if err != nil {
+		_ = binding.Close()
+		return release, err
+	}
+	return func() { release(); _ = binding.Close() }, nil
+}
+func (s *Server) projectTestWork(ctx context.Context, actorID, callID string, request tools.ProjectWorkRequest) (any, error) {
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return nil, err
+	}
+	defer binding.Close()
+	return s.projectWork(binding, ctx, actorID, callID, request)
+}
+func (s *Server) projectTestCoordinator(id string) (session.Session, bool) {
+	binding := s.projectFixtureBinding()
+	defer binding.Close()
+	return s.projectCoordinator(binding, id)
+}
+func (s *Server) projectTestRecoverInbox() {
+	binding := s.projectFixtureBinding()
+	defer binding.Close()
+	s.recoverProjectInbox(binding)
+}
+func (s *Server) projectTestNoticeUserMessage(th *threadState, message providers.ChatMessage) {
+	binding := th.state.Retain()
+	defer binding.Close()
+	s.noticeProjectUserMessage(binding, th, message)
+}
+func (s *Server) projectTestKickInboxDrain(id string) {
+	binding := s.projectFixtureBinding()
+	defer binding.Close()
+	s.kickProjectInboxDrain(binding, id)
 }

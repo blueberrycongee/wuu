@@ -343,11 +343,20 @@ func runModels(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, configPath, err := config.LoadFrom(rootDir, os.Getenv("HOME"))
+	state, err := openCommandState(context.Background(), rootDir)
 	if err != nil {
 		return err
 	}
-	providerCfg, resolvedName, err := cfg.ResolveProvider(*providerName)
+	defer state.Close()
+	services, err := state.Services()
+	if err != nil {
+		return err
+	}
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	providerCfg, resolvedName, err := view.Config.ResolveProvider(*providerName)
 	if err != nil {
 		return err
 	}
@@ -356,6 +365,7 @@ func runModels(args []string) error {
 	}
 
 	client, err := codex.New(codex.ClientConfig{
+		Credentials:           services.Credentials,
 		BaseURL:               providerCfg.BaseURL,
 		APIKey:                explicitProviderAPIKey(providerCfg),
 		Headers:               providerCfg.Headers,
@@ -377,7 +387,7 @@ func runModels(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("provider: %s\nconfig: %s\n\n", resolvedName, configPath)
+	fmt.Printf("provider: %s\n\n", resolvedName)
 	for _, model := range models {
 		fmt.Println(model.Slug)
 	}
@@ -1384,15 +1394,17 @@ func newLocalDebugAppServerClient(ctx context.Context, opts debugAppServerOption
 	if err != nil {
 		return nil, err
 	}
+	bindings := appserver.NewRuntimeBindings()
 	rt, err := runtime.NewSession(runtime.Options{
-		RootDir:       rootDir,
-		HomeDir:       homeDir,
-		ConfigPath:    configPath,
-		Config:        cfg,
-		ProviderName:  opts.provider,
-		ModelOverride: opts.model,
-		DriverProfile: opts.driver,
-		NoTools:       opts.noTools,
+		NativeProviders: bindings.NativeProviders(),
+		RootDir:         rootDir,
+		HomeDir:         homeDir,
+		ConfigPath:      configPath,
+		Config:          cfg,
+		ProviderName:    opts.provider,
+		ModelOverride:   opts.model,
+		DriverProfile:   opts.driver,
+		NoTools:         opts.noTools,
 	})
 	if err != nil {
 		return nil, err
@@ -1408,7 +1420,7 @@ func newLocalDebugAppServerClient(ctx context.Context, opts debugAppServerOption
 		pipes:  []io.Closer{serverInR, serverInW, serverOutR, serverOutW},
 	}
 	go func() {
-		client.done <- appserver.RunStdio(serverCtx, rt, serverInR, serverOutW)
+		client.done <- appserver.RunStdio(serverCtx, rt, serverInR, serverOutW, appserver.WithRuntimeBindings(bindings))
 	}()
 	return client, nil
 }

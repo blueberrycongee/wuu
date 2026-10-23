@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,11 +55,14 @@ type ProjectCoordinationRequest struct {
 // The store belongs to this generation and remains available through cleanup.
 type ProjectCoordinationProvider struct {
 	*Server
-	registry *pluginhost.ServiceRegistry
-	ctx      context.Context
-	store    *session.Store
-	owner    *ProjectCoordinationProvider
-	lifetime *projectCoordinationLifetime
+	registry    *pluginhost.ServiceRegistry
+	bridge      *ProjectCoordinatorBridge
+	retainState func() (*runtime.State, error)
+	binding     *runtime.State
+	ctx         context.Context
+	store       *session.Store
+	owner       *ProjectCoordinationProvider
+	lifetime    *projectCoordinationLifetime
 }
 
 // Invocation views share lifetime/queue ownership while their store context
@@ -111,7 +112,7 @@ func ProjectCoordinationDescriptor() pluginhost.ServiceDescriptor {
 	return pluginhost.ServiceDescriptor{Name: ProjectCoordinationService, Version: "1.0.0", Methods: methods}
 }
 func (p *ProjectCoordinationProvider) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}, {Name: ManagedSessionService, MajorVersion: 1, Required: true}, {Name: pluginhost.KernelBackgroundService, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}, {Name: config.ServiceName, MajorVersion: 1, Required: true}, {Name: ManagedSessionService, MajorVersion: 1, Required: true}, {Name: pluginhost.KernelBackgroundService, MajorVersion: 1, Required: true}}
 }
 func (p *ProjectCoordinationProvider) Activate(ctx context.Context) error {
 	if !projectAgentEnabled {
@@ -137,15 +138,30 @@ func (p *ProjectCoordinationProvider) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func (p *ProjectCoordinationProvider) startBackground(work func()) bool {
+func (p *ProjectCoordinationProvider) startBackground(work func(*ProjectCoordinationProvider)) bool {
+	p = p.owner
 	p.lifetime.backgroundMu.Lock()
-	if !p.schedulingAllowed() || p.lifetime.closed.Load() || !p.lifetime.active.Load() || p.Server == nil || !p.selected() {
+	if !p.schedulingAllowed() || p.lifetime.closed.Load() || !p.lifetime.active.Load() || !p.selected() {
 		p.lifetime.backgroundMu.Unlock()
 		return false
 	}
 	p.lifetime.backgroundWG.Add(1)
 	p.lifetime.backgroundMu.Unlock()
-	go func() { defer p.lifetime.backgroundWG.Done(); work() }()
+	scope, ctx, release, err := p.bridge.acquireBackground(p.lifetime.ctx, p.registry, p.retainState)
+	if err != nil {
+		p.lifetime.backgroundWG.Done()
+		return false
+	}
+	operation := *p
+	operation.Server, operation.binding = scope.registration.server, scope.state
+	operation.ctx, operation.store = ctx, p.store.WithContext(ctx)
+	go func() {
+		// Releasing the final State can synchronously invoke provider Close.
+		// Mark the finished pass before that reentrant shutdown waits for us.
+		defer release()
+		defer p.lifetime.backgroundWG.Done()
+		work(&operation)
+	}()
 	return true
 }
 func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
@@ -153,18 +169,13 @@ func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pl
 		return nil, err
 	}
 	p.lifetime.backgroundMu.Lock()
-	if p.lifetime.closed.Load() || !p.lifetime.active.Load() || p.Server == nil {
+	if p.lifetime.closed.Load() || !p.lifetime.active.Load() {
 		p.lifetime.backgroundMu.Unlock()
-		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "project coordination provider is stopped or unbound"}
+		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "project coordination provider is stopped"}
 	}
 	p.lifetime.backgroundWG.Add(1)
 	p.lifetime.backgroundMu.Unlock()
 	defer p.lifetime.backgroundWG.Done()
-	ctx = context.WithValue(ctx, projectExecutionContextKey{}, call.ExecutionID)
-	operation := *p
-	operation.ctx = ctx
-	operation.store = p.store.WithContext(ctx)
-	p = &operation
 
 	if call.Service != ProjectCoordinationService {
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "unknown project service"}
@@ -174,12 +185,7 @@ func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pl
 			return nil, &pluginhost.HostServiceError{Code: "service_not_authorized", Message: "project scheduler must be started by its owner"}
 		}
 		close(p.lifetime.schedulerReady)
-		p.owner.startBackground(p.owner.startProjectRecovery)
-		select {
-		case <-ctx.Done():
-		case <-p.lifetime.ctx.Done():
-		}
-		p.owner.stopScheduling()
+		p.owner.runScheduler(ctx)
 		return json.RawMessage(`{}`), nil
 	}
 	if call.Method == "instructions" || call.Method == "tool-config" {
@@ -196,6 +202,32 @@ func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pl
 		}
 		return json.Marshal(defaultProjectInstructions(metadata))
 	}
+	scope, err := projectScopeForCall(ctx, call)
+	if err != nil {
+		return nil, projectServiceError(err)
+	}
+	// Completion and intervention are settlement of an admitted run. Closing
+	// its connection must not discard these writes to the retained graph.
+	settlement := call.Method == "turn" || call.Method == "user-input"
+	binding, err := scope.retain(p.registry, p.bridge, settlement)
+	if err != nil {
+		return nil, projectServiceError(err)
+	}
+	defer binding.Close()
+	if !settlement {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		stop := context.AfterFunc(scope.registration.ctx, cancel)
+		defer stop()
+		defer cancel()
+	}
+	ctx = context.WithValue(ctx, projectCallScopeKey{}, scope)
+	ctx = context.WithValue(ctx, projectExecutionContextKey{}, call.ExecutionID)
+	operation := *p
+	operation.Server, operation.binding = scope.registration.server, binding
+	operation.ctx, operation.store = ctx, p.store.WithContext(ctx)
+	p = &operation
+
 	if call.Method == "tool-policy" || call.Method == "tool-validate" {
 		raw, err := p.invokeToolPolicy(call)
 		if err != nil {
@@ -208,16 +240,11 @@ func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pl
 		return nil, err
 	}
 	var value any = struct{}{}
-	var err error
+	err = nil
 	switch call.Method {
 	case "admission":
-		cfg := config.Config{}
-		if p.rt.ConfigLoadMode != runtime.ConfigLoadFile || strings.TrimSpace(p.rt.ConfigPath) != "" {
-			cfg, _, err = p.rt.LoadEffectiveConfig()
-		}
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, config.ErrConfigNotFound) {
-			err = nil
-		}
+		var cfg config.Config
+		cfg, err = p.loadProjectConfig(ctx)
 		value = ProjectAdmissionPolicy{MaxParallel: cfg.Agent.ProjectMaxParallelValue()}
 	case "session":
 		value, err = p.projectSessionHandler(request.ActorID)(ctx, request.CallID, request.Session)
@@ -227,7 +254,7 @@ func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pl
 			value, err = p.listProjectWork(request.ProjectID, request.Details)
 		}
 	case "capacity":
-		value = p.owner.deferProjectCapacityRetry(request.SessionID, request.Action)
+		value = p.deferProjectCapacityRetry(request.SessionID, request.Action)
 	case "work":
 		value, err = p.projectWork(ctx, request.ActorID, request.CallID, request.Work)
 	case "membership":
@@ -247,7 +274,21 @@ func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pl
 		}
 	case "turn", "user-input":
 		var th *threadState
-		th, err = p.ensureOwnedThreadLoaded(request.SessionID)
+		var metadata session.Session
+		var found bool
+		metadata, found, err = p.store.Find(request.SessionID)
+		if err == nil && found {
+			th = scope.thread
+			if th != nil && (th.ID != request.SessionID || th.state == nil || th.state.Sessions != binding.Sessions) {
+				return nil, projectServiceError(errors.New("project settlement does not match its admitted thread"))
+			}
+			if th == nil {
+				th = p.threadForState(binding, request.SessionID)
+			}
+			if th == nil {
+				th = &threadState{ID: metadata.ID, Source: metadata.Source, ProjectID: projectIDForSession(metadata), Title: metadata.Title}
+			}
+		}
 		if err == nil && th != nil {
 			if call.Method == "turn" {
 				p.afterProjectTurn(th, request.Turn, request.CompactOnly)
@@ -256,14 +297,14 @@ func (p *ProjectCoordinationProvider) InvokeService(ctx context.Context, call pl
 			}
 		}
 	case "inbox":
-		p.owner.drainSessionInbox(request.SessionID)
+		p.drainSessionInbox(request.SessionID)
 	case "schedule":
-		p.owner.kickProjectInboxDrain(request.ProjectID)
+		p.kickProjectInboxDrain(request.ProjectID)
 	case "recover":
 		if request.ProjectID != "" {
 			err = p.recoverProjectWork(request.ProjectID)
 		} else {
-			p.owner.recoverProjectInbox()
+			p.recoverProjectInbox()
 		}
 
 	case "member-work":
@@ -359,7 +400,7 @@ func projectServiceError(err error) error {
 }
 
 func (p *ProjectCoordinationProvider) schedulingAllowed() bool {
-	if p.lifetime.ctx.Err() != nil {
+	if p.lifetime.ctx.Err() != nil || p.ctx.Err() != nil {
 		return false
 	}
 	select {
@@ -368,4 +409,16 @@ func (p *ProjectCoordinationProvider) schedulingAllowed() bool {
 	default:
 		return false
 	}
+}
+
+func (p *ProjectCoordinationProvider) loadProjectConfig(ctx context.Context) (config.Config, error) {
+	source := config.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		result, callErr := p.registry.Call(ctx, p.ID(), pluginhost.ServiceCallParams{Service: config.ServiceName, Method: method, Params: raw, ExecutionID: projectExecutionID(ctx)})
+		if callErr != nil {
+			return nil, callErr
+		}
+		return result, nil
+	})
+	view, err := source.Read(ctx)
+	return view.Config, err
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -103,7 +104,7 @@ func (s *ProjectCoordinationProvider) invokeToolPolicy(call pluginhost.ServiceIn
 	}
 	return json.RawMessage(`{}`), nil
 }
-func (s *Server) acquireProjectWorkToolForBinding(member session.Session, call providers.ToolCall, base agent.ToolExecutor, host *pluginhost.Host, store *session.Store) (func(), error) {
+func (s *Server) acquireProjectWorkToolForBinding(binding *runtime.State, member session.Session, call providers.ToolCall, base agent.ToolExecutor) (func(), error) {
 	noop := func() {}
 	readOnly := false
 	if metadata, ok := base.(agent.ToolMetadataProvider); ok {
@@ -113,13 +114,13 @@ func (s *Server) acquireProjectWorkToolForBinding(member session.Session, call p
 	}
 	input := projectToolPolicyRequest{Member: member, Call: call, ReadOnly: readOnly}
 	var policy ProjectToolPolicy
-	if err := callProjectCoordination(context.Background(), host, "tool-policy", input, &policy); err != nil {
+	if err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "tool-policy", input, &policy); err != nil {
 		return noop, err
 	}
 	if policy.LeaseKey == "" {
 		return noop, nil
 	}
-	lease, acquired, err := store.TryAcquireThreadExecutionLease(s.rt.SessionDir, policy.LeaseKey)
+	lease, acquired, err := binding.Sessions.TryAcquireThreadExecutionLease(s.rt.SessionDir, policy.LeaseKey)
 	if err != nil {
 		return noop, err
 	}
@@ -127,7 +128,7 @@ func (s *Server) acquireProjectWorkToolForBinding(member session.Session, call p
 		return noop, errors.New("another work participant is still writing; retry after it exits")
 	}
 	input.Policy = policy
-	if err := callProjectCoordination(context.Background(), host, "tool-validate", input, nil); err != nil {
+	if err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "tool-validate", input, nil); err != nil {
 		_ = lease.Release()
 		return noop, err
 	}

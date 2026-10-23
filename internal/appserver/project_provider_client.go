@@ -8,6 +8,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -36,10 +37,10 @@ func callProjectCoordination(ctx context.Context, host *pluginhost.Host, method 
 	return json.Unmarshal(raw, output)
 }
 
-func (s *Server) projectSessionHandlerForHost(actorID string, host *pluginhost.Host) tools.ProjectSessionHandler {
+func (s *Server) projectSessionHandlerForState(actorID string, binding *runtime.State) tools.ProjectSessionHandler {
 	return func(ctx context.Context, callID string, request tools.ProjectSessionRequest) (any, error) {
 		var raw json.RawMessage
-		err := callProjectCoordination(ctx, host, "session", ProjectCoordinationRequest{ActorID: actorID, CallID: callID, Session: request}, &raw)
+		err := callProjectCoordination(s.projectServiceContext(ctx, binding), binding.Host, "session", ProjectCoordinationRequest{ActorID: actorID, CallID: callID, Session: request}, &raw)
 		if err != nil {
 			return nil, err
 		}
@@ -63,86 +64,82 @@ func decodeProjectResult(request tools.ProjectSessionRequest, raw json.RawMessag
 	err := json.Unmarshal(raw, &value)
 	return value, err
 }
-func (s *Server) projectWork(ctx context.Context, actorID, callID string, request tools.ProjectWorkRequest) (any, error) {
-	return s.projectSessionHandlerForHost(actorID, s.rt.PluginHost)(ctx, callID, tools.ProjectSessionRequest{Action: "work", Work: &request})
+func (s *Server) projectWork(binding *runtime.State, ctx context.Context, actorID, callID string, request tools.ProjectWorkRequest) (any, error) {
+	return s.projectSessionHandlerForState(actorID, binding)(ctx, callID, tools.ProjectSessionRequest{Action: "work", Work: &request})
 }
-func (s *Server) workForMember(projectID, memberID string) (session.ProjectWork, bool, error) {
+func (s *Server) workForMember(binding *runtime.State, projectID, memberID string) (session.ProjectWork, bool, error) {
 	var result struct {
 		Work  session.ProjectWork `json:"work"`
 		Found bool                `json:"found"`
 	}
-	err := callProjectCoordination(context.Background(), s.rt.PluginHost, "member-work", ProjectCoordinationRequest{ProjectID: projectID, SessionID: memberID}, &result)
+	err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "member-work", ProjectCoordinationRequest{ProjectID: projectID, SessionID: memberID}, &result)
 	return result.Work, result.Found, err
 }
-func (s *Server) projectCoordinator(id string) (session.Session, bool) {
+func (s *Server) projectCoordinator(binding *runtime.State, id string) (session.Session, bool) {
 	var result struct {
 		Project session.Session `json:"project"`
 		Found   bool            `json:"found"`
 	}
-	err := callProjectCoordination(context.Background(), s.rt.PluginHost, "coordinator", ProjectCoordinationRequest{ProjectID: id}, &result)
+	err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "coordinator", ProjectCoordinationRequest{ProjectID: id}, &result)
 	return result.Project, err == nil && result.Found
 }
 
-func (s *Server) adoptProjectSession(projectID, sessionID string) (session.Session, error) {
+func (s *Server) adoptProjectSession(binding *runtime.State, projectID, sessionID string) (session.Session, error) {
 	var result session.Session
-	err := callProjectCoordination(context.Background(), s.rt.PluginHost, "membership", ProjectCoordinationRequest{ProjectID: projectID, SessionID: sessionID, Action: "adopt"}, &result)
+	err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "membership", ProjectCoordinationRequest{ProjectID: projectID, SessionID: sessionID, Action: "adopt"}, &result)
 	return result, err
 }
-func (s *Server) releaseProjectSession(projectID, sessionID string) (session.Session, error) {
+func (s *Server) releaseProjectSession(binding *runtime.State, projectID, sessionID string) (session.Session, error) {
 	var result session.Session
-	err := callProjectCoordination(context.Background(), s.rt.PluginHost, "membership", ProjectCoordinationRequest{ProjectID: projectID, SessionID: sessionID, Action: "release"}, &result)
+	err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "membership", ProjectCoordinationRequest{ProjectID: projectID, SessionID: sessionID, Action: "release"}, &result)
 	return result, err
 }
-func (s *Server) startProjectThread(selection session.RuntimeSelection, engineID agentengine.EngineID, params ThreadStartParams) (*threadState, error) {
+func (s *Server) startProjectThread(binding *runtime.State, selection session.RuntimeSelection, engineID agentengine.EngineID, params ThreadStartParams) (*threadState, error) {
 	var result struct {
 		SessionID string `json:"session_id"`
 	}
-	err := callProjectCoordination(context.Background(), s.rt.PluginHost, "create", ProjectCoordinationRequest{Selection: selection, EngineID: engineID, Start: params}, &result)
+	err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "create", ProjectCoordinationRequest{Selection: selection, EngineID: engineID, Start: params}, &result)
 	if err != nil {
 		return nil, err
 	}
-	return s.ensureThreadLoaded(result.SessionID)
+	return s.ensureThreadLoaded(binding, result.SessionID)
 }
-func (s *Server) projectEvent(host *pluginhost.Host, method string, input ProjectCoordinationRequest) {
+func (s *Server) projectEvent(binding *runtime.State, method string, input ProjectCoordinationRequest, thread *threadState) {
 	if !projectAgentEnabled {
 		return
 	}
-	if err := callProjectCoordination(context.Background(), host, method, input, nil); err != nil {
+	ctx := s.projectServiceContext(context.Background(), binding)
+	ctx.Value(projectCallScopeKey{}).(*projectCallScope).thread = thread
+	if err := callProjectCoordination(ctx, binding.Host, method, input, nil); err != nil {
 		providers.DebugLogf("project coordination %s: %v", method, err)
 	}
 }
-func (s *Server) afterProjectTurnForHost(th *threadState, turn Turn, compactOnly bool, host *pluginhost.Host) {
-	s.projectEvent(host, "turn", ProjectCoordinationRequest{SessionID: th.ID, Turn: turn, CompactOnly: compactOnly})
+func (s *Server) afterProjectTurnForState(th *threadState, turn Turn, compactOnly bool, binding *runtime.State) {
+	s.projectEvent(binding, "turn", ProjectCoordinationRequest{SessionID: th.ID, Turn: turn, CompactOnly: compactOnly}, th)
 }
 
-func (s *Server) noticeProjectUserMessage(th *threadState, msg providers.ChatMessage) {
-	s.projectEvent(s.rt.PluginHost, "user-input", ProjectCoordinationRequest{SessionID: th.ID, Message: msg})
+func (s *Server) noticeProjectUserMessage(binding *runtime.State, th *threadState, msg providers.ChatMessage) {
+	s.projectEvent(binding, "user-input", ProjectCoordinationRequest{SessionID: th.ID, Message: msg}, th)
 }
-func (s *Server) enqueueProjectInput(projectID, relatedSessionID, clientID, cause, content string, wake bool) {
-	s.projectEvent(s.rt.PluginHost, "enqueue", ProjectCoordinationRequest{ProjectID: projectID, SessionID: relatedSessionID, ClientID: clientID, Cause: cause, Content: content, Wake: wake})
+func (s *Server) enqueueProjectInput(binding *runtime.State, projectID, relatedSessionID, clientID, cause, content string, wake bool) {
+	s.projectEvent(binding, "enqueue", ProjectCoordinationRequest{ProjectID: projectID, SessionID: relatedSessionID, ClientID: clientID, Cause: cause, Content: content, Wake: wake}, nil)
 }
-func (s *Server) startProjectRecovery() {
-	s.projectEvent(s.rt.PluginHost, "recover", ProjectCoordinationRequest{})
+func (s *Server) startProjectRecovery(binding *runtime.State) {
+	s.projectEvent(binding, "recover", ProjectCoordinationRequest{}, nil)
 }
 
-func (s *Server) drainSessionInboxForHost(id string, host *pluginhost.Host) {
-	s.projectEvent(host, "inbox", ProjectCoordinationRequest{SessionID: id})
+func (s *Server) drainSessionInboxForState(id string, binding *runtime.State) {
+	s.projectEvent(binding, "inbox", ProjectCoordinationRequest{SessionID: id}, nil)
 }
-func (s *Server) kickProjectInboxDrain(id string) {
-	s.projectEvent(s.rt.PluginHost, "schedule", ProjectCoordinationRequest{ProjectID: id})
+func (s *Server) kickProjectInboxDrain(binding *runtime.State, id string) {
+	s.projectEvent(binding, "schedule", ProjectCoordinationRequest{ProjectID: id}, nil)
 }
 func (s *Server) closeProjectInboxDrains() {
-	host := s.rt.PluginHost
-	if host == nil || host.ServiceRegistry() == nil {
-		return
-	}
-	if id, ok := host.ServiceRegistry().ProviderPluginID(ProjectCoordinationService, 1); ok {
-		host.RetirePlugin(context.Background(), id, errors.New("app-server closed"))
-	}
+	s.projectRegistration.Close()
 }
-func (s *Server) listProjectWork(projectID string, details bool) (any, error) {
+func (s *Server) listProjectWork(binding *runtime.State, projectID string, details bool) (any, error) {
 	var result any
-	err := callProjectCoordination(context.Background(), s.rt.PluginHost, "work-list", struct {
+	err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "work-list", struct {
 		ProjectID string `json:"project_id"`
 		Details   bool   `json:"details"`
 	}{projectID, details}, &result)
@@ -158,13 +155,13 @@ func ProjectInstructions(ctx context.Context, host *pluginhost.Host, metadata se
 	return result, err
 }
 
-func (s *Server) deferProjectCapacityRetry(threadID, kind string) bool {
+func (s *Server) deferProjectCapacityRetry(binding *runtime.State, threadID, kind string) bool {
 	var deferred bool
-	err := callProjectCoordination(context.Background(), s.rt.PluginHost, "capacity", ProjectCoordinationRequest{SessionID: threadID, Action: kind}, &deferred)
+	err := callProjectCoordination(s.projectServiceContext(context.Background(), binding), binding.Host, "capacity", ProjectCoordinationRequest{SessionID: threadID, Action: kind}, &deferred)
 	return err == nil && deferred
 }
-func (s *Server) recoverProjectInbox() {
-	s.projectEvent(s.rt.PluginHost, "recover", ProjectCoordinationRequest{})
+func (s *Server) recoverProjectInbox(binding *runtime.State) {
+	s.projectEvent(binding, "recover", ProjectCoordinationRequest{}, nil)
 }
 
 func ProjectToolConfiguration(ctx context.Context, host *pluginhost.Host, metadata session.Session) (pluginhost.SessionToolPolicy, error) {

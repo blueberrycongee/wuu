@@ -91,6 +91,7 @@ type Options struct {
 type Runtime struct {
 	mu       sync.Mutex
 	core     *runtime.Session
+	bindings *appserver.RuntimeBindings
 	serving  int
 	closed   bool
 	closeErr error
@@ -150,7 +151,9 @@ func New(opts Options) (*Runtime, error) {
 		return nil, err
 	}
 
+	bindings := appserver.NewRuntimeBindings()
 	core, err := runtime.NewSession(runtime.Options{
+		NativeProviders:          bindings.NativeProviders(),
 		RootDir:                  rootDir,
 		Host:                     host,
 		WorkspaceID:              strings.TrimSpace(opts.WorkspaceID),
@@ -169,7 +172,7 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{core: core}, nil
+	return &Runtime{core: core, bindings: bindings}, nil
 }
 
 // Serve runs one app-server JSONL connection until the client requests
@@ -203,7 +206,7 @@ func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error 
 		r.mu.Unlock()
 	}()
 
-	return appserver.RunStdio(ctx, core, in, out)
+	return appserver.RunStdio(ctx, core, in, out, appserver.WithRuntimeBindings(r.bindings))
 }
 
 // Close releases resources owned by the embedded runtime. It is idempotent.

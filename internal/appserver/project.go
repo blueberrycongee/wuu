@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -157,7 +158,7 @@ func (s *ProjectCoordinationProvider) afterProjectTurn(th *threadState, turn Tur
 	projectID := th.ProjectID
 	th.mu.Unlock()
 	if source == projectSessionSource {
-		s.startBackground(func() { s.owner.kickProjectInboxDrain(projectID) })
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.kickProjectInboxDrain(projectID) })
 	}
 	switch {
 	case source == projectSessionSource && !compactOnly:
@@ -165,10 +166,10 @@ func (s *ProjectCoordinationProvider) afterProjectTurn(th *threadState, turn Tur
 		// replacement has already stopped its autonomous scheduler.
 		s.recordProjectResult(th, turn)
 		if turn.Status != TurnStatusInterrupted {
-			s.startBackground(func() { s.owner.drainSessionInbox(th.ID) })
+			s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(th.ID) })
 		}
 	case source == projectSource && turn.Status != TurnStatusInterrupted:
-		s.startBackground(func() { s.owner.drainSessionInbox(th.ID) })
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(th.ID) })
 	}
 }
 
@@ -277,7 +278,7 @@ func (s *ProjectCoordinationProvider) noticeProjectUserMessage(th *threadState, 
 		providers.DebugLogf("record work intervention: %v", err)
 	} else if found && w.Phase != "stopped" {
 		brief := w.Brief + "\n\nDirect user input in " + th.ID + ":\n" + msg.Content
-		if _, err := s.projectWork(context.Background(), projectID, "user-input:"+th.ID+":"+identity, tools.ProjectWorkRequest{Operation: "update", WorkID: w.ID, Revision: w.Revision, Brief: brief, Acceptance: w.Acceptance, Authority: w.Authority, SourceRefs: w.SourceRefs + "\n" + identity}); err != nil {
+		if _, err := s.projectWork(s.ctx, projectID, "user-input:"+th.ID+":"+identity, tools.ProjectWorkRequest{Operation: "update", WorkID: w.ID, Revision: w.Revision, Brief: brief, Acceptance: w.Acceptance, Authority: w.Authority, SourceRefs: w.SourceRefs + "\n" + identity}); err != nil {
 			providers.DebugLogf("apply direct work intervention: %v", err)
 		}
 	}
@@ -307,7 +308,7 @@ func (s *ProjectCoordinationProvider) enqueueProjectInput(projectID, relatedSess
 		providers.DebugLogf("queue project input %q: %v", clientID, err)
 		return
 	}
-	s.startBackground(func() { s.owner.drainSessionInbox(projectID) })
+	s.startBackground(func(operation *ProjectCoordinationProvider) { operation.drainSessionInbox(projectID) })
 }
 
 // startProjectRecovery checks at start-up whether any project work may need
@@ -349,7 +350,7 @@ func (s *ProjectCoordinationProvider) startProjectRecovery() {
 		}
 	}
 	if pending {
-		s.startBackground(s.owner.recoverProjectInbox)
+		s.startBackground(func(operation *ProjectCoordinationProvider) { operation.recoverProjectInbox() })
 	}
 }
 
@@ -400,8 +401,8 @@ func (s *ProjectCoordinationProvider) restoreProjectMembership(id string, old se
 	if _, err := s.store.ChangeControl(id, old.ManagerID, session.ControlActive, old.Revision); err != nil {
 		return err
 	}
-	s.revokeSessionInputs(id)
-	s.publishSessionControl(id)
+	s.revokeSessionInputs(s.binding, id)
+	s.publishSessionControl(s.binding, id)
 	return nil
 }
 
@@ -421,7 +422,7 @@ func (s *ProjectCoordinationProvider) loadDurableProjectTurns(id string) ([]Turn
 		}
 		history = append(history, message)
 	}
-	turns := turnsFromPersistedHistory(id, history, time.Now().UTC(), s.resolveParticipantSummary)
+	turns := turnsFromPersistedHistory(id, history, time.Now().UTC(), func(id string) (participant.Summary, bool) { return s.resolveParticipantSummary(s.binding, id) })
 	terminals := make(map[string]TurnStatus)
 	for _, record := range history {
 		if record.Role == "meta" && record.Content == turnTerminalHistoryRecord && record.ClientID != "" {
@@ -516,7 +517,7 @@ func (s *ProjectCoordinationProvider) ensureOwnedThreadLoaded(id string) (*threa
 	if err != nil || !s.ownsSessionWorkspace(root, workspaceID) {
 		return nil, err
 	}
-	return s.ensureThreadLoaded(id)
+	return s.ensureThreadLoaded(s.binding, id)
 }
 
 // drainSessionInbox hands pending host input to its session: it steers a
