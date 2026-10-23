@@ -2045,12 +2045,11 @@ func shutdownAndCleanupAgentControl(control *agentcontrol.AgentControl) error {
 	control.BeginShutdown()
 	control.StopAll()
 	control.YieldWorkerTerminalFinalizations()
-	deadline := time.Now().Add(ownedWorkerExecutionDrainTimeout)
-	for control.HasOwnedWorkerExecutions() && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if remaining := control.OwnedWorkerExecutionCount(); remaining > 0 {
-		providers.DebugLogf("session cleanup: %d worker execution lease(s) still owned after %s; proceeding with cleanup", remaining, ownedWorkerExecutionDrainTimeout)
+	drainCtx, cancel := context.WithTimeout(context.Background(), ownedWorkerExecutionDrainTimeout)
+	drainErr := control.WaitOwnedWorkerExecutions(drainCtx)
+	cancel()
+	if drainErr != nil {
+		providers.DebugLogf("session cleanup: %d worker execution lease(s) still owned after %s; proceeding with cleanup", control.OwnedWorkerExecutionCount(), ownedWorkerExecutionDrainTimeout)
 	}
 	pending, pendingErr := control.PendingWorkerTerminalFinalizations()
 	control.Close()

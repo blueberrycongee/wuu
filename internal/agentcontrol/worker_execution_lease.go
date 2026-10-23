@@ -1,6 +1,7 @@
 package agentcontrol
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -82,14 +83,8 @@ func (l *workerExecutionLease) releasedSignal() <-chan struct{} {
 	if l == nil {
 		return closedWorkerExecutionSignal()
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.released == nil {
-		l.released = make(chan struct{})
-		if l.file == nil {
-			close(l.released)
-		}
-	}
+	// The signal is initialized before publication and never replaced. Reading
+	// it must not wait for the persistence acknowledgement holding lease.mu.
 	return l.released
 }
 
@@ -207,6 +202,29 @@ func (c *AgentControl) OwnedWorkerExecutionCount() int {
 		}
 	}
 	return count
+}
+
+// WaitOwnedWorkerExecutions waits for physical release of the currently owned
+// execution leases. Call BeginShutdown first to prevent new admission while
+// draining. Cancellation stops waiting; it does not release another execution.
+func (c *AgentControl) WaitOwnedWorkerExecutions(ctx context.Context) error {
+	if c == nil {
+		return nil
+	}
+	c.workerLeaseMu.Lock()
+	signals := make([]<-chan struct{}, 0, len(c.workerLeases))
+	for _, lease := range c.workerLeases {
+		signals = append(signals, lease.releasedSignal())
+	}
+	c.workerLeaseMu.Unlock()
+	for _, released := range signals {
+		select {
+		case <-released:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return nil
 }
 
 // HasOwnedWorkerExecutions reports whether this AgentControl still owns any

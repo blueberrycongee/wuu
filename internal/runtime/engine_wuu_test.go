@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
@@ -15,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
@@ -52,6 +55,96 @@ func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
 	s.RebuildProtocolEngines(nil)
 	if !s.EngineAvailable("cursor") || !s.EngineAvailable("opencode") {
 		t.Fatal("restoring auto settings did not restore detection")
+	}
+}
+
+// Open/Resume own their thread resources; the cached-thread adapter borrows
+// them. Providers must survive until the last owned session finishes cleanup.
+func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
+	client := &generationClient{id: "owned"}
+	generation := testPluginGeneration("owned", client)
+	s := testGenerationSession(generation)
+	s.RootDir, s.WuuHome, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	s.StreamRunner = &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
+	t.Cleanup(func() { _, _ = s.Cleanup(); _ = generation.close() })
+	factory := NewWuuEngine(s)
+	first, err := factory.Open(context.Background(), agentengine.OpenRequest{ThreadID: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = first.Close(context.Background()) })
+	second, err := factory.Resume(context.Background(), agentengine.ResumeRequest{OpenRequest: agentengine.OpenRequest{ThreadID: "second"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.Close(context.Background()) })
+	borrowed := factory.SessionForThread(&ThreadRuntime{StreamRunner: s.StreamRunner, PluginGeneration: generation})
+	if err := borrowed.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if client.closed {
+		t.Fatal("workspace cleanup retired a provider still owned by engine sessions")
+	}
+	if err := first.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if client.closed {
+		t.Fatal("closing one engine session retired another session's provider")
+	}
+	if err := second.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !client.closed {
+		t.Fatal("engine sessions lost their owned thread handles and leaked the provider")
+	}
+}
+
+func TestWuuEngineCloseDrainsActiveTurnAndStopsAdmission(t *testing.T) {
+	model := &defaultBindingModel{}
+	engine := &wuuEngineSession{runner: &agent.StreamRunner{Client: model, Model: "fixture", LoopDriver: loopdriver.DefaultDriver{}}}
+	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	defer unblock()
+	t.Cleanup(func() {
+		unblock()
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("engine turn did not finish cleanup")
+		}
+	})
+	go func() {
+		defer close(finished)
+		_, _ = engine.RunTurn(context.Background(), agentengine.TurnInput{}, func(event providers.StreamEvent) {
+			if event.Type == providers.EventContentDelta {
+				close(started)
+				<-release
+			}
+		})
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("engine did not start its model call")
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := engine.Close(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("close claimed cleanup completed while a callback is active: %v", err)
+	}
+	unblock()
+	if err := engine.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	<-finished
+	if _, err := engine.RunTurn(context.Background(), agentengine.TurnInput{}, nil); err == nil || model.calls != 1 {
+		t.Fatalf("closed engine accepted a turn: calls=%d err=%v", model.calls, err)
 	}
 }
 

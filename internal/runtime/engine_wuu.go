@@ -41,9 +41,8 @@ func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) 
 	}, nil
 }
 
-// Open creates a fresh thread runtime for a new conversation and returns it
-// as an engine session. The wuu engine keeps running the existing
-// constructor path; only the entry point moves behind the seam.
+// Open creates a fresh thread runtime owned by the returned engine session.
+// Close drains its turn and workers before releasing the provider generation.
 func (e *WuuEngine) Open(ctx context.Context, req agentengine.OpenRequest) (agentengine.Session, error) {
 	if e == nil || e.session == nil {
 		return nil, errors.New("wuu engine is not bound to a runtime session")
@@ -64,12 +63,11 @@ func (e *WuuEngine) Open(ctx context.Context, req agentengine.OpenRequest) (agen
 		return nil, err
 	}
 	rt.EngineID = agentengine.EngineWuu
-	return &wuuEngineSession{runner: rt.StreamRunner}, nil
+	return &wuuEngineSession{runner: rt.StreamRunner, owner: e.session, ownedRuntime: rt}, nil
 }
 
-// Resume reopens an existing conversation. The wuu engine restores context
-// from Wuu's canonical history, so resume is the same construction path;
-// external engines will use their native session references here.
+// Resume reopens an existing conversation with the same resource ownership
+// as Open. Wuu restores context from canonical history.
 func (e *WuuEngine) Resume(ctx context.Context, req agentengine.ResumeRequest) (agentengine.Session, error) {
 	return e.Open(ctx, req.OpenRequest)
 }
@@ -306,31 +304,42 @@ func (s *Session) EngineSessionForThread(ctx context.Context, rt *ThreadRuntime,
 	return sess
 }
 
-// wuuEngineSession adapts a StreamRunner to the engine Session contract.
-// RunTurn is exactly StreamRunner.RunWithCallback: the native loop, streamed
-// through the caller's event sink. Interrupt and Close are host-owned for the
-// built-in engine (the app-server cancels turn contexts and cleans up thread
-// runtimes itself), so they only guard the per-turn context this session
-// creates.
+// wuuEngineSession owns Open/Resume resources and borrows cached thread
+// runtimes. Both paths stop admission and drain their active turn on Close.
 type wuuEngineSession struct {
-	mu     sync.Mutex
-	runner *agent.StreamRunner
-	cancel context.CancelFunc
+	mu           sync.Mutex
+	runner       *agent.StreamRunner
+	owner        *Session
+	ownedRuntime *ThreadRuntime
+	cancel       context.CancelFunc
+	turnDone     chan struct{}
+	closeDone    chan struct{}
+	closeErr     error
 }
 
 func (w *wuuEngineSession) RunTurn(ctx context.Context, input agentengine.TurnInput, sink agentengine.EventSink) (agentengine.TurnResult, error) {
 	if w == nil || w.runner == nil {
 		return agentengine.TurnResult{}, errors.New("wuu engine session has no runner")
 	}
-	ctx, cancel := context.WithCancel(ctx)
 	w.mu.Lock()
-	w.cancel = cancel
+	if w.closeDone != nil {
+		w.mu.Unlock()
+		return agentengine.TurnResult{}, errors.New("wuu engine session is closed")
+	}
+	if w.turnDone != nil {
+		w.mu.Unlock()
+		return agentengine.TurnResult{}, errors.New("wuu engine session already has an active turn")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	w.cancel, w.turnDone = cancel, done
 	w.mu.Unlock()
 	defer func() {
-		w.mu.Lock()
-		w.cancel = nil
-		w.mu.Unlock()
 		cancel()
+		w.mu.Lock()
+		w.cancel, w.turnDone = nil, nil
+		close(done)
+		w.mu.Unlock()
 	}()
 	res, err := w.runner.RunWithCallback(ctx, input.History, agent.StreamCallback(sink))
 	return agentengine.TurnResult{Result: res}, err
@@ -350,17 +359,44 @@ func (w *wuuEngineSession) Interrupt(_ context.Context, _ string) error {
 	return nil
 }
 
-// Close releases per-turn state. The host owns the runner and thread runtime
-// lifecycle for the built-in engine, so there is nothing to shut down here.
-func (w *wuuEngineSession) Close(context.Context) error {
+// Close stops admission and cancels the active turn. Caller cancellation ends
+// the wait, while cleanup retains resources until all owned consumers finish.
+func (w *wuuEngineSession) Close(ctx context.Context) error {
 	w.mu.Lock()
-	cancel := w.cancel
-	w.cancel = nil
-	w.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if w.closeDone == nil {
+		w.closeDone = make(chan struct{})
+		cancel, turnDone := w.cancel, w.turnDone
+		go func() {
+			if cancel != nil {
+				cancel()
+			}
+			if turnDone != nil {
+				<-turnDone
+			}
+			if rt := w.ownedRuntime; rt != nil {
+				if control := rt.AgentControl; control != nil {
+					control.BeginShutdown()
+					control.StopAll()
+					control.YieldWorkerTerminalFinalizations()
+					// Physical execution cleanup outlives the Close caller's
+					// deadline; provider leases cannot expire underneath it.
+					_ = control.WaitOwnedWorkerExecutions(context.Background())
+					w.closeErr = shutdownAndCleanupAgentControl(control)
+				}
+				w.owner.ReleasePluginGeneration(rt.PluginGeneration)
+				rt.PluginGeneration = nil
+			}
+			close(w.closeDone)
+		}()
 	}
-	return nil
+	done := w.closeDone
+	w.mu.Unlock()
+	select {
+	case <-done:
+		return w.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // EngineUnavailableSession returns an engine session that fails every turn
