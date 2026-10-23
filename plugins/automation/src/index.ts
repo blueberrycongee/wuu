@@ -328,7 +328,8 @@ export function createAutomationPlugin(): RuntimePlugin {
         if (!execution) throw new Error("automation scheduler execution is unavailable");
         if (stopped || schedulingStopped || execution.signal.aborted) { stopScheduling(); return {}; }
         host = scoped;
-        const cancelled = new Promise<void>(resolve => execution.signal.addEventListener("abort", () => { stopScheduling(); resolve(); }, { once: true }));
+        const signal = AbortSignal.any([execution.signal, abort.signal]);
+        const cancelled = new Promise<void>(resolve => signal.addEventListener("abort", () => { stopScheduling(); resolve(); }, { once: true }));
         fireDue(); timer = setInterval(fireDue, 15_000);
         await cancelled;
         await dispatch;

@@ -45,7 +45,7 @@ async function fixture(t, initial, handler) {
   await plugin.prepare();
   const lifecycle = new AbortController();
   t.after(async () => { lifecycle.abort(); background.abort(); await running; await plugin.shutdown(); });
-  return { plugin, host, lifecycle, background, calls, fireTimer: () => fireTimer(), state: () => state, async activate() { await plugin.activate(host, { signal: lifecycle.signal }); await tick(); } };
+  return { plugin, host, lifecycle, background, calls, backgroundDone: () => running, fireTimer: () => fireTimer(), state: () => state, async activate() { await plugin.activate(host, { signal: lifecycle.signal }); await tick(); } };
 }
 
 test("recovery preserves uncertain dispatch without replaying session effects", async t => {
@@ -98,4 +98,11 @@ test("generation background cancellation stops scheduling without shutting down 
   // An already admitted foreground request retains this provider until release.
   await f.plugin.invokeService({ service: "automation.scheduler", method: "request", params: { method: "automation.create", input: { prompt: "Retained request", cron: "* * * * *" } } }, f.host);
   assert.equal(f.calls.filter(call => call.method === "host.storage.set").length, 1);
+});
+
+test("lifecycle cancellation drains the scheduler before the shutdown barrier", { timeout: 1_000 }, async t => {
+  const f = await fixture(t, { tasks: [], runs: [] });
+  await f.activate();
+  f.lifecycle.abort();
+  await f.backgroundDone();
 });

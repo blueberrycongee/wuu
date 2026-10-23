@@ -1004,7 +1004,8 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
           return {};
         }
         host = scoped;
-        const cancelled = new Promise((resolve) => execution.signal.addEventListener("abort", () => {
+        const signal = AbortSignal.any([execution.signal, abort.signal]);
+        const cancelled = new Promise((resolve) => signal.addEventListener("abort", () => {
           stopScheduling();
           resolve();
         }, { once: true }));
