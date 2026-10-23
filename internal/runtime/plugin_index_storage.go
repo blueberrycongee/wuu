@@ -21,9 +21,10 @@ import (
 // The authoritative document and receipts commit together. JSONL is a legacy
 // import source until this exists, and a diagnostic export afterward.
 type nativeIndexDocument struct {
-	Version  int                    `json:"version"`
-	Events   []pluginhost.DataEvent `json:"events"`
-	Receipts map[string]string      `json:"receipts"`
+	Version       int                    `json:"version"`
+	LatestContext []pluginhost.DataEvent `json:"latest_context"`
+	Events        []pluginhost.DataEvent `json:"events"`
+	Receipts      map[string]string      `json:"receipts"`
 }
 
 const nativeIndexFile = "turn-index.json"
@@ -34,7 +35,7 @@ func readNativeIndex(path string) (nativeIndexDocument, error) {
 		return nativeIndexDocument{}, err
 	}
 	var document nativeIndexDocument
-	if json.Unmarshal(raw, &document) != nil || document.Version != 1 || document.Receipts == nil {
+	if json.Unmarshal(raw, &document) != nil || (document.Version != 1 && document.Version != 2) || document.Receipts == nil {
 		return nativeIndexDocument{}, serviceError("data_unavailable", "selected index document is invalid")
 	}
 	return document, nil
@@ -77,11 +78,16 @@ func queryNativeIndex(ctx context.Context, stateDir string, query pluginhost.Dat
 		}
 		switch token {
 		case "version":
-			if decoder.Decode(&version) != nil || version != 1 {
+			if decoder.Decode(&version) != nil || (version != 1 && version != 2) {
+				return nil, invalid
+			}
+		case "latest_context":
+			var projection json.RawMessage
+			if version != 2 || decoder.Decode(&projection) != nil {
 				return nil, invalid
 			}
 		case "events":
-			if version != 1 || eventsSeen {
+			if (version != 1 && version != 2) || eventsSeen {
 				return nil, invalid
 			}
 			eventsSeen = true
@@ -119,7 +125,7 @@ func queryNativeIndex(ctx context.Context, stateDir string, query pluginhost.Dat
 			return nil, invalid
 		}
 	}
-	if token, err := decoder.Token(); err != nil || token != json.Delim('}') || version != 1 || !eventsSeen || !receiptsSeen {
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') || (version != 1 && version != 2) || !eventsSeen || !receiptsSeen {
 		return nil, invalid
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
@@ -162,6 +168,15 @@ func appendNativeIndexTurn(ctx context.Context, stateDir string, batch pluginhos
 	} else if err != nil {
 		return receipt, serviceError("data_unavailable", "selected index cannot be read")
 	}
+	upgraded := document.Version == 1
+	if upgraded {
+		projection, err := indexContextProjection(document.Events)
+		if err != nil {
+			return receipt, err
+		}
+		document.LatestContext = projection
+		document.Version = 2
+	}
 	digest := indexBatchDigest(batch.Events)
 	if previous, exists := document.Receipts[batch.TurnID]; exists {
 		if previous != digest {
@@ -169,6 +184,13 @@ func appendNativeIndexTurn(ctx context.Context, stateDir string, batch pluginhos
 		}
 		receipt.Duplicate = true
 	} else {
+		projection, err := indexContextProjection(batch.Events)
+		if err != nil {
+			return receipt, err
+		}
+		if len(projection) > 0 {
+			document.LatestContext = projection
+		}
 		document.Events = append(document.Events, batch.Events...)
 		document.Receipts[batch.TurnID] = digest
 	}
@@ -179,7 +201,7 @@ func appendNativeIndexTurn(ctx context.Context, stateDir string, batch pluginhos
 	if err := ctx.Err(); err != nil {
 		return receipt, err
 	}
-	if imported || !receipt.Duplicate {
+	if imported || upgraded || !receipt.Duplicate {
 		if err := securefs.WriteFileAtomic(filepath.Join(dir, nativeIndexFile), encoded); err != nil {
 			return receipt, serviceError("index_unavailable", "index commit failed; the batch may have been applied")
 		}

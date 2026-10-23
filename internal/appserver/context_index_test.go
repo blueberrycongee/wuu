@@ -124,10 +124,10 @@ func runContextIndexFixture(path string) {
 		var result any = struct{}{}
 		switch request.Method {
 		case "initialize":
-			result = pluginhost.CapabilityInitializeResult{ProtocolVersion: pluginhost.CapabilityProtocolVersion, LifecycleVersion: pluginhost.RuntimeLifecycleVersion, ProvidedServices: []pluginhost.ServiceDescriptor{{Name: "host.data.query", Version: "2.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "call", InputSchema: "host.data.query.input.v2", OutputSchema: "host.data.query.output.v2"}, {Name: "append-turn", InputSchema: "host.data.query.append-turn.input.v2", OutputSchema: "host.data.query.append-turn.output.v2"}}}}}
+			result = pluginhost.CapabilityInitializeResult{ProtocolVersion: pluginhost.CapabilityProtocolVersion, LifecycleVersion: pluginhost.RuntimeLifecycleVersion, ProvidedServices: []pluginhost.ServiceDescriptor{{Name: "host.data.query", Version: "2.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "call", InputSchema: "host.data.query.input.v2", OutputSchema: "host.data.query.output.v2"}, {Name: "append-turn", InputSchema: "host.data.query.append-turn.input.v2", OutputSchema: "host.data.query.append-turn.output.v2"}, {Name: "latest-context", InputSchema: "host.data.query.latest-context.input.v2", OutputSchema: "host.data.query.latest-context.output.v2"}}}}}
 		case "service.invoke":
 			var params pluginhost.ServiceInvokeParams
-			if json.Unmarshal(request.Params, &params) != nil || params.Service != "host.data.query" || params.Method != "call" {
+			if json.Unmarshal(request.Params, &params) != nil || params.Service != "host.data.query" || params.Method != "latest-context" {
 				os.Exit(4)
 			}
 			result = json.RawMessage(payload)

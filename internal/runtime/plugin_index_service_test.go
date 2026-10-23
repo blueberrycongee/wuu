@@ -214,3 +214,95 @@ func TestIndexProviderBoundedQueryDoesNotReadRemainingDocument(t *testing.T) {
 		t.Fatal("full read accepted corrupt tail")
 	}
 }
+
+func TestIndexLatestContextProjectionStopsBeforeHistoricalTail(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	client := indexProviderClient(activeDataQueryProvider(t, dir))
+	batch := indexBatchFixture(t, "request")
+	contextData, _ := json.Marshal([]sessiontrace.RequestContextRecord{{StepIndex: 3, InputTokens: 37}})
+	batch.Events = append(batch.Events[:1], pluginhost.DataEvent{Type: "context_requests", ThreadID: "thread", TurnID: "request", Data: contextData}, batch.Events[1])
+	if _, err := client.AppendTurn(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.AppendTurn(ctx, indexBatchFixture(t, "no-context")); err != nil {
+		t.Fatal(err)
+	}
+	projected, err := client.LatestContext(ctx, "thread")
+	if err != nil || len(projected.Events) == 0 || projected.Events[0].TurnID != "request" {
+		t.Fatalf("latest context lost matching turn: %+v %v", projected, err)
+	}
+	raw, _ := json.Marshal(projected.Events)
+	// The source after the committed projection is deliberately unreadable.
+	prefix := append(append([]byte(`{"version":2,"latest_context":`), raw...), []byte(`,"events":[broken-tail`)...)
+	path := filepath.Join(statepath.SessionArtifactDir(dir, "thread"), nativeIndexFile)
+	if err := os.WriteFile(path, prefix, 0600); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(2 * pluginhost.DataLatestContextMaxBytes); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	result, err := client.LatestContext(ctx, "thread")
+	if err != nil || len(result.Events) != len(projected.Events) {
+		t.Fatalf("latest projection read historical tail: %+v %v", result, err)
+	}
+	if _, err := client.Query(ctx, pluginhost.DataQueryParams{ThreadID: "thread"}); err == nil {
+		t.Fatal("full query accepted invalid history")
+	}
+}
+
+func TestIndexLatestContextLegacyReadBudget(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	client := indexProviderClient(activeDataQueryProvider(t, dir))
+	if result, err := client.LatestContext(ctx, "thread"); err != nil || len(result.Events) != 0 {
+		t.Fatalf("empty latest: %+v %v", result, err)
+	}
+	path := sessiontrace.Path(statepath.SessionArtifactDir(dir, "thread"))
+	if err := sessiontrace.AppendTurn(path, sessiontrace.TurnRecord{ThreadID: "thread", TurnID: "legacy"}, sessiontrace.FinalRecord{}, nil, nil, []sessiontrace.RequestContextRecord{{InputTokens: 13}}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := client.LatestContext(ctx, "thread"); err != nil || len(result.Events) == 0 || result.Events[0].TurnID != "legacy" {
+		t.Fatalf("legacy latest: %+v %v", result, err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(pluginhost.DataLatestContextMaxBytes + 1); err != nil {
+		t.Fatal(err)
+	}
+	file.Close()
+	if _, err := client.LatestContext(ctx, "thread"); err == nil {
+		t.Fatal("oversize legacy source bypassed latest-context read budget")
+	}
+}
+
+func TestIndexLatestContextRejectsMalformedProviderProjection(t *testing.T) {
+	for name, events := range map[string]string{
+		"missing":              "",
+		"null":                 `,"events":null`,
+		"wrong metadata scope": `,"events":[{"type":"turn","thread_id":"thread","turn_id":"turn","data":{"thread_id":"thread","turn_id":"other"}},{"type":"context_requests","thread_id":"thread","turn_id":"turn","data":[{"step_index":1}]}]`,
+		"multiple requests":    `,"events":[{"type":"turn","thread_id":"thread","turn_id":"turn","data":{"thread_id":"thread","turn_id":"turn"}},{"type":"context_requests","thread_id":"thread","turn_id":"turn","data":[{"step_index":1},{"step_index":2}]}]`,
+		"wrong provider step":  `,"events":[{"type":"turn","thread_id":"thread","turn_id":"turn","data":{"thread_id":"thread","turn_id":"turn"}},{"type":"context_requests","thread_id":"thread","turn_id":"turn","data":[{"step_index":1}]},{"type":"provider_states","thread_id":"thread","turn_id":"turn","data":[{"step_index":2}]}]`,
+		"unrelated payload":    `,"events":[{"type":"turn","thread_id":"thread","turn_id":"turn","data":{"thread_id":"thread","turn_id":"turn"}},{"type":"context_requests","thread_id":"thread","turn_id":"turn","data":[{"step_index":1}]},{"type":"tool_records","thread_id":"thread","turn_id":"turn","data":[]}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			client := NewIndexClient(func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+				calls++
+				return json.RawMessage(`{"version":"2.0.0","thread_id":"thread"` + events + `}`), nil
+			})
+			_, err := client.LatestContext(context.Background(), "thread")
+			var serviceErr *pluginhost.HostServiceError
+			if !errors.As(err, &serviceErr) || serviceErr.Code != "invalid_response" || calls != 1 {
+				t.Fatalf("invalid projection accepted or retried: calls=%d err=%v", calls, err)
+			}
+		})
+	}
+}

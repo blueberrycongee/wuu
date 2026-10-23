@@ -74,6 +74,16 @@ func (s *dataQueryService) InvokeService(ctx context.Context, params pluginhost.
 		}
 		return marshalServiceResult(receipt)
 	}
+	if params.Method == pluginhost.DataLatestContextMethod {
+		var input pluginhost.DataLatestContextParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		if err := pluginhost.ValidateDataQueryParams(pluginhost.DataQueryParams{ThreadID: input.ThreadID}); err != nil {
+			return nil, err
+		}
+		return queryLatestNativeContext(ctx, s.stateDir, input.ThreadID)
+	}
 	if params.Method != pluginhost.KernelServiceMethod {
 		return nil, serviceError("method_not_found", "trace query method is unavailable")
 	}

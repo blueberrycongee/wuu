@@ -6,7 +6,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
@@ -37,7 +36,7 @@ func (s *Server) handleThreadContextComposition(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	indexed, err := services.Index.Query(context.Background(), pluginhost.DataQueryParams{ThreadID: threadID})
+	indexed, err := services.Index.LatestContext(context.Background(), threadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

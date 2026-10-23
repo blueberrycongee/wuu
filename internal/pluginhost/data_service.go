@@ -13,9 +13,11 @@ const (
 	KernelDataQueryService = "host.data.query"
 
 	// DataQueryServiceVersion is the wire version of the query contract.
-	DataQueryServiceVersion = "2.0.0"
-	DataQueryServiceMajor   = 2
-	DataAppendTurnMethod    = "append-turn"
+	DataQueryServiceVersion         = "2.0.0"
+	DataQueryServiceMajor           = 2
+	DataAppendTurnMethod            = "append-turn"
+	DataLatestContextMethod         = "latest-context"
+	DataLatestContextMaxBytes int64 = 16 << 20
 )
 
 // First-party data fact types. These are the stable discriminants the current
@@ -70,6 +72,11 @@ type DataQueryResult struct {
 	Events         []DataEvent `json:"events"`
 }
 
+// DataLatestContextParams requests bounded metadata for the latest indexed request.
+type DataLatestContextParams struct {
+	ThreadID string `json:"thread_id"`
+}
+
 // DataAppendTurnParams is one complete, ordered turn batch. The turn key is
 // idempotent: the same events may be acknowledged again; changed events conflict.
 type DataAppendTurnParams struct {
@@ -113,7 +120,7 @@ func KernelDataQueryDescriptor() ServiceDescriptor {
 			Name:         KernelServiceMethod,
 			InputSchema:  "host.data.query.input.v2",
 			OutputSchema: "host.data.query.output.v2",
-		}, {Name: DataAppendTurnMethod, InputSchema: "host.data.query.append-turn.input.v2", OutputSchema: "host.data.query.append-turn.output.v2"}},
+		}, {Name: DataAppendTurnMethod, InputSchema: "host.data.query.append-turn.input.v2", OutputSchema: "host.data.query.append-turn.output.v2"}, {Name: DataLatestContextMethod, InputSchema: "host.data.query.latest-context.input.v2", OutputSchema: "host.data.query.latest-context.output.v2"}},
 	}
 }
 
