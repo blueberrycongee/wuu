@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const createSessionFixture = require('./session-fixture.cjs');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain } = require('electron');
@@ -415,24 +416,16 @@ async function run() {
   }
   report.buildSha256 = Object.fromEntries(['out/main/index.js', 'out/preload/index.cjs', 'out/renderer/index.html'].map(file =>
     [file, createHash('sha256').update(fs.readFileSync(path.join(desktop, file))).digest('hex')]));
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', project], {
-    env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
-  });
-  assert.equal(boot.status, 0, boot.stderr || String(boot.error));
-  const seed = spawnSync('python3', ['-c', `
-import json, sqlite3, sys
-from pathlib import Path
-home=Path(sys.argv[1]); project=sys.argv[2]
-db=sqlite3.connect(home/'sessions/sessions.sqlite3')
-db.execute('DELETE FROM session_messages'); db.execute('DELETE FROM sessions')
-for s in json.loads(sys.argv[3]):
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)', (s['id'],'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z',s['title'],project,'acceptance-project','fixture','fixture',s['turns']*2))
-    for turn in range(s['turns']):
-        for role,text in [('user','Synthetic acceptance question '+str(turn+1)),('assistant',s['text'])]:
-            seq=turn*2+(1 if role=='user' else 2)
-            db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,phase) VALUES (?,?,?,?,?,?)', (s['id'],seq,role,text,'2026-01-01T00:00:00Z',''))
-db.commit()
-`, home, project, JSON.stringify(sessions)], { encoding: 'utf8', timeout: 30000 });
+  const sessionFixture = createSessionFixture(home, project);
+  const seededSessions = sessions.map(s => ({
+    session: { id: s.id, created_at: stamp, updated_at: '2026-01-02T00:00:00Z', title: s.title,
+      cwd: project, workspace_id: 'acceptance-project', provider: 'fixture', model: 'fixture' },
+    history: Array.from({ length: s.turns }, (_, turn) => [
+      { role: 'user', content: `Synthetic acceptance question ${turn + 1}`, at: stamp },
+      { role: 'assistant', content: s.text, at: stamp, phase: '' },
+    ]).flat(),
+  }));
+  const seed = sessionFixture({ op: 'seed', sessions: seededSessions });
   assert.equal(seed.status, 0, seed.stderr || String(seed.error));
   websiteFixture = await createWebsiteFixture(home);
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);

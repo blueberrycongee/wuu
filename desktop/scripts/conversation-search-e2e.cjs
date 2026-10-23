@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const createSessionFixture = require('./session-fixture.cjs');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain } = require('electron');
@@ -301,34 +302,29 @@ const watchdog = setTimeout(() => {
 }, 360000);
 
 async function run() {
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', projects[0].path], {
-    env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
+  const sessionFixture = createSessionFixture(home, projects[0].path);
+  const stamp = '2026-01-01T00:00:00Z';
+  const seededSessions = sessions.map(s => {
+    const project = projects[s.project];
+    const history = [];
+    for (let turn = 1; turn <= s.turns; turn++) {
+      let user = `Synthetic question ${turn}`;
+      if (s.user && turn === 2) user = 'Long request context. '.repeat(90) + 'opal-user-detail';
+      let answer = `## Synthetic answer ${turn}\n\n` + 'Readable long content with **formatting**, without external inference. '.repeat(25);
+      if (turn === s.matchTurn) {
+        answer = `The exact historical assistant finding is ${s.needle}.\n\n${answer}`;
+        if (s.lateNeedle) answer += '\n\nMore archived context. '.repeat(4000) + '\n\n' + s.lateNeedle.split(/\s+/).join('\n\n');
+      }
+      if (s.process && turn === 2) answer += '\n\n```text\n' + 'ordinary code line\n'.repeat(1000) + 'Highlight\n```';
+      history.push({ role: 'user', content: user, at: stamp },
+        { role: 'assistant', content: answer, at: stamp, phase: s.process && turn === 2 ? 'commentary' : '' });
+    }
+    if (s.process) history.push({ role: 'assistant', content: 'Final summary without the process detail.', at: stamp, phase: 'final_answer' });
+    return { session: { id: s.id, created_at: stamp, updated_at: s.updated, title: s.title,
+      cwd: project.path, workspace_id: project.id, provider: 'fixture', model: 'fixture',
+      pinned_at: s.pinned, archived_at: s.archived }, history };
   });
-  assert.equal(boot.status, 0, boot.stderr || String(boot.error));
-  const seed = spawnSync('python3', ['-c', `
-import json, sqlite3, sys
-from pathlib import Path
-home=Path(sys.argv[1]); projects=json.loads((home/'projects.json').read_text())['projects']
-db=sqlite3.connect(home/'sessions/sessions.sqlite3')
-db.execute('DELETE FROM session_messages'); db.execute('DELETE FROM sessions')
-for s in json.loads(sys.argv[2]):
-    p=projects[s['project']]
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries,pinned_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', (s['id'],'2026-01-01T00:00:00Z',s['updated'],s['title'],p['path'],p['id'],'fixture','fixture',s['turns']*2,s.get('pinned'),s.get('archived')))
-    for t in range(1,s['turns']+1):
-        user='Synthetic question '+str(t)
-        if s.get('user') and t==2: user=('Long request context. '*90)+'opal-user-detail'
-        answer='## Synthetic answer '+str(t)+'\\n\\n'+('Readable long content with **formatting**, without external inference. '*25)
-        if t==s.get('matchTurn'):
-            answer='The exact historical assistant finding is '+s['needle']+'.\\n\\n'+answer
-            if s.get('lateNeedle'): answer += ('\\n\\nMore archived context. '*4000)+'\\n\\n'+'\\n\\n'.join(s['lateNeedle'].split())
-        if s.get('process') and t==2: answer += '\\n\\n'+chr(96)*3+'text\\n'+('ordinary code line\\n'*1000)+'Highlight\\n'+chr(96)*3
-        for r,(role,text) in enumerate([('user',user),('assistant',answer)]):
-            phase='commentary' if s.get('process') and t==2 and role=='assistant' else ''
-            db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,phase) VALUES (?,?,?,?,?,?)', (s['id'],(t-1)*2+r+1,role,text,'2026-01-01T00:00:00Z',phase))
-    if s.get('process'):
-        db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,phase) VALUES (?,?,?,?,?,?)', (s['id'],5,'assistant','Final summary without the process detail.','2026-01-01T00:00:00Z','final_answer'))
-db.commit()
-`, home, JSON.stringify(sessions)], { encoding: 'utf8' });
+  const seed = sessionFixture({ op: 'seed', sessions: seededSessions });
   assert.equal(seed.status, 0, seed.stderr);
   await import(pathToFileURL(mainBundle).href);
   await waitHost(() => main, 'actual bundled main window');
@@ -427,9 +423,9 @@ db.commit()
   await matchingArticle(main, 'search-archive', 2, archivedNeedle);
   const archives = await evaluate(main, () => window.wuu.listArchivedThreads());
   assert.ok(archives.threads.some(t => t.id === 'search-archive' && t.archived), 'Resume must not unarchive the result');
-  const stored = spawnSync('python3', ['-c', "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('SELECT archived_at FROM sessions WHERE id=?', ('search-archive',)).fetchone()[0])", path.join(home, 'sessions/sessions.sqlite3')], { encoding: 'utf8' });
+  const stored = sessionFixture({ op: 'read', ids: ['search-archive'] });
   assert.equal(stored.status, 0, stored.stderr);
-  assert.equal(stored.stdout.trim(), archivedAt, 'Resume must preserve ArchivedAt exactly');
+  assert.equal(JSON.parse(stored.stdout).sessions[0].session.archived_at, archivedAt, 'Resume must preserve ArchivedAt exactly');
   recordCheck({ name: 'archived search/resume retains persisted ArchivedAt', archivedAt });
 
   await open(main); await query(main, 'cobaltneedle');

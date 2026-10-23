@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const createSessionFixture = require('./session-fixture.cjs');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { app, ipcMain, clipboard, dialog, Menu } = require('electron');
@@ -513,34 +514,27 @@ const watchdog = setTimeout(() => { log('Global acceptance deadline exceeded'); 
 
 async function run() {
   log(boundary);
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', cwd], {
-    env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
+  const sessionFixture = createSessionFixture(home, cwd);
+  const stamp = '2026-01-01T00:00:00Z';
+  const seededSessions = sessions.map(s => {
+    const history = [];
+    s.messages.forEach((message, index) => {
+      const peer = Boolean(message.origin);
+      history.push({ role: 'user', content: peer ? `Delivery context\n\n${message.text}` : message.text,
+        display_content: peer ? message.text : '', origin: message.origin || '',
+        presentation_kind: peer ? 'session_message' : '', related_session_id: message.related || '',
+        read_only: peer, name: message.name || '', at: stamp });
+      if (message.artifacts?.length) {
+        const call = `deliver-${index}`;
+        history.push({ role: 'assistant', tool_calls: [{ id: call, name: 'present_artifact', arguments: '{}' }], at: stamp },
+          { role: 'tool', content: 'Delivered files.', tool_call_id: call, name: 'present_artifact', tool_result: { content: message.artifacts }, at: stamp });
+      }
+      history.push({ role: 'assistant', content: 'Acknowledged.', at: stamp });
+    });
+    return { session: { id: s.id, created_at: stamp, updated_at: stamp, title: s.title,
+      cwd, workspace_id: project.id, provider: 'fixture', model: 'fixture' }, history };
   });
-  assert.equal(boot.status, 0, boot.stderr || String(boot.error));
-  const seed = spawnSync('python3', ['-c', `
-import json, sqlite3, sys
-from pathlib import Path
-home=Path(sys.argv[1]); p=json.loads((home/'projects.json').read_text())['projects'][0]
-db=sqlite3.connect(home/'sessions/sessions.sqlite3')
-db.execute('DELETE FROM session_messages'); db.execute('DELETE FROM sessions')
-for s in json.loads(sys.argv[2]):
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)', (s['id'],'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z',s['title'],p['path'],p['id'],'fixture','fixture',len(s['messages'])*2))
-    seq=0
-    for i,m in enumerate(s['messages']):
-        seq+=1
-        peer=bool(m.get('origin'))
-        db.execute('INSERT INTO session_messages (session_id,seq,role,content,display_content,origin,presentation_kind,related_session_id,read_only,name,at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', (s['id'],seq,'user',('Delivery context\\n\\n'+m['text']) if peer else m['text'],m['text'] if peer else '',m.get('origin',''),'session_message' if peer else '',m.get('related',''),int(peer),m.get('name',''),'2026-01-01T00:00:00Z'))
-        if m.get('artifacts'):
-            call='deliver-'+str(i)
-            seq+=1
-            db.execute('INSERT INTO session_messages (session_id,seq,role,tool_calls_json,at) VALUES (?,?,?,?,?)', (s['id'],seq,'assistant',json.dumps([{'id':call,'name':'present_artifact','arguments':'{}'}]),'2026-01-01T00:00:00Z'))
-            seq+=1
-            db.execute('INSERT INTO session_messages (session_id,seq,role,content,tool_call_id,name,tool_result_json,at) VALUES (?,?,?,?,?,?,?,?)', (s['id'],seq,'tool','Delivered files.',call,'present_artifact',json.dumps({'content':m['artifacts']}),'2026-01-01T00:00:00Z'))
-        seq+=1
-        db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)', (s['id'],seq,'assistant','Acknowledged.','2026-01-01T00:00:00Z'))
-    db.execute('UPDATE sessions SET entries=? WHERE id=?', (seq,s['id']))
-db.commit()
-`, home, JSON.stringify(sessions)], { encoding: 'utf8' });
+  const seed = sessionFixture({ op: 'seed', sessions: seededSessions });
   assert.equal(seed.status, 0, seed.stderr);
   await import(pathToFileURL(mainBundle).href);
   await hostUntil(() => main, 'bundled main window');
