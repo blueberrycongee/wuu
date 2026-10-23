@@ -279,7 +279,6 @@ type Server struct {
 	chatGPTManager    *siwc.Manager
 	chatGPTBindings   map[string]*chatGPTBinding
 	chatGPTHTTP       *http.Client
-	chatGPTAttempts   map[string]bool
 	chatGPTModelCache map[string][]chatgpt.ModelInfo
 
 	xaiLoginMu sync.Mutex

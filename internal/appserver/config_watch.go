@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -219,16 +220,16 @@ func (s *Server) refreshConfigIfChanged() error {
 	if s == nil || s.rt == nil || s.closed.Load() {
 		return nil
 	}
+	services, release, err := s.modelServices()
+	if err != nil {
+		return err
+	}
+	defer release()
 	s.configRefreshMu.Lock()
 	defer s.configRefreshMu.Unlock()
 	// Compute under the same lock used to apply an interactive config update.
 	// Computing first could leave `next` stale while waiting for the lock, then
 	// hot-apply the interactive update a second time after it completed.
-	services, release, err := s.rt.RetainStateServices()
-	if err != nil {
-		return err
-	}
-	defer release()
 	view, err := services.Config.Read(context.Background())
 	if err != nil {
 		// Poll the selected source again so repair can be observed even without
@@ -261,7 +262,7 @@ func (s *Server) refreshConfigIfChanged() error {
 		s.configFingerprint = next
 		return nil
 	}
-	if err := s.applyExternalConfigChange(cfg); err != nil {
+	if err := s.applyExternalConfigChangeWithServices(services, cfg); err != nil {
 		// Keep the previous fingerprint so the watcher retries after the user
 		// fixes the file instead of permanently swallowing the broken edit.
 		return err
@@ -275,6 +276,14 @@ func (s *Server) refreshConfigIfChanged() error {
 }
 
 func (s *Server) applyExternalConfigChange(cfg config.Config) error {
+	services, release, err := s.modelServices()
+	if err != nil {
+		return err
+	}
+	defer release()
+	return s.applyExternalConfigChangeWithServices(services, cfg)
+}
+func (s *Server) applyExternalConfigChangeWithServices(services *runtime.StateServices, cfg config.Config) error {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
@@ -312,13 +321,13 @@ func (s *Server) applyExternalConfigChange(cfg config.Config) error {
 
 	var client providers.StreamClient
 	if resolvedName != previousProvider || connectionChanged || providerClientChanged {
-		client, err = s.buildConfiguredStreamClient(ruleProviderCfg, resolvedName)
+		client, err = s.buildStreamClientWithServices(services, ruleProviderCfg, resolvedName)
 		if err != nil {
 			return err
 		}
 	}
 
-	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousProvider, client, true)
+	return s.applyModelSelectionToRuntime(services, cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousProvider, client, true)
 }
 
 // Catalog refresh admission keys come from the selected provider too. Local

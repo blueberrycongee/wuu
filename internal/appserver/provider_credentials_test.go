@@ -36,7 +36,7 @@ func TestServerSavingAPIKeyClearsPreviousBearerConfig(t *testing.T) {
 			if saved.AuthToken != "" || saved.AuthTokenEnv != "" || saved.APIKey != "" || saved.APIKeyEnv != "" {
 				t.Errorf("config retained credential fields after saving key: %+v", saved)
 			}
-			client, err := providerfactory.BuildClient(saved, "gateway")
+			client, err := providerfactory.BuildClient(saved, "gateway", providerfactory.Bindings{Credentials: selectedCredentialFixture(t, rt)})
 			if err != nil {
 				t.Fatal(err)
 			}

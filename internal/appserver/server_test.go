@@ -912,6 +912,7 @@ func TestProviderSummariesExposeDiscoveredCodexCLILogin(t *testing.T) {
 	if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bindConfigSourceForTest(t, rt)
 	summaries := New(rt, &lockedBuffer{}).providerSummaries()
 	var discovered *ProviderSummary
 	for index := range summaries {
@@ -925,6 +926,9 @@ func TestProviderSummariesExposeDiscoveredCodexCLILogin(t *testing.T) {
 	}
 	if discovered.ReuseCodexCredentials {
 		t.Fatal("discovered Codex login must not imply reuse is already enabled")
+	}
+	if discovered.APIKeyConfigured {
+		t.Fatal("discovered Codex login must not authorize inference before reuse is enabled")
 	}
 	if discovered.CodexCredentialSource != "codex-cli" {
 		t.Fatalf("codex credential source = %q, want codex-cli", discovered.CodexCredentialSource)

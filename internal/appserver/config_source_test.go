@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -23,19 +25,23 @@ func (c *configSourceConsumer) Status() pluginhost.Status {
 }
 func (*configSourceConsumer) Close(context.Context) error { return nil }
 func (*configSourceConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: config.ServiceName, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: config.ServiceName, MajorVersion: 1, Required: true}, {Name: credentialstore.ServiceName, MajorVersion: 1, Required: true}}
 }
 func (*configSourceConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
 
 type observedConfigSource struct {
 	*config.Service
-	writes  int
-	outcome string
+	writes      int
+	outcome     string
+	beforeWrite func()
 }
 
 func (p *observedConfigSource) InvokeService(ctx context.Context, input pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	if input.Method == "compare-exchange" {
 		p.writes++
+		if p.beforeWrite != nil {
+			p.beforeWrite()
+		}
 		if p.outcome == "unknown" {
 			return nil, errors.New("private-provider-token")
 		}
@@ -63,16 +69,18 @@ func newSelectedConfigSourceServer(t *testing.T) (*Server, *observedConfigSource
 	provider := &observedConfigSource{Service: config.NewMemoryService("test.selected-config", cfg)}
 	path := filepath.Join(t.TempDir(), "untouched", "config.json")
 	consumer := &configSourceConsumer{}
+	home := t.TempDir()
+	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
 	native := config.NewService(config.Module, path, "")
 	registry, err := pluginhost.NewServiceRegistryWithBindings([]composition.Binding{{Service: config.ServiceName, Major: 1, Provider: provider.ID()}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	conflicts := registry.RegisterClients(provider, native, consumer)
+	conflicts := registry.RegisterClients(provider, native, credentials, consumer)
 	if len(conflicts) != 0 {
 		t.Fatal(conflicts)
 	}
-	host := pluginhost.New(provider, consumer)
+	host := pluginhost.New(provider, credentials, consumer)
 	host.AttachServiceRegistry(registry, conflicts)
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
@@ -136,8 +144,10 @@ func bindConfigSourceForTest(t *testing.T, rt *runtime.Session) {
 	}
 	provider := config.NewService(config.Module, rt.ConfigPath, "")
 	consumer := &configSourceConsumer{}
-	host := pluginhost.New(provider, consumer)
-	registry, conflicts := pluginhost.BuildServiceRegistry(provider, consumer)
+	home := os.Getenv("HOME")
+	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
+	host := pluginhost.New(provider, credentials, consumer)
+	registry, conflicts := pluginhost.BuildServiceRegistry(provider, credentials, consumer)
 	if len(conflicts) != 0 {
 		t.Fatal(conflicts)
 	}
@@ -147,4 +157,51 @@ func bindConfigSourceForTest(t *testing.T, rt *runtime.Session) {
 	}
 	rt.PluginHost = host
 	t.Cleanup(func() { _ = host.Close(context.Background()) })
+}
+
+// A transport error cannot authorize restoring a stale credential over a
+// concurrent rotation. Config must confirm removal before credential cleanup.
+func TestProviderRemoveUnknownConfigDoesNotOverwriteCredentialRotation(t *testing.T) {
+	srv, provider := newSelectedConfigSourceServer(t)
+	out := &lockedBuffer{}
+	srv.out = out
+	services, release, err := srv.rt.RetainStateServices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := view.Config
+	cfg.Providers["removed"] = config.ProviderConfig{Type: "openai-compatible", BaseURL: "https://removed.example.test/v1", Model: "fixture"}
+	source, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := services.Config.CompareExchange(context.Background(), view.Revision, source); err != nil {
+		t.Fatal(err)
+	}
+	auth := authstorage.NewBound(context.Background(), services.Credentials)
+	if err := auth.Set("removed", authstorage.Credentials{APIKey: "original"}); err != nil {
+		t.Fatal(err)
+	}
+	provider.outcome = "unknown"
+	provider.beforeWrite = func() {
+		if err := auth.Set("removed", authstorage.Credentials{APIKey: "rotated"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	params, _ := json.Marshal(ConfigProviderRemoveParams{Provider: "removed"})
+	if err := srv.handleConfigProviderRemove(Request{ID: json.RawMessage(`"remove"`), Params: params}); err != nil {
+		t.Fatal(err)
+	}
+	if responseByID(t, parseOutput(t, out.String()), "remove")["error"] == nil {
+		t.Fatal("unknown config outcome succeeded")
+	}
+	got, err := auth.Get("removed")
+	if err != nil || got.APIKey != "rotated" {
+		t.Fatalf("uncertain removal overwrote credential rotation: %v", err)
+	}
 }

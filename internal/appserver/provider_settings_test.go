@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -107,10 +106,7 @@ func TestServerKeepSelectionSavesAnotherProviderWithoutSelectingIt(t *testing.T)
 	if saved := cfg.Providers["gateway"]; saved.BaseURL != "https://edge.example.test/v1" || saved.Model != "gateway-model" || saved.APIKey != "" {
 		t.Fatalf("gateway config = %+v", saved)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	if credentials, err := store.Get("gateway"); err != nil || credentials.APIKey != "gateway-key" {
 		t.Fatalf("gateway key not stored: %+v err=%v", credentials, err)
 	}

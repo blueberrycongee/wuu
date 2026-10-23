@@ -948,7 +948,9 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseServices()
-	snapshot := services.Snapshot
+	// Package management targets the installed catalog; captured services still
+	// own configuration writes and never replace retained execution inventory.
+	snapshot := s.rt.ExtensionSnapshot()
 	var selected *pluginpkg.Plugin
 	for index := range snapshot.Plugins {
 		if snapshot.Plugins[index].SubjectID == strings.TrimSpace(params.ID) {
@@ -960,7 +962,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", params.ID))
 	}
 	if params.Action == ExtensionPackagePromoteUpdate || params.Action == ExtensionPackageRejectUpdate {
-		return s.handlePendingPluginUpdate(req, params, *selected, releaseMutation)
+		return s.handlePendingPluginUpdate(req, params, *selected, services, releaseMutation)
 	}
 	providedFingerprint := strings.TrimSpace(params.Fingerprint)
 	if providedFingerprint != "" && providedFingerprint != selected.Fingerprint {
@@ -1008,7 +1010,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	}
 	activationErr = errors.Join(activationErr, configActivationError(committedView))
 	s.rt.SetExtensionSettings(&preparedSettings)
-	s.schedulePluginTurnLifecycleReplay()
+	s.scheduleCurrentPluginTurnLifecycleReplay()
 	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
 }
 
@@ -1250,6 +1252,10 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 }
 
 func (s *Server) handleConfigModelUpdate(req Request) error {
+	return s.handleConfigModelUpdateWithServices(req, nil)
+}
+
+func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runtime.StateServices) error {
 	var params ConfigModelUpdateParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1283,7 +1289,17 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if providerName == "" {
 		providerName = s.rt.ProviderName
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if services == nil {
+		var err error
+		var release func()
+		services, release, err = s.modelServices()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer release()
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1297,7 +1313,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	creatingProvider := params.CreateProvider
 	autoDiscoveredGrokBuild := false
 	if !creatingProvider {
-		if _, discovered := localGrokBuildProvider(cfg, providerName, os.Getenv("HOME")); discovered {
+		if _, discovered := selectedGrokBuildProvider(cfg, providerName, services.Credentials); discovered {
 			creatingProvider = true
 			autoDiscoveredGrokBuild = true
 		}
@@ -1446,7 +1462,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("ChatGPT model choices are managed by the selected account"))
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := s.validateChatGPTModel(ctx, providerCfg)
+		err := s.validateChatGPTModel(ctx, providerCfg, services.ChatGPT)
 		cancel()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1461,7 +1477,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("reuse_codex_credentials is only valid for openai-codex providers"))
 		}
 		if *params.ReuseCodexCredentials {
-			if _, err := codex.LocalOAuthStatus(os.Getenv("HOME"), true); err != nil {
+			if _, err := codex.OAuthStatus(context.Background(), services.Credentials, true); err != nil {
 				return s.writeResponse(req.ID, nil, err)
 			}
 		}
@@ -1562,24 +1578,13 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 
 	var client providers.StreamClient
 	if resolvedName != s.rt.ProviderName || connectionChanged || providerClientChanged {
-		if ruleProviderCfg.Type == "chatgpt" {
-			var direct *chatgpt.Client
-			direct, err = s.chatGPTClient(ruleProviderCfg.ChatGPTAccountID)
-			if err == nil {
-				client = providers.AdaptStreamClient(direct)
-			}
-		} else {
-			client, err = s.buildConfiguredStreamClient(ruleProviderCfg, resolvedName)
-		}
+		client, err = s.buildStreamClientWithServices(services, ruleProviderCfg, resolvedName)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
 	if authKeyForStore != "" {
-		store, storeErr := authstorage.ForHome(os.Getenv("HOME"))
-		if storeErr != nil {
-			return s.writeResponse(req.ID, nil, storeErr)
-		}
+		store := authstorage.NewBound(context.Background(), services.Credentials)
 		if err := store.Update(resolvedName, func(credentials *authstorage.Credentials) {
 			credentials.Type = "api_key"
 			credentials.APIKey = authKeyForStore
@@ -1590,10 +1595,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 		}
 	}
 	if authTokenForStore != "" {
-		store, storeErr := authstorage.ForHome(os.Getenv("HOME"))
-		if storeErr != nil {
-			return s.writeResponse(req.ID, nil, storeErr)
-		}
+		store := authstorage.NewBound(context.Background(), services.Credentials)
 		if err := store.Update(resolvedName, func(credentials *authstorage.Credentials) {
 			credentials.Type = "auth_token"
 			credentials.AuthToken = authTokenForStore
@@ -1640,13 +1642,13 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if addedModel != "" {
 		change.AddedModels = []string{addedModel}
 	}
-	if _, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) { return config.UpdateProviderSource(source, resolvedName, change) }); err != nil {
+	if _, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) { return config.UpdateProviderSource(source, resolvedName, change) }); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if keepSelection && resolvedName != s.rt.ProviderName {
 		// The default runtime keeps its client; roles and idle conversations
 		// that use the edited provider pick up the saved connection.
-		if err := s.refreshRuntimeAfterProviderEdit(connectionChanged); err != nil {
+		if err := s.refreshRuntimeAfterProviderEdit(services, connectionChanged); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		if fingerprint, fingerprintErr := s.effectiveConfigFingerprint(); fingerprintErr == nil {
@@ -1672,7 +1674,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 			runtime.ConfigureToolkitPermissions(s.rt.Toolkit, s.rt.Permissions)
 		}
 	}
-	if err := s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousRuntimeProvider, client, explicitSelection); err != nil {
+	if err := s.applyModelSelectionToRuntime(services, cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousRuntimeProvider, client, explicitSelection); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	// The RPC response is the notification path for this in-process mutation.
@@ -1709,8 +1711,9 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 
 // refreshRuntimeAfterProviderEdit re-resolves model roles for the unchanged
 // workspace selection after another provider's saved configuration changed.
-func (s *Server) refreshRuntimeAfterProviderEdit(connectionChanged bool) error {
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+func (s *Server) refreshRuntimeAfterProviderEdit(services *runtime.StateServices, connectionChanged bool) error {
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return err
 	}
@@ -1731,7 +1734,7 @@ func (s *Server) refreshRuntimeAfterProviderEdit(connectionChanged bool) error {
 	if err != nil {
 		return err
 	}
-	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false, s.rt.ProviderName, nil, false)
+	return s.applyModelSelectionToRuntime(services, cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false, s.rt.ProviderName, nil, false)
 }
 
 // applyModelSelectionToRuntime swaps the workspace runtime onto a resolved
@@ -1739,6 +1742,7 @@ func (s *Server) refreshRuntimeAfterProviderEdit(connectionChanged bool) error {
 // config/model/update handler and the config-file watcher so an external edit
 // to the effective config can be hot-applied without restarting the app-server.
 func (s *Server) applyModelSelectionToRuntime(
+	services *runtime.StateServices,
 	cfg config.Config,
 	resolvedName string,
 	model string,
@@ -1768,14 +1772,14 @@ func (s *Server) applyModelSelectionToRuntime(
 	if roleSelections.Title.Inherited && client != nil {
 		s.rt.TitleClient = client
 	} else if !roleSelections.Title.Inherited || connectionChanged {
-		titleClient, err := s.buildConfiguredStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
+		titleClient, err := s.buildStreamClientWithServices(services, roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
 		if err != nil {
 			return fmt.Errorf("build title client: %w", err)
 		}
 		s.rt.TitleClient = titleClient
 	}
 	if s.rt.Toolkit != nil && (!roleSelections.Worker.Inherited || connectionChanged || providerClientChanged || resolvedName != previousRuntimeProvider) {
-		workerClient, err := s.buildConfiguredStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
+		workerClient, err := s.buildStreamClientWithServices(services, roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
 		if err != nil {
 			return fmt.Errorf("build worker client: %w", err)
 		}
@@ -1876,10 +1880,15 @@ func (s *Server) handleConfigCodexCredentials(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if _, err := codex.LocalOAuthStatus(os.Getenv("HOME"), true); err != nil {
+	services, release, err := s.modelServices()
+	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if _, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+	defer release()
+	if _, err := codex.OAuthStatus(context.Background(), services.Credentials, true); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
 		return config.UseCodexCredentialsSource(source, strings.TrimSpace(params.Provider))
 	}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1904,7 +1913,13 @@ func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error
 	if providerName == "" {
 		providerName = s.rt.ProviderName
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, release, err := s.modelServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -1916,6 +1931,7 @@ func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error
 		return s.writeResponse(req.ID, nil, fmt.Errorf("provider %s uses type %s; Codex models require openai-codex", resolvedName, providerCfg.Type))
 	}
 	client, err := codex.New(codex.ClientConfig{
+		Credentials:           services.Credentials,
 		BaseURL:               providerCfg.BaseURL,
 		APIKey:                explicitProviderAPIKey(providerCfg),
 		Headers:               providerCfg.Headers,
@@ -1959,7 +1975,13 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if providerName == "" {
 		return s.writeResponse(req.ID, nil, errors.New("provider is required"))
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, release, err := s.modelServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -2008,15 +2030,12 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		// Validate the replacement before touching the removed connection's
 		// credentials. An invalid or unauthenticated fallback must be a no-op.
 		_, ruleCfg := modelcatalog.EnrichProvider(fallbackName, fallback, fallbackModel)
-		if _, err := s.buildConfiguredStreamClient(ruleCfg, fallbackName); err != nil {
+		if _, err := s.buildStreamClientWithServices(services, ruleCfg, fallbackName); err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("replacement provider is not ready: %w", err))
 		}
 		params.FallbackProvider, params.FallbackModel = fallbackName, fallbackModel
 	}
-	authStore, authErr := authstorage.ForHome(os.Getenv("HOME"))
-	if authErr != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("prepare credential cleanup: %w", authErr))
-	}
+	authStore := authstorage.NewBound(context.Background(), services.Credentials)
 	// This account-level sign-in may be used by other connections or
 	// workspaces. Removing a provider is not an account sign-out.
 	removeCredential := !config.IsXAISubscriptionProvider(existing.Type) || resolvedName != xaisub.AuthProviderID
@@ -2025,37 +2044,32 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if authErr != nil && !errors.Is(authErr, authstorage.ErrNotFound) {
 		return s.writeResponse(req.ID, nil, authErr)
 	}
-	// Config and credentials are separate atomic files. Restore only the
-	// affected credential entries if either part of removal fails.
-	restoreCredentials := func(cause error) error {
-		if previous, ok := credentials.Providers[resolvedName]; ok && removeCredential {
-			if err := authStore.Set(resolvedName, previous); err != nil {
-				cause = errors.Join(cause, fmt.Errorf("restore provider credential %q: %w", resolvedName, err))
-			}
-		}
-		return cause
+	// Remove configuration first. A failed or uncertain credential cleanup
+	// must not replay a stale value over a concurrent credential rotation.
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	if removeCredential {
-		if err := authStore.DeleteProvider(resolvedName); err != nil {
-			return s.writeResponse(req.ID, nil, restoreCredentials(fmt.Errorf("remove provider credential: %w", err)))
-		}
+	next, newDefault, err := config.RemoveProviderSource(source, providerName, params.FallbackProvider, params.FallbackModel)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	var newDefault string
-	committedView, removeErr := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
-		next, selected, err := config.RemoveProviderSource(source, providerName, params.FallbackProvider, params.FallbackModel)
-		newDefault = selected
-		return next, err
-	})
+	committedView, removeErr := services.Config.CompareExchange(context.Background(), view.Revision, next)
 	if removeErr != nil {
-		if committedView.Committed {
-			return s.writeResponse(req.ID, nil, removeErr)
+		return s.writeResponse(req.ID, nil, removeErr)
+	}
+	if err := configActivationError(committedView); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, exists := credentials.Providers[resolvedName]; removeCredential && exists {
+		if err := authStore.DeleteProvider(resolvedName); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("provider was removed from configuration, but credential cleanup failed: %w", err))
 		}
-		return s.writeResponse(req.ID, nil, restoreCredentials(removeErr))
 	}
 	if !removedWasDefault {
 		// Keep the main selection, but rebuild roles and idle snapshots that
 		// could still refer to the removed provider.
-		if err := s.refreshRuntimeAfterProviderEdit(true); err != nil {
+		if err := s.refreshRuntimeAfterProviderEdit(services, true); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		return s.writeResponse(req.ID, ConfigProviderRemoveResult{
@@ -2094,7 +2108,7 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("marshal fallback params: %w", err))
 	}
-	return s.handleConfigModelUpdate(synthetic)
+	return s.handleConfigModelUpdateWithServices(synthetic, services)
 }
 
 func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {
@@ -2369,7 +2383,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 		selected := providerCfg
 		selected.Model = model
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := s.validateChatGPTModel(ctx, selected)
+		err := s.validateChatGPTModel(ctx, selected, services.ChatGPT)
 		cancel()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -2782,14 +2796,22 @@ func selectionConfigPointers(selection modelvariant.Selection, touched bool, pre
 func (s *Server) providerSummaries() []ProviderSummary {
 	s.providerSummariesMu.Lock()
 	defer s.providerSummariesMu.Unlock()
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.lastProviderSummaries
+	}
+	defer release()
+	if s.chatGPTManager != nil {
+		services.ChatGPT = s.chatGPTManager
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		// Presentation only: execution and mutations still load and validate config.
 		return s.lastProviderSummaries
 	}
-	home := os.Getenv("HOME")
 	autoDiscovered := false
-	if provider, ok := localGrokBuildProvider(cfg, "grok-build", home); ok {
+	if provider, ok := selectedGrokBuildProvider(cfg, "grok-build", services.Credentials); ok {
 		providers := make(map[string]config.ProviderConfig, len(cfg.Providers)+1)
 		for name, configured := range cfg.Providers {
 			providers[name] = configured
@@ -2805,7 +2827,7 @@ func (s *Server) providerSummaries() []ProviderSummary {
 		enriched[name] = s.withCachedCodexModels(name, provider)
 	}
 	cfg.Providers = enriched
-	summaries := providerSummariesFromConfig(cfg, home)
+	summaries := selectedProviderSummariesFromConfig(cfg, services.Credentials)
 	if autoDiscovered {
 		for index := range summaries {
 			if summaries[index].Name == "grok-build" {
@@ -2814,7 +2836,7 @@ func (s *Server) providerSummaries() []ProviderSummary {
 			}
 		}
 	}
-	s.enrichChatGPTSummaries(summaries, cfg)
+	s.enrichChatGPTSummaries(summaries, cfg, services.ChatGPT)
 	s.lastProviderSummaries = summaries
 	return summaries
 }
@@ -2865,25 +2887,7 @@ func selectedGrokBuildProvider(cfg config.Config, providerName string, selected 
 	return config.ApplyGrokBuildProviderDefaults(config.ProviderConfig{Type: "grok-build"}), true
 }
 
-func localGrokBuildProvider(cfg config.Config, providerName, home string) (config.ProviderConfig, bool) {
-	if strings.TrimSpace(providerName) != "grok-build" {
-		return config.ProviderConfig{}, false
-	}
-	if _, exists := cfg.Providers[providerName]; exists {
-		return config.ProviderConfig{}, false
-	}
-	for _, provider := range cfg.Providers {
-		if config.IsGrokBuildProvider(provider.Type) {
-			return config.ProviderConfig{}, false
-		}
-	}
-	if _, err := grokbuild.LocalOAuthStatus(home); err != nil {
-		return config.ProviderConfig{}, false
-	}
-	return config.ApplyGrokBuildProviderDefaults(config.ProviderConfig{Type: "grok-build"}), true
-}
-
-func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSummary {
+func selectedProviderSummariesFromConfig(cfg config.Config, selected credentialstore.Store) []ProviderSummary {
 	names := make([]string, 0, len(cfg.Providers))
 	for name := range cfg.Providers {
 		names = append(names, name)
@@ -2898,7 +2902,7 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 			Type:             provider.Type,
 			Model:            provider.Model,
 			BaseURL:          provider.BaseURL,
-			APIKeyConfigured: providerHasAuth(name, provider, home),
+			APIKeyConfigured: providerHasSelectedAuth(name, provider, selected),
 			ConnectionLocked: provider.Type == "chatgpt" || isCodexProviderType(provider.Type) || config.IsXAISubscriptionProvider(provider.Type) || config.IsGrokBuildProvider(provider.Type),
 			Models:           providerModelSummaries(name, provider),
 		}
@@ -2915,8 +2919,15 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 			summary.ReuseCodexCredentials = provider.ReuseCodexCredentials
 			if explicitProviderAPIKey(provider) != "" {
 				summary.CodexCredentialSource = "explicit"
-			} else if source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials); err == nil {
-				summary.CodexCredentialSource = source
+			} else {
+				source, err := codex.OAuthStatus(context.Background(), selected, provider.ReuseCodexCredentials)
+				if err != nil && !provider.ReuseCodexCredentials {
+					// Discovery advertises an available account without authorizing reuse.
+					source, err = codex.OAuthStatus(context.Background(), selected, true)
+				}
+				if err == nil {
+					summary.CodexCredentialSource = source
+				}
 			}
 		}
 		out = append(out, summary)
@@ -2924,7 +2935,7 @@ func providerSummariesFromConfig(cfg config.Config, home string) []ProviderSumma
 	return out
 }
 
-func providerHasAuth(name string, provider config.ProviderConfig, home string) bool {
+func providerHasSelectedAuth(name string, provider config.ProviderConfig, selected credentialstore.Store) bool {
 	if provider.Type == "chatgpt" {
 		return false
 	}
@@ -2932,11 +2943,11 @@ func providerHasAuth(name string, provider config.ProviderConfig, home string) b
 		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
 			return true
 		}
-		source, err := codex.LocalOAuthStatus(home, provider.ReuseCodexCredentials)
+		source, err := codex.OAuthStatus(context.Background(), selected, provider.ReuseCodexCredentials)
 		return err == nil && (source == "wuu-auth-store" || provider.ReuseCodexCredentials)
 	}
 	if config.IsXAISubscriptionProvider(provider.Type) {
-		_, err := xaisub.LocalOAuthStatus(home)
+		_, err := xaisub.OAuthStatus(context.Background(), selected)
 		return err == nil
 	}
 	if config.IsGrokBuildProvider(provider.Type) {
@@ -2946,32 +2957,30 @@ func providerHasAuth(name string, provider config.ProviderConfig, home string) b
 		if !provider.ReuseGrokCredentials {
 			return false
 		}
-		_, err := grokbuild.LocalOAuthStatus(home)
+		_, err := grokbuild.OAuthStatus(context.Background(), selected)
 		return err == nil
 	}
 
-	if _, err := providerfactory.ResolveAPIKeyWithHome(provider, name, home); err == nil {
+	// Explicit bearer configuration is independent of saved model credentials.
+	if providerUsesAnthropicAuth(provider) && (strings.TrimSpace(provider.AuthToken) != "" || configuredEnvValue(provider.AuthTokenEnv) != "") {
 		return true
+	}
+	if _, err := providerfactory.ResolveAPIKey(provider, name, selected); err == nil {
+		return true
+	} else if !strings.Contains(err.Error(), "no API key found") {
+		return false
 	}
 	if !providerUsesAnthropicAuth(provider) {
 		return false
 	}
-	if strings.TrimSpace(provider.AuthToken) != "" {
-		return true
-	}
-	authTokenEnv := strings.TrimSpace(provider.AuthTokenEnv)
-	if authTokenEnv == "" {
-		authTokenEnv = "ANTHROPIC_AUTH_TOKEN"
-	}
-	if configuredEnvValue(authTokenEnv) != "" {
-		return true
-	}
-	store, err := authstorage.ForHome(home)
-	if err != nil {
+	credentials, err := authstorage.NewBound(context.Background(), selected).Get(name)
+	if err != nil && !errors.Is(err, authstorage.ErrNotFound) {
 		return false
 	}
-	credentials, err := store.Get(name)
-	return err == nil && strings.TrimSpace(credentials.AuthToken) != ""
+	if strings.TrimSpace(credentials.AuthToken) != "" {
+		return true
+	}
+	return strings.TrimSpace(provider.AuthTokenEnv) == "" && configuredEnvValue("ANTHROPIC_AUTH_TOKEN") != ""
 }
 
 func configuredEnvValue(name string) string {

@@ -12,9 +12,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
-	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/siwc"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -22,8 +19,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 )
 
 type chatGPTFixtureTransport struct {
@@ -116,6 +122,7 @@ func TestChatGPTRegistrationConnectionDiscoveryInferenceSignOut(t *testing.T) {
 	writeProviderSettingsConfig(t, rt, twoProviderSettingsConfig)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	defer srv.Close()
 	srv.chatGPTManager = manager
 	srv.chatGPTHTTP = &http.Client{Transport: chatGPTFixtureTransport{endpoint, inference.Client().Transport}}
 	call := func(id, method, params string) map[string]any {
@@ -189,6 +196,7 @@ func TestChatGPTRegistrationConnectionDiscoveryInferenceSignOut(t *testing.T) {
 	}
 	defer restartedManager.Close()
 	restarted := New(rt, &lockedBuffer{})
+	defer restarted.Close()
 	restarted.chatGPTManager = restartedManager
 	restored := providerSummaryNamed(t, restarted.providerSummaries(), "chatgpt-personal")
 	if len(restored.Models) != 2 || restored.Models[0].ID != "second" || restored.Models[1].ID != "first" {
@@ -203,7 +211,7 @@ func TestChatGPTRegistrationConnectionDiscoveryInferenceSignOut(t *testing.T) {
 			t.Fatalf("serialized account route facts missing: %+v", facts)
 		}
 	}
-	client, err := srv.chatGPTClient(p.ChatGPTAccountID)
+	client, err := chatgpt.New(chatgpt.ClientConfig{AccountID: p.ChatGPTAccountID, AccessToken: manager.AccessToken, BindRequest: manager.BindRequest, HTTPClient: srv.chatGPTHTTP})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,34 +254,114 @@ func TestChatGPTGenerationLoginOwnershipAndCleanup(t *testing.T) {
 		return attempt
 	}
 	oldAttempt, foreign := start(old), start(next)
-	releases := 0
-	srv := &Server{chatGPTAttempts: map[string]bool{oldAttempt.ID: true}, chatGPTBindings: map[string]*chatGPTBinding{
-		"old":  {manager: old, release: func() { releases++ }},
-		"next": {manager: next, release: func() { releases++ }},
-	}}
-	if owner, err := srv.chatGPTLoginManager(oldAttempt.ID); err != nil || owner != old {
-		t.Fatalf("old login changed owner: %v", err)
+	var releases atomic.Int32
+	srv := &Server{out: &lockedBuffer{}}
+	defer srv.closeChatGPTLogins()
+	retain := func(attempt siwc.Attempt) *chatGPTBinding {
+		t.Helper()
+		binding, err := srv.retainChatGPTLogin(&runtime.StateServices{ChatGPT: old}, func() { releases.Add(1) }, attempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return binding
 	}
-	if _, err := srv.chatGPTLoginManager(foreign.ID); err == nil {
+	owned := retain(oldAttempt)
+	// A later selected manager must not take over the admitted attempt.
+	srv.chatGPTManager = next
+	result, err := owned.poll(context.Background())
+	if err != nil || result.LoginID != oldAttempt.ID || result.Status != "pending" {
+		t.Fatalf("old login changed owner: %+v %v", result, err)
+	}
+	if releases.Load() != 0 {
+		t.Fatal("pending login released its generation")
+	}
+	if _, err := srv.chatGPTLoginBinding(foreign.ID); err == nil {
 		t.Fatal("foreign login admitted")
 	}
-	srv.closeChatGPTLogins()
-	for manager, id := range map[*siwc.Manager]string{old: oldAttempt.ID} {
-		attempt, err := manager.Poll(id)
-		if err != nil || attempt.Status != "cancelled" {
-			t.Fatalf("owned login still active: %v", err)
-		}
+	if err := srv.handleAuthChatGPT(context.Background(), Request{ID: json.RawMessage(`"cancel"`), Method: "auth/chatgpt/login/cancel", Params: json.RawMessage(`{"login_id":"` + oldAttempt.ID + `"}`)}); err != nil {
+		t.Fatal(err)
 	}
-	attempt, err := next.Poll(foreign.ID)
+	if releases.Load() != 1 {
+		t.Fatalf("cancel retained the login generation: releases=%d", releases.Load())
+	}
+	result, err = owned.poll(context.Background())
+	if err != nil || result.Status != "cancelled" {
+		t.Fatalf("cancelled login receipt unavailable: %+v %v", result, err)
+	}
+	// A callback must release its generation even if the frontend stops polling.
+	deniedAttempt := start(old)
+	denied := retain(deniedAttempt)
+	authorize, _ := url.Parse(deniedAttempt.AuthorizationURL)
+	callback, _ := url.Parse(authorize.Query().Get("redirect_uri"))
+	callback.RawQuery = url.Values{"state": {authorize.Query().Get("state")}, "error": {"access_denied"}}.Encode()
+	response, err := http.Get(callback.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	select {
+	case <-denied.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("unpolled completed login retained its generation")
+	}
+	if releases.Load() != 2 {
+		t.Fatalf("completed login retained the generation: releases=%d", releases.Load())
+	}
+	result, err = denied.poll(context.Background())
+	if err != nil || result.Status != "failed" {
+		t.Fatalf("completed login receipt unavailable: %+v %v", result, err)
+	}
+	closingAttempt := start(old)
+	retain(closingAttempt)
+	srv.closeChatGPTLogins()
+	attempt, err := old.Poll(closingAttempt.ID)
+	if err != nil || attempt.Status != "cancelled" {
+		t.Fatalf("owned login still active: %v", err)
+	}
+	attempt, err = next.Poll(foreign.ID)
 	if err != nil || attempt.Status != "pending" {
 		t.Fatalf("server cleanup cancelled another consumer's login: %v", err)
 	}
 	start(old)
-	if releases != 2 {
-		t.Fatalf("generation handles released %d times", releases)
+	if releases.Load() != 3 {
+		t.Fatalf("generation handles released %d times", releases.Load())
 	}
 	srv.closeChatGPTLogins()
-	if releases != 2 {
+	if releases.Load() != 3 {
 		t.Fatal("generation handles released again")
+	}
+}
+
+func TestChatGPTCatalogUsesLoginGenerationConfig(t *testing.T) {
+	ctx := context.Background()
+	oldManager, nextManager := new(siwc.Manager), new(siwc.Manager)
+	makeSource := func() *config.Client {
+		cfg := config.Default()
+		cfg.Providers = map[string]config.ProviderConfig{"chatgpt": {Type: "chatgpt", BaseURL: "https://api.openai.com/v1", Model: "original", ChatGPTAccountID: "account"}}
+		cfg.DefaultProvider = "chatgpt"
+		source := config.NewMemoryService("test.catalog", cfg)
+		if err := source.Activate(ctx); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = source.Close(ctx) })
+		return config.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+			return source.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: config.ServiceName, Method: method, Params: raw})
+		})
+	}
+	oldConfig, nextConfig := makeSource(), makeSource()
+	srv := &Server{chatGPTBindings: map[string]*chatGPTBinding{
+		"old":  {manager: oldManager, services: &runtime.StateServices{Config: oldConfig}},
+		"next": {manager: nextManager, services: &runtime.StateServices{Config: nextConfig}},
+	}}
+	if err := srv.saveChatGPTCatalog(ctx, oldManager, "account", []chatgpt.ModelInfo{{Slug: "old-account-model", DisplayName: "Old account"}}); err != nil {
+		t.Fatal(err)
+	}
+	oldView, err := oldConfig.Read(ctx)
+	if err != nil || len(oldView.Config.Providers["chatgpt"].ChatGPTModels) != 1 {
+		t.Fatalf("old login catalog not saved: %v", err)
+	}
+	nextView, err := nextConfig.Read(ctx)
+	if err != nil || len(nextView.Config.Providers["chatgpt"].ChatGPTModels) != 0 {
+		t.Fatalf("old login changed new configuration: %v", err)
 	}
 }
