@@ -330,11 +330,7 @@ type Server struct {
 	storageMaintenanceCancel     context.CancelFunc
 	startupErr                   error
 
-	// sideThreadStore persists side threads (1:<=1 binding per main
-	// thread). Nil when SessionDir is unset; handleSideThreadOpen /
-	// handleSideThreadGetHistory treat nil as the "feature off" path.
-	sideThreadStore *sidethread.Store
-	controlMu       sync.Mutex
+	controlMu sync.Mutex
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
 	inboxMu    sync.Mutex
@@ -416,18 +412,24 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		bootOwner = first
 		s.bootOwner = first
 	}
-	if rt != nil && strings.TrimSpace(rt.SessionDir) != "" {
-		s.sideThreadStore = sidethread.NewStore(filepath.Join(rt.SessionDir, "sidethreads"))
 
-	}
 	binding, err := rt.RetainState()
 	if err != nil {
 		s.startupErr = err
 		return s
 	}
 	defer binding.Close()
+	if strings.TrimSpace(rt.SessionDir) != "" {
+		if err := sidethread.NewStore(context.Background(), binding.Documents).ImportLegacy(filepath.Join(rt.SessionDir, "sidethreads"), bootOwner); err != nil {
+			s.startupErr = fmt.Errorf("import legacy side threads: %w", err)
+			return s
+		}
+	}
 	if bootOwner {
-		s.recoverSideThreadsOnBoot()
+		if err := s.recoverSideThreadsOnBoot(binding); err != nil {
+			s.startupErr = err
+			return s
+		}
 		s.settleOnBoot(binding)
 	}
 	if s.presenceLease != nil {

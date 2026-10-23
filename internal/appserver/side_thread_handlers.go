@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -40,6 +41,7 @@ const (
 )
 
 type sideThreadTurn struct {
+	store       *sidethread.Store
 	state       *runtime.State
 	generation  *runtime.PluginGeneration
 	pluginID    string
@@ -90,11 +92,9 @@ func (s *Server) handleSideThreadGetHistory(req Request) error {
 }
 
 func (s *Server) openSideThread(binding *runtime.State, mainID string) (*SideThreadOpenResult, error) {
+	store := sidethread.NewStore(context.Background(), binding.Documents)
 	if mainID == "" {
 		return nil, errors.New("main_thread_id is required")
-	}
-	if s.sideThreadStore == nil {
-		return &SideThreadOpenResult{Summary: nil}, nil
 	}
 	if err := s.requireMainThread(binding, mainID); err != nil {
 		return nil, err
@@ -102,7 +102,7 @@ func (s *Server) openSideThread(binding *runtime.State, mainID string) (*SideThr
 	if err := s.recoverStaleSideThread(binding, mainID); err != nil {
 		return nil, err
 	}
-	st, err := s.sideThreadStore.Load(mainID)
+	st, err := store.Load(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
 		return &SideThreadOpenResult{Summary: nil}, nil
 	}
@@ -113,11 +113,9 @@ func (s *Server) openSideThread(binding *runtime.State, mainID string) (*SideThr
 }
 
 func (s *Server) getSideThreadHistory(binding *runtime.State, mainID string) (*SideThreadGetHistoryResult, error) {
+	store := sidethread.NewStore(context.Background(), binding.Documents)
 	if mainID == "" {
 		return nil, errors.New("main_thread_id is required")
-	}
-	if s.sideThreadStore == nil {
-		return nil, sidethread.ErrNotFound
 	}
 	if err := s.requireMainThread(binding, mainID); err != nil {
 		return nil, err
@@ -125,7 +123,7 @@ func (s *Server) getSideThreadHistory(binding *runtime.State, mainID string) (*S
 	if err := s.recoverStaleSideThread(binding, mainID); err != nil {
 		return nil, err
 	}
-	st, err := s.sideThreadStore.Load(mainID)
+	st, err := store.Load(mainID)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +421,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	if err := validateSideThreadSelection(mainID, selection); err != nil {
 		return nil, err
 	}
-	if s == nil || s.rt == nil || s.sideThreadStore == nil {
+	if s == nil || s.rt == nil || binding == nil || binding.Documents == nil {
 		return nil, errors.New("side-thread feature unavailable")
 	}
 	if s.closed.Load() {
@@ -434,6 +432,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 		commandID = strings.TrimSpace(commandIDs[0])
 	}
 	generationState := binding.Retain()
+	store := sidethread.NewStore(context.Background(), generationState.Documents)
 	generation := generationState.Generation
 	generationOwned := true
 	defer func() {
@@ -489,7 +488,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	if err != nil {
 		return nil, err
 	}
-	existing, err := s.sideThreadStore.Load(mainID)
+	existing, err := store.Load(mainID)
 	if err != nil && !errors.Is(err, sidethread.ErrNotFound) {
 		return nil, err
 	}
@@ -522,7 +521,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	if generation != nil && !s.rt.IsCurrentPluginGeneration(generation) {
 		return nil, errors.New("plugin generation changed during side conversation admission")
 	}
-	st, err := s.sideThreadStore.BeginTurnWithSelection(mainID, sideThreadID, prompt, userMessageID, assistantMessageID, selection)
+	st, err := store.BeginTurnWithSelection(mainID, sideThreadID, prompt, userMessageID, assistantMessageID, selection)
 	if err != nil {
 		return nil, err
 	}
@@ -530,17 +529,17 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	lifecycleLeaseOwned = false
 
 	ctx, cancel := context.WithCancel(context.Background())
-	turn := &sideThreadTurn{cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState}
+	turn := &sideThreadTurn{store: store, cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState}
 	s.sideTurnMu.Lock()
 	if s.closed.Load() {
 		s.sideTurnMu.Unlock()
 		cancel()
-		return nil, s.abortAcceptedSideThread(mainID, userMessageID, assistantMessageID, errServerClosed)
+		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errServerClosed)
 	}
 	if _, exists := s.sideTurns[mainID]; exists {
 		s.sideTurnMu.Unlock()
 		cancel()
-		return nil, s.abortAcceptedSideThread(mainID, userMessageID, assistantMessageID, errSideThreadExecutionBusy)
+		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errSideThreadExecutionBusy)
 	}
 	s.sideTurns[mainID] = turn
 	s.sideTurnMu.Unlock()
@@ -552,7 +551,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 		delete(s.sideTurns, mainID)
 		s.sideTurnMu.Unlock()
 		turn.cancel()
-		return nil, s.abortAcceptedSideThread(mainID, userMessageID, assistantMessageID, errServerClosed)
+		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errServerClosed)
 	}
 	leaseOwned = false
 	generationOwned = false
@@ -623,14 +622,17 @@ func sideThreadQuestionText(message sidethread.Message) string {
 // abortAcceptedSideThread rolls a persisted-but-never-launched turn back out
 // of the durable record and surfaces cause to the RPC caller, so the renderer
 // runs its send failure path instead of treating the message as delivered.
-func (s *Server) abortAcceptedSideThread(mainID, userMessageID, assistantMessageID string, cause error) error {
-	rollbackErr := s.sideThreadStore.RollbackTurn(mainID, userMessageID, assistantMessageID)
+func (s *Server) abortAcceptedSideThread(store *sidethread.Store, mainID, userMessageID, assistantMessageID string, cause error) error {
+	rollbackErr := store.RollbackTurn(mainID, userMessageID, assistantMessageID)
 	if rollbackErr == nil {
 		return cause
 	}
 	// The turn cannot be removed; settle it as an explicit failure so it is
 	// never mistaken for a normal answer-less exchange.
-	if _, _, finishErr := s.sideThreadStore.FinishTurn(mainID, assistantMessageID, "", sidethread.StatusFailed, cause.Error()); finishErr != nil && !errors.Is(finishErr, sidethread.ErrNotFound) {
+	if uncertainSideThreadCommit(rollbackErr) {
+		return errors.Join(cause, rollbackErr)
+	}
+	if _, _, finishErr := store.FinishTurn(mainID, assistantMessageID, "", sidethread.StatusFailed, cause.Error()); finishErr != nil && !errors.Is(finishErr, sidethread.ErrNotFound) {
 		return errors.Join(cause, rollbackErr, finishErr)
 	}
 	return errors.Join(cause, rollbackErr)
@@ -734,19 +736,19 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 		turnStatus = TurnStatusFailed
 	}
 	items := projector.finish(turnStatus, runErr, time.Now().UTC())
-	st, message, finishErr := s.persistSideThreadFinish(mainID, assistantMessageID, text, items, status, errorText)
+	st, message, finishErr := s.persistSideThreadFinish(turn.store, mainID, assistantMessageID, text, items, status, errorText)
 	if finishErr != nil && !errors.Is(finishErr, sidethread.ErrNotFound) {
 		persistFailure := fmt.Sprintf("persist side thread reply: %v", finishErr)
 		if errorText != "" {
 			persistFailure = errorText + "; " + persistFailure
 		}
 		errorText = persistFailure
-		if status != sidethread.StatusInterrupted {
+		if status != sidethread.StatusInterrupted && !uncertainSideThreadCommit(finishErr) {
 			// The record must not stay running: lazy recovery would settle it
 			// as a normal empty interruption even though this turn completed
 			// in memory. An explicit failure is the terminal state recovery
 			// leaves alone.
-			st, message, finishErr = s.persistSideThreadFinish(mainID, assistantMessageID, text, items, sidethread.StatusFailed, errorText)
+			st, message, finishErr = s.persistSideThreadFinish(turn.store, mainID, assistantMessageID, text, items, sidethread.StatusFailed, errorText)
 		}
 	}
 	if errors.Is(finishErr, sidethread.ErrNotFound) {
@@ -783,10 +785,10 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 // transient store failures within sideThreadFinishTurnAttempts. Retries stop
 // early on server close so shutdown is not delayed, and on ErrNotFound
 // because a deleted record never comes back.
-func (s *Server) persistSideThreadFinish(mainID, assistantMessageID, text string, items []ThreadItem, status sidethread.Status, errorText string) (*sidethread.SideThread, sidethread.Message, error) {
+func (s *Server) persistSideThreadFinish(store *sidethread.Store, mainID, assistantMessageID, text string, items []ThreadItem, status sidethread.Status, errorText string) (*sidethread.SideThread, sidethread.Message, error) {
 	for attempt := 1; ; attempt++ {
-		st, message, err := s.sideThreadStore.FinishTurnWithItems(mainID, assistantMessageID, text, sideThreadStoredItems(items), status, errorText)
-		if err == nil || errors.Is(err, sidethread.ErrNotFound) || attempt >= sideThreadFinishTurnAttempts || s.closed.Load() {
+		st, message, err := store.FinishTurnWithItems(mainID, assistantMessageID, text, sideThreadStoredItems(items), status, errorText)
+		if err == nil || errors.Is(err, sidethread.ErrNotFound) || uncertainSideThreadCommit(err) || attempt >= sideThreadFinishTurnAttempts || s.closed.Load() {
 			return st, message, err
 		}
 		providers.DebugLogf("finish side thread %q (attempt %d/%d): %v", mainID, attempt, sideThreadFinishTurnAttempts, err)
@@ -830,6 +832,7 @@ func (s *Server) notifySideThreadFinishFailure(binding *runtime.State, initial *
 
 func (s *Server) watchSideThreadInterrupt(ctx context.Context, mainID string, turn *sideThreadTurn, done chan<- struct{}) {
 	defer close(done)
+	store := sidethread.NewStore(ctx, turn.state.Documents)
 	ticker := time.NewTicker(sideThreadInterruptPollInterval)
 	defer ticker.Stop()
 	for {
@@ -842,7 +845,7 @@ func (s *Server) watchSideThreadInterrupt(ctx context.Context, mainID string, tu
 				turn.cancel()
 				return
 			}
-			st, err := s.sideThreadStore.Load(mainID)
+			st, err := store.Load(mainID)
 			if err != nil && !errors.Is(err, sidethread.ErrNotFound) {
 				providers.DebugLogf("observe side thread %q: %v", mainID, err)
 				continue
@@ -876,17 +879,20 @@ func (s *Server) handleSideThreadInterrupt(req Request) error {
 }
 
 func (s *Server) interruptSideThread(binding *runtime.State, mainID string) (*SideThreadInterruptResult, error) {
-	if mainID == "" || s == nil || s.sideThreadStore == nil {
+	if mainID == "" || s == nil || binding == nil || binding.Documents == nil {
 		return &SideThreadInterruptResult{Ok: false}, nil
 	}
 	s.sideTurnMu.Lock()
 	turn := s.sideTurns[mainID]
 	if turn != nil {
+		binding = turn.state.Retain()
+		defer binding.Close()
 		turn.interrupted.Store(true)
 		turn.cancel()
 	}
 	s.sideTurnMu.Unlock()
-	st, changed, err := s.sideThreadStore.Interrupt(mainID)
+	store := sidethread.NewStore(context.Background(), binding.Documents)
+	st, changed, err := store.Interrupt(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
 		return &SideThreadInterruptResult{Ok: false}, nil
 	}
@@ -921,7 +927,7 @@ func (s *Server) resetSideThread(binding *runtime.State, mainID string) (*SideTh
 	if mainID == "" {
 		return nil, errors.New("main_thread_id is required")
 	}
-	if s == nil || s.sideThreadStore == nil {
+	if s == nil || binding == nil || binding.Documents == nil {
 		return &SideThreadResetResult{Ok: false}, nil
 	}
 	if err := s.requireMainThread(binding, mainID); err != nil {
@@ -932,18 +938,21 @@ func (s *Server) resetSideThread(binding *runtime.State, mainID string) (*SideTh
 	// settles as ErrNotFound on the removed record.
 	s.sideTurnMu.Lock()
 	if turn := s.sideTurns[mainID]; turn != nil {
+		binding = turn.state.Retain()
+		defer binding.Close()
 		turn.interrupted.Store(true)
 		turn.cancel()
 	}
 	s.sideTurnMu.Unlock()
-	st, err := s.sideThreadStore.Load(mainID)
+	store := sidethread.NewStore(context.Background(), binding.Documents)
+	st, err := store.Load(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
 		return &SideThreadResetResult{Ok: true}, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if err := s.sideThreadStore.Delete(mainID); err != nil {
+	if err := store.Delete(mainID); err != nil {
 		return nil, err
 	}
 	s.notifySideThreadEvent(SideThreadEventNotification{
@@ -1349,24 +1358,23 @@ func releaseSideThreadExecutionLease(mainID string, lease *session.DocumentThrea
 	}
 }
 
-func (s *Server) recoverSideThreadsOnBoot() {
-	if s == nil || s.sideThreadStore == nil {
-		return
-	}
-	recovered, err := s.sideThreadStore.RecoverRunning()
+func (s *Server) recoverSideThreadsOnBoot(binding *runtime.State) error {
+	recovered, err := sidethread.NewStore(context.Background(), binding.Documents).RecoverRunning()
 	if err != nil {
-		providers.DebugLogf("recover side threads: %v", err)
+		return fmt.Errorf("recover side threads: %w", err)
 	}
 	if recovered > 0 {
 		providers.DebugLogf("recovered %d interrupted side thread(s)", recovered)
 	}
+	return nil
 }
 
 // recoverStaleSideThread settles a running record only when no process owns
 // its execution lease. This lazy check covers an owner crash while another
 // app-server remains alive, a case where workspace boot recovery does not run.
 func (s *Server) recoverStaleSideThread(binding *runtime.State, mainID string) error {
-	st, err := s.sideThreadStore.Load(mainID)
+	store := sidethread.NewStore(context.Background(), binding.Documents)
+	st, err := store.Load(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) || (err == nil && st.Status != sidethread.StatusRunning) {
 		return nil
 	}
@@ -1381,7 +1389,7 @@ func (s *Server) recoverStaleSideThread(binding *runtime.State, mainID string) e
 		return nil
 	}
 	defer releaseSideThreadExecutionLease(mainID, lease)
-	_, _, err = s.sideThreadStore.Interrupt(mainID)
+	_, _, err = store.Interrupt(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
 		return nil
 	}
@@ -1393,14 +1401,23 @@ func (s *Server) cancelSideThreads() {
 		return
 	}
 	s.sideTurnMu.Lock()
-	turns := make(map[string]*sideThreadTurn, len(s.sideTurns))
+	turns := make(map[string]*runtime.State, len(s.sideTurns))
 	for mainID, turn := range s.sideTurns {
 		turn.interrupted.Store(true)
 		turn.cancel()
-		turns[mainID] = turn
+		turns[mainID] = turn.state.Retain()
 	}
 	s.sideTurnMu.Unlock()
-	for mainID := range turns {
-		_, _, _ = s.sideThreadStore.Interrupt(mainID)
+	for mainID, binding := range turns {
+		_, _, err := sidethread.NewStore(context.Background(), binding.Documents).Interrupt(mainID)
+		if err != nil && !errors.Is(err, sidethread.ErrNotFound) {
+			providers.DebugLogf("interrupt side thread %q: %v", mainID, err)
+		}
+		_ = binding.Close()
 	}
+}
+
+func uncertainSideThreadCommit(err error) bool {
+	var pending *persistence.CommitError
+	return errors.As(err, &pending)
 }
