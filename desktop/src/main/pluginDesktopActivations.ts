@@ -20,13 +20,17 @@ export class PluginDesktopActivations {
     this.workdirs.set(workdir, request);
     const result = await request<InitializeResult>("initialize", params);
     if (this.disconnected) throw new Error("Renderer document is disconnected");
-    this.observeInventory(workdir, result.extension_inventory ?? []);
+    this.bindInventory(request, result.extension_inventory ?? []);
     return result;
   }
 
   observeInventory(workdir: string, inventory: readonly ExtensionInventoryRecord[]): void {
     const request = this.workdirs.get(workdir);
     if (this.disconnected || !request) return;
+    this.bindInventory(request, inventory);
+  }
+
+  private bindInventory(request: ProcessRequest, inventory: readonly ExtensionInventoryRecord[]): void {
     for (const plugin of inventory) {
       if (plugin.desktop && plugin.graph_generation && !this.graphs.has(plugin.graph_generation)) {
         this.graphs.set(plugin.graph_generation, request);

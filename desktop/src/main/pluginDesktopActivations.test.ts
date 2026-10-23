@@ -28,6 +28,19 @@ describe("desktop activation IPC lifetime", () => {
     expect(second.calls.mock.calls.at(-1)).toEqual(first.calls.mock.calls.at(-1));
   });
 
+  it("keeps overlapping initializes bound to their own captured process", async () => {
+    const first = server("first"), second = server("second"), owner = new PluginDesktopActivations(13);
+    let release!: () => void;
+    first.calls.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({ extension_inventory: inventory("first") }); }));
+    const pending = owner.initialize("/same", first.request, {});
+    await owner.initialize("/same", second.request, {});
+    release(); await pending;
+    await owner.report(report("first"));
+    await owner.report(report("second"));
+    expect(first.calls.mock.calls[1]?.[1]).toMatchObject({ graph_generation: "first" });
+    expect(second.calls.mock.calls[1]?.[1]).toMatchObject({ graph_generation: "second" });
+  });
+
   it("routes committed inventory notifications but rejects unknown graphs", async () => {
     const backend = server("first"), owner = new PluginDesktopActivations(8);
     await owner.initialize("/a", backend.request, {});
