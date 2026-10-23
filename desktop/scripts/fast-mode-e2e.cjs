@@ -402,6 +402,11 @@ async function run() {
   main.setContentSize(1380, 860);
   await waitFor(main, () => document.querySelector('.project-row-new-thread'));
   await evaluate(main, () => document.querySelector('.project-row-new-thread').click());
+  // The conversation and draft share the runtime trigger. Wait for the draft
+  // commit that closes the old menu before opening the new one.
+  await waitFor(main, () => document.querySelector('.empty-scroll-region')
+    && document.querySelector('.codex-runtime-trigger[aria-expanded="false"]:not(:disabled)')
+    && !document.querySelector('.runtime-panel'));
   await openPanel(false);
   await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)'));
   for (const engine of ['Wuu', 'Codex']) {
