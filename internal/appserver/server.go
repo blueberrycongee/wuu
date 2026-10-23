@@ -321,7 +321,7 @@ type Server struct {
 	configRejectedSources        string
 	providerSummariesMu          sync.Mutex
 	lastProviderSummaries        []ProviderSummary
-	pluginLifecycleReplayPending atomic.Bool
+	pluginLifecycleReplay        pluginLifecycleReplayState
 	refreshExtensionsForTest     func(config.Config) error
 	refreshConfigForTest         func() error
 	presenceLease                *session.AppServerPresenceLease
@@ -447,7 +447,7 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 			s.createPluginSession, s.sendPluginSession, s.listPluginSessions, s.cancelPluginSession,
 			s.inspectPluginSession, s.statusPluginWorkspace, s.applyPluginWorkspace, s.discardPluginWorkspace,
 			func(ctx context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
-				binding, err := rt.RetainState()
+				binding, err := runtime.RetainInvocationState(ctx)
 				if err != nil {
 					return pluginhost.SessionControlResult{}, err
 				}
@@ -457,11 +457,11 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 		)
 		unbindProcesses := rt.PluginSessionRouter.BindProcessSessions(s.resolvePluginProcessSession)
 		s.pluginTurnUnbind = func() { unbindTurns(); unbindProcesses() }
-		s.startBackground(s.replayPendingPluginTurnLifecycles)
+		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
 	if rt != nil && rt.SessionDir != "" {
-		s.startProjectRecovery()
+		s.startProjectRecovery(binding)
 	}
 	s.startPluginGenerationWatch()
 	s.startConfigWatch()
@@ -777,13 +777,14 @@ func (s *Server) Close() {
 		s.backgroundMu.Unlock()
 
 		s.mu.Lock()
-		threads := make([]*threadState, 0, len(s.threads))
-		for _, th := range s.threads {
+		closingThreads := s.threads
+		threads := make([]*threadState, 0, len(closingThreads))
+		for _, th := range closingThreads {
 			if th != nil {
 				threads = append(threads, th)
 			}
 		}
-		clear(s.threads)
+		s.threads = make(map[string]*threadState)
 		s.mu.Unlock()
 
 		// Close worker-turn admission before the first cancellation wave. BeginShutdown
@@ -845,8 +846,13 @@ func (s *Server) Close() {
 		clear(s.drainingQueuedTurns)
 		s.queuedTurnMu.Unlock()
 		for threadID, entries := range queuedOnClose {
+			th := closingThreads[threadID]
+			if th == nil || th.state == nil {
+				providers.DebugLogf("cannot persist queued shutdown lifecycle for thread %q: captured state is unavailable", threadID)
+				continue
+			}
 			for _, entry := range entries {
-				s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+				s.notifyPluginTurnDiscardedWithRetry(th.state, threadID, entry, "app-server closed before queued turn started", true)
 			}
 		}
 		s.agentCompletionMu.Lock()
@@ -1233,10 +1239,16 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handleThreadControl(ctx, req)
 	case "thread/control/take":
 		return s.handleThreadTakeControl(req)
-	case MethodProjectWork:
-		return s.handleProjectWork(req)
-	case MethodProjectSession:
-		return s.handleProjectSession(req)
+	case MethodProjectWork, MethodProjectSession:
+		binding, err := s.rt.RetainState()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer binding.Close()
+		if req.Method == MethodProjectWork {
+			return s.handleProjectWork(binding, req)
+		}
+		return s.handleProjectSession(binding, req)
 	case MethodThreadPin:
 		return s.handleThreadPin(req)
 	case MethodThreadOrganizationUpdate:

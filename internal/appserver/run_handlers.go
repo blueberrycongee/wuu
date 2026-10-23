@@ -640,7 +640,7 @@ func (s *Server) startOrDeferExecutionSchemaRetry(ctx context.Context, th *threa
 		tracker.schemaRetry = &executionSchemaRetry{projectID: projectID, thread: th, snapshot: snapshot, prompt: prompt, queuedAt: time.Now().UTC()}
 	}
 	s.runMu.Unlock()
-	s.kickProjectInboxDrain(projectID)
+	s.kickProjectInboxDrain(th.state, projectID)
 	return nil
 }
 

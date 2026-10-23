@@ -757,7 +757,7 @@ func (s *Server) handleTurnDequeue(req Request) error {
 		return err
 	}
 	if removed {
-		s.notifyPluginTurnDiscarded(threadID, removedTurn, "queued turn was removed")
+		s.notifyPluginTurnDiscarded(binding, threadID, removedTurn, "queued turn was removed")
 		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
 			ThreadID: threadID,
 			QueueID:  queueID,
@@ -911,9 +911,9 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 	})
 	th.applyLatestSteerDocumentOverrideLocked()
 	th.mu.Unlock()
-	s.noticeProjectUserMessage(th, steerMsg)
+	s.noticeProjectUserMessage(th.state, th, steerMsg)
 	if removedQueued {
-		s.notifyPluginTurnDiscarded(params.ThreadID, removedQueuedTurn, "queued turn was converted to steering input")
+		s.notifyPluginTurnDiscarded(binding, params.ThreadID, removedQueuedTurn, "queued turn was converted to steering input")
 		_ = s.writeNotification(NotificationTurnDequeued, TurnDequeuedNotification{
 			ThreadID: params.ThreadID,
 			QueueID:  clientID,
@@ -2152,7 +2152,7 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 	// synchronous observer callback here would otherwise re-enter that ordered
 	// process and prevent the cancellation response from ever being returned.
 	cancel()
-	s.notifyPluginTurnInterruptedAsync(pluginhost.AgentTurnInterruptedInput{
+	s.notifyPluginTurnInterruptedAsync(binding, pluginhost.AgentTurnInterruptedInput{
 		ThreadID: threadID,
 		TurnID:   turnID,
 		Cause:    "turn_interrupted",
@@ -2168,12 +2168,12 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 		return true, err
 	}
 	for _, entry := range discardedPluginTurns {
-		s.notifyPluginTurnDiscarded(threadID, entry, "queued turn was interrupted")
+		s.notifyPluginTurnDiscarded(binding, threadID, entry, "queued turn was interrupted")
 	}
 	// Pending steers have no durable history yet. Record explicit cancellation
 	// so an extension's recovery policy does not redeliver them after this stop.
 	for _, entry := range queuedTurnsFromSteers(pluginSteers) {
-		s.notifyPluginTurnDiscarded(threadID, entry, "steered input was interrupted")
+		s.notifyPluginTurnDiscarded(binding, threadID, entry, "steered input was interrupted")
 	}
 	discardedIDs := queuedTurnIDs(discardedPluginTurns)
 	s.notifyQueuedTurnsDequeued(threadID, discardedIDs)
@@ -3491,7 +3491,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	_ = s.startBackgroundWithState(binding, func(binding *runtime.State) {
 		ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
 		defer cancel()
-		if observerErr := s.notifyPluginTurnCompleted(ctx, completedObservation); observerErr != nil {
+		if observerErr := s.notifyPluginTurnCompleted(binding, ctx, completedObservation); observerErr != nil {
 			providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
 		}
 	})
@@ -3506,7 +3506,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			}
 			errorText = err.Error()
 		}
-		s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
+		s.notifyPluginTurnLifecycleAsync(binding, reference.PluginID, pluginhost.AgentTurnLifecycleInput{
 			RequestID: reference.RequestID, State: lifecycleState, ThreadID: th.ID,
 			TurnID: turnID, QueueID: reference.QueueID, Error: errorText,
 			StartedAt: &startedAt, CompletedAt: &now,
@@ -3964,7 +3964,7 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 	if s.closed.Load() {
 		entries := s.discardQueuedTurns(threadID)
 		for _, entry := range entries {
-			s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+			s.notifyPluginTurnDiscardedWithRetry(binding, threadID, entry, "app-server closed before queued turn started", true)
 		}
 		s.clearQueuedTurnDrain(threadID)
 		return
@@ -3977,9 +3977,9 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 		discardedEntries := s.discardQueuedTurns(threadID)
 		for _, entry := range discardedEntries {
 			if s.closed.Load() {
-				s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+				s.notifyPluginTurnDiscardedWithRetry(binding, threadID, entry, "app-server closed before queued turn started", true)
 			} else {
-				s.notifyPluginTurnDiscarded(threadID, entry, "thread no longer exists")
+				s.notifyPluginTurnDiscarded(binding, threadID, entry, "thread no longer exists")
 			}
 		}
 		s.clearQueuedTurnDrain(threadID)
@@ -4018,7 +4018,7 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 		// shutdown before durable admission is replayable; a rejected launcher
 		// can also return errServerClosed after the user turn was appended.
 		if _, admitted := s.findSessionInput(th, entry.msg.ClientID); !admitted {
-			s.notifyPluginTurnDiscardedWithRetry(threadID, entry, "app-server closed before queued turn started", true)
+			s.notifyPluginTurnDiscardedWithRetry(binding, threadID, entry, "app-server closed before queued turn started", true)
 			err = nil
 		}
 	}
@@ -4029,7 +4029,7 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 			// background. The drain must never synchronously re-enter a plugin
 			// helper that may be blocked inside a host service call waiting on
 			// this very drain (single-worker plugin processes).
-			s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
+			s.notifyPluginTurnLifecycleAsync(binding, reference.PluginID, pluginhost.AgentTurnLifecycleInput{
 				RequestID: reference.RequestID, State: pluginhost.TurnLifecycleFailed,
 				ThreadID: threadID, QueueID: reference.QueueID, Error: err.Error(),
 			})
@@ -4051,7 +4051,7 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 	requeued := requeueCandidate && !cancelled
 	s.clearQueuedTurnDrain(threadID)
 	if requeued && (executionBusy || retryableAdmission) {
-		if capacityFull && s.deferProjectCapacityRetry(threadID, "queued") {
+		if capacityFull && s.deferProjectCapacityRetry(binding, threadID, "queued") {
 			return
 		}
 		s.scheduleThreadExecutionLeaseRetry(binding, func(binding *runtime.State) {
@@ -4352,7 +4352,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
 	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
 	th.mu.Unlock()
-	s.noticeProjectUserMessage(th, userMsg)
+	s.noticeProjectUserMessage(th.state, th, userMsg)
 
 	return startedThreadTurn{
 		ctx:        turnCtx,
@@ -4489,7 +4489,7 @@ func (s *Server) startQueuedTurn(binding *runtime.State, ctx context.Context, th
 		// Best-effort background observation. Plugin helpers are single-worker
 		// processes; a synchronous call from the drain can re-enter a helper
 		// that is blocked in a host service waiting on this drain.
-		s.notifyPluginTurnLifecycleAsync(reference.PluginID, pluginhost.AgentTurnLifecycleInput{
+		s.notifyPluginTurnLifecycleAsync(binding, reference.PluginID, pluginhost.AgentTurnLifecycleInput{
 			RequestID: reference.RequestID, State: pluginhost.TurnLifecycleRunning,
 			ThreadID: threadID, TurnID: started.turnID, QueueID: reference.QueueID,
 			StartedAt: &started.admittedAt,
@@ -4809,7 +4809,7 @@ func (s *Server) drainAgentCompletionTurns(binding *runtime.State, threadID stri
 	}
 	s.clearAgentCompletionDrain(threadID)
 	if requeued && (executionBusy || retryableAdmission) {
-		if capacityFull && s.deferProjectCapacityRetry(threadID, "completion") {
+		if capacityFull && s.deferProjectCapacityRetry(binding, threadID, "completion") {
 			return
 		}
 		s.scheduleThreadExecutionLeaseRetry(binding, func(binding *runtime.State) {

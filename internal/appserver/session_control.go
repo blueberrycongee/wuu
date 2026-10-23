@@ -63,18 +63,18 @@ func (s *Server) readThreadSessionControl(binding *runtime.State, id string) (*T
 	if err != nil || !ok {
 		return nil, err
 	}
-	return s.threadSessionControl(id, c), nil
+	return s.threadSessionControl(binding, id, c), nil
 }
 
 // threadSessionControl names the manager. A fence left by a project that was
 // archived or deleted no longer manages the session, so it is not shown.
-func (s *Server) threadSessionControl(_ string, c session.Control) *ThreadSessionControl {
+func (s *Server) threadSessionControl(binding *runtime.State, _ string, c session.Control) *ThreadSessionControl {
 	if c.ManagerID == "" || c.State == session.ControlReleased {
 		return nil
 	}
 	name := c.ManagerID
 	if !strings.HasPrefix(c.ManagerID, "plugin:") {
-		project, live := s.projectCoordinator(c.ManagerID)
+		project, live := s.projectCoordinator(binding, c.ManagerID)
 		if !live {
 			return nil
 		}
@@ -96,7 +96,7 @@ func (s *Server) takeSessionControlForInput(binding *runtime.State, id string) e
 		return err
 	}
 	if ok && c.State != session.ControlReleased && !strings.HasPrefix(c.ManagerID, "plugin:") {
-		if _, live := s.projectCoordinator(c.ManagerID); live {
+		if _, live := s.projectCoordinator(binding, c.ManagerID); live {
 			return nil
 		}
 	}
@@ -118,7 +118,7 @@ func (s *Server) takeSessionControl(binding *runtime.State, id, state string) er
 	if !ok || c.State == session.ControlReleased {
 		return nil
 	}
-	project, live := s.projectCoordinator(c.ManagerID)
+	project, live := s.projectCoordinator(binding, c.ManagerID)
 	if live {
 		// Stop revokes previously admitted inputs, not membership. A later
 		// explicit instruction uses the new revision and remains admissible.
@@ -133,17 +133,17 @@ func (s *Server) takeSessionControl(binding *runtime.State, id, state string) er
 	s.revokeSessionInputs(binding, id)
 	s.publishSessionControl(binding, id)
 	if live {
-		if w, found, err := s.workForMember(project.ID, id); err != nil {
+		if w, found, err := s.workForMember(binding, project.ID, id); err != nil {
 			return err
 		} else if found && w.Phase != "stopped" {
-			if _, err := s.projectWork(context.Background(), project.ID, fmt.Sprintf("member-stop:%s:%d", id, c.Revision), tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: w.Revision}); err != nil {
+			if _, err := s.projectWork(binding, context.Background(), project.ID, fmt.Sprintf("member-stop:%s:%d", id, c.Revision), tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: w.Revision}); err != nil {
 				return err
 			}
 		}
 	}
 
 	if live {
-		s.enqueueProjectInput(project.ID, id, fmt.Sprintf("project-control:%s:%d", id, c.Revision), projectCauseStopped,
+		s.enqueueProjectInput(binding, project.ID, id, fmt.Sprintf("project-control:%s:%d", id, c.Revision), projectCauseStopped,
 			"The user stopped this session. Respect their stop intent; do not automatically restart the stopped work. The session remains a project member and may receive new instructions later.", false)
 	}
 	return nil

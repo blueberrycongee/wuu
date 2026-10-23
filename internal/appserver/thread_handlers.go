@@ -163,7 +163,7 @@ func (s *Server) handleThreadStart(req Request) error {
 	// Review is owned by the built-in engine and never expands permission mode.
 	selection.ApproveForMe = selection.ApproveForMe && engineID == agentengine.EngineWuu && approvefor.EnabledForMode(selection.PermissionMode)
 	if params.Project != nil {
-		th, err := s.startProjectThread(selection, engineID, params)
+		th, err := s.startProjectThread(binding, selection, engineID, params)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1399,7 +1399,7 @@ func (s *Server) threadListResult(binding *runtime.State, entries map[string]thr
 		if err != nil {
 			return ThreadListResult{}, err
 		}
-		entry.thread.SessionControl = s.threadSessionControl(entry.thread.ID, controls[entry.thread.ID])
+		entry.thread.SessionControl = s.threadSessionControl(binding, entry.thread.ID, controls[entry.thread.ID])
 		// Sidebar refreshes are summary lists. Dirty worktree state is a git
 		// status per checkout, and a workspace can store one for many
 		// sessions. Running those on every list blocks the app server.
