@@ -170,7 +170,10 @@ function descriptor(name, methods, preparation = []) {
 var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
 var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
 var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
-var ARTIFACT_STORE_DESCRIPTOR = descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "fork"]);
+var ARTIFACT_STORE_DESCRIPTOR = {
+  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "fork", "delete-thread"]),
+  version: "1.1.0"
+};
 
 // packages/plugin-sdk/src/coordination.ts
 var PROJECT_COORDINATION_SERVICE = "project.coordination";

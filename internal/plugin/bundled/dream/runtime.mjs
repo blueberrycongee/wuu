@@ -144,6 +144,61 @@ var PUBLIC_ICON_NAME_SET = new Set(PUBLIC_ICON_NAMES);
 // packages/plugin-sdk/src/bundle-contract.ts
 var encoder = new TextEncoder();
 
+// packages/plugin-sdk/src/providers.ts
+var CREDENTIAL_STORE_SERVICE = "state.credentials";
+var CONFIG_SOURCE_SERVICE = "state.config";
+var PLUGIN_SETTINGS_STORE_SERVICE = "state.plugin-settings";
+var ARTIFACT_STORE_SERVICE = "state.artifacts";
+function descriptor(name, methods, preparation = []) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`,
+    ...preparation.includes(method) ? { preparation: true } : {}
+  })) };
+}
+var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
+var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var ARTIFACT_STORE_DESCRIPTOR = {
+  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "fork", "delete-thread"]),
+  version: "1.1.0"
+};
+
+// packages/plugin-sdk/src/coordination.ts
+var PROJECT_COORDINATION_SERVICE = "project.coordination";
+var MANAGED_SESSION_SERVICE = "host.managed-session";
+function descriptor2(name, methods) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`
+  })) };
+}
+var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
+  "scheduler",
+  "session",
+  "work",
+  "membership",
+  "create",
+  "turn",
+  "user-input",
+  "inbox",
+  "schedule",
+  "recover",
+  "instructions",
+  "member-work",
+  "coordinator",
+  "enqueue",
+  "capacity",
+  "work-list",
+  "tool-policy",
+  "tool-validate",
+  "tool-config",
+  "admission"
+]);
+var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
@@ -224,7 +279,11 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: null };
     }
   } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...code ? { code } : {},
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)
+    } };
   }
 }
 function scopedRuntimeHost(host, execution) {
