@@ -635,13 +635,17 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 				t.Fatal(err)
 			}
 			configuration := config.NewService(config.Module, session.ConfigPath, "")
-			if err := configuration.Activate(context.Background()); err != nil {
+			consumer := &fakeServicePluginClient{id: StateServicesConsumer, required: []pluginhost.ServiceRequirement{{Name: config.ServiceName, MajorVersion: 1, Required: true}}}
+			session.PluginHost.Add(configuration)
+			session.PluginHost.Add(consumer)
+			registry, conflicts := pluginhost.BuildServiceRegistry(configuration, consumer)
+			if len(conflicts) != 0 {
+				t.Fatal(conflicts)
+			}
+			session.PluginHost.AttachServiceRegistry(registry, conflicts)
+			if err := session.PluginHost.Activate(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = configuration.Close(context.Background()) })
-			session.configClient = config.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-				return configuration.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: config.ServiceName, Method: method, Params: raw})
-			})
 			defer session.Cleanup()
 			defer session.pluginGeneration.close()
 			selection := ThreadModelSelection{Provider: "fixture", Model: model}
