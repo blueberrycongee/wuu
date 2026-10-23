@@ -438,7 +438,8 @@ func TestResolveAuthToken_NonMiniMaxStoredAuthTokenStaysBearer(t *testing.T) {
 		BaseURL: "https://api.anthropic.com",
 		Model:   "claude-3-5-sonnet-latest",
 	}
-	if got := resolveAuthToken(provider, "anthropic"); got != "bearer-token" {
+	stored, _ := store.Get("anthropic")
+	if got := resolveAuthToken(provider, "anthropic", stored); got != "bearer-token" {
 		t.Fatalf("auth token = %q, want bearer-token", got)
 	}
 }
@@ -683,11 +684,12 @@ func TestResolveAuthToken_SavedTokenBeatsImplicitDefaultEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := config.ProviderConfig{Type: "anthropic", BaseURL: "https://api.anthropic.com", Model: "claude"}
-	if got := resolveAuthToken(provider, "anthropic"); got != "saved-token" {
+	stored, _ := store.Get("anthropic")
+	if got := resolveAuthToken(provider, "anthropic", stored); got != "saved-token" {
 		t.Fatalf("auth token = %q, want the saved token", got)
 	}
 	provider.AuthTokenEnv = "ANTHROPIC_AUTH_TOKEN"
-	if got := resolveAuthToken(provider, "anthropic"); got != "ambient-token" {
+	if got := resolveAuthToken(provider, "anthropic", stored); got != "ambient-token" {
 		t.Fatalf("explicit auth_token_env = %q, want it to win", got)
 	}
 }

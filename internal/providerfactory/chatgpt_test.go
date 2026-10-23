@@ -46,7 +46,7 @@ func TestChatGPTRequiresExplicitGenerationManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	if _, err := BuildClient(provider, "chatgpt", manager); err == nil || !strings.Contains(err.Error(), "not found") {
+	if _, err := BuildClient(provider, "chatgpt", Bindings{ChatGPT: manager}); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("factory did not use injected account manager: %v", err)
 	}
 }

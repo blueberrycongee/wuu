@@ -2,6 +2,7 @@ package providerfactory
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
 	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
@@ -25,29 +27,31 @@ import (
 // title generator, or compaction job.
 var sharedProviderCoordinator = providers.NewProviderCoordinator(providers.DefaultProviderCoordinatorConfig())
 
-// BuildClient constructs a single-submission protocol client. A supplied
-// ChatGPT manager is owned by the calling generation, which closes it only
-// after every client and login consumer finishes cleanup. providerName is
-// the key under which this provider lives
-// in the config map; it's needed so resolveAPIKey can fall back to the global
-// auth store.
-func BuildClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.Client, error) {
-	return buildClient(provider, providerName, managers...)
+// Bindings captures services owned by the calling generation. The caller keeps
+// them alive for every client and login operation and owns their cleanup.
+type Bindings struct {
+	Credentials credentialstore.Store
+	ChatGPT     *siwc.Manager
+}
+
+// BuildClient constructs a single-submission protocol client. Without bindings,
+// only explicit config and environment credentials are available.
+func BuildClient(provider config.ProviderConfig, providerName string, bindings ...Bindings) (providers.Client, error) {
+	return buildClient(provider, providerName, bindings...)
 }
 
 // BuildStreamClient constructs a streaming-capable provider client using the
-// provider default retry policy. providerName is the config map key; see
-// BuildClient for why this matters for the global auth-store fallback.
-func BuildStreamClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.StreamClient, error) {
-	client, err := buildClient(provider, providerName, managers...)
+// provider default retry policy and the same captured services as BuildClient.
+func BuildStreamClient(provider config.ProviderConfig, providerName string, bindings ...Bindings) (providers.StreamClient, error) {
+	client, err := buildClient(provider, providerName, bindings...)
 	if err != nil {
 		return nil, err
 	}
 	return providers.AdaptStreamClient(client), nil
 }
 
-func BuildRuntimeStreamClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.StreamClient, error) {
-	client, err := BuildStreamClient(provider, providerName, managers...)
+func BuildRuntimeStreamClient(provider config.ProviderConfig, providerName string, bindings ...Bindings) (providers.StreamClient, error) {
+	client, err := BuildStreamClient(provider, providerName, bindings...)
 	if err == nil {
 		return client, nil
 	}
@@ -60,6 +64,9 @@ func BuildRuntimeStreamClient(provider config.ProviderConfig, providerName strin
 func IsCredentialError(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, authstorage.ErrUnavailable) {
+		return true
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "no chatgpt account credentials") ||
@@ -204,7 +211,16 @@ func isFirstPartyOpenAIResponsesBaseURL(raw string) bool {
 		u == "https://chatgpt.com/backend-api/codex"
 }
 
-func buildClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.Client, error) {
+func buildClient(provider config.ProviderConfig, providerName string, bindings ...Bindings) (providers.Client, error) {
+	if len(bindings) > 1 {
+		return nil, errors.New("one provider service binding is required")
+	}
+	var bound Bindings
+	var store *authstorage.Store
+	if len(bindings) == 1 {
+		bound = bindings[0]
+		store = authstorage.NewBound(context.Background(), bound.Credentials)
+	}
 	profile, err := resolveProviderProfile(provider)
 	if err != nil {
 		return nil, err
@@ -222,10 +238,10 @@ func buildClient(provider config.ProviderConfig, providerName string, managers .
 			if strings.TrimSpace(provider.ChatGPTAccountID) == "" {
 				return nil, fmt.Errorf("no ChatGPT account credentials; sign in with ChatGPT")
 			}
-			if len(managers) != 1 || managers[0] == nil {
+			if bound.ChatGPT == nil {
 				return nil, fmt.Errorf("no ChatGPT account credentials: selected credential manager is unavailable")
 			}
-			manager := managers[0]
+			manager := bound.ChatGPT
 			account, err := manager.Account(context.Background(), provider.ChatGPTAccountID)
 			if err != nil {
 				return nil, fmt.Errorf("no ChatGPT account credentials: %w", err)
@@ -284,7 +300,7 @@ func buildClient(provider config.ProviderConfig, providerName string, managers .
 			}
 			return client, nil
 		}
-		apiKey, apiKeyErr := resolveAPIKey(provider, providerName)
+		apiKey, apiKeyErr := resolveAPIKey(provider, providerName, store)
 		if apiKeyErr != nil {
 			return nil, apiKeyErr
 		}
@@ -302,7 +318,7 @@ func buildClient(provider config.ProviderConfig, providerName string, managers .
 		}
 		return client, nil
 	case wireAnthropicMessages:
-		apiKey, authToken, apiKeyErr := resolveAnthropicCredentials(provider, providerName)
+		apiKey, authToken, apiKeyErr := resolveAnthropicCredentials(provider, providerName, store)
 		if apiKeyErr != nil {
 			return nil, apiKeyErr
 		}
@@ -370,64 +386,63 @@ func normalizeType(value string) string {
 	return s
 }
 
-// ResolveAPIKeyWithHome resolves API key with explicit home directory.
-//
-// Order: config api_key, the configured api_key_env, a key the user saved for
-// this provider, the provider type's implicit default env var, then any other
-// stored key. Saved keys rank above the implicit default only because that
-// variable is ambient and says nothing about this service.
-func ResolveAPIKeyWithHome(provider config.ProviderConfig, providerName, home string) (string, error) {
-	// 1. Explicit api_key in config.
-	if strings.TrimSpace(provider.APIKey) != "" {
-		return strings.TrimSpace(provider.APIKey), nil
-	}
+// ResolveAPIKey resolves credentials from the supplied service. A service error
+// is never replaced with an ambient environment or local-file credential.
+func ResolveAPIKey(provider config.ProviderConfig, providerName string, selected credentialstore.Store) (string, error) {
+	return resolveAPIKey(provider, providerName, authstorage.NewBound(context.Background(), selected))
+}
 
+// ResolveAPIKeyWithHome is an explicit legacy-file adapter for migration tools.
+func ResolveAPIKeyWithHome(provider config.ProviderConfig, providerName, home string) (string, error) {
+	store, err := authstorage.ForHome(home)
+	if err != nil {
+		return "", err
+	}
+	return resolveAPIKey(provider, providerName, store)
+}
+
+func loadStoredCredentials(store *authstorage.Store, providerName string) (authstorage.Credentials, error) {
+	if store == nil || providerName == "" {
+		return authstorage.Credentials{}, nil
+	}
+	credentials, err := store.Get(providerName)
+	if errors.Is(err, authstorage.ErrNotFound) {
+		return authstorage.Credentials{}, nil
+	}
+	return credentials, err
+}
+
+func resolveAPIKey(provider config.ProviderConfig, providerName string, store *authstorage.Store) (string, error) {
+	if explicit := resolveExplicitAPIKey(provider); explicit != "" {
+		return explicit, nil
+	}
+	stored, err := loadStoredCredentials(store, providerName)
+	if err != nil {
+		return "", err
+	}
+	return resolveStoredAPIKey(provider, providerName, stored)
+}
+
+func resolveStoredAPIKey(provider config.ProviderConfig, providerName string, stored authstorage.Credentials) (string, error) {
+	storedKey := storedAPIKey(stored, provider, providerName)
+	if storedKey != "" && stored.Source == authstorage.SourceSaved {
+		return storedKey, nil
+	}
 	envKey := strings.TrimSpace(provider.APIKeyEnv)
-	if envKey != "" {
+	if envKey == "" {
+		envKey = defaultAPIKeyEnv(normalizeType(provider.Type))
 		if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
 			return value, nil
 		}
 	}
-
-	stored, hasStored := storedCredentials(home, providerName)
-	storedKey := ""
-	if hasStored {
-		storedKey = storedAPIKey(stored, provider, providerName)
-	}
-	if storedKey != "" && stored.Source == authstorage.SourceSaved {
-		return storedKey, nil
-	}
-
-	if envKey == "" {
-		envKey = defaultAPIKeyEnv(normalizeType(provider.Type))
-		if envKey != "" {
-			if value := strings.TrimSpace(os.Getenv(envKey)); value != "" {
-				return value, nil
-			}
-		}
-	}
-
 	if storedKey != "" {
 		return storedKey, nil
 	}
-
 	hint := "set api_key or run wuu init"
 	if envKey != "" {
 		hint = fmt.Sprintf("set api_key, %s env var, or run wuu init", envKey)
 	}
 	return "", fmt.Errorf("no API key found for provider %q (%s)", provider.Type, hint)
-}
-
-func storedCredentials(home, providerName string) (authstorage.Credentials, bool) {
-	if home == "" || providerName == "" {
-		return authstorage.Credentials{}, false
-	}
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		return authstorage.Credentials{}, false
-	}
-	credentials, err := store.Get(providerName)
-	return credentials, err == nil
 }
 
 func storedAPIKey(credentials authstorage.Credentials, provider config.ProviderConfig, providerName string) string {
@@ -438,10 +453,6 @@ func storedAPIKey(credentials authstorage.Credentials, provider config.ProviderC
 		return strings.TrimSpace(credentials.AuthToken)
 	}
 	return ""
-}
-
-func resolveAPIKey(provider config.ProviderConfig, providerName string) (string, error) {
-	return ResolveAPIKeyWithHome(provider, providerName, os.Getenv("HOME"))
 }
 
 func resolveExplicitAPIKey(provider config.ProviderConfig) string {
@@ -456,7 +467,7 @@ func resolveExplicitAPIKey(provider config.ProviderConfig) string {
 
 // Resolve the connection's credentials as a pair. Independently falling back
 // for each header can send an unrelated ambient credential to a custom endpoint.
-func resolveAnthropicCredentials(provider config.ProviderConfig, providerName string) (string, string, error) {
+func resolveAnthropicCredentials(provider config.ProviderConfig, providerName string, store *authstorage.Store) (string, string, error) {
 	apiKey := resolveExplicitAPIKey(provider)
 	authToken := strings.TrimSpace(provider.AuthToken)
 	if authToken == "" {
@@ -467,7 +478,11 @@ func resolveAnthropicCredentials(provider config.ProviderConfig, providerName st
 	if apiKey != "" || authToken != "" {
 		return apiKey, authToken, nil
 	}
-	if stored, ok := storedCredentials(os.Getenv("HOME"), providerName); ok && stored.Source == authstorage.SourceSaved {
+	stored, err := loadStoredCredentials(store, providerName)
+	if err != nil {
+		return "", "", err
+	}
+	if stored.Source == authstorage.SourceSaved {
 		if key := storedAPIKey(stored, provider, providerName); key != "" {
 			return key, "", nil
 		}
@@ -477,8 +492,8 @@ func resolveAnthropicCredentials(provider config.ProviderConfig, providerName st
 	}
 	// Preserve the environment/default behavior for connections without a
 	// selected credential, including older imported auth-store entries.
-	apiKey, err := resolveAPIKey(provider, providerName)
-	authToken = resolveAuthToken(provider, providerName)
+	apiKey, err = resolveStoredAPIKey(provider, providerName, stored)
+	authToken = resolveAuthToken(provider, providerName, stored)
 	if authToken != "" {
 		err = nil
 	}
@@ -487,7 +502,7 @@ func resolveAnthropicCredentials(provider config.ProviderConfig, providerName st
 
 // resolveAuthToken resolves a Bearer auth token from config or environment.
 // This mirrors the Anthropic SDK's ANTHROPIC_AUTH_TOKEN support.
-func resolveAuthToken(provider config.ProviderConfig, providerName string) string {
+func resolveAuthToken(provider config.ProviderConfig, providerName string, credentials authstorage.Credentials) string {
 	if t := strings.TrimSpace(provider.AuthToken); t != "" {
 		return t
 	}
@@ -495,10 +510,8 @@ func resolveAuthToken(provider config.ProviderConfig, providerName string) strin
 	storedToken := ""
 	saved := false
 	if providerName != "" && !shouldTreatStoredAuthTokenAsAPIKey(provider, providerName) {
-		if credentials, ok := storedCredentials(os.Getenv("HOME"), providerName); ok {
-			storedToken = strings.TrimSpace(credentials.AuthToken)
-			saved = credentials.Source == authstorage.SourceSaved
-		}
+		storedToken = strings.TrimSpace(credentials.AuthToken)
+		saved = credentials.Source == authstorage.SourceSaved
 	}
 	envKey := strings.TrimSpace(provider.AuthTokenEnv)
 	if envKey != "" {
