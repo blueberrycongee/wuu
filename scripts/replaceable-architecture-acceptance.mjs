@@ -13,16 +13,17 @@ const { values } = parseArgs({ options: {
   help: { type: "boolean" },
 } });
 if (values.help) {
-  console.log("node scripts/replaceable-architecture-acceptance.mjs --suite domains|boundaries|sdk|all [--candidate SHA] [--output DIR]");
+  console.log("node scripts/replaceable-architecture-acceptance.mjs --suite domains|boundaries|sdk|external|all [--candidate SHA] [--output DIR]");
   console.log("Domains validates real cross-domain document migration. Boundaries runs existing race-tested storage/graph contracts. SDK runs the independent SDK process and CLI journey. These checks do not certify production composition, legacy import, or UI acceptance.");
   process.exit(0);
 }
 const suites = {
-  domains: [["cross-domain-migration", "go", ["test", "-race", "-count=1", "-json", "./scripts/replaceable-architecture-acceptance"]]],
+  domains: [["cross-domain-migration", "go", ["test", "-race", "-count=1", "-json", "./scripts/replaceable-architecture-acceptance", "-run", "^TestAcceptanceCrossDomainMigration$"]]],
   boundaries: [
     ["storage-and-host", "go", ["test", "-race", "-count=1", "-json", "./internal/persistence", "./internal/pluginhost"]],
     ["retained-generations", "go", ["test", "-race", "-count=1", "-json", "./internal/runtime", "-run", "Test(RetainedGeneration|Candidate|FailedCandidate|ActivatePluginGeneration|DisabledRuntime|ThreadModel|BuiltPluginGenerations|PluginSystemPromptFailure|RefreshCandidate|PackageDependency)"]],
   ],
+  external: [["external-provider-parity", process.execPath, ["scripts/replaceable-architecture-external.mjs"]]],
   sdk: [["sdk-process-and-transfer", process.execPath, ["scripts/document-state-e2e.mjs"]]],
 };
 const selection = values.suite === "all" ? Object.values(suites).flat() : suites[values.suite];
