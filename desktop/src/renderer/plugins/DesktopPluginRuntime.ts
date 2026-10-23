@@ -214,7 +214,7 @@ export class DesktopPluginRuntime {
     const knownPluginIds = new Set([...previousOrder.reverse(), ...this.activeGenerations.keys()]);
     for (const pluginId of knownPluginIds) {
       const plugin = desired.get(pluginId);
-      if (!plugin?.desktop || previousDesired.get(pluginId)?.graph_generation !== plugin.graph_generation || dependenciesChanged(pluginId)) {
+      if (!plugin?.desktop || dependenciesChanged(pluginId)) {
         const cleanup = unload(pluginId);
         if (cleanup) await cleanup;
         if (epoch !== this.syncEpoch) return [];

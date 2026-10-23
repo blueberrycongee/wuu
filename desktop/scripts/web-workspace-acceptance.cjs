@@ -1854,17 +1854,60 @@ async function runWebsiteAcceptance(h, fixture) {
     await click(plugins, 'disable-extension-inventory');
     await click(pick('.sidebar-section-item', 'Plugins'), 'plugin-details-for-disable');
     if (await evaluate(() => !!document.querySelector('.catalog-row-open[aria-label*="Acceptance Webpage"]'))) await click('.catalog-row-open[aria-label*="Acceptance Webpage"]', 'open-enabled-fixture');
-    await click('button[role="switch"][aria-label="Turn off Acceptance Webpage"]', 'disable-authored-extension');
-    await waitFor(() => !document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]'));
-    await until(() => !contents('/extension'), 'disabled extension native contents destroyed');
-    await capture('extension-disabled-cleanly');
-    assert.ok(wc.isDestroyed());
+    await evaluate(() => {
+      const evidence = { startedAt: performance.now(), frames: 0, mutations: 0, failures: [], transitions: [] };
+      let previous, frame;
+      const sample = source => {
+        const recovery = document.querySelector('.application-recovery');
+        const toggle = document.querySelector('button[role="switch"][aria-label="Turn on Acceptance Webpage"]');
+        const state = { mounted: Boolean(document.querySelector('.app-shell')), recovery: recovery?.textContent ?? null,
+          disabled: Boolean(toggle && !toggle.disabled && toggle.getAttribute('aria-checked') === 'false') };
+        const key = JSON.stringify(state);
+        if (key !== previous) {
+          const snapshot = { at: performance.now(), source, ...state };
+          evidence.transitions.push(snapshot);
+          if (!state.mounted || recovery) evidence.failures.push({ ...snapshot, html: document.body.innerHTML.slice(0, 12000) });
+          previous = key;
+        }
+      };
+      const observer = new MutationObserver(records => { evidence.mutations += records.length; sample('mutation'); });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+      const tick = () => { evidence.frames++; sample('frame'); frame = requestAnimationFrame(tick); };
+      sample('before-disable'); frame = requestAnimationFrame(tick);
+      window.__wuuExtensionDisableContinuity = { stop: () => {
+        sample('after-disable'); observer.disconnect(); cancelAnimationFrame(frame);
+        return { ...evidence, endedAt: performance.now() };
+      } };
+    });
+    let continuity;
+    try {
+      await click('button[role="switch"][aria-label="Turn off Acceptance Webpage"]', 'disable-authored-extension');
+      await waitFor(() => {
+        const toggle = document.querySelector('button[role="switch"][aria-label="Turn on Acceptance Webpage"]');
+        return toggle && !toggle.disabled && toggle.getAttribute('aria-checked') === 'false'
+          && !document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]');
+      }, undefined, 'Disabled extension details remain available');
+      await until(() => !contents('/extension'), 'disabled extension native contents destroyed');
+      await capture('extension-disabled-cleanly');
+      assert.ok(wc.isDestroyed());
+    } finally {
+      continuity = await evaluate(() => {
+        const result = window.__wuuExtensionDisableContinuity.stop();
+        delete window.__wuuExtensionDisableContinuity; return result;
+      }).catch(error => ({ unavailable: String(error) }));
+      report.extensionDisableContinuity = continuity;
+      fs.writeFileSync(path.join(output, 'extension-disable-shell-continuity.json'), JSON.stringify(continuity, null, 2));
+      save();
+    }
+    assert.equal(continuity.unavailable, undefined, 'Shell continuity evidence is available');
+    assert.ok(continuity.frames > 0, 'Observe real renderer frames throughout disable');
+    assert.deepEqual(continuity.failures, [], 'Disabling an unrelated extension never removes the selected shell or shows application recovery');
     await click('button[role="switch"][aria-label="Turn on Acceptance Webpage"]', 're-enable-authored-extension');
     await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]'), undefined, 'fixture re-enabled', 20000);
     const replacement = await openSite('Fixture Website', '/extension');
     assert.notEqual(replacement.id, wc.id, 'Re-enabled generation gets a new page');
     assert.equal(views().filter(view => view.webContents.getURL() === origin + '/extension').length, 1, 'Exactly one replacement plugin native page');
-    return { layout, multipleWebsiteDestinations: true, ordinaryNavigation, sharedCookieRetained: true, hiddenPageRetained: true, retainedDraft: true, oldGenerationDestroyed: true, singleReplacementPage: true };
+    return { layout, multipleWebsiteDestinations: true, ordinaryNavigation, sharedCookieRetained: true, hiddenPageRetained: true, retainedDraft: true, oldGenerationDestroyed: true, singleReplacementPage: true, shellContinuity: continuity };
   });
   // Public availability is diagnostic; actual tab ownership, chrome and return
   // behavior remain product gates even when a service blocks anonymous access.
