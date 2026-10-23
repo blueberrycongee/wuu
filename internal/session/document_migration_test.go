@@ -201,3 +201,24 @@ func TestLegacyMigrationRecoversUncertainCommit(t *testing.T) {
 		t.Fatalf("recovery: %+v %v", result, err)
 	}
 }
+
+func TestLegacyMigrationRecorded(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, store *Store) {
+		documents := &boundedSessionDocuments{Documents: store.documents}
+		recorded, err := LegacySQLiteMigrationRecorded(context.Background(), documents)
+		if err != nil || recorded {
+			t.Fatalf("new store migration marker: %v %v", recorded, err)
+		}
+		legacy := t.TempDir()
+		if _, err := Create(legacy, "marker"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := MigrateLegacySQLite(context.Background(), legacy, store.documents); err != nil {
+			t.Fatal(err)
+		}
+		recorded, err = LegacySQLiteMigrationRecorded(context.Background(), documents)
+		if err != nil || !recorded {
+			t.Fatalf("committed migration marker: %v %v", recorded, err)
+		}
+	})
+}

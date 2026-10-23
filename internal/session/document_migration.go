@@ -30,6 +30,24 @@ type LegacyMigrationResult struct {
 	AlreadyMigrated bool           `json:"-"`
 }
 
+// LegacySQLiteMigrationRecorded reports whether the selected authority has a
+// completed legacy conversion. This bounded marker read does not verify that
+// the source stayed unchanged; callers must still run MigrateLegacySQLite.
+func LegacySQLiteMigrationRecorded(ctx context.Context, documents persistence.Documents) (bool, error) {
+	view, err := documents.Read(ctx, persistence.Query{Namespace: documentNamespace("legacy_sqlite_migrations"), Keys: []string{dbFileName}})
+	if err != nil || len(view.Documents) == 0 {
+		return false, err
+	}
+	var result LegacyMigrationResult
+	if err := json.Unmarshal(view.Documents[0].Value, &result); err != nil {
+		return false, fmt.Errorf("%w: invalid legacy migration marker", persistence.ErrCorrupt)
+	}
+	if result.Fingerprint == "" {
+		return false, fmt.Errorf("%w: incomplete legacy migration marker", persistence.ErrCorrupt)
+	}
+	return true, nil
+}
+
 // MigrateLegacySQLite imports a stopped legacy writer into the selected provider.
 // Every converted document, raw source row and completion marker commits in one
 // transaction. Conflicting destination namespaces are rejected. An uncertain
