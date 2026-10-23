@@ -293,6 +293,12 @@ jobs:
       - name: Install fonts for multilingual selection captures
         if: ${{ matrix.suite != 'unit' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         run: |
+          # Hosted images can select the slow Azure archive through a mirror list.
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
 
@@ -1101,6 +1107,11 @@ jobs:
       - name: Build headless workspace acceptance prerequisites
         run: |
           npm --prefix desktop run build:remote
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           clients/mobile-web/node_modules/.bin/playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install -y openssh-server
@@ -1262,6 +1273,11 @@ jobs:
           cache-dependency-path: go.sum
       - name: Install Linux packaging dependencies
         run: |
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2
           npm ci --prefix desktop

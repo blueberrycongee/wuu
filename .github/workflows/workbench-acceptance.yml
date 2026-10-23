@@ -98,8 +98,12 @@ jobs:
         run: |
           npm ci --prefix desktop
           node desktop/node_modules/electron/install.js
-          # The hosted Azure mirror can consume the entire visual-test budget.
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+          # Hosted images can select the slow Azure archive through a mirror list.
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y xvfb ffmpeg openbox xdotool x11-utils fonts-noto-cjk fonts-noto-color-emoji pulseaudio pulseaudio-utils
           pulseaudio --check || pulseaudio --start --exit-idle-time=-1
