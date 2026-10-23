@@ -966,6 +966,7 @@ func NewSession(opts Options) (*Session, error) {
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
 	initialGeneration.revokedMu.Lock()
+	initialGeneration.systemPrompt = baseSystemPrompt
 	initialGeneration.models = captureGenerationModelBindings(runtimeSession)
 	initialGeneration.models.config = cfg
 	initialGeneration.settings = cfg
@@ -2924,7 +2925,16 @@ func (s *Session) RefreshSystemPrompt(providerName, model string) string {
 	if s == nil {
 		return ""
 	}
-	return s.refreshSystemPromptWithSkills(providerName, model, s.AvailableSkills())
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	generation := s.pluginGeneration
+	prompt := s.refreshSystemPromptWithSkills(providerName, model, generation.filterSkills(s.Skills))
+	if generation != nil {
+		generation.revokedMu.Lock()
+		generation.systemPrompt = prompt
+		generation.revokedMu.Unlock()
+	}
+	return prompt
 }
 
 // applyPluginGeneration already holds the session publication lock. Its caller

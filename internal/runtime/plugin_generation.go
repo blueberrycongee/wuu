@@ -38,6 +38,7 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
+	systemPrompt      string
 	models            *generationModelBindings
 	id                string
 	state             *runtimeState
@@ -372,6 +373,12 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
+	// Activation callbacks belong to this candidate before it is published.
+	// Materialize its prompt from prepared contributions, never the live runner.
+	s.pluginGenerationMu.Lock()
+	basePrompt := buildBaseSystemPromptContent(s.RootDir, s.SessionDate, config.DefaultSystemPrompt(), "", s.ProviderName, s.Model, activeSurfaceWithDeferredToolCatalog(s.Toolkit, s.DeferredToolCatalogPrompt), s.InstructionFiles, "", "", generation.skills)
+	generation.systemPrompt, _ = assemblePluginSystemPrompt(basePrompt, generation.systemPrompts)
+	s.pluginGenerationMu.Unlock()
 	kernel.bindStateGeneration(generation, s)
 	if kernel.selectedServices != nil {
 		generation.credentials = kernel.selectedServices.credentials
@@ -802,6 +809,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 		systemPrompts:     s.systemPrompts,
 	}
 	if s.StreamRunner != nil {
+		generation.systemPrompt = s.StreamRunner.SystemPrompt
 		generation.compactions = s.StreamRunner.CompactionRegistry
 	}
 	generation.bindActivityOwnership(s.ActivityRegistry)
@@ -853,7 +861,10 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.Toolkit.SetMCPManager(generation.mcp)
 		configureToolkitSecurityExtensions(s.Toolkit, generation.host)
 	}
-	s.refreshSystemPromptWithSkills(s.ProviderName, s.Model, generation.filterSkills(generation.skills))
+	prompt := s.refreshSystemPromptWithSkills(s.ProviderName, s.Model, generation.filterSkills(generation.skills))
+	generation.revokedMu.Lock()
+	generation.systemPrompt = prompt
+	generation.revokedMu.Unlock()
 }
 
 // close retires every generation-owned resource in reverse ownership order
