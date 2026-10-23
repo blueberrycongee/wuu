@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -202,4 +203,34 @@ func newTurnTraceIndexFixture(t *testing.T, provider *turnTraceIndexProvider) (*
 	t.Cleanup(func() { _ = host.Close(context.Background()) })
 	rt.PluginHost = host
 	return &Server{rt: rt}, testRuntimeState(t, rt)
+}
+
+type nativeTraceServiceConsumer struct{ configSourceConsumer }
+
+func (*nativeTraceServiceConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return append((&configSourceConsumer{}).RequiredServices(), pluginhost.ServiceRequirement{
+		Name: pluginhost.KernelDataQueryService, MajorVersion: pluginhost.DataQueryServiceMajor, Required: true,
+	})
+}
+
+func bindNativeTraceForTest(t *testing.T, rt *runtime.Session) {
+	t.Helper()
+	source := config.NewService(config.Module, rt.ConfigPath, "")
+	home := os.Getenv("HOME")
+	credentials := credentialstore.NewService("test.trace-credentials", func() (credentialstore.Store, error) {
+		return nativeCredentialFixture(t, home), nil
+	})
+	index := runtime.NewDataQueryService(runtime.DataQueryModule, t.TempDir())
+	consumer := &nativeTraceServiceConsumer{}
+	host := pluginhost.New(source, credentials, index, consumer)
+	registry, conflicts := pluginhost.BuildServiceRegistry(source, credentials, index, consumer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	rt.PluginHost = host
 }

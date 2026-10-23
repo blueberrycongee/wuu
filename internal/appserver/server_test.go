@@ -4328,6 +4328,7 @@ func TestServerTurnStartRunsAgentLoop(t *testing.T) {
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -4577,6 +4578,7 @@ func TestServerThreadContextCompositionReturnsLatestRequest(t *testing.T) {
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	raw, err := json.Marshal(map[string]any{
@@ -4945,6 +4947,7 @@ func TestServerTurnPermissionModeChangesExecutionWithoutCacheDrift(t *testing.T)
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -5079,6 +5082,7 @@ func TestServerQueuedTurnReResolvesPermissionsAtStart(t *testing.T) {
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
