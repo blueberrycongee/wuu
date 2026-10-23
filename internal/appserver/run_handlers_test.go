@@ -40,6 +40,7 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	defer srv.Close()
 	thread := newThreadState("ephemeral-run-thread", []providers.ChatMessage{{Role: "system", Content: "system"}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	thread.Ephemeral = true
+	thread.state = testRuntimeState(t, rt)
 	srv.threads[thread.ID] = thread
 	rt.ActivityRegistry = activity.NewRegistry()
 	options := activity.StartOptions{ThreadID: thread.ID, Workdir: rt.RootDir, Kind: activity.KindBrowser, PluginID: "browser"}
@@ -69,17 +70,16 @@ func TestRunStartSettlesManifest(t *testing.T) {
 		t.Fatalf("text-only run should leave browser ready but idle: %+v", current)
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		stored, getErr := srv.runStore.Get(context.Background(), run.ID)
-		if getErr == nil {
-			run = stored
-			if run.Status.Terminal() {
-				break
+	waitForTurnCompletedForThread(t, out, thread.ID)
+	for _, message := range parseOutput(t, out.String()) {
+		if message["method"] == NotificationRunUpdated {
+			updated := remarshal[RunUpdatedNotification](t, message["params"])
+			if updated.Run.ID == run.ID && updated.Run.Status.Terminal() {
+				run = updated.Run
 			}
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
+
 	if run.ID == "" {
 		t.Fatalf("run/start did not return a Run: %s", out.String())
 	}
@@ -137,12 +137,19 @@ func TestRunStartSettlesManifest(t *testing.T) {
 }
 
 func TestExecutionRunSchemaOutcomeRetriesWithinOneRun(t *testing.T) {
-	srv := &Server{runs: make(map[string]*runTracker), activeRunByThread: make(map[string]string)}
+	rt := newTestRuntime(t, &fakeClient{})
+	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
+	store, err := execution.NewStore(rt.Documents)
+	if err != nil {
+		t.Fatal(err)
+	}
 	validator, err := structuredoutput.New(json.RawMessage(`{"type":"object","required":["ok"]}`))
 	if err != nil {
 		t.Fatalf("New validator: %v", err)
 	}
-	srv.registerExecutionRun(execution.Run{ID: "run-schema", ThreadID: "thread-schema"}, validator)
+	srv.registerExecutionRun(testRuntimeState(t, rt), store, execution.Run{ID: "run-schema", ThreadID: "thread-schema"}, validator)
+	defer srv.detachExecutionRun("run-schema")
 
 	for attempt := 0; attempt < structuredoutput.MaxRetries; attempt++ {
 		prompt, retry, validationErr := srv.executionRunSchemaOutcome("run-schema", `{"wrong":true}`)
@@ -163,12 +170,12 @@ func TestFailAndDetachExecutionRunReturnsExistingTerminalRun(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	srv := New(rt, &lockedBuffer{})
 	defer srv.Close()
-	run := createEphemeralExecutionRun(t, srv, "thread-terminal-race")
-	if _, err := srv.runStore.AttachTurn(context.Background(), run.ID, run.ThreadID, "turn-terminal-race", time.Now().UTC()); err != nil {
+	run, store := createEphemeralExecutionRun(t, srv, "thread-terminal-race")
+	if _, err := store.AttachTurn(context.Background(), run.ID, run.ThreadID, "turn-terminal-race", time.Now().UTC()); err != nil {
 		t.Fatalf("AttachTurn: %v", err)
 	}
-	srv.registerExecutionRun(run, nil)
-	completed, err := srv.runStore.Complete(context.Background(), run.ID, execution.Result{FinalTurnID: "turn-terminal-race"}, time.Now().UTC())
+	srv.registerExecutionRun(testRuntimeState(t, rt), store, run, nil)
+	completed, err := store.Complete(context.Background(), run.ID, execution.Result{FinalTurnID: "turn-terminal-race"}, time.Now().UTC())
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -190,15 +197,16 @@ func TestRunInterruptRecordsTimeoutBeforeCancellingTurn(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
-	run := createEphemeralExecutionRun(t, srv, "thread-timeout-order")
-	if _, err := srv.runStore.AttachTurn(context.Background(), run.ID, run.ThreadID, "turn-timeout-order", time.Now().UTC()); err != nil {
+	run, store := createEphemeralExecutionRun(t, srv, "thread-timeout-order")
+	if _, err := store.AttachTurn(context.Background(), run.ID, run.ThreadID, "turn-timeout-order", time.Now().UTC()); err != nil {
 		t.Fatalf("AttachTurn: %v", err)
 	}
-	srv.registerExecutionRun(run, nil)
+	srv.registerExecutionRun(testRuntimeState(t, rt), store, run, nil)
 	th := newThreadState(run.ThreadID, []providers.ChatMessage{{Role: "system", Content: "system"}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	observed := execution.Status("")
 	th.cancel = func() { observed = srv.executionRunInterruptStatus(run.ID) }
 	th.currentExecutionRunID = run.ID
+	th.state = testRuntimeState(t, rt)
 	srv.threads[run.ThreadID] = th
 
 	req := Request{ID: json.RawMessage(`"interrupt"`), Method: MethodRunInterrupt, Params: mustJSON(RunInterruptParams{RunID: run.ID, Reason: "timeout"})}
@@ -219,9 +227,10 @@ func TestRunInterruptDoesNotCancelSuccessorRun(t *testing.T) {
 	cancelled := false
 	th.cancel = func() { cancelled = true }
 	th.currentExecutionRunID = "run-successor"
+	th.state = testRuntimeState(t, rt)
 	srv.threads[threadID] = th
 
-	turnActive, err := srv.interruptThreadExecution(threadID, "run-original", "")
+	turnActive, err := srv.interruptThreadExecution(th.state, threadID, "run-original", "")
 	if !errors.Is(err, errExecutionRunChanged) || turnActive {
 		t.Fatalf("interrupt successor = active %v, error %v", turnActive, err)
 	}
@@ -230,9 +239,13 @@ func TestRunInterruptDoesNotCancelSuccessorRun(t *testing.T) {
 	}
 }
 
-func createEphemeralExecutionRun(t *testing.T, srv *Server, threadID string) execution.Run {
+func createEphemeralExecutionRun(t *testing.T, srv *Server, threadID string) (execution.Run, *execution.Store) {
 	t.Helper()
-	run, err := srv.runStore.Create(context.Background(), execution.CreateParams{
+	store, err := execution.NewStore(srv.rt.Documents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.Create(context.Background(), execution.CreateParams{
 		RuntimeID: "test-runtime", Ephemeral: true, ThreadID: threadID,
 		Request: execution.Request{Mode: execution.ModeStart, HasPrompt: true},
 		Runtime: execution.RuntimeManifest{
@@ -244,5 +257,5 @@ func createEphemeralExecutionRun(t *testing.T, srv *Server, threadID string) exe
 	if err != nil {
 		t.Fatalf("Create execution Run: %v", err)
 	}
-	return run
+	return run, store
 }

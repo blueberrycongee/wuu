@@ -43,7 +43,7 @@ func TestThreadRuntimeOnlyReconcilesToolLedgerAfterExecutionAdmission(t *testing
 
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	th, err := srv.ensureThreadLoaded(sess.ID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestThreadRuntimeOnlyReconcilesToolLedgerAfterExecutionAdmission(t *testing
 	assertToolInvocationState(t, rt.Documents, invocation.ID, toolledger.InvocationRunning)
 
 	th.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
 	th.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	}
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	th, err := srv.ensureThreadLoaded(sess.ID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	turnID := session.NewID()
 	userMessage := providers.ChatMessage{Role: "user", Content: "start"}
 	th.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
 	if err == nil && acquired {
 		th.startTurnLocked(turnID, userMessage, time.Now().UTC())
 	}
@@ -151,7 +151,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		srv.runTurn(context.Background(), th, threadRuntime, turnID, turnRuntimeSnapshot{
+		srv.runTurn(th.state, context.Background(), th, threadRuntime, turnID, turnRuntimeSnapshot{
 			ProviderName: rt.ProviderName,
 			Model:        rt.Model,
 		}, []providers.ChatMessage{userMessage})

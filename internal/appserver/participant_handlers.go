@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -52,7 +53,7 @@ func resolveParticipantModelOverride(rt *runtimeSessionReference, participantNam
 	if providerName == "" || providerName == workerProviderName {
 		return modelName, nil, nil
 	}
-	if rt == nil || strings.TrimSpace(rt.configPath) == "" {
+	if rt == nil || rt.services == nil {
 		return "", nil, fmt.Errorf("participant %q pins model %q but no runtime config is available", participantName, rawPin)
 	}
 	cfg, loadErr := rt.loadEffectiveConfig()
@@ -63,7 +64,7 @@ func resolveParticipantModelOverride(rt *runtimeSessionReference, participantNam
 	if !found {
 		return "", nil, fmt.Errorf("participant %q pins model %q but provider %q is not configured", participantName, rawPin, providerName)
 	}
-	client, buildErr := providerfactory.BuildStreamClient(providerCfg, providerName)
+	client, buildErr := providerfactory.BuildStreamClient(providerCfg, providerName, providerfactory.Bindings{Credentials: rt.services.Credentials, ChatGPT: rt.services.ChatGPT})
 	if buildErr != nil {
 		return "", nil, fmt.Errorf("participant %q pins model %q but provider %q failed to build: %w", participantName, rawPin, providerName, buildErr)
 	}
@@ -71,30 +72,20 @@ func resolveParticipantModelOverride(rt *runtimeSessionReference, participantNam
 }
 
 type runtimeSessionReference struct {
-	configPath string
-	loadConfig func() (config.Config, string, error)
+	services *runtime.StateServices
 }
 
-func newRuntimeSessionReference(rt *runtime.Session) *runtimeSessionReference {
-	if rt == nil {
-		return nil
-	}
-	return &runtimeSessionReference{
-		configPath: rt.ConfigPath,
-		loadConfig: rt.LoadEffectiveConfig,
-	}
+// The admitted turn owns these services for the entire callback lifetime.
+func newRuntimeSessionReference(services *runtime.StateServices) *runtimeSessionReference {
+	return &runtimeSessionReference{services: services}
 }
 
 func (rt *runtimeSessionReference) loadEffectiveConfig() (config.Config, error) {
-	if rt == nil {
+	if rt == nil || rt.services == nil {
 		return config.Config{}, errors.New("runtime config is unavailable")
 	}
-	if rt.loadConfig != nil {
-		cfg, _, err := rt.loadConfig()
-		return cfg, err
-	}
-	cfg, _, err := config.LoadPath(rt.configPath)
-	return cfg, err
+	view, err := rt.services.Config.Read(context.Background())
+	return view.Config, err
 }
 
 func resolveParticipantSubagentType(explicitSubagentType string, _ participant.Participant) string {
