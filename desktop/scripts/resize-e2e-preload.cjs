@@ -374,6 +374,7 @@ if (process.env.WUU_TITLEBAR_FIXTURE_PLATFORM) {
   desktopAPI.platform = process.env.WUU_TITLEBAR_FIXTURE_PLATFORM;
   desktopAPI.hostKind = "desktop";
   if (desktopAPI.platform === "darwin") {
+    desktopAPI.windowSetControls = async () => undefined;
     desktopAPI.windowClose = async () => undefined;
     desktopAPI.windowMinimize = async () => undefined;
     desktopAPI.windowToggleMaximize = async () => undefined;
