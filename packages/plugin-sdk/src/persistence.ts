@@ -74,7 +74,6 @@ export function documentStoreDescriptor(): ServiceDescriptor {
       name,
       input_schema: `state.documents.${name}.input.v1`,
       output_schema: `state.documents.${name}.output.v1`,
-      ...(name === "read" || name === "commit" ? { cleanup: true } : {}),
     })),
   };
 }
