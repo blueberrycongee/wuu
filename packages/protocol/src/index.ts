@@ -817,6 +817,10 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Exact admitted graph identity, independent of the plugin code fingerprint. */
+  graph_generation: string;
+  /** Declared service dependency. Omit to invoke the plugin's client capability. */
+  service?: string;
   /** Optional opaque ID enabling cancellation of this request. */
   request_id?: string;
   method: string;
@@ -828,7 +832,7 @@ export interface PluginClientRequestParams extends PluginIdentityParams {
   workspace_root?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
-export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; }
+export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; graph_generation: string; }
 export interface PluginClientCancelResult { cancelled: boolean; }
 
 export type ConfigModelUpdateResult = {

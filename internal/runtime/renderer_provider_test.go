@@ -58,3 +58,30 @@ func TestRendererShellUsesAuthoritativeComposition(t *testing.T) {
 		})
 	}
 }
+
+func TestRendererConsumerWithoutProvidedServicesJoinsGraph(t *testing.T) {
+	for _, mixed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "desktop-only", true: "mixed"}[mixed], func(t *testing.T) {
+			item := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "consumer", Desktop: &pluginpkg.DesktopSpec{Entry: "desktop.mjs", RequiredServices: []pluginhost.ServiceRequirement{{Name: "ui.shell", MajorVersion: 1, Required: true}}}}, SubjectID: "plugin:user:consumer", Fingerprint: "consumer-v1"}
+			if mixed {
+				item.Runtime = &pluginpkg.RuntimeSpec{Command: "fixture"}
+			}
+			modules := []string{defaultShellModule, "consumer"}
+			start := func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+				return newRendererService(RendererModule{ID: cfg.ID}, nil, nil), nil
+			}
+			host, _, err := buildPluginHost([]pluginpkg.Plugin{item}, t.TempDir(), "test", t.TempDir(), t.TempDir(), nil, start, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer host.Close(context.Background())
+			if err := host.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			result, callErr := host.CallService(context.Background(), item.ID, "ui.shell", "describe", nil)
+			if callErr != nil || len(result) == 0 {
+				t.Fatalf("renderer dependency: %s %v", result, callErr)
+			}
+		})
+	}
+}

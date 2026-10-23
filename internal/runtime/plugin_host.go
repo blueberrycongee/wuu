@@ -218,7 +218,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			continue
 		}
 		if item.Runtime == nil {
-			if item.Desktop != nil && len(item.Desktop.Services) > 0 {
+			if item.Desktop != nil {
 				client := newRendererService(rendererModule(item), item.Desktop.RequiredServices, nil)
 				rendererServices = append(rendererServices, client)
 				host.Add(client)
@@ -262,7 +262,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		}
 		started = append(started, client)
 		host.Add(client)
-		if item.Desktop != nil && len(item.Desktop.Services) > 0 {
+		if item.Desktop != nil {
 			rendererServices = append(rendererServices, newRendererService(rendererModule(item), item.Desktop.RequiredServices, client))
 		}
 	}
