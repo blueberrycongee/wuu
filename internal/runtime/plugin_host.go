@@ -81,7 +81,10 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		kernel.bindRegistry(registry)
 	}
 	if resolved.Includes(loopdriver.DefaultDriverID) {
-		nativeModules = append(nativeModules, loopdriver.NewService(loopdriver.DefaultDriverID, DriverServicePrefix+"default", loopdriver.DefaultDriver{}, registry))
+		nativeModules = append(nativeModules, loopdriver.NewService(loopdriver.DefaultDriverID, DriverServicePrefix+"default", loopdriver.DefaultDriver{}, registry, []pluginhost.ServiceRequirement{
+			{Name: loopdriver.DriverModelLoopService, MajorVersion: 1, Required: true},
+			{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
+		}))
 		if resolved.Modules != nil {
 			required[loopdriver.DefaultDriverID] = true
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -64,7 +65,7 @@ func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req p
 	ctx = context.WithValue(ctx, modelRequestOriginKey{}, origin)
 	for _, capability := range c.host.Capabilities(pluginhost.CapabilityModelRequestTransform) {
 		var output pluginhost.ModelRequestMiddlewareOutput
-		if err := c.host.InvokeCapability(ctx, capability, pluginhost.ModelRequestMiddlewareInput{Request: logicalModelRequest(req), Origin: origin}, &output); err != nil {
+		if err := c.host.InvokeCapability(ctx, capability, pluginhost.ModelRequestMiddlewareInput{Request: modelwire.RequestToWire(req), Origin: origin}, &output); err != nil {
 			if handled := c.host.HandleCapabilityError(capability, err); handled != nil {
 				return req, handled
 			}
@@ -73,7 +74,7 @@ func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req p
 		if output.Request == nil {
 			continue
 		}
-		replacement, err := applyLogicalModelRequest(req, *output.Request)
+		replacement, err := modelwire.ApplyRequest(req, *output.Request)
 		if err == nil && (replacement.Provider != req.Provider || replacement.Model != req.Model) {
 			err = errors.New("request transforms cannot change the configured model route; use independent inference")
 		}
@@ -112,7 +113,7 @@ func (c *modelPipelineClient) observe(ctx context.Context, req providers.ChatReq
 		return nil
 	}
 	origin := c.requestOrigin(req)
-	input := pluginhost.ModelResponseObserveInput{Phase: phase, Request: logicalModelRequest(req), Origin: origin, Error: modelErrorView(cause)}
+	input := pluginhost.ModelResponseObserveInput{Phase: phase, Request: modelwire.RequestToWire(req), Origin: origin, Error: modelErrorView(cause)}
 	if result != nil {
 		input.Result = &pluginhost.ModelInvokeResult{Response: logicalModelResponse(*result), Origin: origin}
 	}

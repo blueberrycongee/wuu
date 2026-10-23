@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -180,7 +181,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 }
 
 func (k *modelInvokeInvoker) prepareIndependent(ctx context.Context, session *Session, host *pluginhost.Host, scope pluginhost.ExecutionScope, input pluginhost.ModelInvokeParams) (providers.StreamClient, providers.ChatRequest, error) {
-	request, err := applyLogicalModelRequest(providers.ChatRequest{}, input.Request)
+	request, err := modelwire.ApplyRequest(providers.ChatRequest{}, input.Request)
 	if err != nil {
 		return nil, request, serviceError("invalid_params", err.Error())
 	}

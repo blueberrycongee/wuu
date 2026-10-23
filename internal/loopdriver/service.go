@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -13,14 +14,15 @@ import (
 // Service exposes a native driver through the same versioned protocol as a
 // process driver. Instances and callbacks belong to this module generation.
 type Service struct {
-	id      string
-	name    string
-	driver  Driver
-	router  pluginhost.ServiceRouter
-	mu      sync.Mutex
-	state   pluginhost.State
-	next    uint64
-	entries map[string]*serviceInstance
+	id       string
+	name     string
+	driver   Driver
+	router   pluginhost.ServiceRouter
+	requires []pluginhost.ServiceRequirement
+	mu       sync.Mutex
+	state    pluginhost.State
+	next     uint64
+	entries  map[string]*serviceInstance
 }
 
 type serviceInstance struct {
@@ -30,8 +32,8 @@ type serviceInstance struct {
 	done      chan struct{}
 }
 
-func NewService(id, name string, driver Driver, router pluginhost.ServiceRouter) *Service {
-	return &Service{id: id, name: name, driver: driver, router: router, state: pluginhost.StatePrepared, entries: make(map[string]*serviceInstance)}
+func NewService(id, name string, driver Driver, router pluginhost.ServiceRouter, requires []pluginhost.ServiceRequirement) *Service {
+	return &Service{id: id, name: name, driver: driver, router: router, requires: slices.Clone(requires), state: pluginhost.StatePrepared, entries: make(map[string]*serviceInstance)}
 }
 
 func (s *Service) ID() string { return s.id }
@@ -48,10 +50,7 @@ func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	}}}
 }
 func (s *Service) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{
-		{Name: DriverModelLoopService, MajorVersion: 1, Required: true},
-		{Name: DriverCheckpointService, MajorVersion: 1, Required: true},
-	}
+	return slices.Clone(s.requires)
 }
 func (s *Service) Activate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {

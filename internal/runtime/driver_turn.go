@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
-	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 type driverTurnInvoker struct{ parent *kernelHostServices }
@@ -37,7 +37,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err != nil {
 			return nil, err
 		}
-		return marshalServiceResult(pluginprotocol.DriverTurnReadResult{LogicalModelRequestV1: logicalModelRequest(request), Messages: driverMessagesToWire(request.Messages)})
+		return marshalServiceResult(modelwire.DriverRequestToWire(request))
 	case "context":
 		if err := decodeServiceParams(params.Params, &scope); err != nil {
 			return nil, err
@@ -52,7 +52,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		current, err := turn.ReplaceContext(ctx, loopdriver.ContextReplacement{Revision: input.Revision, Messages: driverMessagesFromWire(input.Messages)})
+		current, err := turn.ReplaceContext(ctx, loopdriver.ContextReplacement{Revision: input.Revision, Messages: modelwire.DriverMessagesFromWire(input.Messages)})
 		if err != nil {
 			return nil, err
 		}
@@ -62,12 +62,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		logical := input.Request.LogicalModelRequestV1
-		logical.Messages = make([]pluginhost.ModelMessageV1, 0, len(input.Request.Messages))
-		for _, message := range input.Request.Messages {
-			logical.Messages = append(logical.Messages, message.ModelMessageV1)
-		}
-		request, err := applyLogicalModelRequest(providers.ChatRequest{}, logical)
+		request, err := modelwire.ApplyDriverRequest(input.Request)
 		if err != nil {
 			return nil, serviceError("invalid_request", err.Error())
 		}
@@ -75,9 +70,9 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err != nil {
 			return nil, err
 		}
-		result := pluginprotocol.DriverTurnModelResult{Messages: driverMessagesToWire(round.Messages)}
+		result := pluginprotocol.DriverTurnModelResult{Messages: modelwire.DriverMessagesToWire(round.Messages)}
 		if round.Usage != nil {
-			usage := modelTokenUsageToLogical(*round.Usage)
+			usage := modelwire.TokenUsageToWire(*round.Usage)
 			result.Usage = &usage
 		}
 		return marshalServiceResult(result)
@@ -86,21 +81,21 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		batch := loopdriver.ToolBatch{ID: input.BatchID, Messages: driverMessagesFromWire(input.Messages)}
+		batch := loopdriver.ToolBatch{ID: input.BatchID, Messages: modelwire.DriverMessagesFromWire(input.Messages)}
 		for _, call := range input.Calls {
-			batch.Calls = append(batch.Calls, modelToolCallFromLogical(call))
+			batch.Calls = append(batch.Calls, modelwire.ToolCallFromWire(call))
 		}
 		messages, err := turn.CallTools(ctx, batch)
 		if err != nil {
 			return nil, err
 		}
-		return marshalServiceResult(pluginprotocol.DriverTurnToolsResult{Messages: driverMessagesToWire(messages)})
+		return marshalServiceResult(pluginprotocol.DriverTurnToolsResult{Messages: modelwire.DriverMessagesToWire(messages)})
 	case "complete":
 		var input pluginprotocol.DriverTurnCompleteParams
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		receipt, err := turn.CompleteTurn(ctx, loopdriver.TurnResult{Content: input.Content, Messages: driverMessagesFromWire(input.Messages)})
+		receipt, err := turn.CompleteTurn(ctx, loopdriver.TurnResult{Content: input.Content, Messages: modelwire.DriverMessagesFromWire(input.Messages)})
 		if err != nil {
 			return nil, err
 		}
@@ -111,23 +106,5 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 }
 
 func driverContextToWire(current loopdriver.TurnContext) pluginprotocol.DriverTurnContextResult {
-	return pluginprotocol.DriverTurnContextResult{Messages: driverMessagesToWire(current.Messages), Revision: current.Revision, ArchiveHead: current.ArchiveHead, CanReplace: current.CanReplace}
-}
-
-func driverMessagesToWire(messages []providers.ChatMessage) []pluginprotocol.DriverMessageV1 {
-	result := make([]pluginprotocol.DriverMessageV1, 0, len(messages))
-	for _, message := range messages {
-		result = append(result, pluginprotocol.DriverMessageV1{ModelMessageV1: modelChatMessageToLogical(message), ToolInvocationID: message.ToolInvocationID, ClientID: message.ClientID, Seq: message.Seq, Steered: message.Steered})
-	}
-	return result
-}
-
-func driverMessagesFromWire(messages []pluginprotocol.DriverMessageV1) []providers.ChatMessage {
-	result := make([]providers.ChatMessage, 0, len(messages))
-	for _, message := range messages {
-		item := modelChatMessageFromLogical(message.ModelMessageV1)
-		item.ToolInvocationID, item.ClientID, item.Seq, item.Steered = message.ToolInvocationID, message.ClientID, message.Seq, message.Steered
-		result = append(result, item)
-	}
-	return result
+	return pluginprotocol.DriverTurnContextResult{Messages: modelwire.DriverMessagesToWire(current.Messages), Revision: current.Revision, ArchiveHead: current.ArchiveHead, CanReplace: current.CanReplace}
 }

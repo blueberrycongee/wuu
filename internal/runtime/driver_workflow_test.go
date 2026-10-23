@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -191,7 +192,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id string, initial []providers.ChatMessage) {
 	t.Helper()
 	toRecords := func(messages []providers.ChatMessage) []session.HistoryRecord {
-		raw, err := json.Marshal(driverMessagesToWire(messages))
+		raw, err := json.Marshal(modelwire.DriverMessagesToWire(messages))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -245,7 +246,7 @@ func workflowRecordsToMessages(t *testing.T, records []session.HistoryRecord) []
 	if err := json.Unmarshal(raw, &messages); err != nil {
 		t.Fatal(err)
 	}
-	return driverMessagesFromWire(messages)
+	return modelwire.DriverMessagesFromWire(messages)
 }
 
 type workflowCheckpointBarrier struct {
