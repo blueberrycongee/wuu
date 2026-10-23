@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Expose independent model, tool-batch, completion and checkpoint operations for external loop drivers. The public SDK includes a workflow example with evidence collection and synthesis, plus isolated verification of cancellation, durable recovery and provider removal.
+
 - Own runtime client activation and cleanup through generation-local cordis-go scopes, with serialized shutdown barriers and attributable provider panic errors. Building from source now requires Go 1.27.0; build and CI version selection follows `go.mod`.
 
 - Select runtime modules and service providers through named `composition.profiles` and explicit `modules` / `services` overrides. Inspect binding sources, package versions and lifecycle states. Ambiguous or unavailable choices reject preparation; failed or removed providers never fall back to another implementation. Removing native modules also retires them in retained generations; safe mode starts no composition modules.

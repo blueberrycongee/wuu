@@ -294,12 +294,14 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	}
 
 	gateway := &streamDriverGateway{
-		runner:     r,
-		onEvent:    onEvent,
-		descriptor: descriptor,
-		execution:  execution,
-		results:    make(map[string]LoopResult),
+		runner:            r,
+		onEvent:           onEvent,
+		descriptor:        descriptor,
+		execution:         execution,
+		results:           make(map[string]LoopResult),
+		streamTurnGateway: newStreamTurnGateway(ctx, r, input, onEvent),
 	}
+	defer gateway.close()
 	done := make(chan struct{})
 	go func() {
 		select {
@@ -311,6 +313,12 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	outcome, runErr := instance.Run(ctx, gateway)
 	close(done)
 	instance.Shutdown()
+	gateway.close()
+	// A failed or canceled remote call may return its initial instance state.
+	// Preserve the latest checkpoint accepted by the execution before it ended.
+	if runErr != nil && gateway.lastCheckpoint != nil {
+		outcome.Checkpoint = *gateway.lastCheckpoint
+	}
 
 	res, ok := gateway.result(outcome.ReceiptID)
 	if outcome.ReceiptID != "" && !ok {
@@ -325,15 +333,26 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 }
 
 type streamDriverGateway struct {
-	runner     *StreamRunner
-	onEvent    StreamCallback
-	descriptor loopdriver.Descriptor
-	execution  loopdriver.ExecutionContext
-	results    map[string]LoopResult
-	next       int
+	*streamTurnGateway
+	runner         *StreamRunner
+	onEvent        StreamCallback
+	descriptor     loopdriver.Descriptor
+	execution      loopdriver.ExecutionContext
+	results        map[string]LoopResult
+	lastCheckpoint *loopdriver.Checkpoint
+	next           int
 }
 
 func (gateway *streamDriverGateway) ExecuteModelLoop(ctx context.Context, input loopdriver.PersistedInput, policy loopdriver.LoopPolicy) (loopdriver.ModelLoopReceipt, error) {
+	ctx, leave, err := gateway.acquire(ctx)
+	if err != nil {
+		return loopdriver.ModelLoopReceipt{}, err
+	}
+	defer leave()
+	if gateway.ready {
+		return loopdriver.ModelLoopReceipt{}, errors.New("cannot combine independent turn operations with the legacy loop gateway")
+	}
+	gateway.legacy = true
 	gateway.next++
 	receipt := loopdriver.ModelLoopReceipt{ID: fmt.Sprintf("model-loop-%d", gateway.next)}
 	result, err := gateway.runner.runModelToolLoop(ctx, input.Messages, gateway.onEvent, policy, gateway.descriptor, gateway.execution)
@@ -342,17 +361,29 @@ func (gateway *streamDriverGateway) ExecuteModelLoop(ctx context.Context, input 
 }
 
 func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpoint loopdriver.Checkpoint) error {
+	ctx, leave, err := gateway.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
 	if checkpoint.ContractVersion != loopdriver.ContractVersion || checkpoint.DriverID != gateway.descriptor.ID || checkpoint.DriverVersion != gateway.descriptor.Version {
 		return errors.New("loop driver attempted to write a checkpoint for another contract")
 	}
-	if gateway.runner.DriverCheckpointStore == nil {
-		return nil
+	if gateway.runner.DriverCheckpointStore != nil {
+		if err := gateway.runner.DriverCheckpointStore.Save(ctx, checkpoint); err != nil {
+			return err
+		}
 	}
-	return gateway.runner.DriverCheckpointStore.Save(ctx, checkpoint)
+	checkpoint.State = append(json.RawMessage(nil), checkpoint.State...)
+	gateway.lastCheckpoint = &checkpoint
+	return nil
 }
 
 func (gateway *streamDriverGateway) result(receiptID string) (LoopResult, bool) {
 	result, ok := gateway.results[receiptID]
+	if !ok {
+		return gateway.streamTurnGateway.result(receiptID)
+	}
 	return result, ok
 }
 
@@ -743,7 +774,23 @@ func (r *StreamRunner) pendingToolResultMessages(ctx context.Context, history []
 			})
 			end++
 		}
-		messages = append(messages, providers.ChatMessage{Role: "assistant", ToolCalls: calls})
+		// A crash can happen after the assistant call was archived but before
+		// its settled results were projected. Reuse that trailing declaration.
+		declared := false
+		if index == 0 && len(history) > 0 {
+			last := history[len(history)-1]
+			declared = last.Role == "assistant" && len(last.ToolCalls) == len(calls)
+			for i, call := range calls {
+				if !declared {
+					break
+				}
+				original := last.ToolCalls[i]
+				declared = original.ID == call.ID && original.Name == call.Name && original.Arguments == call.Arguments && original.Kind == call.Kind
+			}
+		}
+		if !declared {
+			messages = append(messages, providers.ChatMessage{Role: "assistant", ToolCalls: calls})
+		}
 		for _, invocation := range pending[index:end] {
 			messages = append(messages, providers.ChatMessage{
 				Role: "tool", Name: invocation.ToolName, ToolCallID: invocation.ProviderCallID,

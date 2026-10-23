@@ -25,7 +25,9 @@
     "dist/model.js",
     "dist/model.d.ts",
     "dist/process.js",
-    "dist/process.d.ts"
+    "dist/process.d.ts",
+    "dist/driver.js",
+    "dist/driver.d.ts"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

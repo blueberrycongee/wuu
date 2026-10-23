@@ -12,6 +12,7 @@
 import type { PluginDependency } from "./bundle-contract.js";
 import type { ModelAdapterDescriptor } from "./model.js";
 export * from "./process.js";
+export * from "./driver.js";
 
 import type {
   PublicIconName,
