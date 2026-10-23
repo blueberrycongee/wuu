@@ -23,6 +23,8 @@ Use the smallest boundary that fits. A toolbar button does not need a replacemen
 
 Slots add content alongside native UI. Multiple registrations compose by `order`.
 
+When a primary plugin page is active, its contextual sidebar also renders that plugin's `sidebar.primary` contributions below its navigation entries. The slot receives `viewTypeId` and `viewContext` (the same immutable context object passed to the page). Use them to show page-specific summaries and keep separate page instances isolated. These fields are absent in the conversation sidebar.
+
 | Slot | Location |
 | --- | --- |
 | `sidebar.primary`, `sidebar.footer` | Sidebar content and footer |

@@ -23,6 +23,8 @@
 
 Slot 在原生界面旁添加内容，多个注册项按 `order` 组合。
 
+主区域的插件页面激活时，其侧栏会在导航入口下方渲染该插件自己的 `sidebar.primary` 贡献。Slot 接收 `viewTypeId` 和 `viewContext`，后者与页面收到的是同一个不可变 context 对象。可据此展示当前页面的摘要，并隔离不同页面实例的状态。会话侧栏不提供这两个字段。
+
 | Slot | 位置 |
 | --- | --- |
 | `sidebar.primary`、`sidebar.footer` | 侧栏内容和底部 |

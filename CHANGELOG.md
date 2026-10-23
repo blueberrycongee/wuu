@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Show running and upcoming automations in the contextual sidebar, with task status, scheduled time, workspace-aware selection, and access to dispatched one-shot run details.
+
 - Compose named profiles from ordered reusable bundles, profile patches and user overrides with composition version 2; version 1 inline configurations remain supported. Patches can select or exclude modules and replace or remove service bindings; diagnostics show applied layers and individual selection sources. Explicit empty compositions remain empty after saving.
 
 - Persist independent drivers' model-input receipts before model or streaming-tool dispatch. Storage failure prevents execution; receipts preserve the bound driver, execution, operation identity and submitted input across native and process implementations.

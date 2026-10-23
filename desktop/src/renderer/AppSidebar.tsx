@@ -1993,6 +1993,15 @@ export function AppSidebar({
                 <span className="sidebar-section-label">{entry.title}</span>
               </button>
             ))}
+            <PluginSlot
+              host={pluginHost}
+              id="sidebar.primary"
+              pluginId={activePluginMain.view.pluginId}
+              context={Object.freeze({
+                viewTypeId: activePluginMain.view.viewTypeId,
+                viewContext: activePluginMain.view.context,
+              })}
+            />
           </nav>
         ) : null}
         <div className="sidebar-conversation-section" style={{ display: conversationsActive ? "contents" : "none" }} inert={!conversationsActive}>

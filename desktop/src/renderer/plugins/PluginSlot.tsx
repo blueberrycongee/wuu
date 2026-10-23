@@ -21,6 +21,8 @@ import { createPluginTranslator } from "./pluginI18n";
 export interface PluginSlotProps {
   host: PluginHost;
   id: PluginSlotId;
+  /** Limit a contextual slot to the plugin that owns the active page. */
+  pluginId?: string;
   context?: PluginSlotRenderContext;
 }
 
@@ -84,7 +86,7 @@ function ContributionContent({
   return contribution.render(localizedContext);
 }
 
-export function PluginSlot({ host, id, context = EMPTY_CONTEXT }: PluginSlotProps): ReactNode {
+export function PluginSlot({ host, id, pluginId, context = EMPTY_CONTEXT }: PluginSlotProps): ReactNode {
   const subscribe = useCallback((listener: () => void) => host.subscribeSlot(id, listener), [host, id]);
   const getSnapshot = useCallback(() => host.getSlotSnapshot(id), [host, id]);
   const contributions = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -92,7 +94,7 @@ export function PluginSlot({ host, id, context = EMPTY_CONTEXT }: PluginSlotProp
   return createElement(
     Fragment,
     null,
-    ...contributions.map((contribution) => createElement(PluginSlotContribution, {
+    ...contributions.filter((contribution) => !pluginId || contribution.pluginId === pluginId).map((contribution) => createElement(PluginSlotContribution, {
       key: `${contribution.pluginId}:${contribution.generation}:${contribution.id}`,
       host,
       id,

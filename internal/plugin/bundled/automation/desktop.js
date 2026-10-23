@@ -9,6 +9,10 @@ export async function activate(api) {
     "automation.history": "Recent runs", "automation.more": "More actions",
 
     "automation.title": "Automations",
+    "automation.sidebar.running": "Running now", "automation.sidebar.upcoming": "Up next",
+    "automation.sidebar.idle": "Nothing running right now", "automation.sidebar.unscheduled": "No upcoming runs",
+    "automation.sidebar.loading": "Loading schedules…", "automation.sidebar.refreshError": "Could not refresh schedules",
+    "automation.run.starting": "Starting",
     "automation.new": "New automation", "automation.empty": "No automations yet",
     "automation.search": "Search automations", "automation.search.empty": "No matching automations.",
     "automation.enable": "Enabled", "automation.paused": "Paused", "automation.enableNamed": "Enable {name}",
@@ -31,6 +35,10 @@ export async function activate(api) {
     "automation.history": "最近运行", "automation.more": "更多操作",
 
     "automation.title": "自动化",
+    "automation.sidebar.running": "正在运行", "automation.sidebar.upcoming": "接下来",
+    "automation.sidebar.idle": "当前没有运行中的任务", "automation.sidebar.unscheduled": "暂无待触发的任务",
+    "automation.sidebar.loading": "正在加载调度…", "automation.sidebar.refreshError": "调度信息刷新失败",
+    "automation.run.starting": "正在启动",
     "automation.new": "新建自动化", "automation.empty": "还没有自动化任务",
     "automation.search": "搜索自动化", "automation.search.empty": "没有匹配的自动化。",
     "automation.enable": "启用", "automation.paused": "已暂停", "automation.enableNamed": "启用 {name}",
@@ -101,6 +109,20 @@ export async function activate(api) {
     .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:var(--font-sm); line-height:1.5; }
     .plugin-automation-item-meta > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
+    .plugin-automation-sidebar { display:flex; flex-direction:column; gap:var(--space-4); padding-block:var(--space-4); font-size:var(--font-ui); }
+    .plugin-automation-sidebar-workspace { margin:0; padding-inline:var(--sidebar-row-pad-x); color:var(--ink-soft); overflow-wrap:anywhere; }
+    .plugin-automation-sidebar-group { display:flex; flex-direction:column; gap:var(--sidebar-row-gap); }
+    .plugin-automation-sidebar-heading { display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-2); }
+    .plugin-automation-sidebar-count { font-variant-numeric:tabular-nums; font-weight:var(--weight-regular); }
+    .plugin-automation-sidebar-item { align-items:flex-start; padding-block:var(--space-2); }
+    .plugin-automation-sidebar-item > svg { margin-top:calc((1em * var(--line-ui) - var(--sidebar-primary-icon-size)) / 2); color:var(--ink-tertiary); }
+    .plugin-automation-sidebar-item[data-status="running"] > svg, .plugin-automation-sidebar-item[data-status="starting"] > svg { color:var(--info); }
+    .plugin-automation-sidebar-item[aria-pressed="true"] { background:var(--sidebar-row-selected-bg); box-shadow:var(--sidebar-row-selected-shadow); }
+    .plugin-automation-sidebar-copy { display:flex; flex:1; flex-direction:column; gap:2px; min-width:0; }
+    .plugin-automation-sidebar-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:var(--line-ui); }
+    .plugin-automation-sidebar-meta { color:var(--ink-soft); font-size:var(--font-sm); line-height:var(--line-ui); overflow-wrap:anywhere; }
+    .plugin-automation-sidebar .plugin-automation-sidebar-item:focus-visible { outline-offset:-2px; }
+    .plugin-automation-sidebar-item:disabled { cursor:default; opacity:0.45; }
     .plugin-automation-empty { min-height:160px; }
     .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
     .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
@@ -505,7 +527,7 @@ export async function activate(api) {
       h("div", { className: "plugin-automation-detail-inner" },
         h("div", { className: "plugin-automation-detail-head" },
           !task ? h("h2", { className: "plugin-automation-detail-title" }, tr("automation.new"))
-            : readOnly ? h("span", { className: "plugin-automation-detail-status" }, tr("automation.run.completed"))
+            : readOnly ? h("span", { className: "plugin-automation-detail-status" }, tr(`automation.run.${runStatus(runs[0]) || "never"}`))
             : h(Checkbox, { className: "plugin-automation-enable", label: tr("automation.enable"), checked: !task.paused, disabled: busy, onChange: onPause }),
           task && !readOnly ? h(MoreMenu, { tr, busy, onRemove }) : null,
           h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), title: tr("automation.close"), onClick: onClose }, h(CloseIcon))),
@@ -595,6 +617,47 @@ export async function activate(api) {
     };
   }
 
+  // The catalog owns fetching and selection. Its sidebar consumes the same
+  // render snapshot, so workspace changes and mutations never race a second poller.
+  // The host shares each view's immutable context with its contextual slot.
+  const sidebarSnapshots = new WeakMap();
+  const sidebarListeners = new Set();
+  const subscribeSidebar = (listener) => { sidebarListeners.add(listener); return () => sidebarListeners.delete(listener); };
+  function publishSidebar(context, snapshot) {
+    if (snapshot) sidebarSnapshots.set(context, snapshot);
+    else sidebarSnapshots.delete(context);
+    for (const listener of sidebarListeners) listener();
+  }
+
+  function ScheduleSidebar({ translate: tr, locale, viewContext }) {
+    const getSnapshot = React.useCallback(() => sidebarSnapshots.get(viewContext) || null, [viewContext]);
+    const snapshot = React.useSyncExternalStore(subscribeSidebar, getSnapshot);
+    if (!snapshot?.workspace) return null;
+    const { tasks, runs, workspace, loaded, error, selectedID, busy, choose } = snapshot;
+    const active = runs.filter((run) => ["starting", "running", "queued"].includes(run.status))
+      .sort((a, b) => Number(a.status === "queued") - Number(b.status === "queued") || Date.parse(a.triggered_at) - Date.parse(b.triggered_at));
+    const upcoming = tasks.filter((task) => !task.paused && Date.parse(task.next_run_at) > 0)
+      .sort((a, b) => Date.parse(a.next_run_at) - Date.parse(b.next_run_at));
+    const row = (task, key, status, time) => {
+      const title = task.title || task.prompt;
+      const timestamp = formatDateTime(time, task.timezone, locale);
+      const meta = status ? tr(`automation.run.${status}`) : `${timestamp} · ${shortTimezone(task.timezone)}`;
+      return h("button", { key, type: "button", className: "sidebar-section-item plugin-automation-sidebar-item", "data-status": status || "scheduled", "aria-pressed": selectedID === task.id, disabled: busy, title: `${title}\n${status ? `${meta} · ` : ""}${timestamp} · ${task.timezone}`, onClick: () => choose({ kind: "task", id: task.id }) },
+        h(ClockIcon), h("span", { className: "plugin-automation-sidebar-copy" },
+          h("span", { className: "plugin-automation-sidebar-title" }, title),
+          h("span", { className: "plugin-automation-sidebar-meta" }, meta)));
+    };
+    const group = (name, items, empty) => h("section", { className: "plugin-automation-sidebar-group", "aria-label": tr(name) },
+      h("h3", { className: "sidebar-subsection-title plugin-automation-sidebar-heading" }, tr(name), h("span", { className: "plugin-automation-sidebar-count", "aria-hidden": true }, items.length)),
+      items.length ? items : h("p", { className: "sidebar-subsection-empty" }, tr(empty)));
+    return h("div", { className: "plugin-automation-sidebar" },
+      h("p", { className: "plugin-automation-sidebar-workspace" }, workspace.name || workspaceName(workspace.root)),
+      error ? h("p", { className: "sidebar-subsection-empty", role: "status", title: error }, tr("automation.sidebar.refreshError")) : null,
+      !loaded ? (!error ? h("p", { className: "sidebar-subsection-empty", role: "status" }, tr("automation.sidebar.loading")) : null) : h(React.Fragment, null,
+        group("automation.sidebar.running", active.map((run) => row(run.task, run.id, run.status, run.triggered_at)), "automation.sidebar.idle"),
+        group("automation.sidebar.upcoming", upcoming.map((task) => row(task, task.id, null, task.next_run_at)), "automation.sidebar.unscheduled")));
+  }
+
   function Catalog(props) {
     const tr = props.translate;
     const resize = useEditorResize();
@@ -608,6 +671,7 @@ export async function activate(api) {
     // replaying the panel's entrance.
     const [swap, setSwap] = React.useState(false);
     const [loadedID, setLoadedID] = React.useState("");
+    const [refreshError, setRefreshError] = React.useState("");
     const [busy, setBusy] = React.useState(false);
     const [error, setError] = React.useState("");
     const [query, setQuery] = React.useState("");
@@ -624,7 +688,8 @@ export async function activate(api) {
         setTasks(Array.isArray(list.tasks) ? list.tasks : []);
         setRuns(Array.isArray(history?.runs) ? history.runs : []);
         setLoadedID(id);
-      } catch (reason) { if (current === epoch.current) setError(String(reason)); }
+        setRefreshError("");
+      } catch (reason) { if (current === epoch.current) setRefreshError(String(reason)); }
     }, []);
     React.useEffect(() => {
       let cancelled = false;
@@ -638,8 +703,10 @@ export async function activate(api) {
     }, []);
     React.useEffect(() => {
       void refresh(workspaceID);
-      const timer = setInterval(() => { if (!document.hidden) void refresh(workspaceID); }, 15000);
-      return () => { clearInterval(timer); epoch.current++; };
+      const refreshVisible = () => { if (!document.hidden) void refresh(workspaceID); };
+      const timer = setInterval(refreshVisible, 15000);
+      document.addEventListener("visibilitychange", refreshVisible);
+      return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refreshVisible); epoch.current++; };
     }, [refresh, workspaceID]);
     React.useEffect(() => {
       let cancelled = false;
@@ -677,7 +744,7 @@ export async function activate(api) {
     // run, so its switch never moves the row.
     const scheduled = [...tasks].sort((a, b) => String(a.next_run_at || "").localeCompare(String(b.next_run_at || ""))).filter(matchesQuery);
     const finished = completedTasks.filter(matchesQuery);
-    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || completedTasks.find((task) => task.id === selection.id) : null;
+    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || sortedRuns.find((run) => run.task_id === selection.id)?.task : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const closePanel = () => {
       setError("");
@@ -701,6 +768,10 @@ export async function activate(api) {
     // Opening from a closed panel plays its entrance; choosing again while it
     // stays open swaps the content in place.
     const choose = (next) => { setError(""); setSwap(panelOpen && !panelClosing); setPanelClosing(false); setSelection(next); };
+    React.useEffect(() => {
+      publishSidebar(props.context, { tasks, runs, workspace, loaded, error: refreshError, selectedID: panelClosing ? null : selection?.id, busy, choose });
+    });
+    React.useEffect(() => () => publishSidebar(props.context, null), [props.context]);
     // The row opens the editor; the switch pauses and resumes in place. A
     // completed one-shot has nothing left to switch.
     const taskRow = (task, done) => {
@@ -732,10 +803,10 @@ export async function activate(api) {
               label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length,
               placeholder: tr("automation.workspaceNone"),
               options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
-              onChange: (id) => { epoch.current++; setWorkspaceID(id); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); },
+              onChange: (id) => { epoch.current++; setWorkspaceID(id); setLoadedID(""); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); setRefreshError(""); },
             })),
             h(Button, { className: "plugin-automation-create", disabled: busy || !workspace, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
-          error && !panelOpen ? h("p", { className: "plugin-automation-error", role: "alert" }, error) : null,
+          refreshError || (error && !panelOpen) ? h("p", { className: "plugin-automation-error", role: "alert" }, refreshError || error) : null,
           !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
             : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
             : loaded && !scheduled.length && !finished.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty") })
@@ -758,5 +829,6 @@ export async function activate(api) {
         }) : null)));
   }
 
+  api.registerSlot("sidebar.primary", { id: "automation.schedule", render: (context) => context.viewTypeId === "automation.catalog" ? h(ScheduleSidebar, context) : null });
   api.registerViewType({ id: "automation.catalog", title: "Automations", icon: "clock", defaultRegion: "primary", persistence: "durable", render: (props) => h(Catalog, props) });
 }
