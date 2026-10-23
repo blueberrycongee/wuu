@@ -835,7 +835,7 @@ jobs:
           retention-days: 14
 
       - name: Guard request lifecycle
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -897,7 +897,7 @@ jobs:
           retention-days: 14
 
       - name: Check session switch budget ratchet
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         env:
           PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
@@ -906,7 +906,7 @@ jobs:
           node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
 
       - name: Guard session switch work
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         # Preserve Electron failures through the evidence log pipeline.
         shell: bash
         env:
