@@ -354,21 +354,31 @@ app.whenReady().then(async () => {
         const label = `${theme}-${size}`;
         win.setContentSize(size === 14 ? 1100 : 940, 820);
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
-        await waitFor(() => Boolean(document.querySelector(".thread-list-more")));
+        await waitFor(() => Boolean(document.querySelector('[data-functional-group-id="projects"] .thread-list-more'))
+          && Boolean(document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle')));
+        // Recent presents the same 48 sessions independently of the paged
+        // workspace. Fold it through its control to establish a fitting list.
+        await evaluate(() => {
+          const toggle = document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle');
+          if (toggle.getAttribute("aria-expanded") === "true") toggle.click();
+        });
+        await waitFor(() => Boolean(document.querySelector('[data-sidebar-recents] > .thread-list-collapse[data-state="closed"]')));
         const fitting = await sample(`${label}-initial-fitting-list`);
         assert.ok(fitting.scrollHeight === fitting.clientHeight && fitting.top === 0 && fitting.bottom === 0, "an initially fitting list has no faded edges");
         await evaluate(async () => {
-          while (document.querySelector(".thread-list-more")) {
-            document.querySelector(".thread-list-more").click();
+          while (document.querySelector('[data-functional-group-id="projects"] .thread-list-more')) {
+            document.querySelector('[data-functional-group-id="projects"] .thread-list-more').click();
             await new Promise(requestAnimationFrame);
           }
         });
-        await waitFor(() => document.querySelectorAll(".thread-row").length === 48);
-        await evaluate(() => document.querySelector(".thread-row-main").click());
+        await evaluate(() => document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle').click());
+        await waitFor(() => document.querySelectorAll(".project-thread-list .thread-row").length === 48
+          && document.querySelectorAll("[data-sidebar-recents] .thread-row").length === 48);
+        await evaluate(() => document.querySelector(".project-thread-list .thread-row-main").click());
         // Active content appears before the reveal finishes. Wait for the
         // pending row to clear before choosing an independent reading position.
-        await waitFor(() => Boolean(document.querySelector(".thread-row.active"))
-          && !document.querySelector(".thread-row.pending-switch"));
+        await waitFor(() => Boolean(document.querySelector(".project-thread-list .thread-row.active"))
+          && !document.querySelector(".project-thread-list .thread-row.pending-switch"));
         app.focus({ steal: true });
         win.focus();
         await waitFor(() => document.hasFocus());
@@ -458,10 +468,10 @@ app.whenReady().then(async () => {
         // both switch targets visible so this checks stream-state isolation.
         await evaluate(() => { document.querySelector(".sidebar-main").scrollTop = 0; });
         const switchBaseline = await sample(`${label}-before-switch`);
-        await evaluate(() => document.querySelectorAll(".sidebar-main .thread-row-main")[1].click());
+        await evaluate(() => document.querySelectorAll(".project-thread-list .thread-row-main")[1].click());
         await waitFor(() => !document.documentElement.hasAttribute("data-stream-following"));
         unchanged(switchBaseline, await sample(`${label}-switch-idle`), "switch to idle conversation");
-        await evaluate(() => document.querySelector(".sidebar-main .thread-row-main").click());
+        await evaluate(() => document.querySelector(".project-thread-list .thread-row-main").click());
         await waitFor(() => document.documentElement.hasAttribute("data-stream-following"));
         unchanged(switchBaseline, await sample(`${label}-switch-running`), "switch to running conversation");
 
