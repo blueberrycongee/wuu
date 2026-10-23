@@ -1547,6 +1547,10 @@ export function useConversationScrollState({
         return undefined;
       }
 
+      // Composer/status refs can rerun restoration after search reserves the
+      // viewport. Let that jump finish against the newly measured layout.
+      if (messageJumpCancelRef.current) return;
+
       if (adoptingSubmission && submissionRef.current) {
         submissionRef.current.threadID = activeThreadID;
         // The draft bubble moves into the thread pane without a bottom jump,

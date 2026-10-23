@@ -2060,8 +2060,10 @@ export function App({ application: providedApplication }: { application?: Applic
         if (!mounted) {
           return;
         }
-        const { heldComposerMessages, ...runtimeAppState } = loadedState;
-        restoreInitialComposerRuntime(runtimeAppState);
+        const { heldComposerMessages } = loadedState;
+        // A replacement shell can consume navigation while initialize resolves.
+        // Restore the composer from live state, not the earlier snapshot.
+        restoreInitialComposerRuntime(applicationController.getState());
         if (loadedState.thread) {
           seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
         }
