@@ -214,8 +214,17 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 	locked, _ := ctx.Value(authorityLockKey{}).(*authorityLocked)
 	a.mu.Lock()
 	allowed := a.admitted && !a.closed && (!a.closing || locked != nil)
+	lazyAdmission := !a.admitted && !a.closed && !a.closing && a.prepared && a.documents != nil && !pluginhost.IsServicePreparation(ctx)
 	readOnly := !a.admitted && !a.closed && !a.closing && (params.Method == "read" || params.Method == "export")
 	a.mu.Unlock()
+	if lazyAdmission {
+		// Provider activation precedes every active consumer callback, but peer
+		// consumers need not activate in session-consumer registration order.
+		if err := a.admitActiveCall(ctx, client); err != nil {
+			return nil, err
+		}
+		allowed = true
+	}
 	if !allowed {
 		if readOnly {
 			return a.readPrepared(ctx, client, params)
@@ -239,6 +248,23 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 	}
 	locked = &authorityLocked{dir: a.dir, record: record}
 	return a.dispatch(ctx, client, locked, params)
+}
+
+func (a *StateAuthority) admitActiveCall(ctx context.Context, client *persistence.Client) error {
+	a.preflightMu.Lock()
+	defer a.preflightMu.Unlock()
+	a.mu.Lock()
+	if a.closed || a.closing {
+		a.mu.Unlock()
+		return persistence.ErrClosed
+	}
+	admitted := a.admitted
+	a.mu.Unlock()
+	if admitted {
+		return nil
+	}
+	_, err := a.activate(ctx, client)
+	return err
 }
 
 // Registry dispatch has already authorized the actual consumer's lifecycle

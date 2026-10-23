@@ -1,9 +1,17 @@
 package pluginhost
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
+
+// IsServicePreparation reports whether registry dispatch authorized this call
+// within a real preparation callback, including its nested service calls.
+func IsServicePreparation(ctx context.Context) bool {
+	preparing, _ := ctx.Value(servicePreparationKey{}).(bool)
+	return preparing
+}
 
 // WrapServiceInvoker decorates the selected provider before activation. Call it
 // after all registrations. Declarations, identity, dispatch, execution scopes,

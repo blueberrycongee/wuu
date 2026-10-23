@@ -192,7 +192,7 @@ func TestStateAuthorityProtectsAllCallersWithoutHotExports(t *testing.T) {
 			for _, request := range []struct{ method, params string }{
 				{"read", `{"namespace":"business","cursor":"same-thread"}`},
 				{"read", `{"namespace":"business","unexpected":true}`},
-				{"commit", `{"id":"invalid","expected_revision":1,"writes":[],"unexpected":true}`},
+				{"commit", `{"id":"invalid","expected_revision":"1","writes":[{"namespace":"business","key":"invalid","value":true}],"unexpected":true}`},
 				{"export", `{"unexpected":true}`},
 				{"compact", `{"unexpected":true}`},
 			} {
@@ -517,6 +517,15 @@ func TestStateAuthorityOrdinaryConsumersReadDuringPrepare(t *testing.T) {
 						}
 						return nil
 					}
+					native.activate = func(ctx context.Context) error {
+						documents := client(native.ID())
+						view, err := documents.Read(ctx, persistence.Query{Namespace: "business"})
+						if err != nil {
+							return err
+						}
+						_, err = documents.Commit(ctx, authorityWrite("consumer-activated", view.Revision, "ready"))
+						return err
+					}
 					consumer = native
 				} else {
 					node, err := exec.LookPath("node")
@@ -542,6 +551,7 @@ func TestStateAuthorityOrdinaryConsumersReadDuringPrepare(t *testing.T) {
 					}
 					return gate.Preflight(ctx, client(session.ID()))
 				}
+				session.activate = func(ctx context.Context) error { return gate.Activate(ctx, client(session.ID())) }
 				host := pluginhost.New(consumer, provider, session)
 				registry, conflicts := pluginhost.BuildServiceRegistry(consumer, provider, session)
 				router.mu.Lock()
@@ -566,6 +576,13 @@ func TestStateAuthorityOrdinaryConsumersReadDuringPrepare(t *testing.T) {
 				gate.mu.Unlock()
 				if admitted || provider.Status().State != pluginhost.StatePrepared {
 					t.Fatal("ordinary preparation activated or admitted candidate")
+				}
+				if err := host.Activate(ctx); err != nil {
+					t.Fatal(err)
+				}
+				view, err := client(session.ID()).Read(ctx, persistence.Query{Namespace: "business"})
+				if err != nil || len(view.Documents) != 1 || string(view.Documents[0].Value) != `"ready"` {
+					t.Fatalf("consumer activation write: %+v %v", view, err)
 				}
 			})
 		}
@@ -601,9 +618,14 @@ readline.createInterface({input: process.stdin}).on('line', async line => {
       const snapshot = await call('export', {});
       if (view.revision !== '0' || snapshot.revision !== '0' || view.documents.length !== 0) throw new Error('prepare changed empty state');
       let rejected = false;
-      try { await call('commit', {id: 'forbidden', expected_revision: 0, writes: [{namespace: 'business', key: 'early', value: true}]}); }
+      try { await call('commit', {id: 'forbidden', expected_revision: '0', writes: [{namespace: 'business', key: 'early', value: true}]}); }
       catch { rejected = true; }
       if (!rejected) throw new Error('prepare wrote business state');
+      send({id: request.id, result: {}});
+    } else if (request.method === 'activate') {
+      const view = await call('read', {namespace: 'business'});
+      await call('commit', {id: 'consumer-activated', expected_revision: view.revision,
+        writes: [{namespace: 'business', key: 'same-thread', value: 'ready'}]});
       send({id: request.id, result: {}});
     } else if (request.id) send({id: request.id, result: {}});
   } catch (error) { send({id: request.id, error: {code: 'prepare_failed', message: error.message}}); }
