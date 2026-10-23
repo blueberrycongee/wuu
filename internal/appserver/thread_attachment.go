@@ -13,7 +13,7 @@ import (
 	_ "image/png"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/runtime"
+	"context"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
@@ -75,11 +75,12 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 	th.mu.Unlock()
 	hash := sha256.New()
 	if artifactURI != "" {
-		stateDir, err := s.workspaceStateDir()
+		services, release, err := s.rt.RetainStateServices()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		data, media, err := runtime.ReadManagedArtifact(s.rt.WuuHome, stateDir, params.ThreadID, artifactURI, 12*1024*1024)
+		defer release()
+		data, media, err := services.Artifacts.Read(context.Background(), params.ThreadID, artifactURI, 12*1024*1024)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}

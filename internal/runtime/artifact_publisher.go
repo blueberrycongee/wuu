@@ -16,57 +16,31 @@ import (
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
-// Reuse plugin artifact storage and its URI/manifest contract without requiring
-// a plugin invocation or granting a model control over thread/storage identity.
-func newArtifactPublisher(wuuHome string) tools.ArtifactPublisher {
+// NewArtifactPublisher routes built-in presentation through the selected
+// artifact provider, including media inspection and immutable snapshot creation.
+func NewArtifactPublisher(client *ArtifactClient) tools.ArtifactPublisher {
 	return func(ctx context.Context, request tools.ArtifactPublishRequest) (toolresult.ContentPart, error) {
-		if request.ThreadID == "" || request.ThreadID == "." || request.ThreadID == ".." || strings.ContainsAny(request.ThreadID, `/\`) {
+		if !validArtifactThreadID(request.ThreadID) {
 			return toolresult.ContentPart{}, fmt.Errorf("invalid artifact thread id")
 		}
-		if err := ctx.Err(); err != nil {
-			return toolresult.ContentPart{}, err
-		}
-		// Stat before opening so directories and special files (e.g. FIFOs) never
-		// block a tool call. importArtifact also checks the opened descriptor.
-		info, err := os.Stat(request.Path)
-		if err != nil {
-			return toolresult.ContentPart{}, fmt.Errorf("stat artifact: %w", err)
-		}
-		if !info.Mode().IsRegular() {
-			return toolresult.ContentPart{}, fmt.Errorf("artifact path must name a regular file")
-		}
-		if info.Size() > maxImportedArtifactBytes {
-			return toolresult.ContentPart{}, fmt.Errorf("artifact exceeds %d bytes", maxImportedArtifactBytes)
-		}
-		file, err := os.Open(request.Path)
-		if err != nil {
-			return toolresult.ContentPart{}, err
-		}
-		defer file.Close()
-		mimeType, err := presentedArtifactMIME(file, request.Path)
-		if err != nil {
-			return toolresult.ContentPart{}, err
-		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return toolresult.ContentPart{}, err
-		}
-		artifact, err := importArtifact(ctx, wuuHome, request.StateDir, pluginhost.ToolExecutionScope{
-			ExecutionSnapshot: pluginhost.ExecutionSnapshot{
-				ThreadID: request.ThreadID, CallID: request.CallID, CWD: request.CWD,
-				ID: request.CallID, PluginID: "builtin.present_artifact",
-			},
-		}, pluginhost.ArtifactImportParams{Path: request.Path, MIMEType: mimeType}, file)
+		artifact, err := client.Import(ctx, ArtifactScope{ThreadID: request.ThreadID, ExecutionID: request.CallID, CallID: request.CallID, CWD: request.CWD, PluginID: "builtin.present_artifact"}, pluginhost.ArtifactImportParams{Path: request.Path}, true)
 		if err != nil {
 			return toolresult.ContentPart{}, err
 		}
 		part := toolresult.ContentPart{Type: toolresult.ContentTypeFile, Artifact: &toolresult.ArtifactPresentation{Placement: toolresult.ArtifactPlacementTurnEnd}}
-		if strings.HasPrefix(mimeType, "image/") {
+		if strings.HasPrefix(artifact.MIMEType, "image/") {
 			part.Type = toolresult.ContentTypeImage
 			part.Artifact.Placement = toolresult.ArtifactPlacementInline
 		}
 		applyManagedArtifact(&part, artifact)
 		return part, nil
 	}
+}
+
+// Remove this error-only compatibility constructor when runtime initialization
+// passes its captured ArtifactClient to NewArtifactPublisher at every call site.
+func newArtifactPublisher(wuuHome string) tools.ArtifactPublisher {
+	return NewArtifactPublisher(nil)
 }
 
 func presentedArtifactMIME(file *os.File, name string) (string, error) {

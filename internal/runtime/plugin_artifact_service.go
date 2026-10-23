@@ -59,13 +59,6 @@ func (k *artifactImportInvoker) InvokeService(ctx context.Context, params plugin
 	if params.Method != pluginhost.KernelServiceMethod {
 		return nil, serviceError("method_not_found", "kernel service method is unavailable")
 	}
-	k.parent.mu.RLock()
-	stateDir := k.parent.workspaceStateDir
-	wuuHome := k.parent.wuuHome
-	k.parent.mu.RUnlock()
-	if strings.TrimSpace(stateDir) == "" || strings.TrimSpace(wuuHome) == "" {
-		return nil, serviceError("service_unavailable", "artifact storage is unavailable")
-	}
 	scope, scopeErr := params.CallerExecution(true)
 	if scopeErr != nil {
 		return nil, scopeErr
@@ -74,7 +67,7 @@ func (k *artifactImportInvoker) InvokeService(ctx context.Context, params plugin
 	if err := decodeServiceParams(params.Params, &input); err != nil {
 		return nil, err
 	}
-	result, err := importPluginArtifact(ctx, wuuHome, stateDir, scope, input)
+	result, err := k.parent.artifactClient(params.ExecutionID).Import(ctx, artifactScope(scope), input, false)
 	if err != nil {
 		return nil, err
 	}
@@ -219,10 +212,7 @@ func (k *kernelHostServices) materializeToolResult(ctx context.Context, scope pl
 	if result == nil {
 		return nil
 	}
-	k.mu.RLock()
-	stateDir := k.workspaceStateDir
-	wuuHome := k.wuuHome
-	k.mu.RUnlock()
+	client := k.artifactClient("")
 	for index := range result.Content {
 		part := &result.Content[index]
 		switch part.Type {
@@ -230,7 +220,7 @@ func (k *kernelHostServices) materializeToolResult(ctx context.Context, scope pl
 		default:
 			continue
 		}
-		managed, isManaged, err := resolveManagedArtifact(wuuHome, stateDir, scope.ThreadID, part.URI)
+		managed, isManaged, err := client.Resolve(ctx, scope.ThreadID, part.URI)
 		if err != nil {
 			return fmt.Errorf("content[%d]: %w", index, err)
 		}
@@ -245,9 +235,9 @@ func (k *kernelHostServices) materializeToolResult(ctx context.Context, scope pl
 		if !local {
 			continue
 		}
-		artifact, err := importPluginArtifact(ctx, wuuHome, stateDir, scope, pluginhost.ArtifactImportParams{
+		artifact, err := client.Import(ctx, artifactScope(scope), pluginhost.ArtifactImportParams{
 			Path: path, Name: part.Name, MIMEType: part.MIMEType,
-		})
+		}, false)
 		if err != nil {
 			return fmt.Errorf("content[%d]: %w", index, err)
 		}
@@ -749,4 +739,24 @@ func (c *ArtifactClient) invoke(ctx context.Context, method string, input, outpu
 		return serviceError("invalid_response", "artifact provider returned an invalid response")
 	}
 	return nil
+}
+
+func artifactScope(scope pluginhost.ToolExecutionScope) ArtifactScope {
+	return ArtifactScope{ThreadID: scope.ThreadID, ExecutionID: scope.ID, PluginID: scope.PluginID, CallID: scope.CallID, CWD: scope.CWD}
+}
+
+func (k *kernelHostServices) artifactClient(executionID string) *ArtifactClient {
+	k.mu.RLock()
+	registry := k.registry
+	k.mu.RUnlock()
+	return NewArtifactClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		if registry == nil {
+			return nil, serviceError("service_unavailable", "artifact service graph is unavailable")
+		}
+		result, err := registry.Call(ctx, k.ID(), pluginhost.ServiceCallParams{Service: ArtifactServiceName, Method: method, Params: raw, ExecutionID: executionID})
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	})
 }

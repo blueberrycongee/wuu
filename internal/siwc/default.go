@@ -1,42 +1,24 @@
 package siwc
 
 import (
-	"os"
+	"errors"
 	"path/filepath"
-	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
-var defaults struct {
-	sync.Mutex
-	managers map[string]*Manager
+// NewBoundManager uses an already resolved home and the selected generation's
+// credential client. Its owner shares this instance with dependent consumers,
+// closes it after their cleanup, then releases the credential generation.
+func NewBoundManager(resolvedWuuHome string, credentials credentialstore.Store) (*Manager, error) {
+	if !filepath.IsAbs(resolvedWuuHome) {
+		return nil, errors.New("ChatGPT requires a resolved absolute Wuu home")
+	}
+	return New(Config{StateDir: filepath.Join(resolvedWuuHome, "chatgpt"), Credentials: credentials})
 }
 
-// DefaultManager shares account refresh and registration ownership within a
-// process. Desktop credentials stay in the system keyring; failure is visible.
+// Remove this error-only compatibility entry when all application/model
+// constructors inject NewBoundManager from their retained service generation.
 func DefaultManager() (*Manager, error) {
-	home, err := statepath.Home(os.Getenv("HOME"))
-	if err != nil {
-		return nil, err
-	}
-	defaults.Lock()
-	defer defaults.Unlock()
-	if manager := defaults.managers[home]; manager != nil {
-		return manager, nil
-	}
-	credentials, err := credentialstore.NewDesktopStore()
-	if err != nil {
-		return nil, err
-	}
-	manager, err := New(Config{StateDir: filepath.Join(home, "chatgpt"), Credentials: credentials})
-	if err != nil {
-		return nil, err
-	}
-	if defaults.managers == nil {
-		defaults.managers = map[string]*Manager{}
-	}
-	defaults.managers[home] = manager
-	return manager, nil
+	return nil, errors.New("ChatGPT requires an explicitly bound credential provider")
 }
