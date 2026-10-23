@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -132,10 +133,34 @@ func (s *Session) RefreshEngineSettings() error {
 func (s *Session) UpdateEngineSettings(update config.EnginesSettingsUpdate) error {
 	s.engineSettingsMu.Lock()
 	defer s.engineSettingsMu.Unlock()
-	if err := config.UpdateEnginesSettings(s.ConfigPath, update); err != nil {
+	services, release, err := s.RetainStateServices()
+	if err != nil {
 		return err
 	}
-	return s.refreshEngineSettings()
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	source := view.Source
+	if len(source) == 0 {
+		source, err = json.Marshal(view.Config)
+		if err != nil {
+			return errors.New("selected configuration cannot be edited")
+		}
+	}
+	next, err := config.UpdateEnginesSettingsSource(source, update)
+	if err != nil {
+		return err
+	}
+	view, err = services.Config.CompareExchange(context.Background(), view.Revision, next)
+	if err != nil {
+		return err
+	}
+	if view.ActivationError != "" {
+		return errors.New("engine settings were saved, but the selected configuration could not be activated")
+	}
+	return s.applyEngineSettings(view.Config)
 }
 
 func (s *Session) refreshEngineSettings() error {
@@ -143,6 +168,10 @@ func (s *Session) refreshEngineSettings() error {
 	if err != nil {
 		return err
 	}
+	return s.applyEngineSettings(cfg)
+}
+
+func (s *Session) applyEngineSettings(cfg config.Config) error {
 	codexBinary, codexResolveErr := codexengine.ResolveBinary()
 	codexEnabled := codexResolveErr == nil
 	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()

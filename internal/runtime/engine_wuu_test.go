@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -306,3 +307,48 @@ func (*testEngineSession) RunTurn(context.Context, agentengine.TurnInput, agente
 
 func (*testEngineSession) Interrupt(context.Context, string) error { return nil }
 func (*testEngineSession) Close(context.Context) error             { return nil }
+
+func TestEngineSettingsUseSelectedConfigurationSource(t *testing.T) {
+	ctx := context.Background()
+	provider := config.NewMemoryService(config.Module, config.Default())
+	consumer := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: config.ServiceName, MajorVersion: 1, Required: true}}}
+	host := pluginhost.New(provider, consumer)
+	registry, conflicts := pluginhost.BuildServiceRegistry(provider, consumer)
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(ctx)
+	path := filepath.Join(t.TempDir(), "unselected", "config.json")
+	s := &Session{PluginHost: host, ConfigPath: path}
+	selected := "codex"
+	disabled := false
+	if err := s.UpdateEngineSettings(config.EnginesSettingsUpdate{DefaultEngine: &selected, Codex: &config.EngineBinaryUpdate{Enabled: &disabled}}); err != nil {
+		t.Fatal(err)
+	}
+	if s.DefaultEngine() != agentengine.EngineID("codex") {
+		t.Fatal("committed selected engine was not applied")
+	}
+	services, release, err := s.RetainStateServices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := services.Config.Read(ctx)
+	release()
+	if err != nil || view.Config.Engines == nil || view.Config.Engines.DefaultEngine != "codex" {
+		t.Fatalf("engine settings not persisted by selected provider: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("engine edit accessed unselected file source")
+	}
+	if err := provider.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	selected = "wuu"
+	if err := s.UpdateEngineSettings(config.EnginesSettingsUpdate{DefaultEngine: &selected}); err == nil {
+		t.Fatal("closed selected config fell back")
+	}
+	if s.DefaultEngine() != agentengine.EngineID("codex") {
+		t.Fatal("failed edit changed active engine selection")
+	}
+}
