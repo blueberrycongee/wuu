@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 )
@@ -93,6 +94,9 @@ func ReadCLI(ctx context.Context, selected credentialstore.Store, cli string) (C
 	var credentials Credentials
 	if json.Unmarshal(raw, &credentials) != nil {
 		return Credentials{}, errors.New("selected CLI credential record is invalid")
+	}
+	if cli == "codex" && strings.TrimSpace(credentials.AccessToken) == "" {
+		return Credentials{}, errors.New("Codex CLI auth is missing access_token; sign in again")
 	}
 	return credentials, nil
 }

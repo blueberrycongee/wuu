@@ -363,9 +363,6 @@ func OAuthStatus(ctx context.Context, selected credentialstore.Store, reuseCLI b
 		}
 		return "", err
 	}
-	if reuseCLI && strings.TrimSpace(state.AccessToken) == "" {
-		return "", errors.New("Codex CLI auth is missing access_token; sign in again")
-	}
 	if strings.TrimSpace(state.AccessToken) == "" || (tokenExpiring(state.AccessToken, 0) && (reuseCLI || strings.TrimSpace(state.RefreshToken) == "")) {
 		return "", errors.New("Codex OAuth credentials are missing or expired; sign in again")
 	}

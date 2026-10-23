@@ -783,3 +783,20 @@ func TestCodexReuseIgnoresSavedLoginAndReloadsRotatedCredentials(t *testing.T) {
 		t.Fatal("source selection must preserve saved credentials")
 	}
 }
+
+func TestClientRejectsEmptySelectedCodexTokenBeforeRequest(t *testing.T) {
+	home, codexHome := t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", codexHome)
+	writeCodexCLIAuth(t, codexHome, "", "refresh-private")
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.WriteHeader(http.StatusUnauthorized) }))
+	defer server.Close()
+	client, err := New(ClientConfig{BaseURL: server.URL, Credentials: testSelectedCredentials(t, home), HTTPClient: server.Client(), ReuseCodexCredentials: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.Chat(context.Background(), providers.ChatRequest{Model: "gpt-5-codex", Messages: []providers.ChatMessage{{Role: "user", Content: "hello"}}})
+	if err == nil || !strings.Contains(err.Error(), "missing access_token") || strings.Contains(err.Error(), "refresh-private") || calls.Load() != 0 {
+		t.Fatalf("invalid selected credentials reached network or lost safe diagnosis: calls=%d err=%v", calls.Load(), err)
+	}
+}
