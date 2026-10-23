@@ -8,6 +8,7 @@ import type {
   EngineListResult,
   EngineUpdateParams,
   ExtensionInventoryRecord,
+  ExtensionPackageEnablementUpdate,
   ExtensionPackageUpdateParams,
   ProviderSummary,
   RecentWorkspace,
@@ -19,7 +20,7 @@ import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
 import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
-import { ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
+import { ONBOARDING_PLUGIN_MANIFESTS, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
 import { OnboardingBrowserImport } from "./OnboardingBrowserImport";
 import { SystemPermissionsPanel } from "./SystemPermissions";
@@ -347,17 +348,21 @@ export function FirstRunOnboarding({
     setField("applyingPlugins", true);
     setField("error", null);
     try {
+      const updates: ExtensionPackageEnablementUpdate[] = [];
       for (const plugin of bundledPlugins) {
         const shouldEnable = selectedPluginIDs.has(plugin.id);
         // Persist the choice even when it matches a package default, so an
         // interrupted setup cannot replace it with a recommended preset.
         if (plugin.enabled_override !== shouldEnable) {
-          await onUpdateExtensionPackage({
+          updates.push({
             id: plugin.id,
+            fingerprint: plugin.fingerprint,
             action: shouldEnable ? "enable" : "disable",
           });
         }
       }
+      // Validate and activate the complete choice, without intermediate graphs.
+      if (updates.length > 0) await onUpdateExtensionPackage({ updates });
       setStep("runtime");
     } catch (reason) {
       failure(reason, "onboarding.pluginsFailed");
@@ -770,15 +775,16 @@ function OnboardingPluginChoice({
   const { t } = useI18n();
   const id = useId();
   const descriptionKey = PLUGIN_DESCRIPTION_KEYS[plugin.provenance.plugin_id ?? ""];
+  const manifest = ONBOARDING_PLUGIN_MANIFESTS[plugin.provenance.plugin_id ?? ""];
   // The whole row is the switch's label, so a click anywhere on it toggles.
   return (
     <label className="onboarding-plugin" data-plugin={plugin.provenance.plugin_id}>
       <span className="catalog-row-mark" aria-hidden="true">
         <PluginIcon icon={plugin.icon} pluginId={plugin.id} fingerprint={plugin.fingerprint ?? ""} />
       </span>
-      <span className="catalog-row-title" id={`${id}-name`}>{plugin.name}</span>
+      <span className="catalog-row-title" id={`${id}-name`}>{manifest?.name ?? plugin.name}</span>
       <span className="catalog-row-description" id={`${id}-description`}>
-        {descriptionKey ? t(descriptionKey) : plugin.description}
+        {descriptionKey ? t(descriptionKey) : manifest?.description ?? plugin.description}
       </span>
       <button
         className="settings-switch"

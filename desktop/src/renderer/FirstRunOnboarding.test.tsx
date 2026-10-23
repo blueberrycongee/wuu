@@ -91,7 +91,7 @@ describe("FirstRunOnboarding", () => {
     await clickButton("开始设置");
     await clickPlugin("todo");
     await clickButton("继续");
-    expect(update).toHaveBeenCalledExactlyOnceWith({ id: "plugin:bundled:todo", action: "disable" });
+    expect(update).toHaveBeenCalledExactlyOnceWith({ updates: [{ id: "plugin:bundled:todo", fingerprint: "todo-fingerprint", action: "disable" }] });
     await flow.remount();
     expect(container.querySelector(".onboarding-stage-plugins")).not.toBeNull();
     const choice = container.querySelector<HTMLButtonElement>('[data-plugin="todo"] [role="switch"]')!;
@@ -243,6 +243,48 @@ describe("FirstRunOnboarding", () => {
     ]);
   });
 
+  it.each(["推荐", "极简", "全部"])("applies the %s preset as one complete provider and consumer selection", async preset => {
+    const ids = ["side", "todo", "automation", "automation-client"];
+    const update = vi.fn(async () => undefined);
+    await sharedFlow({ inventory: ids.map(id => plugin(id, true)), onUpdateExtensionPackage: update });
+    await clickButton("开始设置");
+    await clickButton(preset);
+    expect(container.querySelector('[data-plugin="automation-client"] [role="switch"]')).not.toBeNull();
+    await clickButton("继续");
+    expect(update).toHaveBeenCalledExactlyOnceWith({ updates: ids.map(id => ({
+      id: `plugin:bundled:${id}`, fingerprint: `${id}-fingerprint`,
+      action: preset === "极简" || (preset === "推荐" && id === "todo") ? "disable" : "enable",
+    })) });
+    expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
+  });
+
+  it("retains an incomplete custom selection after graph rejection and submits the user's correction", async () => {
+    const update = vi.fn(async () => undefined)
+      .mockRejectedValueOnce(new Error("automation.scheduler@1 has no selected provider"));
+    const flow = await sharedFlow({ inventory: [plugin("automation", true), plugin("automation-client", true)], onUpdateExtensionPackage: update });
+    await clickButton("开始设置");
+    await clickButton("极简");
+    await clickPlugin("automation-client");
+    await clickButton("继续");
+    expect(update).toHaveBeenCalledExactlyOnceWith({ updates: [
+      { id: "plugin:bundled:automation", fingerprint: "automation-fingerprint", action: "disable" },
+      { id: "plugin:bundled:automation-client", fingerprint: "automation-client-fingerprint", action: "enable" },
+    ] });
+    await flow.remount();
+    expect(container.querySelector(".onboarding-stage-plugins")).not.toBeNull();
+    expect(container.querySelector(".onboarding-error")?.textContent).toContain("automation.scheduler@1");
+    expect(container.querySelector('[data-plugin="automation"] [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+    expect(container.querySelector('[data-plugin="automation-client"] [role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+    await clickPlugin("automation");
+    await clickButton("继续");
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update).toHaveBeenLastCalledWith({ updates: [
+      { id: "plugin:bundled:automation", fingerprint: "automation-fingerprint", action: "enable" },
+      { id: "plugin:bundled:automation-client", fingerprint: "automation-client-fingerprint", action: "enable" },
+    ] });
+    expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
+  });
+
   it.each(["ask-user", "todo", "goal", "subagent", "peers", "memory", "dream"])("allows enabling %s from the bundled onboarding choices", async (id) => {
     const update = vi.fn(async () => undefined);
     await act(async () => root.render(
@@ -256,7 +298,7 @@ describe("FirstRunOnboarding", () => {
     await clickButton("开始设置");
     await clickPlugin(id);
     await clickButton("继续");
-    expect(update).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "enable" });
+    expect(update).toHaveBeenCalledExactlyOnceWith({ updates: [{ id: `plugin:bundled:${id}`, fingerprint: `${id}-fingerprint`, action: "enable" }] });
   });
 
   it("requires authentication and a saved connection for a ready model provider", () => {
@@ -398,6 +440,7 @@ describe("FirstRunOnboarding", () => {
               plugin("ask-user", true),
               plugin("todo", false),
               plugin("automation", false),
+              plugin("automation-client", false),
               plugin("side", true),
               plugin("subagent", true),
               plugin("peers", true),
@@ -411,36 +454,32 @@ describe("FirstRunOnboarding", () => {
     expect(container.querySelector(".onboarding-status")).toBeNull();
     const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin")]
       .filter((row) => row.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true")
-      .map((row) => row.querySelector(".catalog-row-title")?.textContent);
-    expect(selectedPlugins()).toEqual(["side", "automation"]);
+      .map((row) => row.getAttribute("data-plugin"));
+    expect(selectedPlugins()).toEqual(["side", "automation", "automation-client"]);
     expect(container.querySelector(".onboarding-presets [aria-pressed=true]")?.textContent).toBe("推荐");
     await clickButton("全部");
-    expect(selectedPlugins()).toHaveLength(7);
+    expect(selectedPlugins()).toHaveLength(8);
     await clickButton("推荐");
-    expect(selectedPlugins()).toEqual(["side", "automation"]);
+    expect(selectedPlugins()).toEqual(["side", "automation", "automation-client"]);
     expect(props.onUpdateExtensionPackage).not.toHaveBeenCalled();
     await clickPlugin("side");
     await clickButton("继续");
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(7);
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:side", action: "disable" });
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: "plugin:bundled:todo", action: "disable" });
-    for (const id of ["ask-user", "subagent", "peers", "memory"]) {
-      expect(props.onUpdateExtensionPackage).toHaveBeenCalledWith({ id: `plugin:bundled:${id}`, action: "disable" });
-    }
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledExactlyOnceWith({ updates: [
+      "side", "ask-user", "todo", "automation", "automation-client", "subagent", "peers", "memory",
+    ].map(id => ({ id: `plugin:bundled:${id}`, fingerprint: `${id}-fingerprint`, action: id === "automation" || id === "automation-client" ? "enable" : "disable" })) });
 
     // Restarting before onboarding finishes keeps the committed selection.
     await act(async () => {
       root.unmount();
       root = createRoot(container);
       root.render(<I18nProvider><FirstRunOnboarding {...props} inventory={[
-        "side", "ask-user", "todo", "automation", "subagent", "peers", "memory",
+        "side", "ask-user", "todo", "automation", "automation-client", "subagent", "peers", "memory",
       ].map((id) => ({ ...plugin(id, id === "automation"), enabled_override: id === "automation" }))} /></I18nProvider>);
     });
     await clickButton("开始设置");
     expect(selectedPlugins()).toEqual(["automation"]);
     await clickButton("继续");
-    expect(props.onUpdateExtensionPackage).toHaveBeenCalledTimes(7);
+    expect(props.onUpdateExtensionPackage).toHaveBeenCalledOnce();
   });
 
   it("splits the mascot into three colored clones that keep stacked decorations", async () => {
@@ -500,7 +539,7 @@ describe("FirstRunOnboarding", () => {
       await clickPlugin(id);
       selected.push(id);
       expect(container.querySelectorAll(".onboarding-plugin [role=switch][aria-checked=true]")).toHaveLength(selected.length);
-      const expected = selected.filter((pluginID) => pluginID !== "subagent");
+      const expected = selected.filter((pluginID) => pluginID !== "subagent" && pluginID !== "automation-client");
       expect(wornCapabilities().sort()).toEqual([...expected].sort());
       for (const decoration of expected) {
         const node = mascotStage()?.querySelector(`[data-onboarding-capability="${decoration}"]`);
@@ -519,7 +558,7 @@ describe("FirstRunOnboarding", () => {
     expect(wornCapabilities()).toEqual([]);
     await clickButton("全部");
     expect(visibleClones()).toHaveLength(3);
-    expect(wornCapabilities().sort()).toEqual(ONBOARDING_PLUGIN_ORDER.filter((id) => id !== "subagent").sort());
+    expect(wornCapabilities().sort()).toEqual(ONBOARDING_PLUGIN_ORDER.filter((id) => id !== "subagent" && id !== "automation-client").sort());
     expect(update).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
   });
@@ -580,8 +619,10 @@ describe("FirstRunOnboarding", () => {
     await clickButton("极简");
     await clickButton("继续");
 
-    expect(update).toHaveBeenCalledTimes(2);
-    expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:ask-user", action: "disable" });
+    expect(update).toHaveBeenCalledExactlyOnceWith({ updates: [
+      { id: "plugin:bundled:ask-user", fingerprint: "ask-user-fingerprint", action: "disable" },
+      { id: "plugin:bundled:memory", fingerprint: "memory-fingerprint", action: "disable" },
+    ] });
     expect(complete).not.toHaveBeenCalled();
 
     expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
@@ -776,7 +817,7 @@ describe("FirstRunOnboarding", () => {
     expect(container.querySelector(".onboarding-stage-plugins")).not.toBeNull();
     expect(document.activeElement).toBe(title());
     await pressEnter();
-    expect(update).toHaveBeenCalledWith({ id: "plugin:bundled:automation", action: "enable" });
+    expect(update).toHaveBeenCalledExactlyOnceWith({ updates: [{ id: "plugin:bundled:automation", fingerprint: "automation-fingerprint", action: "enable" }] });
     expect(container.querySelector(".onboarding-stage-runtime")).not.toBeNull();
     expect(document.activeElement).toBe(title());
   });
@@ -911,7 +952,7 @@ describe("FirstRunOnboarding", () => {
     expect(container.querySelector("[data-testid=\"onboarding-preview-exit\"]")).not.toBeNull();
     await clickButton("开始设置");
     expect(container.querySelectorAll('.onboarding-plugin [role=switch][aria-checked="true"]').length).toBeGreaterThan(0);
-    await clickPlugin("Goal");
+    await clickPlugin("goal");
     expect(mascotStage()?.querySelector('[data-onboarding-capability="goal"]')).not.toBeNull();
     await clickButton("继续");
     const installedChoice = container.querySelector<HTMLInputElement>(`[data-testid="onboarding-engine-${installed}"]`)!;
@@ -1009,11 +1050,11 @@ describe("FirstRunOnboarding", () => {
   }
 
   // Clicks the plugin's row, which labels its switch.
-  async function clickPlugin(name: string): Promise<void> {
+  async function clickPlugin(id: string): Promise<void> {
     const row = [...container.querySelectorAll(".onboarding-plugin")].find(
-      (candidate) => candidate.querySelector(".catalog-row-title")?.textContent === name,
+      (candidate) => candidate.getAttribute("data-plugin") === id,
     );
-    expect(row, `missing plugin ${name}`).toBeDefined();
+    expect(row, `missing plugin ${id}`).toBeDefined();
     await act(async () => {
       row?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
