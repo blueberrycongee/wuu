@@ -24,7 +24,7 @@ func TestStateModelsKeepCapturedClientsAndOptionsAfterTransfer(t *testing.T) {
 	rt := &Session{
 		Documents: documents, Sessions: session.NewStore(ctx, documents),
 		ProviderName: "original", Model: "original-model", TitleClient: oldClient,
-		StreamRunner: &agent.StreamRunner{Client: oldClient, ProviderName: "original", Model: "original-model", APIModel: "original-api", Effort: "high", Temperature: 0.3, ProviderOptions: map[string]any{"reasoning": map[string]any{"effort": "high"}}},
+		StreamRunner: &agent.StreamRunner{SystemPrompt: "original prompt", Client: oldClient, ProviderName: "original", Model: "original-model", APIModel: "original-api", Effort: "high", Temperature: 0.3, ProviderOptions: map[string]any{"reasoning": map[string]any{"effort": "high"}}},
 		ModelRoles:   modelroles.Set{Title: modelroles.Selection{APIModel: "original-title", ProviderOptions: map[string]any{"mode": "original"}}},
 	}
 	captured, err := rt.RetainState()
@@ -41,8 +41,12 @@ func TestStateModelsKeepCapturedClientsAndOptionsAfterTransfer(t *testing.T) {
 	}
 	rt.StreamRunner.Client, rt.TitleClient = nextClient, nextClient
 	rt.StreamRunner.APIModel = "successor-api"
+	rt.StreamRunner.SystemPrompt = "successor prompt"
 	rt.StreamRunner.ProviderOptions["reasoning"].(map[string]any)["effort"] = "low"
 	rt.ModelRoles.Title.ProviderOptions["mode"] = "successor"
+	if transferred.SystemPrompt != "original prompt" {
+		t.Fatalf("transferred state followed successor prompt: %q", transferred.SystemPrompt)
+	}
 	models, err := transferred.Models()
 	if err != nil {
 		t.Fatal(err)

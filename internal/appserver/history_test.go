@@ -247,7 +247,7 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			want.state = testRuntimeState(t, rt)
 			want.historyHeadSeq = loaded.baselineSeq
 			want.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, at, srv.participantResolver(testRuntimeState(t, srv.rt)))
-			srv.restorePluginToolLabels(want.Turns)
+			restorePluginToolLabels(want.state.Host, want.Turns)
 			want.Turns = applyTokenUsageMetasToTurns(want.Turns, metas)
 			want.WorkspaceKind = workspaceKindForCWD(rt.WuuHome, want.CWD)
 			applySessionMetadata(want, loaded.metadata)

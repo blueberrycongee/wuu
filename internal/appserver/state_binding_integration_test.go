@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
@@ -319,5 +321,58 @@ func TestTitleOverrideUsesSelectedConfigurationAndCredentials(t *testing.T) {
 		}
 	default:
 		t.Fatal("selected provider was not called")
+	}
+}
+
+// History loading and managed creation must keep the prompt from the same
+// retained authority, even when publication changes the shared runner later.
+func TestThreadHistoryUsesCapturedPromptAfterPublication(t *testing.T) {
+	for _, path := range []string{"resume", "fork", "managed"} {
+		t.Run(path, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.StreamRunner.SystemPrompt = "captured authority prompt"
+			srv := New(rt, &lockedBuffer{})
+			t.Cleanup(srv.Close)
+			const id = "captured-prompt-source"
+			if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := appendChatMessage(rt.Sessions, id, providers.ChatMessage{Role: "user", Content: "stored conversation"}); err != nil {
+				t.Fatal(err)
+			}
+			binding := testRuntimeState(t, rt)
+			rt.StreamRunner.SystemPrompt = "successor authority prompt"
+			var history []providers.ChatMessage
+			switch path {
+			case "resume":
+				loaded, err := srv.loadPersistedThreadSnapshot(binding, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				history = loaded.history
+			case "fork":
+				loaded, err := srv.loadForkSourceThread(binding, id, time.Now().UTC())
+				if err != nil {
+					t.Fatal(err)
+				}
+				history = loaded.history
+			case "managed":
+				th, err := srv.createHostSessionThreadWithStore(binding, binding.Sessions, "fixture", "plugin", "captured-prompt-child", hostSessionCreateParams{ContextSource: sessionContextFresh, Instructions: "child instructions"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				history = th.History
+			}
+			if len(history) == 0 || history[0].Role != "system" || !strings.Contains(history[0].Content, "captured authority prompt") || strings.Contains(history[0].Content, "successor authority prompt") {
+				t.Fatalf("history followed the successor prompt: %+v", history)
+			}
+			if path == "managed" && !strings.Contains(history[0].Content, "child instructions") {
+				t.Fatalf("lost child instructions: %+v", history)
+			}
+			persisted, err := loadChatMessages(binding.Sessions, id)
+			if err != nil || len(persisted) != 1 || persisted[0].Content != "stored conversation" {
+				t.Fatalf("read-only source changed: %+v, %v", persisted, err)
+			}
+		})
 	}
 }

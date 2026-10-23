@@ -113,7 +113,7 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 	cleanupWorktree := false
 	fork := session.ForkMetadata{}
 	if params.ContextSource == sessionContextFork {
-		parent, loadErr := s.loadPersistedThreadSnapshotWithStore(store, params.ParentSessionID)
+		parent, loadErr := s.loadPersistedThreadSnapshotWithStore(binding, store, params.ParentSessionID)
 		if loadErr != nil {
 			return nil, loadErr
 		}
@@ -125,7 +125,7 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		fork = session.ForkMetadata{ForkedFromID: params.ParentSessionID}
 	}
 	if params.ContextSource == sessionContextSeed && params.ParentSessionID != "" {
-		parent, loadErr := s.loadPersistedThreadSnapshotWithStore(store, params.ParentSessionID)
+		parent, loadErr := s.loadPersistedThreadSnapshotWithStore(binding, store, params.ParentSessionID)
 		if loadErr != nil {
 			return nil, loadErr
 		}
@@ -206,7 +206,7 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		history = make([]providers.ChatMessage, 0, 1)
 	}
 	if params.ContextSource != sessionContextSeed {
-		if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" && len(history) == 0 {
+		if prompt := strings.TrimSpace(binding.SystemPrompt); prompt != "" && len(history) == 0 {
 			history = append(history, providers.ChatMessage{Role: "system", Content: sessionSystemPrompt(prompt, params.Instructions)})
 		}
 	}

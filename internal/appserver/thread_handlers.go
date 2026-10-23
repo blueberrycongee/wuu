@@ -257,7 +257,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	history := make([]providers.ChatMessage, 0, 1)
-	if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" {
+	if prompt := strings.TrimSpace(binding.SystemPrompt); prompt != "" {
 		history = append(history, providers.ChatMessage{Role: "system", Content: prompt})
 	}
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, persistHistory, time.Now().UTC())
@@ -400,7 +400,7 @@ func (s *Server) handleThreadResume(req Request) error {
 	}
 	if th := s.threadForState(binding, id); th != nil {
 		th.mu.Lock()
-		s.restorePluginToolLabels(th.Turns)
+		restorePluginToolLabels(binding.Host, th.Turns)
 		thread := th.threadResumeSnapshotLocked(params)
 		th.mu.Unlock()
 		thread, err = s.threadWithChildAgents(binding, thread)
@@ -542,7 +542,7 @@ func (s *Server) loadPersistedThreadState(binding *runtime.State, id string, now
 	th.History = cloneHistory(loaded.history)
 	th.historyHeadSeq = loaded.baselineSeq
 	th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.participantResolver(binding))
-	s.restorePluginToolLabels(th.Turns)
+	restorePluginToolLabels(binding.Host, th.Turns)
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, threadCWD)
 	applySessionMetadata(th, loaded.metadata)
@@ -571,10 +571,10 @@ type persistedThreadSnapshot struct {
 // so even a deterministic history repair must not be written back here. The
 // lease admission paths persist repairNeeded under exclusive ownership.
 func (s *Server) loadPersistedThreadSnapshot(binding *runtime.State, id string) (persistedThreadSnapshot, error) {
-	return s.loadPersistedThreadSnapshotWithStore(binding.Sessions, id)
+	return s.loadPersistedThreadSnapshotWithStore(binding, binding.Sessions, id)
 }
 
-func (s *Server) loadPersistedThreadSnapshotWithStore(store *session.Store, id string) (persistedThreadSnapshot, error) {
+func (s *Server) loadPersistedThreadSnapshotWithStore(binding *runtime.State, store *session.Store, id string) (persistedThreadSnapshot, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return persistedThreadSnapshot{}, errors.New("thread_id is required")
@@ -632,9 +632,9 @@ func (s *Server) loadPersistedThreadSnapshotWithStore(store *session.Store, id s
 		tokenMetas:         tokenMetas,
 		pluginGeneration:   pluginGeneration,
 	}
-	systemPrompt := s.rt.StreamRunner.SystemPrompt
-	// The active runtime prompt is configuration, not conversation data. Use it
-	// in memory without rewriting the thread during a read-only load.
+	systemPrompt := binding.SystemPrompt
+	// Keep the captured configuration with its authority without rewriting
+	// conversation data during this read-only load.
 	loaded.history = replaceBaseSystemPrompt(repaired, sessionSystemPrompt(systemPrompt, metadata.Instructions))
 	return loaded, nil
 }
@@ -1001,7 +1001,7 @@ func (s *Server) handleThreadEditMessageForState(binding *runtime.State, ctx con
 	th.Turns = turnsFromHistory(th.ID, committedHistory, now)
 	if th.PersistHistory {
 		th.Turns = turnsFromPersistedHistory(th.ID, committedDisplay, now, s.participantResolver(binding))
-		s.restorePluginToolLabels(th.Turns)
+		restorePluginToolLabels(binding.Host, th.Turns)
 	}
 	th.UpdatedAt = now
 	th.currentTurn = ""
@@ -1027,7 +1027,7 @@ func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now tim
 	if th := s.threadForState(binding, id); th != nil {
 		th.mu.Lock()
 		defer th.mu.Unlock()
-		s.restorePluginToolLabels(th.Turns)
+		restorePluginToolLabels(binding.Host, th.Turns)
 		source := forkSourceThread{
 			liveHistory:    th.running || !th.PersistHistory,
 			history:        cloneHistory(th.History),
@@ -1075,7 +1075,7 @@ func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now tim
 	}
 	// Forking reads the source snapshot but never mutates it. Any repair is
 	// persisted only by an execution/mutation admission that owns the source.
-	history = replaceBaseSystemPrompt(repaired, s.rt.StreamRunner.SystemPrompt)
+	history = replaceBaseSystemPrompt(repaired, binding.SystemPrompt)
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, s.rt.RootDir, true, now)
 	th.state = binding
 	displayHistory := cloneHistory(history)
@@ -1086,7 +1086,7 @@ func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now tim
 		displayHistory = chatMessagesFromPersistedMessages(loaded.displayHistory)
 		rawHistory = loaded.rawHistory
 		th.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, now, s.participantResolver(binding))
-		s.restorePluginToolLabels(th.Turns)
+		restorePluginToolLabels(binding.Host, th.Turns)
 	}
 	if metas, err := loadMetaMessages(binding.Sessions, id); err != nil {
 		return forkSourceThread{}, err
