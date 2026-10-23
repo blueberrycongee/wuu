@@ -688,9 +688,9 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
   /* Text and toolbar glyphs share the card inset used by code blocks and
    * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
   --composer-text-start: var(--card-padding);
-  /* The draft keeps the query bubble's framed-text inset, so typed and sent
-   * text sit the same distance from their frames. */
-  --composer-text-padding-top: var(--conversation-framed-text-inset-block);
+  /* Keep the first line clear of the rounded corner. The editor uses the
+   * full card inset for placeholders, the caret and typed text alike. */
+  --composer-text-padding-top: var(--card-padding);
   --composer-control-icon-inset: calc((32px - var(--icon-size)) / 2);
   /* Filled corner controls keep their visible edge this far from the frame. */
   --composer-corner-inset: var(--space-2);
@@ -717,12 +717,6 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
 .composer-stack .composer-above-input,
 .composer-stack .composer-pending-drawer {
   transform: translateY(calc(var(--composer-expanded-offset) * -1));
-}
-
-.hero-composer-wrap .composer {
-  --composer-text-start: var(--card-padding);
-  --composer-text-padding-top: var(--card-padding);
-  min-height: var(--composer-collapsed-min-height);
 }
 
 /* Pending attachments above the composer input. */
@@ -1069,7 +1063,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   line-height: var(--conversation-reading-line-height);
 }
 
-/* The hero keeps a roomier top inset than the dock composer. */
+/* The welcome editor reserves more writing space above its toolbar. */
 .hero-composer-wrap .composer textarea {
   height: 92px;
   min-height: 92px;

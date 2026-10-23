@@ -1991,6 +1991,8 @@ export type Thread = {
   agent_path?: string;
   preview: string;
   title?: string;
+  /** Monotonic persisted title revision; independent of turn timestamps. */
+  title_revision?: number;
   // "project" marks a project coordinator; "project-session" a session it manages.
   source?: string;
   // The coordinator that manages this session.

@@ -123,6 +123,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Limit ambient loading rings in project rows, conversation rows, and session tabs to 30 angle updates per second while preserving their existing rotation speed.
+
+- Give the regular conversation input the full card inset above its first line, matching the welcome input and keeping placeholders, typed text, and the caret clear of rounded corners.
+
+- Resolve wallpaper cover sizing in CSS during window resizing, avoiding inherited style updates across the conversation while retaining wallpaper alignment in the native navigation ribbon.
+
+- Keep conversation titles synchronized across lists, tabs, resumes, and delayed notifications using a persisted title revision. Retry automatic naming for untitled conversations after later successful turns while preserving saved manual titles.
+
 - Recover automatically when a Responses WebSocket reaches its connection lifetime limit during a reply, reconnecting with the full request while preserving tool replay safeguards and retry limits.
 
 - Prevent conversation previews from jumping when sending a follow-up after a delivered file by settling the outgoing file card before the submission scroll animation.

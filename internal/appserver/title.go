@@ -171,8 +171,8 @@ func (s *Server) generateThreadTitle(threadID string, history []providers.ChatMe
 // When forceFirstUser is true, the pipeline uses the first user message
 // regardless of how many subsequent user messages there are. This is the
 // behavior thread/regenerate-title wants (re-title with the original
-// prompt). The production first-turn path leaves it false so a later
-// turn cannot accidentally re-trigger title generation.
+// prompt). Automatic retries use the persisted original summary when available;
+// without that durable source, only a first-turn history is eligible.
 //
 // threadRuntime is the conversation's per-thread runtime. When the title role
 // inherits the main model, the title follows this runtime's pinned model rather
@@ -228,16 +228,38 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 		return res, nil
 	}
 
+	if persist {
+		s.mu.Lock()
+		if s.titleGenerations[threadID] {
+			s.mu.Unlock()
+			res.SkipReason = "title generation already running"
+			return res, nil
+		}
+		if s.titleGenerations == nil {
+			s.titleGenerations = make(map[string]bool)
+		}
+		s.titleGenerations[threadID] = true
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			delete(s.titleGenerations, threadID)
+			s.mu.Unlock()
+		}()
+	}
+
 	firstUser, ok := firstUserMessageForTitle(history, forceFirstUser)
-	if forceFirstUser {
-		// Provider history is rewritten by compaction. Session Summary is the
-		// immutable preview captured from the original first user message, so use
-		// it for manual regeneration instead of accidentally titling a retained
-		// post-compaction message. Probe/synthetic threads have no metadata and
-		// continue to use the supplied history.
-		if metadata, found, err := session.Find(s.rt.SessionDir, threadID); err != nil {
-			providers.DebugLogf("title[%s]: failed to load original title source: %v", threadID, err)
-		} else if found && strings.TrimSpace(metadata.Summary) != "" {
+	// History can be compacted or contain follow-up input by the time an
+	// attempt runs. The durable summary retains the original user intent and
+	// lets an untitled session retry after a failed or interrupted first turn.
+	if metadata, found, err := session.Find(s.rt.SessionDir, threadID); err != nil {
+		res.PersistErr = err
+		return res, err
+	} else if found {
+		if persist && strings.TrimSpace(metadata.Title) != "" {
+			res.SkipReason = "session already titled"
+			return res, nil
+		}
+		if strings.TrimSpace(metadata.Summary) != "" {
 			firstUser = strings.TrimSpace(metadata.Summary)
 			ok = true
 		}
@@ -252,7 +274,7 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 	th := s.thread(threadID)
 	if th != nil {
 		th.mu.Lock()
-		if th.ReadOnly || th.Ephemeral || th.ParentID != "" || strings.TrimSpace(th.Title) != "" {
+		if th.ReadOnly || th.Ephemeral || th.ParentID != "" || (persist && strings.TrimSpace(th.Title) != "") {
 			th.mu.Unlock()
 			res.SkipReason = "thread already titled / read-only / ephemeral / forked"
 			providers.DebugLogf("title[%s]: skipped (%s)", threadID, res.SkipReason)
@@ -535,9 +557,12 @@ func (s *Server) regenerateTitleWithOverride(ctx context.Context, req Request, t
 		if terr != nil {
 			return s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, terr)
 		}
-		_ = s.notifyThreadUpdated(thread)
 		result.PersistedTitle = metadata.Title
 		result.PreviewAfter = thread.Preview
+		if err := s.notifyThreadUpdated(thread); err != nil {
+			result.NotificationErr = err
+			return s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, err)
+		}
 		result.Notified = true
 	}
 	return s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, nil)

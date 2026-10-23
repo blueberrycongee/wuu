@@ -783,7 +783,7 @@ function reduceNotification(
         updateThreadByID(state, thread.id, (current) => {
           const turns = mergeThreadUpdatedTurns(thread.turns, current.turns);
           return {
-            ...thread,
+            ...reconcileThreadTitle(current, thread),
             status: reconciledThreadStatus(thread, current, turns),
             turns,
             child_agents: thread.child_agents ?? current.child_agents,
@@ -1368,6 +1368,7 @@ export function reconcileResumedThreadTurns(
   resumed: Thread,
   local: Thread | undefined,
 ): Thread {
+  if (local) resumed = reconcileThreadTitle(local, resumed);
   const localTurns = local ? reconcileOptimisticTurns(local.turns, resumed.turns) : undefined;
   if (localTurns) {
     const turns = preserveTurnCompletions(resumed.turns, localTurns);
@@ -1511,6 +1512,9 @@ function replaceThreadPreservingOrder(threads: Thread[], thread: Thread): Thread
 
 function upsertThread(threads: Thread[], thread: Thread | undefined): Thread[] {
   if (thread && isThread(thread)) {
+    const threadID = thread.id;
+    const existing = threads.find((item) => item.id === threadID);
+    if (existing) thread = reconcileThreadTitle(existing, thread);
     const preserved = replaceThreadPreservingOrder(threads, thread);
     if (preserved) {
       return preserved;
@@ -1608,6 +1612,7 @@ function summarizeThreadForSidebar(
     agent_path: thread.agent_path,
     preview: thread.preview,
     title: thread.title,
+    title_revision: thread.title_revision,
     source: thread.source,
     project_id: thread.project_id,
     project_exists: thread.project_exists,
@@ -1678,7 +1683,10 @@ function summarizeWorkspaceThreadsForSidebar(
   const next: Record<string, ThreadSummary[]> = {};
   for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
     next[workspaceID] = summarizeThreadsForSidebar(
-      threads.map((thread) => liveByID.get(thread.id) ?? thread),
+      threads.map((thread) => {
+        const live = liveByID.get(thread.id);
+        return live ? reconcileThreadTitle(thread, live) : thread;
+      }),
       runningThreadIDs,
     );
   }
@@ -1777,7 +1785,25 @@ function mergeListedThreads(current: Thread[], listed: Thread[]): Thread[] {
   );
 }
 
+// A later turn timestamp does not make its captured title newer. Title
+// revisions are committed with the title and survive reconnects and restarts.
+export function reconcileThreadTitle(existing: Thread, incoming: Thread): Thread {
+  if (existing.title?.trim() && (
+    !incoming.title?.trim() ||
+    (existing.title_revision ?? 0) > (incoming.title_revision ?? 0)
+  )) {
+    return {
+      ...incoming,
+      title: existing.title,
+      title_revision: existing.title_revision,
+      preview: existing.preview,
+    };
+  }
+  return incoming;
+}
+
 function mergeListedThread(existing: Thread, listed: Thread): Thread {
+  listed = reconcileThreadTitle(existing, listed);
   const turns = mergeListedThreadTurns(existing.turns, listed.turns);
   return {
     ...listed,
@@ -1871,7 +1897,11 @@ function reconcileListedThreadState(state: AppState, listed: Thread[]): AppState
   releaseNewlySettledTurnStreams(state.thread, thread);
   releaseNewlySettledTurnStreams(state.secondaryThread, secondaryThread);
 
-  const reconciled = { ...state, threads, thread, secondaryThread };
+  const sessionTabs = threads.reduce(
+    (tabs, listedThread) => syncThreadSessionTabTitle(tabs, listedThread),
+    state.sessionTabs,
+  );
+  const reconciled = { ...state, threads, thread, secondaryThread, sessionTabs };
   const wasRunning = state.running || isThreadRunning(activeThreadForState(state));
   const running = isThreadRunning(activeThreadForState(reconciled));
   return {

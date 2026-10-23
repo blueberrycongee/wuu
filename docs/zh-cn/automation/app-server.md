@@ -124,6 +124,11 @@ Schema 修正回合，因此单个 `turn/completed` 不代表整次运行结束�
 `thread_id`，创建独立对话。`thread/start` 的 `ephemeral: true` 创建内存会话，服务退出后
 无法恢复。
 
+会话快照中的可选字段 `title_revision` 是随标题修改一起保存、单调递增的版本号，省略时
+视为零。合并列表、恢复响应或 `thread/updated` 通知时，保留版本较大的标题；
+`updated_at` 表示会话活动时间，不能用来判断标题的新旧。自动生成只填补空标题，
+可在后续回合成功后重试，不会覆盖已保存的手动标题。
+
 每个对话保留自己的模型和权限选择。应在对话空闲时，用带 `thread_id` 的
 `config/model/update` 修改；这不会改变工作区默认值。对话忙时返回 `thread_busy`，客户端可
 等待后重试。不带 `thread_id` 的请求修改未来

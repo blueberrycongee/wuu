@@ -8,7 +8,7 @@ func (s *Server) notifyThreadStarted(thread Thread) error {
 	if err != nil {
 		return err
 	}
-	thread = s.threadWithPersistedOrganizationIdentity(thread)
+	thread = s.threadWithPersistedMetadata(thread)
 	return s.writeNotification(NotificationThreadStarted, ThreadStartedNotification{Thread: thread})
 }
 
@@ -18,12 +18,17 @@ func (s *Server) notifyThreadUpdated(thread Thread) error {
 	if err != nil {
 		return err
 	}
-	thread = s.threadWithPersistedOrganizationIdentity(thread)
+	thread = s.threadWithPersistedMetadata(thread)
 	return s.writeNotification(NotificationThreadUpdated, ThreadUpdatedNotification{Thread: thread})
 }
 
-func (s *Server) threadWithPersistedOrganizationIdentity(thread Thread) Thread {
+func (s *Server) threadWithPersistedMetadata(thread Thread) Thread {
 	if metadata, ok, err := session.Find(s.rt.SessionDir, thread.ID); err == nil && ok {
+		if metadata.TitleRevision >= thread.TitleRevision {
+			thread.Title = metadata.Title
+			thread.TitleRevision = metadata.TitleRevision
+			thread.Preview = firstNonEmpty(metadata.Title, thread.Preview, metadata.Summary)
+		}
 		thread.Pinned = metadata.PinnedAt != nil
 		thread.FolderID = metadata.FolderID
 		thread.WorkspaceID = metadata.WorkspaceID

@@ -17,6 +17,7 @@ import {
   initialState,
   isScratchThread,
   mergeSidebarThread,
+  reconcileThreadTitle,
   reduceNotification,
   sortThreads,
   threadBelongsToWorkspace,
@@ -224,7 +225,10 @@ function reconcileSidebarThreadList(
     if (!now.has(id)) result.delete(id);
   }
   for (const [id, thread] of now) {
-    if (before.get(id) !== thread) result.set(id, thread);
+    if (before.get(id) !== thread) {
+      const incoming = result.get(id);
+      result.set(id, incoming ? reconcileThreadTitle(incoming, thread) : thread);
+    }
   }
   return sortThreads([...result.values()]);
 }

@@ -5,10 +5,14 @@ html[data-shell-skin] body {
 
 .app-background,
 html[data-shell-skin] .sidebar-ribbon::before {
+  /* Resolve viewport geometry only on the painted surfaces. Updating inherited
+     root variables on every resize invalidates the conversation's styles too. */
+  --shell-image-width: max(var(--shell-viewport-width, 100vw), calc(var(--shell-viewport-height, 100vh) * var(--shell-image-ratio, 1)));
+  --shell-image-height: max(var(--shell-viewport-height, 100vh), calc(var(--shell-viewport-width, 100vw) / var(--shell-image-ratio, 1)));
   background-color: var(--shell-background);
   background-image: linear-gradient(var(--shell-overlay), var(--shell-overlay)), var(--shell-image, none);
-  background-size: 100% 100%, var(--shell-image-size, cover);
-  background-position: 0 0, calc(var(--shell-image-x, 0px) - var(--shell-offset-x, 0px)) calc(var(--shell-image-y, 0px) - var(--shell-offset-y, 0px));
+  background-size: 100% 100%, var(--shell-image-width) var(--shell-image-height);
+  background-position: 0 0, calc((var(--shell-viewport-width, 100vw) - var(--shell-image-width)) * var(--shell-image-align-x, 0.5) - var(--shell-offset-x, 0px)) calc((var(--shell-viewport-height, 100vh) - var(--shell-image-height)) * var(--shell-image-align-y, 0.5) - var(--shell-offset-y, 0px));
   background-repeat: no-repeat;
 }
 

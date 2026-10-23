@@ -9,6 +9,7 @@ import {
   draftSessionTabForContext,
   ensureSessionTab,
   isThreadRunning,
+  mergeSidebarThread,
   removeSessionTab,
   threadSessionTabID,
   upsertThread,
@@ -161,13 +162,15 @@ export function createThreadMutationActions(
       deps.setAppState((current) => ({
         ...current,
         thread:
-          current.thread?.id === thread.id ? result.thread : current.thread,
+          current.thread?.id === thread.id
+            ? mergeSidebarThread(current.thread, result.thread)
+            : current.thread,
         secondaryThread:
           current.secondaryThread?.id === thread.id
-            ? result.thread
+            ? mergeSidebarThread(current.secondaryThread, result.thread)
             : current.secondaryThread,
         threads: current.threads.map((item) =>
-          item.id === result.thread.id ? result.thread : item,
+          item.id === result.thread.id ? mergeSidebarThread(item, result.thread) : item,
         ),
         status: current.status === "ready" ? "ready" : current.status,
       }));
@@ -209,10 +212,12 @@ export function createThreadMutationActions(
       deps.setAppState((current) => ({
         ...current,
         thread:
-          current.thread?.id === thread.id ? result.thread : current.thread,
+          current.thread?.id === thread.id
+            ? mergeSidebarThread(current.thread, result.thread)
+            : current.thread,
         secondaryThread:
           current.secondaryThread?.id === thread.id
-            ? result.thread
+            ? mergeSidebarThread(current.secondaryThread, result.thread)
             : current.secondaryThread,
         threads:
           current.threads.some((item) => item.id === result.thread.id) ||
@@ -340,10 +345,12 @@ export function createThreadMutationActions(
       deps.setAppState((current) => ({
         ...current,
         thread:
-          current.thread?.id === thread.id ? result.thread : current.thread,
+          current.thread?.id === thread.id
+            ? mergeSidebarThread(current.thread, result.thread)
+            : current.thread,
         secondaryThread:
           current.secondaryThread?.id === thread.id
-            ? result.thread
+            ? mergeSidebarThread(current.secondaryThread, result.thread)
             : current.secondaryThread,
         threads: upsertThread(current.threads, result.thread),
         status: current.status === "ready" ? "ready" : current.status,

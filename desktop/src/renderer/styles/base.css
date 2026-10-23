@@ -335,6 +335,9 @@
   /* Deliberate exception: session skeleton loading is an ambient state, its
    * spinner breathes slower than the active-progress --motion-spin rhythm. */
   --session-loading-spin-duration: 1400ms;
+  /* Small ambient rings need only 30 angle updates per second. Quantizing
+   * their compositor animation avoids repainting masked lists at display Hz. */
+  --session-loading-spin-easing: steps(42, end);
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
   /* Scrollbar tokens — unify every scrollbar in the renderer.

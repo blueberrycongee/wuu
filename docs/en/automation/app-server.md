@@ -57,6 +57,13 @@ session in the workspace. `thread/fork` takes `thread_id` and creates a separate
 conversation. `thread/start` with `ephemeral: true` creates an in-memory session
 that cannot be resumed after the server exits.
 
+Thread snapshots carry an optional `title_revision`, a monotonically increasing
+version saved with each title change. Treat an omitted revision as zero. When
+merging lists, resumes, or `thread/updated` notifications, preserve the title from
+the higher revision; `updated_at` tracks conversation activity and cannot order
+title changes. Automatic generation fills only an empty title and may retry after
+a later successful turn. It never replaces a saved manual title.
+
 A conversation keeps its own model and permission selection. Change it through
 `config/model/update` with `thread_id` while the conversation is idle. This does
 not change workspace defaults. A busy conversation returns `thread_busy`, allowing

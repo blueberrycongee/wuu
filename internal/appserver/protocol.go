@@ -2460,11 +2460,13 @@ type Thread struct {
 	ProjectRole string `json:"project_role,omitempty"`
 	// ProjectExists resolves grouping independently of coordinator visibility.
 	// Lists, resumes and metadata responses include it; incremental events may omit it.
-	ProjectExists  *bool  `json:"project_exists,omitempty"`
-	ParentID       string `json:"parent_id,omitempty"`
-	AgentPath      string `json:"agent_path,omitempty"`
-	Preview        string `json:"preview"`
-	Title          string `json:"title,omitempty"`
+	ProjectExists *bool  `json:"project_exists,omitempty"`
+	ParentID      string `json:"parent_id,omitempty"`
+	AgentPath     string `json:"agent_path,omitempty"`
+	Preview       string `json:"preview"`
+	Title         string `json:"title,omitempty"`
+	// TitleRevision orders persisted title changes independently of turn activity.
+	TitleRevision  int64  `json:"title_revision,omitempty"`
 	ModelProvider  string `json:"model_provider"`
 	Model          string `json:"model"`
 	ModelVariant   string `json:"model_variant"`

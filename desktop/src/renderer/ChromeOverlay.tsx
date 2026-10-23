@@ -64,6 +64,12 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
       const value = computed.getPropertyValue(name).trim();
       if (value.length <= 512 && !/url\s*\(/i.test(value)) variables[name] = value;
     }
+    if (model.kind === "ribbon") {
+      // The native view is only ribbon-sized; its wallpaper uses the owner's
+      // viewport. Window resize dismisses it, so capture this when presenting.
+      variables["--shell-viewport-width"] = `${window.innerWidth}px`;
+      variables["--shell-viewport-height"] = `${window.innerHeight}px`;
+    }
     const current = ++generation.current;
     const request: ChromeOverlayRequest = { version: CHROME_OVERLAY_VERSION, token: currentToken, generation: current,
       bounds, model, focus, appearance: { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", locale, fontFamily: computed.fontFamily, variables,

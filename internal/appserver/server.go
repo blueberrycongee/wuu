@@ -64,6 +64,7 @@ type threadState struct {
 	UpdatedAt      time.Time
 	LastAccessedAt time.Time
 	Title          string
+	TitleRevision  int64
 	ModelProvider  string
 	Model          string
 	ModelVariant   string
@@ -225,6 +226,8 @@ type Server struct {
 
 	mu      sync.Mutex
 	threads map[string]*threadState
+	// Title attempts outlive cached thread snapshots and are deduplicated by ID.
+	titleGenerations map[string]bool
 
 	runMu             sync.Mutex
 	runStore          *execution.Store
