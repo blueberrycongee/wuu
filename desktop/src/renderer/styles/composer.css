@@ -395,7 +395,7 @@
 
 .dock-composer-wrap {
   --composer-dock-bottom-space: max(
-    clamp(var(--space-1), calc(2dvh - var(--space-1)), var(--space-2)),
+    clamp(var(--space-4), 3dvh, var(--space-6)),
     env(safe-area-inset-bottom, 0px)
   );
   position: relative;
