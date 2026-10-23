@@ -37,12 +37,6 @@ func NewArtifactPublisher(client *ArtifactClient) tools.ArtifactPublisher {
 	}
 }
 
-// Remove this error-only compatibility constructor when runtime initialization
-// passes its captured ArtifactClient to NewArtifactPublisher at every call site.
-func newArtifactPublisher(wuuHome string) tools.ArtifactPublisher {
-	return NewArtifactPublisher(nil)
-}
-
 func presentedArtifactMIME(file *os.File, name string) (string, error) {
 	probe := make([]byte, 512)
 	n, err := file.Read(probe)
