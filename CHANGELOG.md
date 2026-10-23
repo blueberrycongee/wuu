@@ -121,6 +121,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep conversation titles synchronized across lists, tabs, resumes, and delayed notifications using a persisted title revision. Retry automatic naming for untitled conversations after later successful turns while preserving saved manual titles.
+
 - Recover automatically when a Responses WebSocket reaches its connection lifetime limit during a reply, reconnecting with the full request while preserving tool replay safeguards and retry limits.
 
 - Prevent conversation previews from jumping when sending a follow-up after a delivered file by settling the outgoing file card before the submission scroll animation.

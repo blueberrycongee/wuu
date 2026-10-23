@@ -42,6 +42,7 @@ type Session struct {
 	CreatedAt             time.Time         `json:"created_at"`
 	UpdatedAt             time.Time         `json:"updated_at,omitempty"`
 	Title                 string            `json:"title,omitempty"`
+	TitleRevision         int64             `json:"title_revision,omitempty"`
 	Summary               string            `json:"summary,omitempty"`
 	Entries               int               `json:"entries"`
 	LatestCompletedTurnID string            `json:"latest_completed_turn_id,omitempty"`
@@ -401,7 +402,7 @@ func listSessions(sessDir, where string, args []any, limit int) ([]Session, erro
 	defer db.Close()
 
 	query := `
-SELECT id, created_at, updated_at, title, summary, entries, cwd,
+SELECT id, created_at, updated_at, title, title_revision, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
@@ -572,7 +573,7 @@ func FindManagedByRequest(sessDir, owner, requestID string) (Session, bool, erro
 	}
 	defer db.Close()
 	row := db.QueryRow(`
-SELECT id, created_at, updated_at, title, summary, entries, cwd,
+SELECT id, created_at, updated_at, title, title_revision, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
@@ -914,7 +915,11 @@ func updateMetadata(sessDir, id string, missingOK bool, update func(*Session)) (
 		}
 		return Session{}, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
 	}
+	previousTitle := s.Title
 	update(&s)
+	if s.Title != previousTitle {
+		s.TitleRevision++
+	}
 	if err := updateSessionTx(tx, s); err != nil {
 		return Session{}, err
 	}
@@ -1285,6 +1290,7 @@ func migrateSchema(db *sql.DB) error {
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			title TEXT NOT NULL DEFAULT '',
+			title_revision INTEGER NOT NULL DEFAULT 0,
 			summary TEXT NOT NULL DEFAULT '',
 			entries INTEGER NOT NULL DEFAULT 0,
 			cwd TEXT NOT NULL DEFAULT '',
@@ -1778,6 +1784,9 @@ func migrateSchema(db *sql.DB) error {
 			return fmt.Errorf("migrate sessions database: %w", err)
 		}
 	}
+	if err := migration.addColumnIfMissing("sessions", "title_revision", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
 	if err := migration.addColumnIfMissing("held_user_work", "state", "TEXT NOT NULL DEFAULT 'pending'"); err != nil {
 		return err
 	}
@@ -2162,24 +2171,24 @@ func insertSessionTx(tx *sql.Tx, sess Session) error {
 
 func insertSessionSQL() string {
 	return `INSERT INTO sessions (
-		id, created_at, updated_at, title, summary, entries, cwd,
+		id, created_at, updated_at, title, title_revision, summary, entries, cwd,
 		forked_from_id, forked_from_turn_id, forked_from_item_id,
 		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
 		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
 		provider, model, variant, effort, speed, model_options_json, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 }
 
 func updateSessionTx(tx *sql.Tx, sess Session) error {
 	_, err := tx.Exec(`
 UPDATE sessions
-SET created_at = ?, updated_at = ?, title = ?, summary = ?, entries = ?, cwd = ?,
+SET created_at = ?, updated_at = ?, title = ?, title_revision = ?, summary = ?, entries = ?, cwd = ?,
     forked_from_id = ?, forked_from_turn_id = ?, forked_from_item_id = ?,
     pinned_at = ?, folder_id = ?, archived_at = ?, archive_reason = ?, worktree_path = ?, worktree_base_head = ?, worktree_base_repo = ?,
     workspace_id = ?, source = ?, owner = ?, visibility = ?, parent_id = ?, context_source = ?, creation_request_id = ?,
 	provider = ?, model = ?, variant = ?, effort = ?, speed = ?, model_options_json = ?, permission_mode = ?, approve_for_me = ?, engine_id = ?, engine_ref = ?, instructions = ?, project_role = ?, tool_policy_json = ?
 WHERE id = ?`,
-		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
+		timeText(sess.CreatedAt), timeText(sess.UpdatedAt), sess.Title, sess.TitleRevision, sess.Summary, sess.Entries, normalizeCWD(sess.CWD),
 		sess.ForkedFromID, sess.ForkedFromTurnID, sess.ForkedFromItemID,
 		nullableTimeText(sess.PinnedAt), strings.TrimSpace(sess.FolderID), nullableTimeText(sess.ArchivedAt), sess.ArchiveReason,
 		normalizeCWD(sess.WorktreePath), sess.WorktreeBaseHEAD, normalizeCWD(sess.WorktreeBaseRepo),
@@ -2212,6 +2221,7 @@ func sessionArgs(sess Session) []any {
 		timeText(sess.CreatedAt),
 		timeText(sess.UpdatedAt),
 		sess.Title,
+		sess.TitleRevision,
 		sess.Summary,
 		sess.Entries,
 		normalizeCWD(sess.CWD),
@@ -2248,7 +2258,7 @@ func sessionArgs(sess Session) []any {
 
 func findSessionDB(db *sql.DB, id string) (Session, bool, error) {
 	row := db.QueryRow(`
-SELECT id, created_at, updated_at, title, summary, entries, cwd,
+SELECT id, created_at, updated_at, title, title_revision, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
@@ -2265,7 +2275,7 @@ WHERE id = ?`, id)
 
 func findSessionTx(tx *sql.Tx, id string) (Session, bool, error) {
 	row := tx.QueryRow(`
-SELECT id, created_at, updated_at, title, summary, entries, cwd,
+SELECT id, created_at, updated_at, title, title_revision, summary, entries, cwd,
        forked_from_id, forked_from_turn_id, forked_from_item_id,
        pinned_at, folder_id, archived_at, archive_reason,
        worktree_path, worktree_base_head, worktree_base_repo,
@@ -2300,7 +2310,7 @@ func scanSession(scanner interface {
 	var createdAt, updatedAt, modelOptions string
 	var pinnedAt, archivedAt sql.NullString
 	if err := scanner.Scan(
-		&s.ID, &createdAt, &updatedAt, &s.Title, &s.Summary, &s.Entries, &s.CWD,
+		&s.ID, &createdAt, &updatedAt, &s.Title, &s.TitleRevision, &s.Summary, &s.Entries, &s.CWD,
 		&s.ForkedFromID, &s.ForkedFromTurnID, &s.ForkedFromItemID,
 		&pinnedAt, &s.FolderID, &archivedAt, &s.ArchiveReason,
 		&s.WorktreePath, &s.WorktreeBaseHEAD, &s.WorktreeBaseRepo,

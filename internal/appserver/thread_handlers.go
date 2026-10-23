@@ -431,6 +431,7 @@ func (s *Server) handleThreadResume(req Request) error {
 }
 
 func (s *Server) writeThreadResumeResult(req Request, thread Thread, responseOnly bool) error {
+	thread = s.threadWithPersistedMetadata(thread)
 	held, err := s.loadHeldUserTurns(thread.ID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1525,7 +1526,10 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 	if strings.TrimSpace(metadata.CWD) != "" {
 		th.CWD = metadata.CWD
 	}
-	th.Title = metadata.Title
+	if metadata.TitleRevision >= th.TitleRevision {
+		th.Title = metadata.Title
+		th.TitleRevision = metadata.TitleRevision
+	}
 	th.Source = metadata.Source
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
@@ -1625,6 +1629,7 @@ func threadEntryFromSession(sess session.Session, provider, model string) thread
 			ProjectRole:           projectRoleForSession(sess),
 			Preview:               firstNonEmpty(sess.Title, sess.Summary),
 			Title:                 sess.Title,
+			TitleRevision:         sess.TitleRevision,
 			ModelProvider:         firstNonEmpty(selection.Provider, provider),
 			Model:                 firstNonEmpty(selection.Model, model),
 			ModelVariant:          selection.Variant,
@@ -2256,6 +2261,10 @@ func (s *Server) refreshListedSessionMetadata(sessions []session.Session) {
 	for _, metadata := range sessions {
 		if th := s.threads[metadata.ID]; th != nil {
 			th.mu.Lock()
+			if metadata.TitleRevision >= th.TitleRevision {
+				th.Title = metadata.Title
+				th.TitleRevision = metadata.TitleRevision
+			}
 			th.ArchivedAt = metadata.ArchivedAt
 			th.ArchiveReason = metadata.ArchiveReason
 			th.PinnedAt = metadata.PinnedAt

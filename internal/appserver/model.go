@@ -73,6 +73,7 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 		AgentPath:       th.AgentPath,
 		Preview:         firstNonEmpty(th.Title, threadPreview(th.History)),
 		Title:           th.Title,
+		TitleRevision:   th.TitleRevision,
 		ModelProvider:   th.ModelProvider,
 		Model:           th.Model,
 		ModelVariant:    th.ModelVariant,
