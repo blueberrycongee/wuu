@@ -266,7 +266,7 @@ func execProcessStore(t *testing.T, root string) *execution.Store {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := runtime.OpenState(context.Background(), runtime.StateOptions{RootDir: root, HomeDir: root, ConfigPath: path, Config: cfg})
+	state, err := runtime.OpenState(context.Background(), runtime.StateOptions{RootDir: root, HomeDir: root, ConfigPath: path, ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg})
 	if err != nil {
 		t.Fatal(err)
 	}

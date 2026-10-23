@@ -18,11 +18,11 @@ func openCommandState(ctx context.Context, workdir string) (*runtime.State, erro
 		return nil, err
 	}
 	home := os.Getenv("HOME")
-	cfg, path, _, err := runtimeconfig.Load(runtimeconfig.LoadOptions{RootDir: root, HomeDir: home})
+	cfg, path, mode, err := runtimeconfig.Load(runtimeconfig.LoadOptions{RootDir: root, HomeDir: home})
 	if errors.Is(err, config.ErrConfigNotFound) {
 		cfg = runtimeconfig.StarterConfig()
 	} else if err != nil {
 		return nil, err
 	}
-	return runtime.OpenState(ctx, runtime.StateOptions{RootDir: root, HomeDir: home, ConfigPath: path, Config: cfg})
+	return runtime.OpenState(ctx, runtime.StateOptions{RootDir: root, HomeDir: home, ConfigPath: path, ConfigLoadMode: mode, Config: cfg})
 }
