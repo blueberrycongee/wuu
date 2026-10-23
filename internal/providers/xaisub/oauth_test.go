@@ -170,28 +170,28 @@ func TestLoginHubStartAndPoll(t *testing.T) {
 	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/oauth2/token")
 
 	hub := NewLoginHub()
-	start, err := hub.Start(context.Background())
+	start, err := hub.Start(context.Background(), testSelectedCredentials(t, home), func() {})
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	if start.UserCode != "WXYZ-1234" || start.LoginID == "" {
 		t.Fatalf("start = %+v", start)
 	}
-	first, err := hub.Poll(context.Background(), start.LoginID, home, DefaultBaseURL)
+	first, err := hub.Poll(context.Background(), start.LoginID, DefaultBaseURL)
 	if err != nil {
 		t.Fatalf("first poll: %v", err)
 	}
 	if first.Status != LoginPending {
 		t.Fatalf("first status = %q", first.Status)
 	}
-	second, err := hub.Poll(context.Background(), start.LoginID, home, DefaultBaseURL)
+	second, err := hub.Poll(context.Background(), start.LoginID, DefaultBaseURL)
 	if err != nil {
 		t.Fatalf("second poll: %v", err)
 	}
 	if second.Status != LoginSuccess {
 		t.Fatalf("second status = %+v", second)
 	}
-	if _, err := LocalOAuthStatus(home); err != nil {
+	if _, err := OAuthStatus(context.Background(), testSelectedCredentials(t, home)); err != nil {
 		t.Fatalf("LocalOAuthStatus: %v", err)
 	}
 }
