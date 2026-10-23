@@ -135,6 +135,7 @@ func TestEnsureThreadRuntimeHealsRemovedProviderPin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			writeSelectionTestConfig(t, rt.ConfigPath)
+			bindConfigSourceForTest(t, rt)
 			if tc.supportsFast {
 				cfg, _, err := rt.LoadEffectiveConfig()
 				if err != nil {
@@ -236,6 +237,7 @@ func TestEnsureThreadRuntimeHealKeepsRowPermissionUnderExecOverride(t *testing.T
 	rt.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeUnconfined}
 	rt.PermissionModeExplicit = true
 	writeSelectionTestConfig(t, rt.ConfigPath)
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, &lockedBuffer{})
 
 	if _, err := rt.Sessions.CreateWithMetadata("override-heal", rt.RootDir); err != nil {
@@ -402,6 +404,7 @@ func TestThreadSpeedSelectionPersistsAndRebuilds(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	call := func(id, method string, params any) map[string]any {
 		t.Helper()

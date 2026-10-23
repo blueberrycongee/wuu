@@ -246,6 +246,7 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	contenderRuntime.Documents, contenderRuntime.Sessions = rt.Documents, rt.Sessions
 	contenderRuntime.StateDir = rt.StateDir
 	contenderOut := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, contenderRuntime, &threadDeleteArtifactProvider{})
 	contender := New(contenderRuntime, contenderOut)
 	t.Cleanup(contender.Close)
 	dispatchPayload(t, contender, "delete-before-release", MethodThreadDelete, ThreadDeleteParams{ThreadID: rootID})
