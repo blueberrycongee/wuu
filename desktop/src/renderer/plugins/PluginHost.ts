@@ -252,6 +252,8 @@ export interface PluginThreadSummary {
 }
 
 export interface ActivatePluginGenerationOptions {
+  /** Public manifest identity; installation scope remains in pluginId. */
+  manifestId?: string;
   graphGeneration?: string;
   pluginId: string;
   generation: string;
@@ -542,6 +544,7 @@ interface UISlotRecord extends OrderedRecord { readonly definition: RegisteredUI
 interface UIContributionRecord extends OrderedRecord { readonly definition: RegisteredUIContribution }
 
 interface GenerationState {
+  readonly manifestId: string;
   graphGeneration?: string;
   activation: number;
   registrationReported: boolean;
@@ -694,7 +697,7 @@ export class PluginHost {
     const pluginId = requireNonEmpty(options.pluginId, "plugin id");
     const generation = requireNonEmpty(options.generation, "plugin generation");
     if (this.reportActivation) requireNonEmpty(options.graphGeneration ?? "", "committed graph generation");
-    const state = createGenerationState(pluginId, generation, options.contributions);
+    const state = createGenerationState(pluginId, generation, options.contributions, requireNonEmpty(options.manifestId ?? pluginId, "manifest id"));
     state.graphGeneration = options.graphGeneration;
     state.activation = (this.activationCounts.get(pluginId) ?? 0) + 1;
     this.activationCounts.set(pluginId, state.activation);
@@ -1230,7 +1233,7 @@ export class PluginHost {
         if (definition.cardinality !== "one" && definition.cardinality !== "many") throw new Error("Invalid UI slot cardinality");
         const record: UISlotRecord = {
           pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
-          definition: Object.freeze({ ...definition, id, name: `${state.pluginId}/${id}`, pluginId: state.pluginId, generation: state.generation }),
+          definition: Object.freeze({ ...definition, id, name: `${state.manifestId}/${id}`, pluginId: state.pluginId, generation: state.generation }),
         };
         state.uiSlots.push(record);
         return this.ownRecord(state, record);
@@ -2340,11 +2343,13 @@ export class PluginHost {
 function createGenerationState(
   pluginId: string,
   generation: string,
-  declaredContributions?: PluginContributionDeclarations,
+  declaredContributions: PluginContributionDeclarations | undefined,
+  manifestId: string,
 ): GenerationState {
   let completeCleanup!: () => void;
   const cleanupComplete = new Promise<void>(resolve => { completeCleanup = resolve; });
   return {
+    manifestId,
     activation: 0,
     registrationReported: false,
     renderedViews: 0,

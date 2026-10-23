@@ -148,27 +148,27 @@ describe("application shell assembly", () => {
     expect(service.invoke).toHaveBeenCalledTimes(1);
   });
 
-  it("composes nested third-party contributions and removes only their owner", async () => {
+  it.each(["user", "project"])("composes manifest-named slots for %s installations and removes only their owner", async (scope) => {
     const { host } = fixture();
-    await host.activateGeneration({ pluginId: "shell", generation: "v1", register: api => {
+    await host.activateGeneration({ pluginId: `plugin:${scope}:shell`, manifestId: "shell", generation: "v1", register: api => {
       api.registerUISlot({ id: "body", cardinality: "many" });
       api.registerApplicationShell({ id: "ui.shell", render: ({ slots }) => <main><slots.Slot name="shell/body" /></main> });
     } });
-    await host.activateGeneration({ pluginId: "panel", generation: "v1", register: api => {
+    await host.activateGeneration({ pluginId: `plugin:${scope}:panel`, manifestId: "panel", generation: "v1", register: api => {
       api.registerUISlot({ id: "children", cardinality: "many" });
       api.registerUIContribution({ id: "panel", target: "shell/body", render: ({ slots }) => <section>Panel<slots.Slot name="panel/children" /></section> });
     } });
-    await host.activateGeneration({ pluginId: "evidence", generation: "v1", register: api => {
+    await host.activateGeneration({ pluginId: `plugin:${scope}:evidence`, manifestId: "evidence", generation: "v1", register: api => {
       api.registerUIContribution({ id: "panel", target: "panel/children", render: () => <span>Evidence</span> });
     } });
     const container = document.createElement("div");
     const root = createRoot(container);
     try {
-      act(() => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "v1", id: "ui.shell" }} />));
+      act(() => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: `plugin:${scope}:shell`, generation: "v1", id: "ui.shell" }} />));
       expect(container.textContent).toBe("PanelEvidence");
-      act(() => host.unload("evidence"));
+      act(() => host.unload(`plugin:${scope}:evidence`));
       expect(container.textContent).toBe("Panel");
-      act(() => host.unload("panel"));
+      act(() => host.unload(`plugin:${scope}:panel`));
       expect(container.textContent).toBe("");
     } finally { act(() => root.unmount()); }
   });

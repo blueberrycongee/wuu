@@ -265,6 +265,7 @@ export class DesktopPluginRuntime {
           if (epoch !== this.syncEpoch) return false;
           await this.host.activateGeneration({
             pluginId: plugin.id,
+            manifestId: plugin.provenance.plugin_id ?? plugin.id,
             generation: fingerprint,
             graphGeneration: plugin.graph_generation,
             contributions: desktopContributionDeclarations(plugin),

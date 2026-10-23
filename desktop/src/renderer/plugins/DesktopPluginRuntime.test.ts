@@ -55,6 +55,26 @@ describe("DesktopPluginRuntime", () => {
     }
   });
 
+  it("preserves public manifest slot names across installed graph replacement", async () => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    const handles: PluginGenerationApi[] = [];
+    const runtime = new DesktopPluginRuntime(host, async () => ({ activate: (api: PluginGenerationApi) => {
+      handles.push(api);
+      api.registerUISlot({ id: "body", cardinality: "many" });
+    } }));
+    try {
+      await runtime.sync([{ ...dependencyPlugin("demo"), graph_generation: "first" }]);
+      await runtime.sync([{ ...dependencyPlugin("demo"), graph_generation: "second" }]);
+      expect(handles).toHaveLength(2);
+      expect(host.getUISlot("demo/body")?.pluginId).toBe("user:demo");
+      expect(handles[0].signal.aborted).toBe(true);
+      expect(handles[1].signal.aborted).toBe(false);
+    } finally {
+      await runtime.sync([]);
+    }
+  });
+
   it("reactivates an unchanged graph on a fresh connection after retained consumers finish cleanup", async () => {
     installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
     const report = vi.fn<WuuDesktopApi["reportPluginDesktopActivation"]>(async () => {});
