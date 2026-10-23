@@ -38,6 +38,7 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
+	models            *generationModelBindings
 	id                string
 	state             *runtimeState
 	credentials       credentialstore.Store
@@ -289,9 +290,14 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 }
 
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
+	configRoot := s.RootDir
+	if s.ConfigLoadMode == ConfigLoadFile {
+		configRoot = ""
+	}
+	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, configRoot, cfg)
 	var active []pluginpkg.Plugin
 	if !s.SafeMode {
-		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, s.nativeProviders...)
+		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
 		if err != nil {
 			return nil, err
 		}
@@ -319,7 +325,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile, s.nativeProviders...)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile, factories...)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
@@ -444,6 +450,8 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
 	activationErr := activatePluginHost(context.Background(), candidate.host)
+	modelErr := s.bindGenerationModels(candidate)
+	activationErr = errors.Join(activationErr, modelErr)
 	available := availablePluginPackages(candidate.active, candidate.host)
 	if len(available) != len(candidate.active) {
 		candidate.revokeMissingPlugins(candidate.availableModuleIDs(), s.TitleClient, s.Model)
@@ -814,6 +822,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.ActivePlugins = append([]pluginpkg.Plugin(nil), generation.active...)
 	s.ExtensionSettings = generation.settings.Extensions
 	s.PluginHost = generation.host
+	s.applyGenerationModels(generation.models)
 	s.credentials, s.configClient, s.chatGPTManager, s.artifactClient, s.mcpOAuth = generation.credentials, generation.configClient, generation.chatGPTManager, generation.artifactClient, generation.mcpOAuth
 	if generation.state != nil {
 		s.Documents, s.Sessions, s.InferenceJournalRuntime = generation.state.documents, generation.state.sessions, generation.state.journal

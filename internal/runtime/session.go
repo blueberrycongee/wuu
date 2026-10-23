@@ -412,7 +412,7 @@ func NewSession(opts Options) (*Session, error) {
 	if opts.ConfigLoadMode == ConfigLoadFile {
 		configRoot = ""
 	}
-	opts.NativeProviders = withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, configRoot, cfg)
+	factories := withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, configRoot, cfg)
 
 	wuuHome, err := statepath.Home(opts.HomeDir)
 	if err != nil {
@@ -450,7 +450,7 @@ func NewSession(opts Options) (*Session, error) {
 	safeMode := opts.SafeMode || strings.TrimSpace(os.Getenv("WUU_SAFE_MODE")) == "1"
 	var activePlugins []pluginpkg.Plugin
 	if !safeMode {
-		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins, opts.NativeProviders...)
+		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins, factories...)
 		if activationErr != nil {
 			return nil, activationErr
 		}
@@ -481,7 +481,7 @@ func NewSession(opts Options) (*Session, error) {
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
 	}
-	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile, opts.NativeProviders...)
+	pluginHost, pluginKernel, err := startPluginHost(activePlugins, rootDir, workspaceID, wuuHome, workspaceStateDir, pluginTurnRouter, userQuestions, runtimeComposition(cfg.Composition, safeMode), opts.DriverProfile, factories...)
 	if err != nil {
 		return nil, fmt.Errorf("prepare plugin composition: %w", err)
 	}
