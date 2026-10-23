@@ -33,11 +33,10 @@ func (s *pluginHostServices) credentialRequest(ctx context.Context, raw json.Raw
 	if err != nil {
 		return nil, serviceError("credential_unavailable", err.Error())
 	}
-	store, err := plugincredentials.Open()
-	if err != nil {
-		return nil, serviceError("credential_unavailable", err.Error())
+	if s.credentials == nil {
+		return nil, serviceError("service_unavailable", "selected credential provider is unavailable")
 	}
-	result, err := plugincredentials.Request(ctx, store, binding, params)
+	result, err := plugincredentials.Request(ctx, s.credentials, binding, params)
 	if err != nil {
 		return nil, serviceError("credential_request_failed", err.Error())
 	}
