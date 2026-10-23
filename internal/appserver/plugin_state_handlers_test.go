@@ -8,9 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 func TestPluginSettingsValidateOwnershipTypeScopeAndGeneration(t *testing.T) {
@@ -136,8 +139,16 @@ func newPluginStateTestServer(t *testing.T, runtimeClients ...func(string) plugi
 	for _, create := range runtimeClients {
 		clients = append(clients, create(item.ID))
 	}
-	if len(clients) > 0 {
-		rt.PluginHost = pluginhost.New(clients...)
+	settings := pluginsettings.NewService(pluginsettings.Module, rt.WuuHome, rt.RootDir)
+	credentials := credentialstore.NewService(credentialstore.FileModule, func() (credentialstore.Store, error) {
+		return credentialstore.NewFileStore(filepath.Join(rt.WuuHome, "test-credentials.json")), nil
+	})
+	clients = append(clients, settings, credentials, &stateHandlerConsumer{})
+	rt.PluginHost = pluginhost.New(clients...)
+	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
+	rt.PluginHost.AttachServiceRegistry(registry, conflicts)
+	if err := rt.PluginHost.Activate(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -200,5 +211,34 @@ func TestPluginExecutionsListReturnsLiveTable(t *testing.T) {
 	result := remarshal[PluginExecutionsResult](t, response["result"])
 	if result.Executions == nil {
 		t.Fatal("executions must be an empty list, not null")
+	}
+}
+
+type stateHandlerConsumer struct{}
+
+func (*stateHandlerConsumer) ID() string { return runtime.StateServicesConsumer }
+func (*stateHandlerConsumer) Status() pluginhost.Status {
+	return pluginhost.Status{ID: runtime.StateServicesConsumer, State: pluginhost.StateActive}
+}
+func (*stateHandlerConsumer) Close(context.Context) error                      { return nil }
+func (*stateHandlerConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
+func (*stateHandlerConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true}, {Name: credentialstore.ServiceName, MajorVersion: 1, Required: true}}
+}
+
+func TestPluginStateHandlersStopWhenSelectedProviderIsRevoked(t *testing.T) {
+	srv, item, out := newPluginStateTestServer(t)
+	callPluginPackageRPC(t, srv, "before", MethodPluginStorageSet, PluginStorageSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: PluginValueScopeUser, Key: "entry", Value: "old"})
+	if responseByID(t, parseOutput(t, out.String()), "before")["error"] != nil {
+		t.Fatal("initial selected write failed")
+	}
+	srv.rt.PluginHost.ServiceRegistry().RevokePlugin(context.Background(), pluginsettings.Module)
+	callPluginPackageRPC(t, srv, "after", MethodPluginStorageSet, PluginStorageSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: PluginValueScopeUser, Key: "entry", Value: "new"})
+	if responseByID(t, parseOutput(t, out.String()), "after")["error"] == nil {
+		t.Fatal("revoked provider fell back to local settings")
+	}
+	document, err := pluginsettings.ReadState(srv.rt.WuuHome, srv.rt.RootDir, item.SubjectID, pluginsettings.ScopeUser)
+	if err != nil || document.Values["entry"] != "old" {
+		t.Fatalf("disabled provider wrote local state: %+v %v", document, err)
 	}
 }
