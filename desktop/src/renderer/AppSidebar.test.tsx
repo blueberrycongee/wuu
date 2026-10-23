@@ -20,6 +20,7 @@ let unreadViewOpen = false;
 let attentionStickyIDs = new Set<string>();
 
 beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
   unreadViewOpen = false;
   attentionStickyIDs = new Set();
@@ -376,7 +377,7 @@ describe("AppSidebar layout", () => {
       const [count, setCount] = useState(0);
       return <button data-navigation-view onClick={() => setCount(count + 1)}>View clicks: {count}</button>;
     }
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:app-sidebar-view",
       generation: "one",
       register(api) {
@@ -401,7 +402,7 @@ describe("AppSidebar layout", () => {
       act(() => view!.click());
       expect(view?.textContent).toBe("View clicks: 1");
 
-      await act(async () => desktopPluginHost.activateGeneration({
+      await act(async () => desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
         pluginId: "test:app-sidebar-navigation",
         generation: "replacement",
         register(api) {
@@ -434,7 +435,7 @@ describe("AppSidebar layout", () => {
 
   it("lets a navigation presenter replace production navigation within one stable shell", async () => {
     let snapshot: NavigationSnapshotV1 | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:app-sidebar-navigation",
       generation: "one",
       register(api) {

@@ -92,6 +92,7 @@ function installWuuApi(): void {
     },
   });
   const api = {
+    reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue({
       projects: [],
       active_context: { kind: "no_project", cwd: workspace },
@@ -165,7 +166,7 @@ describe("primary plugin view covers the conversation", () => {
     expect(container.querySelector(".conversation-pane > .dock-composer-wrap")).not.toBeNull();
 
     await act(async () => {
-      await desktopPluginHost.activateGeneration({
+      await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
         pluginId,
         generation: "one",
         register(api) {

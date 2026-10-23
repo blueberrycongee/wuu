@@ -264,6 +264,7 @@ function installWuuApi(): {
     },
   });
   const api = {
+    reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined),
     listProjects: vi.fn().mockResolvedValue({
       projects: [],
       active_context: { kind: "no_project", cwd: workspace },
@@ -467,7 +468,7 @@ describe("session tab switch latency", () => {
     const pluginId = "test:page-history";
     try {
       await act(async () => {
-        await desktopPluginHost.activateGeneration({ pluginId, generation: "history-one", register(api) {
+        await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph", pluginId, generation: "history-one", register(api) {
           api.registerViewType({ id: "history-page", title: "History plugin", defaultRegion: "primary",
             render: () => <input data-testid="history-plugin-draft" defaultValue="plugin draft" /> });
         } });

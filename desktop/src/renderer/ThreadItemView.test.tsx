@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { streamTextKey, streamTextStore } from "./StreamText";
 import { ImagePreviewProvider } from "./ImagePreview";
@@ -14,6 +14,10 @@ import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
 import type { ResponseSelection } from "../shared/protocol";
+
+beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
+});
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
@@ -118,7 +122,7 @@ describe("ThreadItemView", () => {
   it.each(["user_message", "agent_message"] as const)("mounts plugin actions for %s with only the public message snapshot", async (type) => {
     const execute = vi.fn();
     desktopPluginHost.setActiveConversationThread("another-active-thread");
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test", generation: "actions-one",
       register(api) {
         api.registerCommand({ id: "message.inspect", title: "Inspect plugin message", placements: ["conversation.message.actions"], execute });
@@ -365,7 +369,7 @@ describe("ThreadItemView", () => {
 
   it("mounts sanitized frozen context before and after each conversation message", async () => {
     const contexts: Array<Readonly<Record<string, unknown>>> = [];
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "one",
       register(api) {
@@ -404,7 +408,7 @@ describe("ThreadItemView", () => {
   });
 
   it("uses a conversation item presenter for the complete production item root", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-1",
       register: (api) => {
@@ -432,7 +436,7 @@ describe("ThreadItemView", () => {
 
   it("uses the legacy message surface as the exact native fallback with a sanitized context", async () => {
     let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-1",
       register: (api) => {
@@ -474,7 +478,7 @@ describe("ThreadItemView", () => {
 
   it("exposes the active thread id on the conversation message surface", async () => {
     let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-thread-id",
       register: (api) => {
@@ -499,7 +503,7 @@ describe("ThreadItemView", () => {
 
   it("lets the keyed presenter replace the legacy surface and native fallback coherently", async () => {
     const legacyRender = vi.fn(() => <section data-legacy-message />);
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-1",
       register: (api) => {

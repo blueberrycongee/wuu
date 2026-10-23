@@ -8,7 +8,7 @@
  */
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { ProcessSurface } from "./ProcessSurface";
 import { ContextCompactionNotice } from "./TurnNotice";
 import {
@@ -20,6 +20,10 @@ import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { modelMascotAccessory } from "./WuuMascot";
 import { translateCurrent as t } from "./i18n";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
+
+beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
+});
 
 beforeAll(() => {
   // jsdom does not lay out real heights. Stub getBoundingClientRect so
@@ -257,7 +261,7 @@ describe("ProcessSurface", () => {
   });
 
   it("nests the single-tool presenter inside the complete process boundary", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:tool-activity-presenter",
       generation: "one",
       register(api) {
@@ -268,7 +272,7 @@ describe("ProcessSurface", () => {
         });
       },
     });
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:process-wrapper",
       generation: "one",
       register(api) {
@@ -287,7 +291,7 @@ describe("ProcessSurface", () => {
 
     expect(container.querySelector("[data-process-wrapper] [data-tool-presenter-root]")).not.toBeNull();
 
-    await act(async () => desktopPluginHost.activateGeneration({
+    await act(async () => desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:process-replacement",
       generation: "one",
       register(api) {
@@ -305,7 +309,7 @@ describe("ProcessSurface", () => {
   });
 
   it("lets a matching presenter replace the complete single-tool surface root", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:tool-activity-presenter",
       generation: "one",
       register(api) {
@@ -327,7 +331,7 @@ describe("ProcessSurface", () => {
   });
 
   it("dispatches matching presenter rows in an expanded multi-tool timeline", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:tool-activity-presenter",
       generation: "one",
       register(api) {
