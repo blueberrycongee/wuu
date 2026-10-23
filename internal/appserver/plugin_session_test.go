@@ -579,13 +579,23 @@ func TestPluginSessionSendQueuesBusyThreadAndReportsLaterTransitions(t *testing.
 
 func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.T) {
 	chatStarted := make(chan struct{})
+	steerRequest := make(chan struct{})
 	releaseFirst := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	unblockFirst := sync.OnceFunc(func() { close(releaseFirst) })
+	unblockSecond := sync.OnceFunc(func() { close(releaseSecond) })
 	client := &fakeClient{
-		responses: []providers.ChatResponse{providersResponse("first"), providersResponse("second")},
+		// Keep a real next step in this turn: a final response instead retains
+		// the unconsumed steer for a follow-up, covered by the Peers tests.
+		responses: []providers.ChatResponse{{Content: "working", FinishReason: providers.FinishReasonContinue}, providersResponse("second")},
 		onChat: func(call int, _ providers.ChatRequest) {
 			if call == 1 {
 				close(chatStarted)
 				<-releaseFirst
+			}
+			if call == 2 {
+				close(steerRequest)
+				<-releaseSecond
 			}
 		},
 	}
@@ -595,7 +605,7 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 	rt.PluginHost = pluginhost.New(owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() { unblockFirst(); unblockSecond(); srv.Close() })
 
 	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
@@ -638,8 +648,35 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 		t.Fatalf("pending steers = %d, want 1", pendingSteers)
 	}
 
-	close(releaseFirst)
+	unblockFirst()
+	select {
+	case <-steerRequest:
+	case <-time.After(3 * time.Second):
+		t.Fatal("steer was not submitted to the provider")
+	}
+	client.mu.Lock()
+	requests := append([]providers.ChatRequest(nil), client.requests...)
+	client.mu.Unlock()
+	if len(requests) != 2 {
+		t.Fatalf("provider requests = %d, want 2", len(requests))
+	}
+	consumed := 0
+	for _, message := range requests[1].Messages {
+		if message.ClientID == pluginSessionRequestClientID(owner.id, "steer") && message.Content == params.Input.Prompt && message.Steered {
+			consumed++
+		}
+	}
+	if consumed != 1 {
+		t.Fatalf("second provider request consumed %d steers, want 1", consumed)
+	}
+	unblockSecond()
 	waitForTurnCompletedForThread(t, out, created.SessionID)
+	waitPluginGenerationWatchTest(t, func() bool {
+		thread.mu.Lock()
+		idle := !thread.running && !thread.admissionReserved && thread.executionLease == nil
+		thread.mu.Unlock()
+		return idle && !srv.hasQueuedUserWork(created.SessionID)
+	})
 	thread.mu.Lock()
 	turns := len(thread.Turns)
 	thread.mu.Unlock()
