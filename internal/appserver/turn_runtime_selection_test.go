@@ -27,6 +27,7 @@ func TestResolveThreadTurnPermissionsExplicitOverrideBeatsThreadPin(t *testing.T
 	rt.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState("pinned-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	th.PermissionMode = config.PermissionModeUnconfined
 
 	got, err := srv.resolveThreadTurnPermissions(th, nil)
@@ -154,10 +155,10 @@ func TestEnsureThreadRuntimeHealsRemovedProviderPin(t *testing.T) {
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 
-			if _, err := session.CreateWithMetadata(rt.SessionDir, "healed-thread", rt.RootDir); err != nil {
+			if _, err := rt.Sessions.CreateWithMetadata("healed-thread", rt.RootDir); err != nil {
 				t.Fatalf("create session: %v", err)
 			}
-			if _, err := session.SetRuntimeSelection(rt.SessionDir, "healed-thread", session.RuntimeSelection{
+			if _, err := rt.Sessions.SetRuntimeSelection("healed-thread", session.RuntimeSelection{
 				Provider:       "removed-provider",
 				Model:          "removed-model",
 				Speed:          tc.speed,
@@ -197,7 +198,7 @@ func TestEnsureThreadRuntimeHealsRemovedProviderPin(t *testing.T) {
 			if variant != "high" || permission != config.PermissionModeReadOnly {
 				t.Fatalf("heal must keep the thread's own pins: variant=%q permission=%q", variant, permission)
 			}
-			sess, ok, err := session.Find(rt.SessionDir, "healed-thread")
+			sess, ok, err := rt.Sessions.Find("healed-thread")
 			if err != nil || !ok {
 				t.Fatalf("find session: ok=%v err=%v", ok, err)
 			}
@@ -237,10 +238,10 @@ func TestEnsureThreadRuntimeHealKeepsRowPermissionUnderExecOverride(t *testing.T
 	writeSelectionTestConfig(t, rt.ConfigPath)
 	srv := New(rt, &lockedBuffer{})
 
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "override-heal", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("override-heal", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, "override-heal", session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection("override-heal", session.RuntimeSelection{
 		Provider:       "removed-provider",
 		Model:          "removed-model",
 		PermissionMode: config.PermissionModeStandard,
@@ -264,7 +265,7 @@ func TestEnsureThreadRuntimeHealKeepsRowPermissionUnderExecOverride(t *testing.T
 	if permission != config.PermissionModeStandard {
 		t.Fatalf("heal replaced the thread's pinned mode with the override: %q", permission)
 	}
-	sess, ok, err := session.Find(rt.SessionDir, "override-heal")
+	sess, ok, err := rt.Sessions.Find("override-heal")
 	if err != nil || !ok {
 		t.Fatalf("find session: ok=%v err=%v", ok, err)
 	}
@@ -307,13 +308,14 @@ func TestEnsureThreadRuntimeSelectionMismatchWithOutstandingAgentWorkFailsAdmiss
 	})
 
 	th := newThreadState("mismatch-outstanding", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	staleRuntime := &runtime.ThreadRuntime{
 		AgentControl: control,
 		// Stamped as built for a selection the thread no longer pins.
 		Selection: runtime.ThreadModelSelection{Provider: rt.ProviderName, Model: "stale-model"},
 	}
 	th.execRuntime = staleRuntime
-	th.runtimeSubscription = srv.subscribeThreadRuntime(th.ID, staleRuntime)
+	th.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), th.ID, staleRuntime)
 	srv.mu.Lock()
 	srv.threads[th.ID] = th
 	srv.mu.Unlock()
@@ -436,7 +438,7 @@ func TestThreadSpeedSelectionPersistsAndRebuilds(t *testing.T) {
 	if next == first || next.StreamRunner.ProviderOptions["serviceTier"] != "default" {
 		t.Fatalf("stale speed runtime: %v", next.StreamRunner.ProviderOptions)
 	}
-	saved, ok, err := session.Find(rt.SessionDir, th.ID)
+	saved, ok, err := rt.Sessions.Find(th.ID)
 	if err != nil || !ok || saved.Speed != "standard" || saved.Variant != "high" {
 		t.Fatalf("saved selection = %+v, %v", saved, err)
 	}

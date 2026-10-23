@@ -27,7 +27,7 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 				t.Run(fmt.Sprintf("hook_%v_released_%v_stop_%v", duringHook, released, stopped), func(t *testing.T) {
 					srv, client, calls, rt := newProjectFixture(t)
 					lead := startProject(t, client, "Run adoption stop")
-					lease, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
+					lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
 					if err != nil || !ok {
 						t.Fatalf("lead lease: %v %v", ok, err)
 					}
@@ -36,15 +36,15 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 					client.rpc(t, MethodThreadStart, ThreadStartParams{}, &worker)
 					id := worker.Thread.ID
 					if released {
-						old, err := session.ChangeControl(rt.SessionDir, id, "prior-manager", session.ControlActive, 0)
+						old, err := rt.Sessions.ChangeControl(id, "prior-manager", session.ControlActive, 0)
 						if err != nil {
 							t.Fatal(err)
 						}
-						if _, err = session.ChangeControl(rt.SessionDir, id, "prior-manager", session.ControlReleased, old.Revision); err != nil {
+						if _, err = rt.Sessions.ChangeControl(id, "prior-manager", session.ControlReleased, old.Revision); err != nil {
 							t.Fatal(err)
 						}
 					}
-					journal, err := session.NewInferenceJournalRuntime(rt.SessionDir, "run-adoption")
+					journal, err := rt.Sessions.NewInferenceJournalRuntime("run-adoption")
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -92,7 +92,7 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 						t.Fatal(err)
 					}
 					if stopped {
-						if err := peer.takeSessionControl(id, session.ControlPaused); err != nil {
+						if err := peer.takeSessionControl(testRuntimeState(t, peer.rt), id, session.ControlPaused); err != nil {
 							t.Fatal(err)
 						}
 					}

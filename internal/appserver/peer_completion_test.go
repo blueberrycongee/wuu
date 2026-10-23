@@ -114,14 +114,14 @@ func TestPeerReceiptCancellationPreventsRedelivery(t *testing.T) {
 			if _, err := srv.sendPluginSession(ctx, owner.id, params); err != nil {
 				t.Fatal(err)
 			}
-			if interrupted, err := srv.interruptThreadExecution(threadID, "", initial.TurnID); err != nil || !interrupted {
+			if interrupted, err := srv.interruptThreadExecution(testRuntimeState(t, srv.rt), threadID, "", initial.TurnID); err != nil || !interrupted {
 				t.Fatalf("interrupt: %v, %v", interrupted, err)
 			}
 			inspected, err := srv.inspectPluginSession(ctx, owner.id, pluginhost.SessionInspectParams{SessionID: threadID, RequestID: params.RequestID})
 			if err != nil || inspected.Turn == nil || inspected.Turn.State != pluginhost.TurnLifecycleDiscarded || inspected.Turn.Retryable {
 				t.Fatalf("user cancellation lost its durable discard receipt: %+v, %v", inspected, err)
 			}
-			waitForThreadLeaseRelease(t, srv.rt.SessionDir, threadID)
+			waitForThreadLeaseRelease(t, srv.rt.Sessions, srv.rt.SessionDir, threadID)
 			retried, err := srv.sendPluginSession(ctx, owner.id, params)
 			if err != nil || retried.State != pluginhost.TurnLifecycleDiscarded {
 				t.Fatalf("cancelled receipt was admitted again: %+v, %v", retried, err)
@@ -244,7 +244,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 					t.Fatal("later turn did not settle")
 				}
 			}
-			records, head, err := loadProviderPersistedMessages(srv.rt.SessionDir, threadID, true)
+			records, head, err := loadProviderPersistedMessages(srv.rt.Sessions, threadID, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -257,7 +257,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 			if len(retained) == 0 {
 				t.Fatal("later turn missing from provider history")
 			}
-			if _, err := session.StoreHistoryCheckpointAtBaseline(srv.rt.SessionDir, threadID,
+			if _, err := srv.rt.Sessions.StoreHistoryCheckpointAtBaseline(threadID,
 				session.HistoryCheckpointKindProviderRewrite, retained, head); err != nil {
 				t.Fatal(err)
 			}
@@ -274,7 +274,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := session.PutPluginTurnLifecycleOutbox(srv.rt.SessionDir, owner.id, "receipt-two", payload); err != nil {
+					if err := srv.rt.Sessions.PutPluginTurnLifecycleOutbox(owner.id, "receipt-two", payload); err != nil {
 						t.Fatal(err)
 					}
 				}

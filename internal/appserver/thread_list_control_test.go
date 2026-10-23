@@ -17,30 +17,30 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	// A live project names its sessions' manager; a fence left by an unknown
 	// manager no longer manages anything.
 	const project = "project-a"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, project, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(project, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.SetSource(rt.SessionDir, project, projectSource); err != nil {
+	if _, err := rt.Sessions.SetSource(project, projectSource); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.UpdateTitle(rt.SessionDir, project, "Catalog"); err != nil {
+	if _, err := rt.Sessions.UpdateTitle(project, "Catalog"); err != nil {
 		t.Fatal(err)
 	}
 	expected[project] = nil
 	for _, state := range []string{session.ControlActive, session.ControlPaused, session.ControlTakenOver, session.ControlReleased, "ordinary", "unknown-manager"} {
 		id := "session-" + state
-		if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+		if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
 			t.Fatal(err)
 		}
 		expected[id] = nil
 		switch state {
 		case "ordinary":
 		case "unknown-manager":
-			if _, err := session.ChangeControl(rt.SessionDir, id, "manager-gone", session.ControlActive, 0); err != nil {
+			if _, err := rt.Sessions.ChangeControl(id, "manager-gone", session.ControlActive, 0); err != nil {
 				t.Fatal(err)
 			}
 		default:
-			control, err := session.ChangeControl(rt.SessionDir, id, project, state, 0)
+			control, err := rt.Sessions.ChangeControl(id, project, state, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -48,7 +48,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 				expected[id] = &ThreadSessionControl{ManagerID: control.ManagerID, ManagerName: "Catalog", State: control.State, Revision: control.Revision}
 			}
 		}
-		loaded, err := owner.server.loadPersistedThreadState(id, time.Now().UTC())
+		loaded, err := owner.server.loadPersistedThreadState(testRuntimeState(t, owner.server.rt), id, time.Now().UTC())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -59,6 +59,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	// but has never loaded the original project's managed conversations.
 	otherRuntime := newTestRuntime(t, &fakeClient{})
 	otherRuntime.SessionDir = rt.SessionDir
+	otherRuntime.Documents, otherRuntime.Sessions = rt.Documents, rt.Sessions
 	otherOutput := &lockedBuffer{}
 	other := &rpcClient{server: New(otherRuntime, otherOutput), out: otherOutput}
 	t.Cleanup(other.server.Close)
@@ -102,7 +103,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 	assertLists([]string{MethodThreadList, MethodThreadListAll})
 
 	// A relationship released elsewhere must also override a loaded snapshot.
-	if _, err := session.ChangeControl(rt.SessionDir, "session-active", project, session.ControlReleased, expected["session-active"].Revision); err != nil {
+	if _, err := rt.Sessions.ChangeControl("session-active", project, session.ControlReleased, expected["session-active"].Revision); err != nil {
 		t.Fatal(err)
 	}
 	expected["session-active"] = nil
@@ -129,15 +130,15 @@ func TestProjectGroupingDistinguishesArchivedAndMissingCoordinators(t *testing.T
 	t.Cleanup(srv.Close)
 	client := &rpcClient{server: srv, out: out}
 	for _, id := range []string{"project", "member", "orphan"} {
-		if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+		if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := session.SetSource(rt.SessionDir, "project", projectSource); err != nil {
+	if _, err := rt.Sessions.SetSource("project", projectSource); err != nil {
 		t.Fatal(err)
 	}
 	for member, parent := range map[string]string{"member": "project", "orphan": "missing"} {
-		if _, err := session.SetProjectMembership(rt.SessionDir, member, projectSessionSource, parent, ""); err != nil {
+		if _, err := rt.Sessions.SetProjectMembership(member, projectSessionSource, parent, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -170,7 +171,7 @@ func TestProjectGroupingDistinguishesArchivedAndMissingCoordinators(t *testing.T
 	}
 	assertGrouping(true)
 	client.rpc(t, MethodThreadArchive, ThreadArchiveParams{ThreadID: "project", Archived: true}, nil)
-	if err := srv.notifyThreadStarted(Thread{ID: "member", Source: projectSessionSource, ProjectID: "project"}); err != nil {
+	if err := srv.notifyThreadStarted(testRuntimeState(t, srv.rt), Thread{ID: "member", Source: projectSessionSource, ProjectID: "project"}); err != nil {
 		t.Fatal(err)
 	}
 	rows := parseOutput(t, out.String())

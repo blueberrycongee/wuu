@@ -184,7 +184,7 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 			Images:       []TurnStartImage{{MediaType: "image/jpeg", Data: base64.StdEncoding.EncodeToString(encodeTestJPEG(t, 2, 2, 90))}},
 			ContentParts: []providers.MessageContentPart{{Type: "text", Text: explicit}},
 		})
-		held, found, err := srv.findHeldUserTurn(started.Thread.ID, queueID)
+		held, found, err := srv.findHeldUserTurn(testRuntimeState(t, srv.rt), started.Thread.ID, queueID)
 		if err != nil || !found {
 			t.Fatalf("explicit skill queue failed: %v", err)
 		}

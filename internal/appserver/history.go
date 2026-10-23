@@ -116,11 +116,11 @@ type persistedAgentHistory struct {
 	Messages     []providers.ChatMessage `json:"messages,omitempty"`
 }
 
-func loadChatMessages(sessDir, id string) ([]providers.ChatMessage, error) {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" {
+func loadChatMessages(store *sessionstore.Store, id string) ([]providers.ChatMessage, error) {
+	if store == nil || strings.TrimSpace(id) == "" {
 		return nil, nil
 	}
-	records, _, err := loadProviderPersistedMessages(sessDir, id, false)
+	records, _, err := loadProviderPersistedMessages(store, id, false)
 	if err != nil {
 		return nil, err
 	}
@@ -249,21 +249,21 @@ func loadAgentHistory(path string) (persistedAgentHistory, error) {
 
 // appendChatMessage persists a chat message and returns the seq assigned to
 // it. Returns seq 0 when the message is not persisted.
-func appendChatMessage(sessDir, id string, msg providers.ChatMessage) (int, error) {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" || !shouldPersistMessage(msg) {
+func appendChatMessage(store *sessionstore.Store, id string, msg providers.ChatMessage) (int, error) {
+	if store == nil || strings.TrimSpace(id) == "" || !shouldPersistMessage(msg) {
 		return 0, nil
 	}
 	rec := persistedMessageFromChatMessage(msg)
-	return sessionstore.AppendHistoryRecordReturningSeq(sessDir, id, historyRecordFromPersistedMessage(rec))
+	return store.AppendHistoryRecordReturningSeq(id, historyRecordFromPersistedMessage(rec))
 }
 
-func appendChatMessages(sessDir, id string, msgs []providers.ChatMessage) error {
-	_, _, err := appendChatMessagesReturningRange(sessDir, id, msgs)
+func appendChatMessages(store *sessionstore.Store, id string, msgs []providers.ChatMessage) error {
+	_, _, err := appendChatMessagesReturningRange(store, id, msgs)
 	return err
 }
 
-func appendChatMessagesReturningRange(sessDir, id string, msgs []providers.ChatMessage) (int, int, error) {
-	seqs, endSeq, err := appendChatMessagesReturningSeqs(sessDir, id, msgs)
+func appendChatMessagesReturningRange(store *sessionstore.Store, id string, msgs []providers.ChatMessage) (int, int, error) {
+	seqs, endSeq, err := appendChatMessagesReturningSeqs(store, id, msgs)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -275,8 +275,8 @@ func appendChatMessagesReturningRange(sessDir, id string, msgs []providers.ChatM
 	return 0, endSeq, nil
 }
 
-func appendChatMessagesReturningSeqs(sessDir, id string, msgs []providers.ChatMessage) ([]int, int, error) {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" || len(msgs) == 0 {
+func appendChatMessagesReturningSeqs(store *sessionstore.Store, id string, msgs []providers.ChatMessage) ([]int, int, error) {
+	if store == nil || strings.TrimSpace(id) == "" || len(msgs) == 0 {
 		return make([]int, len(msgs)), 0, nil
 	}
 	records := make([]sessionstore.HistoryRecord, 0, len(msgs))
@@ -296,7 +296,7 @@ func appendChatMessagesReturningSeqs(sessDir, id string, msgs []providers.ChatMe
 		records = append(records, record)
 		indexes = append(indexes, index)
 	}
-	startSeq, endSeq, err := sessionstore.AppendHistoryRecordsReturningRange(sessDir, id, records)
+	startSeq, endSeq, err := store.AppendHistoryRecordsReturningRange(id, records)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -307,11 +307,11 @@ func appendChatMessagesReturningSeqs(sessDir, id string, msgs []providers.ChatMe
 	return seqs, endSeq, nil
 }
 
-func rewriteChatHistory(sessDir, id string, msgs []providers.ChatMessage) error {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" {
+func rewriteChatHistory(store *sessionstore.Store, id string, msgs []providers.ChatMessage) error {
+	if store == nil || strings.TrimSpace(id) == "" {
 		return nil
 	}
-	preserved, err := loadRewritePreservedMessages(sessDir, id)
+	preserved, err := loadRewritePreservedMessages(store, id)
 	if err != nil {
 		return fmt.Errorf("load preserved session history: %w", err)
 	}
@@ -319,17 +319,17 @@ func rewriteChatHistory(sessDir, id string, msgs []providers.ChatMessage) error 
 	for _, rec := range preserved {
 		records = append(records, historyRecordFromPersistedMessage(rec))
 	}
-	return sessionstore.RewriteHistoryRecords(sessDir, id, records)
+	return store.RewriteHistoryRecords(id, records)
 }
 
 // rewriteChatHistoryAtBaseline replaces the model-visible history while
 // preserving records appended after baselineSeq in one store transaction.
-func rewriteChatHistoryAtBaseline(sessDir, id string, msgs []providers.ChatMessage, baselineSeq int) error {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" {
+func rewriteChatHistoryAtBaseline(store *sessionstore.Store, id string, msgs []providers.ChatMessage, baselineSeq int) error {
+	if store == nil || strings.TrimSpace(id) == "" {
 		return nil
 	}
 	records := historyRecordsFromChatMessages(msgs)
-	return sessionstore.RewriteHistoryRecordsAtBaseline(sessDir, id, records, baselineSeq)
+	return store.RewriteHistoryRecordsAtBaseline(id, records, baselineSeq)
 }
 
 func historyRecordsFromChatMessages(msgs []providers.ChatMessage) []sessionstore.HistoryRecord {
@@ -357,8 +357,8 @@ func maxHistorySeq(msgs []providers.ChatMessage) int {
 // history. provider and model tag the row so the insight scanner can aggregate
 // usage per provider/model across sessions. Empty values are preserved as empty
 // strings, which the scanner interprets as "unknown provider/model".
-func appendTokenUsage(sessDir, id, provider, model string, usage providers.TokenUsage, contextTokens int) error {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" || (usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheCreationTokens == 0 && usage.CacheReadTokens == 0 && contextTokens == 0) {
+func appendTokenUsage(store *sessionstore.Store, id, provider, model string, usage providers.TokenUsage, contextTokens int) error {
+	if store == nil || strings.TrimSpace(id) == "" || (usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.CacheCreationTokens == 0 && usage.CacheReadTokens == 0 && contextTokens == 0) {
 		return nil
 	}
 	rec := persistedMessage{
@@ -373,7 +373,7 @@ func appendTokenUsage(sessDir, id, provider, model string, usage providers.Token
 		CacheCreationTokens: usage.CacheCreationTokens,
 		CacheReadTokens:     usage.CacheReadTokens,
 	}
-	return sessionstore.AppendHistoryRecord(sessDir, id, historyRecordFromPersistedMessage(rec))
+	return store.AppendHistoryRecord(id, historyRecordFromPersistedMessage(rec))
 }
 
 func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage {
@@ -456,11 +456,11 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 	return out
 }
 
-func loadMetaMessages(sessDir, id string) ([]persistedMessage, error) {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" {
+func loadMetaMessages(store *sessionstore.Store, id string) ([]persistedMessage, error) {
+	if store == nil || strings.TrimSpace(id) == "" {
 		return nil, nil
 	}
-	if records, err := loadPersistedMessages(sessDir, id, true); err != nil {
+	if records, err := loadPersistedMessages(store, id, true); err != nil {
 		return nil, err
 	} else if records != nil {
 		metas := make([]persistedMessage, 0)
@@ -476,8 +476,8 @@ func loadMetaMessages(sessDir, id string) ([]persistedMessage, error) {
 
 // loadPersistedMessages reads the active branch; physical audit readers use
 // session.LoadHistoryRecords directly.
-func loadPersistedMessages(sessDir, id string, includeMeta bool) ([]persistedMessage, error) {
-	records, err := sessionstore.LoadActiveHistoryRecords(sessDir, id, includeMeta)
+func loadPersistedMessages(store *sessionstore.Store, id string, includeMeta bool) ([]persistedMessage, error) {
+	records, err := store.LoadActiveHistoryRecords(id, includeMeta)
 	if err != nil {
 		return nil, fmt.Errorf("load session history: %w", err)
 	}
@@ -496,8 +496,8 @@ func loadPersistedMessages(sessDir, id string, includeMeta bool) ([]persistedMes
 // together with the physical message head it was reconstructed from. Raw
 // session_messages remain append-only; checkpoints replace the provider-visible
 // prefix without deleting or renumbering those physical rows.
-func loadProviderPersistedMessages(sessDir, id string, includeMeta bool) ([]persistedMessage, int, error) {
-	snapshot, err := sessionstore.LoadProviderHistorySnapshot(sessDir, id)
+func loadProviderPersistedMessages(store *sessionstore.Store, id string, includeMeta bool) ([]persistedMessage, int, error) {
+	snapshot, err := store.LoadProviderHistorySnapshot(id)
 	if err != nil {
 		return nil, 0, fmt.Errorf("load provider history: %w", err)
 	}
@@ -638,11 +638,11 @@ func persistedMessageFromHistoryRecord(rec sessionstore.HistoryRecord) (persiste
 	return out, nil
 }
 
-func loadRewritePreservedMessages(sessDir, id string) ([]persistedMessage, error) {
-	if strings.TrimSpace(sessDir) == "" || strings.TrimSpace(id) == "" {
+func loadRewritePreservedMessages(store *sessionstore.Store, id string) ([]persistedMessage, error) {
+	if store == nil || strings.TrimSpace(id) == "" {
 		return nil, nil
 	}
-	records, err := loadPersistedMessages(sessDir, id, true)
+	records, err := loadPersistedMessages(store, id, true)
 	if err != nil {
 		return nil, err
 	}
@@ -735,13 +735,13 @@ func replaceBaseSystemPrompt(history []providers.ChatMessage, prompt string) []p
 	return append([]providers.ChatMessage{{Role: "system", Content: prompt}}, out...)
 }
 
-func appendControlledChatMessage(dir, id string, msg providers.ChatMessage, control, baseline *sessionstore.Control, accepted *sessionstore.HeldUserWork) (int, error) {
+func appendControlledChatMessage(store *sessionstore.Store, id string, msg providers.ChatMessage, control, baseline *sessionstore.Control, accepted *sessionstore.HeldUserWork) (int, error) {
 	rec := historyRecordFromPersistedMessage(persistedMessageFromChatMessage(msg))
 	if accepted != nil {
-		return sessionstore.AppendAcceptedUserHistoryRecord(dir, id, rec, *accepted)
+		return store.AppendAcceptedUserHistoryRecord(id, rec, *accepted)
 	}
 	if baseline != nil {
-		return sessionstore.AppendContinuationHistoryRecord(dir, id, rec, control, *baseline)
+		return store.AppendContinuationHistoryRecord(id, rec, control, *baseline)
 	}
-	return sessionstore.AppendControlledHistoryRecord(dir, id, rec, control)
+	return store.AppendControlledHistoryRecord(id, rec, control)
 }

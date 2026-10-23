@@ -82,6 +82,12 @@ func markdownImageReferences(kind, scopeID, turnID, messageID, body string) []Th
 }
 
 func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params struct {
 		Kind      string `json:"kind"`
 		ScopeID   string `json:"scope_id"`
@@ -101,7 +107,7 @@ func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error
 	var body, cwd string
 	switch params.Kind {
 	case "thread":
-		th, err := s.historyThread(params.ScopeID)
+		th, err := s.historyThread(binding, params.ScopeID)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}

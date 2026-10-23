@@ -9,14 +9,15 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-func (s *Server) rebindThreadWorkspace(threadID, requestedRoot string) error {
+func (s *Server) rebindThreadWorkspace(binding *runtime.State, threadID, requestedRoot string) error {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
-	if s.thread(threadID) == nil {
+	if s.threadForState(binding, threadID) == nil {
 		return session.ErrSessionNotFound
 	}
 	baseRoot, err := canonicalWorkspaceDirectory(s.rt.RootDir)
@@ -62,8 +63,8 @@ func (s *Server) rebindThreadWorkspace(threadID, requestedRoot string) error {
 		worktreeBaseRepo = baseRoot
 	}
 
-	metadata, err := session.UpdateWorkspaceBinding(
-		s.rt.SessionDir,
+	metadata, err := binding.Sessions.UpdateWorkspaceBinding(
+
 		threadID,
 		targetRoot,
 		worktreePath,
@@ -73,14 +74,14 @@ func (s *Server) rebindThreadWorkspace(threadID, requestedRoot string) error {
 	if err != nil {
 		return err
 	}
-	thread, err := s.threadAfterMetadataUpdate(metadata)
+	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
 	if err != nil {
 		// Child-agent enrichment is presentation data. The returned thread
 		// already contains the persisted workspace metadata, so keep the
 		// runtime move successful and notify with that partial snapshot.
 		providers.DebugLogf("enrich rebound thread %q: %v", threadID, err)
 	}
-	if err := s.notifyThreadUpdated(thread); err != nil {
+	if err := s.notifyThreadUpdated(binding, thread); err != nil {
 		// Persistence and the authoritative in-memory thread already moved.
 		// A broken output stream must not report the operation as rejected and
 		// leave the executing toolkit on its old root.

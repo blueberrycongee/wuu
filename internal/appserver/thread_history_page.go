@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -248,14 +249,14 @@ func historyTextPreview(text string) string {
 	return strings.ToValidUTF8(text[:2048], "") + "…"
 }
 
-func (s *Server) historyThread(id string) (*threadState, error) {
-	if th := s.thread(id); th != nil {
+func (s *Server) historyThread(binding *runtime.State, id string) (*threadState, error) {
+	if th := s.threadForState(binding, id); th != nil {
 		return th, nil
 	}
 	// Read-only fallback also works after a host restart without a prior resume.
-	th, err := s.loadPersistedThreadState(id, time.Now().UTC())
+	th, err := s.loadPersistedThreadState(binding, id, time.Now().UTC())
 	if errors.Is(err, session.ErrSessionNotFound) {
-		thread, ok, agentErr := s.agentSessionThread(id)
+		thread, ok, agentErr := s.agentSessionThread(binding, id)
 		if agentErr != nil {
 			return nil, agentErr
 		}
@@ -267,6 +268,12 @@ func (s *Server) historyThread(id string) (*threadState, error) {
 }
 
 func (s *Server) handleThreadHistoryRead(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params struct {
 		ThreadID string `json:"thread_id"`
 		Cursor   string `json:"cursor"`
@@ -290,7 +297,7 @@ func (s *Server) handleThreadHistoryRead(req Request) error {
 	if boundaryTurn == "" {
 		return s.writeResponse(req.ID, nil, errors.New("invalid history cursor"))
 	}
-	th, err := s.historyThread(params.ThreadID)
+	th, err := s.historyThread(binding, params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

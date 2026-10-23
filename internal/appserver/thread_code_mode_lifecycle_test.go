@@ -107,7 +107,7 @@ func TestThreadDeleteReleasesCodeModeStateCapacity(t *testing.T) {
 		t.Fatal("fixture did not evict the deleted conversation runtime")
 	}
 	rpc(MethodThreadDelete, ThreadDeleteParams{ThreadID: deleted})
-	if _, exists, err := session.Find(rt.SessionDir, deleted); err != nil || exists {
+	if _, exists, err := rt.Sessions.Find(deleted); err != nil || exists {
 		t.Fatalf("permanent delete did not remove the session: exists=%v, err=%v", exists, err)
 	}
 	result, err = run(fresh, `store("marker", "new"); return load("marker");`)

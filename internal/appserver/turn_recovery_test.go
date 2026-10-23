@@ -72,11 +72,11 @@ func TestResponsesFailureDiagnosticsSurviveThreadResume(t *testing.T) {
 			}
 
 			rt := newTestRuntime(t, &fakeClient{})
-			sess, err := session.CreateWithMetadata(rt.SessionDir, session.NewID(), rt.RootDir)
+			sess, err := rt.Sessions.CreateWithMetadata(session.NewID(), rt.RootDir)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "user", Content: "hello"}); err != nil {
+			if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "user", Content: "hello"}); err != nil {
 				t.Fatal(err)
 			}
 			srv := New(rt, &lockedBuffer{})
@@ -86,7 +86,7 @@ func TestResponsesFailureDiagnosticsSurviveThreadResume(t *testing.T) {
 			if err := srv.persistTurnTerminal(th, sess.ID+"-turn-0001", TurnKindUser, TurnStatusFailed, &live, time.Now().UTC(), nil, rt.ProviderName, rt.Model, providers.TokenUsage{InputTokens: 7}); err != nil {
 				t.Fatal(err)
 			}
-			activity, err := session.LatestSubscriptionActivity(rt.SessionDir, []session.SubscriptionActivityKey{{Provider: rt.ProviderName}})
+			activity, err := rt.Sessions.LatestSubscriptionActivity([]session.SubscriptionActivityKey{{Provider: rt.ProviderName}})
 			if err != nil {
 				t.Fatal(err)
 			}

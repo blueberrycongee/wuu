@@ -34,6 +34,12 @@ func (s *Server) handleActivityList(req Request) error {
 }
 
 func (s *Server) handleActivityTakeover(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	params, err := parseActivityActionParams(req)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -46,10 +52,10 @@ func (s *Server) handleActivityTakeover(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(binding, params.ThreadID, session.ControlPaused); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
+	if _, err := s.interruptThreadExecution(binding, params.ThreadID, "", ""); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(current)}, nil)
@@ -72,6 +78,12 @@ func (s *Server) handleActivityRelease(req Request) error {
 }
 
 func (s *Server) handleActivityStop(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	params, err := parseActivityActionParams(req)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -84,10 +96,10 @@ func (s *Server) handleActivityStop(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.takeSessionControl(params.ThreadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(binding, params.ThreadID, session.ControlPaused); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if _, err := s.interruptThreadExecution(params.ThreadID, "", ""); err != nil {
+	if _, err := s.interruptThreadExecution(binding, params.ThreadID, "", ""); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeResponse(req.ID, ActivityActionResult{Activity: activitySessionFromRuntime(current)}, nil)

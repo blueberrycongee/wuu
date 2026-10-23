@@ -147,12 +147,12 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, source := range []string{"grok", "codex", "external"} {
-		sess, err := session.CreateWithMetadata(rt.SessionDir, source, t.TempDir())
+		sess, err := rt.Sessions.CreateWithMetadata(source, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
 		if source == "external" {
-			if _, err := session.SetEngine(rt.SessionDir, sess.ID, "codex"); err != nil {
+			if _, err := rt.Sessions.SetEngine(sess.ID, "codex"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -160,7 +160,7 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 			{Role: "meta", Content: "token_usage", Provider: source, InputTokens: 12},
 			{Role: "meta", Content: "turn_terminal", Provider: source, StopReason: "completed", InputTokens: 12},
 		} {
-			if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, record); err != nil {
+			if err := rt.Sessions.AppendHistoryRecord(sess.ID, record); err != nil {
 				t.Fatal(err)
 			}
 		}

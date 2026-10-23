@@ -9,10 +9,11 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-func (s *Server) prepareHandoffSeed(ctx context.Context, params pluginhost.SessionCreateParams) (pluginhost.SessionCreateParams, error) {
+func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context, params pluginhost.SessionCreateParams) (pluginhost.SessionCreateParams, error) {
 	if params.ContextSource != pluginhost.SessionContextSourceSeed || params.Seed == nil || strings.TrimSpace(params.Seed.Body) != "" {
 		return params, nil
 	}
@@ -33,9 +34,10 @@ func (s *Server) prepareHandoffSeed(ctx context.Context, params pluginhost.Sessi
 	if params.Seed.Source.SessionID == "" {
 		params.Seed.Source.SessionID = sourceID
 	}
-	page, err := session.ReadHistoryQuery(ctx, s.rt.SessionDir, session.HistoryReadQuery{
-		SessionID: sourceID, StartSeq: 1, EndSeq: params.Seed.Source.ThroughSeq, SnapshotSeq: params.Seed.Source.ThroughSeq, Limit: 50,
-	})
+	page, err := binding.Sessions.WithContext(ctx).
+		ReadHistoryQuery(session.HistoryReadQuery{
+			SessionID: sourceID, StartSeq: 1, EndSeq: params.Seed.Source.ThroughSeq, SnapshotSeq: params.Seed.Source.ThroughSeq, Limit: 50,
+		})
 	if err != nil {
 		return params, err
 	}
@@ -44,7 +46,7 @@ func (s *Server) prepareHandoffSeed(ctx context.Context, params pluginhost.Sessi
 	}
 	messages := chatMessagesFromHistoryRecords(page.Records)
 	previous := agent.CompactionNote{}
-	if note, ok, err := session.LoadCompactionNote(s.rt.SessionDir, sourceID, provider.CompactionKey()); err != nil {
+	if note, ok, err := binding.Sessions.LoadCompactionNote(sourceID, provider.CompactionKey()); err != nil {
 		return params, err
 	} else if ok {
 		previous = agent.CompactionNote{Markdown: note.Markdown, CoveredMessages: note.CoveredMessages, CoveredHash: note.CoveredHash}

@@ -1,10 +1,10 @@
 package appserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
@@ -32,7 +32,20 @@ func (s *Server) refreshExtensions(cfg config.Config) error {
 	return s.rt.RefreshExtensions(cfg)
 }
 
-func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, error) {
+// Resolve provider policy before acquiring thread or execution lease locks.
+func (s *Server) threadProjectAdmission(ctx context.Context, th *threadState) (int, error) {
+	metadata, found, err := th.state.Sessions.Find(th.ID)
+	if err != nil {
+		return 0, err
+	}
+	if !found || (metadata.Source != projectSource && metadata.Source != projectSessionSource) {
+		return 0, nil
+	}
+	policy, err := ProjectAdmission(ctx, th.state.Host, th.ID)
+	return policy.MaxParallel, err
+}
+
+func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParallel int) (bool, error) {
 	if th == nil {
 		return false, errors.New("thread is required")
 	}
@@ -67,7 +80,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		s.pluginGenerationRefreshMu.Unlock()
 		if needsRefresh {
 			_ = lease.Release()
-			_ = s.startBackground(func() {
+			_ = s.startBackgroundWithState(th.state, func(binding *runtime.State) {
 				if err := s.refreshPluginGenerationIfChanged(); err != nil && !pluginGenerationRefreshPending(err) {
 					providers.DebugLogf("refresh plugin generation before admission: %v", err)
 				}
@@ -76,6 +89,21 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		}
 		th.pluginExecutionLease = lease
 		newPluginLease = true
+	}
+	current, err := s.rt.RetainState()
+	if err != nil {
+		if newPluginLease {
+			th.releasePluginGenerationExecutionLeaseLocked()
+		}
+		return false, err
+	}
+	matches := th.state != nil && (current.Sessions == th.state.Sessions || s.activeExecutionRunID(th.ID) != "" || (th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)))
+	_ = current.Close()
+	if !matches {
+		if newPluginLease {
+			th.releasePluginGenerationExecutionLeaseLocked()
+		}
+		return false, errors.Join(errRetryableTurnAdmission, errors.New("selected state changed before execution admission"))
 	}
 	th.admissionReserved = true
 	if !th.PersistHistory {
@@ -88,21 +116,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, er
 		}
 		return false, errors.New("session directory is required for durable thread execution")
 	}
-	// Embedded runtimes may have no configuration file; they retain the
-	// default policy. A configured but malformed file still rejects admission.
-	cfg := config.Config{}
-	var err error
-	if s.rt.ConfigLoadMode != runtime.ConfigLoadFile || strings.TrimSpace(s.rt.ConfigPath) != "" {
-		cfg, _, err = s.rt.LoadEffectiveConfig()
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, config.ErrConfigNotFound) {
-		th.admissionReserved = false
-		if newPluginLease {
-			th.releasePluginGenerationExecutionLeaseLocked()
-		}
-		return false, fmt.Errorf("load worker admission policy: %w", err)
-	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLeaseWithProjectLimit(s.rt.SessionDir, th.ID, cfg.Agent.ProjectMaxParallelValue())
+	lease, acquired, err := th.state.Sessions.TryAcquireThreadExecutionLeaseWithProjectLimit(s.rt.SessionDir, th.ID, maxParallel)
 	if err != nil {
 		th.admissionReserved = false
 		if newPluginLease {
@@ -128,7 +142,7 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	if th == nil || !th.PersistHistory {
 		return nil
 	}
-	loaded, err := s.loadPersistedThreadSnapshot(th.ID)
+	loaded, err := s.loadPersistedThreadSnapshot(th.state, th.ID)
 	if err != nil {
 		return fmt.Errorf("refresh durable state for thread %q: %w", th.ID, err)
 	}
@@ -136,12 +150,12 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 		return errProjectAgentDisabled
 	}
 	if loaded.repairNeeded {
-		if err := s.rewriteChatHistoryUnderExecutionLease(s.rt.SessionDir, th.ID, loaded.repairedHistory, loaded.baselineSeq); err != nil {
+		if err := s.rewriteChatHistoryUnderExecutionLease(th.state, s.rt.SessionDir, th.ID, loaded.repairedHistory, loaded.baselineSeq); err != nil {
 			return fmt.Errorf("persist repaired history for thread %q: %w", th.ID, err)
 		}
 		// Re-read display rows after the rewrite so Turns and provider history
 		// are rebuilt from the same committed snapshot.
-		loaded, err = s.loadPersistedThreadSnapshot(th.ID)
+		loaded, err = s.loadPersistedThreadSnapshot(th.state, th.ID)
 		if err != nil {
 			return fmt.Errorf("reload repaired state for thread %q: %w", th.ID, err)
 		}
@@ -155,7 +169,7 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 			return errors.New("session must execute in its relocated project runtime")
 		}
 		m := loaded.metadata
-		if _, err := session.UpdateWorkspaceBinding(s.rt.SessionDir, th.ID, m.CWD, m.WorktreePath, m.WorktreeBaseHEAD, m.WorktreeBaseRepo); err != nil {
+		if _, err := th.state.Sessions.UpdateWorkspaceBinding(th.ID, m.CWD, m.WorktreePath, m.WorktreeBaseHEAD, m.WorktreeBaseRepo); err != nil {
 			return err
 		}
 	}
@@ -166,7 +180,7 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	th.WorkspaceKind = workspaceKindForCWD(s.rt.WuuHome, th.CWD)
 	th.History = cloneHistory(loaded.history)
 	th.historyHeadSeq = loaded.baselineSeq
-	th.Turns = turnsFromPersistedHistory(th.ID, loaded.displayHistory, time.Now().UTC(), s.resolveParticipantSummary)
+	th.Turns = turnsFromPersistedHistory(th.ID, loaded.displayHistory, time.Now().UTC(), s.participantResolver(th.state))
 	s.restorePluginToolLabels(th.Turns)
 	th.Turns = applyTokenUsageMetasToTurns(th.Turns, loaded.tokenMetas)
 	th.currentTurn = ""
@@ -188,7 +202,7 @@ func threadExecutionBusyError(threadID string) error {
 // tryAcquireThreadMutationLease serializes destructive durable mutations with
 // model turns without attaching the lease to currentTurn. Callers must release
 // the returned lease after the mutation is fully committed.
-func (s *Server) tryAcquireThreadMutationLease(threadID string) (*session.ThreadExecutionLease, error) {
+func (s *Server) tryAcquireThreadMutationLease(binding *runtime.State, threadID string) (*session.DocumentThreadExecutionLease, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil, errors.New("thread id is required")
@@ -196,7 +210,7 @@ func (s *Server) tryAcquireThreadMutationLease(threadID string) (*session.Thread
 	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
 		return nil, errors.New("session directory is required for durable thread mutation")
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(s.rt.SessionDir, threadID)
+	lease, acquired, err := binding.Sessions.TryAcquireThreadExecutionLease(s.rt.SessionDir, threadID)
 	if err != nil {
 		return nil, fmt.Errorf("acquire mutation lease for thread %q: %w", threadID, err)
 	}
@@ -206,7 +220,7 @@ func (s *Server) tryAcquireThreadMutationLease(threadID string) (*session.Thread
 	return lease, nil
 }
 
-func releaseThreadMutationLease(threadID string, lease *session.ThreadExecutionLease) {
+func releaseThreadMutationLease(threadID string, lease *session.DocumentThreadExecutionLease) {
 	if lease == nil {
 		return
 	}
@@ -215,20 +229,25 @@ func releaseThreadMutationLease(threadID string, lease *session.ThreadExecutionL
 	}
 }
 
-func (s *Server) rewriteChatHistoryUnderExecutionLease(sessDir, threadID string, history []providers.ChatMessage, baselineSeq int) error {
+func (s *Server) rewriteChatHistoryUnderExecutionLease(binding *runtime.State, sessDir, threadID string, history []providers.ChatMessage, baselineSeq int) error {
 	if s != nil && s.rewriteChatHistoryForTest != nil {
 		return s.rewriteChatHistoryForTest(sessDir, threadID, history)
 	}
-	return rewriteChatHistoryAtBaseline(sessDir, threadID, history, baselineSeq)
+	return rewriteChatHistoryAtBaseline(binding.Sessions, threadID, history, baselineSeq)
 }
 
-func (s *Server) scheduleThreadExecutionLeaseRetry(retry func()) {
+func (s *Server) scheduleThreadExecutionLeaseRetry(binding *runtime.State, retry func(*runtime.State)) {
 	if s == nil || retry == nil || s.closed.Load() {
 		return
 	}
+	held := binding.Retain()
+	if held == nil {
+		return
+	}
 	time.AfterFunc(threadExecutionLeaseRetryDelay, func() {
+		defer held.Close()
 		if !s.closed.Load() {
-			retry()
+			retry(held)
 		}
 	})
 }
@@ -366,7 +385,7 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		}
 		structuredCause = string(encoded)
 	}
-	if err := session.AppendHistoryRecord(s.rt.SessionDir, th.ID, session.HistoryRecord{
+	if err := th.state.Sessions.AppendHistoryRecord(th.ID, session.HistoryRecord{
 		Role:                "meta",
 		Content:             turnTerminalHistoryRecord,
 		Provider:            providerName,
@@ -388,7 +407,7 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		// worked leaves no trace in history.
 		return nil
 	}
-	return session.AppendHistoryRecord(s.rt.SessionDir, th.ID, session.HistoryRecord{
+	return th.state.Sessions.AppendHistoryRecord(th.ID, session.HistoryRecord{
 		Role:           "meta",
 		Content:        streamReconnectHistoryRecord,
 		DisplayContent: reconnect.Text,

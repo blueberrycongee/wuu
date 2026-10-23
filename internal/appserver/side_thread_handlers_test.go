@@ -131,7 +131,7 @@ func newSideThreadServer(t *testing.T, client providers.StreamClient) (*Server, 
 
 func createSideThreadMain(t *testing.T, s *Server, id string) {
 	t.Helper()
-	if _, err := session.CreateWithMetadata(s.rt.SessionDir, id, s.rt.RootDir); err != nil {
+	if _, err := s.rt.Sessions.CreateWithMetadata(id, s.rt.RootDir); err != nil {
 		t.Fatalf("create main thread: %v", err)
 	}
 }
@@ -166,14 +166,14 @@ func waitForSideThreadDelta(t *testing.T, out *lockedBuffer, text string) {
 func TestOpenSideThreadIsLazyButRequiresMainThread(t *testing.T) {
 	s, _, _ := newSideThreadServer(t, nil)
 	createSideThreadMain(t, s, "main_lazy")
-	res, err := s.openSideThread("main_lazy")
+	res, err := s.openSideThread(testRuntimeState(t, s.rt), "main_lazy")
 	if err != nil {
 		t.Fatalf("openSideThread: %v", err)
 	}
 	if res.Summary != nil {
 		t.Fatalf("lazy open materialized a record: %+v", res.Summary)
 	}
-	if _, err := s.openSideThread("missing"); !errors.Is(err, session.ErrSessionNotFound) {
+	if _, err := s.openSideThread(testRuntimeState(t, s.rt), "missing"); !errors.Is(err, session.ErrSessionNotFound) {
 		t.Fatalf("missing main thread error = %v", err)
 	}
 }
@@ -181,7 +181,7 @@ func TestOpenSideThreadIsLazyButRequiresMainThread(t *testing.T) {
 func TestOpenRecoversSideTurnAfterRemoteOwnerCrash(t *testing.T) {
 	s, rt, _ := newSideThreadServer(t, nil)
 	createSideThreadMain(t, s, "main_lazy_recovery")
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, sideThreadExecutionLeasePrefix+"main_lazy_recovery")
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, sideThreadExecutionLeasePrefix+"main_lazy_recovery")
 	if err != nil || !acquired {
 		t.Fatalf("acquire owner lease: acquired=%t err=%v", acquired, err)
 	}
@@ -189,7 +189,7 @@ func TestOpenRecoversSideTurnAfterRemoteOwnerCrash(t *testing.T) {
 		t.Fatalf("BeginTurn: %v", err)
 	}
 
-	live, err := s.openSideThread("main_lazy_recovery")
+	live, err := s.openSideThread(testRuntimeState(t, s.rt), "main_lazy_recovery")
 	if err != nil {
 		t.Fatalf("open with live owner: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestOpenRecoversSideTurnAfterRemoteOwnerCrash(t *testing.T) {
 		t.Fatalf("release crashed owner lease: %v", err)
 	}
 
-	recovered, err := s.openSideThread("main_lazy_recovery")
+	recovered, err := s.openSideThread(testRuntimeState(t, s.rt), "main_lazy_recovery")
 	if err != nil {
 		t.Fatalf("open after owner crash: %v", err)
 	}
@@ -222,7 +222,7 @@ func TestGetSideThreadHistoryReturnsPersistedMessages(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	res, err := s.getSideThreadHistory("main_history")
+	res, err := s.getSideThreadHistory(testRuntimeState(t, s.rt), "main_history")
 	if err != nil {
 		t.Fatalf("getSideThreadHistory: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestSendSideThreadMessageRunsReadOnlyModelAndPersistsReply(t *testing.T) {
 	client := &sideThreadTestClient{response: "The main task is still running."}
 	s, _, out := newSideThreadServer(t, client)
 	createSideThreadMain(t, s, "main_send")
-	res, err := s.sendSideThreadMessage("main_send", "What is the status?")
+	res, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_send", "What is the status?")
 	if err != nil {
 		t.Fatalf("sendSideThreadMessage: %v", err)
 	}
@@ -508,7 +508,7 @@ func TestSideThreadSendRejectsConcurrentServers(t *testing.T) {
 	client := &sideThreadTestClient{response: "done", started: make(chan struct{}), release: make(chan struct{})}
 	owner, rt, _ := newSideThreadServer(t, client)
 	createSideThreadMain(t, owner, "main_concurrent")
-	if _, err := owner.sendSideThreadMessage("main_concurrent", "first"); err != nil {
+	if _, err := owner.sendSideThreadMessage(testRuntimeState(t, owner.rt), "main_concurrent", "first"); err != nil {
 		t.Fatalf("owner send: %v", err)
 	}
 	select {
@@ -532,7 +532,7 @@ func TestSideThreadSendRejectsConcurrentServers(t *testing.T) {
 		sideThreadStore: sidethread.NewStore(filepath.Join(rt.SessionDir, "sidethreads")),
 		sideTurns:       make(map[string]*sideThreadTurn),
 	}
-	if _, err := peer.sendSideThreadMessage("main_concurrent", "second"); !errors.Is(err, errSideThreadExecutionBusy) {
+	if _, err := peer.sendSideThreadMessage(testRuntimeState(t, peer.rt), "main_concurrent", "second"); !errors.Is(err, errSideThreadExecutionBusy) {
 		t.Fatalf("contending send error = %v, want busy", err)
 	}
 	close(client.release)
@@ -549,7 +549,7 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	client := &sideThreadTestClient{partial: "partial progress", started: make(chan struct{}), release: make(chan struct{})}
 	s, rt, out := newSideThreadServer(t, client)
 	createSideThreadMain(t, s, "main_interrupt")
-	if _, err := s.sendSideThreadMessage("main_interrupt", "status?"); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_interrupt", "status?"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	select {
@@ -558,7 +558,7 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 		t.Fatal("provider request did not start")
 	}
 	waitForSideThreadDelta(t, out, "partial progress")
-	res, err := s.interruptSideThread("main_interrupt")
+	res, err := s.interruptSideThread(testRuntimeState(t, s.rt), "main_interrupt")
 	if err != nil || !res.Ok {
 		t.Fatalf("interrupt: result=%+v err=%v", res, err)
 	}
@@ -580,7 +580,7 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	defer rt.ReleasePluginGeneration(generation)
 	client.started = make(chan struct{})
 	client.once = sync.Once{}
-	if _, err := s.sendSideThreadMessage("main_interrupt", "continue?"); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_interrupt", "continue?"); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -614,7 +614,7 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.sendSideThreadMessage("main_interrupt", "disabled"); err == nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_interrupt", "disabled"); err == nil {
 		t.Fatal("disabled side command accepted a send")
 	}
 	settings.SetEnabled(rt.Plugins[0].SubjectID, true)
@@ -634,7 +634,7 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 		t.Fatalf("disable lost side history: %+v", history)
 	}
 	close(client.release)
-	if _, err := s.sendSideThreadMessage("main_interrupt", "enabled again"); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_interrupt", "enabled again"); err != nil {
 		t.Fatal(err)
 	}
 	s.backgroundWG.Wait()
@@ -657,7 +657,7 @@ func TestResetSideThreadClearsHistoryAndNotifies(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	res, err := s.resetSideThread("main_reset")
+	res, err := s.resetSideThread(testRuntimeState(t, s.rt), "main_reset")
 	if err != nil || !res.Ok {
 		t.Fatalf("resetSideThread: result=%+v err=%v", res, err)
 	}
@@ -671,7 +671,7 @@ func TestResetSideThreadClearsHistoryAndNotifies(t *testing.T) {
 		}
 	}
 	// A second reset finds nothing to clear and stays idempotent.
-	res, err = s.resetSideThread("main_reset")
+	res, err = s.resetSideThread(testRuntimeState(t, s.rt), "main_reset")
 	if err != nil || !res.Ok {
 		t.Fatalf("reset of absent record: result=%+v err=%v", res, err)
 	}
@@ -681,7 +681,7 @@ func TestResetSideThreadCancelsRunningTurn(t *testing.T) {
 	client := &sideThreadTestClient{partial: "partial progress", started: make(chan struct{}), release: make(chan struct{})}
 	s, _, out := newSideThreadServer(t, client)
 	createSideThreadMain(t, s, "main_reset_running")
-	if _, err := s.sendSideThreadMessage("main_reset_running", "status?"); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_reset_running", "status?"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	select {
@@ -690,7 +690,7 @@ func TestResetSideThreadCancelsRunningTurn(t *testing.T) {
 		t.Fatal("provider request did not start")
 	}
 	waitForSideThreadDelta(t, out, "partial progress")
-	res, err := s.resetSideThread("main_reset_running")
+	res, err := s.resetSideThread(testRuntimeState(t, s.rt), "main_reset_running")
 	if err != nil || !res.Ok {
 		t.Fatalf("resetSideThread: result=%+v err=%v", res, err)
 	}
@@ -706,7 +706,7 @@ func TestRemoteInterruptCancelsOwningSideThreadProcess(t *testing.T) {
 	client := &sideThreadTestClient{partial: "partial progress", started: make(chan struct{}), release: make(chan struct{})}
 	owner, rt, ownerOut := newSideThreadServer(t, client)
 	createSideThreadMain(t, owner, "main_remote_interrupt")
-	if _, err := owner.sendSideThreadMessage("main_remote_interrupt", "status?"); err != nil {
+	if _, err := owner.sendSideThreadMessage(testRuntimeState(t, owner.rt), "main_remote_interrupt", "status?"); err != nil {
 		t.Fatalf("owner send: %v", err)
 	}
 	select {
@@ -723,7 +723,7 @@ func TestRemoteInterruptCancelsOwningSideThreadProcess(t *testing.T) {
 		sideThreadStore: sidethread.NewStore(filepath.Join(rt.SessionDir, "sidethreads")),
 		sideTurns:       make(map[string]*sideThreadTurn),
 	}
-	res, err := peer.interruptSideThread("main_remote_interrupt")
+	res, err := peer.interruptSideThread(testRuntimeState(t, peer.rt), "main_remote_interrupt")
 	if err != nil || !res.Ok {
 		t.Fatalf("peer interrupt: result=%+v err=%v", res, err)
 	}
@@ -755,7 +755,7 @@ func TestSideThreadSnapshotIncludesLiveMainTurn(t *testing.T) {
 		},
 	}}
 	s.threads["main_live"] = th
-	if _, err := s.sendSideThreadMessage("main_live", "what is happening?"); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_live", "what is happening?"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	waitForSideThreadStatus(t, s.sideThreadStore, "main_live", sidethread.StatusCompleted)
@@ -785,7 +785,7 @@ func TestSideThreadContextUsesResolvedModelBudget(t *testing.T) {
 		ID: "tool", Type: ThreadItemToolCall, Status: ThreadItemStatusInProgress, Name: "run_shell", Result: "LATEST_LIVE_TOOL_MARKER",
 	}}}}
 	s.threads["main_long"] = th
-	if _, err := s.sendSideThreadMessage("main_long", "LATEST_SIDE_PROMPT_MARKER"); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_long", "LATEST_SIDE_PROMPT_MARKER"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	waitForSideThreadStatus(t, s.sideThreadStore, "main_long", sidethread.StatusCompleted)
@@ -860,7 +860,7 @@ func TestSideThreadSendRejectsOversizedPromptBeforePersisting(t *testing.T) {
 	rt.StreamRunner.MaxInputTokens = 200
 	createSideThreadMain(t, s, "main_oversized_prompt")
 
-	_, err := s.sendSideThreadMessage("main_oversized_prompt", strings.Repeat("oversized active prompt ", 500))
+	_, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_oversized_prompt", strings.Repeat("oversized active prompt ", 500))
 	if err == nil || !strings.Contains(err.Error(), "prompt requires") {
 		t.Fatalf("oversized send error = %v", err)
 	}
@@ -874,7 +874,7 @@ func TestSideThreadSendRunnerValidationDoesNotPersist(t *testing.T) {
 	rt.StreamRunner = nil
 	createSideThreadMain(t, s, "main_missing_runner")
 
-	if _, err := s.sendSideThreadMessage("main_missing_runner", "status?"); err == nil || !strings.Contains(err.Error(), "stream runner") {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_missing_runner", "status?"); err == nil || !strings.Contains(err.Error(), "stream runner") {
 		t.Fatalf("missing runner error = %v", err)
 	}
 	if _, err := s.sideThreadStore.Load("main_missing_runner"); !errors.Is(err, sidethread.ErrNotFound) {
@@ -901,7 +901,7 @@ func TestSideThreadRejectedPromptLeavesExistingHistoryUnchanged(t *testing.T) {
 		t.Fatalf("load before: %v", err)
 	}
 
-	if _, err := s.sendSideThreadMessage("main_existing_oversized", strings.Repeat("oversized active prompt ", 500)); err == nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_existing_oversized", strings.Repeat("oversized active prompt ", 500)); err == nil {
 		t.Fatal("oversized prompt unexpectedly succeeded")
 	}
 	after, err := s.sideThreadStore.Load("main_existing_oversized")
@@ -920,7 +920,7 @@ func TestSideThreadSendPreservesLongAcceptedPromptEndToEnd(t *testing.T) {
 	createSideThreadMain(t, s, "main_long_prompt")
 	prompt := strings.Repeat("active prompt context ", 120) + "ACTIVE_PROMPT_TAIL_MARKER"
 
-	if _, err := s.sendSideThreadMessage("main_long_prompt", prompt); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_long_prompt", prompt); err != nil {
 		t.Fatalf("send long prompt: %v", err)
 	}
 	st := waitForSideThreadStatus(t, s.sideThreadStore, "main_long_prompt", sidethread.StatusCompleted)
@@ -953,7 +953,7 @@ func TestSideThreadPersistFailureSurfacesExplicitFailure(t *testing.T) {
 	client := &sideThreadTestClient{response: "completed answer", started: make(chan struct{}), release: make(chan struct{})}
 	s, rt, out := newSideThreadServer(t, client)
 	createSideThreadMain(t, s, "main_persist_failure")
-	if _, err := s.sendSideThreadMessage("main_persist_failure", "status?"); err != nil {
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_persist_failure", "status?"); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	select {
@@ -1025,10 +1025,10 @@ func TestMainThreadModelSelectionPrefersCacheThenSession(t *testing.T) {
 	srv := New(rt, &lockedBuffer{})
 	cachedRoot := t.TempDir()
 
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "sel-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("sel-thread", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, "sel-thread", session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection("sel-thread", session.RuntimeSelection{
 		Provider: "fake-provider",
 		Model:    "persisted-model",
 	}); err != nil {
@@ -1036,10 +1036,10 @@ func TestMainThreadModelSelectionPrefersCacheThenSession(t *testing.T) {
 	}
 
 	// Not cached: fall back to the persisted session row.
-	if got := srv.mainThreadModelSelection("sel-thread"); got.Model != "persisted-model" {
+	if got := srv.mainThreadModelSelection(testRuntimeState(t, srv.rt), "sel-thread"); got.Model != "persisted-model" {
 		t.Fatalf("uncached selection model = %q, want persisted-model", got.Model)
 	}
-	if got := srv.mainThreadRoot("sel-thread"); got != rt.RootDir {
+	if got := srv.mainThreadRoot(testRuntimeState(t, srv.rt), "sel-thread"); got != rt.RootDir {
 		t.Fatalf("uncached root = %q, want persisted %q", got, rt.RootDir)
 	}
 
@@ -1048,15 +1048,15 @@ func TestMainThreadModelSelectionPrefersCacheThenSession(t *testing.T) {
 	srv.mu.Lock()
 	srv.threads[th.ID] = th
 	srv.mu.Unlock()
-	if got := srv.mainThreadModelSelection("sel-thread"); got.Model != "cached-model" {
+	if got := srv.mainThreadModelSelection(testRuntimeState(t, srv.rt), "sel-thread"); got.Model != "cached-model" {
 		t.Fatalf("cached selection model = %q, want cached-model", got.Model)
 	}
-	if got := srv.mainThreadRoot("sel-thread"); got != cachedRoot {
+	if got := srv.mainThreadRoot(testRuntimeState(t, srv.rt), "sel-thread"); got != cachedRoot {
 		t.Fatalf("cached root = %q, want %q", got, cachedRoot)
 	}
 
 	// Unknown thread yields an empty (workspace-default) selection.
-	if got := srv.mainThreadModelSelection("missing-thread"); got.Provider != "" || got.Model != "" {
+	if got := srv.mainThreadModelSelection(testRuntimeState(t, srv.rt), "missing-thread"); got.Provider != "" || got.Model != "" {
 		t.Fatalf("unknown thread selection = %+v, want empty", got)
 	}
 }

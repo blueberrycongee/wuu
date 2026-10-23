@@ -271,7 +271,7 @@ func TestCancelledLateQueueIsNotHeldDuringInterrupt(t *testing.T) {
 	if err := s.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatal(err)
 	}
-	held, err := s.loadHeldUserTurns(threadID)
+	held, err := s.loadHeldUserTurns(testRuntimeState(t, s.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +380,7 @@ func TestExplicitlyHeldQueueDoesNotStartAfterStopSettles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	held, err := s.loadHeldUserTurns(threadID)
+	held, err := s.loadHeldUserTurns(testRuntimeState(t, s.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestExplicitlyHeldQueueDoesNotStartAfterStopSettles(t *testing.T) {
 		t.Fatal("held input must not dispatch")
 	}
 	// The durable held input survives a new server instance.
-	restored, err := New(rt, &lockedBuffer{}).loadHeldUserTurns(threadID)
+	restored, err := New(rt, &lockedBuffer{}).loadHeldUserTurns(testRuntimeState(t, New(rt, &lockedBuffer{}).rt), threadID)
 	if err != nil || len(restored) != 2 {
 		t.Fatalf("held input not recoverable: %+v, %v", restored, err)
 	}
@@ -414,9 +414,9 @@ func TestQueuedAdmissionRejectionKeepsInputHeldWithReason(t *testing.T) {
 		t.Fatal("withdraw queued turn")
 	}
 
-	s.drainQueuedTurns(threadID)
+	s.drainQueuedTurns(testRuntimeState(t, s.rt), threadID)
 
-	held, err := s.loadHeldUserTurns(threadID)
+	held, err := s.loadHeldUserTurns(testRuntimeState(t, s.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}

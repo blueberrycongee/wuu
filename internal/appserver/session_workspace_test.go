@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -33,14 +32,14 @@ func TestRebindThreadWorkspacePersistsLinkedWorktreeAndNotifies(t *testing.T) {
 	}
 	start := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
 
-	if err := srv.rebindThreadWorkspace(start.Thread.ID, linked); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), start.Thread.ID, linked); err != nil {
 		t.Fatalf("rebindThreadWorkspace: %v", err)
 	}
 	want, err := canonicalWorkspaceDirectory(linked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, found, err := session.Find(rt.SessionDir, start.Thread.ID)
+	stored, found, err := rt.Sessions.Find(start.Thread.ID)
 	if err != nil || !found {
 		t.Fatalf("Find: found=%v err=%v", found, err)
 	}
@@ -111,14 +110,14 @@ func TestRebindThreadWorkspaceBackToProjectThroughSymlink(t *testing.T) {
 		t.Fatalf("thread/start: %v", err)
 	}
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
-	if err := srv.rebindThreadWorkspace(threadID, linked); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threadID, linked); err != nil {
 		t.Fatalf("rebind to linked worktree: %v", err)
 	}
-	if err := srv.rebindThreadWorkspace(threadID, resolvedRepo); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threadID, resolvedRepo); err != nil {
 		t.Fatalf("rebind back to project: %v", err)
 	}
 
-	stored, found, err := session.Find(rt.SessionDir, threadID)
+	stored, found, err := rt.Sessions.Find(threadID)
 	if err != nil || !found {
 		t.Fatalf("Find: found=%v err=%v", found, err)
 	}
@@ -139,13 +138,13 @@ func TestRebindThreadWorkspaceRejectsUnrelatedRepositoryAndSubdirectory(t *testi
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
-	threads, err := session.List(rt.SessionDir, 10)
+	threads, err := rt.Sessions.List(10)
 	if err != nil || len(threads) != 1 {
 		t.Fatalf("List: len=%d err=%v", len(threads), err)
 	}
 
 	unrelated := initSessionWorkspaceRepo(t)
-	if err := srv.rebindThreadWorkspace(threads[0].ID, unrelated); err == nil ||
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threads[0].ID, unrelated); err == nil ||
 		!strings.Contains(err.Error(), "linked worktree") {
 		t.Fatalf("unrelated repository error = %v", err)
 	}
@@ -153,11 +152,11 @@ func TestRebindThreadWorkspaceRejectsUnrelatedRepositoryAndSubdirectory(t *testi
 	if err := os.Mkdir(subdir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.rebindThreadWorkspace(threads[0].ID, subdir); err == nil ||
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threads[0].ID, subdir); err == nil ||
 		!strings.Contains(err.Error(), "worktree root") {
 		t.Fatalf("subdirectory error = %v", err)
 	}
-	stored, found, err := session.Find(rt.SessionDir, threads[0].ID)
+	stored, found, err := rt.Sessions.Find(threads[0].ID)
 	if err != nil || !found {
 		t.Fatalf("Find: found=%v err=%v", found, err)
 	}
@@ -185,14 +184,14 @@ func TestRebindThreadWorkspaceCompletesWhenNotificationFails(t *testing.T) {
 	start := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
 	srv.out = sessionWorkspaceErrorWriter{}
 
-	if err := srv.rebindThreadWorkspace(start.Thread.ID, linked); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), start.Thread.ID, linked); err != nil {
 		t.Fatalf("rebindThreadWorkspace: %v", err)
 	}
 	want, err := canonicalWorkspaceDirectory(linked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, found, err := session.Find(rt.SessionDir, start.Thread.ID)
+	stored, found, err := rt.Sessions.Find(start.Thread.ID)
 	if err != nil || !found || stored.CWD != want {
 		t.Fatalf("stored workspace after notification failure: found=%v err=%v session=%+v", found, err, stored)
 	}
@@ -214,7 +213,7 @@ func TestRebindThreadWorkspaceCompletesWhenChildAgentLookupFails(t *testing.T) {
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
-	threads, err := session.List(rt.SessionDir, 10)
+	threads, err := rt.Sessions.List(10)
 	if err != nil || len(threads) != 1 {
 		t.Fatalf("List: len=%d err=%v", len(threads), err)
 	}
@@ -227,14 +226,14 @@ func TestRebindThreadWorkspaceCompletesWhenChildAgentLookupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := srv.rebindThreadWorkspace(threadID, linked); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threadID, linked); err != nil {
 		t.Fatalf("rebindThreadWorkspace: %v", err)
 	}
 	want, err := canonicalWorkspaceDirectory(linked)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, found, err := session.Find(rt.SessionDir, threadID)
+	stored, found, err := rt.Sessions.Find(threadID)
 	if err != nil || !found || stored.CWD != want {
 		t.Fatalf("stored workspace after child-agent failure: found=%v err=%v session=%+v", found, err, stored)
 	}
@@ -250,11 +249,11 @@ func TestRebindThreadWorkspaceRejectsNonGitProject(t *testing.T) {
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
-	threads, err := session.List(rt.SessionDir, 10)
+	threads, err := rt.Sessions.List(10)
 	if err != nil || len(threads) != 1 {
 		t.Fatalf("List: len=%d err=%v", len(threads), err)
 	}
-	if err := srv.rebindThreadWorkspace(threads[0].ID, rt.RootDir); err == nil ||
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threads[0].ID, rt.RootDir); err == nil ||
 		!strings.Contains(err.Error(), "project Git repository") {
 		t.Fatalf("non-Git project error = %v", err)
 	}

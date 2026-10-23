@@ -89,6 +89,12 @@ func conversationSnapshot(thread Thread) Thread {
 // Activity pages run forward within one settled group, independently of the
 // conversation cursor. Deleted or regrouped boundaries fail explicitly.
 func (s *Server) handleThreadActivityRead(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params struct {
 		ThreadID   string `json:"thread_id"`
 		TurnID     string `json:"turn_id"`
@@ -99,7 +105,7 @@ func (s *Server) handleThreadActivityRead(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	th, err := s.historyThread(params.ThreadID)
+	th, err := s.historyThread(binding, params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

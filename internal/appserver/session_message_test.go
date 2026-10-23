@@ -74,7 +74,7 @@ func TestSessionMessageQueuedDeliveryAndReplay(t *testing.T) {
 			if event.RequestID != params.RequestID || event.State != "completed" {
 				continue
 			}
-			loaded, err := srv.loadPersistedThreadState(target, time.Now())
+			loaded, err := srv.loadPersistedThreadState(testRuntimeState(t, srv.rt), target, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}

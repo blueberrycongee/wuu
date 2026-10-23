@@ -172,7 +172,7 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 					}
 					close(client.release)
 					// A queued extension turn can run, but must not regain local UI input.
-					if _, err := srv.startQueuedTurn(context.Background(), threadID, queuedTurn{
+					if _, err := srv.startQueuedTurn(testRuntimeState(t, srv.rt), context.Background(), threadID, queuedTurn{
 						id: "background", msg: providers.ChatMessage{Role: "user", Content: "background update", Origin: "plugin"},
 					}); err != nil {
 						t.Fatal(err)

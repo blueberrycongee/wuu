@@ -18,6 +18,7 @@ func TestServerCloseReleasesConnectionOwnedResources(t *testing.T) {
 
 	cancelled := make(chan struct{})
 	th := newThreadState("thread-close", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	th.running = true
 	th.cancel = func() { close(cancelled) }
 	sub := &threadRuntimeSubscription{done: make(chan struct{})}

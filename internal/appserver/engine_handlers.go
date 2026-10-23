@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/externalengine"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -50,6 +51,12 @@ func (e *engineModelCatalogCacheEntry) loadCatalog(binaryPath string, now time.T
 // handleEngineList reports the engine inventory and the persisted engine
 // settings for the settings UI.
 func (s *Server) handleEngineList(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params struct {
 		IncludeQuota  bool   `json:"include_quota"`
 		RefreshModels bool   `json:"refresh_models"`
@@ -82,7 +89,7 @@ func (s *Server) handleEngineList(req Request) error {
 		// Historical statistics belong to the opt-in dashboard request, not
 		// navigation or the composer inventory. Copy providers before enriching
 		// them so cached configuration summaries remain history-free.
-		s.attachSubscriptionActivity(result.Engines, result.SubscriptionProviders)
+		s.attachSubscriptionActivity(binding, result.Engines, result.SubscriptionProviders)
 		s.attachSubscriptionQuotas(result.Engines, result.SubscriptionProviders)
 	}
 	return s.writeResponse(req.ID, result, nil)
@@ -243,7 +250,7 @@ func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo
 // read failure leaves the fields empty:
 // the inventory itself is still usable, and the dashboard says the request is
 // unknown rather than inventing a status.
-func (s *Server) attachSubscriptionActivity(engines []EngineInfo, providers []ProviderSummary) {
+func (s *Server) attachSubscriptionActivity(binding *runtime.State, engines []EngineInfo, providers []ProviderSummary) {
 	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
 		return
 	}
@@ -260,7 +267,7 @@ func (s *Server) attachSubscriptionActivity(engines []EngineInfo, providers []Pr
 	if len(keys) == 0 {
 		return
 	}
-	activity, err := session.LatestSubscriptionActivity(s.rt.SessionDir, keys)
+	activity, err := binding.Sessions.LatestSubscriptionActivity(keys)
 	if err != nil {
 		return
 	}

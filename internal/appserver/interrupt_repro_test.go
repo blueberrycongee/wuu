@@ -227,7 +227,7 @@ func TestRepro_InterruptAfterToolCompletes_PersistsMessages(t *testing.T) {
 	}
 	waitForMethod(t, out, NotificationTurnError)
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}

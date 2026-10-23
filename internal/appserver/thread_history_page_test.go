@@ -23,6 +23,7 @@ func TestHistoryPagesSurviveAppendsAndRejectRemovedBoundary(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	th := newThreadState("paged", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now())
+	th.state = testRuntimeState(t, rt)
 	for i := 0; i < 63; i++ {
 		th.Turns = append(th.Turns, Turn{ID: fmt.Sprint(i), Items: []ThreadItem{{ID: fmt.Sprint(i), Text: strings.Repeat("x", 20_000)}}})
 	}
@@ -68,6 +69,7 @@ func TestThreadAttachmentReadsSourceAndThumbnailWithoutDeliveryCache(t *testing.
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	th := newThreadState("images", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now())
+	th.state = testRuntimeState(t, rt)
 	var pngBytes bytes.Buffer
 	if err := png.Encode(&pngBytes, image.NewRGBA(image.Rect(0, 0, 800, 400))); err != nil {
 		t.Fatal(err)
@@ -253,6 +255,7 @@ func TestTerminalNotificationsDeferLargeToolContent(t *testing.T) {
 				t.Fatal(err)
 			}
 			th := newThreadState("large-results", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now())
+			th.state = testRuntimeState(t, rt)
 			turn := Turn{ID: "turn", Status: TurnStatusCompleted, ItemsView: TurnItemsViewFull}
 			for i := 0; i < 20; i++ {
 				turn.Items = append(turn.Items, ThreadItem{ID: fmt.Sprint(i), Type: ThreadItemToolCall, Status: ThreadItemStatusCompleted, Result: strings.Repeat("result", 200_000)})

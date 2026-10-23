@@ -26,7 +26,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			lead := startProject(t, client, "Schema continuation")
 			worker := capacityWorker(t, srv, lead.ID, "schema-worker", "worker")
 			holder := capacityWorker(t, srv, lead.ID, "schema-holder", "worker")
-			journal, err := session.NewInferenceJournalRuntime(rt.SessionDir, "schema-capacity-test")
+			journal, err := rt.Sessions.NewInferenceJournalRuntime("schema-capacity-test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -51,7 +51,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				Request: execution.Request{Mode: execution.ModeStart},
 			}, &started)
 			initial := calls.next(t, "schema-capacity JSON")
-			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
+			lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
 			if err != nil || !acquired {
 				t.Fatalf("hold capacity: acquired=%v error=%v", acquired, err)
 			}
@@ -144,7 +144,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 
 func assertSchemaUserTurns(t *testing.T, srv *Server, threadID string, want int) {
 	t.Helper()
-	history, err := loadChatMessages(srv.rt.SessionDir, threadID)
+	history, err := loadChatMessages(srv.rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,23 +178,23 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			var control session.Control
 			var err error
 			if adoptWhileRunning {
-				if _, err = session.SetProjectMembership(rt.SessionDir, worker.ID, "", "", ""); err != nil {
+				if _, err = rt.Sessions.SetProjectMembership(worker.ID, "", "", ""); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				control, err = session.ChangeControl(rt.SessionDir, worker.ID, lead.ID, session.ControlActive, 0)
+				control, err = rt.Sessions.ChangeControl(worker.ID, lead.ID, session.ControlActive, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
 			// Keep result reporting durable but out of the model so the only eligible
 			// inference in this test is the schema Run under examination.
-			leadLease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
+			leadLease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
 			if err != nil || !acquired {
 				t.Fatalf("hold coordinator: %v %v", acquired, err)
 			}
 			defer leadLease.Release()
-			journal, err := session.NewInferenceJournalRuntime(rt.SessionDir, "schema-stop-test")
+			journal, err := rt.Sessions.NewInferenceJournalRuntime("schema-stop-test")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -213,15 +213,15 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			}, &started)
 			initial := calls.next(t, "stopped-schema JSON")
 			if adoptWhileRunning {
-				if _, err := session.SetProjectMembership(rt.SessionDir, worker.ID, projectSessionSource, lead.ID, ""); err != nil {
+				if _, err := rt.Sessions.SetProjectMembership(worker.ID, projectSessionSource, lead.ID, ""); err != nil {
 					t.Fatal(err)
 				}
-				control, err = session.ChangeControl(rt.SessionDir, worker.ID, lead.ID, session.ControlActive, 0)
+				control, err = rt.Sessions.ChangeControl(worker.ID, lead.ID, session.ControlActive, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
+			lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
 			if err != nil || !acquired {
 				t.Fatalf("hold worker: %v %v", acquired, err)
 			}
@@ -251,7 +251,7 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			if !deferred {
 				t.Fatal("schema correction never entered its capacity wait")
 			}
-			if _, err := session.ChangeControl(rt.SessionDir, worker.ID, lead.ID, session.ControlActive, control.Revision); err != nil {
+			if _, err := rt.Sessions.ChangeControl(worker.ID, lead.ID, session.ControlActive, control.Revision); err != nil {
 				t.Fatal(err)
 			}
 			// Agent/process completion continuations retain the Run ID but build

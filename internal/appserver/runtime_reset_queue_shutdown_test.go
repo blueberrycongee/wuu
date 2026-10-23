@@ -13,7 +13,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
@@ -45,8 +44,9 @@ func TestGeneralSettingsResetKeepsActiveRuntimeUntilWorkerFinalization(t *testin
 	t.Cleanup(srv.Close)
 	now := time.Now().UTC()
 	th := newThreadState("settings-reset-active", nil, rt.ProviderName, rt.Model, rt.RootDir, false, now)
+	th.state = testRuntimeState(t, rt)
 	threadRuntime := &runtime.ThreadRuntime{AgentControl: control}
-	subscription := srv.subscribeThreadRuntime(th.ID, threadRuntime)
+	subscription := srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), th.ID, threadRuntime)
 	th.execRuntime = threadRuntime
 	th.runtimeSubscription = subscription
 	th.startTurnLocked("root-turn", providers.ChatMessage{Role: "user", Content: "spawn after settings update"}, now)
@@ -111,20 +111,20 @@ func TestGeneralSettingsResetKeepsActiveRuntimeUntilWorkerFinalization(t *testin
 func TestQueuedTurnRejectedAfterDurableAdmissionPersistsFailure(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "must not run"}}
 	rt := newTestRuntime(t, client)
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "queued-prelaunch-close", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("queued-prelaunch-close", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	if _, err := srv.ensureThreadLoaded(sess.ID); err != nil {
+	if _, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), sess.ID); err != nil {
 		t.Fatalf("load queued thread: %v", err)
 	}
 	srv.beforeQueuedTurnBackgroundForTest = func() {
 		srv.closed.Store(true)
 	}
 
-	started, err := srv.startQueuedTurn(context.Background(), sess.ID, queuedTurn{
+	started, err := srv.startQueuedTurn(testRuntimeState(t, srv.rt), context.Background(), sess.ID, queuedTurn{
 		id:  "queued-before-close",
 		msg: providers.ChatMessage{Role: "user", Content: "persist me before shutdown"},
 	})
@@ -133,13 +133,13 @@ func TestQueuedTurnRejectedAfterDurableAdmissionPersistsFailure(t *testing.T) {
 	}
 	assertFakeClientRequestCount(t, client, 0)
 	assertPersistedPrelaunchTurnFailed(t, srv, sess.ID, errServerClosed.Error())
-	assertThreadLeaseAvailable(t, rt.SessionDir, sess.ID)
+	assertThreadLeaseAvailable(t, rt.Sessions, rt.SessionDir, sess.ID)
 
-	loaded, err := srv.loadPersistedThreadSnapshot(sess.ID)
+	loaded, err := srv.loadPersistedThreadSnapshot(testRuntimeState(t, srv.rt), sess.ID)
 	if err != nil {
 		t.Fatalf("reload queued thread: %v", err)
 	}
-	turns := turnsFromPersistedHistory(sess.ID, loaded.displayHistory, time.Now().UTC(), srv.resolveParticipantSummary)
+	turns := turnsFromPersistedHistory(sess.ID, loaded.displayHistory, time.Now().UTC(), srv.participantResolver(testRuntimeState(t, srv.rt)))
 	if len(turns) != 1 || turns[0].Status != TurnStatusFailed {
 		t.Fatalf("reloaded queued turn = %+v, want one failed turn", turns)
 	}

@@ -15,7 +15,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestProcessCompletionChatMessageIncludesOutputTail(t *testing.T) {
@@ -86,7 +85,7 @@ func TestForwardProcessNotificationsQueuesOnlyNaturalOwnerExit(t *testing.T) {
 	done := make(chan struct{})
 	forwardDone := make(chan struct{})
 	go func() {
-		server.forwardProcessNotifications(threadID, nil, nil, events, done)
+		server.forwardProcessNotifications(testRuntimeState(t, server.rt), threadID, nil, nil, events, done)
 		close(forwardDone)
 	}()
 
@@ -175,7 +174,7 @@ func TestForwardProcessNotificationsPullsPersistedCompletionAfterMissedEvent(t *
 	done := make(chan struct{})
 	forwardDone := make(chan struct{})
 	go func() {
-		server.forwardProcessNotifications(threadID, nil, manager, events, done)
+		server.forwardProcessNotifications(testRuntimeState(t, server.rt), threadID, nil, manager, events, done)
 		close(forwardDone)
 	}()
 	// A full channel can drop the terminal event itself, but at least one
@@ -297,15 +296,16 @@ func TestQueuedProcessCompletionAlreadyAnsweredSkipsProvider(t *testing.T) {
 		{Role: "assistant", ClientID: processCompletionAnswerClientIDPrefix + started.ID, Content: "already handled"},
 	}
 	rootThread := newThreadState(threadID, history, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	rootThread.state = testRuntimeState(t, rt)
 	rootThread.execRuntime = threadRuntime
 	server.mu.Lock()
 	server.threads[threadID] = rootThread
 	server.mu.Unlock()
-	rootThread.runtimeSubscription = server.subscribeThreadRuntime(threadID, threadRuntime)
+	rootThread.runtimeSubscription = server.subscribeThreadRuntime(testRuntimeState(t, server.rt), threadID, threadRuntime)
 	t.Cleanup(func() { releaseThreadRuntime(rootThread) })
 
 	queuedID := processCompletionClientID([]string{started.ID})
-	startedTurn, err := server.startQueuedTurn(context.Background(), threadID, queuedTurn{
+	startedTurn, err := server.startQueuedTurn(testRuntimeState(t, server.rt), context.Background(), threadID, queuedTurn{
 		id:       queuedID,
 		msg:      providers.ChatMessage{Role: "user", ClientID: queuedID, Content: "process done"},
 		snapshot: turnRuntimeSnapshot{ProcessCompletionIDs: []string{started.ID}},
@@ -367,12 +367,13 @@ func TestProcessCompletionDrainContinuesPastDeliveredResult(t *testing.T) {
 	server := New(rt, out)
 	t.Cleanup(server.Close)
 	rootThread := newThreadState(threadID, []providers.ChatMessage{{Role: "user", Content: "continue after the jobs finish"}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	rootThread.state = testRuntimeState(t, rt)
 	rootThread.execRuntime = &runtime.ThreadRuntime{StreamRunner: rt.StreamRunner, ProcessManager: manager}
 	server.mu.Lock()
 	server.threads[threadID] = rootThread
 	server.mu.Unlock()
 	server.prependPendingAgentCompletionTurns(threadID, pending)
-	server.kickAgentCompletionDrain(threadID)
+	server.kickAgentCompletionDrain(testRuntimeState(t, server.rt), threadID)
 	waitForTurnCompletedForThread(t, out, threadID)
 
 	mainClient.mu.Lock()
@@ -414,7 +415,7 @@ func TestProcessCompletionDrainYieldsToQueuedUserWork(t *testing.T) {
 		drainingQueuedTurns: map[string]bool{threadID: true},
 	}
 
-	server.drainAgentCompletionTurns(threadID)
+	server.drainAgentCompletionTurns(testRuntimeState(t, server.rt), threadID)
 
 	server.agentCompletionMu.Lock()
 	pending := cloneAgentCompletionTurns(server.pendingAgentCompletionTurns[threadID])
@@ -449,7 +450,7 @@ func TestServerAutoResumesAndAcknowledgesNaturalProcessCompletion(t *testing.T) 
 	server.mu.Lock()
 	server.threads[threadID] = rootThread
 	server.mu.Unlock()
-	rootThread.runtimeSubscription = server.subscribeThreadRuntime(threadID, threadRuntime)
+	rootThread.runtimeSubscription = server.subscribeThreadRuntime(testRuntimeState(t, server.rt), threadID, threadRuntime)
 	t.Cleanup(func() { releaseThreadRuntime(rootThread) })
 
 	started, err := manager.Start(context.Background(), process.StartOptions{
@@ -506,10 +507,10 @@ func TestThreadResumeReplaysProcessCompletionAcrossManagerRestart(t *testing.T) 
 	mainClient := &fakeClient{response: providers.ChatResponse{Content: "continued after restart"}}
 	rt := newTestRuntime(t, mainClient)
 	threadID := "thread-process-restart"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, threadID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, threadID, []providers.ChatMessage{
 		{Role: "user", Content: "continue after the background build"},
 		{Role: "assistant", Content: "I will continue when it finishes."},
 	}); err != nil {
@@ -595,7 +596,7 @@ func TestThreadResumeAcknowledgesPersistedAnswerWithoutDuplicateModelTurn(t *tes
 	mainClient := &fakeClient{response: providers.ChatResponse{Content: "should not run"}}
 	rt := newTestRuntime(t, mainClient)
 	threadID := "thread-process-answer-crash"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 	runtimeDir := filepath.Join(rt.RootDir, "process-runtime")
@@ -627,7 +628,7 @@ func TestThreadResumeAcknowledgesPersistedAnswerWithoutDuplicateModelTurn(t *tes
 	}
 
 terminal:
-	if err := rewriteChatHistory(rt.SessionDir, threadID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, threadID, []providers.ChatMessage{
 		{Role: "user", ClientID: processCompletionClientID([]string{started.ID}), Content: "<process_notification>done</process_notification>"},
 		{Role: "assistant", ClientID: processCompletionAnswerClientIDPrefix + started.ID, Content: "already continued"},
 	}); err != nil {
@@ -685,16 +686,17 @@ func TestProcessCompletionsJoinActiveTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	threadID := "active-process-results"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
 	server := New(rt, out)
 	t.Cleanup(server.Close)
 	th := newThreadState(threadID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: rt.StreamRunner, ProcessManager: manager}
 	server.threads[threadID] = th
-	startedTurn, err := server.startQueuedTurn(context.Background(), threadID, queuedTurn{id: "work", msg: providers.ChatMessage{Role: "user", Content: "Complete the work."}})
+	startedTurn, err := server.startQueuedTurn(testRuntimeState(t, server.rt), context.Background(), threadID, queuedTurn{id: "work", msg: providers.ChatMessage{Role: "user", Content: "Complete the work."}})
 	if err != nil || !startedTurn {
 		t.Fatalf("start: %v, %v", startedTurn, err)
 	}
@@ -728,7 +730,7 @@ func TestProcessCompletionsJoinActiveTurn(t *testing.T) {
 			}
 		}
 		if owner == threadID {
-			server.enqueueProcessCompletionTurn(threadID, p.ID, processCompletionChatMessage(manager, terminal))
+			server.enqueueProcessCompletionTurn(testRuntimeState(t, server.rt), threadID, p.ID, processCompletionChatMessage(manager, terminal))
 		}
 		if strings.HasPrefix(kind, "pending-") {
 			wanted = append(wanted, p.ID)
@@ -759,14 +761,14 @@ func TestProcessCompletionsJoinActiveTurn(t *testing.T) {
 	check(third.request)
 	third.response <- providers.ChatResponse{Content: "Verified both results."}
 	waitForTurnCompletedForThread(t, out, threadID)
-	waitForThreadLeaseRelease(t, rt.SessionDir, threadID)
+	waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, threadID)
 	for _, id := range wanted {
 		pending, err := manager.CompletionPending(id)
 		if err != nil || pending {
 			t.Fatalf("completion not acknowledged: %s, %v, %v", id, pending, err)
 		}
 	}
-	records, _, err := loadProviderPersistedMessages(rt.SessionDir, threadID, false)
+	records, _, err := loadProviderPersistedMessages(rt.Sessions, threadID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -776,7 +778,7 @@ func TestProcessCompletionsJoinActiveTurn(t *testing.T) {
 			t.Fatalf("persisted answer lost completion receipt %s", id)
 		}
 	}
-	server.tryDrainAgentCompletionTurns(threadID, true)
+	server.tryDrainAgentCompletionTurns(testRuntimeState(t, server.rt), threadID, true)
 	server.backgroundWG.Wait()
 	select {
 	case <-provider.calls:
@@ -808,7 +810,7 @@ func TestNormalTurnReconcilesAnsweredProcessCompletionAfterReload(t *testing.T) 
 	client := &fakeClient{response: providers.ChatResponse{Content: "Answer to new unrelated request."}}
 	rt := newTestRuntime(t, client)
 	id := "receipt-reload-regression"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(rt.RootDir, "process-runtime")
@@ -841,7 +843,7 @@ await:
 		processCompletionChatMessage(manager, process.Event{Process: *p}),
 		{Role: "assistant", ClientID: processCompletionAnswerClientIDPrefix + p.ID, Content: "The background task already succeeded."},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, id, original); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, id, original); err != nil {
 		t.Fatal(err)
 	}
 	restarted, err := process.NewManager(rt.RootDir, dir)
@@ -849,7 +851,7 @@ await:
 		t.Fatal(err)
 	}
 	rt.ProcessManager = restarted
-	loaded, err := loadChatMessages(rt.SessionDir, id)
+	loaded, err := loadChatMessages(rt.Sessions, id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -873,7 +875,7 @@ await:
 		t.Fatal(err)
 	}
 	waitForTurnCompletedForThread(t, out, id)
-	waitForThreadLeaseRelease(t, rt.SessionDir, id)
+	waitForThreadLeaseRelease(t, rt.Sessions, rt.SessionDir, id)
 	client.mu.Lock()
 	requests := append([]providers.ChatRequest(nil), client.requests...)
 	client.mu.Unlock()

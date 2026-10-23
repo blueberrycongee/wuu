@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // Exercise the edit/reload/fork contract through RPC and real SQLite storage.
@@ -27,7 +26,7 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
-			sess, err := session.CreateWithMetadata(rt.SessionDir, "edited-branch", rt.RootDir)
+			sess, err := rt.Sessions.CreateWithMetadata("edited-branch", rt.RootDir)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -36,20 +35,20 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 				{Role: "user", Content: "obsolete prompt"}, {Role: "assistant", Content: "obsolete answer", Phase: providers.MessagePhaseFinalAnswer},
 				{Role: "user", Content: "later prompt"}, {Role: "assistant", Content: "later answer", Phase: providers.MessagePhaseFinalAnswer},
 			}
-			if err := rewriteChatHistory(rt.SessionDir, sess.ID, original); err != nil {
+			if err := rewriteChatHistory(rt.Sessions, sess.ID, original); err != nil {
 				t.Fatal(err)
 			}
-			archived, err := session.LoadHistoryRecords(rt.SessionDir, sess.ID, true)
+			archived, err := rt.Sessions.LoadHistoryRecords(sess.ID, true)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if scenario.compact {
-				history, err := loadChatMessages(rt.SessionDir, sess.ID)
+				history, err := loadChatMessages(rt.Sessions, sess.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				// Both projections have a second turn, but it refers to different prompts.
-				if err := rewriteChatHistoryAtBaseline(rt.SessionDir, sess.ID, history[2:], 6); err != nil {
+				if err := rewriteChatHistoryAtBaseline(rt.Sessions, sess.ID, history[2:], 6); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -139,12 +138,12 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 					t.Errorf("fork provider history = %v, want %v", got, expected)
 				}
 				if scenario.compact {
-					history, head, err := loadProviderPersistedMessages(rt.SessionDir, sess.ID, false)
+					history, head, err := loadProviderPersistedMessages(rt.Sessions, sess.ID, false)
 					if err != nil {
 						t.Fatal(err)
 					}
 					active := chatMessagesFromPersistedMessages(history)
-					if err := rewriteChatHistoryAtBaseline(rt.SessionDir, sess.ID, active[len(active)-2:], head); err != nil {
+					if err := rewriteChatHistoryAtBaseline(rt.Sessions, sess.ID, active[len(active)-2:], head); err != nil {
 						t.Fatal(err)
 					}
 					cold()
@@ -152,7 +151,7 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 					assertTexts("compacted reload", current, want)
 				}
 			}
-			raw, err := session.LoadHistoryRecords(rt.SessionDir, sess.ID, true)
+			raw, err := rt.Sessions.LoadHistoryRecords(sess.ID, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -168,7 +167,7 @@ func TestEditedBranchRejectsTargetReleasedFromProviderContext(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "released-edit-target", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("released-edit-target", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,17 +175,17 @@ func TestEditedBranchRejectsTargetReleasedFromProviderContext(t *testing.T) {
 		{Role: "user", Content: "released prompt"}, {Role: "assistant", Content: "released answer", Phase: providers.MessagePhaseFinalAnswer},
 		{Role: "user", Content: "retained prompt"}, {Role: "assistant", Content: "retained answer", Phase: providers.MessagePhaseFinalAnswer},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, original); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, original); err != nil {
 		t.Fatal(err)
 	}
-	history, err := loadChatMessages(rt.SessionDir, sess.ID)
+	history, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistoryAtBaseline(rt.SessionDir, sess.ID, history[2:], 4); err != nil {
+	if err := rewriteChatHistoryAtBaseline(rt.Sessions, sess.ID, history[2:], 4); err != nil {
 		t.Fatal(err)
 	}
-	before, err := session.LoadProviderHistorySnapshot(rt.SessionDir, sess.ID)
+	before, err := rt.Sessions.LoadProviderHistorySnapshot(sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +210,7 @@ func TestEditedBranchRejectsTargetReleasedFromProviderContext(t *testing.T) {
 	if response["error"] == nil {
 		t.Errorf("released target resolved to a recycled position: %+v", response["result"])
 	}
-	after, err := session.LoadProviderHistorySnapshot(rt.SessionDir, sess.ID)
+	after, err := rt.Sessions.LoadProviderHistorySnapshot(sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,12 +239,12 @@ func TestEditedBranchRejectsForkFromStaleConnection(t *testing.T) {
 			writer, reader := New(rt, writerOut), New(rt, readerOut)
 			t.Cleanup(writer.Close)
 			t.Cleanup(reader.Close)
-			sess, err := session.CreateWithMetadata(rt.SessionDir, "stale-fork", rt.RootDir)
+			sess, err := rt.Sessions.CreateWithMetadata("stale-fork", rt.RootDir)
 			if err != nil {
 				t.Fatal(err)
 			}
 			initial := []providers.ChatMessage{{Role: "user", Content: "kept prompt"}, {Role: "assistant", Content: "kept answer", Phase: providers.MessagePhaseFinalAnswer}, {Role: "user", Content: "obsolete prompt"}, {Role: "assistant", Content: "obsolete answer", Phase: providers.MessagePhaseFinalAnswer}}
-			if err := rewriteChatHistory(rt.SessionDir, sess.ID, initial); err != nil {
+			if err := rewriteChatHistory(rt.Sessions, sess.ID, initial); err != nil {
 				t.Fatal(err)
 			}
 			rpc := func(server *Server, out *lockedBuffer, id, method string, params any) map[string]any {
@@ -289,7 +288,7 @@ func TestEditedBranchRejectsForkFromStaleConnection(t *testing.T) {
 				t.Fatal(fork["error"])
 			}
 			forked := remarshal[ThreadForkResult](t, fork["result"]).Thread
-			history, err := loadChatMessages(rt.SessionDir, forked.ID)
+			history, err := loadChatMessages(rt.Sessions, forked.ID)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -3,7 +3,6 @@ package appserver
 import (
 	"context"
 	"fmt"
-	sessionstore "github.com/blueberrycongee/wuu/internal/session"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -213,19 +212,20 @@ func TestResponsesGeneratedImageSurvivesHistoryReload(t *testing.T) {
 	}
 	assertImage(th.Turns)
 	dir := t.TempDir()
-	sess, err := sessionstore.CreateWithMetadata(dir, "image", t.TempDir())
+	dirStore := newAppserverTestStore(t, dir)
+	sess, err := dirStore.CreateWithMetadata("image", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(dir, sess.ID, append([]providers.ChatMessage{user}, result.NewMessages...)); err != nil {
+	if err := rewriteChatHistory(dirStore, sess.ID, append([]providers.ChatMessage{user}, result.NewMessages...)); err != nil {
 		t.Fatal(err)
 	}
-	history, err := loadPersistedMessages(dir, sess.ID, true)
+	history, err := loadPersistedMessages(dirStore, sess.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertImage(turnsFromPersistedHistory(sess.ID, history, now, nil))
-	loaded, err := loadChatMessages(dir, sess.ID)
+	loaded, err := loadChatMessages(dirStore, sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -14,6 +15,12 @@ import (
 const contextCompositionModeLatestRequest = "latest_request"
 
 func (s *Server) handleThreadContextComposition(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadContextCompositionParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -22,7 +29,7 @@ func (s *Server) handleThreadContextComposition(req Request) error {
 	if threadID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	if err := s.ensureContextCompositionThreadExists(threadID); err != nil {
+	if err := s.ensureContextCompositionThreadExists(binding, threadID); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 
@@ -51,18 +58,18 @@ func (s *Server) handleThreadContextComposition(req Request) error {
 		}
 		return s.writeResponse(req.ID, nil, err)
 	}
-	result := s.contextCompositionFromTrace(threadID, tracePath, summary)
+	result := s.contextCompositionFromTrace(binding, threadID, tracePath, summary)
 	return s.writeResponse(req.ID, result, nil)
 }
 
-func (s *Server) ensureContextCompositionThreadExists(threadID string) error {
-	if s.thread(threadID) != nil {
+func (s *Server) ensureContextCompositionThreadExists(binding *runtime.State, threadID string) error {
+	if s.threadForState(binding, threadID) != nil {
 		return nil
 	}
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
-	if _, ok, err := session.Find(s.rt.SessionDir, threadID); err != nil {
+	if _, ok, err := binding.Sessions.Find(threadID); err != nil {
 		return err
 	} else if ok {
 		return nil
@@ -91,7 +98,7 @@ func (s *Server) threadContextTracePath(threadID string) (string, error) {
 	return sessiontrace.Path(statepath.SessionArtifactDir(stateDir, threadID)), nil
 }
 
-func (s *Server) contextCompositionFromTrace(threadID, tracePath string, summary sessiontrace.ReplaySummary) ThreadContextCompositionResult {
+func (s *Server) contextCompositionFromTrace(binding *runtime.State, threadID, tracePath string, summary sessiontrace.ReplaySummary) ThreadContextCompositionResult {
 	result := ThreadContextCompositionResult{
 		ThreadID:  threadID,
 		Available: false,
@@ -156,7 +163,7 @@ func (s *Server) contextCompositionFromTrace(threadID, tracePath string, summary
 	result.CompactThresholdTokens = compactThresholdTokens
 	result.PromptTokens = promptTokens
 	result.TotalContextTokens = totalContextTokens
-	result.RetainedTokens = s.latestRetainedContextTokens(threadID)
+	result.RetainedTokens = s.latestRetainedContextTokens(binding, threadID)
 	result.InputTokens = request.InputTokens
 	result.OutputTokens = request.OutputTokens
 	result.CacheCreationTokens = request.CacheCreationTokens
@@ -362,8 +369,8 @@ func providerReportedTokenUsage(input, output, cacheCreation, cacheRead int) boo
 // size that came from provider-reported usage. A context_tokens marker with
 // no input, output, or cache counts is a local estimate. Seeding that value
 // treats a partial total as ground truth and blocks the pre-send reconcile.
-func (s *Server) latestProviderRetainedContextTokens(threadID string) int {
-	if th := s.thread(threadID); th != nil {
+func (s *Server) latestProviderRetainedContextTokens(binding *runtime.State, threadID string) int {
+	if th := s.threadForState(binding, threadID); th != nil {
 		th.mu.Lock()
 		defer th.mu.Unlock()
 		for i := len(th.Turns) - 1; i >= 0; i-- {
@@ -380,7 +387,7 @@ func (s *Server) latestProviderRetainedContextTokens(threadID string) int {
 	if s == nil || s.rt == nil {
 		return 0
 	}
-	metas, err := loadMetaMessages(s.rt.SessionDir, threadID)
+	metas, err := loadMetaMessages(binding.Sessions, threadID)
 	if err != nil {
 		return 0
 	}
@@ -397,8 +404,8 @@ func (s *Server) latestProviderRetainedContextTokens(threadID string) int {
 	return 0
 }
 
-func (s *Server) latestRetainedContextTokens(threadID string) int {
-	if th := s.thread(threadID); th != nil {
+func (s *Server) latestRetainedContextTokens(binding *runtime.State, threadID string) int {
+	if th := s.threadForState(binding, threadID); th != nil {
 		th.mu.Lock()
 		defer th.mu.Unlock()
 		for i := len(th.Turns) - 1; i >= 0; i-- {
@@ -410,7 +417,7 @@ func (s *Server) latestRetainedContextTokens(threadID string) int {
 	if s == nil || s.rt == nil {
 		return 0
 	}
-	metas, err := loadMetaMessages(s.rt.SessionDir, threadID)
+	metas, err := loadMetaMessages(binding.Sessions, threadID)
 	if err != nil {
 		return 0
 	}

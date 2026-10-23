@@ -18,6 +18,8 @@ import (
 )
 
 type runTracker struct {
+	state           *runtime.State
+	store           *execution.Store
 	id              string
 	threadID        string
 	validator       *structuredoutput.Validator
@@ -37,12 +39,22 @@ type executionSchemaRetry struct {
 }
 
 func (s *Server) handleRunStart(ctx context.Context, req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params RunStartParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
-	if s.runStore == nil || s.rt == nil || s.rt.InferenceJournalRuntime == nil {
+	if binding.InferenceJournalRuntime == nil {
 		return s.writeRunError(req.ID, "internal_error", errors.New("execution run store is unavailable"))
+	}
+	runStore, err := execution.NewStore(binding.Documents)
+	if err != nil {
+		return s.writeRunError(req.ID, "internal_error", err)
 	}
 	params.ThreadID = strings.TrimSpace(params.ThreadID)
 	params.Prompt = strings.TrimSpace(params.Prompt)
@@ -70,7 +82,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
-	th, err := s.ensureThreadLoaded(params.ThreadID)
+	th, err := s.ensureThreadLoaded(binding, params.ThreadID)
 	if err != nil {
 		return s.writeRunError(req.ID, "thread_not_found", err)
 	}
@@ -86,7 +98,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
-	if err := s.takeSessionControlForInput(params.ThreadID); err != nil {
+	if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 
@@ -95,7 +107,7 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	// after a capacity wait or an intervening user stop.
 	var retryControl *session.Control
 	controlBaseline := session.Control{SessionID: params.ThreadID}
-	if control, found, err := session.ReadControl(s.rt.SessionDir, params.ThreadID); err != nil {
+	if control, found, err := binding.Sessions.ReadControl(params.ThreadID); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	} else if found {
 		controlBaseline = control
@@ -113,8 +125,8 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 	workspace, initialRuntime, ephemeral := s.executionFactsForThread(th, nil, turnRuntimeSnapshot{}.withPermissions(permissions))
-	run, err := s.runStore.Create(ctx, execution.CreateParams{
-		RuntimeID: s.rt.InferenceJournalRuntime.RuntimeID(),
+	run, err := runStore.Create(ctx, execution.CreateParams{
+		RuntimeID: binding.InferenceJournalRuntime.RuntimeID(),
 		Request:   params.Request,
 		Runtime:   initialRuntime,
 		Workspace: workspace,
@@ -150,21 +162,21 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 			admissionErr = fmt.Errorf("thread %q already has a running turn", params.ThreadID)
 		}
 		runErr := execution.Error{Code: "admission_failed", Category: "cancelled", Message: admissionErr.Error()}
-		_, _ = s.runStore.Fail(ctx, run.ID, execution.StatusCancelled, execution.Result{ExitCode: execution.ExitCodeForSettlement(execution.StatusCancelled, &runErr)}, runErr, time.Now().UTC())
+		_, _ = runStore.Fail(ctx, run.ID, execution.StatusCancelled, execution.Result{ExitCode: execution.ExitCodeForSettlement(execution.StatusCancelled, &runErr)}, runErr, time.Now().UTC())
 		return s.writeRunError(req.ID, "thread_busy", admissionErr)
 	}
 
 	workspace, resolvedRuntime, _ := s.executionFactsForThread(th, threadRuntime, started.runtime)
-	run, err = s.runStore.Resolve(ctx, run.ID, resolvedRuntime, workspace, time.Now().UTC())
+	run, err = runStore.Resolve(ctx, run.ID, resolvedRuntime, workspace, time.Now().UTC())
 	if err == nil {
-		run, err = s.runStore.AttachTurn(ctx, run.ID, params.ThreadID, started.turnID, started.admittedAt)
+		run, err = runStore.AttachTurn(ctx, run.ID, params.ThreadID, started.turnID, started.admittedAt)
 	}
 	if err != nil {
 		persistErr := s.abortStartedThreadTurnDurably(th, started, err)
-		_, _ = s.runStore.Fail(ctx, run.ID, execution.StatusFailed, execution.Result{}, execution.Error{Code: "manifest_update_failed", Category: "internal", Message: err.Error()}, time.Now().UTC())
+		_, _ = runStore.Fail(ctx, run.ID, execution.StatusFailed, execution.Result{}, execution.Error{Code: "manifest_update_failed", Category: "internal", Message: err.Error()}, time.Now().UTC())
 		return s.writeRunError(req.ID, "internal_error", errors.Join(err, persistErr))
 	}
-	s.registerExecutionRun(run, validator)
+	s.registerExecutionRun(binding, runStore, run, validator)
 	s.runMu.Lock()
 	if tracker := s.runs[run.ID]; tracker != nil {
 		tracker.control = retryControl
@@ -173,8 +185,8 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	s.runMu.Unlock()
 	started.runtime.Control = retryControl
 
-	launch, accepted := s.reserveBackground(func() {
-		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
+	launch, accepted := s.reserveBackgroundWithState(binding, func(binding *runtime.State) {
+		s.runTurn(binding, started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
 	})
 	if !accepted {
 		persistErr := s.abortStartedThreadTurnDurably(th, started, errServerClosed)
@@ -204,6 +216,12 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 }
 
 func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params RunInterruptParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
@@ -212,7 +230,7 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	if runID == "" {
 		return s.writeRunError(req.ID, "invalid_params", errors.New("run_id is required"))
 	}
-	view, err := s.readExecutionRun(ctx, runID)
+	view, err := s.readExecutionRun(binding, ctx, runID)
 	if err != nil {
 		if errors.Is(err, execution.ErrNotFound) {
 			return s.writeRunError(req.ID, "run_not_found", err)
@@ -225,7 +243,7 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	if !view.Attached {
 		return s.writeRunError(req.ID, "run_not_attached", fmt.Errorf("run %q is not attached to this app-server", runID))
 	}
-	if err := s.takeSessionControl(view.Run.ThreadID, session.ControlPaused); err != nil {
+	if err := s.takeSessionControl(binding, view.Run.ThreadID, session.ControlPaused); err != nil {
 		return s.writeRunError(req.ID, "internal_error", err)
 	}
 	interruptStatus := execution.StatusInterrupted
@@ -236,10 +254,10 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	// the Turn synchronously with cancel, so writing this afterward races the
 	// terminal Run update and can misclassify a timeout as a generic interrupt.
 	s.setExecutionRunInterruptStatus(runID, interruptStatus)
-	turnActive, err := s.interruptThreadExecution(view.Run.ThreadID, runID, "")
+	turnActive, err := s.interruptThreadExecution(binding, view.Run.ThreadID, runID, "")
 	if err != nil {
 		if errors.Is(err, errExecutionRunChanged) {
-			latest, readErr := s.readExecutionRun(ctx, runID)
+			latest, readErr := s.readExecutionRun(binding, ctx, runID)
 			if readErr == nil && latest.Run.Status.Terminal() {
 				return s.writeResponse(req.ID, RunInterruptResult{Run: latest.Run}, nil)
 			}
@@ -265,25 +283,38 @@ func (s *Server) handleRunInterrupt(ctx context.Context, req Request) error {
 	return s.writeResponse(req.ID, RunInterruptResult{Run: view.Run}, nil)
 }
 
-func (s *Server) readExecutionRun(ctx context.Context, runID string) (RunView, error) {
-	if s == nil || s.runStore == nil {
-		return RunView{}, errors.New("execution run store is unavailable")
+func (s *Server) readExecutionRun(binding *runtime.State, ctx context.Context, runID string) (RunView, error) {
+	s.runMu.Lock()
+	tracker := s.runs[runID]
+	var runStore *execution.Store
+	if tracker != nil {
+		binding = tracker.state.Retain()
+		runStore = tracker.store
 	}
-	run, err := s.runStore.Get(ctx, runID)
+	s.runMu.Unlock()
+	if tracker != nil {
+		defer binding.Close()
+	} else {
+		var err error
+		runStore, err = execution.NewStore(binding.Documents)
+		if err != nil {
+			return RunView{}, err
+		}
+	}
+	run, err := runStore.Get(ctx, runID)
 	if err != nil {
 		return RunView{}, err
 	}
-	view := RunView{Run: run}
-	if th := s.thread(run.ThreadID); th != nil {
+	view := RunView{Run: run, Attached: s.executionRunAttached(run.ID)}
+	if th := s.threadForState(binding, run.ThreadID); th != nil {
 		th.mu.Lock()
 		thread := th.snapshotLocked()
 		th.mu.Unlock()
 		view.Thread = &thread
-		view.Attached = s.executionRunAttached(run.ID)
 		return view, nil
 	}
 	if !run.Ephemeral {
-		if th, loadErr := s.loadPersistedThreadState(run.ThreadID, time.Now().UTC()); loadErr == nil {
+		if th, loadErr := s.loadPersistedThreadState(binding, run.ThreadID, time.Now().UTC()); loadErr == nil {
 			th.mu.Lock()
 			thread := th.snapshotLocked()
 			th.mu.Unlock()
@@ -325,10 +356,10 @@ func (s *Server) executionFactsForThread(th *threadState, threadRuntime *runtime
 	}, ephemeral
 }
 
-func (s *Server) registerExecutionRun(run execution.Run, validator *structuredoutput.Validator) {
+func (s *Server) registerExecutionRun(binding *runtime.State, store *execution.Store, run execution.Run, validator *structuredoutput.Validator) {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
-	tracker := &runTracker{id: run.ID, threadID: run.ThreadID, validator: validator}
+	tracker := &runTracker{state: binding.Retain(), store: store, id: run.ID, threadID: run.ThreadID, validator: validator}
 	s.runs[run.ID] = tracker
 	s.activeRunByThread[run.ThreadID] = run.ID
 }
@@ -384,7 +415,13 @@ func (s *Server) attachExecutionTurn(runID, threadID, turnID string, at time.Tim
 	if strings.TrimSpace(runID) == "" {
 		return nil
 	}
-	_, err := s.runStore.AttachTurn(context.Background(), runID, threadID, turnID, at)
+	runBinding, runStore, err := s.retainExecutionRun(runID)
+	if err != nil {
+		return err
+	}
+	defer runBinding.Close()
+
+	_, err = runStore.AttachTurn(context.Background(), runID, threadID, turnID, at)
 	return err
 }
 
@@ -392,7 +429,13 @@ func (s *Server) settleExecutionRunTurn(runID, turnID, tracePath string, turn Tu
 	if strings.TrimSpace(runID) == "" {
 		return execution.Run{}, false, nil
 	}
-	run, err := s.runStore.FinishTurn(context.Background(), runID, turnID, execution.TurnTerminal{TracePath: tracePath, At: at})
+	runBinding, runStore, err := s.retainExecutionRun(runID)
+	if err != nil {
+		return execution.Run{}, false, err
+	}
+	defer runBinding.Close()
+
+	run, err := runStore.FinishTurn(context.Background(), runID, turnID, execution.TurnTerminal{TracePath: tracePath, At: at})
 	if err != nil {
 		return execution.Run{}, false, err
 	}
@@ -410,9 +453,9 @@ func (s *Server) settleExecutionRunTurn(runID, turnID, tracePath string, turn Tu
 			}
 		}
 		result.ExitCode = execution.ExitCodeForSettlement(status, &runError)
-		run, err = s.runStore.Fail(context.Background(), runID, status, result, runError, at)
+		run, err = runStore.Fail(context.Background(), runID, status, result, runError, at)
 	} else if !awaitingContinuation {
-		run, err = s.runStore.Complete(context.Background(), runID, result, at)
+		run, err = runStore.Complete(context.Background(), runID, result, at)
 	}
 	if err != nil {
 		return execution.Run{}, false, err
@@ -453,7 +496,7 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 	if snapshot.ExecutionControlBaseline == nil {
 		snapshot.ExecutionControlBaseline = s.executionRunControlBaseline(snapshot.ExecutionRunID)
 	}
-	if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
+	if err := s.validateExecutionSchemaRetry(th.state, snapshot); err != nil {
 		return err
 	}
 	userMsg, err := userMessageFromPrompt(prompt, nil, nil)
@@ -464,7 +507,7 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 	started, ok, err := s.startThreadUserTurnWithAdmission(ctx, th, userMsg, snapshot, false, turnReadOnlyIgnore,
 		turnAdmissionHooks{
 			afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
-				if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
+				if err := s.validateExecutionSchemaRetry(th.state, snapshot); err != nil {
 					return err
 				}
 				var runtimeErr error
@@ -472,7 +515,7 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 				return runtimeErr
 			},
 			beforeUserAppendLocked: func(_ *threadState) (func() error, error) {
-				err := s.validateExecutionSchemaRetry(snapshot)
+				err := s.validateExecutionSchemaRetry(th.state, snapshot)
 				return nil, err
 			},
 		},
@@ -490,8 +533,8 @@ func (s *Server) startExecutionSchemaRetry(ctx context.Context, th *threadState,
 	if err := s.writeNotification(NotificationTurnStarted, TurnStartedNotification{ThreadID: th.ID, Turn: started.turn}); err != nil {
 		return errors.Join(err, s.abortStartedThreadTurnDurably(th, started, err))
 	}
-	launch, accepted := s.reserveBackground(func() {
-		s.runTurn(started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
+	launch, accepted := s.reserveBackgroundWithState(th.state, func(binding *runtime.State) {
+		s.runTurn(binding, started.ctx, th, threadRuntime, started.turnID, started.runtime, started.history)
 	})
 	if !accepted {
 		return errors.Join(errServerClosed, s.abortStartedThreadTurnDurably(th, started, errServerClosed))
@@ -520,7 +563,7 @@ func (s *Server) executionRunControlBaseline(runID string) *session.Control {
 	return nil
 }
 
-func (s *Server) validateExecutionSchemaRetry(snapshot turnRuntimeSnapshot) error {
+func (s *Server) validateExecutionSchemaRetry(binding *runtime.State, snapshot turnRuntimeSnapshot) error {
 	if s.closed.Load() {
 		return errServerClosed
 	}
@@ -531,22 +574,25 @@ func (s *Server) validateExecutionSchemaRetry(snapshot turnRuntimeSnapshot) erro
 		s.runMu.Unlock()
 		return errExecutionRunChanged
 	}
+	binding = tracker.state.Retain()
+	defer binding.Close()
+	runStore := tracker.store
 	interruptStatus := tracker.interruptStatus
 	s.runMu.Unlock()
 	if interruptStatus != "" {
 		return context.Canceled
 	}
 	if snapshot.Control != nil {
-		if err := session.ValidateControl(s.rt.SessionDir, *snapshot.Control); err != nil {
+		if err := binding.Sessions.ValidateControl(*snapshot.Control); err != nil {
 			return err
 		}
 	}
 	if baseline := snapshot.ExecutionControlBaseline; baseline != nil {
-		if err := session.ValidateContinuationControl(s.rt.SessionDir, *baseline); err != nil {
+		if err := binding.Sessions.ValidateContinuationControl(*baseline); err != nil {
 			return err
 		}
 	}
-	run, err := s.runStore.Get(context.Background(), runID)
+	run, err := runStore.Get(context.Background(), runID)
 	if err != nil {
 		return err
 	}
@@ -561,7 +607,7 @@ func (s *Server) startOrDeferExecutionSchemaRetry(ctx context.Context, th *threa
 	if !errors.Is(err, session.ErrProjectWorkerCapacity) {
 		return err
 	}
-	metadata, found, readErr := session.Find(s.rt.SessionDir, th.ID)
+	metadata, found, readErr := th.state.Sessions.Find(th.ID)
 	if readErr != nil {
 		return readErr
 	}
@@ -578,7 +624,7 @@ func (s *Server) startOrDeferExecutionSchemaRetry(ctx context.Context, th *threa
 	if snapshot.ExecutionControlBaseline == nil {
 		snapshot.ExecutionControlBaseline = s.executionRunControlBaseline(snapshot.ExecutionRunID)
 	}
-	if err := s.validateExecutionSchemaRetry(snapshot); err != nil {
+	if err := s.validateExecutionSchemaRetry(th.state, snapshot); err != nil {
 		return err
 	}
 	s.runMu.Lock()
@@ -601,7 +647,7 @@ func (s *Server) startOrDeferExecutionSchemaRetry(ctx context.Context, th *threa
 // Capacity deferrals remain part of their accepted Run and share the project's
 // bounded timer. Validation still runs when this pass already knows the pool is
 // full, so a stopped or detached run does not retain a useless retry loop.
-func (s *Server) drainExecutionSchemaRetries(projectID string, allowStart bool) (pending, capacityFull bool) {
+func (s *Server) drainExecutionSchemaRetries(binding *runtime.State, projectID string, allowStart bool) (pending, capacityFull bool) {
 	s.runMu.Lock()
 	var retries []*executionSchemaRetry
 	for _, tracker := range s.runs {
@@ -618,7 +664,7 @@ func (s *Server) drainExecutionSchemaRetries(projectID string, allowStart bool) 
 	})
 	for _, retry := range retries {
 		runID := retry.snapshot.ExecutionRunID
-		err := s.validateExecutionSchemaRetry(retry.snapshot)
+		err := s.validateExecutionSchemaRetry(binding, retry.snapshot)
 		if err == nil && !allowStart {
 			pending = true
 			continue
@@ -651,13 +697,13 @@ func (s *Server) drainExecutionSchemaRetries(projectID string, allowStart bool) 
 			continue
 		}
 		if err != nil {
-			s.failExecutionSchemaRetry(runID, err)
+			s.failExecutionSchemaRetry(binding, runID, err)
 		}
 	}
 	return pending, capacityFull
 }
 
-func (s *Server) failExecutionSchemaRetry(runID string, cause error) {
+func (s *Server) failExecutionSchemaRetry(binding *runtime.State, runID string, cause error) {
 	providers.DebugLogf("start structured-output retry for run %q: %v", runID, cause)
 	status, category := execution.StatusFailed, "internal"
 	if errors.Is(cause, context.Canceled) || errors.Is(cause, session.ErrControlChanged) || errors.Is(cause, errExecutionRunChanged) || errors.Is(cause, errServerClosed) {
@@ -673,30 +719,39 @@ func (s *Server) failExecutionSchemaRetry(runID string, cause error) {
 
 func (s *Server) detachExecutionRun(runID string) {
 	s.runMu.Lock()
-	defer s.runMu.Unlock()
 	tracker := s.runs[runID]
 	delete(s.runs, runID)
 	if tracker != nil && s.activeRunByThread[tracker.threadID] == runID {
 		delete(s.activeRunByThread, tracker.threadID)
 	}
+	s.runMu.Unlock()
+	if tracker != nil {
+		_ = tracker.state.Close()
+	}
 }
 
 func (s *Server) failAndDetachExecutionRun(runID string, status execution.Status, code, category string, cause error) (execution.Run, error) {
+	runBinding, runStore, err := s.retainExecutionRun(runID)
+	if err != nil {
+		return execution.Run{}, err
+	}
+	defer runBinding.Close()
+
 	message := "execution run failed"
 	if cause != nil {
 		message = cause.Error()
 	}
 	runError := execution.Error{Code: code, Category: category, Message: message}
-	run, err := s.runStore.Fail(context.Background(), runID, status, execution.Result{ExitCode: execution.ExitCodeForSettlement(status, &runError)}, runError, time.Now().UTC())
+	run, err := runStore.Fail(context.Background(), runID, status, execution.Result{ExitCode: execution.ExitCodeForSettlement(status, &runError)}, runError, time.Now().UTC())
 	if err != nil {
-		current, readErr := s.runStore.Get(context.Background(), runID)
+		current, readErr := runStore.Get(context.Background(), runID)
 		if readErr != nil || !current.Status.Terminal() {
 			return execution.Run{}, fmt.Errorf("settle execution run %q: %w", runID, err)
 		}
 		run = current
 	}
 	s.detachExecutionRun(runID)
-	s.kickQueuedTurnDrain(run.ThreadID)
+	s.kickQueuedTurnDrain(runBinding, run.ThreadID)
 	return run, nil
 }
 
@@ -715,4 +770,16 @@ func (s *Server) interruptAttachedRunsOnClose() {
 func (s *Server) writeRunError(id json.RawMessage, code string, err error) error {
 	resp := Response{ID: id, Error: &ResponseError{Code: code, Message: err.Error()}}
 	return s.writeJSON(resp)
+}
+
+// The map owns one reference; each operation retains another before dropping
+// runMu so a concurrent terminal detach cannot close its dependencies early.
+func (s *Server) retainExecutionRun(runID string) (*runtime.State, *execution.Store, error) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
+	tracker := s.runs[runID]
+	if tracker == nil {
+		return nil, nil, errExecutionRunChanged
+	}
+	return tracker.state.Retain(), tracker.store, nil
 }

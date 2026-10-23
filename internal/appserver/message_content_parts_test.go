@@ -12,7 +12,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 const responseSelectionFixture = `[{"type":"response_selection","text":"Quoted assistant response (JSON):\n{\"text\":\"Alpha 🌊\",\"comment\":\"Explain this.\"}\n","selection":{"id":"selection-1","text":"Alpha 🌊","comment":"Explain this.","source":{"thread_id":"source-thread","turn_id":"source-turn","item_id":"source-item","start_offset":4,"end_offset":12}}},{"type":"text","text":"Compare it."}]`
@@ -227,7 +226,7 @@ func TestResponseSelectionQueuedHeldResumeAndSteer(t *testing.T) {
 	rpc("steer", MethodTurnSteer, params)
 	rpc("interrupt", MethodTurnInterrupt, map[string]any{"thread_id": threadID})
 	waitForMethod(t, out, NotificationTurnError)
-	held, err := srv.loadHeldUserTurns(threadID)
+	held, err := srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +255,7 @@ func TestResponseSelectionQueuedHeldResumeAndSteer(t *testing.T) {
 	rpc("release", MethodTurnSteer, map[string]any{"thread_id": threadID, "client_id": "queue-1", "prompt": prompt})
 	close(client.release)
 	waitForTurnCompletedForThread(t, out, threadID)
-	history, err := loadChatMessages(rt.SessionDir, threadID)
+	history, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,7 +388,8 @@ func TestFileSelectionContentPartsHistoryRoundTrip(t *testing.T) {
 	for _, rewrite := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rewrite=%t", rewrite), func(t *testing.T) {
 			dir := t.TempDir()
-			sess, err := session.CreateWithMetadata(dir, "selection-history", t.TempDir())
+			dirStore := newAppserverTestStore(t, dir)
+			sess, err := dirStore.CreateWithMetadata("selection-history", t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -403,21 +403,21 @@ func TestFileSelectionContentPartsHistoryRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			if rewrite {
-				err = rewriteChatHistory(dir, sess.ID, []providers.ChatMessage{msg})
+				err = rewriteChatHistory(dirStore, sess.ID, []providers.ChatMessage{msg})
 			} else {
-				_, err = appendChatMessage(dir, sess.ID, msg)
+				_, err = appendChatMessage(dirStore, sess.ID, msg)
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			loaded, err := loadChatMessages(dir, sess.ID)
+			loaded, err := loadChatMessages(dirStore, sess.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if len(loaded) != 1 || loaded[0].Content != prompt || !reflect.DeepEqual(loaded[0].ContentParts, parts) {
 				t.Fatalf("provider replay lost content or metadata: %+v", loaded)
 			}
-			records, err := loadPersistedMessages(dir, sess.ID, false)
+			records, err := loadPersistedMessages(dirStore, sess.ID, false)
 			if err != nil || len(records) != 1 {
 				t.Fatalf("load display history: records=%+v err=%v", records, err)
 			}
@@ -435,7 +435,8 @@ func TestFileSelectionContentPartsHistoryRoundTrip(t *testing.T) {
 
 func TestFileSelectionContentPartsQueueRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	sess, err := session.CreateWithMetadata(dir, "selection-queue", t.TempDir())
+	dirStore := newAppserverTestStore(t, dir)
+	sess, err := dirStore.CreateWithMetadata("selection-queue", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,11 +452,11 @@ func TestFileSelectionContentPartsQueueRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("queued message missing")
 	}
-	if _, err := srv.appendHeldUserTurns(sess.ID, []queuedTurn{entry}); err != nil {
+	if _, err := srv.appendHeldUserTurns(testRuntimeState(t, srv.rt), sess.ID, []queuedTurn{entry}); err != nil {
 		t.Fatal(err)
 	}
 	restarted := &Server{rt: &runtime.Session{SessionDir: dir}}
-	held, err := restarted.loadHeldUserTurns(sess.ID)
+	held, err := restarted.loadHeldUserTurns(testRuntimeState(t, restarted.rt), sess.ID)
 	if err != nil || len(held) != 1 {
 		t.Fatalf("load held messages: %+v, err=%v", held, err)
 	}
@@ -605,7 +606,7 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 			}
 			checkStored := func(stage, threadID string) {
 				t.Helper()
-				records, err := session.LoadHistoryRecords(rt.SessionDir, threadID, false)
+				records, err := rt.Sessions.LoadHistoryRecords(threadID, false)
 				if err != nil {
 					t.Fatal(err)
 				}

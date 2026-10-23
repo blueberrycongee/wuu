@@ -7,12 +7,12 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
 func TestAgentFromSnapshotResolvesParticipantSummary(t *testing.T) {
 	sessDir := t.TempDir()
+	sessDirStore := newAppserverTestStore(t, sessDir)
 	p := participant.Participant{
 		ID:     "prt-1234567890abcdef",
 		Kind:   participant.KindEphemeral,
@@ -20,7 +20,7 @@ func TestAgentFromSnapshotResolvesParticipantSummary(t *testing.T) {
 		Role:   "researcher",
 		Avatar: "🔎",
 	}
-	if err := session.UpsertParticipant(sessDir, p); err != nil {
+	if err := sessDirStore.UpsertParticipant(p); err != nil {
 		t.Fatalf("UpsertParticipant: %v", err)
 	}
 
@@ -34,7 +34,7 @@ func TestAgentFromSnapshotResolvesParticipantSummary(t *testing.T) {
 		StartedAt:     time.Now().UTC(),
 	}
 
-	agent := s.agentFromSnapshot(nil, snap)
+	agent := s.agentFromSnapshot(testRuntimeState(t, s.rt), nil, snap)
 	if agent.Participant == nil {
 		t.Fatal("expected participant summary, got nil")
 	}
@@ -49,10 +49,10 @@ func TestAgentFromSnapshotResolvesParticipantSummary(t *testing.T) {
 	mutated := p
 	mutated.Name = "Mutated·should-not-appear"
 	mutated.Avatar = "🤖"
-	if err := session.UpsertParticipant(sessDir, mutated); err != nil {
+	if err := sessDirStore.UpsertParticipant(mutated); err != nil {
 		t.Fatalf("UpsertParticipant (mutate): %v", err)
 	}
-	again := s.agentFromSnapshot(nil, snap)
+	again := s.agentFromSnapshot(testRuntimeState(t, s.rt), nil, snap)
 	if again.Participant == nil || *again.Participant != want {
 		t.Fatalf("cached participant summary = %+v, want %+v", again.Participant, want)
 	}
@@ -69,7 +69,7 @@ func TestAgentFromSnapshotParticipantFallback(t *testing.T) {
 		TaskName:      "fix-tests",
 		Status:        subagent.StatusRunning,
 	}
-	agent := s.agentFromSnapshot(nil, snap)
+	agent := s.agentFromSnapshot(testRuntimeState(t, s.rt), nil, snap)
 	if agent.Participant == nil {
 		t.Fatal("expected fallback participant summary, got nil")
 	}
@@ -89,7 +89,7 @@ func TestAgentFromSnapshotParticipantFallback(t *testing.T) {
 		Type:   "verifier",
 		Status: subagent.StatusCompleted,
 	}
-	agent = s.agentFromSnapshot(nil, legacy)
+	agent = s.agentFromSnapshot(testRuntimeState(t, s.rt), nil, legacy)
 	if agent.Participant == nil || agent.Participant.Name == "" {
 		t.Fatalf("legacy snapshot fallback participant = %+v, want non-nil with name", agent.Participant)
 	}
@@ -101,12 +101,12 @@ func TestAgentThreadModelInheritsRootUnlessSnapshotIsPinned(t *testing.T) {
 	root := newThreadState("root", nil, "kimi", "k3", s.rt.RootDir, false, now)
 	s.threads[root.ID] = root
 
-	inherited, _ := s.ensureAgentThreadState(root.ID, nil, subagent.SubAgentSnapshot{ID: "agent-inherited"}, now)
+	inherited, _ := s.ensureAgentThreadState(testRuntimeState(t, s.rt), root.ID, nil, subagent.SubAgentSnapshot{ID: "agent-inherited"}, now)
 	if inherited.ModelProvider != "kimi" || inherited.Model != "k3" {
 		t.Fatalf("inherited model = %s/%s, want kimi/k3", inherited.ModelProvider, inherited.Model)
 	}
 
-	pinned, _ := s.ensureAgentThreadState(root.ID, nil, subagent.SubAgentSnapshot{
+	pinned, _ := s.ensureAgentThreadState(testRuntimeState(t, s.rt), root.ID, nil, subagent.SubAgentSnapshot{
 		ID:       "agent-pinned",
 		Model:    "sonnet-4",
 		ModelPin: "anthropic:sonnet-4",

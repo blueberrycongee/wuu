@@ -80,6 +80,10 @@ func (s *Server) invalidateParticipantSummary(id string) {
 		return
 	}
 	s.participantMu.Lock()
-	delete(s.participantSummaryCache, id)
+	for key := range s.participantSummaryCache {
+		if key.id == id {
+			delete(s.participantSummaryCache, key)
+		}
+	}
 	s.participantMu.Unlock()
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // threadTitleSystemPrompt is adapted from OpenCode's title prompt, with
@@ -155,8 +154,8 @@ type TitleGenerationResult struct {
 //     final answer (reasoning consumes the entire budget).
 //   - We aggregate text deltas only; thinking deltas (<think>…</think>) are
 //     stripped again post-hoc in cleanGeneratedThreadTitle.
-func (s *Server) generateThreadTitle(threadID string, history []providers.ChatMessage, threadRuntime *runtime.ThreadRuntime) {
-	_, _ = s.generateThreadTitleCore(threadID, history, true, true, false, threadRuntime)
+func (s *Server) generateThreadTitle(binding *runtime.State, threadID string, history []providers.ChatMessage, threadRuntime *runtime.ThreadRuntime) {
+	_, _ = s.generateThreadTitleCore(binding, threadID, history, true, true, false, threadRuntime)
 }
 
 // generateThreadTitleCore is the workhorse behind generateThreadTitle,
@@ -179,7 +178,7 @@ func (s *Server) generateThreadTitle(threadID string, history []providers.ChatMe
 // than the workspace default (which drifts when another session switches
 // model). It may be nil (probe / regenerate-title / no runtime), in which case
 // the workspace runtime resolves the title model as before.
-func (s *Server) generateThreadTitleCore(threadID string, history []providers.ChatMessage, persist, notify, forceFirstUser bool, threadRuntime *runtime.ThreadRuntime) (res TitleGenerationResult, retErr error) {
+func (s *Server) generateThreadTitleCore(binding *runtime.State, threadID string, history []providers.ChatMessage, persist, notify, forceFirstUser bool, threadRuntime *runtime.ThreadRuntime) (res TitleGenerationResult, retErr error) {
 	res.ThreadID = threadID
 	res.StartedAt = time.Now().UTC()
 	defer func() {
@@ -229,20 +228,21 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 	}
 
 	if persist {
+		key := sessionCacheKey{binding.Sessions, threadID}
 		s.mu.Lock()
-		if s.titleGenerations[threadID] {
+		if s.titleGenerations[key] {
 			s.mu.Unlock()
 			res.SkipReason = "title generation already running"
 			return res, nil
 		}
 		if s.titleGenerations == nil {
-			s.titleGenerations = make(map[string]bool)
+			s.titleGenerations = make(map[sessionCacheKey]bool)
 		}
-		s.titleGenerations[threadID] = true
+		s.titleGenerations[key] = true
 		s.mu.Unlock()
 		defer func() {
 			s.mu.Lock()
-			delete(s.titleGenerations, threadID)
+			delete(s.titleGenerations, key)
 			s.mu.Unlock()
 		}()
 	}
@@ -251,7 +251,7 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 	// History can be compacted or contain follow-up input by the time an
 	// attempt runs. The durable summary retains the original user intent and
 	// lets an untitled session retry after a failed or interrupted first turn.
-	if metadata, found, err := session.Find(s.rt.SessionDir, threadID); err != nil {
+	if metadata, found, err := binding.Sessions.Find(threadID); err != nil {
 		res.PersistErr = err
 		return res, err
 	} else if found {
@@ -271,7 +271,7 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 	}
 	res.FirstUserPrompt = firstUser
 
-	th := s.thread(threadID)
+	th := s.threadForState(binding, threadID)
 	if th != nil {
 		th.mu.Lock()
 		if th.ReadOnly || th.Ephemeral || th.ParentID != "" || (persist && strings.TrimSpace(th.Title) != "") {
@@ -335,7 +335,7 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 		return res, nil
 	}
 
-	metadata, err := session.UpdateGeneratedTitle(s.rt.SessionDir, threadID, res.CleanedTitle)
+	metadata, err := binding.Sessions.UpdateGeneratedTitle(threadID, res.CleanedTitle)
 	if err != nil {
 		res.PersistErr = err
 		providers.DebugLogf("title[%s]: persist failed: %v", threadID, err)
@@ -344,7 +344,7 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 	res.Persisted = true
 	res.PersistedTitle = metadata.Title
 
-	thread, err := s.threadAfterMetadataUpdate(metadata)
+	thread, err := s.threadAfterMetadataUpdate(binding, metadata)
 	if err != nil {
 		res.NotificationErr = err
 		providers.DebugLogf("title[%s]: failed to reload thread after persist: %v", threadID, err)
@@ -353,7 +353,7 @@ func (s *Server) generateThreadTitleCore(threadID string, history []providers.Ch
 	res.PreviewAfter = thread.Preview
 
 	if notify {
-		if err := s.notifyThreadUpdated(thread); err != nil {
+		if err := s.notifyThreadUpdated(binding, thread); err != nil {
 			res.NotificationErr = err
 			providers.DebugLogf("title[%s]: notification failed: %v", threadID, err)
 			return res, err
@@ -483,6 +483,12 @@ func finishTitleFailure(execution *providers.InferenceExecution, err error) erro
 // the UI can show what *would* be persisted. When not dry-run, a
 // thread/updated notification is also fired (handled by the core).
 func (s *Server) handleThreadRegenerateTitle(ctx context.Context, req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params ThreadRegenerateTitleParams
 	if err := json.Unmarshal(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("parse params: %w", err))
@@ -494,7 +500,7 @@ func (s *Server) handleThreadRegenerateTitle(ctx context.Context, req Request) e
 
 	// Build history from the on-disk session (the in-memory thread state
 	// may be missing — e.g. after a desktop restart).
-	history, err := loadChatMessages(s.rt.SessionDir, threadID)
+	history, err := loadChatMessages(binding.Sessions, threadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("load history for thread %q: %w", threadID, err))
 	}
@@ -504,10 +510,10 @@ func (s *Server) handleThreadRegenerateTitle(ctx context.Context, req Request) e
 	// only when an override is requested; otherwise reuse s.rt so the
 	// request matches the user's live provider exactly.
 	if params.ModelOverride != "" || params.ProviderName != "" {
-		return s.regenerateTitleWithOverride(ctx, req, threadID, history, params)
+		return s.regenerateTitleWithOverride(binding, ctx, req, threadID, history, params)
 	}
 
-	result, err := s.generateThreadTitleCore(threadID, history, !params.DryRun, !params.DryRun, true, nil)
+	result, err := s.generateThreadTitleCore(binding, threadID, history, !params.DryRun, !params.DryRun, true, nil)
 	if err != nil {
 		// Still return the result so the caller can see what went wrong.
 		_ = s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, err)
@@ -522,7 +528,7 @@ func (s *Server) handleThreadRegenerateTitle(ctx context.Context, req Request) e
 // one, runs generateThreadTitleCore against that runtime, then merges
 // the resulting title back into the live server's thread state and
 // fires the thread/updated notification.
-func (s *Server) regenerateTitleWithOverride(ctx context.Context, req Request, threadID string, history []providers.ChatMessage, params ThreadRegenerateTitleParams) error {
+func (s *Server) regenerateTitleWithOverride(binding *runtime.State, ctx context.Context, req Request, threadID string, history []providers.ChatMessage, params ThreadRegenerateTitleParams) error {
 	cfg, _, err := loadProbeConfig(s.rt.RootDir, os.Getenv("HOME"))
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -540,7 +546,8 @@ func (s *Server) regenerateTitleWithOverride(ctx context.Context, req Request, t
 	defer func() { _, _ = probeRT.Cleanup() }()
 
 	probeSrv := New(probeRT, s.out)
-	result, err := probeSrv.generateThreadTitleCore(threadID, history, !params.DryRun, false, true, nil)
+	defer probeSrv.Close()
+	result, err := probeSrv.generateThreadTitleCore(binding, threadID, history, !params.DryRun, false, true, nil)
 	if err != nil {
 		_ = s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, err)
 		return nil
@@ -549,17 +556,17 @@ func (s *Server) regenerateTitleWithOverride(ctx context.Context, req Request, t
 	// and the desktop's thread state stay authoritative. Skip when
 	// dry-run (the probe already returned without persisting).
 	if !params.DryRun && result.Persisted {
-		metadata, perr := session.UpdateGeneratedTitle(s.rt.SessionDir, threadID, result.CleanedTitle)
+		metadata, perr := binding.Sessions.UpdateGeneratedTitle(threadID, result.CleanedTitle)
 		if perr != nil {
 			return s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, perr)
 		}
-		thread, terr := s.threadAfterMetadataUpdate(metadata)
+		thread, terr := s.threadAfterMetadataUpdate(binding, metadata)
 		if terr != nil {
 			return s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, terr)
 		}
 		result.PersistedTitle = metadata.Title
 		result.PreviewAfter = thread.Preview
-		if err := s.notifyThreadUpdated(thread); err != nil {
+		if err := s.notifyThreadUpdated(binding, thread); err != nil {
 			result.NotificationErr = err
 			return s.writeResponse(req.ID, ThreadRegenerateTitleResult{TitleGenerationResult: result}, err)
 		}

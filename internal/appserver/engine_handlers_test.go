@@ -14,7 +14,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // Disabling a selected implementation must reject admission before it creates
@@ -60,7 +59,7 @@ func TestUnavailableSelectedEngineRejectsNewThreads(t *testing.T) {
 			if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), id) {
 				t.Fatalf("unavailable selection did not produce its diagnostic: %+v", response)
 			}
-			threads, err := session.List(rt.SessionDir, 100)
+			threads, err := rt.Sessions.List(100)
 			if err != nil || len(threads) != 0 {
 				t.Fatalf("rejected selection created threads: %+v, %v", threads, err)
 			}
@@ -121,7 +120,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if terminals != 1 {
 		t.Fatalf("completed notifications = %d, want one", terminals)
 	}
-	history, err := loadChatMessages(rt.SessionDir, threadID)
+	history, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +136,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if !found {
 		t.Fatalf("final summary absent from durable history: %+v", history)
 	}
-	metas, err := loadMetaMessages(rt.SessionDir, threadID)
+	metas, err := loadMetaMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +210,7 @@ func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
 			if liveText.String() != want || failures != 1 {
 				t.Fatalf("live assistant text = %q, failures = %d", liveText.String(), failures)
 			}
-			history, err := loadChatMessages(rt.SessionDir, threadID)
+			history, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatal(err)
 			}

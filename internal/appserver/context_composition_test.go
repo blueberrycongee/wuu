@@ -10,16 +10,16 @@ func TestLatestProviderRetainedContextTokensIgnoresLocalEstimate(t *testing.T) {
 	}}
 	s.threads["s1"] = thread
 
-	if got := s.latestProviderRetainedContextTokens("s1"); got != 0 {
+	if got := s.latestProviderRetainedContextTokens(testRuntimeState(t, s.rt), "s1"); got != 0 {
 		t.Fatalf("local context marker = %d, want 0", got)
 	}
-	if got := s.latestRetainedContextTokens("s1"); got != 452352 {
+	if got := s.latestRetainedContextTokens(testRuntimeState(t, s.rt), "s1"); got != 452352 {
 		t.Fatalf("display retained context = %d, want the latest local marker", got)
 	}
 
 	thread.Turns[1].InputTokens = 400_000
 	thread.Turns[1].CacheReadTokens = 50_000
-	if got := s.latestProviderRetainedContextTokens("s1"); got != 452352 {
+	if got := s.latestProviderRetainedContextTokens(testRuntimeState(t, s.rt), "s1"); got != 452352 {
 		t.Fatalf("provider-backed context = %d, want 452352", got)
 	}
 }

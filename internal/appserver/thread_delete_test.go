@@ -60,7 +60,7 @@ func TestServerThreadDeleteRemovesSessionAndArtifacts(t *testing.T) {
 		t.Fatalf("unexpected delete result: %+v", deleteResult)
 	}
 
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil {
 		t.Fatalf("session.Find after delete: %v", err)
 	} else if ok {
 		t.Fatalf("session %q should be gone after thread/delete", threadID)
@@ -114,7 +114,7 @@ func TestServerThreadDeleteRejectsRunningThread(t *testing.T) {
 	if resp["error"] == nil {
 		t.Fatalf("deleting a running thread must fail, got %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("running thread must survive a rejected delete: ok=%v err=%v", ok, err)
 	}
 }
@@ -136,7 +136,7 @@ func TestServerThreadDeleteRejectsRunningSideThreadAndDoesNotRecreateIt(t *testi
 		t.Fatalf("thread/start: %v", err)
 	}
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "side-delete-start")["result"]).Thread.ID
-	if _, err := srv.sendSideThreadMessage(threadID, "status?"); err != nil {
+	if _, err := srv.sendSideThreadMessage(testRuntimeState(t, srv.rt), threadID, "status?"); err != nil {
 		t.Fatalf("side send: %v", err)
 	}
 	select {
@@ -150,7 +150,7 @@ func TestServerThreadDeleteRejectsRunningSideThreadAndDoesNotRecreateIt(t *testi
 	if busy["error"] == nil || !strings.Contains(fmt.Sprint(busy["error"]), "side thread is running") {
 		t.Fatalf("delete did not report the running side thread: %+v", busy)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("rejected delete removed main thread: ok=%t err=%v", ok, err)
 	}
 
@@ -186,7 +186,7 @@ func TestServerThreadDeletePreservesMainThreadWhenSideCleanupFails(t *testing.T)
 	if resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "delete side thread") {
 		t.Fatalf("side cleanup failure was not returned: %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("failed side cleanup removed the main thread: ok=%t err=%v", ok, err)
 	}
 }
@@ -215,7 +215,7 @@ func TestServerThreadDeleteRestoresSideThreadWhenMainDeleteFails(t *testing.T) {
 	if resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "injected main delete failure") {
 		t.Fatalf("main delete failure was not returned: %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("failed main delete removed thread: ok=%t err=%v", ok, err)
 	}
 	side, err := srv.sideThreadStore.Load(threadID)
@@ -294,7 +294,7 @@ func TestServerThreadDeleteRejectsActiveBackgroundAgent(t *testing.T) {
 	if resp["error"] == nil {
 		t.Fatalf("deleting a thread with an active background agent must fail, got %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, threadID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(threadID); err != nil || !ok {
 		t.Fatalf("thread with an active agent must survive a rejected delete: ok=%v err=%v", ok, err)
 	}
 }
@@ -303,13 +303,13 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	ownerRuntime := newTestRuntime(t, &fakeClient{})
 	ownerRuntime.StateDir = filepath.Join(ownerRuntime.RootDir, ".wuu-state")
 	rootID := "cross-server-child-delete"
-	if _, err := session.CreateWithMetadata(ownerRuntime.SessionDir, rootID, ownerRuntime.RootDir); err != nil {
+	if _, err := ownerRuntime.Sessions.CreateWithMetadata(rootID, ownerRuntime.RootDir); err != nil {
 		t.Fatalf("create root session: %v", err)
 	}
 
 	owner := New(ownerRuntime, &lockedBuffer{})
 	t.Cleanup(owner.Close)
-	rootThread, err := owner.ensureThreadLoaded(rootID)
+	rootThread, err := owner.ensureThreadLoaded(testRuntimeState(t, owner.rt), rootID)
 	if err != nil {
 		t.Fatalf("load owner thread: %v", err)
 	}
@@ -372,6 +372,7 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	contenderRuntime := newTestRuntime(t, &fakeClient{})
 	contenderRuntime.RootDir = ownerRuntime.RootDir
 	contenderRuntime.SessionDir = ownerRuntime.SessionDir
+	contenderRuntime.Documents, contenderRuntime.Sessions = ownerRuntime.Documents, ownerRuntime.Sessions
 	contenderRuntime.StateDir = ownerRuntime.StateDir
 	contenderOut := &lockedBuffer{}
 	contender := New(contenderRuntime, contenderOut)
@@ -381,7 +382,7 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	if resp := responseByID(t, parseOutput(t, contenderOut.String()), "delete-active"); resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "active agents") {
 		t.Fatalf("cross-server delete must reject the durable active nested child: %+v", resp)
 	}
-	if _, ok, err := session.Find(ownerRuntime.SessionDir, rootID); err != nil || !ok {
+	if _, ok, err := ownerRuntime.Sessions.Find(rootID); err != nil || !ok {
 		t.Fatalf("rejected delete removed the root session: ok=%t err=%v", ok, err)
 	}
 
@@ -391,7 +392,7 @@ func TestServerThreadDeleteRejectsDurableNestedAgentFromAnotherServer(t *testing
 	if resp := responseByID(t, parseOutput(t, contenderOut.String()), "delete-terminal"); resp["error"] != nil {
 		t.Fatalf("terminal durable child state should allow delete: %+v", resp["error"])
 	}
-	if _, ok, err := session.Find(ownerRuntime.SessionDir, rootID); err != nil {
+	if _, ok, err := ownerRuntime.Sessions.Find(rootID); err != nil {
 		t.Fatalf("find deleted root session: %v", err)
 	} else if ok {
 		t.Fatal("root session survived delete after all children became terminal")
@@ -405,7 +406,7 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StateDir = filepath.Join(rt.RootDir, ".wuu-state")
 	const rootID = "terminal-worker-delete-observer"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, rootID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(rootID, rt.RootDir); err != nil {
 		t.Fatalf("create root session: %v", err)
 	}
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
@@ -475,7 +476,7 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	if resp := responseByID(t, parseOutput(t, out.String()), "delete-observer-busy"); resp["error"] == nil || !strings.Contains(fmt.Sprint(resp["error"]), "active agents") {
 		t.Fatalf("delete must reject the terminal worker lease observer: %+v", resp)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, rootID); err != nil || !ok {
+	if _, ok, err := rt.Sessions.Find(rootID); err != nil || !ok {
 		t.Fatalf("rejected delete removed the root session: ok=%t err=%v", ok, err)
 	}
 
@@ -485,7 +486,7 @@ func TestServerThreadDeleteRejectsTerminalWorkerUntilExecutionLeaseReleases(t *t
 	if resp := responseByID(t, parseOutput(t, out.String()), "delete-observer-released"); resp["error"] != nil {
 		t.Fatalf("delete after worker lease release failed: %+v", resp["error"])
 	}
-	if _, ok, err := session.Find(rt.SessionDir, rootID); err != nil {
+	if _, ok, err := rt.Sessions.Find(rootID); err != nil {
 		t.Fatalf("find deleted root session: %v", err)
 	} else if ok {
 		t.Fatal("root session survived delete after worker lease release")
@@ -709,7 +710,7 @@ func TestServerThreadDeleteCleansForkWorktree(t *testing.T) {
 	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
 		t.Fatalf("fork worktree should be removed with the thread, stat err = %v", err)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, forkResult.Thread.ID); err != nil {
+	if _, ok, err := rt.Sessions.Find(forkResult.Thread.ID); err != nil {
 		t.Fatalf("session.Find after delete: %v", err)
 	} else if ok {
 		t.Fatalf("fork session should be gone after thread/delete")
@@ -735,19 +736,19 @@ func TestServerThreadDeleteOnlyIfArchivedPreservesRestoredData(t *testing.T) {
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 			const threadID = "guarded-delete"
-			if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+			if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 				t.Fatal(err)
 			}
-			if err := session.AppendHistoryRecord(rt.SessionDir, threadID, session.HistoryRecord{Role: "user", Content: "keep my history"}); err != nil {
+			if err := rt.Sessions.AppendHistoryRecord(threadID, session.HistoryRecord{Role: "user", Content: "keep my history"}); err != nil {
 				t.Fatal(err)
 			}
 			if test.archived {
-				if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+				if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if test.restored {
-				if _, err := session.UpdateArchived(rt.SessionDir, threadID, false); err != nil {
+				if _, err := rt.Sessions.UpdateArchived(threadID, false); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -764,7 +765,7 @@ func TestServerThreadDeleteOnlyIfArchivedPreservesRestoredData(t *testing.T) {
 			if gotError := response["error"] != nil; gotError != test.wantError {
 				t.Fatalf("delete error = %t, want %t: %+v", gotError, test.wantError, response)
 			}
-			if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || found != test.wantError {
+			if _, found, err := rt.Sessions.Find(threadID); err != nil || found != test.wantError {
 				t.Fatalf("session retained = %t, want %t: %v", found, test.wantError, err)
 			}
 			if exists, err := srv.sideThreadStore.Exists(threadID); err != nil || exists != test.wantError {
@@ -776,7 +777,7 @@ func TestServerThreadDeleteOnlyIfArchivedPreservesRestoredData(t *testing.T) {
 			if !strings.Contains(fmt.Sprint(response["error"]), "not archived") {
 				t.Fatalf("guard rejection did not explain archive eligibility: %+v", response)
 			}
-			history, err := session.LoadHistoryRecords(rt.SessionDir, threadID, true)
+			history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
 			if err != nil || len(history) != 1 || history[0].Content != "keep my history" {
 				t.Fatalf("rejected deletion changed history: %+v, %v", history, err)
 			}
@@ -806,10 +807,10 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, filepath.Join(t.TempDir(), "foreign-project")); err != nil {
+			if _, err := rt.Sessions.CreateWithMetadata(threadID, filepath.Join(t.TempDir(), "foreign-project")); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+			if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
 				t.Fatal(err)
 			}
 			artifactDir := statepath.SessionArtifactDir(foreignStateDir, threadID)
@@ -823,7 +824,8 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 				}
 			}
 			otherStore := t.TempDir()
-			if _, err := session.CreateWithMetadata(otherStore, threadID, rt.RootDir); err != nil {
+			otherStoreStore := newAppserverTestStore(t, otherStore)
+			if _, err := otherStoreStore.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 				t.Fatal(err)
 			}
 			dispatchPayload(t, srv, "list", MethodThreadListArchived, ThreadListParams{CWD: rt.RootDir})
@@ -839,7 +841,7 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 			if queued && !strings.Contains(fmt.Sprint(response["error"]), "active agents") {
 				t.Fatalf("foreign queued worker rejection lost its reason: %+v", response)
 			}
-			if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || found != queued {
+			if _, found, err := rt.Sessions.Find(threadID); err != nil || found != queued {
 				t.Fatalf("foreign archived session retained = %t, want %t: %v", found, queued, err)
 			}
 			_, artifactErr := os.Stat(artifactDir)
@@ -849,7 +851,7 @@ func TestServerThreadDeleteArchivedUsesGlobalStoreAndForeignArtifacts(t *testing
 			if !queued && !errors.Is(artifactErr, os.ErrNotExist) {
 				t.Fatalf("foreign artifacts survived deletion: %v", artifactErr)
 			}
-			if _, found, err := session.Find(otherStore, threadID); err != nil || !found {
+			if _, found, err := otherStoreStore.Find(threadID); err != nil || !found {
 				t.Fatalf("deletion escaped the configured session store: found=%t err=%v", found, err)
 			}
 		})
@@ -862,13 +864,13 @@ func TestServerThreadDeleteArchivedRechecksRestoreAfterSideStaging(t *testing.T)
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	const threadID = "restore-after-side-stage"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, threadID, session.HistoryRecord{Role: "user", Content: "survive restoration"}); err != nil {
+	if err := rt.Sessions.AppendHistoryRecord(threadID, session.HistoryRecord{Role: "user", Content: "survive restoration"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, threadID, true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived(threadID, true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := srv.sideThreadStore.BeginTurn(threadID, "side question", "side-user", "side-assistant"); err != nil {
@@ -882,22 +884,22 @@ func TestServerThreadDeleteArchivedRechecksRestoreAfterSideStaging(t *testing.T)
 			t.Fatalf("side deletion was not staged before restore: %v", err)
 		}
 		// Another archive caller may restore after any handler-level precheck.
-		if _, err := session.UpdateArchived(rt.SessionDir, id, false); err != nil {
+		if _, err := rt.Sessions.UpdateArchived(id, false); err != nil {
 			t.Fatal(err)
 		}
 		srv.deleteSessionForTest = nil
-		return srv.deleteThreadSession(id, true)
+		return srv.deleteThreadSession(testRuntimeState(t, srv.rt), id, true)
 	}
 	dispatchPayload(t, srv, "delete", MethodThreadDelete, map[string]any{"thread_id": threadID, "only_if_archived": true})
 	response := responseByID(t, parseOutput(t, out.String()), "delete")
 	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "not archived") {
 		t.Fatalf("restore before the delete transaction must reject deletion: %+v", response)
 	}
-	metadata, found, err := session.Find(rt.SessionDir, threadID)
+	metadata, found, err := rt.Sessions.Find(threadID)
 	if err != nil || !found || metadata.ArchivedAt != nil {
 		t.Fatalf("restored session was changed: found=%t metadata=%+v err=%v", found, metadata, err)
 	}
-	history, err := session.LoadHistoryRecords(rt.SessionDir, threadID, true)
+	history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
 	if err != nil || len(history) != 1 || history[0].Content != "survive restoration" {
 		t.Fatalf("restored history changed: %+v, %v", history, err)
 	}
@@ -915,7 +917,7 @@ func TestServerThreadDeleteKeepsUnrelatedGlobalArtifacts(t *testing.T) {
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	const threadID = "same-id-different-store"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 	foreignStateDir, err := statepath.WorkspaceDirByID(rt.WuuHome, "unrelated-global-workspace")
@@ -949,7 +951,7 @@ func TestServerThreadDeleteRejectsSymlinkedForeignArtifactPaths(t *testing.T) {
 				srv := New(rt, out)
 				t.Cleanup(srv.Close)
 				const threadID = "foreign-symlink"
-				if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+				if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 					t.Fatal(err)
 				}
 				foreignStateDir, err := statepath.WorkspaceDirByID(rt.WuuHome, "foreign")
@@ -976,7 +978,7 @@ func TestServerThreadDeleteRejectsSymlinkedForeignArtifactPaths(t *testing.T) {
 				if response["error"] == nil {
 					t.Fatalf("delete traversed unsafe foreign artifact path: %+v", response)
 				}
-				if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || !found {
+				if _, found, err := rt.Sessions.Find(threadID); err != nil || !found {
 					t.Fatalf("unsafe artifact path did not preserve session: found=%t err=%v", found, err)
 				}
 				if _, err := os.Stat(marker); err != nil {
@@ -996,7 +998,7 @@ func TestServerThreadDeleteRejectsSymlinkedForeignWorkspace(t *testing.T) {
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	const threadID = "foreign-workspace-symlink"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 	outside := t.TempDir()
@@ -1016,7 +1018,7 @@ func TestServerThreadDeleteRejectsSymlinkedForeignWorkspace(t *testing.T) {
 	if response["error"] == nil {
 		t.Fatalf("unsafe workspace path bypassed active worker protection: %+v", response)
 	}
-	if _, found, err := session.Find(rt.SessionDir, threadID); err != nil || !found {
+	if _, found, err := rt.Sessions.Find(threadID); err != nil || !found {
 		t.Fatalf("unsafe workspace path did not preserve session: found=%t err=%v", found, err)
 	}
 	if queue, err := store.ListQueueItems(); err != nil || len(queue) != 1 || queue[0].ID != "queued-worker" {

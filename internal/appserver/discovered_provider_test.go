@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func setupDiscoveredGrokProvider(t *testing.T) *runtime.Session {
@@ -65,7 +64,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 			if built.StreamRunner.ProviderName != "grok-build" || built.StreamRunner.Model != "grok-4.6" || built.StreamRunner.Variant != "xhigh" {
 				t.Fatalf("selected runtime used a different model: %+v", built.Selection)
 			}
-			saved, ok, err := session.Find(rt.SessionDir, thread.ID)
+			saved, ok, err := rt.Sessions.Find(thread.ID)
 			if err != nil || !ok || saved.Provider != "grok-build" || saved.Model != "grok-4.6" {
 				t.Fatalf("selected session = %+v, found=%v, err=%v", saved, ok, err)
 			}
