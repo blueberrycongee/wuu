@@ -125,6 +125,7 @@ func TestThreadListsPreserveSessionControlAcrossWorkspaces(t *testing.T) {
 
 func TestProjectGroupingDistinguishesArchivedAndMissingCoordinators(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
