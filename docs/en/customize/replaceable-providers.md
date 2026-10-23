@@ -25,6 +25,8 @@ The low-level state services are for implementations and admitted consumers. Ord
 
 The host retains execution admission, cancellation, lifecycle order, OS locks, permissions enforcement, managed-session creation and transport. The selected permission provider decides allow/deny; an allow decision does not disable native sandbox enforcement. Coordination providers own role policy, instructions, work transitions and scheduling. A shell owns layout and presentation while application actions remain host services. Disabling a provider stops its behavior; a failed selection does not silently activate the native implementation.
 
+Renderer consumers declare `desktop.required_services` and call `api.invokeService({ service, method, params }, options)`. The host chooses the provider from that consumer's dependency and binds plugin identity, generation and execution. Options carry workspace selection and cancellation. `invokeRuntime` remains an opaque request to the same plugin's runtime; it does not select a service implementation. Keeping a UI consumer independently selectable from its business provider lets the same UI use a replacement without starting the old provider's behavior.
+
 ## Use the callback's binding
 
 Construct clients from the `RuntimeHost` passed to the current tool/service/capability callback. It carries that callback's execution scope. Do not cache it as a process-global client, reacquire the newest graph midway through an operation, or replace a failed call with direct filesystem access.

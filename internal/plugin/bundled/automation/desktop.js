@@ -2,6 +2,9 @@ export async function activate(api) {
   const React = api.react;
   const h = React.createElement;
   const { Page, Button, TextInput, TextArea, Checkbox, EmptyState } = api.ui;
+  const requestScheduler = (method, input, options) => api.invokeService({
+    service: "automation.scheduler", method: "request", params: { method, input },
+  }, options);
 
   api.registerLocale({ id: "automation-en", locale: "en-US", entries: {
     "automation.save": "Save changes", "automation.saved": "Saved", "automation.unsaved": "Unsaved changes",
@@ -618,7 +621,7 @@ export async function activate(api) {
       const current = ++epoch.current;
       if (!id) return;
       try {
-        const [list, history] = await Promise.all([api.invokeRuntime("automation.list", {}, { workspaceId: id }), api.invokeRuntime("automation.run.list", {}, { workspaceId: id })]);
+        const [list, history] = await Promise.all([requestScheduler("automation.list", {}, { workspaceId: id }), requestScheduler("automation.run.list", {}, { workspaceId: id })]);
         if (current !== epoch.current) return;
         if (list?.workspace?.id !== id) throw new Error("Automation runtime returned a different workspace");
         setTasks(Array.isArray(list.tasks) ? list.tasks : []);
@@ -661,7 +664,7 @@ export async function activate(api) {
       if (!workspace || busy) return null;
       setBusy(true); setError("");
       try {
-        const result = await api.invokeRuntime(method, { ...input, workspace_id: workspace.id, workspace_root: workspace.root }, { workspaceId: workspace.id });
+        const result = await requestScheduler(method, { ...input, workspace_id: workspace.id, workspace_root: workspace.root }, { workspaceId: workspace.id });
         await refresh(workspace.id);
         return result;
       } catch (reason) { setError(String(reason)); return null; }

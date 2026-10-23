@@ -5,6 +5,7 @@ import {
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
   MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR,
   documentStore, type StateImportResult, type StateCompaction, type RuntimeHost,
+  type PluginGenerationApi, type DataQueryResult,
   type ManagedSessionCreate, type CredentialCompareExchange, type ConfigSourceView,
 } from '@wuu/plugin-sdk';
 
@@ -17,6 +18,16 @@ async function maintain(host: RuntimeHost) {
   return {compacted, imported};
 }
 void maintain;
+
+async function desktopConsumer(api: PluginGenerationApi) {
+  const facts = await api.invokeService<DataQueryResult>({
+    service: 'host.data.query', method: 'call', params: {thread_id: 'worker'},
+  }, {workspaceId: 'workspace', signal: api.signal});
+  // @ts-expect-error The host supplies execution identity, never the renderer.
+  api.invokeService({service:'host.data.query',method:'call',execution_id:'another-owner'});
+  return facts.events?.map(event => event.type);
+}
+void desktopConsumer;
 
 // Compile against the package entry, including descriptors needed by providers.
 const descriptors = [CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR,

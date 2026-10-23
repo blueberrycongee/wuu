@@ -503,6 +503,11 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   readonly signal: AbortSignal;
   /** Invoke one method owned by this plugin's active runtime generation. */
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
+  /** Call a selected service through this desktop consumer's declared dependency.
+   * The host binds identity, generation and execution; callers cannot choose a
+   * provider. TOutput describes the service contract, not runtime validation.
+   */
+  invokeService<TOutput = unknown>(request: PluginServiceCall, options?: PluginRuntimeInvokeOptions): Promise<TOutput>;
   /** Read bounded, display-only completed turns from the addressed conversation. */
   readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   /** List registered project workspaces that a trusted extension may target. */
@@ -549,6 +554,15 @@ export interface PluginVisibleHistoryResult {
     readonly imageCount: number;
     readonly fileCount: number;
   }[];
+}
+
+/** Renderer request envelope. Major version comes from required_services;
+ * routing and execution identity remain host-owned.
+ */
+export interface PluginServiceCall {
+  readonly service: string;
+  readonly method: string;
+  readonly params?: unknown;
 }
 
 export interface PluginRuntimeInvokeOptions {
