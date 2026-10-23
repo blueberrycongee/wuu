@@ -139,6 +139,7 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
       id: "user:workspace-e2e", name: "Workspace E2E", kind: "plugin",
       provenance: { kind: "plugin", source: "user", scope: "user" },
       state: "granted", approval_state: "granted", enabled: true, fingerprint: "workspace-e2e",
+      graph_generation: "default-shell-e2e-graph",
       desktop: { entry: "desktop.js" },
       contributions: { workspace_tools: [{
         id: "notes", view: "notes", title: "Workspace notes with a long descriptive title",
