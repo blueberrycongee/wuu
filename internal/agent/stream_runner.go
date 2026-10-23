@@ -1572,6 +1572,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			ReasoningBlocks:  cloneReasoningBlocks(reasoningBlocks),
 			ToolCalls:        partialToolCalls,
 			ToolRuntime:      partialToolRuntime,
+			Usage:            usage,
 		}
 		if journalErr := req.Execution.Complete(outcome, failure); journalErr != nil {
 			return partial, errors.Join(fmt.Errorf("stream request failed: %w", err), fmt.Errorf("complete failed inference operation: %w", journalErr))

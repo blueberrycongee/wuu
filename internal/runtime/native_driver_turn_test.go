@@ -41,7 +41,7 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 	kernel := newKernelHostServices(nil, nil)
 	kernel.bindRegistry(registry)
 	provider := loopdriver.NewService("native-evidence", "driver.evidence", implementation, registry, []pluginhost.ServiceRequirement{
-		{Name: pluginprotocol.DriverTurnService, MajorVersion: 1, Required: true},
+		{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 		{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 	})
 	clients := append([]pluginhost.Client{kernel, provider}, runtimeServiceConsumers("evidence")...)
@@ -137,6 +137,38 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 	if result.Content != "The measured value is 42." || tools.calls != 1 || len(model.requests) != 2 {
 		t.Fatalf("native control flow failed: result=%+v model=%d tools=%d", result, len(model.requests), tools.calls)
 	}
+	// A provider-owned loop must receive classified failure evidence and the
+	// accepted partial response, then decide whether another round is allowed.
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("model-failure-partial-%t", partial), func(t *testing.T) {
+			failureModel := &driverFailureModel{partial: partial}
+			runner.Client = failureModel
+			implementation.run = func(ctx context.Context, gateway loopdriver.KernelGateway) (loopdriver.ModelLoopReceipt, error) {
+				turn := gateway.(loopdriver.TurnGateway)
+				request, err := turn.ReadTurn(ctx)
+				if err != nil {
+					return loopdriver.ModelLoopReceipt{}, err
+				}
+				round, err := turn.CallModel(ctx, request)
+				var failure *loopdriver.ModelRoundError
+				if !errors.As(err, &failure) || failure.Failure.Category != "context_overflow" || !failure.Failure.ContextOverflow {
+					return loopdriver.ModelLoopReceipt{}, fmt.Errorf("lost classified model failure: %v", err)
+				}
+				if partial && (len(round.Messages) != 1 || round.Messages[0].Content != "partial evidence" || round.Usage == nil || round.Usage.OutputTokens != 3) {
+					return loopdriver.ModelLoopReceipt{}, fmt.Errorf("lost partial model result: %+v", round)
+				}
+				if !partial && len(round.Messages) != 0 {
+					return loopdriver.ModelLoopReceipt{}, fmt.Errorf("invented partial result: %+v", round)
+				}
+				return turn.CompleteTurn(ctx, loopdriver.TurnResult{Content: "driver stopped after classified failure"})
+			}
+			failedCtx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "native-session", ExecutionID: fmt.Sprintf("native-failure-%t", partial)})
+			result, err := runner.RunWithCallback(failedCtx, history, nil)
+			if err != nil || result.Content != "driver stopped after classified failure" || failureModel.calls != 1 || tools.calls != 1 {
+				t.Fatalf("failure changed driver control flow: result=%+v calls=%d tools=%d err=%v", result, failureModel.calls, tools.calls, err)
+			}
+		})
+	}
 	if _, ok := kernel.driverGateways.lookup("native-execution"); ok {
 		t.Fatal("completed native driver retained its callbacks")
 	}
@@ -145,6 +177,27 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 	}); err == nil {
 		t.Fatal("late callback reached a completed execution")
 	}
+}
+
+type driverFailureModel struct {
+	partial bool
+	calls   int
+}
+
+func (m *driverFailureModel) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	return providers.ChatResponse{}, errors.New("stream only")
+}
+
+func (m *driverFailureModel) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	m.calls++
+	stream := make(chan providers.StreamEvent, 3)
+	if m.partial {
+		stream <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "partial evidence"}
+		stream <- providers.StreamEvent{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 17, OutputTokens: 3}}
+	}
+	stream <- providers.StreamEvent{Type: providers.EventError, Error: providers.NewProviderStreamError("context_length_exceeded", "controlled context overflow")}
+	close(stream)
+	return stream, nil
 }
 
 type nativeTurnFixture struct {

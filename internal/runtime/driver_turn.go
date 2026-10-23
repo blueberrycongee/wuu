@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 type driverTurnInvoker struct{ parent *kernelHostServices }
@@ -66,11 +68,25 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err != nil {
 			return nil, serviceError("invalid_request", err.Error())
 		}
-		round, err := turn.CallModel(ctx, request)
-		if err != nil {
-			return nil, err
-		}
+		round, runErr := turn.CallModel(ctx, request)
 		result := pluginprotocol.DriverTurnModelResult{Messages: modelwire.DriverMessagesToWire(round.Messages)}
+		if runErr != nil {
+			failure := providers.NormalizeFailure(runErr)
+			result.Failure = &pluginprotocol.DriverModelFailure{
+				Message: runErr.Error(), Origin: string(failure.Origin), Category: string(failure.Category),
+				ProviderCode: failure.ProviderCode, HTTPStatus: failure.HTTPStatus,
+				RetryAfterMS: failure.RetryAfter.Milliseconds(), ContextOverflow: failure.ContextOverflow,
+			}
+			var recovery *providers.StreamRecoveryError
+			if errors.As(runErr, &recovery) {
+				info := recovery.Recovery
+				result.Failure.Recovery = &pluginprotocol.DriverModelRecovery{
+					OperationID: info.OperationID, AttemptCount: info.AttemptCount, RetryCount: info.RetryCount,
+					MaxAttempts: info.MaxAttempts, SubmissionCount: info.SubmissionCount,
+					StopReason: info.StopReason, BudgetDimension: info.BudgetDimension,
+				}
+			}
+		}
 		if round.Usage != nil {
 			usage := modelwire.TokenUsageToWire(*round.Usage)
 			result.Usage = &usage

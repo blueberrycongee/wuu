@@ -150,14 +150,14 @@ Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDr
 
 后台 worker 同样使用所选驱动。在产生效果前，会保存服务 profile、提供者 ID、驱动 ID/版本及 checkpoint 契约。后续回合和重启恢复保留该绑定；提供者缺失或不兼容时明确失败。驱动选择功能引入前的记录保留原生默认驱动身份。worker 执行持有 generation 租约，直到终态持久化和清理完成，并使用与父执行不同的回调 ID。待恢复的 checkpoint 与其执行输入单独保存，不覆盖最近已提交的终态结果，避免崩溃恢复抹去尚待投递的结果；终态快照提交对应的执行 ID。worker checkpoint 文件属于恢复数据，须与历史一同保留；忽略驱动绑定的旧版本不能安全恢复使用替代驱动的 worker。
 
-独立驱动可声明 `driver.turn` 主版本 1 和 `driver.checkpoint` 主版本 1。SDK 的 `driverTurn(host, execution)` 提供以下操作：
+独立驱动声明 `driver.turn` 主版本 2 和 `driver.checkpoint` 主版本 1。SDK 的 `driverTurn(host, execution)` 提供以下操作：
 
 | 操作 | 可观察行为 |
 | --- | --- |
 | `read()` | 返回绑定的模型默认参数、可用工具及包含已恢复工具回执的当前活动历史。 |
 | `context()` | 返回模型活动历史、执行内 revision、持久化归档位置，以及是否支持持久化替换。 |
 | `replaceContext(revision, messages)` | 先归档已接纳的原始消息，再原子提交驱动的替换内容及并发持久化的尾部消息；过期 revision 在写入前被拒绝。 |
-| `model(request)` | 通过所选模型管线执行一次流式请求，返回已接纳的输入贡献与助手回复；不会执行工具。 |
+| `model(request)` | 通过所选模型管线执行一次流式请求，返回已接纳的输入贡献与助手回复；不会执行工具。操作失败时抛出 `DriverModelError`，保留 `round.messages`、已报告的 `round.usage` 及结构化 `failure` 证据。 |
 | `tools(batchID, messages, calls)` | 通过所选执行器和持久化工具账本执行明确的批次；同一执行内拒绝重复批次和调用 ID。驱动可直接选取工具，执行前会补齐缺失的助手调用声明。待执行调用可以分批提交；返回值仅包含工具结果消息。 |
 | `complete(content, messages?)` | 返回终态回执。模型与工具消息已被记录；可选消息用于追加驱动自行生成的内容。 |
 | `checkpoint(checkpoint)` | 保存与该驱动身份及 checkpoint 契约精确匹配的状态；外部效果开始前应先保存执行意图。 |
@@ -166,9 +166,11 @@ Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDr
 
 原生驱动模块也可使用相同的独立回合操作。回调依赖须显式声明，调用通过服务注册表并携带提供者的执行身份；原生模块调用未声明的回调同样会被拒绝。模型请求与上下文操作保留客户端消息 ID、历史序号、引导输入标记及工具调用 ID；这些字段用于关联记录，不授予调用权限。
 
-上下文操作要求 `driver.turn` 1.1.0 或更新版本。替换活动上下文会保留原始历史。归档成功但 checkpoint 提交失败时，归档保持持久化，原活动上下文仍有效；重试前应重新读取 revision。提交后的取消不会撤销已提交上下文。缺少归档或原子 checkpoint 服务时，替换不可用，不会退回易失状态。
+`driver.turn` 2.0 将模型操作失败从服务错误改为包含 `failure`、已接纳消息及已报告用量的结果。SDK 将其转换为 `DriverModelError`；原生驱动会同时收到 `ModelRoundError` 和部分 `ModelRound`。失败证据包含来源、类别、提供者代码、HTTP 状态、重试延迟、上下文溢出分类，以及可用时的恢复执行器停止原因和尝试次数。底层原因可重试不代表获得了新的重试预算。传输、调用权限及请求格式错误仍返回服务错误。须同时更新声明的服务主版本与 SDK；直接使用协议的消费者须检查 `failure`。宿主会拒绝主版本 1 的消费者，避免将失败的模型操作误认为成功。checkpoint 契约 1 与已保存的驱动状态保持兼容。
 
-[取证工作流示例](../../../examples/plugins/workflow-loop/runtime.ts) 仅依赖公开 SDK：先规划一个工具批次，提交仅包含当前任务和证据的活动上下文，再禁用工具进行综合回答。此示例要求支持持久化上下文替换。checkpoint 记录当前阶段；恢复使用已结算的工具回执，不会重放效果。在检出目录运行 `node scripts/workflow-driver-e2e.mjs`，可在独立目录安装打包后的 SDK，并验证真实文件证据、原始历史保留、更改默认 profile 后的已提交上下文恢复、规划历史尚未写入时的中断，以及移除提供者。同一验证还会排除原生默认模块，让工作流接管 `driver.default`；将示例的运行时环境变量设为 `WUU_WORKFLOW_PROFILE=default` 即可声明该服务。可重复核对的日志和安装包保留在 `.tmp/e2e/workflow-driver/`。
+替换活动上下文会保留原始历史。归档成功但 checkpoint 提交失败时，归档保持持久化，原活动上下文仍有效；重试前应重新读取 revision。提交后的取消不会撤销已提交上下文。缺少归档或原子 checkpoint 服务时，替换不可用，不会退回易失状态。
+
+[取证工作流示例](../../../examples/plugins/workflow-loop/runtime.ts) 仅依赖公开 SDK：先规划一个工具批次，提交仅包含当前任务和证据的活动上下文，再禁用工具进行综合回答。此示例要求支持持久化上下文替换。checkpoint 记录当前阶段；恢复使用已结算的工具回执，不会重放效果。在检出目录运行 `node scripts/workflow-driver-e2e.mjs`，可在独立目录安装打包后的 SDK，并验证真实文件证据、原始历史保留、更改默认 profile 后的已提交上下文恢复、规划历史尚未写入时的中断、驱动自主处理上下文溢出，以及移除提供者。同一验证还会排除原生默认模块，让工作流接管 `driver.default`；将示例的运行时环境变量设为 `WUU_WORKFLOW_PROFILE=default` 即可声明该服务。可重复核对的日志和安装包保留在 `.tmp/e2e/workflow-driver/`。
 
 默认多轮驱动仍使用旧的 `driver.model-loop` 网关，其压缩和历史改写策略尚未迁移至独立操作。同一次执行不能混用两种网关。工作流示例会继续保存的任务上下文，不会将新的用户任务合并到中断的工作流中。目前驱动 profile 通过 debug app-server 的 `--driver` 选项选择，桌面尚无相应选择控件。
 

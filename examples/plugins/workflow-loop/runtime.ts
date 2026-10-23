@@ -1,5 +1,5 @@
 import {
-  driverServiceDescriptor, driverTurn, requireDriverTurnServices, runJSONLRuntime,
+  DriverModelError, driverServiceDescriptor, driverTurn, requireDriverTurnServices, runJSONLRuntime,
   type DriverCheckpoint, type DriverCreateParams, type DriverExecution,
   type DriverInstanceParams, type DriverResumeParams, type DriverTurnInput,
   type ModelMessageV1, type ModelToolCallV1, type RuntimePlugin,
@@ -69,14 +69,28 @@ const plugin: RuntimePlugin = {
       instance.checkpoint = next;
     };
     try {
-      const current = await turn.read();
+      let current = await turn.read();
       let state = instance.checkpoint.state;
       if (state.phase === "complete") state = { phase: "ready" };
       if (state.phase === "ready") {
-        const plan = await turn.model({
-          ...current,
-          messages: [...current.messages, { role: "user", content: "Gather the evidence needed for this task in one batch of tools. A separate synthesis stage will write the answer after those results arrive.", hidden: true }],
-        });
+        const instruction: ModelMessageV1 = { role: "user", content: "Gather the evidence needed for this task in one batch of tools. A separate synthesis stage will write the answer after those results arrive.", hidden: true };
+        let plan;
+        try {
+          plan = await turn.model({ ...current, messages: [...current.messages, instruction] });
+        } catch (error) {
+          // This workflow retries planning once after dropping earlier tasks.
+          // Partial output or admitted input needs explicit reconciliation.
+          if (!(error instanceof DriverModelError) || !error.failure.context_overflow || error.round.messages.length) throw error;
+          const context = await turn.context();
+          const task = context.messages.findLastIndex(message => message.role === "user" && !message.hidden);
+          if (!context.can_replace || task <= 0) throw error;
+          const focused = [...context.messages.filter(message => message.role === "system"), ...context.messages.slice(task)];
+          if (focused.length >= context.messages.length) throw error;
+          const committed = await turn.replaceContext(context.revision, focused);
+          current = { ...current, messages: committed.messages };
+          await save({ phase: "ready" });
+          plan = await turn.model({ ...current, messages: [...current.messages, instruction] });
+        }
         const calls = plan.messages.flatMap(message => message.tool_calls ?? []);
         state = { phase: "planned", request: { ...current, messages: [...current.messages, ...plan.messages] }, calls };
         await save(state);

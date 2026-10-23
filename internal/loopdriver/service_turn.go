@@ -67,6 +67,9 @@ func (g serviceGateway) CallModel(ctx context.Context, request providers.ChatReq
 		usage := modelwire.TokenUsageFromWire(*result.Usage)
 		round.Usage = &usage
 	}
+	if result.Failure != nil {
+		return round, &ModelRoundError{Failure: *result.Failure}
+	}
 	return round, nil
 }
 
