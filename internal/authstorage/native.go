@@ -165,7 +165,7 @@ func readCodexCLI(path string) (Credentials, error) {
 			AccountID    string `json:"account_id"`
 		} `json:"tokens"`
 	}
-	if json.Unmarshal(data, &raw) != nil || strings.TrimSpace(raw.Tokens.AccessToken) == "" {
+	if json.Unmarshal(data, &raw) != nil {
 		return Credentials{}, errors.New("Codex CLI credential file is invalid")
 	}
 	return Credentials{Type: "oauth", AccessToken: raw.Tokens.AccessToken, RefreshToken: raw.Tokens.RefreshToken, IDToken: raw.Tokens.IDToken, AccountID: raw.Tokens.AccountID, AuthMode: "chatgpt", Source: "codex-cli"}, nil

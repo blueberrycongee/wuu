@@ -358,7 +358,13 @@ func OAuthStatus(ctx context.Context, selected credentialstore.Store, reuseCLI b
 		state, err = authstorage.NewBound(ctx, selected).Get("openai-codex")
 	}
 	if err != nil {
+		if reuseCLI && errors.Is(err, authstorage.ErrNotFound) {
+			return "", errors.New("Codex CLI OAuth credentials not found; sign in with Codex CLI first")
+		}
 		return "", err
+	}
+	if reuseCLI && strings.TrimSpace(state.AccessToken) == "" {
+		return "", errors.New("Codex CLI auth is missing access_token; sign in again")
 	}
 	if strings.TrimSpace(state.AccessToken) == "" || (tokenExpiring(state.AccessToken, 0) && (reuseCLI || strings.TrimSpace(state.RefreshToken) == "")) {
 		return "", errors.New("Codex OAuth credentials are missing or expired; sign in again")
