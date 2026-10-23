@@ -156,7 +156,7 @@ func runStateServiceFixture(path string) {
 			for name, methods := range map[string][]string{"state.config": {"read", "compare-exchange"}, "state.plugin-settings": {"read", "update", "read-state", "update-state"}, "state.artifacts": {"import", "resolve", "read", "fork"}, "security.authorize": {"authorize"}, "host.data.query": {"call"}} {
 				descriptor := pluginhost.ServiceDescriptor{Name: name, Version: "1.0.0"}
 				for _, method := range methods {
-					descriptor.Methods = append(descriptor.Methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: name + "." + method + ".input.v1", OutputSchema: name + "." + method + ".output.v1", Cleanup: true})
+					descriptor.Methods = append(descriptor.Methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: name + "." + method + ".input.v1", OutputSchema: name + "." + method + ".output.v1"})
 				}
 				descriptors = append(descriptors, descriptor)
 			}

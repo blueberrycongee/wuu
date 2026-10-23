@@ -104,7 +104,7 @@ func runExternalCredentialFixture(path string) {
 		case "initialize":
 			var methods []pluginhost.ServiceMethodDescriptor
 			for _, method := range []string{"get", "set", "delete", "compare-exchange"} {
-				methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: "state.credentials." + method + ".input.v1", OutputSchema: "state.credentials." + method + ".output.v1", Cleanup: true})
+				methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: "state.credentials." + method + ".input.v1", OutputSchema: "state.credentials." + method + ".output.v1"})
 			}
 			reply(request.ID, pluginhost.CapabilityInitializeResult{ProtocolVersion: pluginhost.CapabilityProtocolVersion, LifecycleVersion: pluginhost.RuntimeLifecycleVersion, ProvidedServices: []pluginhost.ServiceDescriptor{{Name: "state.credentials", Version: "1.0.0", Methods: methods}}})
 		case "prepare", "activate", "service.changed", "execution.cancel":

@@ -493,7 +493,7 @@ func (*artifactService) RequiredServices() []pluginhost.ServiceRequirement { ret
 func (*artifactService) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
 	for _, method := range []string{"import", "resolve", "read", "fork"} {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ArtifactServiceName + "." + method + ".input.v1", OutputSchema: ArtifactServiceName + "." + method + ".output.v1", Cleanup: true})
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ArtifactServiceName + "." + method + ".input.v1", OutputSchema: ArtifactServiceName + "." + method + ".output.v1"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ArtifactServiceName, Version: "1.0.0", Methods: methods}}
 }

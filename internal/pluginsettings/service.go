@@ -64,7 +64,7 @@ func (*Service) RequiredServices() []pluginhost.ServiceRequirement { return nil 
 func (*Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
 	for _, method := range []string{"read", "update", "read-state", "update-state"} {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Preparation: method == "read" || method == "read-state", Cleanup: true})
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Preparation: method == "read" || method == "read-state"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
 }

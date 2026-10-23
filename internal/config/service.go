@@ -71,8 +71,8 @@ func (s *Service) Status() pluginhost.Status {
 func (*Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
-		{Name: "read", InputSchema: "state.config.read.input.v1", OutputSchema: "state.config.read.output.v1", Preparation: true, Cleanup: true},
-		{Name: "compare-exchange", InputSchema: "state.config.compare-exchange.input.v1", OutputSchema: "state.config.compare-exchange.output.v1", Cleanup: true},
+		{Name: "read", InputSchema: "state.config.read.input.v1", OutputSchema: "state.config.read.output.v1", Preparation: true},
+		{Name: "compare-exchange", InputSchema: "state.config.compare-exchange.input.v1", OutputSchema: "state.config.compare-exchange.output.v1"},
 	}}}
 }
 func (s *Service) Activate(ctx context.Context) error {

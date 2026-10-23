@@ -64,7 +64,7 @@ func (s *Service) Status() pluginhost.Status {
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	methods := make([]pluginhost.ServiceMethodDescriptor, 0, 4)
 	for _, method := range []string{"get", "set", "delete", "compare-exchange"} {
-		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1", Cleanup: true})
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ServiceName + "." + method + ".input.v1", OutputSchema: ServiceName + "." + method + ".output.v1"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
 }
