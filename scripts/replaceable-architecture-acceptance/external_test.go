@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -140,6 +142,88 @@ func TestAcceptanceProviderErrorParity(t *testing.T) {
 				_, err := documents.Read(ctx, persistence.Query{})
 				require.ErrorIs(t, err, persistence.ErrInvalid)
 			})
+		})
+	}
+}
+
+// Exercise public pagination through the actual registry and SDK process. The
+// fixture's storage cost is not measured; page bounds and revision consistency are.
+func TestAcceptanceProviderQueryParity(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl", "external"} {
+		t.Run(kind, func(t *testing.T) {
+			_, documents, _, _ := startAcceptanceProvider(t, kind, t.TempDir())
+			ctx := context.Background()
+			writes := []persistence.Write{}
+			for n := 0; n < 257; n++ {
+				writes = append(writes, persistence.Write{Namespace: "acceptance.pages", Key: fmt.Sprintf("history/%03d", n), Value: json.RawMessage(fmt.Sprintf(`{"ordinal":%d}`, n))})
+			}
+			for _, key := range []string{"outside", "unicode/\ue000", "unicode/\U00010000"} {
+				writes = append(writes, persistence.Write{Namespace: "acceptance.pages", Key: key, Value: json.RawMessage(`true`)})
+			}
+			_, err := documents.Commit(ctx, persistence.Transaction{ID: "page-seed", Writes: writes})
+			require.NoError(t, err)
+			for _, reverse := range []bool{false, true} {
+				query := persistence.Query{Namespace: "acceptance.pages", Prefix: "history/", Start: "history/017", End: "history/251", Reverse: reverse, Limit: 31}
+				got := []string{}
+				for page := 0; ; page++ {
+					require.Less(t, page, 10, "cursor must advance")
+					view, err := documents.Read(ctx, query)
+					require.NoError(t, err)
+					require.LessOrEqual(t, len(view.Documents), query.Limit)
+					for _, row := range view.Documents {
+						got = append(got, row.Key)
+					}
+					if view.NextCursor == "" {
+						break
+					}
+					require.NotEmpty(t, view.Documents)
+					require.Equal(t, view.Documents[len(view.Documents)-1].Key, view.NextCursor)
+					query.Cursor, query.AtRevision = view.NextCursor, &view.Revision
+				}
+				want := []string{}
+				for n := 17; n < 251; n++ {
+					want = append(want, fmt.Sprintf("history/%03d", n))
+				}
+				if reverse {
+					slices.Reverse(want)
+				}
+				require.Equal(t, want, got, "all matching keys exactly once in public byte order")
+			}
+			for _, tc := range []struct {
+				query persistence.Query
+				keys  []string
+			}{
+				{persistence.Query{Namespace: "acceptance.pages", Prefix: "history/", Keys: []string{"outside", "history/001", "history/002", "history/002", "history/003"}, Start: "history/002", End: "history/003", Limit: 1}, []string{"history/002"}},
+				{persistence.Query{Namespace: "acceptance.pages", Keys: []string{}, Limit: 1}, []string{}},
+				{persistence.Query{Namespace: "acceptance.pages", Prefix: "unicode/", Reverse: true, Limit: 2}, []string{"unicode/\U00010000", "unicode/\ue000"}},
+			} {
+				view, err := documents.Read(ctx, tc.query)
+				require.NoError(t, err)
+				keys := []string{}
+				for _, row := range view.Documents {
+					keys = append(keys, row.Key)
+				}
+				require.Equal(t, tc.keys, keys)
+				require.Empty(t, view.NextCursor)
+			}
+			first, err := documents.Read(ctx, persistence.Query{Namespace: "acceptance.pages", Limit: 1})
+			require.NoError(t, err)
+			_, err = documents.Commit(ctx, persistence.Transaction{ID: "other-namespace", ExpectedRevision: first.Revision, Writes: []persistence.Write{{Namespace: "acceptance.other", Key: "event", Value: json.RawMessage(`true`)}}})
+			require.NoError(t, err)
+			_, err = documents.Read(ctx, persistence.Query{Namespace: "acceptance.pages", Limit: 1, Cursor: first.NextCursor, AtRevision: &first.Revision})
+			require.ErrorIs(t, err, persistence.ErrConflict)
+			zero := persistence.Revision(0)
+			_, err = documents.Read(ctx, persistence.Query{Namespace: "acceptance.pages", Keys: []string{}, AtRevision: &zero})
+			require.ErrorIs(t, err, persistence.ErrConflict, "zero revision and empty key selector must survive JSON")
+			for _, query := range []persistence.Query{
+				{Namespace: "acceptance.pages", Cursor: "history/001", Limit: 1},
+				{Namespace: "acceptance.pages", Limit: -1},
+				{Namespace: "acceptance.pages", Limit: 10001},
+				{Namespace: "acceptance.pages", Start: "z", End: "a"},
+			} {
+				_, err = documents.Read(ctx, query)
+				require.ErrorIs(t, err, persistence.ErrInvalid)
+			}
 		})
 	}
 }

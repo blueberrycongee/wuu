@@ -22,10 +22,20 @@ const plugin: RuntimePlugin = {
   invokeService({ method, params }) {
     if (method === "read") {
       const query = params as StateQuery;
-      if (!query.namespace) reject("invalid_request", "namespace is required");
-      return { revision: state.revision, documents: state.documents.filter(row => row.namespace === query.namespace
-        && row.key.startsWith(query.prefix ?? "") && (query.keys === undefined || query.keys.includes(row.key)))
-        .sort((a, b) => Buffer.compare(Buffer.from(a.key), Buffer.from(b.key))) };
+      const compare = (a: string, b: string) => Buffer.compare(Buffer.from(a), Buffer.from(b));
+      const limit = query.limit ?? 0;
+      if (!query.namespace.trim() || !Number.isInteger(limit) || limit < 0 || limit > 10000
+        || (query.end && compare(query.start ?? "", query.end) > 0)
+        || (query.cursor && query.at_revision === undefined)) reject("invalid_request", "invalid read selectors");
+      if (query.at_revision !== undefined && query.at_revision !== state.revision) reject("state_conflict", "page revision changed");
+      const matches = state.documents.filter(row => row.namespace === query.namespace
+        && row.key.startsWith(query.prefix ?? "") && (query.keys === undefined || query.keys.includes(row.key))
+        && (!query.start || compare(row.key, query.start) >= 0) && (!query.end || compare(row.key, query.end) < 0)
+        && (!query.cursor || (query.reverse ? compare(row.key, query.cursor) < 0 : compare(row.key, query.cursor) > 0)))
+        .sort((a, b) => query.reverse ? compare(b.key, a.key) : compare(a.key, b.key));
+      const documents = limit ? matches.slice(0, limit) : matches;
+      return { revision: state.revision, documents,
+        ...(limit && matches.length > limit ? { next_cursor: documents[documents.length - 1].key } : {}) };
     }
     if (method === "export") return { version: 1, ...state };
     if (method !== "commit") reject("method_not_found", "unknown method");
