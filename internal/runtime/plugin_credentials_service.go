@@ -76,7 +76,7 @@ func (s *Session) RetainStateServices() (*StateServices, func(), error) {
 	}
 	generation := s.pluginGeneration
 	generation.retain()
-	snapshot := ExtensionSnapshot{Plugins: append([]pluginpkg.Plugin(nil), generation.plugins...), ExtensionSettings: generation.settings.Extensions, PluginHost: generation.host}
+	snapshot := ExtensionSnapshot{GenerationID: generation.id, Plugins: append([]pluginpkg.Plugin(nil), generation.plugins...), ExtensionSettings: generation.settings.Extensions, PluginHost: generation.host}
 	generation.revokedMu.Lock()
 	for _, item := range generation.active {
 		if !generation.revokedPlugins[item.ID] {

@@ -242,3 +242,18 @@ func TestPluginStateHandlersStopWhenSelectedProviderIsRevoked(t *testing.T) {
 		t.Fatalf("disabled provider wrote local state: %+v %v", document, err)
 	}
 }
+
+func TestDesktopInventoryKeepsAdmittedGraphGeneration(t *testing.T) {
+	srv, item, _ := newPluginStateTestServer(t)
+	snapshot := srv.rt.ExtensionSnapshot()
+	snapshot.GenerationID = "admitted-graph"
+	for _, record := range srv.extensionInventory(snapshot) {
+		if record.ID == item.SubjectID && record.Desktop != nil {
+			if record.GraphGeneration != "admitted-graph" {
+				t.Fatal("desktop record lost its snapshot graph identity")
+			}
+			return
+		}
+	}
+	t.Fatal("desktop inventory record missing")
+}

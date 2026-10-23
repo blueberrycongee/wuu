@@ -680,6 +680,11 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		}
 		return records[i].ID < records[j].ID
 	})
+	for i := range records {
+		if records[i].Desktop != nil {
+			records[i].GraphGeneration = snapshot.GenerationID
+		}
+	}
 	return records
 }
 
