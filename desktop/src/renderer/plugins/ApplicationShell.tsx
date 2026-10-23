@@ -29,7 +29,7 @@ function compositionFor(host: PluginHost): UICompositionV1 {
     return <SlotAncestors.Provider value={[...ancestors, name]}>
       {contributions.length === 0 ? fallback : contributions.map(contribution => {
         return <ShellBoundary key={activationKey(contribution)}
-          identity={`${contribution.pluginId}/${contribution.id}`}>
+          identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
           <Contribution host={host} contribution={contribution} slots={composition} context={context} />
         </ShellBoundary>;
       })}
@@ -47,7 +47,14 @@ function Contribution({ host, contribution, slots, context }: {
   return <View application={contribution.application} slots={slots} context={context} />;
 }
 
-class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string }, { error?: Error }> {
+class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string }, { error?: Error }> {
+  private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
+  componentDidMount(): void {
+    this.observer = this.props.host.observeGenerationRender(this.props.pluginId, this.props.generation);
+    if (this.state.error) this.observer.failed(this.state.error);
+  }
+  componentDidCatch(error: Error): void { this.observer?.failed(error); }
+  componentWillUnmount(): void { this.observer?.dispose(); }
   state: { error?: Error } = {};
   static getDerivedStateFromError(error: Error): { error: Error } { return { error }; }
   render(): React.ReactNode {
@@ -74,7 +81,7 @@ export function ApplicationShellOutlet({ host, binding }: { host: PluginHost; bi
   </div>;
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
-  return <ShellBoundary key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`}>
+  return <ShellBoundary key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>
     <SelectedShell host={host} shell={selected} />
   </ShellBoundary>;
 }

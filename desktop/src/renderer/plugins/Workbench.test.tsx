@@ -17,6 +17,7 @@ import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
 describe("WorkbenchController", () => {
   beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
     window.localStorage.clear();
     document.documentElement.dataset.theme = "dark";
   });
@@ -746,7 +747,7 @@ describe("DesktopWorkbench product path", () => {
   });
 
   it("uses registered message renderers and releases them with their generation", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "user:renderer",
       generation: "one",
       register(api) {

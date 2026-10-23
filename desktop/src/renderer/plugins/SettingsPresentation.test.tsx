@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { InitializeResult } from "../../shared/protocol";
 import { SETTINGS_ACTIONS, type PresentationHost, type SettingsSnapshotV1 } from "../../shared/workbench";
@@ -20,6 +20,8 @@ const PAGES = Object.freeze([
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
+
+beforeEach(() => { window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} }; });
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -62,7 +64,7 @@ describe("SettingsPresentation", () => {
   it("replaces the settings root, dispatches validated actions, updates live, and restores fallback on unload", async () => {
     let presenterHost: PresentationHost | undefined;
     let latestSnapshot: SettingsSnapshotV1 | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "test:settings-presenter",
       generation: "one",
       register(api) {
@@ -112,7 +114,7 @@ describe("SettingsPresentation", () => {
 
   it("uses the exact native fallback when a settings presenter fails", async () => {
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "test:settings-failure",
       generation: "one",
       register(api) {

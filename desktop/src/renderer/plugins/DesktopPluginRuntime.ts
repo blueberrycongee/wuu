@@ -28,6 +28,7 @@ export interface DesktopPluginFailure {
 }
 
 export const desktopPluginHost = new PluginHost({
+  reportActivation: params => window.wuu.reportPluginDesktopActivation(params),
   react: React,
   application: {
     contractVersion: 1,
@@ -117,6 +118,7 @@ export class DesktopPluginRuntime {
     inventory: readonly ExtensionInventoryRecord[],
     safeMode = false,
   ): Promise<readonly DesktopPluginFailure[]> {
+    this.host.setInventoryGraphs(inventory);
     const epoch = ++this.syncEpoch;
     this.syncController?.abort();
     const controller = new AbortController();
@@ -154,8 +156,8 @@ export class DesktopPluginRuntime {
         const generation = this.activeGenerations.get(provider);
         // A never-started optional provider may keep failing without disturbing
         // consumers. Replacing a live provider still fences its consumers first.
-        const available = !plugin.desktop || (live ? generation === plugin.fingerprint : generation !== undefined);
-        graph.set(provider, [provider, available ? plugin.fingerprint : null, providers]);
+        const available = !plugin.desktop || (live ? generation === desktopGeneration(plugin) : generation !== undefined);
+        graph.set(provider, [provider, available ? desktopGeneration(plugin) : null, providers]);
         providers.forEach(visit);
       };
       const providers = dependencies.get(id) ?? [];
@@ -185,7 +187,7 @@ export class DesktopPluginRuntime {
     const knownPluginIds = new Set([...previousOrder.reverse(), ...this.activeGenerations.keys()]);
     for (const pluginId of knownPluginIds) {
       const plugin = desired.get(pluginId);
-      if (!plugin?.desktop || dependenciesChanged(pluginId)) {
+      if (!plugin?.desktop || previousDesired.get(pluginId)?.graph_generation !== plugin.graph_generation || dependenciesChanged(pluginId)) {
         const cleanup = unload(pluginId);
         if (cleanup) await cleanup;
         if (epoch !== this.syncEpoch) return [];
@@ -214,12 +216,19 @@ export class DesktopPluginRuntime {
         const ready = await Promise.all(providerIds.map(activate));
         if (epoch !== this.syncEpoch) return false;
         if (providerIds.some((provider, index) => !ready[index] && requiredDependencies.get(id)?.includes(provider))) {
-          if (plugin.desktop) failures.push({ pluginId: id, fingerprint: plugin.fingerprint!, error: new Error("Required desktop dependency failed to activate") });
+          if (plugin.desktop) {
+            const error = new Error("Required desktop dependency failed to activate");
+            try {
+              await this.host.activateGeneration({ pluginId: id, generation: plugin.fingerprint!, graphGeneration: plugin.graph_generation, register: () => { throw error; } });
+            } catch (failure: unknown) {
+              failures.push({ pluginId: id, fingerprint: plugin.fingerprint!, error: failure });
+            }
+          }
           return false;
         }
         if (!plugin.desktop) return true;
         const fingerprint = plugin.fingerprint;
-        if (!fingerprint || this.activeGenerations.get(plugin.id) === fingerprint) {
+        if (!fingerprint || this.activeGenerations.get(plugin.id) === desktopGeneration(plugin)) {
           return true;
         }
         // Staging callbacks can already own provider resources before activation commits.
@@ -230,6 +239,7 @@ export class DesktopPluginRuntime {
           await this.host.activateGeneration({
             pluginId: plugin.id,
             generation: fingerprint,
+            graphGeneration: plugin.graph_generation,
             contributions: desktopContributionDeclarations(plugin),
             signal: controller.signal,
             register: async (api) => {
@@ -246,7 +256,7 @@ export class DesktopPluginRuntime {
             },
           });
           if (epoch === this.syncEpoch) {
-            this.activeGenerations.set(plugin.id, fingerprint);
+            this.activeGenerations.set(plugin.id, desktopGeneration(plugin));
             this.activeDependencies.set(plugin.id, dependencySignature(plugin.id, true));
             // Recovery changes availability without changing inventory. Fence
             // every affected consumer in reverse order before any can restart.
@@ -278,6 +288,10 @@ export class DesktopPluginRuntime {
     await Promise.all([...desired.keys()].sort().map(activate));
     return failures.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
   }
+}
+
+function desktopGeneration(plugin: ExtensionInventoryRecord): string {
+  return JSON.stringify([plugin.graph_generation, plugin.fingerprint]);
 }
 
 function desktopContributionDeclarations(
@@ -313,7 +327,7 @@ export function useDesktopPluginRuntime(
       for (const failure of failures) {
         console.error(`Desktop plugin ${failure.pluginId} failed to activate`, failure.error);
       }
-    });
+    }).catch((error: unknown) => console.error("Desktop plugin synchronization failed", error));
     return () => window.removeEventListener("storage", syncThemeFromOtherWindow);
   }, [inventory, safeMode]);
 }

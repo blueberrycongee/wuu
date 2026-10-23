@@ -3,7 +3,7 @@ import type {
   ApplicationShellDefinition, UISlotDefinition, UIContributionDefinition,
 } from "../../../../packages/plugin-sdk/src/ui";
 import type * as React from "react";
-import type { ExtensionIconDescriptor, PluginVisibleHistoryRequest, PluginVisibleHistoryResult } from "../../shared/protocol";
+import type { PluginDesktopActivationParams, ExtensionInventoryRecord, ExtensionIconDescriptor, PluginVisibleHistoryRequest, PluginVisibleHistoryResult } from "../../shared/protocol";
 import { settleOnAbort } from "./activation";
 import { createPluginWebPage } from "./PluginWebPage";
 
@@ -250,6 +250,7 @@ export interface PluginThreadSummary {
 }
 
 export interface ActivatePluginGenerationOptions {
+  graphGeneration?: string;
   pluginId: string;
   generation: string;
   contributions?: PluginContributionDeclarations;
@@ -410,6 +411,7 @@ export interface RegisteredUIContribution extends UIContributionDefinition {
 }
 
 export interface PluginHostOptions {
+  reportActivation?: (report: PluginDesktopActivationParams) => Promise<void>;
   application?: ApplicationServiceV1;
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
@@ -536,6 +538,12 @@ interface UISlotRecord extends OrderedRecord { readonly definition: RegisteredUI
 interface UIContributionRecord extends OrderedRecord { readonly definition: RegisteredUIContribution }
 
 interface GenerationState {
+  graphGeneration?: string;
+  activation: number;
+  registrationReported: boolean;
+  renderedViews: number;
+  renderFailed: boolean;
+  cleanupFailed: boolean;
   retainedViews: number;
   cleaned: boolean;
   readonly cleanupComplete: Promise<void>;
@@ -622,6 +630,12 @@ export class PluginHost {
   private readonly workspaceLister?: PluginHostOptions["listWorkspaces"];
   private readonly threadLister?: PluginHostOptions["listThreads"];
   private readonly visibleHistoryReader?: PluginHostOptions["readVisibleHistory"];
+  private readonly reportActivation?: PluginHostOptions["reportActivation"];
+  private reportQueue: Promise<void> = Promise.resolve();
+  private reportFailure?: string;
+  private inventoryGraphs?: Map<string, string | undefined>;
+  private readonly activationCounts = new Map<string, number>();
+  private readonly reportedActivations = new Map<string, number>();
   private readonly activeGenerations = new Map<string, GenerationState>();
   private readonly pendingActivations = new Map<string, PendingActivation>();
   private readonly slotSnapshots = new Map<PluginSlotId, readonly RegisteredPluginSlotContribution[]>();
@@ -660,6 +674,7 @@ export class PluginHost {
     if (!Number.isFinite(this.activationTimeoutMs) || this.activationTimeoutMs <= 0) {
       throw new Error("Plugin activation timeout must be a positive finite duration");
     }
+    this.reportActivation = options.reportActivation;
     this.application = options.application;
     this.react = options.react;
     this.ui = createPluginUIKit(options.react);
@@ -673,7 +688,11 @@ export class PluginHost {
   async activateGeneration(options: ActivatePluginGenerationOptions): Promise<Disposable> {
     const pluginId = requireNonEmpty(options.pluginId, "plugin id");
     const generation = requireNonEmpty(options.generation, "plugin generation");
+    if (this.reportActivation) requireNonEmpty(options.graphGeneration ?? "", "committed graph generation");
     const state = createGenerationState(pluginId, generation, options.contributions);
+    state.graphGeneration = options.graphGeneration;
+    state.activation = (this.activationCounts.get(pluginId) ?? 0) + 1;
+    this.activationCounts.set(pluginId, state.activation);
     const pending: PendingActivation = { state };
 
     const previousPending = this.pendingActivations.get(pluginId);
@@ -716,6 +735,7 @@ export class PluginHost {
         message: `Plugin generation registration failed: ${errorMessage(error)}`,
         cause: error,
       });
+      this.reportRegistration(state, "failed");
       this.disposeGeneration(state, error);
       throw error;
     } finally {
@@ -735,6 +755,7 @@ export class PluginHost {
     }
     this.activeGenerations.set(pluginId, state);
     state.active = true;
+    this.reportRegistration(state, "active");
     if (previous) {
       previous.active = false;
       this.disposeGeneration(previous);
@@ -1508,6 +1529,7 @@ export class PluginHost {
           try {
             cleanup();
           } catch (error: unknown) {
+            state.cleanupFailed = true;
             this.addDiagnostic({
               pluginId: state.pluginId,
               generation: state.generation,
@@ -1867,8 +1889,71 @@ export class PluginHost {
   private finishGenerationCleanup(state: GenerationState): void {
     if (!state.disposed || state.retainedViews > 0 || state.cleaned) return;
     state.cleaned = true;
-    for (const disposable of [...state.teardown].reverse()) disposable.dispose();
+    for (const disposable of [...state.teardown].reverse()) {
+      try { disposable.dispose(); }
+      catch (error: unknown) {
+        state.cleanupFailed = true;
+        this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "cleanup", message: `Plugin cleanup failed: ${errorMessage(error)}`, cause: error });
+      }
+    }
+    if (state.registrationReported) this.report(state, "cleanup", state.cleanupFailed ? "failed" : "disposed");
     state.completeCleanup();
+  }
+
+  private reportRegistration(state: GenerationState, status: "active" | "failed"): void {
+    state.registrationReported = true;
+    this.report(state, "registration", status);
+    if (state.cleaned) this.report(state, "cleanup", state.cleanupFailed ? "failed" : "disposed");
+  }
+
+  private report(state: GenerationState, phase: PluginDesktopActivationParams["phase"], status: PluginDesktopActivationParams["status"]): void {
+    const send = this.reportActivation;
+    if (!send) return;
+    const params: PluginDesktopActivationParams = {
+      id: state.pluginId, fingerprint: state.generation, graph_generation: state.graphGeneration!, activation: state.activation, phase, status,
+      ...(status === "failed" ? { message: `Plugin desktop ${phase} failed; inspect local diagnostics` } : {}),
+    };
+    this.reportQueue = this.reportQueue.then(async () => {
+      // A newly committed graph owns the registry. Its obsolete callbacks may
+      // still finish effect cleanup, but cannot update the replacement graph.
+      if (this.inventoryGraphs && this.inventoryGraphs.get(state.pluginId) !== state.graphGeneration) return;
+      if (state.activation < (this.reportedActivations.get(state.pluginId) ?? 0)) return;
+      if (phase === "registration") this.reportedActivations.set(state.pluginId, state.activation);
+      await send(params);
+    }).catch((error: unknown) => {
+      if (this.inventoryGraphs && this.inventoryGraphs.get(state.pluginId) !== state.graphGeneration) return;
+      this.reportFailure = `Desktop activation report failed: ${errorMessage(error)}`;
+      this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "activation", message: this.reportFailure, cause: error });
+    });
+  }
+
+  setInventoryGraphs(inventory: readonly ExtensionInventoryRecord[]): void {
+    this.inventoryGraphs = new Map(inventory.map(plugin => [plugin.id, plugin.graph_generation]));
+  }
+
+  flushActivationReports(): Promise<void> { return this.reportQueue; }
+  getActivationReportFailure = (): string | undefined => this.reportFailure;
+
+  observeGenerationRender(pluginId: string, generation: string): { failed(error: Error): void; dispose(): void } {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state || state.generation !== generation) throw new Error("Plugin generation is no longer active");
+    state.renderedViews++;
+    if (!state.renderFailed && state.renderedViews === 1) this.report(state, "render", "active");
+    let disposed = false;
+    return {
+      failed: error => {
+        if (disposed || state.cleaned || state.renderFailed) return;
+        state.renderFailed = true;
+        this.addDiagnostic({ pluginId, generation, kind: "render", message: `Plugin UI render failed: ${errorMessage(error)}`, cause: error });
+        this.report(state, "render", "failed");
+      },
+      dispose: () => {
+        if (disposed) return;
+        disposed = true;
+        state.renderedViews--;
+        if (!state.cleaned && !state.renderFailed && state.renderedViews === 0) this.report(state, "render", "disposed");
+      },
+    };
   }
 
   private refreshPublicState(replaceSnapshots = false): void {
@@ -2242,6 +2327,11 @@ function createGenerationState(
   let completeCleanup!: () => void;
   const cleanupComplete = new Promise<void>(resolve => { completeCleanup = resolve; });
   return {
+    activation: 0,
+    registrationReported: false,
+    renderedViews: 0,
+    renderFailed: false,
+    cleanupFailed: false,
     retainedViews: 0,
     cleaned: false,
     cleanupComplete,

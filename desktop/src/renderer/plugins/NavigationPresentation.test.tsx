@@ -16,6 +16,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -72,7 +73,7 @@ describe("NavigationPresentation", () => {
 
   it("replaces the complete root, updates live, and returns to fallback on unload", async () => {
     let observed: NavigationSnapshotV1 | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "test:navigation-presentation",
       generation: "one",
       register(api) {
@@ -106,7 +107,7 @@ describe("NavigationPresentation", () => {
 
   it("uses the exact native fallback when a presenter fails", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "test:navigation-presentation",
       generation: "broken",
       register(api) {

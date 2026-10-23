@@ -2,11 +2,12 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
+import type { PluginDesktopActivationParams } from "../../shared/protocol";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
-import { PluginHost, type PluginGenerationApi } from "./PluginHost";
+import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
 import { ApplicationShellOutlet } from "./ApplicationShell";
 
-function fixture() {
+function fixture(options: Partial<PluginHostOptions> = {}) {
   const listeners = new Set<() => void>();
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
@@ -14,12 +15,94 @@ function fixture() {
     subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     invoke: vi.fn(async () => undefined) as ApplicationServiceV1["invoke"],
   };
-  return { host: new PluginHost({ react: React, application: service }), service, listeners };
+  return { host: new PluginHost({ react: React, application: service, ...options }), service, listeners };
 }
 
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it.each(["root", "nested"])("reports %s render failure without a healthy view overwriting it", async (target) => {
+    const report = vi.fn(async (_params: PluginDesktopActivationParams) => {});
+    const { host } = fixture({ reportActivation: report });
+    const broken = () => { throw new Error("private render detail"); };
+    await host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: api => {
+      api.registerUISlot({ id: "body", cardinality: "many" });
+      api.registerApplicationShell({ id: "ui.shell", render: target === "root" ? broken : ({ slots }) => <slots.Slot name="shell/body" /> });
+    } });
+    if (target === "nested") await host.activateGeneration({ pluginId: "child", generation: "source", graphGeneration: "graph", register: api => {
+      api.registerUIContribution({ id: "broken", target: "shell/body", order: 0, render: broken });
+      api.registerUIContribution({ id: "healthy", target: "shell/body", order: 1, render: () => <span>Healthy sibling</span> });
+    } });
+    const root = createRoot(document.createElement("div"));
+    const logging = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "source", id: "ui.shell" }} />));
+      await host.flushActivationReports();
+      const owner = target === "root" ? "shell" : "child";
+      const reports = report.mock.calls.map(call => call[0]).filter(item => item.id === owner);
+      expect(reports[0]).toMatchObject({ phase: "registration", status: "active", graph_generation: "graph", activation: 1 });
+      expect(reports.at(-1)).toMatchObject({ phase: "render", status: "failed" });
+      expect(JSON.stringify(reports)).not.toContain("private render detail");
+    } finally { act(() => root.unmount()); logging.mockRestore(); }
+  });
+
+  it("reports provider cleanup after view cleanup and preserves cleanup failures", async () => {
+    const order: string[] = [];
+    const report = vi.fn(async (params: PluginDesktopActivationParams) => { order.push(`${params.phase}:${params.status}`); });
+    const { host } = fixture({ reportActivation: report });
+    await host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: api => {
+      api.registerCleanup(() => { order.push("provider-cleanup"); throw new Error("private cleanup detail"); });
+      api.registerApplicationShell({ id: "ui.shell", render: () => {
+        React.useEffect(() => () => { order.push("view-cleanup"); }, []);
+        return <main>Mounted</main>;
+      } });
+    } });
+    const root = createRoot(document.createElement("div"));
+    await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "source", id: "ui.shell" }} />));
+    await act(async () => { host.unload("shell"); });
+    await host.flushActivationReports();
+    expect(order.indexOf("view-cleanup")).toBeLessThan(order.indexOf("provider-cleanup"));
+    expect(order.at(-1)).toBe("cleanup:failed");
+    expect(JSON.stringify(report.mock.calls)).not.toContain("private cleanup detail");
+    act(() => root.unmount());
+  });
+
+  it("reports failed registration before cleanup and numbers same-code retries", async () => {
+    const report = vi.fn(async (_params: PluginDesktopActivationParams) => {});
+    const { host } = fixture({ reportActivation: report });
+    await expect(host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: () => { throw new Error("broken"); } })).rejects.toThrow("broken");
+    await host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: () => {} });
+    await host.flushActivationReports();
+    expect(report.mock.calls.map(call => call[0])).toMatchObject([
+      { activation: 1, phase: "registration", status: "failed" },
+      { activation: 1, phase: "cleanup", status: "disposed" },
+      { activation: 2, phase: "registration", status: "active" },
+    ]);
+  });
+
+  it("does not send late disposal of a retained activation after the replacement registers", async () => {
+    const report = vi.fn(async (_params: PluginDesktopActivationParams) => {});
+    const { host } = fixture({ reportActivation: report });
+    const activate = () => host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: () => {} });
+    await activate();
+    const release = host.retainGeneration("shell", "source");
+    await activate();
+    await host.flushActivationReports();
+    release(); await Promise.resolve(); await host.flushActivationReports();
+    const reports = report.mock.calls.map(call => call[0]);
+    expect(reports.at(-1)).toMatchObject({ activation: 2, phase: "registration", status: "active" });
+    expect(reports.filter(item => item.activation === 1 && item.phase === "cleanup")).toHaveLength(0);
+  });
+
+  it("keeps committed UI live but exposes a mandatory ACK transport failure", async () => {
+    const { host } = fixture({ reportActivation: async () => { throw new Error("bridge unavailable"); } });
+    await host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: () => {} });
+    await host.flushActivationReports();
+    expect(host.hasActivePlugin("shell")).toBe(true);
+    expect(host.getActivationReportFailure()).toContain("bridge unavailable");
+  });
+
+
   it("renders only the exact selected provider and removes its UI on unload", async () => {
     const { host } = fixture();
     for (const id of ["default", "research"]) await host.activateGeneration({

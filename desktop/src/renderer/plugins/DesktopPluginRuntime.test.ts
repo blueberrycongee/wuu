@@ -13,6 +13,19 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
+  it("fences and reactivates unchanged source after the committed graph changes", async () => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: "fixture" }));
+    const handles: PluginGenerationApi[] = [];
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, async () => ({ activate: (api: PluginGenerationApi) => { handles.push(api); } }));
+    await runtime.sync([{ ...inventoryPlugin(), graph_generation: "first" }]);
+    await runtime.sync([{ ...inventoryPlugin(), graph_generation: "second" }]);
+    expect(handles).toHaveLength(2);
+    expect(handles[0].signal.aborted).toBe(true);
+    expect(handles[1].signal.aborted).toBe(false);
+  });
+
+
   it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {
     let release!: () => void;
     let signalStarted!: () => void;
