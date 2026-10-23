@@ -133,6 +133,9 @@ type AppState = {
   configError?: string;
   initialized?: InitializeResult;
   runtimeConnectionGeneration?: number;
+  // Page selection outlives shell activations, including catalog refreshes.
+  nativeSection?: "conversations" | "catalog";
+  catalogSection?: "plugins" | "skills";
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProjectId?: string;

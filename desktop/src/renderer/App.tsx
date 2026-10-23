@@ -734,7 +734,10 @@ export function App({ application: providedApplication }: { application?: Applic
     models: [],
   });
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [nativeSection, setNativeSection] = useState<"conversations" | "catalog">("conversations");
+  const nativeSection = state.nativeSection ?? "conversations";
+  const setNativeSection = useCallback((nativeSection: "conversations" | "catalog") => {
+    setState(current => ({ ...current, nativeSection }));
+  }, [setState]);
   const ribbonBrowser = useRibbonBrowserTabs(!poppedOutMode);
   const [activeWebsiteID, setActiveWebsiteID] = useState<string>();
   const activeWebsite = ribbonBrowser.state?.tabs?.find((website) => website.id === ribbonBrowser.state?.activeTabId);
@@ -742,7 +745,10 @@ export function App({ application: providedApplication }: { application?: Applic
   useEffect(() => {
     if (ribbonBrowser.state && !ribbonBrowser.state.tabs?.length) setActiveWebsiteID(undefined);
   }, [ribbonBrowser.state]);
-  const [catalogSection, setCatalogSection] = useState<SkillsCatalogSection>("plugins");
+  const catalogSection = state.catalogSection ?? "plugins";
+  const setCatalogSection = useCallback((catalogSection: SkillsCatalogSection) => {
+    setState(current => ({ ...current, catalogSection }));
+  }, [setState]);
   const [catalogPluginRequest, setCatalogPluginRequest] = useState<{ id: string; request: number }>();
   const [catalogVisited, setCatalogVisited] = useState(false);
   const pageWorkbench = useSyncExternalStore(desktopWorkbenchController.subscribe,

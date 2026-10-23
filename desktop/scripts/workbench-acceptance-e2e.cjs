@@ -522,6 +522,8 @@ async function run() {
     await fill('.catalog-toolbar input', '');
     await click('.catalog-refresh', 'catalog-refresh');
     await waitFor(() => document.querySelector('.catalog-refresh')?.getAttribute('aria-busy') === 'false');
+    assert.ok(await evaluate(() => Boolean(document.querySelector('.catalog-section-pane:not([hidden]) .catalog-row[aria-label="Preview acceptance-skill"]'))), 'Refreshing the catalog preserves the selected Skills page');
+    await capture('skills-after-catalog-refresh');
     await goConversations();
   });
 

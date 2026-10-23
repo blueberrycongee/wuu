@@ -7,10 +7,12 @@
  * keys whenever the project list got a fresh array identity (any runtime
  * reload), silently re-expanding those sections.
  */
+import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  ExtensionCatalogRefreshResult,
   InitializeResult,
   ServerEvent,
   Thread,
@@ -40,6 +42,10 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 
 import { App } from "./App";
 import { translateCurrent } from "./i18n";
+import * as applicationState from "./plugins/ApplicationController";
+import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
+import { PluginHost } from "./plugins/PluginHost";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -195,6 +201,63 @@ describe("sidebar collapse-state independence", () => {
     delete document.documentElement.dataset.theme;
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  // A refresh replaces the shell activation even when its code fingerprint is
+  // unchanged. Preserve the selected catalog, but never replay stale navigation.
+  it.each([
+    { section: "skills", leave: false },
+    { section: "plugins", leave: false },
+    { section: "skills", leave: true },
+  ] as const)("retains the latest route during $section refresh (leave=$leave)", async ({ section, leave }) => {
+    installWuuApi();
+    window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
+    let finishRefresh!: (value: ExtensionCatalogRefreshResult) => void;
+    window.wuu.refreshExtensionCatalog = vi.fn(() => new Promise<ExtensionCatalogRefreshResult>(resolve => { finishRefresh = resolve; }));
+    const controller = new applicationState.ApplicationController();
+    const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
+    const click = async (selector: string) => {
+      const button = container.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    try {
+      await activate();
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+      });
+      await flushAsync();
+      await click('[data-ribbon-id="catalog"]');
+      await click(`.sidebar-section-navigation > button:nth-of-type(${section === "skills" ? 2 : 1})`);
+      const selectedLabel = container.querySelector('.sidebar-section-item[aria-current="page"]')?.getAttribute("aria-label");
+      expect(selectedLabel).toBeTruthy();
+      await click('.catalog-refresh');
+      expect(container.querySelector('.catalog-refresh')?.getAttribute("aria-busy")).toBe("true");
+      if (leave) await click('[data-wuu-component="conversations-section"]');
+      const previousShell = container.querySelector('.app-shell');
+      await act(async () => { await activate(); });
+      await act(async () => { finishRefresh({ skills: [], extension_inventory: [] }); });
+      await flushAsync();
+      expect(window.wuu.refreshExtensionCatalog).toHaveBeenCalledOnce();
+      expect(container.querySelector('.app-shell')).not.toBe(previousShell);
+      if (leave) {
+        expect(container.querySelector('.catalog-section-pane:not([hidden])')).toBeNull();
+        await click('[data-ribbon-id="catalog"]');
+      }
+      expect(container.querySelector('.catalog-section-pane:not([hidden])')).not.toBeNull();
+      expect(container.querySelector('.sidebar-section-item[aria-current="page"]')?.getAttribute("aria-label")).toBe(selectedLabel);
+      expect(container.querySelector('.catalog-refresh')?.getAttribute("aria-busy")).toBe("false");
+    } finally {
+      act(() => { root?.unmount(); });
+      root = null;
+      await host.unloadAndWait("shell");
+      shared.mockRestore();
+    }
   });
 
   it("keeps the account control available and dismisses its menu on collapse", async () => {
