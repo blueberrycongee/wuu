@@ -48,6 +48,8 @@ class FixtureHost extends EventEmitter {
   locks = new Map();
   lockTokens = new Map();
   lockSequence = 0;
+  background = new Map();
+  backgroundSequence = 0;
   intercept;
   memory = 'Current workspace memory';
   constructor(id) { super(); this.id = id; this.storagePath = join(scratch, `${id}-storage.json`); }
@@ -62,7 +64,20 @@ class FixtureHost extends EventEmitter {
       this.on('call', listener);
     }), `${this.id}: ${service}`);
   }
-  async call(frame) {
+  cancelBackground(job) {
+    if (job.state !== 'running') return false;
+    job.cancelled = true;
+    job.runtime.send({ id: `cancel-${job.job_id}`, method: 'execution.cancel', params: { execution_id: job.execution_id } });
+    return true;
+  }
+  async stopBackground(runtime) {
+    runtime.backgroundClosed = true;
+    const jobs = [...this.background.values()].filter(job => job.runtime === runtime);
+    for (const job of jobs) this.cancelBackground(job);
+    await deadline(Promise.all(jobs.map(job => job.done)), `${runtime.id} drains background work`);
+    for (const job of jobs) assert.notEqual(job.state, 'failed', JSON.stringify(job.error));
+  }
+  async call(frame, runtime) {
     assert.equal(frame.method, 'host.service.call', 'Plugins must use the public service gateway');
     const { service, params = {}, execution_id, method } = frame.params;
     const call = { service, method, params, execution_id };
@@ -71,6 +86,35 @@ class FixtureHost extends EventEmitter {
     if (this.intercept) { const intercepted = await this.intercept(call); if (intercepted !== undefined) return intercepted; }
     let result;
     switch (service) {
+      case 'host.background': {
+        if (method === 'start') {
+          assert(!runtime.backgroundClosed, 'Retired generations cannot admit background work');
+          assert(params.key, 'Background work needs a generation-local key');
+          const target = runtime.definition.provided_services?.find(service => service.name === params.service);
+          assert(target?.methods.some(method => method.name === params.method), 'Background work invokes a service declared by its owner');
+          assert(![...this.background.values()].some(job => job.runtime === runtime && job.key === params.key && job.state === 'running'), 'Background keys must be unique while running');
+          const job_id = `background-${++this.backgroundSequence}`;
+          const execution_id = `${job_id}-execution`;
+          const job = { runtime, key: params.key, job_id, execution_id, state: 'running' };
+          this.background.set(job_id, job);
+          // The callback outlives the initiating request and belongs to this exact transport.
+          job.done = runtime.request('service.invoke', { service: params.service, method: params.method,
+            params: params.params ?? {}, caller: runtime.id, execution_id }, 0).then(
+            result => { job.state = 'completed'; job.result = result; },
+            error => { job.state = 'failed'; job.error = { message: error.message }; }).finally(() => {
+            if (job.cancelled) {
+              job.state = 'cancelled'; delete job.result;
+              job.error = { code: 'request_cancelled', message: 'Background job was cancelled' };
+            }
+          });
+          return { job_id, execution_id };
+        }
+        const job = this.background.get(params.job_id);
+        assert(job?.runtime === runtime, 'Background handles belong to their admitting generation');
+        if (method === 'cancel') return { cancelled: this.cancelBackground(job) };
+        assert.equal(method, 'inspect');
+        return { job_id: job.job_id, state: job.state, result: job.result, error: job.error };
+      }
       case 'host.storage.get': return { value: this.storage.get(this.key(params)) ?? null };
       case 'host.storage.set': this.storage.set(this.key(params), params.value); result = {}; break;
       case 'host.storage.delete': this.storage.delete(this.key(params)); result = {}; break;
@@ -156,7 +200,7 @@ class Runtime extends EventEmitter {
       try { frame = JSON.parse(line); } catch { this.fail(new Error(`${id} wrote non-JSON stdout: ${line}`)); return; }
       this.frames.push({ direction: 'plugin', frame });
       if (frame.method) {
-        void this.host.call(frame).then(result => this.send({ id: frame.id, result }), error => this.send({ id: frame.id, error: { code: error.code ?? 'fixture_host_error', message: error.message } }));
+        void this.host.call(frame, this).then(result => this.send({ id: frame.id, result }), error => this.send({ id: frame.id, error: { code: error.code ?? 'fixture_host_error', message: error.message } }));
       } else {
         const pending = this.pending.get(frame.id);
         if (!pending) return;
@@ -172,17 +216,18 @@ class Runtime extends EventEmitter {
     if (this.exited || this.process.stdin.destroyed || this.process.stdin.writableEnded) return;
     this.frames.push({ direction: 'host', frame }); this.process.stdin.write(`${JSON.stringify(frame)}\n`);
   }
-  request(method, params) {
+  request(method, params, timeout = 10000) {
     const id = `fixture-${++this.sequence}`;
     const promise = new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
     this.send({ id, method, ...(params === undefined ? {} : { params }) });
-    return deadline(promise, `${this.id}.${method}`).finally(() => this.pending.delete(id));
+    return (timeout ? deadline(promise, `${this.id}.${method}`, timeout) : promise).finally(() => this.pending.delete(id));
   }
   tool(tool_id, args, extra = {}) {
     return this.request('tool.execute', { tool_id, arguments: args, session_id: 'parent', thread_id: 'parent', turn_id: 'initial',
       execution_id: `execution-${this.sequence + 1}`, call_id: `call-${this.sequence + 1}`, cwd: scratch, ...extra });
   }
   capability(capability, input) { return this.request('capability.invoke', { capability, input, output: {}, execution_id: `capability-${this.sequence + 1}` }); }
+  service(service, method, params) { return this.request('service.invoke', { service, method, params, caller: 'fixture', execution_id: `service-${this.sequence + 1}` }); }
   client(method, input = {}) { return this.capability('plugin.client.request', { method, input }).then(value => value.output.result); }
   async initialize(activate = true) {
     const start = this.host.calls.length;
@@ -202,6 +247,7 @@ class Runtime extends EventEmitter {
   }
   async shutdown() {
     if (!this.exited) {
+      await this.host.stopBackground(this);
       await this.request('shutdown');
       const tail = this.request('tool.execute', { tool_id: 'after_shutdown', arguments: {} });
       await assert.rejects(tail, /shutting down/);
@@ -234,7 +280,6 @@ try {
     const deliveries = [];
     let failDelivery = true;
     host.intercept = call => {
-      if (call.service === 'host.background') return { id: call.params.key, state: 'running' };
       if (call.service !== 'host.process') return;
       const input = call.params;
       if (call.method === 'start') {
@@ -265,7 +310,9 @@ try {
     assert.equal(start.params.timeout_ms, 0);
     assert(start.execution_id, 'Shell start retains the live tool execution');
     process.output = '\nfirst event\npartial';
-    const watch = runtime.request('service.invoke', { service: 'monitor.watch', method: 'run', params: { task_id: process.id }, execution_id: 'monitor-watch' });
+    const watch = [...host.background.values()].find(job => job.runtime === runtime && job.key === process.id);
+    assert(watch, 'The host admits the monitor callback independently of its start tool');
+    assert.notEqual(watch.execution_id, start.execution_id);
     await host.waitCall('host.process', params => params.message?.request_id && deliveries.length >= 2);
     assert.equal(deliveries[0].request_id, deliveries[1].request_id, 'Lost delivery acknowledgement reuses its identity');
     assert.equal(deliveries[1].if_running, 'steer');
@@ -276,7 +323,8 @@ try {
     assert.equal(listed.tasks.length, 1);
     assert.equal(resultJSON(await runtime.tool('monitor_tasks', { action: 'list' }, { session_id: 'peer', thread_id: 'peer' })).tasks.length, 0);
     await runtime.client('monitor.tasks', { action: 'stop', task_id: process.id, thread_id: 'parent' });
-    await watch;
+    await deadline(watch.done, 'monitor completes after manual stop');
+    assert.equal(watch.state, 'completed');
     const ended = deliveries.at(-1);
     assert.match(ended.input.prompt, /partial/);
     assert.match(ended.input.prompt, /user stopped/);
@@ -481,7 +529,7 @@ try {
     assert.equal(resultJSON(await runtime.tool('send_message', { target_session_id: 'parent', message: 'Should refuse' }, { session_id: 'peer', thread_id: 'peer' })).state, 'refused');
     await runtime.shutdown();
   });
-  await scenario('automation', 'durable overdue dispatch and terminal settlement', async () => {
+  await scenario('automation', 'durable settlement, restart and independent background cancellation', async () => {
     const host = new FixtureHost('automation');
     const due = new Date(Date.now() - 60000).toISOString();
     host.seed('workspace', 'automation.state', { tasks: [{ id: 'due-fixture', title: 'Overdue fixture', prompt: 'Run synthetic task', cron: '* * * * *', timezone: 'UTC', mode: 'thread_heartbeat', heartbeat_thread_id: 'parent', workspace_id: 'fixture-workspace', workspace_root: scratch, recurring: false, paused: false, durable: true, created_at: due, next_run_at: due }], runs: [] });
@@ -499,9 +547,17 @@ try {
     await runtime.shutdown();
     const prior = host.calls.filter(call => call.service === 'host.session.send').length;
     runtime = await launch('automation', host);
-    await runtime.tool('cron', { action: 'list' });
+    await runtime.service('automation.scheduler', 'request', { method: 'automation.list' });
     assert.equal(host.calls.filter(call => call.service === 'host.session.send').length, prior, 'Completed one-shot task must not replay on restart');
-    await assert.rejects(runtime.tool('cron', { action: 'add', title: 'Invalid', prompt: 'x', cron: 'not cron', timezone: 'UTC', mode: 'thread_heartbeat' }));
+    await assert.rejects(runtime.service('automation.scheduler', 'request', { method: 'automation.create', input: { title: 'Invalid', prompt: 'x', cron: 'not cron', timezone: 'UTC', mode: 'thread_heartbeat', heartbeat_thread_id: 'parent' } }), /schedule/);
+    const scheduler = [...host.background.values()].find(job => job.runtime === runtime);
+    assert(scheduler, 'Activation admits the scheduler through the host');
+    await host.stopBackground(runtime);
+    assert.equal(scheduler.state, 'cancelled');
+    const created = await runtime.service('automation.scheduler', 'request', { method: 'automation.create', input: { prompt: 'Retained foreground request', cron: '* * * * *', durable: true } });
+    const retained = await runtime.service('automation.scheduler', 'request', { method: 'automation.list' });
+    assert(retained.tasks.some(task => task.id === created.id), 'Background cancellation keeps admitted foreground requests usable');
+    assert.equal(host.calls.filter(call => call.service === 'host.session.send').length, prior);
     await runtime.shutdown();
   });
   await scenario('automation', 'shutdown releases an unanswered dispatch without consuming it', async () => {
@@ -520,24 +576,27 @@ try {
     host.intercept = undefined;
     const before = host.calls.length;
     runtime = await launch('automation', host);
-    const retry = await host.waitCall('host.session.send', () => true, before);
-    assert.equal(retry.params.request_id, first.params.request_id, 'Restart reuses the pending dispatch identity');
+    await host.waitCall('host.storage.set', params => JSON.parse(params.value).runs?.some(run => run.request_id === first.params.request_id && run.status === 'uncertain'), before);
+    const recovered = await runtime.service('automation.scheduler', 'request', { method: 'automation.run.list' });
+    assert.equal(recovered.runs.find(run => run.request_id === first.params.request_id)?.status, 'uncertain', 'Restart preserves the unanswered dispatch for inspection');
+    assert.equal(host.calls.slice(before).filter(call => call.service === 'host.session.send').length, 0, 'Restart must not repeat a possibly accepted effect');
     await runtime.shutdown();
   });
-  await scenario('automation', 'startup readiness retries the same durable dispatch', async () => {
+  await scenario('automation', 'failed dispatch remains inspectable without automatic replay', async () => {
     const host = new FixtureHost('automation-readiness');
     const due = new Date(Date.now() - 60000).toISOString();
     host.seed('workspace', 'automation.state', { tasks: [{ id: 'retry-fixture', title: 'Retry fixture', prompt: 'Retry work', cron: '* * * * *', timezone: 'UTC', mode: 'thread_heartbeat', heartbeat_thread_id: 'parent', workspace_id: 'fixture-workspace', workspace_root: scratch, recurring: false, paused: false, durable: true, created_at: due, next_run_at: due }], runs: [] });
     host.intercept = call => { if (call.service === 'host.session.send') throw new Error('session service is unavailable'); };
     let runtime = await launch('automation', host);
     const first = await host.waitCall('host.session.send');
-    await host.waitCall('host.storage.set', params => { const state = JSON.parse(params.value); return state.tasks?.length === 1 && state.runs?.length === 0; });
+    await host.waitCall('host.storage.set', params => JSON.parse(params.value).runs?.some(run => run.request_id === first.params.request_id && run.status === 'uncertain'));
     await runtime.shutdown();
     host.intercept = undefined;
     const before = host.calls.length;
     runtime = await launch('automation', host);
-    const retry = await host.waitCall('host.session.send', () => true, before);
-    assert.equal(retry.params.request_id, first.params.request_id);
+    const recovered = await runtime.service('automation.scheduler', 'request', { method: 'automation.run.list' });
+    assert.equal(recovered.runs.find(run => run.request_id === first.params.request_id)?.status, 'uncertain');
+    assert.equal(host.calls.slice(before).filter(call => call.service === 'host.session.send').length, 0, 'A failed host response cannot prove that dispatch had no effect');
     await runtime.shutdown();
   });
   await scenario('automation', 'edits and terminal events survive a late dispatch response', async () => {
@@ -548,7 +607,7 @@ try {
     host.intercept = call => call.service === 'host.session.send' ? new Promise(resolve => { release = resolve; }) : undefined;
     const runtime = await launch('automation', host);
     const sent = await host.waitCall('host.session.send');
-    await runtime.client('automation.update', { id: 'race-fixture', prompt: 'Edited future work', cron: '0 9 * * *' });
+    await runtime.service('automation.scheduler', 'request', { method: 'automation.update', input: { id: 'race-fixture', prompt: 'Edited future work', cron: '0 9 * * *' } });
     await runtime.capability('agent.turn.lifecycle', { request_id: sent.params.request_id, thread_id: 'parent', state: 'running', turn_id: 'race-turn' });
     await runtime.capability('agent.turn.lifecycle', { request_id: sent.params.request_id, thread_id: 'parent', state: 'completed', turn_id: 'race-turn' });
     release({ state: 'queued', session_id: 'parent', queue_id: 'late-race-queue' });
