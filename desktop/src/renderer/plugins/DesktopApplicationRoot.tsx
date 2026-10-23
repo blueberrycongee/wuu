@@ -14,7 +14,7 @@ export function DesktopApplicationRoot(): JSX.Element {
   const desktopApplication = getDesktopApplication();
   const state = useSyncExternalStore(desktopApplication.subscribeState, desktopApplication.getState, desktopApplication.getState);
   useEffect(() => desktopApplication.start(), []);
-  useDesktopPluginRuntime(state.initialized?.extension_inventory, state.initialized?.features?.safe_mode);
+  useDesktopPluginRuntime(state.initialized?.extension_inventory, state.initialized?.features?.safe_mode, state.runtimeConnectionGeneration ?? 0);
   const selection = (state.initialized as ShellInitializeResult | undefined)?.application_shell;
   const binding = selection ? { pluginId: selection.plugin_id, generation: selection.generation, id: selection.provider_id } : null;
   if (!state.initialized) return <div className="application-recovery" role={state.status === "connecting" ? "status" : "alert"}>{state.status === "connecting" ? "Connecting…" : state.status}</div>;

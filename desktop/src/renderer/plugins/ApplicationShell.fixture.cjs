@@ -16,6 +16,7 @@
 // Extends the shared synthetic desktop backend with explicit composition state.
 module.exports = (api) => {
   const listeners = new Set();
+  const restoreListeners = new Set();
   const identities = ["builtin:wuu.default-shell", "user:research-shell", "user:evidence"];
   let selected = identities[0];
   let disabled = false;
@@ -34,6 +35,9 @@ module.exports = (api) => {
   return {
     ...api,
     initialize: async () => ({ ...await initialize(), application_shell: binding(), extension_inventory: inventory() }),
+    listAllThreads: () => api.listThreads(),
+    onRuntimeRestore: listener => { restoreListeners.add(listener); return () => restoreListeners.delete(listener); },
+    testRestore: () => Promise.all([...restoreListeners].map(listener => listener())),
     reportPluginDesktopActivation: async report => {
       if (bridgeFailure) throw new Error("fixture ACK bridge unavailable");
       await api.reportPluginDesktopActivation(report);

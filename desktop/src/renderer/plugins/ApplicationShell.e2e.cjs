@@ -48,6 +48,18 @@ app.whenReady().then(async () => {
     });
     await until(() => Boolean(document.querySelector("[data-research-settings]")));
     await capture("research-light-wide");
+    const beforeRestore = await evaluate(async () => {
+      window.__shellBeforeRestore = document.querySelector("[data-research-shell]");
+      return (await window.wuu.testDesktopActivations()).filter(report => report.id === "user:research-shell" && report.phase === "registration").at(-1);
+    });
+    await evaluate(() => window.wuu.testRestore());
+    await until(() => Boolean(document.querySelector("[data-research-shell] [data-evidence]")) && document.querySelector("[data-research-shell]") !== window.__shellBeforeRestore);
+    const afterRestore = await evaluate(async () => (await window.wuu.testDesktopActivations()).filter(report => report.id === "user:research-shell" && report.phase === "registration").at(-1));
+    assert.equal(afterRestore.graph_generation, beforeRestore.graph_generation, "connection restoration cannot invent a new graph");
+    assert.ok(afterRestore.activation > beforeRestore.activation, "connection restoration must register a fresh activation");
+    assert.equal(await evaluate(() => document.querySelector('[aria-label="Research draft"]').value), "Draft survives the shell change");
+    assert.ok(await evaluate(() => Boolean(document.querySelector("[data-research-settings]"))));
+    await capture("research-after-restore");
     await evaluate(() => window.wuu.testShell("disable"));
     await until(() => Boolean(document.querySelector(".application-recovery")) && !document.querySelector("[data-research-shell]"));
     assert.equal(await evaluate(() => Boolean(document.querySelector(".app-shell"))), false, "disable cannot fallback");
@@ -98,7 +110,7 @@ app.whenReady().then(async () => {
     const unexpectedErrors = errors.filter(message => !message.includes("fixture child failure") && !message.includes("fixture root failure"));
     assert.equal(unexpectedErrors.length, 0, unexpectedErrors.join("\n"));
     fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ passed: true, title, errors: unexpectedErrors, expectedRenderErrors: errors,
-      checked: ["ACK transport failure and recovery without layout shift", "registration/render ACKs", "graph reactivation", "root/nested render failures", "selected default mounts", "external shell mounts", "third-party slot renders", "default unmounts", "shared settings action", "disable has no fallback", "default restores", "light/dark 15/20 screenshot evidence"] }, null, 2));
+      checked: ["same-graph restore reactivation with draft/settings retained", "ACK transport failure and recovery without layout shift", "registration/render ACKs", "graph reactivation", "root/nested render failures", "selected default mounts", "external shell mounts", "third-party slot renders", "default unmounts", "shared settings action", "disable has no fallback", "default restores", "light/dark 15/20 screenshot evidence"] }, null, 2));
     console.log(`PASS application shell assembly; evidence ${output}`);
     win.destroy(); app.exit(0);
   } catch (error) {

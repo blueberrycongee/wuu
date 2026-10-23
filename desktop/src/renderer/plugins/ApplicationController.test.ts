@@ -6,6 +6,30 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("refreshes the local activation lifetime after successful connection restoration while retaining drafts", async () => {
+    let restore!: () => Promise<void>;
+    const initialized = { extension_inventory: [] };
+    const initialize = vi.fn().mockRejectedValueOnce(new Error("restore failed")).mockResolvedValue(initialized);
+    window.wuu = {
+      onRuntimeRestore: (listener: () => Promise<void>) => { restore = listener; return () => {}; },
+      onServerEvent: () => () => {},
+      listProjects: async () => ({ projects: [] }), initialize,
+      listAllThreads: async () => ({ threads: [] }), listArchivedThreads: async () => ({ threads: [] }),
+    } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: initialized as never });
+    await controller.invoke("composer.set-draft", { text: "Survive reconnect" });
+    const stop = controller.start();
+    try {
+      await expect(restore()).rejects.toThrow("restore failed");
+      expect(controller.getState().runtimeConnectionGeneration ?? 0).toBe(0);
+      await restore();
+      expect(controller.getState().runtimeConnectionGeneration).toBe(1);
+      expect(controller.getSnapshot().composer.draftText).toBe("Survive reconnect");
+      await restore();
+      expect(controller.getState().runtimeConnectionGeneration).toBe(2);
+    } finally { stop(); }
+  });
+
   it("publishes the canonical state to every subscriber without duplicating it", () => {
     const controller = new ApplicationController();
     const changed = vi.fn();

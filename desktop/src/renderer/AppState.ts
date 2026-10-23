@@ -132,6 +132,7 @@ type SessionTab =
 type AppState = {
   configError?: string;
   initialized?: InitializeResult;
+  runtimeConnectionGeneration?: number;
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProjectId?: string;

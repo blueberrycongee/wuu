@@ -81,7 +81,10 @@ export class ApplicationController implements ApplicationServiceV1 {
         const signal = this.lifetime!.signal;
         const restored = await loadRuntimeRestore(this.state);
         signal.throwIfAborted();
-        this.updateState(state => applyRuntimeRestore(state, restored));
+        this.updateState(state => ({
+          ...applyRuntimeRestore(state, restored),
+          runtimeConnectionGeneration: (state.runtimeConnectionGeneration ?? 0) + 1,
+        }));
       });
       if (restore) this.subscriptions.push(restore);
       void this.initialize().catch(error => this.updateState(state => ({ ...state, status: String(error instanceof Error ? error.message : error) })));
