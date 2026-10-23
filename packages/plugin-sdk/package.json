@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node dist/index.test.js && node dist/bundle-contract.test.js",
+    "test": "npm run build && node dist/index.test.js && node dist/bundle-contract.test.js && node dist/runtime-composition.test.js",
     "prepack": "npm run build"
   },
   "devDependencies": {
@@ -29,7 +29,9 @@
     "dist/driver.js",
     "dist/driver.d.ts",
     "dist/persistence.js",
-    "dist/persistence.d.ts"
+    "dist/persistence.d.ts",
+    "dist/ui.js",
+    "dist/ui.d.ts"
   ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -37,6 +39,13 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./ui": {
+      "types": "./dist/ui.d.ts",
+      "import": "./dist/ui.js"
     }
+  },
+  "dependencies": {
+    "@types/react": "19.0.0"
   }
 }

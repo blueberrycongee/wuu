@@ -9,6 +9,10 @@
  * @module
  */
 
+import type * as React from "react";
+import type { ApplicationGenerationAPI } from "./ui.js";
+export * from "./ui.js";
+
 import type { PluginDependency } from "./bundle-contract.js";
 import type { ModelAdapterDescriptor } from "./model.js";
 export * from "./process.js";
@@ -98,7 +102,7 @@ export interface ViewTypeDefinition {
   icon?: PublicIconName;
   defaultRegion?: ViewPlacementRegion;
   persistence?: ViewPersistence;
-  render: unknown; // React.ComponentType<ViewRenderProps> — opaque in SDK
+  render: React.ComponentType<ViewRenderProps>;
 }
 
 export interface ViewRenderProps {
@@ -147,7 +151,7 @@ export interface ViewHostAPI {
 }
 
 export interface PluginUIContainerProps {
-  readonly children?: unknown;
+  readonly children?: React.ReactNode;
   readonly className?: string;
   readonly [property: string]: unknown;
 }
@@ -157,8 +161,8 @@ export interface PluginUIPageProps extends PluginUIContainerProps {
 }
 
 export interface PluginUISectionProps extends PluginUIContainerProps {
-  readonly title?: unknown;
-  readonly description?: unknown;
+  readonly title?: React.ReactNode;
+  readonly description?: React.ReactNode;
 }
 
 export interface PluginUIStackProps extends PluginUIContainerProps {
@@ -169,7 +173,7 @@ export interface PluginUIButtonProps extends PluginUIContainerProps {
   readonly variant?: "primary" | "secondary" | "ghost" | "danger";
   readonly type?: "button" | "submit" | "reset";
   readonly disabled?: boolean;
-  readonly onClick?: (event: unknown) => void;
+  readonly onClick?: React.MouseEventHandler<HTMLButtonElement>;
 }
 
 export interface PluginUIToolbarToggleProps extends PluginUIContainerProps {
@@ -178,61 +182,61 @@ export interface PluginUIToolbarToggleProps extends PluginUIContainerProps {
   readonly disabled?: boolean;
   readonly title?: string;
   readonly "aria-label": string;
-  readonly onClick?: (event: unknown) => void;
+  readonly onClick?: React.MouseEventHandler<HTMLButtonElement>;
 }
 
 export interface PluginUITextInputProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly value?: string | number;
   readonly defaultValue?: string | number;
   readonly placeholder?: string;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLInputElement>;
 }
 
 export interface PluginUITextAreaProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly value?: string;
   readonly placeholder?: string;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLTextAreaElement>;
 }
 
 export interface PluginUICheckboxProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly checked?: boolean;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLInputElement>;
 }
 
 export interface PluginUISelectProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly value?: string | number;
   readonly defaultValue?: string | number;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLSelectElement>;
 }
 
 export interface PluginUIEmptyStateProps extends PluginUIContainerProps {
-  readonly title: unknown;
-  readonly description?: unknown;
-  readonly actions?: unknown;
+  readonly title: React.ReactNode;
+  readonly description?: React.ReactNode;
+  readonly actions?: React.ReactNode;
 }
 
 
 export interface PluginUILoadingStateProps extends PluginUIContainerProps {
-  readonly title?: unknown;
-  readonly description?: unknown;
+  readonly title?: React.ReactNode;
+  readonly description?: React.ReactNode;
 }
 
 export interface PluginUIErrorStateProps extends PluginUIContainerProps {
-  readonly title: unknown;
-  readonly description?: unknown;
-  readonly actions?: unknown;
+  readonly title: React.ReactNode;
+  readonly description?: React.ReactNode;
+  readonly actions?: React.ReactNode;
 }
 
 export interface PluginUILiveDurationProps extends PluginUIContainerProps {
@@ -248,7 +252,7 @@ export interface PluginUIWebPageProps {
   readonly title?: string;
 }
 
-export type HostUIComponent<Props> = (props: Props) => unknown;
+export type HostUIComponent<Props> = React.ComponentType<Props>;
 
 /** Composer accessory shell with shared sizing, scrolling and keyboard dismissal.
  * Render in composer.above. Empty-state visibility and expansion belong to the caller.
@@ -258,10 +262,10 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly toggleLabel: string;
   /** Feedback displayed in both collapsed and expanded states. */
-  readonly notice?: unknown;
-  readonly icon?: unknown;
-  readonly summary: unknown;
-  readonly actions?: unknown;
+  readonly notice?: React.ReactNode;
+  readonly icon?: React.ReactNode;
+  readonly summary: React.ReactNode;
+  readonly actions?: React.ReactNode;
   readonly tone?: "default" | "muted" | "warning";
 }
 
@@ -488,7 +492,7 @@ export interface LocaleDefinition {
 // Plugin generation API
 // ---------------------------------------------------------------------------
 
-export interface PluginGenerationApi {
+export interface PluginGenerationApi extends ApplicationGenerationAPI {
   /** Host-owned React runtime. Executable desktop bundles must use this instance. */
   readonly react: HostReact;
   /** Host-owned primitives that inherit the active Wuu theme and spacing rhythm. */
@@ -567,25 +571,8 @@ export interface PluginWorkspaceSnapshot {
   readonly activeRoot?: string;
 }
 
-/** Minimal type for the host-owned React instance; plugins never bundle React. */
-export interface HostReact {
-  readonly Fragment: unknown;
-  useState<T>(initial: T | (() => T)): [T, (next: T | ((current: T) => T)) => void];
-  useEffect(effect: () => void | (() => void), dependencies?: readonly unknown[]): void;
-  useMemo<T>(factory: () => T, dependencies: readonly unknown[]): T;
-  useCallback<T>(callback: T, dependencies: readonly unknown[]): T;
-  useRef<T>(initial: T): { current: T };
-  useSyncExternalStore<T>(
-    subscribe: (notify: () => void) => () => void,
-    getSnapshot: () => T,
-    getServerSnapshot?: () => T,
-  ): T;
-  createElement(
-    type: string | ((props: Readonly<Record<string, unknown>>) => unknown),
-    props: Readonly<Record<string, unknown>> | null,
-    ...children: unknown[]
-  ): unknown;
-}
+/** The host-owned React runtime. Plugins must not bundle a second instance. */
+export type HostReact = typeof React;
 
 // ---------------------------------------------------------------------------
 // Executable runtime contract

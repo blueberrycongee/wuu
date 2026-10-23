@@ -21,6 +21,8 @@ export interface AgentDeclaration {
 
 export interface DesktopDeclaration {
   entry: string;
+  /** Public renderer service descriptors selected through the composition graph. */
+  services?: readonly { readonly name: string; readonly version: string }[];
 }
 
 /** A package dependency; omitted version accepts any installed version. */
