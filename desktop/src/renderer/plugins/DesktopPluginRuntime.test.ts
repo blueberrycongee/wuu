@@ -55,6 +55,44 @@ describe("DesktopPluginRuntime", () => {
     }
   });
 
+  it("reactivates an unchanged graph on a fresh connection after retained consumers finish cleanup", async () => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const report = vi.fn<WuuDesktopApi["reportPluginDesktopActivation"]>(async () => {});
+    const invoke = vi.fn(async () => "result");
+    const host = new PluginHost({ react: React, reportActivation: report, invokeRuntime: invoke });
+    const events: string[] = [];
+    const handles: PluginGenerationApi[] = [];
+    const runtime = new DesktopPluginRuntime(host, async (id) => ({ activate(api: PluginGenerationApi) {
+      handles.push(api);
+      events.push(`start:${id}`);
+      api.registerCleanup(() => { events.push(`stop:${id}`); });
+    } }));
+    const inventory = [dependencyPlugin("consumer", ["provider"]), dependencyPlugin("provider")].map(plugin => ({ ...plugin, graph_generation: "same-graph" }));
+    await runtime.sync(inventory, false, 0);
+    await host.flushActivationReports();
+    await runtime.sync(inventory, false, 0);
+    expect(handles).toHaveLength(2);
+    const release = host.retainGeneration("user:consumer", "fingerprint-one");
+    const reconnect = runtime.sync(inventory, false, 1);
+    await vi.waitFor(() => expect(handles[1].signal.aborted).toBe(true));
+    const overlapping = runtime.sync(inventory, false, 1);
+    expect(handles[0].signal.aborted).toBe(false);
+    expect(handles).toHaveLength(2);
+    release();
+    expect(await reconnect).toEqual([]);
+    expect(await overlapping).toEqual([]);
+    await host.flushActivationReports();
+    expect(events).toEqual(["start:user:provider", "start:user:consumer", "stop:user:consumer", "stop:user:provider", "start:user:provider", "start:user:consumer"]);
+    expect(report.mock.calls.map(([value]) => [value.phase, value.activation, value.graph_generation])).toEqual([
+      ["registration", 1, "same-graph"], ["registration", 1, "same-graph"],
+      ["registration", 2, "same-graph"], ["registration", 2, "same-graph"],
+    ]);
+    await expect(handles[1].invokeService({ service: "catalog", method: "read" })).rejects.toThrow("no longer active");
+    expect(invoke).not.toHaveBeenCalled();
+    await expect(handles[3].invokeService({ service: "catalog", method: "read" })).resolves.toBe("result");
+    await runtime.sync([], false, 1);
+  });
+
   it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {
     let release!: () => void;
     let signalStarted!: () => void;

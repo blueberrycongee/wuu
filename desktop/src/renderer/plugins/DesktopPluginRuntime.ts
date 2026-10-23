@@ -110,6 +110,8 @@ export class DesktopPluginRuntime {
   private readonly pendingDependencies = new Map<string, { signature: string }>();
   private syncEpoch = 0;
   private syncController?: AbortController;
+  private connectionGeneration = 0;
+  private connectionReset?: Promise<void>;
 
   constructor(
     readonly host: PluginHost,
@@ -119,12 +121,42 @@ export class DesktopPluginRuntime {
   async sync(
     inventory: readonly ExtensionInventoryRecord[],
     safeMode = false,
+    connectionGeneration = 0,
   ): Promise<readonly DesktopPluginFailure[]> {
-    this.host.setInventoryGraphs(inventory);
     const epoch = ++this.syncEpoch;
     this.syncController?.abort();
     const controller = new AbortController();
     this.syncController = controller;
+    const unload = (id: string): Promise<void> | undefined => {
+      const cleanup = this.host.unloadAndWait(id);
+      this.activeGenerations.delete(id);
+      this.activeDependencies.delete(id);
+      this.pendingDependencies.delete(id);
+      return cleanup;
+    };
+    if (this.connectionGeneration !== connectionGeneration) {
+      this.connectionGeneration = connectionGeneration;
+      this.host.setInventoryGraphs([]);
+      const previousReset = this.connectionReset;
+      this.connectionReset = (async () => {
+        await previousReset;
+        // Overlapping restores must share teardown, including retained React consumers.
+        const previousOrder = dependencyOrder(this.desiredPlugins).reverse();
+        for (const pluginId of new Set([...previousOrder, ...this.activeGenerations.keys(), ...this.pendingDependencies.keys()])) {
+          const cleanup = unload(pluginId);
+          if (cleanup) await cleanup;
+        }
+        // Drain obsolete ACKs while no graph is admitted on the new connection.
+        await this.host.flushActivationReports();
+      })();
+    }
+    if (this.connectionReset) {
+      const reset = this.connectionReset;
+      await reset;
+      if (epoch !== this.syncEpoch) return [];
+      if (this.connectionReset === reset) this.connectionReset = undefined;
+    }
+    this.host.setInventoryGraphs(inventory);
     const candidates = new Map(
       (safeMode ? [] : inventory).filter(isAvailablePlugin).map((plugin) => [plugin.id, plugin] as const),
     );
@@ -174,13 +206,6 @@ export class DesktopPluginRuntime {
       return (active !== undefined && active !== signature) || (pending !== undefined && pending !== signature);
     };
 
-    const unload = (id: string): Promise<void> | undefined => {
-      const cleanup = this.host.unloadAndWait(id);
-      this.activeGenerations.delete(id);
-      this.activeDependencies.delete(id);
-      this.pendingDependencies.delete(id);
-      return cleanup;
-    };
     const previousDesired = this.desiredPlugins;
     this.desiredPlugins = desired;
     // Dependents release resources before a provider can replace or dispose them.
@@ -316,6 +341,7 @@ export const desktopPluginRuntime = new DesktopPluginRuntime(desktopPluginHost);
 export function useDesktopPluginRuntime(
   inventory: readonly ExtensionInventoryRecord[] | undefined,
   safeMode = false,
+  connectionGeneration = 0,
 ): void {
   useEffect(() => window.wuu?.onServerEvent?.((event) => {
     desktopPluginHost.publishHostEvent(event);
@@ -325,13 +351,13 @@ export function useDesktopPluginRuntime(
     syncShellSkins(inventory, safeMode);
     const syncThemeFromOtherWindow = (): void => syncExtensionTheme(safeMode ? [] : inventory);
     window.addEventListener("storage", syncThemeFromOtherWindow);
-    void desktopPluginRuntime.sync(inventory ?? [], safeMode).then((failures) => {
+    void desktopPluginRuntime.sync(inventory ?? [], safeMode, connectionGeneration).then((failures) => {
       for (const failure of failures) {
         console.error(`Desktop plugin ${failure.pluginId} failed to activate`, failure.error);
       }
     }).catch((error: unknown) => console.error("Desktop plugin synchronization failed", error));
     return () => window.removeEventListener("storage", syncThemeFromOtherWindow);
-  }, [inventory, safeMode]);
+  }, [inventory, safeMode, connectionGeneration]);
 }
 
 function isAvailablePlugin(plugin: ExtensionInventoryRecord): boolean {
