@@ -1,3 +1,16 @@
+/** Durable acceptance and execution are independent; no field means Seen. */
+export interface ClientInputReceipt {
+ request_id: string; receipt_id: string; host_request_id: string; client_id: string; queue_id: string; session_id: string;
+ user_space_id?: string; product_domain?: string; agent_id?: string; plugin_id: string; owner?: string;
+ message_seq?: number; hostturn_id?: string;
+ receipt_state: "accepted" | "in_history";
+ execution_state: "queued" | "held" | "running" | "completed" | "failed" | "interrupted" | "cancelled" | "unconfirmed";
+ accepted_at: string; revision: number; error_stage?: string; error?: string;
+}
+export interface AcceptedClientInputView {
+ receipt: ClientInputReceipt; prompt: string; relation?: MessageRelation; attachments?: SessionInputAttachment[];
+}
+
 /** Stable durable message address; seq is not a provider item or turn ID. */
 export interface MessageRef { session_id: string; seq: number; }
 /** Host-validated quote target plus extension-owned context. Never encode routing in prompt text. */
@@ -264,7 +277,14 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
 }
 
 /** Stable host-owned primitives for plugin views. */
-export interface PluginUIConversationMessageProps { replyPreview?: unknown; onReply?(): void; replyLabel?: string; role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: unknown; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: unknown }; messageActions?: "copy-only" | "none" }
+export interface PluginUIInteractiveAnswerProps {
+  snapshot: unknown;
+  fallbackText?: string;
+  onAction(input: unknown): Promise<unknown>;
+  onRefresh(): Promise<unknown>;
+  onRetry(resumeHeld?: boolean): Promise<unknown>;
+}
+export interface PluginUIConversationMessageProps { interactive?: readonly PluginUIInteractiveAnswerProps[]; replyPreview?: unknown; onReply?(): void; replyLabel?: string; role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: unknown; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: unknown }; messageActions?: "copy-only" | "none" }
 
 export interface PluginUIConversationViewProps {
   presentation?: "standard" | "bubbles";
@@ -1271,6 +1291,8 @@ export interface HostServiceContracts {
       /** Prohibits all tools for this turn. Unsupported with steer or external engines. */
       disable_tools?: boolean;
       user_input_request_id?: string;
+      resume_accepted?: boolean;
+      resume_receipt_id?: string;
  relation?: MessageRelation;
       request_id: string;
       session_id: string;
@@ -1285,7 +1307,7 @@ export interface HostServiceContracts {
       reply_to_turn_id?: string;
       control_revision?: number;
     };
-    result: { state: string; session_id: string; turn_id?: string; queue_id?: string; steered?: boolean };
+    result: { state: string; session_id: string; turn_id?: string; queue_id?: string; steered?: boolean; receipt?: ClientInputReceipt };
   };
   "host.session.list": {
     params: { parent_session_id?: string; scope?: "owned" | "shared" };
@@ -1323,6 +1345,9 @@ export interface HostServiceContracts {
       timeout_ms?: number;
     };
     result: {
+      receipt?: ClientInputReceipt;
+      accepted_input?: AcceptedClientInputView;
+      pending_inputs?: AcceptedClientInputView[];
       session: {
         session_id: string;
         user_space_id?: string;
@@ -1373,6 +1398,7 @@ export interface HostServiceContracts {
       head_seq: number;
       snapshot_seq: number;
       records?: Array<{
+        receipt?: ClientInputReceipt;
         relation?: MessageRelation;
         at?: string;
         seq: number;

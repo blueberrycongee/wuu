@@ -35,8 +35,10 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
         const created = !contexts[session_id]; contexts[session_id] ??= { ...params, session_id, state: "idle" };
         return { session_id, created };
       }
-      case "host.session.inspect": return { session: contexts[params.session_id] };
-      case "host.session.history.read": return { session_id: params.session_id, records: [], head_seq: 0, snapshot_seq: 0, has_more: false };
+      case "host.session.inspect": return { session: contexts[params.session_id], ...(params.request_id ? {receipt:{request_id:"receipt-client",receipt_id:"receipt-one",host_request_id:params.request_id,client_id:"client",queue_id:"queue",session_id:params.session_id,plugin_id:"personal",accepted_at:"2026-10-23T00:00:00Z",revision:2,receipt_state:"accepted",execution_state:"held"}}:{}) };
+      case "host.session.send": return {state:"running",receipt:{receipt_id:params.resume_receipt_id}};
+      case "host.session.cancel": return {session_id:params.session_id,queue_id:params.queue_id,cancelled:true};
+      case "host.session.history.read": return { session_id: params.session_id, records: [{seq:1,role:"user",origin:"user",content:"same text",receipt:{receipt_id:"history-one",request_id:"one",message_seq:1}},{seq:2,role:"user",origin:"user",content:"same text",receipt:{receipt_id:"history-two",request_id:"two",message_seq:2}}], head_seq: 2, snapshot_seq: 2, has_more: false };
       case "host.session.context": return contexts[params.session_id] ?? { session_id: params.session_id, product_domain: "coding" };
       case "host.storage.keys": return { keys: [...storage.keys()].map(key => key.slice("user:".length)) };
       case "host.storage.get": return { value: storage.get(key) ?? null };
@@ -93,6 +95,20 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   await optional.close(); assert.deepEqual(storage, beforeOptional, "optional Memory has no Personal activation or storage effects");
   const binding = (await runtime.call("capability.invoke", { capability: "plugin.client.request", input: { method: "agents.ensure_default", input: {} }, execution_id: "create-main" })).output.result.agent;
   mainSession = binding.main_session_id; mainAgent = binding.agent_id;
+  const receiptClient = (method,input={}) => runtime.call("capability.invoke",{capability:"plugin.client.request",input:{method,input:{agent_id:mainAgent,...input}},execution_id:`receipt-${frames.length}`}).then(r=>r.output.result);
+  const receiptHistory=await receiptClient("agents.history");
+  assert.deepEqual(receiptHistory.records.map(r=>r.receipt?.receipt_id),["history-one","history-two"]);
+  const sendsBefore=frames.filter(f=>f.frame?.params?.service==="host.session.send").length;
+  const status=await receiptClient("agents.messages.status",{request_id:"receipt-client"});
+  assert.equal(status.receipt.receipt_id,"receipt-one");
+  await receiptClient("agents.messages.pending");
+  assert.equal(frames.filter(f=>f.frame?.params?.service==="host.session.send").length,sendsBefore,"reads never resume");
+  await assert.rejects(receiptClient("agents.messages.resume",{request_id:"receipt-client",receipt_id:"wrong"}),/identity/);
+  await receiptClient("agents.messages.resume",{request_id:"receipt-client",receipt_id:"receipt-one"});
+  const resumed=frames.filter(f=>f.frame?.params?.service==="host.session.send").at(-1).frame.params.params;
+  assert.equal(resumed.resume_receipt_id,"receipt-one");assert.equal(resumed.user_input_request_id,"receipt-client");assert.equal(resumed.input.prompt,"");
+  assert.equal((await receiptClient("agents.messages.cancel",{request_id:"receipt-client",receipt_id:"receipt-one"})).queue_id,"queue");
+
   const source = (ref, seconds) => [{ kind: "message", ref, occurred_at: new Date(Date.now() - 60_000 + seconds * 1000).toISOString() }];
   const record = (await runtime.tool("personal_memory_create", { key: "address.home", expected_revision: 0, content: "Synthetic Old Street", evidence: "explicit", sources: source("synthetic-message:1", 0) })).record;
   assert.equal((await runtime.service("query", { query: "address" })).records[0].id, record.id);

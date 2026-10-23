@@ -5,6 +5,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { existsSync } from "node:fs";
+import type { Writable } from "node:stream";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveWuuCommand } from "./wuuCommand";
@@ -34,7 +35,7 @@ class AppServerMessageTooLargeError extends Error {}
 type AppServerSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
-  stdio: ["pipe", "pipe", "pipe"];
+  stdio: ["pipe", "pipe", "pipe"] | ["pipe", "pipe", "pipe", "pipe"];
 };
 
 export type AppServerSpawn = (
@@ -44,7 +45,7 @@ export type AppServerSpawn = (
 ) => ChildProcessWithoutNullStreams;
 
 const defaultSpawnAppServer: AppServerSpawn = (command, args, options) =>
-  spawnChild(command, args, options);
+  spawnChild(command, args, options) as ChildProcessWithoutNullStreams;
 
 type DesktopPaths = { appPath: string; isPackaged: boolean };
 
@@ -692,12 +693,25 @@ export class AppServerClient {
     if (this.desktopPaths?.isPackaged) {
       configurePackagedCUA(helperEnv, resourcesPath, process.platform);
     }
+    const desktopOwner = this.userBinding?.productDomain === "personal";
+    if (desktopOwner) {
+      appServerArgs.push("--desktop-owner-pipe");
+      const calendarClientID = process.env.WUU_PERSONAL_GOOGLE_CALENDAR_CLIENT_ID?.trim();
+      if (calendarClientID) appServerArgs.push("--personal-calendar-client-id", calendarClientID);
+    }
     this.shutdownPromise = undefined;
     const child = this.spawnAppServer(command.command, appServerArgs, {
       cwd: command.cwd,
       env: helperEnv,
-      stdio: ["pipe", "pipe", "pipe"],
+      stdio: desktopOwner ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
     });
+    if (desktopOwner) {
+      const admission = child.stdio[3] as Writable | null;
+      if (!admission) { child.kill(); throw new Error("Desktop owner admission pipe is unavailable"); }
+      admission.on("error", () => child.kill());
+      // This private parent pipe is never reachable through renderer JSONL.
+      admission.end(JSON.stringify({ version: 1, user_space_id: this.userBinding!.userSpaceId, product_domain: this.userBinding!.productDomain }));
+    }
     this.child = child;
     this.userHostVerified = false;
     this.userHostReady = undefined;

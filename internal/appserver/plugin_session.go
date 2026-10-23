@@ -40,6 +40,17 @@ func (s *Server) notifyPluginTurnDiscarded(threadID string, entry queuedTurn, re
 }
 
 func (s *Server) notifyPluginTurnDiscardedWithRetry(threadID string, entry queuedTurn, reason string, retryable bool) {
+	if entry.clientInput != nil {
+		state := "cancelled"
+		if retryable {
+			state = "held"
+		}
+		_, err := session.ChangeClientInput(s.rt.SessionDir, *entry.clientInput, state, "", nil, nil, nil)
+		if err != nil && !errors.Is(err, session.ErrClientInputSettled) {
+			providers.DebugLogf("settle accepted client queue: %v", err)
+		}
+		return
+	}
 	reference := entry.snapshot.PluginTurn
 	if reference == nil {
 		return
@@ -361,6 +372,49 @@ func (s *Server) inspectPluginSessionOnce(pluginID string, params pluginhost.Ses
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
+	if s.clientInputReceiptsEnabled() {
+		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+			return result, false, err
+		}
+		if err := session.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID)); err != nil {
+			return result, false, err
+		}
+		if params.RequestID != "" {
+			row, found, err := session.ReadClientInput(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID), params.RequestID)
+			if err != nil {
+				return result, false, err
+			}
+			if found && (params.TurnID == "" || params.TurnID == row.Receipt.HostTurnID) {
+				if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+					return result, false, err
+				}
+				result.Receipt = &row.Receipt
+				result.AcceptedInput, err = acceptedInputView(row)
+				if err != nil {
+					return result, false, err
+				}
+				result.Turn = &pluginhost.SessionTurnInspection{RequestID: row.Receipt.HostRequestID, State: row.Receipt.ExecutionState, TurnID: row.Receipt.HostTurnID, QueueID: row.Receipt.QueueID, Error: row.Receipt.Error}
+				return result, terminalPluginTurnState(row.Receipt.ExecutionState) || row.Receipt.ExecutionState == "cancelled", nil
+			}
+		} else if metadata.Owner == "plugin:"+pluginID {
+			rows, err := session.ListUnsettledClientInputs(s.rt.SessionDir, s.clientInputScope(params.SessionID, pluginID))
+			if err != nil {
+				return result, false, err
+			}
+			for _, row := range rows {
+				if row.Receipt.PluginID == pluginID && row.Receipt.ReceiptState == "accepted" && row.Receipt.ExecutionState != "cancelled" {
+					if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+						return result, false, err
+					}
+					view, err := acceptedInputView(row)
+					if err != nil {
+						return result, false, err
+					}
+					result.PendingInputs = append(result.PendingInputs, *view)
+				}
+			}
+		}
+	}
 	if metadata.WorktreePath != "" {
 		summary := &pluginhost.SessionWorkspaceSummary{Kind: "worktree"}
 		if manager, managerErr := s.worktreeManager(metadata.WorktreeBaseRepo); managerErr == nil {
@@ -594,6 +648,32 @@ func (s *Server) cancelPluginSession(_ context.Context, pluginID string, params 
 		}
 	}
 	if queueID != "" {
+		if s.clientInputReceiptsEnabled() {
+			if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+				return pluginhost.SessionCancelResult{}, err
+			}
+			rows, err := session.ListUnsettledClientInputs(s.rt.SessionDir, s.clientInputScope(sessionID, pluginID))
+			if err != nil {
+				return pluginhost.SessionCancelResult{}, err
+			}
+			for _, row := range rows {
+				if row.Receipt.QueueID != queueID || row.Receipt.PluginID != pluginID {
+					continue
+				}
+				if row.Receipt.ReceiptState != "accepted" || row.Receipt.ExecutionState == "cancelled" {
+					return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID}, nil
+				}
+				if err := s.validateClientInputSpace(row.Receipt.UserSpaceID, row.Receipt.ProductDomain); err != nil {
+					return pluginhost.SessionCancelResult{}, err
+				}
+				if _, err := session.ChangeClientInput(s.rt.SessionDir, row, "cancelled", "", nil, nil, nil); err != nil {
+					return pluginhost.SessionCancelResult{}, err
+				}
+				s.removePluginQueuedTurn(sessionID, pluginID, queueID)
+				s.notifyQueuedTurnsDequeued(sessionID, []string{queueID})
+				return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID, Cancelled: true}, nil
+			}
+		}
 		entry, ok := s.removePluginQueuedTurn(sessionID, pluginID, queueID)
 		if !ok {
 			return pluginhost.SessionCancelResult{SessionID: sessionID, QueueID: queueID, Cancelled: false}, nil
@@ -646,7 +726,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	}
 	params.Cause = strings.TrimSpace(params.Cause)
 	params.IfRunning = strings.TrimSpace(params.IfRunning)
-	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0) {
+	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.ResumeReceiptID == "") {
 		return pluginhost.SessionSendResult{}, errors.New("plugin owner, request_id, session_id, and input.prompt are required")
 	}
 	if len(params.Input.Attachments) > 0 && params.UserInputRequestID == "" {
@@ -655,8 +735,18 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if err := s.validateMessageRelation(pluginID, params.SessionID, params.Relation); err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
+	if params.ResumeAccepted != (params.ResumeReceiptID != "") {
+		return pluginhost.SessionSendResult{}, errors.New("resume_accepted and resume_receipt_id must be provided together")
+	}
 	var clientAttachments []runtime.ClientInputAttachment
-	if params.UserInputRequestID != "" {
+	if params.ResumeReceiptID != "" {
+		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools {
+			return pluginhost.SessionSendResult{}, errors.New("resume must reference only the immutable accepted input")
+		}
+		if err := runtime.AuthorizeClientInputResume(ctx, pluginID, params.UserInputRequestID, params.ResumeReceiptID, params.SessionID, params.RequestID); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+	} else if params.UserInputRequestID != "" {
 		if err := runtime.AuthorizeClientUserInputRelation(ctx, pluginID, params.UserInputRequestID, params.Relation); err != nil {
 			return pluginhost.SessionSendResult{}, err
 		}
@@ -708,6 +798,33 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		return pluginhost.SessionSendResult{}, err
 	}
 	clientID := pluginSessionRequestClientID(pluginID, params.RequestID)
+	durableClient := s.clientInputReceiptsEnabled() && params.UserInputRequestID != "" && th.PersistHistory && params.IfRunning == pluginhost.SessionIfRunningQueue
+	if durableClient {
+		if err := s.validateClientInputSpace(metadata.UserSpaceID, metadata.ProductDomain); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if err := session.RecoverClientInputs(s.rt.SessionDir, s.clientInputScope(th.ID, pluginID)); err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		row, found, err := session.ReadClientInput(s.rt.SessionDir, s.clientInputScope(th.ID, pluginID), params.RequestID)
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if found {
+			if (params.ResumeReceiptID == "" && row.Fingerprint != clientInputFingerprint(params)) || (params.ResumeReceiptID != "" && params.ResumeReceiptID != row.Receipt.ReceiptID) || row.Receipt.RequestID != params.UserInputRequestID {
+				return pluginhost.SessionSendResult{}, session.ErrClientInputConflict
+			}
+			if params.ResumeAccepted {
+				return s.resumeAcceptedClientInput(ctx, pluginID, params, th, row)
+			}
+			return clientInputSendResult(row.Receipt), nil
+		}
+		if params.ResumeAccepted {
+			return pluginhost.SessionSendResult{}, errors.New("accepted input not found")
+		}
+	} else if params.ResumeAccepted {
+		return pluginhost.SessionSendResult{}, errors.New("resume requires a durable authenticated input")
+	}
 	if existing, ok := s.findSessionInput(th, clientID); ok {
 		return pluginhost.SessionSendResult(existing), nil
 	}
@@ -770,7 +887,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if err != nil {
 		return pluginhost.SessionSendResult{}, err
 	}
-	if len(clientAttachments) > 0 {
+	if len(clientAttachments) > 0 && !durableClient {
 		msg, err = s.persistInputWorkingCopies(ctx, params.SessionID, msg, received, false)
 		if err != nil {
 			return pluginhost.SessionSendResult{}, err
@@ -836,6 +953,9 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	snapshot.RequestContext = requestContext
 	snapshot.Control = control
 	snapshot.PluginTurn = &pluginTurnReference{PluginID: pluginID, RequestID: params.RequestID}
+	if durableClient {
+		return s.acceptClientSessionInput(ctx, pluginID, params, metadata, th, msg, snapshot, clientAttachments)
+	}
 
 	result, ok, err := s.trySubmitSessionInput(ctx, th, msg, params.IfRunning, snapshot)
 	if err != nil {

@@ -23,6 +23,7 @@ class Host {
   async call(method, p) {
     this.calls.push([method, p]);
     if (method === 'host.session.context') return this.context;
+    if (method === 'host.service.call' && p.service === 'host.personal') { if (p.params.operation === 'owner.check') throw new Error('calendar connection changes require the user client'); return {ok:true,value:{product_domain:'personal',provider:'google-calendar',user_space_id:'user-one',state:'unavailable',selected_calendars:[],error_code:'oauth_client_not_configured'}}; }
     const key = `${p.scope}:${p.key}`;
     if (method === 'host.storage.get') return { value: this.values.get(key) ?? null };
     assert.equal(method, 'host.storage.compare_exchange');
@@ -129,7 +130,7 @@ test('reload owns the generation; stopped or replaced runtimes cannot repopulate
 test('cache window mismatches are empty and aged successful data is explicitly stale', async () => {
   const f = await fixture(); await f.call('refresh', query);
   const mismatch = await f.call('agenda', { ...query, calendar_id: 'other' }); assert.equal(mismatch.events.length, 0); assert.equal(mismatch.freshness, 'empty'); assert.equal(mismatch.source, undefined);
-  const plugin = new PersonalCalendarPlugin({ clock: () => new Date('2026-10-18T12:20:00Z') });
+  const plugin = new PersonalCalendarPlugin({ reader: new GoogleCalendarReader({ authorize: async () => authorization, clock: current }), clock: () => new Date('2026-10-18T12:20:00Z') });
   plugin.initialize({ product_domain: 'personal', user_space_id: 'user-one' }, f.host, { signal: new AbortController().signal }); await plugin.activate();
   const aged = await plugin.invokeService({ service: 'calendar.personal', method: 'agenda', params: query, caller: 'kernel' }); assert.equal(aged.freshness, 'stale'); assert.equal(aged.events.length, 1);
 });

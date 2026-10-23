@@ -26,6 +26,13 @@ type ClientInputAttachment struct {
 }
 
 func ValidateClientUserInput(input ClientUserInput) error {
+	if input.ResumeReceiptID != "" {
+		if strings.TrimSpace(input.RequestID) == "" || len(input.RequestID) > 128 || strings.TrimSpace(input.ResumeReceiptID) == "" || len(input.ResumeReceiptID) > 128 || input.Prompt != "" || len(input.Attachments) > 0 || input.Relation != nil {
+			return errors.New("invalid explicit receipt resume intent")
+		}
+		return nil
+	}
+
 	if strings.TrimSpace(input.RequestID) == "" || len(input.RequestID) > 128 || (strings.TrimSpace(input.Prompt) == "" && len(input.Attachments) == 0) || len(input.Prompt) > 64000 {
 		return errors.New("invalid explicit client user_input")
 	}

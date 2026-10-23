@@ -117,6 +117,9 @@ type ManagedMetadata struct {
 // HistoryRecord is the durable session message shape. App-server remains
 // responsible for provider-specific ChatMessage conversion.
 type HistoryRecord struct {
+	AcceptedClientInput  *AcceptedClientInput `json:"-"`
+	AcceptedClientTurnID string               `json:"-"`
+
 	Relation *providers.MessageRelation `json:"relation,omitempty"`
 	// ExpectedHeldMessage is an admission-only compare-and-swap fence for an
 	// accepted steer. It is never serialized into conversation history.
@@ -969,11 +972,12 @@ func AppendContinuationHistoryRecord(sessDir, id string, rec HistoryRecord, cont
 	return appendFencedHistoryRecord(sessDir, id, rec, control, &baseline, nil)
 }
 
-// AppendAcceptedUserHistoryRecord fences concurrent edits and cancellation in
-// the same transaction that admits the input to conversation history.
-func AppendAcceptedUserHistoryRecord(sessDir, id string, rec HistoryRecord, accepted HeldUserWork) (int, error) {
+// AppendAcceptedUserHistoryRecord fences concurrent edits, cancellation, and
+// applicable control changes in the transaction that admits accepted input.
+// Acceptance does not replace the caller's control or continuation baseline.
+func AppendAcceptedUserHistoryRecord(sessDir, id string, rec HistoryRecord, accepted HeldUserWork, control, baseline *Control) (int, error) {
 	rec.ExpectedHeldMessage = accepted.MessageJSON
-	return appendFencedHistoryRecord(sessDir, id, rec, nil, nil, &accepted)
+	return appendFencedHistoryRecord(sessDir, id, rec, control, baseline, &accepted)
 }
 
 func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, baseline *Control, accepted *HeldUserWork) (int, error) {
@@ -982,6 +986,11 @@ func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, b
 		return 0, err
 	}
 	defer db.Close()
+	if rec.AcceptedClientInput != nil {
+		if _, err := db.Exec(`PRAGMA synchronous = FULL`); err != nil {
+			return 0, err
+		}
+	}
 
 	storeWriteMu.Lock()
 	defer storeWriteMu.Unlock()
@@ -996,28 +1005,8 @@ func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, b
 	} else if !ok {
 		return 0, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
 	}
-	if control != nil {
-		var manager, state string
-		var revision int64
-		if err := tx.QueryRow(`SELECT manager_id,revision,state FROM session_controls WHERE session_id=?`, id).Scan(&manager, &revision, &state); err != nil {
-			return 0, err
-		}
-		if control.SessionID != id || manager != control.ManagerID || revision != control.Revision || state != ControlActive {
-			return 0, ErrControlChanged
-		}
-	}
-	if baseline != nil {
-		if baseline.SessionID != id {
-			return 0, ErrControlChanged
-		}
-		current := Control{SessionID: id}
-		err := tx.QueryRow(`SELECT manager_id,revision,state FROM session_controls WHERE session_id=?`, id).Scan(&current.ManagerID, &current.Revision, &current.State)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return 0, err
-		}
-		if err := validateContinuationBaseline(current, *baseline); err != nil {
-			return 0, err
-		}
+	if err := validateHistoryControlTx(tx, id, control, baseline); err != nil {
+		return 0, err
 	}
 	if rec.Role == "user" && rec.ClientID != "" {
 		if err := validateInboxControls(tx, rec.ClientID); err != nil {
@@ -1045,6 +1034,41 @@ func appendFencedHistoryRecord(sessDir, id string, rec HistoryRecord, control, b
 		return 0, fmt.Errorf("commit history append: %w", err)
 	}
 	return seq, nil
+}
+
+func validateHistoryControlTx(tx *sql.Tx, id string, control, baseline *Control) error {
+	if control != nil {
+		var manager, state string
+		var revision int64
+		if err := tx.QueryRow(`SELECT manager_id,revision,state FROM session_controls WHERE session_id=?`, id).Scan(&manager, &revision, &state); err != nil {
+			return err
+		}
+		if control.SessionID != id || manager != control.ManagerID || revision != control.Revision || state != ControlActive {
+			return ErrControlChanged
+		}
+	}
+	if baseline != nil {
+		if baseline.SessionID != id {
+			return ErrControlChanged
+		}
+		current := Control{SessionID: id}
+		err := tx.QueryRow(`SELECT manager_id,revision,state FROM session_controls WHERE session_id=?`, id).Scan(&current.ManagerID, &current.Revision, &current.State)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err := validateContinuationBaseline(current, *baseline); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AppendAcceptedClientHistoryRecord retains the normal control and baseline
+// fences while the append transaction checks and settles the accepted envelope.
+func AppendAcceptedClientHistoryRecord(dir, id string, rec HistoryRecord, accepted AcceptedClientInput, turnID string, control, baseline *Control) (int, error) {
+	rec.AcceptedClientInput = &accepted
+	rec.AcceptedClientTurnID = turnID
+	return appendFencedHistoryRecord(dir, id, rec, control, baseline, nil)
 }
 
 // AppendHistoryRecords appends a related history segment in one transaction.
@@ -1409,6 +1433,15 @@ func migrateSchema(db *sql.DB) error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_plugin_turn_lifecycle_session
 			ON plugin_turn_lifecycle(plugin_id, session_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS client_input_receipts (
+            session_id TEXT NOT NULL, client_id TEXT NOT NULL, plugin_id TEXT NOT NULL,
+            host_request_id TEXT NOT NULL, request_id TEXT NOT NULL, queue_id TEXT NOT NULL UNIQUE,
+            summary_json TEXT NOT NULL, fingerprint TEXT NOT NULL, message_json TEXT NOT NULL,
+            runtime_json TEXT NOT NULL, selection_json TEXT NOT NULL, live_owner TEXT NOT NULL,
+            PRIMARY KEY(session_id,client_id), UNIQUE(plugin_id,host_request_id),
+            UNIQUE(session_id,plugin_id,request_id),
+            FOREIGN KEY(session_id) REFERENCES sessions(id) ON DELETE CASCADE
+        )`,
 		`CREATE TABLE IF NOT EXISTS held_user_work (
 				session_id TEXT NOT NULL,
 				position INTEGER NOT NULL,
@@ -2355,6 +2388,11 @@ func sessionExistsTx(tx *sql.Tx, id string) (bool, error) {
 // The returned seq is the stable address of the appended record.
 func appendHistoryRecordTx(tx *sql.Tx, id string, rec HistoryRecord) (int, error) {
 	if rec.Role == "user" && rec.ClientID != "" {
+		if err := validateAcceptedClientInputTx(tx, id, rec); err != nil {
+			return 0, err
+		}
+	}
+	if rec.Role == "user" && rec.ClientID != "" {
 		if err := consumeHeldUserWorkTx(tx, id, rec); err != nil {
 			return 0, err
 		}
@@ -2364,6 +2402,9 @@ func appendHistoryRecordTx(tx *sql.Tx, id string, rec HistoryRecord) (int, error
 		return 0, fmt.Errorf("next history sequence: %w", err)
 	}
 	if err := insertHistoryRecordTx(tx, id, nextSeq, rec); err != nil {
+		return 0, err
+	}
+	if err := settleClientInputTx(tx, rec, nextSeq); err != nil {
 		return 0, err
 	}
 	return nextSeq, nil

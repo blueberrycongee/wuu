@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=personal"
   },
   "wuu": {

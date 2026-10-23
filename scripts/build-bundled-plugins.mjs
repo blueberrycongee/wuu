@@ -1,3 +1,4 @@
+import { buildPersonalDesktop } from "./build-personal-desktop.mjs";
 import { createRequire } from "node:module";
 import { readdir, readFile, mkdir, writeFile, rename, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -19,6 +20,7 @@ const pluginIDs = (await readdir(pluginsRoot, { withFileTypes: true }))
 if (selected && !pluginIDs.includes(selected)) throw new Error(`unknown bundled plugin: ${selected}`);
 
 for (const id of selected ? [selected] : pluginIDs) {
+  if (id === "personal") await buildPersonalDesktop(check);
   const packageRoot = join(root, "internal/plugin/bundled", id);
   const manifest = JSON.parse(await readFile(join(packageRoot, "plugin.json"), "utf8"));
   const result = await build({

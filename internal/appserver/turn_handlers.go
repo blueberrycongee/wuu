@@ -47,6 +47,7 @@ import (
 )
 
 type queuedTurn struct {
+	clientInput         *session.AcceptedClientInput
 	id                  string
 	msg                 providers.ChatMessage
 	followups           []providers.ChatMessage
@@ -106,7 +107,8 @@ const (
 )
 
 type turnAdmissionHooks struct {
-	acceptedUserWork *session.HeldUserWork
+	acceptedUserWork    *session.HeldUserWork
+	acceptedClientInput *session.AcceptedClientInput
 	// afterLease runs without th.mu after the durable lease has been acquired
 	// and disk state refreshed. The lease remains attached to th, so helpers may
 	// take th.mu and perform admission-only side effects without racing another
@@ -3977,6 +3979,13 @@ func (s *Server) drainQueuedTurns(threadID string) (capacityFull bool) {
 		retryableAdmission = false
 		requeueCandidate = false
 	}
+	if entry.clientInput != nil && err != nil && !executionBusy && !retryableAdmission {
+		if _, holdErr := session.ChangeClientInput(s.rt.SessionDir, *entry.clientInput, "held", "", nil, nil, nil); holdErr == nil {
+			err = nil
+		} else if errors.Is(holdErr, session.ErrClientInputSettled) {
+			err = nil
+		}
+	}
 	if errors.Is(err, errServerClosed) && entry.snapshot.PluginTurn != nil {
 		// A claimed item is no longer in Close's pending-queue snapshot. Only
 		// shutdown before durable admission is replayable; a rejected launcher
@@ -4259,8 +4268,20 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			}
 		}
 	}
+	// Bind receipt admission to the same stable turn identity used by execution
+	// and history reconstruction, while the thread lock protects turn order.
+	if th.PersistHistory {
+		turnID = fmt.Sprintf("%s-turn-%04d", th.ID, len(th.Turns)+1)
+	}
 	if th.PersistHistory && !userAlreadyPersisted {
-		seq, err := appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline, hooks.acceptedUserWork)
+		var seq int
+		var err error
+		if hooks.acceptedClientInput != nil {
+			rec := historyRecordFromPersistedMessage(persistedMessageFromChatMessage(userMsg))
+			seq, err = session.AppendAcceptedClientHistoryRecord(s.rt.SessionDir, th.ID, rec, *hooks.acceptedClientInput, turnID, snapshot.Control, snapshot.ExecutionControlBaseline)
+		} else {
+			seq, err = appendControlledChatMessage(s.rt.SessionDir, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline, hooks.acceptedUserWork)
+		}
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()
@@ -4291,13 +4312,6 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		turn, resumed = th.resumePersistedUserTurnLocked(userMsg.ClientID, now)
 	}
 	if !resumed {
-		if th.PersistHistory {
-			// Persisted turns are reconstructed from conversation order after a
-			// restart or cross-process refresh. Give the live turn that same stable
-			// ID now so item/turn references returned to clients remain valid after
-			// the next admission refresh.
-			turnID = fmt.Sprintf("%s-turn-%04d", th.ID, len(th.Turns)+1)
-		}
 		turn = th.startTurnLocked(turnID, userMsg, now)
 	} else {
 		turnID = turn.ID
@@ -4366,6 +4380,11 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 		}
 		acceptedUserWork = &row
 	}
+	if entry.clientInput != nil {
+		if err := s.materializeAcceptedClientInput(&entry); err != nil {
+			return false, err
+		}
+	}
 	entry.msg.Steered = false
 
 	if s.beforeQueuedTurnThreadLookupForTest != nil {
@@ -4391,7 +4410,8 @@ func (s *Server) startQueuedTurn(ctx context.Context, threadID string, entry que
 		false,
 		turnReadOnlyFail,
 		turnAdmissionHooks{
-			acceptedUserWork: acceptedUserWork,
+			acceptedUserWork:    acceptedUserWork,
+			acceptedClientInput: entry.clientInput,
 			afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
 				if entry.durable {
 					if _, found := s.findSessionInput(admitted, entry.msg.ClientID); found {

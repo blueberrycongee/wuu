@@ -196,9 +196,12 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
-	rt      *runtime.Session
-	out     io.Writer
-	writeMu sync.Mutex
+	clientInputMu    sync.Mutex
+	clientInputOwner string
+	clientInputLease *session.ThreadExecutionLease
+	rt               *runtime.Session
+	out              io.Writer
+	writeMu          sync.Mutex
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry
@@ -424,6 +427,12 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 	if bootOwner {
 		s.recoverSideThreadsOnBoot()
 		s.settleOnBoot()
+	}
+	if s.clientInputReceiptsEnabled() {
+		if err := session.RecoverClientInputs(rt.SessionDir, s.clientInputScope("", "")); err != nil {
+			s.startupErr = err
+			return s
+		}
 	}
 	if s.presenceLease != nil {
 		if err := s.presenceLease.FinalizeStartup(); err != nil {
@@ -836,6 +845,20 @@ func (s *Server) Close() {
 		s.engineHostMu.Unlock()
 		if releaseHost != nil {
 			releaseHost()
+		}
+		s.clientInputMu.Lock()
+		if s.clientInputLease != nil {
+			_ = s.clientInputLease.Release()
+			s.clientInputLease = nil
+		}
+		clientInputOwner := s.clientInputOwner
+		s.clientInputMu.Unlock()
+		if s.clientInputReceiptsEnabled() && clientInputOwner != "" {
+			scope := s.clientInputScope("", "")
+			scope.LiveOwner = clientInputOwner
+			if err := session.RecoverClientInputs(s.rt.SessionDir, scope); err != nil {
+				providers.DebugLogf("recover accepted inputs on close: %v", err)
+			}
 		}
 		s.releasePresence()
 	})

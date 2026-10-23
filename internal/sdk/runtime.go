@@ -12,6 +12,8 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/personalcalendar"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -39,6 +41,10 @@ type Host struct {
 // Options configures one workspace or explicitly domain-bound user runtime. Empty WorkDir and HomeDir values
 // use the process working directory and HOME respectively.
 type Options struct {
+	// PersonalCalendar is trusted local-host composition; zero stays unavailable.
+	// The SDK replaces StateDir with its resolved Personal state root.
+	PersonalCalendar                     personalcalendar.DesktopOptions
+	OpenPersonalCalendarAuthorizationURL func(context.Context, string) error
 	// UserHostIsolationMode defaults to logical_memory for a user binding. It
 	// separates memory APIs and automatic context by domain, but does not promise
 	// OS/file confidentiality. verified_host additionally requires a trusted verifier.
@@ -209,8 +215,32 @@ func New(opts Options) (*Runtime, error) {
 	}
 	result := &Runtime{core: core}
 	if binding.IsUser() {
-		result.userHost, err = appserver.NewUserHost(core)
+		personalOptions := personalhost.Options{}
+		if binding.Domain() == "personal" && host.Kind == runtime.HostLocal && !opts.SafeMode && opts.PersonalCalendar.ClientID != "" {
+			stateHome, pathErr := statepath.Home(homeDir)
+			if pathErr != nil {
+				_, _ = core.Cleanup()
+				return nil, pathErr
+			}
+			calendarOptions := opts.PersonalCalendar
+			calendarOptions.StateDir = filepath.Join(binding.State(stateHome), "calendar")
+			broker, calendarErr := personalcalendar.NewDesktop(calendarOptions)
+			if calendarErr != nil {
+				personalOptions.UnavailableCode = "secure_store_unavailable"
+				var failure *personalcalendar.Failure
+				if errors.As(calendarErr, &failure) {
+					personalOptions.UnavailableCode = failure.Code
+				}
+			} else {
+				personalOptions.Calendar = broker
+				personalOptions.OpenAuthorizationURL = opts.OpenPersonalCalendarAuthorizationURL
+			}
+		}
+		result.userHost, err = appserver.NewUserHost(core, personalOptions)
 		if err != nil {
+			if personalOptions.Calendar != nil {
+				_ = personalOptions.Calendar.Close()
+			}
 			_, _ = core.Cleanup()
 			return nil, err
 		}
@@ -295,11 +325,12 @@ func (r *Runtime) Close() error {
 	}
 	r.closed = true
 	if r.userHost != nil {
-		r.userHost.Close()
+		r.closeErr = r.userHost.Close()
 		r.userHost = nil
 	}
 	if r.core != nil {
-		_, r.closeErr = r.core.Cleanup()
+		_, coreErr := r.core.Cleanup()
+		r.closeErr = errors.Join(r.closeErr, coreErr)
 		r.core = nil
 	}
 	return r.closeErr

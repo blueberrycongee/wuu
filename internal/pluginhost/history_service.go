@@ -66,7 +66,8 @@ type SessionAttachmentReadResult struct {
 }
 
 type SessionHistoryRecord struct {
-	Relation *providers.MessageRelation `json:"relation,omitempty"`
+	Receipt  *providers.ClientInputReceipt `json:"receipt,omitempty"`
+	Relation *providers.MessageRelation    `json:"relation,omitempty"`
 	// ProviderItemID matches a projected thread item's source_id when available;
 	// EngineTurnID identifies a native engine turn. Neither is a host item/turn ID.
 	ProviderItemID   string                     `json:"provider_item_id,omitempty"`

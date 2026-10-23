@@ -105,3 +105,35 @@ func TestClientUserInputRelationCannotBeChangedOrOmitted(t *testing.T) {
 		}
 	}
 }
+
+func TestClientResumeProofCannotMintNewInputOrChangeReceipt(t *testing.T) {
+	input := ClientUserInput{RequestID: "client", ResumeReceiptID: "receipt"}
+	if err := ValidateClientUserInput(input); err != nil {
+		t.Fatal(err)
+	}
+	ctx := WithClientUserInput(context.Background(), "personal", input)
+	if err := AuthorizeClientUserInput(ctx, "personal", "client", "main", "", "host"); err == nil {
+		t.Fatal("resume intent minted a new message")
+	}
+	for _, target := range []struct{ plugin, request, receipt string }{{"other", "client", "receipt"}, {"personal", "other", "receipt"}, {"personal", "client", "other"}} {
+		if err := AuthorizeClientInputResume(ctx, target.plugin, target.request, target.receipt, "main", "host"); err == nil {
+			t.Fatal("mismatched resume admitted")
+		}
+	}
+	if err := AuthorizeClientInputResume(ctx, "personal", "client", "receipt", "main", "host"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AuthorizeClientInputResume(ctx, "personal", "client", "receipt", "other", "host"); err == nil {
+		t.Fatal("cross session resume admitted")
+	}
+	input.Prompt = "new payload"
+	if err := ValidateClientUserInput(input); err == nil {
+		t.Fatal("mixed resume and input admitted")
+	}
+	admission, cancel := context.WithCancel(context.Background())
+	detached := context.WithoutCancel(WithClientUserInput(admission, "personal", ClientUserInput{RequestID: "client", ResumeReceiptID: "receipt"}))
+	cancel()
+	if err := AuthorizeClientInputResume(detached, "personal", "client", "receipt", "main", "host"); err == nil {
+		t.Fatal("detached proof revived")
+	}
+}

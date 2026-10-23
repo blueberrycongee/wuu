@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -14,6 +15,101 @@ import (
 	sessionstore "github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
+
+// Acceptance must not bypass the control fences used by ordinary admission.
+// Exercise the combined storage boundary before a plugin recovery adapter uses it.
+func TestAcceptedChatHistoryRetainsAdmissionFences(t *testing.T) {
+	for _, mode := range []string{"unchanged", "takeover", "baseline_changed", "cancelled", "edited", "runtime_changed"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			sess, err := sessionstore.Create(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			control, err := sessionstore.ChangeControl(dir, sess.ID, "manager", sessionstore.ControlActive, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			msg := providers.ChatMessage{Role: "user", Origin: "user", Content: "accepted client text", ClientID: "plugin:fixture:host-request"}
+			payload, err := json.Marshal(msg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot := turnRuntimeSnapshot{Control: &control, PluginTurn: &pluginTurnReference{PluginID: "fixture", RequestID: "host-request", QueueID: "distinct-queue-id"}}
+			runtimeJSON, err := json.Marshal(snapshot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			accepted := sessionstore.HeldUserWork{ID: msg.ClientID, Origin: sessionstore.HeldUserWorkOriginQueue, MessageJSON: payload, RuntimeJSON: runtimeJSON}
+			if inserted, err := sessionstore.AcceptHeldUserWork(dir, sess.ID, accepted); err != nil || !inserted {
+				t.Fatalf("accept: %v, %v", inserted, err)
+			}
+			baseline := control
+			appendControl := &control
+			switch mode {
+			case "takeover", "baseline_changed":
+				current, err := sessionstore.ChangeControl(dir, sess.ID, "manager", sessionstore.ControlTakenOver, control.Revision)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mode == "baseline_changed" {
+					// Even a new active control must not replace the original continuation baseline.
+					current, err = sessionstore.ChangeControl(dir, sess.ID, "manager", sessionstore.ControlActive, current.Revision)
+					if err != nil {
+						t.Fatal(err)
+					}
+					appendControl = &current
+				}
+			case "cancelled":
+				if _, err := sessionstore.CancelHeldUserWork(dir, sess.ID, accepted.ID, accepted.Origin); err != nil {
+					t.Fatal(err)
+				}
+			case "edited", "runtime_changed":
+				next := accepted
+				if mode == "edited" {
+					next.MessageJSON = []byte(`{"Role":"user","Content":"new text"}`)
+				} else {
+					next.RuntimeJSON = []byte(`{"DisableTools":true}`)
+				}
+				if changed, err := sessionstore.UpdateHeldUserWork(dir, sess.ID, next, accepted); err != nil || !changed {
+					t.Fatalf("edit: %v, %v", changed, err)
+				}
+			}
+			seq, appendErr := appendControlledChatMessage(dir, sess.ID, msg, appendControl, &baseline, &accepted)
+			records, err := sessionstore.LoadHistoryRecords(dir, sess.ID, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			held, err := sessionstore.LoadHeldUserWork(dir, sess.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "unchanged" {
+				if appendErr != nil || seq < 1 || len(records) != 1 || len(held) != 0 {
+					t.Fatalf("atomic admission: seq=%d history=%d held=%d err=%v", seq, len(records), len(held), appendErr)
+				}
+				if _, err := appendControlledChatMessage(dir, sess.ID, msg, appendControl, &baseline, &accepted); !errors.Is(err, sessionstore.ErrHeldUserWorkSettled) {
+					t.Fatalf("duplicate admitted: %v", err)
+				}
+				return
+			}
+			if mode == "takeover" || mode == "baseline_changed" {
+				if !errors.Is(appendErr, sessionstore.ErrControlChanged) {
+					t.Errorf("stale %s append returned %v; want ErrControlChanged", mode, appendErr)
+				}
+			} else if appendErr == nil {
+				t.Error("settled or changed accepted payload admitted")
+			}
+			wantHeld := 1
+			if mode == "cancelled" {
+				wantHeld = 0
+			}
+			if seq != 0 || len(records) != 0 || len(held) != wantHeld {
+				t.Fatalf("rejected append changed durable state: seq=%d history=%d held=%d", seq, len(records), len(held))
+			}
+		})
+	}
+}
 
 func TestChatHistoryRoundTripKeepsRichToolResult(t *testing.T) {
 	sessDir := t.TempDir()

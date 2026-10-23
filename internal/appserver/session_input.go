@@ -21,11 +21,12 @@ const (
 )
 
 type sessionInputResult struct {
-	State     string `json:"state"`
-	SessionID string `json:"session_id"`
-	TurnID    string `json:"turn_id,omitempty"`
-	QueueID   string `json:"queue_id,omitempty"`
-	Steered   bool   `json:"steered,omitempty"`
+	Receipt   *providers.ClientInputReceipt `json:"receipt,omitempty"`
+	State     string                        `json:"state"`
+	SessionID string                        `json:"session_id"`
+	TurnID    string                        `json:"turn_id,omitempty"`
+	QueueID   string                        `json:"queue_id,omitempty"`
+	Steered   bool                          `json:"steered,omitempty"`
 }
 
 // Legacy project history used the plugin origin. Both origins are generated

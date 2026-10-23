@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 	if err := session.AppendHistoryRecord(dir, "private", session.HistoryRecord{Role: "user", Content: "read", Files: files}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := readPluginSessionHistory(context.Background(), home, "personal", pluginhost.SessionHistoryReadParams{SessionID: "private", StartSeq: 1})
+	page, err := readPluginSessionHistory(context.Background(), home, "personal", userspace.Binding{}, pluginhost.SessionHistoryReadParams{SessionID: "private", StartSeq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add Personal interactive answer forms with durable submission receipts and read-only Google Calendar connection settings. Calendar remains unavailable until configured; Personal action review remains unavailable pending its production policy and authorization adapters.
+
 - Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.
 - Add a persistent user-host SDK and scoped notification routing. Calendar authorization/write-provider wiring, native-device verification, and production push delivery remain integration requirements.
 - Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
@@ -41,6 +43,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.
 
 ### Fixed
+
+- Recover Personal drafts and uncertain sends across restarts, retry unavailable quote sources, and keep reply panels compact. Preserve stale calendar warnings and associate delayed authorization cleanup diagnostics with their original attempt.
 
 - Check for desktop updates every 30 minutes instead of every six hours.
 

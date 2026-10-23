@@ -213,6 +213,7 @@ const (
 	HostServiceSessionList           HostServiceMethod = "host.session.list"
 	HostServiceSessionCancel         HostServiceMethod = "host.session.cancel"
 	HostServiceSessionInspect        HostServiceMethod = "host.session.inspect"
+	HostServicePersonal              HostServiceMethod = "host.personal"
 	HostServiceSessionContext        HostServiceMethod = "host.session.context"
 	HostServiceSessionHistoryRead    HostServiceMethod = "host.session.history.read"
 	HostServiceSessionHistorySearch  HostServiceMethod = "host.session.history.search"
@@ -359,6 +360,8 @@ type SessionInputPresentation struct {
 }
 
 type SessionSendParams struct {
+	ResumeReceiptID string `json:"resume_receipt_id,omitempty"`
+	ResumeAccepted  bool   `json:"resume_accepted,omitempty"`
 	// DisableTools prohibits every tool for this turn. Unsupported with steer or external engines.
 	DisableTools bool                       `json:"disable_tools,omitempty"`
 	Relation     *providers.MessageRelation `json:"relation,omitempty"`
@@ -376,11 +379,12 @@ type SessionSendParams struct {
 }
 
 type SessionSendResult struct {
-	State     string `json:"state"`
-	SessionID string `json:"session_id"`
-	TurnID    string `json:"turn_id,omitempty"`
-	QueueID   string `json:"queue_id,omitempty"`
-	Steered   bool   `json:"steered,omitempty"`
+	Receipt   *providers.ClientInputReceipt `json:"receipt,omitempty"`
+	State     string                        `json:"state"`
+	SessionID string                        `json:"session_id"`
+	TurnID    string                        `json:"turn_id,omitempty"`
+	QueueID   string                        `json:"queue_id,omitempty"`
+	Steered   bool                          `json:"steered,omitempty"`
 }
 
 type SessionListParams struct {
@@ -449,11 +453,22 @@ type SessionControlResult struct {
 	Revision  int64  `json:"revision"`
 }
 
+type SessionAcceptedInput struct {
+	Receipt     providers.ClientInputReceipt `json:"receipt"`
+	Prompt      string                       `json:"prompt"`
+	Relation    *providers.MessageRelation   `json:"relation,omitempty"`
+	Attachments []SessionInputAttachment     `json:"attachments,omitempty"`
+}
+
 type SessionInspectResult struct {
-	Session   SessionSummary           `json:"session"`
-	Turn      *SessionTurnInspection   `json:"turn,omitempty"`
-	Workspace *SessionWorkspaceSummary `json:"workspace,omitempty"`
-	TimedOut  bool                     `json:"timed_out,omitempty"`
+	AcceptedInput *SessionAcceptedInput `json:"accepted_input,omitempty"`
+
+	Receipt       *providers.ClientInputReceipt `json:"receipt,omitempty"`
+	PendingInputs []SessionAcceptedInput        `json:"pending_inputs,omitempty"`
+	Session       SessionSummary                `json:"session"`
+	Turn          *SessionTurnInspection        `json:"turn,omitempty"`
+	Workspace     *SessionWorkspaceSummary      `json:"workspace,omitempty"`
+	TimedOut      bool                          `json:"timed_out,omitempty"`
 }
 
 type SessionTurnInspection struct {

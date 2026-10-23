@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/clientauthority"
+	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -29,6 +31,8 @@ var ErrUserHostClientOverflow = errors.New("user host client fell behind; reconn
 // Closing a connection never closes this host or replaces its session router.
 // Headless hosts do not negotiate client computer/browser reverse-RPC tools.
 type UserHost struct {
+	personal            *personalhost.Host
+	unbindPersonal      func()
 	runtime             *runtime.Session
 	mu                  sync.Mutex
 	dispatchMu          sync.Mutex
@@ -37,6 +41,8 @@ type UserHost struct {
 	pending             map[string]userHostResponse
 	next                uint64
 	closed              bool
+	closeDone           chan struct{}
+	closeErr            error
 	attentionCtx        context.Context
 	attentionCancel     context.CancelFunc
 	attentionDone       chan struct{}
@@ -63,7 +69,7 @@ type userHostConnection struct {
 	failure     error
 }
 
-func NewUserHost(rt *runtime.Session) (*UserHost, error) {
+func NewUserHost(rt *runtime.Session, options ...personalhost.Options) (*UserHost, error) {
 	if rt == nil || !rt.UserBinding().IsUser() {
 		return nil, errors.New("persistent user host requires an explicit user binding")
 	}
@@ -91,19 +97,30 @@ func NewUserHost(rt *runtime.Session) (*UserHost, error) {
 			h.server.storageMaintenanceCancel = nil
 		}
 	}
+	personalOptions := personalhost.Options{}
+	if len(options) > 0 {
+		personalOptions = options[0]
+	}
+	h.personal = personalhost.New(rt.UserBinding(), personalOptions)
+	if rt.PluginSessionRouter != nil {
+		h.unbindPersonal = rt.PluginSessionRouter.BindPersonalHost(h.personal.Call)
+	}
 	go h.runAttentionPolicy()
 	return h, nil
 }
 
-func (h *UserHost) Close() {
+func (h *UserHost) Close() error {
 	if h == nil {
-		return
+		return nil
 	}
 	h.mu.Lock()
 	if h.closed {
+		done := h.closeDone
 		h.mu.Unlock()
-		return
+		<-done
+		return h.closeErr
 	}
+	h.closeDone = make(chan struct{})
 	h.closed = true
 	h.attentionCancel()
 	connections := make([]*userHostConnection, 0, len(h.connections))
@@ -114,8 +131,14 @@ func (h *UserHost) Close() {
 	for _, c := range connections {
 		c.cancel()
 	}
+	if h.unbindPersonal != nil {
+		h.unbindPersonal()
+	}
+	h.closeErr = h.personal.Close()
 	h.server.Close()
 	<-h.attentionDone
+	close(h.closeDone)
+	return h.closeErr
 }
 
 // Write accepts one JSONL frame from the single server. A slow or disconnected
@@ -262,6 +285,7 @@ func (h *UserHost) Serve(ctx context.Context, in io.Reader, out io.Writer, regis
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	ctx = clientauthority.BindConnection(ctx)
 	h.mu.Lock()
 	if h.closed {
 		h.mu.Unlock()

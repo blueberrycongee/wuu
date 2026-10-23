@@ -55,7 +55,7 @@ async function fixture({ host = new Host(), provider = new Provider(), authoriza
   const plugin = new PersonalCalendarPlugin({ clock: now, ...(writer ? { writer: new GoogleCalendarWriter({ authorize: authorization, fetch: provider.fetch, clock: now }) } : {}) });
   const lifetime = new AbortController(); plugin.initialize({ product_domain: 'personal', user_space_id: 'one' }, host, { signal: lifetime.signal }); await plugin.activate();
   const service = (method, params = {}) => plugin.invokeService({ service: 'calendar.personal', method, params, caller: 'kernel' });
-  const client = async (method, input = {}) => (await plugin.invokeCapability({ capability: 'plugin.client.request', input: { method: `calendar.${method}`, input } })).output.result;
+  const client = async (method, input = {}) => (await plugin.invokeCapability({ capability: 'plugin.client.request', input: { method: `calendar.${method}`, input } }, { call: (name,p,...args) => name === 'host.service.call' && p.service === 'host.personal' && p.params.operation === 'owner.check' ? Promise.resolve({ok:true,value:{ok:true}}) : host.call(name,p,...args) })).output.result;
   const confirm = op => client('operations.confirm', { operation_id: op.operation_id, expected_revision: op.revision, preview_digest: op.preview_digest });
   return { host, provider, plugin, lifetime, service, client, confirm };
 }

@@ -94,6 +94,11 @@ func (s *Server) notifyPluginTurnInterruptedAsync(input pluginhost.AgentTurnInte
 }
 
 func (s *Server) persistPluginTurnLifecycle(pluginID string, input pluginhost.AgentTurnLifecycleInput) (bool, error) {
+	if s.clientInputReceiptsEnabled() {
+		if err := session.SettleClientInputExecution(s.rt.SessionDir, s.clientInputScope(input.ThreadID, pluginID), input.RequestID, input.TurnID, input.State, input.Error); err != nil {
+			return false, err
+		}
+	}
 	terminal := pluginTurnLifecycleTerminal(input.State)
 	if !terminal {
 		return false, nil

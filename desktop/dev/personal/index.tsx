@@ -1,6 +1,7 @@
 /** Synthetic runtime fixture around the production Personal contribution. No account, native local file reads or external writes. */
 import * as React from "react";
 import { createRoot } from "react-dom/client";
+import type { ClientInputReceipt, MessageRelation } from "../../../packages/plugin-sdk/src/index";
 import type { PluginHostOptions } from "../../src/renderer/plugins/PluginHost";
 import { PluginConversationMessage, PluginConversationView } from "../../src/renderer/plugins/PluginConversation";
 import { App } from "../../src/renderer/App";
@@ -70,10 +71,68 @@ const memories = [
   {id:"m2",revision:1,status:"active",content:"约朋友吃饭时，更喜欢安静、方便聊天的地方。",contributor_agent_id:"mosaic",updated_by_agent_id:"mosaic",effective_at:now,evidence:"explicit",source_at:now,sources:[{kind:"message",ref:"synthetic:2",occurred_at:now}]},
   {id:"m3",revision:1,status:"active",content:"周末可能更愿意把时间留给户外活动。",contributor_agent_id:"mosaic",updated_by_agent_id:"mosaic",effective_at:now,evidence:"inferred",source_at:now,sources:[{kind:"message",ref:"synthetic:3",occurred_at:now}]},
 ];
-const histories:Record<string,Array<{seq:number;role:string;content:string;at?:string;reactions?:{owner?:string;agent?:string;revision:number};relation?:{reply_to?:{session_id:string;seq:number}};attachments?:Array<Record<string,unknown>>}>> = {
+const histories:Record<string,Array<{seq:number;role:string;content:string;receipt?:ClientInputReceipt;at?:string;reactions?:{owner?:string;agent?:string;revision:number};relation?:{reply_to?:{session_id:string;seq:number}};attachments?:Array<Record<string,unknown>>}>> = {
   mosaic:[{seq:1,role:"user",content:"最近事情有点多，帮我看看还有什么需要我决定？"},{seq:2,role:"assistant",at:now,content:"现在有一件事需要你决定：**周五晚餐的地点**。我已经把选择缩小到三家安静、方便聊天的餐厅，等你挑一个再预订。\n\n京都行程还在整理，今天不用操心。这个月的阅读清单也已经准备好了。"},{seq:3,role:"user",content:"好，京都那边记得每天留一点休息时间。"},{seq:4,role:"assistant",at:now,content:"记住了。每天都会留一段空白，下午可以歇一会儿。我会按这个偏好继续安排。\n\n我们先看周五晚餐吧：你更想在公司附近，还是离家近一些？"}],
 };
 for (const history of Object.values(histories)) for (const record of history) record.at ??= now;
+const receiptRows = new Map<string, {receipt: ClientInputReceipt; prompt:string; relation?:MessageRelation; attachments?:Array<{filename:string;media_type:string;sha256:string}>}>();
+const fixtureReceipt = (request:string,state:ClientInputReceipt["execution_state"],seq?:number):ClientInputReceipt => ({request_id:request,receipt_id:`receipt-${request}`,host_request_id:`host-${request}`,client_id:`client-${request}`,queue_id:`queue-${request}`,session_id:"synthetic-main",plugin_id:"personal",owner:"plugin:personal",user_space_id:"local",product_domain:"personal",agent_id:"mosaic",receipt_state:seq?"in_history":"accepted",execution_state:state,accepted_at:now,revision:seq?4:2,...(seq?{message_seq:seq,hostturn_id:`turn-${request}`}:{})});
+if(new URLSearchParams(location.search).has("receipts")) {
+ histories.mosaic = [
+ {seq:1,role:"user",content:"这条已收到，处理已经完成。",receipt:fixtureReceipt("done","completed",1)},
+ {seq:2,role:"assistant",content:"好的，已经整理完成。"},
+ {seq:3,role:"user",content:"这条已收到，但处理遇到了错误。",receipt:fixtureReceipt("failed","failed",3)},
+ {seq:4,role:"user",content:"宿主重启前已开始处理；结果未知，不会自动重放。",receipt:fixtureReceipt("unknown","unconfirmed",4)}
+ ];
+ receiptRows.set("held",{receipt:fixtureReceipt("held","held"),prompt:"附件已经保存在宿主，等我明确继续。",attachments:[{filename:"合成附件.txt",media_type:"text/plain",sha256:"a".repeat(64)}]});
+}
+if (new URLSearchParams(location.search).has("replyReceipts") && receiptRows.has("held")) {
+  receiptRows.get("held")!.relation = {reply_to:{session_id:"synthetic-main",seq:2}};
+  receiptRows.set("main-only",{receipt:fixtureReceipt("main-only","held"),prompt:"仅主会话的 pending，不应出现在 Reply。"});
+}
+const scenarioLabels = {
+  default: "已送达结果 / Held", sending: "发送中（手动释放 ACK）", processing: "处理中",
+  "reject-before-accept": "接收前明确拒绝", "ack-unknown": "已接收但 ACK 未知", "retry-same-id": "未接收的网络失败 / 同 ID 重试",
+};
+type SendScenario = keyof typeof scenarioLabels;
+const requestedScenario = new URLSearchParams(location.search).get("sendScenario") || "default";
+const receiptScenario = {
+  mode: (requestedScenario in scenarioLabels ? requestedScenario : "default") as SendScenario,
+  attempts: [] as Array<{request_id:string}>, accepted: 0, hidden: new Set<string>(),
+  release: undefined as (() => void) | undefined,
+};
+Object.assign(window, { __receiptScenario: receiptScenario });
+const refreshScenarioControls = () => window.dispatchEvent(new Event("receipt-scenario-change"));
+async function sendReceiptScenario(data:Record<string,any>, userInput?:{attachments?:ReadonlyArray<{filename:string;media_type:string;sha256:string}>}) {
+  receiptScenario.attempts.push(structuredClone(data) as {request_id:string});
+  refreshScenarioControls();
+  if (receiptScenario.mode === "reject-before-accept") throw new Error("request_id_conflict: synthetic rejection before acceptance");
+  if (receiptScenario.mode === "retry-same-id" && receiptScenario.attempts.length === 1) throw new Error("合成网络故障：送达状态暂时无法确认");
+  if (receiptScenario.mode === "sending") await new Promise<void>(resolve => {receiptScenario.release=resolve;refreshScenarioControls();});
+  const prior=receiptRows.get(data.request_id);
+  if (prior) return {receipt:prior.receipt,state:prior.receipt.execution_state};
+  const list=histories[data.agent_id], seq=(list.at(-1)?.seq ?? 0)+1;
+  const processing=receiptScenario.mode === "processing";
+  const receipt=fixtureReceipt(data.request_id,processing?"running":"queued",processing?seq:undefined);
+  receiptRows.set(data.request_id,{receipt,prompt:data.prompt,relation:data.relation,attachments:userInput?.attachments?.map(({filename,media_type,sha256})=>({filename,media_type,sha256}))});
+  if(processing) list.push({seq,role:"user",at:now,content:data.prompt,receipt,relation:data.relation});
+  receiptScenario.accepted++;
+  if(receiptScenario.mode === "ack-unknown") receiptScenario.hidden.add(data.request_id);
+  refreshScenarioControls();
+  if(receiptScenario.mode === "ack-unknown") throw new Error("合成 ACK 丢失：状态查询暂不可用");
+  return {receipt,state:receipt.execution_state};
+}
+function ReceiptScenarioControls() {
+  const [, redraw]=React.useState(0);
+  React.useEffect(()=>{const update=()=>redraw(n=>n+1);window.addEventListener("receipt-scenario-change",update);return()=>window.removeEventListener("receipt-scenario-change",update);},[]);
+  return <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center",padding:"8px 12px"}}>
+    <label>合成发送场景：<select data-receipt-scenario value={receiptScenario.mode} onChange={e=>{const url=new URL(location.href);url.searchParams.set("receipts","1");url.searchParams.set("sendScenario",e.target.value);location.href=url.href;}}>{Object.entries(scenarioLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
+    <span>在输入框发送一条消息。请求 {receiptScenario.attempts.length} 次 / 接收 {receiptScenario.accepted} 条。</span>
+    {receiptScenario.mode === "sending" && <button data-release-synthetic-send disabled={!receiptScenario.release} onClick={()=>{receiptScenario.release?.();receiptScenario.release=undefined;refreshScenarioControls();}}>释放合成 ACK</button>}
+    {receiptScenario.mode === "ack-unknown" && <button data-reveal-synthetic-receipt disabled={!receiptScenario.hidden.size} onClick={()=>{receiptScenario.hidden.clear();refreshScenarioControls();}}>恢复状态查询，再点击发送重试</button>}
+    <span>历史“处理结果待确认”表示已送达；发送“送达状态待确认”尚未获得回执。</span>
+  </div>;
+}
 const syntheticDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 const files = new Map<string, {data:string;name:string;mime:string}>();
 histories.mosaic[3].attachments = [{ kind:"artifact",index:0,name:"合成示例.txt",mime_type:"text/plain",size:5,sha256:syntheticDigest }];
@@ -101,6 +160,8 @@ const reactionReceipts = new Map<string, unknown>();
 const reactionsFor = (seq: number) => reactionStore[String(seq)] || { revision: 0 };
 const persistReactions = () => localStorage.setItem("wuu.fixture.reactions", JSON.stringify(reactionStore));
 let offline=false, empty=false;
+let calendarReads=0;
+const calendarFixture=new URLSearchParams(location.search).get("calendar")==="stale";
 let fixtureActivity: "idle" | "thinking" | "responding" = "idle";
 let settings={revision:1,quiet_hours:{enabled:true,start:"22:00",end:"08:00",timezone:"Asia/Shanghai"},notifications:true,notification_batch_seconds:0};
 const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({method,input,userInput})=>{
@@ -117,7 +178,10 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
       localStorage.setItem("wuu.fixture.personal-name", name);
       agent.name = name; agent.revision++; return { agent: { ...agent } };
     }
-    case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"}};
+    case "agents.open":return {agent:agents.find(a=>a.agent_id===data.agent_id),session:{state:fixtureActivity === "idle" ? "completed" : "running"},pending_inputs:[...receiptRows.values()].filter(r=>r.receipt.receipt_state==="accepted"&&r.receipt.execution_state!=="cancelled"&&!receiptScenario.hidden.has(r.receipt.request_id))};
+    case "agents.messages.status": return {receipt:receiptScenario.hidden.has(data.request_id)?undefined:receiptRows.get(data.request_id)?.receipt};
+    case "agents.messages.resume": {const row=receiptRows.get(data.request_id);if(!row||row.receipt.receipt_id!==data.receipt_id||userInput?.resumeReceiptId!==data.receipt_id)throw new Error("Synthetic receipt proof mismatch");row.receipt={...row.receipt,execution_state:"queued",revision:row.receipt.revision+1};return {receipt:row.receipt};}
+    case "agents.messages.cancel": {const row=receiptRows.get(data.request_id);if(!row||row.receipt.receipt_id!==data.receipt_id)throw new Error("Synthetic identity mismatch");row.receipt={...row.receipt,execution_state:"cancelled",revision:row.receipt.revision+1};return {cancelled:true};}
     case "agents.history": {
       if (data.reply_seq === undefined && sendRecoveryFixture.failNextRefresh) {
         sendRecoveryFixture.failNextRefresh = false; sendRecoveryFixture.refreshFailures++;
@@ -147,7 +211,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     }
     case "agents.search":{const matches=(histories[data.agent_id]||[]).filter(record=>record.content.includes(data.query)&&(!data.time_min||(record.at&&record.at>=data.time_min))&&(!data.time_max||(record.at&&record.at<data.time_max))).map(record=>({seq:record.seq,role:record.role,excerpt:record.content.slice(0,120),at:record.at}));return {matches,has_more:false};}
     case "agents.proposals":return {proposals:[]};
-    case "agents.send":{sendRecoveryFixture.requests.push(structuredClone(data)); const list=histories[data.agent_id],seq=(list.at(-1)?.seq ?? 0)+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments,relation:data.relation},{seq:seq+1,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。",relation:data.relation});sendRecoveryFixture.accepted++; const delay = Math.min(10000, Math.max(0, Number(params.get("sendDelay")) || 0)); if (delay) await new Promise(resolve => setTimeout(resolve, delay)); sendRecoveryFixture.failNextRefresh = params.get("sendRefresh") === "error"; return {state:"accepted"};}
+    case "agents.send":{if(receiptScenario.mode!=="default")return sendReceiptScenario(data,userInput);const prior=receiptRows.get(data.request_id);if(prior)return {receipt:prior.receipt,state:prior.receipt.execution_state};sendRecoveryFixture.requests.push(structuredClone(data)); const list=histories[data.agent_id],seq=(list.at(-1)?.seq ?? 0)+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments,relation:data.relation},{seq:seq+1,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。",relation:data.relation});sendRecoveryFixture.accepted++; const delay = Math.min(10000, Math.max(0, Number(params.get("sendDelay")) || 0)); if (delay) await new Promise(resolve => setTimeout(resolve, delay)); sendRecoveryFixture.failNextRefresh = params.get("sendRefresh") === "error"; const receipt=fixtureReceipt(data.request_id,"completed",seq);list.find(row=>row.seq===seq)!.receipt=receipt;receiptRows.set(data.request_id,{receipt,prompt:data.prompt,relation:data.relation});return {state:"completed",receipt};}
     case "agents.attachments.read":{const file=files.get(`${data.agent_id}:${data.seq}:${data.sha256}`);if(!file)throw new Error("Synthetic file missing");if(file.name === "合成读取失败.txt")throw new Error("合成读取失败：用于展示错误与重试，不涉及真实文件。");const offset=data.offset||0;return {data:file.data.slice(offset,offset+128*1024),offset,total:file.data.length,content_type:file.mime,name:file.name,sha256:data.sha256};}
     case "calendar.status":case "calendar.agenda":return {state:"unconnected",read_only:!calendarWriteDemo,freshness:"empty",events:[]};
     case "calendar.operations.list":return {operations:calendarWriteDemo?[calendarOperation]:[]};
@@ -199,6 +263,13 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "memory.correct":{const memory=memories.find(m=>m.id===data.id)!;memory.content=data.content;memory.revision++;return {record:memory};}
     case "memory.forget":{const memory=memories.find(m=>m.id===data.id)!;memory.status="forgotten";return {record:memory};}
     case "agents.pause":case "agents.resume":{const agent=agents.find(a=>a.agent_id===data.agent_id)!;agent.status=method.endsWith("pause")?"paused":"active";agent.revision++;return {agent};}
+    case "connections.status":return {ok:true,value:calendarFixture?{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"fixture-account",connection_id:"fixture-connection",selection_revision:"1",state:"connected",selected_calendars:["fixture-calendar"],authorization_diagnostics:[{attempt_id:"previous-synthetic-attempt",error_code:"credential_cleanup_failed"}]}:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",state:"unavailable",selected_calendars:[],error_code:"oauth_client_not_configured"}};
+    case "connections.calendars":return {ok:true,value:[{id:"fixture-calendar",summary:"合成日历",timeZone:"Asia/Shanghai"}]};
+    case "connections.agenda": {
+      const stale=++calendarReads>1;
+      return {state:stale?"error":"ready",freshness:stale?"stale":"fresh",error_code:stale?"provider_unavailable":undefined,source:{...data,provider:"google-calendar",read_only:true,user_space_id:"local",account_id:"fixture-account",connection_id:"fixture-connection",selection_revision:"1",fetched_at:new Date().toISOString()},events:[{id:"fixture-event",status:"confirmed",summary:"合成日程 · 上次读取结果",all_day:true}],cancelled_events:[]};
+    }
+    case "review.list":return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"尚未配置审核服务，动作审批当前不可用。"}};
     case "settings.get":return {settings};
     case "settings.update":settings={...settings,...data,revision:settings.revision+1};return {settings};
     default:throw new Error(`Unsupported synthetic operation: ${method}`);
@@ -245,11 +316,12 @@ if (params.get("grouping") === "1") histories.mosaic.push(
   {seq:6,role:"user",at:now,content:"那就选离家近一点的。"},
   {seq:7,role:"user",at:now,content:"安静、方便聊天就好。"},
 );
+if(params.has("receipts")) histories.mosaic[3].attachments = undefined;
 applyThemePreference(params.get("theme")==="dark"?"dark":"light");
 document.documentElement.style.setProperty("--conversation-message-font-size",`${params.get("font")==="19"?19:15}px`);
 document.documentElement.dataset.platform="linux";
 function FixtureSurface(){
-  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div><div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
+  return <I18nProvider preferenceStore={{get:()=>"zh-CN",set:async()=>{},subscribe:()=>()=>{}}}><WuuUIRoot><div className="mosaic-fixture"><div className="mosaic-fixture-label"><span>twin · 实际桌面组件 · 合成演示数据 · 非生产账号 · 不会触发真实定时任务 · 修改仅用于当前预览{motionScale > 1 ? ` · 动画轨迹检查 ${motionScale}×慢速` : ""}</span><div><a href="?receipts=1">回执状态场景</a><a href="?receipts=1&replyReceipts=1&sendScenario=sending">Reply 回执场景</a><a href="?attachments=reference">参考文件展示</a><a href="?attachments=all">文件类型测试</a><a href="?attachments=layout">附件布局测试</a><button onClick={()=>{const seq=3;const current=reactionsFor(seq);reactionStore[String(seq)]={...current,agent:current.agent=== "✅"?"❤️":"✅",revision:current.revision+1};persistReactions();host.publishHostEvent({kind:"notification",message:{method:"plugin/client/invalidated",params:{plugin_id:"personal",fingerprint:"synthetic-ui-fixture",user_space_id:"local",product_domain:"personal",topic:"reactions"}}});}}>Twin 表态（合成）</button><button onClick={()=>setActivity(fixtureActivity === "idle" ? "thinking" : fixtureActivity === "thinking" ? "responding" : "idle")}>合成状态：切换</button><button onClick={()=>applyThemePreference(document.documentElement.dataset.theme==="dark"?"light":"dark")}>明 / 暗</button><button onClick={()=>{offline=!offline;host.publishHostEvent({type:"fixture"});}}>离线 / 在线</button></div></div>{params.has("receipts") && <ReceiptScenarioControls/>}<div className="mosaic-fixture-view">{params.get("presentation") === "standard" ? <PluginConversationView conversationId="standard-fixture" title="Standard conversation regression fixture" searchLabel="Search" searchContent={null} composer={null}>{histories.mosaic.map(record => <PluginConversationMessage key={record.seq} id={`standard:${record.seq}`} role={record.role as "user" | "assistant"} content={record.content} timestamp={record.at} />)}</PluginConversationView> : <App />}</div></div></WuuUIRoot></I18nProvider>;
 }
 let fixtureTurn = 0;
 function setActivity(status: "idle" | "thinking" | "responding") {

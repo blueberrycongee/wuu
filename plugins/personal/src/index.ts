@@ -1,6 +1,11 @@
+import { calendarAgendaTool, executeCalendarAgenda } from "../../personal-calendar/src/connected-calendar.js";
+import { callPersonalHost } from "../../personal-calendar/src/host-bridge.js";
 import { PersonalRecords, PERSONAL_MEMORY_SERVICE, PERSONAL_MEMORY_METHODS, personalMemoryPrompt, personalMemoryTools } from "./personal-records.js";
 import { PersonalRoutines, quietUntil, type CalendarChange } from "./routines.js";
 import { createHash } from "node:crypto";
+import { PersonalGenUI, toolSource, type TrustedActor } from "./genui/service";
+import { personalGenUITool, publishModelOutput } from "./genui/model-output";
+import { exact as exactGenUI, record as genuiRecord } from "./genui/schema";
 import {
   requireKernelService, requireClientInvalidationService, invalidateClient, FILE_LOCK_SERVICE, SESSION_ATTENTION_CAPABILITY, type SessionAttentionInput, type SessionAttentionOutput, type AgentPreStepInput, type CapabilityInvokeParams,
   type HostServiceContracts, type JSONSchemaObject, type KernelHostServiceMethod,
@@ -83,7 +88,7 @@ interface NegativeFeedback extends Versioned {
 interface FeedbackBarrier extends Versioned { message_seq: number }
 interface ReactionFeed extends Versioned { messages: Array<{ seq: number }> }
 interface Settings extends Versioned { quiet_hours: { enabled: boolean; start: string; end: string; timezone: string }; notifications: boolean; notification_batch_seconds?: number }
-const methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
+const methodNames = ["agents.list", "agents.ensure_default", "agents.open", "agents.send", "agents.messages.status", "agents.messages.pending", "agents.messages.resume", "agents.messages.cancel", "agents.history", "agents.reactions", "agents.attachments.read", "agents.search", "agents.update", "agents.archive", "agents.pause", "agents.resume", "agents.stop_reply", "agents.resolve", "agents.memory_context", "agents.memory_evidence", "tasks.list", "tasks.get", "tasks.create", "tasks.update", "tasks.stop", "tasks.resume", "tasks.reconcile", "tasks.history", "tasks.attachments.read", "settings.get", "settings.update", "memory.query", "memory.read", "memory.correct", "memory.forget", "routines.list", "routines.history", "routines.create", "routines.update", "routines.pause", "routines.resume", "routines.stop", "calendar.status", "calendar.agenda", "calendar.refresh", "calendar.operations.list"];
 
 export class PersonalPlugin implements RuntimePlugin {
   readonly concurrentCapabilities = [clientCapability, "agent.pre_step", "agent.turn.lifecycle"];
@@ -124,7 +129,7 @@ export class PersonalPlugin implements RuntimePlugin {
     const services: KernelHostServiceMethod[] = ["host.storage.get", "host.storage.keys", "host.storage.compare_exchange", "host.session.create", "host.session.send", "host.session.inspect", "host.session.cancel", "host.session.history.read", "host.session.history.search", "host.session.attachment.read", "host.session.context"];
     return {
       protocol_version: 3 as const,
-      required_services: [...services.map(requireKernelService), { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
+      required_services: [...services.map(requireKernelService), { name: "host.personal", major_version: 1, required: true }, { name: FILE_LOCK_SERVICE, major_version: 1, required: true }, requireClientInvalidationService(), { name: "automation.routines", major_version: 1, required: false }, { name: "calendar.personal", major_version: 1, required: false }],
       provided_services: [{ name: PERSONAL_MEMORY_SERVICE, version: "1.0.0", methods: PERSONAL_MEMORY_METHODS.map(name => ({ name, input_schema: `memory.records.${name}.request.v1`, output_schema: `memory.records.${name}.response.v1` })) }, { name: service, version: "1.0.0", methods: methodNames.map(name => ({ name: name.replaceAll("_", "-"), input_schema: `personal.${name.replaceAll("_", "-")}.input.v1`, output_schema: `personal.${name.replaceAll("_", "-")}.output.v1` })) }, { name: "automation.trigger", version: "1.0.0", methods: [{ name: "fire", input_schema: "automation.trigger.fire.input.v1", output_schema: "automation.trigger.fire.output.v1" }] }],
       capabilities: [
         { id: "agent.system_prompt.section", kind: "transform" as const, version: 1 },
@@ -135,6 +140,7 @@ export class PersonalPlugin implements RuntimePlugin {
       ],
       tools: [
         ...personalMemoryTools(),
+        personalGenUITool, calendarAgendaTool,
         { id: "react_to_message", description: "Set, replace, or remove your own emoji reaction on an exact persisted original user message in this main Personal conversation. This is expression, not a textual reply or task action. Use null to remove; expected_revision comes from the reaction state (0 if absent). Never impersonate owner feedback or treat reactions as authorization. " + reactionGuidance, input_schema: schema({ message_seq: { type: "integer", minimum: 1 }, emoji: { type: ["string", "null"], maxLength: 32 }, expected_revision: integer, request_id: { type: "string", maxLength: 128 } }, "message_seq", "emoji", "expected_revision", "request_id"), activity: { concurrency_safe: true } },
         { id: "create_routine", description: "Create only an explicitly requested reminder or recurring responsibility. Use run_at for a one-time reminder or cron plus timezone for recurrence. A Calendar change source requires kind task, cron, and a verified matching Calendar source account/generation with a fixed window at most 31 days; first baseline is silent and no account connection is initiated.", input_schema: schema({ request_id: string, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: schema({ kind: { type: "string", enum: ["calendar"] }, account_id: string, generation: string, calendar_id: string, time_min: string, time_max: string, timezone: string }, "kind", "account_id", "generation", "calendar_id", "time_min", "time_max", "timezone") }, "request_id", "title", "prompt", "timezone"), activity: { concurrency_safe: true } },
         { id: "manage_routine", description: "List, update, pause, resume, or stop an explicitly requested Personal responsibility. Update the existing routine when the user changes its time or instructions. Mutations require the latest revision.", input_schema: schema({ action: { type: "string", enum: ["list", "update", "pause", "resume", "stop"] }, routine_id: string, expected_revision: integer, title: string, prompt: string, kind: { type: "string", enum: ["reminder", "task"] }, run_at: string, cron: string, timezone: string, missed_policy: { type: "string", enum: ["run_once", "skip"] }, source: { type: "object" } }, "action"), activity: { concurrency_safe: true } },
@@ -349,6 +355,12 @@ export class PersonalPlugin implements RuntimePlugin {
     const task = (await this.list<PersonalTask>("task")).find(t => t.agent_id === agent.agent_id && t.execution.session_id === sessionID);
     if (!task || task.cancel_requested || terminalTask(task)) throw new Error("session is not a current Personal task executor");
     return { agent, task };
+  }
+  private genui(agent: NamedAgent): PersonalGenUI {
+    return new PersonalGenUI(this.host, { owner: this.space, session: agent.main_session_id, agent: agent.agent_id });
+  }
+  private genuiActor(agent: NamedAgent, source: "owner" | "model"): TrustedActor {
+    return { domain: "personal", owner: this.space, session: agent.main_session_id, agent: agent.agent_id, source };
   }
   private reactionID(sessionID: string, seq: number): string { return id(sessionID, String(seq)); }
   private reactionState(record?: ReactionRecord): MessageReactions {
@@ -968,6 +980,11 @@ export class PersonalPlugin implements RuntimePlugin {
     const { agent, task } = await this.resolve(sessionID);
     if (agent.status !== "active") throw new Error(`agent is ${agent.status}`);
     switch (call.tool_id) {
+      case "calendar_agenda": return executeCalendarAgenda(executionHost, this.space, call, execution.signal);
+      case "present_interactive_answer": {
+        if (task || agent.agent_id !== this.mainID() || sessionID !== agent.main_session_id) throw new Error("only the bound main Personal conversation may publish an interactive answer");
+        return { result: await publishModelOutput(this.genui(agent), input, this.genuiActor(agent, "model"), toolSource(call.call_id, call.turn_id, call.tool)) };
+      }
       case "react_to_message": {
         if (task || sessionID !== agent.main_session_id) throw new Error("only the main Personal agent may react");
         return result(await this.react(agent, sessionID, "agent", input));
@@ -1089,7 +1106,36 @@ export class PersonalPlugin implements RuntimePlugin {
   }
   private async request(method: string, input: Record<string, unknown>, clientHost?: RuntimeHost, execution?: RuntimeExecutionContext, ownerClient = false): Promise<unknown> {
     this.assertActive();
+    if (method.startsWith("connections.") || method.startsWith("review.")) {
+      if (!ownerClient || !clientHost) throw new Error("Owner UI control requires a live desktop admission");
+      const operation = method.startsWith("connections.") ? `calendar.${method.slice(12)}` : method;
+      await callPersonalHost(clientHost, "owner.check", {}, undefined, execution?.signal);
+      if (method === "connections.agenda") {
+        const agent = await this.main();
+        return clientHost.call("host.service.call", { service: "calendar.personal", method: "refresh", params: { ...input, session_id: agent.main_session_id } }, { signal: execution?.signal });
+      }
+      if (["connections.select", "connections.disconnect"].includes(method)) {
+        await clientHost.call("host.service.call", { service: "calendar.personal", method: method === "connections.disconnect" ? "disconnect" : "clear-cache", params: {} }, { signal: execution?.signal });
+      }
+      // Preserve typed host failure envelopes across plugin JSONL; provider text
+      // is not an authorization or cache-invalidating signal.
+      const response = await clientHost.call("host.service.call", { service: "host.personal", method: "call", params: { operation, input } }, { signal: execution?.signal });
+      if (method === "connections.attempt" && response && typeof response === "object" && "ok" in response && response.ok === true && "value" in response && (response.value as {state?:string})?.state === "connected") {
+        await clientHost.call("host.service.call", { service: "calendar.personal", method: "clear-cache", params: { reconnect: true } }, { signal: execution?.signal });
+      }
+      return response;
+    }
     switch (method) {
+      case "genui.action": case "genui.read": case "genui.retry": {
+        if (!ownerClient) throw new Error("GenUI requires the authenticated owner client capability");
+        exactGenUI(genuiRecord(input), ["agent_id", method === "genui.action" ? "request" : "surface_id", ...(method === "genui.retry" ? ["receipt_id"] : [])]);
+        const agent = await this.conversation(input, method === "genui.read");
+        await this.resolve(agent.main_session_id);
+        const surface = this.genui(agent), actor = this.genuiActor(agent, "owner");
+        if (method === "genui.action") return surface.act(input.request, actor);
+        if (method === "genui.retry") return surface.retrySubmission(text(input, "surface_id", true), actor, clientHost, input.receipt_id === undefined ? undefined : text(input, "receipt_id", true));
+        return surface.inspect(text(input, "surface_id", true), actor);
+      }
       case "agents.react": {
         if (!ownerClient) throw new Error("owner reactions require the authenticated client capability");
         const agent = await this.conversation(input, true);
@@ -1137,6 +1183,29 @@ export class PersonalPlugin implements RuntimePlugin {
         return { ref, occurred_at: new Date(record.at).toISOString(), ...(main ? { content: record.content } : {}) };
       }
       case "agents.resolve": { const { agent, task } = await this.resolve(text(input, "session_id", true)); return { agent, task_id: task?.task_id, requirements_revision: task?.requirements_revision }; }
+      case "agents.messages.pending": {
+        if (!ownerClient) throw new Error("message receipts require the authenticated client capability");
+        const agent = await this.conversation(input, true);
+        return this.host.call("host.session.inspect", { session_id: agent.main_session_id });
+      }
+      case "agents.messages.status":
+      case "agents.messages.resume":
+      case "agents.messages.cancel": {
+        if (!ownerClient) throw new Error("message receipts require the authenticated client capability");
+        const agent = await this.conversation(input, method !== "agents.messages.resume");
+        const requestID = text(input, "request_id", true);
+        const hostRequestID = `personal-chat-${id(agent.agent_id, requestID)}`;
+        const inspected = await this.host.call("host.session.inspect", { session_id: agent.main_session_id, request_id: hostRequestID });
+        if (method === "agents.messages.status") return inspected;
+        const receipt = inspected.receipt;
+        if (!receipt || receipt.receipt_id !== text(input, "receipt_id", true)) throw new Error("accepted input identity changed or missing");
+        if (method === "agents.messages.cancel") {
+          if (receipt.receipt_state !== "accepted") throw new Error("input already admitted; stop the running reply instead");
+          return this.host.call("host.session.cancel", { session_id: agent.main_session_id, queue_id: receipt.queue_id });
+        }
+        if (!clientHost) throw new Error("resume requires live client admission");
+        return clientHost.call("host.session.send", { session_id: agent.main_session_id, request_id: hostRequestID, user_input_request_id: requestID, resume_accepted: true, resume_receipt_id: receipt.receipt_id, input: { prompt: "" }, if_running: "queue" });
+      }
       case "agents.send": {
         return this.transition(`agent:${text(input, "agent_id", true)}`, async () => {
         const agent = await this.conversation(input); await this.inspectAgent(agent);
@@ -1187,7 +1256,14 @@ export class PersonalPlugin implements RuntimePlugin {
         }
         const tasks = await this.list<PersonalTask>("task");
         for (let pagesRead = 1; ; pagesRead++) {
-          const records = await Promise.all((history.records?.filter(r => !r.hidden && (r.role !== "user" || (!r.read_only && (!r.origin || r.origin === "user"))) && ((["user", "assistant"].includes(r.role) && (r.display_content || r.content)) || r.attachments?.length)).map(async r => ({ seq: r.seq, reaction_eligible: !r.read_only && !r.truncated && (r.role === "assistant" || (r.role === "user" && r.origin === "user")), reactions: this.reactionState((await this.read<ReactionRecord>("reaction", this.reactionID(agent.main_session_id, r.seq))).value), relation: await this.messageRelation(agent.main_session_id, r.seq, r.relation, tasks), ...(r.provider_item_id ? { provider_item_id: r.provider_item_id } : {}), ...(r.engine_turn_id ? { engine_turn_id: r.engine_turn_id } : {}), role: r.role === "user" ? "user" : "assistant", content: ["user", "assistant"].includes(r.role) ? r.display_content || r.content || "" : "", ...("at" in r && typeof r.at === "string" ? { at: r.at } : {}), ...(r.attachments?.length ? { attachments: r.attachments } : {}), ...(["user", "assistant"].includes(r.role) && r.name ? { name: r.name } : {}) })) ?? []));
+          const genui = this.genui(agent), genuiActor = this.genuiActor(agent, "owner");
+          const projected = await Promise.all((history.records ?? []).map(async record => {
+            const projected = record.role === "tool" && !record.hidden ? await genui.projectToolResult(record.tool_result, record.tool_call_id, record.name, genuiActor) : { parts: [] };
+            const ui_parts = projected.parts;
+            const ui_text = record.role === "tool" ? "" : record.display_content || record.content || "";
+            return { ...record, ui_parts, ui_text, ui_fallback: Boolean(projected.fallbackText && !ui_parts.length), ...(projected.fallbackText ? { role: "assistant", content: [ui_text, projected.fallbackText].filter(Boolean).join("\n\n"), display_content: undefined, read_only: true } : {}) };
+          }));
+          const records = await Promise.all((projected.filter(r => !r.hidden && (r.role !== "user" || (!r.read_only && (!r.origin || r.origin === "user"))) && ((["user", "assistant"].includes(r.role) && (r.display_content || r.content)) || r.attachments?.length)).map(async r => ({ seq: r.seq, ...(r.ui_fallback ? { ui_fallback: true } : {}), ...(r.ui_parts.length ? { ui_parts: r.ui_parts, ui_text: r.ui_text } : {}), ...(r.receipt ? {receipt:r.receipt} : {}), reaction_eligible: !r.ui_parts.length && !r.read_only && !r.truncated && (r.role === "assistant" || (r.role === "user" && r.origin === "user")), reactions: this.reactionState((await this.read<ReactionRecord>("reaction", this.reactionID(agent.main_session_id, r.seq))).value), relation: await this.messageRelation(agent.main_session_id, r.seq, r.relation, tasks), ...(r.provider_item_id ? { provider_item_id: r.provider_item_id } : {}), ...(r.engine_turn_id ? { engine_turn_id: r.engine_turn_id } : {}), role: r.role === "user" ? "user" : "assistant", content: ["user", "assistant"].includes(r.role) ? r.display_content || r.content || "" : "", ...("at" in r && typeof r.at === "string" ? { at: r.at } : {}), ...(r.attachments?.length ? { attachments: r.attachments } : {}), ...(["user", "assistant"].includes(r.role) && r.name ? { name: r.name } : {}) })) ?? []));
           if (replyRoot !== undefined || records.length || !history.has_earlier || pagesRead >= historyRecoveryPageLimit || input.start_seq !== undefined || text(input, "cursor")) return { ...history, ...(replyRoot === undefined ? {} : { reply_root_seq: replyRoot }), records };
           // Model context can occupy an entire physical page. Walk older pages
           // within this snapshot, bounded for periodic polling. If exhausted,

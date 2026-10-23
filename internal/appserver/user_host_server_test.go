@@ -233,7 +233,7 @@ func newHeldUserHost(t *testing.T, client pluginhost.Client) (*UserHost, pluginp
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(host.Close)
+	t.Cleanup(func() { _ = host.Close() })
 	return host, item
 }
 

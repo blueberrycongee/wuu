@@ -22,6 +22,8 @@ describe("DesktopPluginRuntime", () => {
       await desktopPluginHost.activateGeneration({ pluginId: "test:reply-receipt", generation: "one", register: value => { api = value; } });
       await api.invokeRuntime("agents.send", { prompt: "Change this", relation }, { userSpaceId: "local", productDomain: "personal", userInput: { requestId: "reply-one", prompt: "Change this", relation } });
       expect(request).toHaveBeenCalledWith(expect.objectContaining({ input: { prompt: "Change this", relation }, user_input: { request_id: "reply-one", prompt: "Change this", relation } }));
+      await api.invokeRuntime("agents.messages.resume", {request_id:"reply-one",receipt_id:"receipt"},{userSpaceId:"local",productDomain:"personal",userInput:{requestId:"reply-one",prompt:"",resumeReceiptId:"receipt"}});
+      expect(request).toHaveBeenLastCalledWith(expect.objectContaining({user_input:{request_id:"reply-one",prompt:"",resume_receipt_id:"receipt"}}));
     } finally { desktopPluginHost.unload("test:reply-receipt"); }
   });
   it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {

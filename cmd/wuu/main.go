@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/executionworker"
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
+	"github.com/blueberrycongee/wuu/internal/personalcalendar"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -29,6 +31,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -90,6 +93,8 @@ func run(args []string) error {
 		return runInit(args[1:])
 	case "login":
 		return runLogin(args[1:])
+	case "calendar-client":
+		return runCalendarClient(args[1:])
 	case "models":
 		return runModels(args[1:])
 	case "run":
@@ -2120,6 +2125,8 @@ func runAppServer(args []string) error {
 	noTools := fs.Bool("no-tools", false, "disable local tools")
 	safeMode := fs.Bool("safe-mode", false, "start without activating plugins")
 	desktopExecutionDefaults := fs.Bool("desktop-execution-defaults", false, "use unlimited steps and automatic temperature for desktop conversations")
+	desktopOwnerPipe := fs.Bool("desktop-owner-pipe", false, "read desktop-parent admission from inherited descriptor 3")
+	calendarClientID := fs.String("personal-calendar-client-id", "", "approved desktop Calendar client ID; credentials remain in the host secure store")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -2134,7 +2141,42 @@ func runAppServer(args []string) error {
 	if host.Kind == runtime.HostLocal {
 		enginecatalog.InstallUserPath()
 	}
+	connectionCtx, closeConnection := context.WithCancel(context.Background())
+	defer closeConnection()
+	if *desktopOwnerPipe {
+		if host.Kind != runtime.HostLocal {
+			return errors.New("desktop owner admission requires a local host")
+		}
+		bootstrap := os.NewFile(3, "desktop-parent-admission")
+		if bootstrap == nil {
+			return errors.New("desktop parent admission pipe is unavailable")
+		}
+		info, statErr := bootstrap.Stat()
+		if statErr != nil || info.Mode()&(os.ModeNamedPipe|os.ModeSocket) == 0 {
+			bootstrap.Close()
+			return errors.New("desktop parent admission requires an inherited pipe")
+		}
+		if err := bootstrap.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			bootstrap.Close()
+			return errors.New("desktop admission deadline unavailable")
+		}
+		connectionCtx, err = clientauthority.AdmitDesktop(connectionCtx, userspace.Binding{UserSpaceID: *userSpaceID, ProductDomain: *productDomain}, bootstrap)
+		bootstrap.Close()
+		if err != nil {
+			return err
+		}
+	}
 	rt, err := wuusdk.New(wuusdk.Options{
+		PersonalCalendar: personalcalendar.DesktopOptions{ClientID: *calendarClientID},
+		OpenPersonalCalendarAuthorizationURL: func(ctx context.Context, raw string) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := personalcalendar.ValidateAuthorizationURL(raw); err != nil {
+				return err
+			}
+			return openBrowser(raw)
+		},
 		UserSpaceID: *userSpaceID, ProductDomain: *productDomain,
 		WorkDir:                  *workdir,
 		WorkspaceID:              *workspaceID,
@@ -2154,11 +2196,8 @@ func runAppServer(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = rt.Close()
-	}()
-
-	return rt.Serve(context.Background(), os.Stdin, os.Stdout)
+	serveErr := rt.Serve(connectionCtx, os.Stdin, os.Stdout)
+	return errors.Join(serveErr, rt.Close())
 }
 
 func resolveAppServerHost(kind, instanceID, workspaceID, configFile string) (runtime.Host, error) {

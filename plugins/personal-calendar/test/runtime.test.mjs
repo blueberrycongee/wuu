@@ -24,6 +24,7 @@ async function run(domain) {
       let result;
       if (service === 'host.storage.get') result = { value: values.get(key) ?? null };
       else if (service === 'host.storage.compare-exchange') { const value = values.get(key) ?? null; if (value === params.expected) { values.set(key, params.value); result = { swapped: true, value: params.value }; } else result = { swapped: false, value }; }
+      else if (service === 'host.personal' && params.operation === 'calendar.read.status') result={ok:true,value:{product_domain:'personal',provider:'google-calendar',user_space_id:'protocol-user',state:'unavailable',selected_calendars:[],error_code:'oauth_client_not_configured'}};
       else assert.fail(`unexpected host effect: ${service}`);
       send({ id: frame.id, result });
     } catch (error) { send({ id: frame.id, error: { message: error.message } }); }
@@ -41,7 +42,7 @@ async function run(domain) {
     if (domain === 'personal') {
       assert.ok(definition.provided_services.some(item => item.name === 'calendar.personal'));
       const snapshot = await request('service.invoke', { service: 'calendar.personal', method: 'refresh', caller: 'kernel', execution_id: 'synthetic-read', params: { calendar_id: 'primary', time_min: '2026-10-18T00:00:00Z', time_max: '2026-10-19T00:00:00Z', timezone: 'UTC' } });
-      assert.equal(snapshot.state, 'unconnected'); assert.equal(snapshot.error_code, 'authorization_not_configured'); assert.equal(snapshot.freshness, 'empty'); assert.deepEqual(snapshot.events, []);
+      assert.equal(snapshot.state, 'unconnected'); assert.equal(snapshot.error_code, 'oauth_client_not_configured'); assert.equal(snapshot.freshness, 'empty'); assert.deepEqual(snapshot.events, []);
     } else { assert.deepEqual(definition.tools, []); assert.deepEqual(definition.provided_services, []); assert.equal(frames.filter(frame => frame.method).length, 0); }
     await request('shutdown'); child.stdin.end(); const stopped = await exit; assert.equal(stopped.code, 0, stderr);
   } finally { lines.close(); if (child.exitCode === null) child.kill(); }

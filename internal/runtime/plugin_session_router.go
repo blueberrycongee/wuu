@@ -24,6 +24,8 @@ type PluginWorkspaceDiscardHandler func(context.Context, string, pluginhost.Work
 // PluginSessionRouter lets plugin processes outlive individual app-server
 // bindings without coupling runtime construction to an app-server package.
 type PluginSessionRouter struct {
+	personalBinding    uint64
+	personalHost       PersonalHostHandler
 	clientBinding      uint64
 	clientInvalidation func(context.Context, *pluginhost.Host, pluginhost.ClientInvalidation) error
 	mu                 sync.RWMutex

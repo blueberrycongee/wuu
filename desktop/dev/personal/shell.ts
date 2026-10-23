@@ -25,7 +25,7 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
     onServerEvent: () => () => {},
     onWindowResizeState: () => () => {},
     onTerminalEvent: () => () => {},
-    requestPluginRuntime: async (request: Parameters<WuuDesktopApi["requestPluginRuntime"]>[0]) => ({ result: await invoke({ pluginId: request.id, generation: request.fingerprint, method: request.method, input: request.input, userSpaceId: request.user_space_id, productDomain: request.product_domain, userInput: request.user_input && { requestId: request.user_input.request_id, prompt: request.user_input.prompt, attachments: request.user_input.attachments } }) }),
+    requestPluginRuntime: async (request: Parameters<WuuDesktopApi["requestPluginRuntime"]>[0]) => ({ result: await invoke({ pluginId: request.id, generation: request.fingerprint, method: request.method, input: request.input, userSpaceId: request.user_space_id, productDomain: request.product_domain, userInput: request.user_input && { requestId: request.user_input.request_id, prompt: request.user_input.prompt, resumeReceiptId: request.user_input.resume_receipt_id, relation: request.user_input.relation, attachments: request.user_input.attachments } }) }),
     cancelPluginRuntime: async () => ({ cancelled: false }),
   } as unknown as WuuDesktopApi;
 }

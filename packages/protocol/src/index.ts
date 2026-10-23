@@ -781,7 +781,7 @@ export interface PluginStorageResult {
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
   /** Exact client-authored message, bound to this live plugin invocation by the host. */
-  user_input?: { request_id: string; prompt: string; relation?: MessageRelation; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
+  user_input?: { request_id: string; prompt: string; resume_receipt_id?: string; relation?: MessageRelation; attachments?: Array<{ sha256: string; filename: string; media_type: string; data: string }> };
   user_space_id?: string;
   product_domain?: "personal" | "coding";
   /** Optional opaque ID enabling cancellation of this request. */

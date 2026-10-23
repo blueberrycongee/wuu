@@ -56,7 +56,7 @@ func newBatchAttentionHost(t *testing.T, seconds int64) (*UserHost, *runtime.Ses
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(host.Close)
+	t.Cleanup(func() { _ = host.Close() })
 	return host, rt, policy
 }
 

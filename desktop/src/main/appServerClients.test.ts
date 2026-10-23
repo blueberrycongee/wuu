@@ -29,6 +29,8 @@ class FakeAppServerChild extends EventEmitter {
   readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
   readonly stderr = new PassThrough();
+  readonly ownerAdmission = new PassThrough();
+  readonly stdio = [this.stdin, this.stdout, this.stderr, this.ownerAdmission];
   killed = false;
 
   kill(): boolean {
@@ -818,11 +820,14 @@ it("does not restart a disposed core while the desktop is waiting for exit", asy
 
 it("keeps an explicit user host resident across project switches and passes its binding to core", async () => {
   vi.stubEnv("WUU_DESKTOP_CORE", "test-wuu-core");
+  vi.stubEnv("WUU_PERSONAL_GOOGLE_CALENDAR_CLIENT_ID", "synthetic.apps.googleusercontent.com");
   const user = { kind: "user" as const, user_space_id: "local", product_domain: "personal" as const, cwd: join(tmpdir(), "user-host-pool") };
   const argsByCwd = new Map<string, readonly string[]>();
   const disposed: string[] = [];
+  const admissions: string[] = [];
   const pool = new AppServerClientPool(() => user, () => "/another-project", () => {}, (_command, args, options) => {
     const child = new FakeAppServerChild(); argsByCwd.set(options.cwd, args);
+    child.ownerAdmission.on("data", data => admissions.push(String(data)));
     child.stdin.on("data", data => {
       const request = JSON.parse(String(data));
       queueMicrotask(() => request.method === "shutdown" ? child.emit("exit", 0, null) : child.stdout.write(`${JSON.stringify({ id: request.id, result: request.method === "initialize" ? { user_space_id: "local", product_domain: "personal" } : {} })}\n`));
@@ -837,6 +842,10 @@ it("keeps an explicit user host resident across project switches and passes its 
     const args = argsByCwd.get(user.cwd)!;
     expect(args.slice(args.indexOf("--user-space"), args.indexOf("--user-space") + 4)).toEqual(["--user-space", "local", "--product-domain", "personal"]);
     expect(args).not.toContain("--workspace-id");
+    expect(args).toContain("--desktop-owner-pipe");
+    expect(args.slice(args.indexOf("--personal-calendar-client-id"), args.indexOf("--personal-calendar-client-id") + 2)).toEqual(["--personal-calendar-client-id", "synthetic.apps.googleusercontent.com"]);
+    for (const [cwd, projectArgs] of argsByCwd) if (cwd !== user.cwd) expect(projectArgs).not.toContain("--personal-calendar-client-id");
+    expect(admissions.map(raw => JSON.parse(raw))).toEqual([{ version: 1, user_space_id: "local", product_domain: "personal" }]);
   } finally { await pool.shutdown(); vi.unstubAllEnvs(); }
 });
 

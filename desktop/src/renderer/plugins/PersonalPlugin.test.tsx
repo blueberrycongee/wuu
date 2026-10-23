@@ -4,17 +4,22 @@ import { resolve } from "node:path";
 import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { desktopPluginHost } from "./DesktopPluginRuntime";
 import { captureReadingAnchor, readingAnchorScrollTop } from "../ConversationReadingAnchor";
 import { PluginConversationAttachment, PluginConversationComposer, PluginConversationMessage, PluginConversationView } from "./PluginConversation";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
 import { PluginViewContent, WorkbenchController } from "./Workbench";
+import { PersonalGenUISurface } from "./personal-genui/PersonalGenUISurface";
+import { fixtures as genuiFixtures } from "../../../../plugins/personal/src/genui/fixtures";
+import { initialState as genuiInitialState } from "../../../../plugins/personal/src/genui/schema";
+import type { ActionResult, ActionRequest } from "../../../../plugins/personal/src/genui/service";
 const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/personal/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 const main = { agent_id: "a-main", user_space_id: "local", name: "Mosaic", kind: "main", main_session_id: "s-private", status: "active", revision: 2 };
 const cleanups: Array<() => void> = [];
-afterEach(() => { cleanups.splice(0).forEach(fn => fn()); });
+beforeEach(() => { window.localStorage.clear(); });
+afterEach(() => { cleanups.splice(0).forEach(fn => fn()); vi.restoreAllMocks(); });
 async function mount(mutate?: (method: string, input: any) => Promise<unknown>, mainAgent: typeof main & Record<string, unknown> = main, historyRecords?: unknown[], fixtures: { calendarView?: boolean; tasks?: unknown[]; memories?: unknown[]; open?: () => Promise<unknown>; history?: (input: any) => Promise<unknown>; historySearch?: boolean } = {}) {
   const invoke = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ method, input }) => {
     if (method === "agents.ensure_default") return { agent: mainAgent };
@@ -44,11 +49,13 @@ async function mount(mutate?: (method: string, input: any) => Promise<unknown>, 
   const controller = new WorkbenchController(host);
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
-  cleanups.push(() => { act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("personal-calendar"); container.remove(); });
+  let disposed = false;
+  const dispose = () => { if (disposed) return; disposed = true; act(() => root.unmount()); controller.dispose(); host.unload("personal"); host.unload("personal-calendar"); container.remove(); };
+  cleanups.push(dispose);
   await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />));
   const click = async (selector: string, scope: ParentNode = container) => { const button = (scope === container && selector.startsWith(".composer-") ? container.querySelector(".mosaic-replies") ?? scope : scope).querySelector<HTMLButtonElement>(selector); expect(button).not.toBeNull(); await act(async () => button!.click()); };
   const edit = async (value: string) => { const node = container.querySelector<HTMLTextAreaElement>(".mosaic-replies textarea") ?? container.querySelector("textarea")!; await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, value); node.dispatchEvent(new Event("input", { bubbles: true })); }); };
-  return { container, invoke, click, edit, controller, publish: (event: unknown = { type: "routine-state-changed" }) => host.publishHostEvent(event), remount: async (between?: () => void) => { await act(async () => root.render(null)); await act(async () => between?.()); await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />)); }, settings: async () => { await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.preferences" />)); }, activateEntry: () => controller.openPluginView("personal", "personal.home") };
+  return { container, invoke, click, edit, controller, dispose, publish: (event: unknown = { type: "routine-state-changed" }) => host.publishHostEvent(event), remount: async (between?: () => void) => { await act(async () => root.render(null)); await act(async () => between?.()); await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.home" />)); }, settings: async () => { await act(async () => root.render(<PluginViewContent controller={controller} pluginId="personal" viewTypeId="personal.preferences" />)); }, activateEntry: () => controller.openPluginView("personal", "personal.home") };
 }
 it("preserves unsent text when sending fails and never substitutes a session ID for an agent", async () => {
   const ui = await mount(async method => { if (method === "agents.send") throw new Error("Host offline"); return {}; });
@@ -813,7 +820,7 @@ it("does not let a completed item's local ID suppress a later turn", async () =>
 });
 
 it("retains confirmed queued admission across route changes and clears it when the same queue starts", async () => {
-  const ui = await mount(async method => method === "agents.send" ? { state: "queued", queue_id: "queue-one" } : {});
+  const ui = await mount(async (method, input) => method === "agents.send" ? { state: "queued", queue_id: "queue-one", receipt: receiptFixture(input.request_id, {execution_state:"queued",queue_id:"queue-one"}) } : {});
   await ui.edit("Another request while busy"); await ui.click('.composer-send-button');
   expect(ui.container.querySelector('[data-queued-count="1"]')).not.toBeNull();
   await ui.remount();
@@ -1026,7 +1033,7 @@ it("never offers mutation controls for ineligible or unverified persisted record
 });
 it("refreshes history without resending an accepted attachment-only message", async () => {
   attachmentBrowser(); let accepted = false, failHistory = true;
-  const ui = await mount(async method => { if (method === "agents.send") { accepted = true; return { state: "accepted" }; } }, main, undefined, { history: async () => { if (accepted && failHistory) throw new Error("History unavailable"); return { records: [] }; } });
+  const ui = await mount(async (method, input) => { if (method === "agents.send") { accepted = true; return { state: "queued", receipt: receiptFixture(input.request_id) }; } }, main, undefined, { history: async () => { if (accepted && failHistory) throw new Error("History unavailable"); return { records: [] }; } });
   await chooseFiles(ui.container, [new File(["hello"], "notes.txt", { type: "text/plain" })]);
   await vi.waitFor(() => expect(ui.container.querySelector('.composer-attachment-tray')).not.toBeNull());
   await ui.click('.composer-send-button');
@@ -1046,7 +1053,7 @@ it("keeps newer quoted drafts and files separate from accepted sends when refres
   await ui.click('.composer-send-button'); await ui.edit("Newer reply draft");
   await chooseFiles(ui.container.querySelector('.mosaic-replies')!, [new File(["hello"], "new.txt", { type: "text/plain" })]);
   await vi.waitFor(() => expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')).not.toBeNull());
-  await act(async () => { accepted = true; finish({ state: "accepted" }); await pending; });
+  await act(async () => { accepted = true; finish({ state: "queued", receipt:receiptFixture((ui.invoke.mock.calls.find(([r])=>r.method==="agents.send")![0].input as any).request_id) }); await pending; });
   expect(ui.container.querySelector('.mosaic-replies .mosaic-reply-status[role="alert"]')).toBeNull();
   expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Newer reply draft");
   expect(ui.container.querySelector('.mosaic-replies .composer-attachment-tray')?.textContent).toContain("new.txt");
@@ -1057,4 +1064,483 @@ it("keeps newer quoted drafts and files separate from accepted sends when refres
   expect(ui.container.querySelector('textarea')!.value).toBe("Independent main draft");
   await ui.click('[data-action="reply-message"]');
   expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Newer reply draft");
+});
+
+it("recovers main, message and task drafts after a fresh plugin generation without sending", async () => {
+  const first = await mount();
+  await first.edit("Main recovery");
+  await first.click('[data-action="reply-message"]'); await first.edit("Message recovery");
+  await first.click('[data-action="close-replies"]'); await first.click('[data-task-id="t1"]');
+  await first.click('[data-action="reply-task"]'); await first.edit("Task recovery"); first.dispose();
+  const next = await mount();
+  expect(next.container.querySelector('textarea')!.value).toBe("Main recovery");
+  await next.click('[data-action="reply-message"]');
+  expect(next.container.querySelector('.mosaic-replies textarea')).toHaveProperty("value", "Message recovery");
+  await next.click('[data-action="close-replies"]'); await next.click('[data-task-id="t1"]'); await next.click('[data-action="reply-task"]');
+  expect(next.container.querySelector('.mosaic-replies textarea')).toHaveProperty("value", "Task recovery");
+  expect(next.invoke.mock.calls.some(([r]) => r.method === "agents.send")).toBe(false);
+  next.dispose();
+  const other = await mount(undefined, { ...main, main_session_id: "other-session" });
+  expect(other.container.querySelector('textarea')!.value).toBe("");
+});
+it("reuses uncertain text admission after restart and clears accepted or explicitly discarded recovery", async () => {
+  const first = await mount(async method => { if (method === "agents.send") throw new Error("Lost response"); });
+  await first.edit("Retry after restart"); await first.click('.composer-send-button');
+  const original = first.invoke.mock.calls.find(([r]) => r.method === "agents.send")![0].input;
+  first.dispose();
+  const next = await mount(async (method,input)=>method==="agents.send"?{state:"queued",receipt:receiptFixture(input.request_id)}:{}); await next.click('.composer-send-button');
+  expect(next.invoke.mock.calls.find(([r]) => r.method === "agents.send")![0].input).toEqual(original);
+  next.dispose(); const accepted = await mount(); expect(accepted.container.querySelector('textarea')!.value).toBe("");
+  await accepted.edit("Discard me"); await accepted.edit(""); accepted.dispose();
+  const cleared = await mount(); expect(cleared.container.querySelector('textarea')!.value).toBe("");
+});
+it("requires attachment reselection after restart and never stores attachment bytes or source excerpts", async () => {
+  attachmentBrowser();
+  const first = await mount(undefined, main, [{ seq: 1, role: "assistant", content: "Private original excerpt" }]);
+  await first.click('[data-action="reply-message"]'); await first.edit("Text survives");
+  await chooseFiles(first.container, [new File(["sensitive file bytes"], "secret.txt", { type: "text/plain" })]);
+  await vi.waitFor(() => expect(first.container.querySelector('.composer-attachment-tray')).not.toBeNull());
+  const stored = Object.values(localStorage).join("");
+  expect(stored).not.toContain("c2Vuc2l0aXZlIGZpbGUgYnl0ZXM="); expect(stored).not.toContain("Private original excerpt");
+  first.dispose(); const next = await mount(); await next.click('[data-action="reply-message"]');
+  expect(next.container.querySelector('.mosaic-replies textarea')).toHaveProperty("value", "Text survives");
+  expect(next.container.querySelector('.mosaic-replies [data-draft-attachments-missing]')).not.toBeNull();
+  expect(next.container.querySelector('.mosaic-replies .composer-attachment-tray')).toBeNull();
+  expect(next.container.querySelector('.mosaic-replies .composer-send-button')).toHaveProperty("disabled", true);
+  await next.click('[data-action="continue-without-attachments"]', next.container.querySelector('.mosaic-replies')!);
+  await next.click('.composer-send-button');
+  expect(next.invoke.mock.calls.find(([r]) => r.method === "agents.send")![0].input).not.toHaveProperty("attachments");
+});
+it("keeps live text usable and reports storage failures, then retries saving", async () => {
+  const ui = await mount();
+  const failure = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Quota exceeded"); });
+  await ui.edit("Keep live text");
+  expect(ui.container.querySelector('textarea')!.value).toBe("Keep live text");
+  expect(ui.container.querySelector('[data-draft-storage-error]')).not.toBeNull();
+  failure.mockRestore(); await ui.click('[data-action="retry-draft-save"]'); ui.dispose();
+  const next = await mount(); expect(next.container.querySelector('textarea')!.value).toBe("Keep live text");
+});
+it("does not revive expired, malformed, or oversized drafts", async () => {
+  const first = await mount(); await first.edit("Expire this"); first.dispose();
+  const key = Object.keys(localStorage).find(key => key.startsWith("wuu.personal.draftRecovery.v1:"))!;
+  expect(key).toBeTruthy();
+  const value = JSON.parse(localStorage.getItem(key)!); value.updatedAt = Date.now() - 25 * 60 * 60 * 1000;
+  localStorage.setItem(key, JSON.stringify(value));
+  const expired = await mount(); expect(expired.container.querySelector('textarea')!.value).toBe(""); expired.dispose();
+  localStorage.setItem(key, "broken JSON"); const broken = await mount(); expect(broken.container.querySelector('textarea')!.value).toBe("");
+  await broken.edit("x".repeat(33 * 1024));
+  expect(broken.container.querySelector('[data-draft-storage-error]')).not.toBeNull();
+  broken.dispose(); const oversized = await mount(); expect(oversized.container.querySelector('textarea')!.value).toBe("");
+});
+it("allows explicit source retry after a transient failure without reopening the plugin", async () => {
+  let attempts = 0;
+  const rows = [{ seq: 20, role: "user", content: "Follow-up", relation: { reply_to: { session_id: "s-private", seq: 3 } } }];
+  const ui = await mount(undefined, main, undefined, { history: async input => {
+    if (input.start_seq === 3) { if (++attempts === 1) throw new Error("Offline"); return { records: [{ seq: 3, role: "assistant", content: "Recovered original" }] }; }
+    return { records: rows };
+  } });
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-reply-reference]')?.getAttribute('data-unavailable')).toBe('true'));
+  await ui.click('[data-reply-reference]');
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-reply-reference]')?.textContent).toBe("Recovered original"));
+  expect(attempts).toBe(2);
+});
+it("retries empty source lookups after view reentry while retaining successful sources", async () => {
+  let attempts = 0;
+  const rows = [{ seq: 20, role: "user", content: "Follow-up", relation: { reply_to: { session_id: "s-private", seq: 3 } } }];
+  const ui = await mount(undefined, main, undefined, { history: async input => input.start_seq === 3 ? (++attempts === 1 ? { records: [] } : { records: [{ seq: 3, role: "assistant", content: "Now available" }] }) : { records: rows } });
+  await ui.remount(); await vi.waitFor(() => expect(ui.container.querySelector('[data-reply-reference]')?.textContent).toBe("Now available"));
+  await ui.remount(); expect(attempts).toBe(2);
+});
+it("recovers an unread saved draft when storage returns without replacing it with empty input", async () => {
+  const first = await mount(); await first.edit("Previously saved input"); first.dispose();
+  const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Storage unavailable"); });
+  const next = await mount();
+  expect(next.container.querySelector('[data-draft-storage-error]')).not.toBeNull();
+  read.mockRestore(); await next.click('[data-action="retry-draft-save"]');
+  expect(next.container.querySelector('textarea')!.value).toBe("Previously saved input");
+});
+it("keeps the explicit reply target when recovery storage cannot be read", async () => {
+  vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Storage unavailable"); });
+  const ui = await mount(); await ui.click('[data-action="reply-message"]'); await ui.edit("Reply despite storage failure");
+  await ui.click('.composer-send-button');
+  expect(ui.invoke.mock.calls.find(([r]) => r.method === "agents.send")![0].input).toMatchObject({ relation: { reply_to: { session_id: "s-private", seq: 1 } } });
+});
+it("never deletes saved drafts when retention cleanup cannot read storage", async () => {
+  const first = await mount(); await first.edit("Keep this stored draft");
+  const other = await mount(undefined, { ...main, main_session_id: "second-session" });
+  const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("Temporary read failure"); });
+  await other.edit("Another stored draft"); read.mockRestore(); first.dispose(); other.dispose();
+  const restored = await mount(); expect(restored.container.querySelector('textarea')!.value).toBe("Keep this stored draft");
+});
+
+const receiptFixture = (request = "client", overrides: Record<string, unknown> = {}) => ({ request_id: request, host_request_id: `host-${request}`, receipt_id: `receipt-${request}`, client_id: `client-${request}`, queue_id: `queue-${request}`, session_id: main.main_session_id, plugin_id: "personal", receipt_state: "accepted", execution_state: "held", accepted_at: "2026-10-23T08:00:00Z", revision: 2, ...overrides });
+it("keeps acceptance unknown until request status proves durable delivery", async () => {
+ let recovered = false;
+ const ui = await mount(async (method, input) => {
+  if (method === "agents.send") throw new Error("ACK lost");
+  if (method === "agents.messages.status") return recovered ? { receipt: receiptFixture(input.request_id) } : {};
+  return {};
+ });
+ await ui.edit("Keep this request");await ui.click(".composer-send-button");
+ expect(ui.container.querySelector("textarea")!.value).toBe("Keep this request");
+ expect(ui.container.querySelector('[data-receipt-state="unknown"]')).not.toBeNull();
+ const first = ui.invoke.mock.calls.find(([r]) => r.method === "agents.send")![0].input;
+ recovered=true;await ui.click(".composer-send-button");
+ expect(ui.container.querySelector("textarea")!.value).toBe("");
+ expect(ui.invoke.mock.calls.filter(([r]) => r.method === "agents.send")).toHaveLength(1);
+ expect(ui.invoke.mock.calls.filter(([r]) => r.method === "agents.messages.status").at(-1)![0].input).toEqual(expect.objectContaining({request_id:(first as any).request_id}));
+});
+it("restores Held inputs by exact identity and resumes only on an explicit action", async () => {
+ const receipt=receiptFixture();let state="held";
+ const ui = await mount(async method => {if(method==="agents.messages.resume") {state="running";return {receipt:{...receipt,execution_state:state,revision:3}};}return {};},main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:state==="held"?[{receipt,prompt:"Saved input",attachments:[{filename:"note.txt",media_type:"text/plain",sha256:"a".repeat(64)}]}]:[]})});
+ expect(ui.container.textContent).toContain("Saved input");expect(ui.container.textContent).toContain("note.txt");
+ expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.send"||r.method==="agents.messages.resume")).toBe(false);
+ await ui.click('[data-action="resume-accepted-input"]');
+ expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"agents.messages.resume",input:expect.objectContaining({receipt_id:receipt.receipt_id,request_id:receipt.request_id}),userInput:{requestId:receipt.request_id,prompt:"",resumeReceiptId:receipt.receipt_id}}));
+});
+it("keeps delivered execution failures distinct and ignores older receipt revisions", async () => {
+ const receipt=receiptFixture("same",{receipt_state:"in_history",execution_state:"failed",message_seq:2,hostturn_id:"turn",revision:5,error_stage:"execution"});let older=false;
+ const ui=await mount(undefined,main,undefined,{history:async()=>({records:[{seq:2,role:"user",content:"Saved",receipt:older?{...receipt,execution_state:"running",revision:3}:receipt}]})});
+ expect(ui.container.querySelector('[data-receipt-state="failed"]')?.textContent).toContain("已送达");
+ older=true;await act(async()=>ui.publish());
+ expect(ui.container.querySelector('[data-receipt-state="failed"]')).not.toBeNull();
+ expect(ui.container.textContent).not.toContain("Seen");
+});
+
+it("reconciles remote cancellation by request without erasing other Held inputs", async () => {
+ const cancelled=receiptFixture("cancel-me"), kept=receiptFixture("keep-me");let remote=false;
+ const ui=await mount(async(method,input)=>method==="agents.messages.status"?{receipt:input.request_id==="cancel-me"?{...cancelled,execution_state:"cancelled",revision:3}:kept}:{},main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:(remote?[kept]:[cancelled,kept]).map(receipt=>({receipt,prompt:receipt.request_id}))})});
+ expect(ui.container.querySelectorAll('[data-receipt-state="held"]')).toHaveLength(2);
+ remote=true;await act(async()=>ui.publish());
+ await vi.waitFor(()=>expect(ui.container.querySelector('[data-receipt-id="receipt-cancel-me"]')).toHaveProperty("dataset.receiptState","cancelled"));
+ expect(ui.container.querySelector('[data-receipt-id="receipt-keep-me"]')).toHaveProperty("dataset.receiptState","held");
+ expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"agents.messages.status",input:expect.objectContaining({request_id:"cancel-me"})}));
+ expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.messages.resume"||r.method==="agents.send")).toBe(false);
+});
+it("keeps an omitted pending receipt until status proves a newer terminal state", async () => {
+ const receipt=receiptFixture("missing");let remote=false,available=false;
+ const ui=await mount(async method=>{if(method==="agents.messages.status"){if(!available)throw new Error("status offline");return {receipt:{...receipt,execution_state:"failed",revision:4,receipt_state:"in_history",message_seq:9,hostturn_id:"actual"}};}return {};},main,[{seq:9,role:"user",content:"same request",receipt}],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:remote?[]:[{receipt,prompt:"same request"}]})});
+ remote=true;await act(async()=>ui.publish());expect(ui.container.querySelector('[data-receipt-id="receipt-missing"]')).toHaveProperty("dataset.receiptState","held");
+ available=true;await act(async()=>ui.publish());await vi.waitFor(()=>expect(ui.container.querySelector('[data-receipt-id="receipt-missing"]')).toHaveProperty("dataset.receiptState","failed"));
+});
+
+it("converges a peer cancellation without dropping other pending inputs", async () => {
+ const first=receiptFixture("first"),other=receiptFixture("other");let cancelled=false;
+ const ui=await mount(async(method,input)=>method==="agents.messages.status"?{receipt:input.request_id==="first"?{...first,execution_state:cancelled?"cancelled":"held",revision:cancelled?3:2}:other}:{},main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:[...(!cancelled?[{receipt:first,prompt:"Cancelled on peer"}]:[]),{receipt:other,prompt:"Keep this separate"}]})});
+ expect(ui.container.querySelectorAll('[data-receipt-state="held"]')).toHaveLength(2);
+ cancelled=true;await act(async()=>ui.publish());
+ await vi.waitFor(()=>expect(ui.container.querySelector('[data-receipt-id="receipt-first"]')).toHaveProperty("dataset.receiptState","cancelled"));
+ expect(ui.container.querySelector('[data-receipt-id="receipt-other"]')).toHaveProperty("dataset.receiptState","held");
+ expect(ui.container.textContent).toContain("Keep this separate");
+ expect(ui.invoke.mock.calls.filter(([r])=>r.method==="agents.messages.status").map(([r])=>(r.input as any).request_id)).toContain("first");
+ expect(ui.invoke.mock.calls.some(([r])=>["agents.send","agents.messages.resume","agents.messages.cancel"].includes(r.method))).toBe(false);
+});
+
+it("publishes new history and other terminal receipts when one status lookup fails", async () => {
+ const failing=receiptFixture("offline"),cancelled=receiptFixture("peer");let refresh=false;
+ const ui=await mount(async(method,input)=>{
+  if(method!=="agents.messages.status")return {};
+  if(input.request_id==="offline")throw new Error("one receipt offline");
+  return {receipt:{...cancelled,execution_state:"cancelled",revision:3}};
+ },main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:refresh?[]:[failing,cancelled].map(receipt=>({receipt,prompt:receipt.request_id}))}),history:async()=>({records:refresh?[{seq:7,role:"assistant",content:"New history must publish"}]:[]})});
+ refresh=true;await act(async()=>ui.publish());
+ expect(ui.container.textContent).toContain("New history must publish");
+ expect(ui.container.querySelector('[data-receipt-id="receipt-offline"]')).toHaveProperty("dataset.receiptState","held");
+ expect(ui.container.querySelector('[data-receipt-id="receipt-peer"]')).toHaveProperty("dataset.receiptState","cancelled");
+ expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.send"||r.method==="agents.messages.resume")).toBe(false);
+});
+
+it("keeps reply Sending, unknown and Held actionable in their own discussion", async () => {
+ let reject!: (reason: Error) => void;const pending=new Promise((_,fail)=>{reject=fail;});
+ let first=true,current:any;const records:any[]=[{seq:1,role:"assistant",content:"Discussion one"},{seq:9,role:"assistant",content:"Discussion two"}];
+ const ui=await mount(async(method,input)=>{
+  if(method==="agents.send") {if(first){first=false;return pending;}current=receiptFixture(input.request_id);return {receipt:current};}
+  if(method==="agents.messages.status")return {receipt:current};
+  if(method==="agents.messages.resume"){current={...current,execution_state:"queued",revision:3};return {receipt:current};}
+  if(method==="agents.messages.cancel"){current={...current,execution_state:"cancelled",revision:4};return {receipt:current};}
+  return {};
+ },main,records);
+ await ui.click('[data-action="reply-message"]');await ui.edit("Only first discussion");await ui.click('.composer-send-button');
+ expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="sending"]')).not.toBeNull();
+ await act(async()=>{reject(new Error("ACK unknown"));await pending.catch(()=>{});});
+ expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="unknown"]')).not.toBeNull();
+ await ui.click('[data-action="close-replies"]');await ui.remount();
+ await act(async()=>ui.container.querySelectorAll<HTMLButtonElement>('.mosaic-main [data-action="reply-message"]')[1].click());
+ expect(ui.container.querySelector('.mosaic-replies')!.textContent).not.toContain("Only first discussion");
+ await ui.click('[data-action="close-replies"]');await ui.click('[data-action="reply-message"]');
+ expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="unknown"]')).not.toBeNull();
+ await ui.click('.composer-send-button');
+ expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="held"]')).not.toBeNull();
+ const sends=ui.invoke.mock.calls.filter(([r])=>r.method==="agents.send");expect((sends[1][0].input as any).request_id).toBe((sends[0][0].input as any).request_id);
+ await ui.click('.mosaic-replies [data-action="resume-accepted-input"]');
+ expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="queued"]')).not.toBeNull();
+ await ui.click('.mosaic-replies [data-action="cancel-accepted-input"]');
+ expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="cancelled"]')).not.toBeNull();
+ expect(ui.invoke.mock.calls.find(([r])=>r.method==="agents.messages.resume")![0].userInput).toEqual({requestId:current.request_id,prompt:"",resumeReceiptId:current.receipt_id});
+});
+
+it("restores only related peer Held inputs in a reply and deduplicates history admission", async () => {
+ const ref=(seq:number)=>({reply_to:{session_id:main.main_session_id,seq}});
+ const own=receiptFixture("own"),other=receiptFixture("other"),plain=receiptFixture("plain");let admitted=false;
+ const root={seq:1,role:"assistant",content:"Canonical discussion"},child={seq:8,role:"assistant",content:"Later answer",relation:ref(1)};
+ const ui=await mount(undefined,main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:admitted?[]:[{receipt:own,prompt:"Related peer input",relation:ref(8)},{receipt:other,prompt:"Other discussion",relation:ref(99)},{receipt:plain,prompt:"Unrelated main input"}]}),history:async input=>({reply_root_seq:1,records:input.reply_seq!==undefined?[root,child,...(admitted?[{seq:10,role:"user",content:"Related peer input",relation:ref(8),receipt:{...own,receipt_state:"in_history",message_seq:10,hostturn_id:"actual",execution_state:"completed",revision:4}}]:[])]:[child,...(admitted?[{seq:10,role:"user",content:"Related peer input",relation:ref(8),receipt:{...own,receipt_state:"in_history",message_seq:10,hostturn_id:"actual",execution_state:"completed",revision:4}}]:[])],has_earlier:false})});
+ await ui.click('[data-action="reply-message"]');const panel=()=>ui.container.querySelector('.mosaic-replies')!;
+ expect(panel().textContent).toContain("Related peer input");expect(panel().textContent).not.toContain("Other discussion");expect(panel().textContent).not.toContain("Unrelated main input");
+ expect(panel().querySelectorAll('[data-receipt-state="held"]')).toHaveLength(1);
+ admitted=true;await act(async()=>ui.publish());
+ await vi.waitFor(()=>expect(panel().querySelectorAll('[data-receipt-id="receipt-own"]')).toHaveLength(1));
+ expect(panel().querySelector('[data-receipt-id="receipt-own"]')).toHaveProperty("dataset.receiptState","completed");
+});
+
+it("limits task reply pending receipts to the current task revision and execution", async () => {
+ const link={task_id:"t1",requirements_revision:2,execution_session_id:"run-two"};
+ const task={task_id:"t1",title:"Current task",goal:"Review",state:"running",revision:3,requirements_revision:2,execution:{session_id:"run-two"}};
+ const rows=[{id:"current",link},{id:"old-revision",link:{...link,requirements_revision:1}},{id:"old-execution",link:{...link,execution_session_id:"run-one"}},{id:"other-task",link:{...link,task_id:"t2"}}];
+ const ui=await mount(undefined,main,[],{tasks:[task],open:async()=>({agent:main,session:{state:"completed"},pending_inputs:rows.map(({id,link})=>({receipt:receiptFixture(id),prompt:id,relation:{metadata:{task_links:[link]}}}))})});
+ await ui.click('[data-task-id="t1"]');await ui.click('[data-action="reply-task"]');
+ const panel=ui.container.querySelector('.mosaic-replies')!;
+ expect(panel.querySelector('[data-receipt-id="receipt-current"]')).not.toBeNull();
+ expect(panel.querySelectorAll('[data-receipt-id]')).toHaveLength(1);
+ expect(panel.querySelector('[data-action="resume-accepted-input"]')).not.toBeNull();
+ expect(panel.querySelector('[data-action="cancel-accepted-input"]')).not.toBeNull();
+});
+
+it("does not let uncertain draft status failure suppress a peer terminal state or history", async () => {
+ const peer=receiptFixture("peer");let refresh=false;
+ const ui=await mount(async(method,input)=>{
+  if(method==="agents.send")throw new Error("transport unknown");
+  if(method==="agents.messages.status") {if(input.request_id==="peer")return {receipt:{...peer,execution_state:"cancelled",revision:3}};throw new Error("draft status offline");}
+  return {};
+ },main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:refresh?[]:[{receipt:peer,prompt:"Peer pending"}]}),history:async()=>({records:refresh?[{seq:7,role:"assistant",content:"History after draft lookup failed"}]:[]})});
+ await ui.edit("Unconfirmed draft");await ui.click('.composer-send-button');refresh=true;await act(async()=>ui.publish());
+ expect(ui.container.textContent).toContain("History after draft lookup failed");
+ expect(ui.container.querySelector('[data-receipt-id="receipt-peer"]')).toHaveProperty("dataset.receiptState","cancelled");
+ expect(ui.container.querySelector('textarea')!.value).toBe("Unconfirmed draft");
+ expect(ui.container.querySelector('[data-receipt-state="unknown"]')).not.toBeNull();
+ expect(ui.invoke.mock.calls.filter(([r])=>r.method==="agents.send")).toHaveLength(1);
+});
+
+it("renders Personal interactive parts with scoped actions, preserves prose, and keeps local edits quiet", async () => {
+  const spec = genuiFixtures.checklist;
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "fixture-surface", messageId: "fixture-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  const observer = vi.fn(() => <p>Coding observer</p>);
+  await desktopPluginHost.activateGeneration({ pluginId: "test:genui-observer", generation: "one", register(api) { api.registerRenderer({ id: "observer", category: "message", match: "text/markdown", render: observer }); } });
+  cleanups.push(() => act(() => desktopPluginHost.unload("test:genui-observer")));
+  const ui = await mount(async (method, input) => {
+    if (method === "genui.action") {
+      const payload = input as { agent_id: string; request: ActionRequest };
+      expect(payload.agent_id).toBe(main.agent_id);
+      expect(payload.request.state.items).toEqual(expect.arrayContaining([expect.objectContaining({ done: true })]));
+      snapshot = { surface: { ...snapshot.surface, state: payload.request.state, revision: 1 }, acceptedRevision: 1 };
+      return snapshot;
+    }
+    return {};
+  }, main, [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_text: "Here is your editable draft.", ui_parts: [snapshot] }]);
+  expect(ui.container.textContent).toContain("Here is your editable draft.");
+  expect(ui.container.querySelectorAll(".personal-genui")).toHaveLength(1);
+  await ui.click('[data-genui-node="done"]');
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "genui.action")).toBe(false);
+  await act(async () => { const button = ui.container.querySelector<HTMLButtonElement>('[data-genui-node="save"]')!; button.click(); button.click(); });
+  expect(ui.invoke.mock.calls.filter(([request]) => request.method === "genui.action")).toHaveLength(1);
+  expect(ui.container.textContent).toContain("选择已保存");
+  expect(observer).not.toHaveBeenCalled();
+});
+
+it("requires an explicit reload after a GenUI revision conflict and renders fallback for unsupported parts", async () => {
+  const spec = genuiFixtures.calculator;
+  const snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "conflict-surface", messageId: "message-conflict", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  const ui = await mount(async method => {
+    if (method === "genui.action") throw new Error("genui_revision_conflict");
+    if (method === "genui.read") return { ...snapshot, surface: { ...snapshot.surface, revision: 1, state: { count: 10, price: 20 } }, acceptedRevision: 1 };
+    return {};
+  }, main, [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_text: "", ui_parts: [snapshot] }]);
+  await ui.click('[data-genui-node="save"]');
+  expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("另一处已更新");
+  const reload = [...ui.container.querySelectorAll<HTMLButtonElement>(".personal-genui button")].find(button => button.textContent === "载入已保存选择")!;
+  await act(async () => reload.click());
+  expect(ui.container.querySelector('[data-genui-node="sum"]')?.textContent).toBe("200");
+  const bad = structuredClone(snapshot); Reflect.set(bad.surface.spec, "schemaVersion", 99);
+  const fallback = await mount(undefined, main, [{ seq: 3, role: "assistant", content: spec.fallbackText, ui_parts: [bad] }]);
+  expect(fallback.container.querySelectorAll(".personal-genui")).toHaveLength(0);
+  expect(fallback.container.textContent).toContain(spec.fallbackText);
+});
+
+it("binds GenUI submit to authenticated durable input and resumes held state only after an explicit continue", async () => {
+  const spec = genuiFixtures.calculator;
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "submit-surface", messageId: "message-submit", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  const ui = await mount(async (method, input) => {
+    if (method === "genui.action") {
+      const request = (input as { request: ActionRequest }).request;
+      snapshot = { surface: { ...snapshot.surface, revision: 1, submitted: true, state: request.state }, acceptedRevision: 1, delivery: "pending", submission: { requestId: request.eventId, prompt: "Synthetic explicit input" } };
+      return snapshot;
+    }
+    if (method === "genui.retry") {
+      snapshot = input.receipt_id ? { ...snapshot, delivery: "accepted", submission: undefined } : { ...snapshot, delivery: "held", submission: { requestId: snapshot.submission!.requestId, prompt: "", resumeReceiptId: "receipt-held" } };
+      if (input.receipt_id) delete snapshot.submission;
+      return snapshot;
+    }
+    if (method === "genui.read") return snapshot;
+    return {};
+  }, main, [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }]);
+  await act(async () => { const button = ui.container.querySelector<HTMLButtonElement>('[data-genui-node="submit"]')!; button.click(); button.click(); });
+  const first = ui.invoke.mock.calls.filter(([r]) => r.method === "genui.retry");
+  expect(first).toHaveLength(1);
+  expect(first[0][0]).toEqual(expect.objectContaining({ productDomain: "personal", userSpaceId: "local", userInput: { requestId: expect.any(String), prompt: "Synthetic explicit input" } }));
+  expect(ui.container.textContent).toContain("尚未运行");
+  const refresh = [...ui.container.querySelectorAll<HTMLButtonElement>(".personal-genui button")].find(b => b.textContent === "刷新状态")!;
+  await act(async () => refresh.click());
+  expect(ui.invoke.mock.calls.filter(([r]) => r.method === "genui.retry")).toHaveLength(1);
+  const resume = [...ui.container.querySelectorAll<HTMLButtonElement>(".personal-genui button")].find(b => b.textContent === "继续文字解释")!;
+  await act(async () => resume.click());
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "genui.retry", input: { agent_id: main.agent_id, surface_id: "submit-surface", receipt_id: "receipt-held" }, userInput: { requestId: first[0][0].userInput!.requestId, prompt: "", resumeReceiptId: "receipt-held" } }));
+  expect(ui.container.textContent).toContain("选择已由当前对话接收");
+});
+
+it("updates same-key GenUI authority through Personal polling without discarding a dirty draft", async () => {
+  const spec = genuiFixtures.calculator;
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "poll-surface", messageId: "poll-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  const history = async () => ({ records: [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }] });
+  const ui = await mount(async (method, input) => {
+    if (method === "genui.action") { expect(input.request.expectedRevision).toBe(2); expect(input.request.state.count).toBe(8); return { surface: { ...snapshot.surface, revision: 3, state: input.request.state }, acceptedRevision: 3 }; }
+    return {};
+  }, main, [], { history });
+  const element = ui.container.querySelector('.personal-genui');
+  snapshot = { surface: { ...snapshot.surface, revision: 1, state: { count: 10, price: 20 } }, acceptedRevision: 1 };
+  await act(async () => ui.publish());
+  expect(ui.container.querySelector('.personal-genui')).toBe(element);
+  expect(ui.container.querySelector('[data-genui-node="sum"]')?.textContent).toBe("200");
+  await act(async () => { const slider = ui.container.querySelector('input[type="range"]')!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "8"); slider.dispatchEvent(new Event("input", { bubbles: true })); slider.dispatchEvent(new Event("change", { bubbles: true })); });
+  snapshot = { surface: { ...snapshot.surface, revision: 2, state: { count: 9, price: 40 } }, acceptedRevision: 2 };
+  await act(async () => ui.publish());
+  expect(ui.container.querySelector('input[type="range"]')).toHaveProperty("value", "8");
+  expect(ui.container.querySelector('[data-genui-node="save"]')).toHaveProperty("disabled", true);
+  expect(ui.container.querySelector('[data-genui-conflict]')).not.toBeNull();
+  await ui.click('[data-action="keep-genui-draft"]');
+  await ui.click('[data-genui-node="save"]');
+  snapshot = { surface: { ...snapshot.surface, revision: 1, state: { count: 1, price: 10 } }, acceptedRevision: 1 };
+  await act(async () => ui.publish());
+  expect(ui.container.querySelector('input[type="range"]')).toHaveProperty("value", "8");
+});
+
+it("exposes same-revision held receipts from polling and never regresses to older delivery status", async () => {
+  const spec = genuiFixtures.calculator;
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "held-poll", messageId: "held-message", spec, state: genuiInitialState(spec), revision: 1, submitted: true }, acceptedRevision: 1, delivery: "pending", deliveryRevision: 0, submission: { requestId: "held-event", prompt: "Synthetic input" } };
+  const ui = await mount(undefined, main, [], { history: async () => ({ records: [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }] }) });
+  const pending = structuredClone(snapshot);
+  snapshot = { ...snapshot, delivery: "held", deliveryRevision: 2, submission: { requestId: "held-event", prompt: "", resumeReceiptId: "receipt-held" } };
+  await act(async () => ui.publish());
+  expect(ui.container.querySelector('[data-action="retry-genui"]')?.textContent).toContain("继续");
+  snapshot = pending; await act(async () => ui.publish());
+  expect(ui.container.querySelector('[data-action="retry-genui"]')?.textContent).toContain("继续");
+  snapshot = { surface: snapshot.surface, acceptedRevision: 1, delivery: "unconfirmed", deliveryRevision: 3 };
+  await act(async () => ui.publish());
+  expect(ui.container.querySelector('[data-action="retry-genui"]')).toBeNull();
+  expect(ui.invoke.mock.calls.filter(([r]) => r.method === "genui.retry")).toHaveLength(0);
+});
+
+it("keeps dirty GenUI choices visible when another client submits and surfaces Held separately", async () => {
+  const spec = genuiFixtures.checklist;
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "draft-held", messageId: "draft-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  const ui = await mount(undefined, main, [], { history: async () => ({ records: [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }] }) });
+  await ui.click('[data-genui-node="done"]');
+  snapshot = { ...snapshot, surface: { ...snapshot.surface, revision: 1, submitted: true }, acceptedRevision: 1, delivery: "held", deliveryRevision: 2, submission: { requestId: "peer-event", prompt: "", resumeReceiptId: "peer-receipt" } };
+  await act(async () => ui.publish());
+  expect(ui.container.querySelector('input[type="checkbox"]')).toHaveProperty("checked", true);
+  expect(ui.container.querySelector('[data-genui-conflict]')).not.toBeNull();
+  expect(ui.container.querySelector('[data-action="keep-genui-draft"]')).toBeNull();
+  expect(ui.container.querySelector('[data-action="retry-genui"]')).not.toBeNull();
+  await ui.click('[data-action="use-genui-authority"]');
+  expect(ui.container.querySelector('input[type="checkbox"]')).toHaveProperty("checked", false);
+});
+
+it("recovers an exceptional visible expression on the same surface while preserving usable inputs", async () => {
+  const spec = structuredClone(genuiFixtures.calculator); spec.fields.count = { type: "number", scope: "persistent", initial: 0, min: 0, max: 20 };
+  spec.tree = { id: "error-root", type: "stack", children: [spec.tree, { id: "conditional-error", type: "text", value: "computed detail", visible: { op: "gt", args: [{ op: "div", args: [1, { get: "count" }] }, 0] } }] };
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "visible-error", messageId: "visible-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  const ui = await mount(undefined, main, [], { history: async () => ({ records: [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }] }) });
+  expect(ui.container.querySelector('input[type="range"]')).not.toBeNull();
+  snapshot = { ...snapshot, surface: { ...snapshot.surface, revision: 1, state: { count: 1, price: 80 } }, acceptedRevision: 1 };
+  await act(async () => ui.publish());
+  expect(ui.container.textContent).toContain("computed detail");
+});
+
+
+it("recovers the GenUI error boundary after a corrected same-ID snapshot", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  const spec = genuiFixtures.calculator;
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "boundary-same", messageId: "boundary-message", spec, state: { count: "invalid", price: 80 }, revision: 0, submitted: false }, acceptedRevision: 0 };
+  const container = document.createElement("div"); document.body.append(container);
+  const root = createRoot(container); cleanups.push(() => { act(() => root.unmount()); container.remove(); });
+  const transport = { dispatch: async () => snapshot, read: async () => snapshot, retry: async () => snapshot };
+  await act(async () => root.render(<PersonalGenUISurface initial={snapshot} transport={transport} />));
+  expect(container.textContent).toContain(spec.fallbackText); expect(container.querySelector('input[type="range"]')).toBeNull();
+  snapshot = { ...snapshot, surface: { ...snapshot.surface, state: { count: 4, price: 80 } } };
+  await act(async () => root.render(<PersonalGenUISurface initial={snapshot} transport={transport} />));
+  expect(container.querySelector('input[type="range"]')).not.toBeNull();
+});
+
+it("mounts connection and review controls in existing preferences without implying configured authority", async () => {
+  const view = await mount(async method => {
+    if (method === "connections.status") return { ok: true, value: { product_domain: "personal", provider: "google-calendar", user_space_id: "local", state: "unavailable", selected_calendars: [], error_code: "oauth_client_not_configured" } };
+    if (method === "review.list") return { ok: true, value: { schema: "personal-review.v1", kind: "unavailable", reason: "Production authorization resolver is unavailable" } };
+  });
+  await view.settings();
+  expect(view.container.querySelector('[data-personal-connections]')).not.toBeNull();
+  expect(view.container.querySelector('.personal-review')).not.toBeNull();
+  expect(view.container.textContent).toContain("Production authorization resolver is unavailable");
+  expect(view.container.querySelector('[data-review-choice]')).toBeNull();
+  expect(view.container.querySelector('[data-action="save-notifications"]')).not.toBeNull();
+});
+
+it("keeps the Calendar CAS error and stale result visible through the shipped settings bridge", async () => {
+  let calls=0;
+  const connection={product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"account",connection_id:"connection",selection_revision:"1",state:"connected",selected_calendars:["primary"]};
+  const view=await mount(async(method,input)=>{
+    if(method==="connections.status")return {ok:true,value:connection};
+    if(method==="connections.calendars")return {ok:true,value:[{id:"primary",summary:"Synthetic",timeZone:"UTC"}]};
+    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
+    if(method==="connections.agenda")return {state:++calls===1?"ready":"error",freshness:calls===1?"fresh":"stale",error_code:calls===1?undefined:"provider_unavailable",read_only:true,source:{...(input as object),provider:"google-calendar",read_only:true,user_space_id:"local",account_id:"account",connection_id:"connection",selection_revision:"1",fetched_at:new Date().toISOString()},events:[{id:"event",status:"confirmed",summary:"Previously fetched appointment",all_day:true}],cancelled_events:[]};
+  });
+  await view.settings();
+  const ask=async()=>{await act(async()=>{view.container.querySelector('form.gcal-agenda-form')!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true}));await new Promise(resolve=>setTimeout(resolve,0));});};
+  await ask();expect(view.container.textContent).toContain("Previously fetched appointment");
+  await ask();expect(view.container.textContent).toContain("Previously fetched appointment");
+  expect(view.container.querySelector('.gcal-notice[role="alert"]')?.textContent).toContain("过期");
+});
+
+it("keeps old authorization diagnostics separate from the new Calendar connection in shipped settings", async () => {
+  const view=await mount(async method=>{
+    if(method==="connections.status")return {ok:true,value:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"new-account",connection_id:"new-connection",selection_revision:"2",state:"connected",selected_calendars:["new-calendar"],authorization_diagnostics:[{attempt_id:"old-attempt",error_code:"credential_cleanup_failed"}]}};
+    if(method==="connections.calendars")return {ok:true,value:[{id:"new-calendar",summary:"Current calendar",timeZone:"UTC"}]};
+    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
+  });
+  await view.settings();
+  expect(view.container.querySelector('form.gcal-agenda-form')).not.toBeNull();
+  expect(view.container.textContent).toContain("Current calendar");
+  const diagnostic=view.container.querySelector('[data-calendar-attempt-diagnostic="old-attempt"]');
+  expect(diagnostic).not.toBeNull();
+  expect(diagnostic?.getAttribute('role')).toBe('alert');
+  expect(view.container.querySelector('.gcal-connection [role="alert"]')).toBeNull();
+});
+
+it("keeps the current Calendar grant usable when an older authorization promise fails cleanup", async () => {
+  // This test leaves both lifetime signals live; jsdom lacks Chromium's any().
+  const previousAny=Object.getOwnPropertyDescriptor(AbortSignal,'any');
+  Object.defineProperty(AbortSignal,'any',{configurable:true,value:(signals:AbortSignal[])=>signals[0]});
+  cleanups.push(()=>{if(previousAny)Object.defineProperty(AbortSignal,'any',previousAny);else Reflect.deleteProperty(AbortSignal,'any');});
+  let connected=false,finish: ((value:unknown)=>void)|undefined;
+  const view=await mount(async method=>{
+    if(method==="connections.status")return {ok:true,value:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"new-account",connection_id:"new-connection",selection_revision:"2",state:connected?"connected":"unconnected",selected_calendars:connected?["new-calendar"]:[]}};
+    if(method==="connections.calendars")return {ok:true,value:[{id:"new-calendar",summary:"Current calendar",timeZone:"UTC"}]};
+    if(method==="connections.start")return new Promise(resolve=>{finish=resolve;});
+    if(method==="review.list")return {ok:true,value:{schema:"personal-review.v1",kind:"unavailable",reason:"Synthetic"}};
+  });
+  await view.settings();
+  await act(async()=>{Array.from(view.container.querySelectorAll('button')).find(button=>button.textContent==='连接 Google Calendar')!.click();});
+  expect(finish).toBeDefined();
+  await act(async()=>{connected=true;finish!({ok:false,error:{code:'credential_cleanup_failed'}});});
+  expect(view.container.querySelector('form.gcal-agenda-form')).not.toBeNull();
+  const notices=Array.from(view.container.querySelectorAll('.gcal-notice[role="alert"]'));
+  expect(notices.length).toBeGreaterThan(0);
+  expect(notices.every(notice=>!notice.textContent?.includes('连接已停用'))).toBe(true);
 });

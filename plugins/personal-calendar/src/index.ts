@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { ConnectedCalendarReader } from "./connected-calendar.js";
+import { callPersonalHost, decodeCalendarConnection } from "./host-bridge.js";
 import { createHash, randomUUID } from 'node:crypto';
 import { requireKernelService, type RuntimePlugin, type RuntimeHost, type RuntimeInitializeParams, type RuntimeInitializeResult, type RuntimeLifecycleContext, type RuntimeExecutionContext, type ServiceInvokeParams, type CapabilityInvokeParams } from '@wuu/plugin-sdk';
 import { CalendarReadError, GoogleCalendarReader, calendarQuery, type CalendarReader, type CalendarQuery, type CalendarSnapshot } from './google-calendar.js';
@@ -36,10 +39,20 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
   private host!: RuntimeHost;
   private space = ''; private key = ''; private owner = randomUUID();
   private available = false; private active = false; private abort = new AbortController();
+  private callScope = new AsyncLocalStorage<{ host: RuntimeHost; sessionID: string }>();
   private reader: CalendarReader; private clock: () => Date;
   private writer?: CalendarWriter; private operations?: CalendarOperations;
   private inFlight?: { query: CalendarQuery; promise: Promise<unknown>; abort: AbortController };
-  constructor(options: PersonalCalendarOptions = {}) { this.reader = options.reader ?? new GoogleCalendarReader(); this.writer = options.writer; this.clock = options.clock ?? (() => new Date()); }
+  constructor(options: PersonalCalendarOptions = {}) { this.reader = options.reader ?? new ConnectedCalendarReader({
+      status: async signal => decodeCalendarConnection(await this.connectedCall('status', {}, signal)),
+      authorize: async signal => decodeCalendarConnection(await this.connectedCall('authorize', {}, signal)),
+      eventsPage: (connectionID, query, signal) => { const { account_id: _account, ...bounded } = query; return this.connectedCall('events', { connection_id: connectionID, query: bounded }, signal); },
+    }); this.writer = options.writer; this.clock = options.clock ?? (() => new Date()); }
+  private connectedCall(method: string, input: unknown, signal: AbortSignal) {
+    const scope = this.callScope.getStore();
+    if (!scope) throw new Error('Calendar read requires an admitted execution scope');
+    return callPersonalHost(scope.host, `calendar.read.${method}`, input, scope.sessionID, signal);
+  }
   initialize(params: RuntimeInitializeParams, host: RuntimeHost, lifecycle: RuntimeLifecycleContext): RuntimeInitializeResult {
     this.host = host; this.space = params.user_space_id?.trim() ?? '';
     this.available = params.product_domain === 'personal' && Boolean(this.space);
@@ -52,7 +65,7 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
       beforeMutation: async () => { await this.update(current => { if (current!.disabled) throw new Error('calendar disconnected'); return { ...current!, state: 'error', error_code: 'calendar_write_pending', refresh: undefined, windows: Object.fromEntries(Object.entries(current!.windows!).map(([key, window]) => [key, { ...window, state: 'error', error_code: 'calendar_write_pending' }])) }; }); this.inFlight?.abort.abort(); },
     });
     return { protocol_version: 3, lifecycle_version: 1,
-      required_services: [...(['host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.context'] as const).map(requireKernelService), { name: 'personal.agents', major_version: 1, required: false }],
+      required_services: [...(['host.storage.get', 'host.storage.keys', 'host.storage.compare_exchange', 'host.session.context'] as const).map(requireKernelService), { name: 'personal.agents', major_version: 1, required: false }, { name: 'host.personal', major_version: 1, required: true }],
       provided_services: [{ name: service, version: '1.0.0', methods: methods.map(name => ({ name, input_schema: `calendar.personal.${name}.request.v1`, output_schema: 'calendar.personal.snapshot.v1' })) }],
       capabilities: [{ id: 'plugin.client.request', kind: 'decision', version: 1 }],
       // Keep existing calendar state and client reconciliation available without
@@ -115,9 +128,32 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
       events: cache?.events ?? [], cancelled_events: cache?.cancelled_events ?? [], source: cache?.source };
   }
   private async current(query?: CalendarQuery) {
+    return this.view(await this.authorizedState(), query);
+  }
+  private async authorizedState(): Promise<Stored> {
     this.assertActive(); const { state } = await this.stored();
     if (!state || state.owner !== this.owner) throw new Error('calendar runtime generation replaced');
-    return this.view(state, query);
+    const sources = Object.values(state.windows ?? {}).flatMap(window => window.cache ? [window.cache.source] : []);
+    if (!sources.length || !this.reader.validateCache) return state;
+    try {
+      await this.reader.validateCache(this.space, sources, this.abort.signal);
+      this.assertActive();
+      // If another request replaces the cache while authority was checked, do
+      // not release that unverified generation. Its caller may retry.
+      const current = await this.stored();
+      if (current.state?.owner !== this.owner || current.state.revision !== state.revision) throw new Error('calendar cache changed during authorization');
+      return current.state;
+    } catch (error) {
+      const failure = error instanceof CalendarReadError ? error : new CalendarReadError('error', 'authorization_unverified');
+      const updated = await this.update(current => {
+        const retain = failure.state === 'error';
+        return { ...current!, state: failure.state, error_code: failure.code, refresh: undefined,
+          windows: retain ? Object.fromEntries(Object.entries(current!.windows ?? {}).map(([key, window]) => [key, { ...window, state: 'error', error_code: failure.code }])) : {},
+          source_epoch: retain ? current!.source_epoch : randomUUID(), account_id: retain ? current!.account_id : undefined, last_success_at: retain ? current!.last_success_at : undefined };
+      });
+      this.inFlight?.abort.abort();
+      return updated;
+    }
   }
   private async session(sessionID: unknown) {
     if (typeof sessionID !== 'string' || !sessionID) throw new Error('Personal calendar requires a verified session scope');
@@ -136,15 +172,17 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
     this.assertActive(); if (call.service !== service) throw new Error('unknown calendar service');
     const input = object(call.params);
     if (call.caller !== 'kernel') {
-      if (['disconnect', 'clear-cache'].includes(call.method) || input.reconnect === true) throw new Error('calendar connection changes require the user client');
-      await this.session(input.session_id);
+      if (['disconnect', 'clear-cache'].includes(call.method) || input.reconnect === true) await callPersonalHost(_host ?? this.host, 'owner.check', {}, undefined, execution?.signal);
+      else await this.session(input.session_id);
     }
-    return this.request(call.method, input, execution?.signal);
+    return this.callScope.run({ host: _host ?? this.host, sessionID: typeof input.session_id === 'string' ? input.session_id : '' }, () => this.request(call.method, input, execution?.signal));
   }
   async invokeCapability(call: CapabilityInvokeParams, _host?: RuntimeHost, execution?: RuntimeExecutionContext): Promise<{ output: unknown }> {
     this.assertActive(); if (call.capability !== 'plugin.client.request') throw new Error('unknown calendar capability');
     const input = object(call.input); if (typeof input.method !== 'string') throw new Error('invalid calendar method');
-    return { output: { result: await this.request(input.method.replace(/^calendar\./, ''), object(input.input), execution?.signal, true) } };
+    const params = object(input.input), method = input.method.replace(/^calendar\./, "");
+    await callPersonalHost(_host ?? this.host, 'owner.check', {}, undefined, execution?.signal);
+    return this.callScope.run({ host: _host ?? this.host, sessionID: typeof params.session_id === 'string' ? params.session_id : '' }, async () => ({ output: { result: await this.request(method, params, execution?.signal, true) } }));
   }
   private async request(method: string, input: Record<string, unknown>, executionSignal?: AbortSignal, client = false): Promise<unknown> {
     this.assertActive();
@@ -171,13 +209,13 @@ export class PersonalCalendarPlugin implements RuntimePlugin {
     if (method === 'status') return this.current(input.calendar_id === undefined ? undefined : calendarQuery(input));
     if (method === 'agenda') return this.current(calendarQuery(input));
     if (method === 'changes') {
-      const query = calendarQuery(input), { state } = await this.stored();
+      const query = calendarQuery(input), state = await this.authorizedState();
       if (!state || state.owner !== this.owner) throw new Error('calendar runtime generation replaced');
       const window = state.windows?.[calendarWindowKey(query)], view = this.view(state, query);
       return calendarChanges(window?.feed, window?.cache, query, input, view.state, view.freshness === 'fresh');
     }
     if (method === 'disconnect' || method === 'clear-cache') {
-      const state = await this.update(current => ({ ...current!, windows: {}, selected_window: undefined, source_epoch: randomUUID(), refresh: undefined, last_success_at: undefined, error_code: undefined, account_id: method === 'disconnect' ? undefined : current!.account_id, disabled: method === 'disconnect' || current!.disabled, state: method === 'disconnect' ? 'unconnected' : current!.account_id ? 'ready' : 'unconnected' }));
+      const state = await this.update(current => ({ ...current!, windows: {}, selected_window: undefined, source_epoch: randomUUID(), refresh: undefined, last_success_at: undefined, error_code: undefined, account_id: method === 'disconnect' ? undefined : current!.account_id, disabled: method === 'disconnect' || (input.reconnect === true ? false : current!.disabled), state: method === 'disconnect' ? 'unconnected' : current!.account_id ? 'ready' : 'unconnected' }));
       this.inFlight?.abort.abort();
       if (method === 'disconnect') this.operations?.stopOutstanding();
       return this.view(state);

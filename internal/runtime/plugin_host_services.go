@@ -101,6 +101,8 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	}
 
 	switch method {
+	case pluginhost.HostServicePersonal:
+		return s.personalService(ctx, raw)
 	case pluginhost.HostServiceSessionContext:
 		var params struct {
 			SessionID string `json:"session_id"`
@@ -216,7 +218,7 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		result, err := readPluginSessionHistory(ctx, s.dataRoot, s.pluginID, params)
+		result, err := readPluginSessionHistory(ctx, s.dataRoot, s.pluginID, s.binding, params)
 		if err != nil {
 			return nil, err
 		}
@@ -497,7 +499,7 @@ func (k *kernelHostServices) KernelServiceRegistrations() []pluginhost.ServiceRe
 		pluginhost.HostServiceSessionHistoryRead, pluginhost.HostServiceSessionHistorySearch, pluginhost.HostServiceSessionAttachmentRead,
 		pluginhost.HostServiceWorkspaceStatus, pluginhost.HostServiceWorkspaceApply,
 		pluginhost.HostServiceWorkspaceDiscard,
-		pluginhost.HostServiceSessionControl,
+		pluginhost.HostServiceSessionControl, pluginhost.HostServicePersonal,
 	}
 	registrations := make([]pluginhost.ServiceRegistration, 0, len(descriptors)+8)
 	for index, descriptor := range descriptors {

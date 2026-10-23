@@ -44,6 +44,7 @@ const (
 	KernelSessionListService            = "host.session.list"
 	KernelSessionCancelService          = "host.session.cancel"
 	KernelSessionInspectService         = "host.session.inspect"
+	KernelPersonalService               = "host.personal"
 	KernelSessionContextService         = "host.session.context"
 	KernelSessionControlService         = "host.session.control"
 	KernelSessionHistoryReadService     = "host.session.history.read"
@@ -87,7 +88,7 @@ func KernelServiceDescriptors() []ServiceDescriptor {
 		KernelSessionCancelService, KernelSessionInspectService, KernelSessionContextService,
 		KernelSessionHistoryReadService, KernelSessionHistorySearchService, KernelSessionAttachmentReadService,
 		KernelWorkspaceStatusService, KernelWorkspaceApplyService, KernelWorkspaceDiscardService,
-		KernelSessionControlService,
+		KernelSessionControlService, KernelPersonalService,
 	}
 	descriptors := make([]ServiceDescriptor, 0, len(names))
 	for _, name := range names {

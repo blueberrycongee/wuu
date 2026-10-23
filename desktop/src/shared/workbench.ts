@@ -245,7 +245,18 @@ export interface PluginUIAvatarProps {
  * Small host-owned component set for plugin surfaces. These components own the
  * common visual rhythm while plugins retain freedom inside their contribution.
  */
+export interface PluginUIInteractiveAnswerProps {
+  snapshot: unknown;
+  fallbackText?: string;
+  onAction(input: unknown): Promise<unknown>;
+  onRefresh(): Promise<unknown>;
+  onRetry(resumeHeld?: boolean): Promise<unknown>;
+}
+
 export interface PluginUIConversationMessageProps {
+  /** Opt-in bounded interactive answer; transport remains owned by the contribution. */
+  interactive?: readonly PluginUIInteractiveAnswerProps[];
+  footer?: React.ReactNode;
   linkPolicy?: "external-only";
   role: "user" | "assistant";
   content: string;

@@ -10,15 +10,20 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/userspace"
 )
 
-func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
+func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, binding userspace.Binding, params pluginhost.SessionHistoryReadParams) (pluginhost.SessionHistoryPage, error) {
 	if err := pluginhost.ValidateSessionHistoryReadParams(params); err != nil {
 		return pluginhost.SessionHistoryPage{}, err
 	}
 	sessDir, meta, err := loadVisibleHistorySession(wuuHome, pluginID, params.SessionID)
 	if err != nil {
 		return pluginhost.SessionHistoryPage{}, err
+	}
+	receiptEnabled := binding.IsUser() && binding.ProductDomain == "personal"
+	if receiptEnabled && (binding.Validate() != nil || !binding.Matches(userspace.Binding{UserSpaceID: meta.UserSpaceID, ProductDomain: meta.ProductDomain})) {
+		return pluginhost.SessionHistoryPage{}, serviceError("domain_denied", "receipt history belongs to another user space")
 	}
 	limit := params.Limit
 	if limit == 0 {
@@ -42,14 +47,25 @@ func readPluginSessionHistory(ctx context.Context, wuuHome, pluginID string, par
 		SessionID: meta.ID, HeadSeq: page.HeadSeq, SnapshotSeq: page.SnapshotSeq, HasMore: page.HasMore, BudgetExhausted: page.BudgetExhausted,
 		Records: make([]pluginhost.SessionHistoryRecord, 0, len(page.Records)),
 	}
+	var receipts map[string]providers.ClientInputReceipt
+	if receiptEnabled {
+		receipts, err = session.ClientInputHistoryReceipts(sessDir, session.ClientInputScope{Binding: binding, SessionID: meta.ID, PluginID: pluginID})
+		if err != nil {
+			return pluginhost.SessionHistoryPage{}, historyServiceError(err)
+		}
+	}
 	for _, record := range page.Records {
+		var receipt *providers.ClientInputReceipt
+		if r, found := receipts[record.ClientID]; found && r.MessageSeq == record.Seq {
+			receipt = &r
+		}
 		attachments := HistoryAttachmentMetadata(record)
 		content := record.Content
 		if record.Origin == "user" && len(attachments) > 0 {
 			content = record.DisplayContent
 		}
 		result.Records = append(result.Records, pluginhost.SessionHistoryRecord{
-			Relation:    providers.CloneMessageRelation(record.Relation),
+			Receipt: receipt, Relation: providers.CloneMessageRelation(record.Relation),
 			Attachments: attachments, At: historyRecordTime(record.At),
 			ProviderItemID: record.ProviderItemID, EngineTurnID: record.EngineTurnID,
 			Seq: record.Seq, Role: record.Role, Name: record.Name, Content: content, DisplayContent: record.DisplayContent,

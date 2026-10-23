@@ -9,13 +9,17 @@ export interface CalendarEvent {
   attendees?: Array<{ email: string; optional: boolean; response_status?: string }>; attendees_omitted?: boolean;
 }
 export interface CalendarSource extends CalendarQuery {
-  provider: 'google-calendar'; user_space_id: string; account_id: string; fetched_at: string; read_only: true; generation?: string;
+  provider: 'google-calendar'; user_space_id: string; account_id: string; fetched_at: string; read_only: true; generation?: string; connection_id?: string; selection_revision?: string;
 }
 export interface CalendarSnapshot { source: CalendarSource; events: CalendarEvent[]; cancelled_events: CalendarEvent[] }
 export interface GoogleAuthorization {
   user_space_id: string; account_id: string; access_token: string; expires_at: string; scopes: readonly string[];
 }
-export interface CalendarReader { read(userSpace: string, query: CalendarQuery, signal: AbortSignal): Promise<CalendarSnapshot> }
+export interface CalendarReader {
+ read(userSpace: string, query: CalendarQuery, signal: AbortSignal): Promise<CalendarSnapshot>;
+ /** Revalidate retained data before any cache/status/change-feed delivery. */
+ validateCache?(userSpace: string, sources: readonly CalendarSource[], signal: AbortSignal): Promise<void>;
+}
 export interface GoogleCalendarReaderOptions {
   /** Returns an existing, authorized account grant. Must not initiate consent. */
   authorize?: (userSpace: string, signal: AbortSignal) => Promise<GoogleAuthorization | null>;
@@ -57,7 +61,7 @@ function eventTime(raw: unknown, defaultTimezone: string): CalendarTime {
   if (timestamp(value.dateTime) && value.date === undefined) return { date_time: value.dateTime, timezone: zone };
   throw failure('invalid_response');
 }
-function normalizeEvent(raw: unknown, zone: string): CalendarEvent {
+export function normalizeEvent(raw: unknown, zone: string): CalendarEvent {
   const value = record(raw), id = text(value.id, true)!;
   if (!['confirmed', 'tentative', 'cancelled'].includes(String(value.status))) throw failure('invalid_response');
   const status = value.status as CalendarEvent['status'];
@@ -112,7 +116,7 @@ export class GoogleCalendarReader implements CalendarReader {
       account = grant.account_id;
       if (query.account_id !== undefined && query.account_id !== account) throw new CalendarReadError('reconnect_required', 'account_scope_mismatch', account);
       if (!timestamp(grant.expires_at) || Date.parse(grant.expires_at) <= this.clock().getTime() + 30_000 || typeof grant.access_token !== 'string' || !grant.access_token || /[\r\n]/.test(grant.access_token)) throw new CalendarReadError('reconnect_required', 'authorization_expired', account);
-      if (!Array.isArray(grant.scopes) || !grant.scopes.some(scope => ['https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly', 'https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/calendar.events'].includes(scope))) throw new CalendarReadError('reconnect_required', 'read_scope_required', account);
+      if (!Array.isArray(grant.scopes) || !grant.scopes.some(scope => ['https://www.googleapis.com/auth/calendar.events.owned.readonly', 'https://www.googleapis.com/auth/calendar.readonly', 'https://www.googleapis.com/auth/calendar.events.readonly', 'https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/calendar.events'].includes(scope))) throw new CalendarReadError('reconnect_required', 'read_scope_required', account);
       const events = new Map<string, CalendarEvent>(); const seen = new Set<string>(); let pageToken = '';
       for (let page = 0; page < 10; page++) {
         bounded.throwIfAborted();
