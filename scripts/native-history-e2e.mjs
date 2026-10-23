@@ -122,6 +122,9 @@ try {
   assert.equal(originalNative.turns.length, 3);
   check("new prompts persist native turn identity and reuse the warm engine");
 
+  // Ordinary continuation detaches before resuming with fresh MCP endpoints.
+  // History cleanup must not introduce another unsubscribe of this source.
+  const historyWireOffset = (await readFile(env.WUU_TEST_CODEX_REQUESTS, "utf8")).trim().split("\n").length;
   const fork = (await rpc("thread/fork", { thread_id: source.id, ...target(one) })).thread;
   const forkRef = stored(fork.id).engine_ref;
   assert(forkRef && forkRef !== sourceRef);
@@ -403,7 +406,7 @@ try {
   assert(initializations >= 3 && initializations <= 7, `unexpected native process churn: ${initializations}`);
   const wire = (await readFile(env.WUU_TEST_CODEX_REQUESTS, "utf8")).trim().split("\n").map(JSON.parse);
   assert(!wire.some(request => request.method === "thread/rollback" || request.method === "thread/revert"));
-  assert(!wire.some(request => request.method === "thread/unsubscribe" && request.params.threadId === sourceRef), "never unsubscribe the source while cleaning a child");
+  assert(!wire.slice(historyWireOffset).some(request => request.method === "thread/unsubscribe" && request.params.threadId === sourceRef), "never unsubscribe the source while cleaning a child");
   check("history operations preserve warm host ownership and never mutate the original native history");
   result.status = "passed";
 } catch (error) { result.error = String(error.stack || error); throw error;
