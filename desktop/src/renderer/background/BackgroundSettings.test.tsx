@@ -24,7 +24,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  mocks.preferences = { image: new Blob(["original"]), imageID: "original", name: "original.png", effect: "dither", opacity: 0.25 };
+  mocks.preferences = { image: new Blob(["original"]), imageID: "original", name: "original.png" };
   mocks.process.mockReset();
   mocks.update.mockReset().mockImplementation(async update => {
     mocks.preferences = update(mocks.preferences);
@@ -57,7 +57,7 @@ it("cancels an unmounted import and ignores its late result after a later remova
   mocks.process.mockReturnValue(new Promise<Blob>(resolve => { finish = resolve; }));
   await mount();
   await chooseImage();
-  const signal = mocks.process.mock.calls[0][3] as AbortSignal | undefined;
+  const signal = mocks.process.mock.calls[0][2] as AbortSignal | undefined;
   await remount();
   await removeImage();
   await act(async () => finish(new Blob(["late result"])));
@@ -79,12 +79,12 @@ it("does not write an unmounted import when its storage transaction starts late"
   expect(mocks.preferences).toBeNull();
 });
 
-it("persists an active import while preserving the current effect and strength", async () => {
+it("persists an active import with a new image identity", async () => {
   const image = new Blob(["processed"]);
   mocks.process.mockResolvedValue(image);
   await mount();
   await chooseImage();
-  expect(mocks.preferences).toMatchObject({ image, name: "replacement.png", effect: "dither", opacity: 0.25 });
+  expect(mocks.preferences).toMatchObject({ image, name: "replacement.png" });
   expect(mocks.preferences?.imageID).not.toBe("original");
   expect(container.querySelector<HTMLInputElement>("input[type=file]")!.disabled).toBe(false);
 });

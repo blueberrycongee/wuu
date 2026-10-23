@@ -1,12 +1,8 @@
 import type { Ref } from "react";
 import type { ChromeAccountAction, ChromeAccountPanel, ChromeAccountTrigger } from "../shared/chromeOverlay";
-import { BarChart3, ChevronsUpDown, LogOut, Settings, Smartphone, UserRound } from "./WuuIcons";
+import { BarChart3, ChevronsUpDown, Cog, LogOut, Settings, Smartphone, UserRound } from "./WuuIcons";
 import { handleFloatingMenuKeyDown } from "./ComposerFloatingMenu";
 import "./SidebarAccountMenu.css";
-
-export function SidebarAccountAvatar({ initials }: { initials?: string }): JSX.Element {
-  return <span className="sidebar-account-avatar" aria-hidden="true">{initials || <UserRound size={18} />}</span>;
-}
 
 export function SidebarAccountTrigger({ model, anchorRef, controls, onOpen }: {
   model: ChromeAccountTrigger; anchorRef?: Ref<HTMLButtonElement>; controls?: string; onOpen: (button: HTMLButtonElement) => void;
@@ -16,7 +12,7 @@ export function SidebarAccountTrigger({ model, anchorRef, controls, onOpen }: {
     onClick={event => onOpen(event.currentTarget)} onKeyDown={event => {
       if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); onOpen(event.currentTarget); }
     }}>
-    <SidebarAccountAvatar initials={model.initials} /><span className="sidebar-account-name">{model.title}</span><ChevronsUpDown size={14} aria-hidden="true" />
+    <span className="sidebar-account-avatar" aria-hidden="true"><Cog size={18} /></span><span className="sidebar-account-name">{model.title}</span><ChevronsUpDown size={14} aria-hidden="true" />
   </button>;
 }
 
@@ -28,7 +24,7 @@ export function SidebarAccountPanel({ model, panelRef, id, onAction, onClose, tr
   return <div ref={panelRef} id={id} role="menu" aria-label={model.label} className="select-menu-panel sidebar-account-menu"
     onBlur={onBlur} onKeyDown={event => { if (!event.nativeEvent.isComposing) handleFloatingMenuKeyDown(event, onClose, trigger); }}>
     {model.profile ? <>
-      <div className="sidebar-account-profile"><SidebarAccountAvatar initials={model.profile.initials} /><div><strong>{model.profile.title}</strong><span>{model.profile.server}</span></div></div>
+      <div className="sidebar-account-profile"><span className="sidebar-account-avatar" aria-hidden="true">{model.profile.initials}</span><div><strong>{model.profile.title}</strong><span>{model.profile.server}</span></div></div>
       <div className="sidebar-account-divider" role="separator" />
     </> : null}
     {model.rows.map(row => {

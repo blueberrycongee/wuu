@@ -19,9 +19,9 @@ async function render() { await act(async () => root.render(<AppBackground />));
 it("does not restore a removed background when a slow processing result arrives", async () => {
   let finish!: (blob: Blob) => void;
   mocks.process.mockReturnValue(new Promise<Blob>(resolve => { finish = resolve; }));
-  mocks.preferences = { image: new Blob(["source"]), imageID: "one", name: "image.png", effect: "none", opacity: 0.15 };
+  mocks.preferences = { image: new Blob(["source"]), imageID: "one", name: "image.png" };
   await render();
-  const signal = mocks.process.mock.calls[0][3] as AbortSignal;
+  const signal = mocks.process.mock.calls[0][2] as AbortSignal;
   mocks.preferences = null;
   await render();
   expect(signal.aborted).toBe(true);
@@ -30,13 +30,11 @@ it("does not restore a removed background when a slow processing result arrives"
   expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
 
-it("changes strength without reprocessing and releases the image URL on removal", async () => {
+it("releases the image URL on removal", async () => {
   mocks.process.mockResolvedValue(new Blob(["result"]));
-  mocks.preferences = { image: new Blob(["source"]), imageID: "one", name: "image.png", effect: "none", opacity: 0.15 };
+  mocks.preferences = { image: new Blob(["source"]), imageID: "one", name: "image.png" };
   await render();
   expect(document.querySelector(".app-background")).not.toBeNull();
-  mocks.preferences = { ...mocks.preferences, opacity: 0.25 };
-  await render();
   expect(mocks.process).toHaveBeenCalledOnce();
   mocks.preferences = null;
   await render();

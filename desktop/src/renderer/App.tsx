@@ -21,6 +21,7 @@ import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./Compos
 
 import {
   type CSSProperties,
+  type ReactNode,
   type RefObject,
   useCallback,
   useEffect,
@@ -212,6 +213,7 @@ import {
   RuntimeLoading,
 } from "./LoadingViews";
 import { EmptyHomeOverview } from "./EmptyHomeOverview";
+import { menuOpeningKey } from "./ComposerFloatingMenu";
 import { WuuMascotRuntimeProvider } from "./WuuMascot";
 import { deriveActiveSessionHints } from "./activeSessionHint";
 import {
@@ -1090,6 +1092,8 @@ export function App(): JSX.Element {
   const gitRefreshQueuedRef = useRef(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const runtimeMenuRef = useRef<HTMLDivElement>(null);
+  const runtimeMenuTriggerRef = useRef<HTMLElement>(null);
+  const greetingWorkspaceRef = useRef<HTMLButtonElement>(null);
   const accessMenuRef = useRef<HTMLDivElement>(null);
   const codexRuntimeRef = useRef<HTMLDivElement>(null);
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
@@ -2240,6 +2244,7 @@ export function App(): JSX.Element {
       if (
         (runtimeMenuOpen || branchMenuOpen) &&
         !runtimeMenuRef.current?.contains(target) &&
+        !greetingWorkspaceRef.current?.contains(target) &&
         !isInsideFloatingMenu(target, "composer-runtime")
       ) {
         setRuntimeMenuOpen(false);
@@ -2343,7 +2348,33 @@ export function App(): JSX.Element {
           workspaceName: activeWorkspace?.name ?? t("greeting.workspaceFallback"),
         }
       : { kind: "wuu" };
-  const emptyThreadTitle = greetingFor(currentHour, greetingContext);
+  let emptyThreadTitle: ReactNode = greetingFor(currentHour, greetingContext);
+  if (greetingContext.kind === "workspace" && !activeThread) {
+    const [beforeWorkspace, afterWorkspace] = greetingFor(currentHour, {
+      kind: "workspace",
+      workspaceName: "{workspace}",
+    }).split("{workspace}");
+    emptyThreadTitle = (
+      <>
+        {beforeWorkspace}
+        <button
+          ref={greetingWorkspaceRef}
+          className="empty-home-workspace-link"
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={runtimeMenuOpen}
+          aria-label={t("composer.switchWorkspace", { workspace: greetingContext.workspaceName })}
+          onClick={toggleWorkspacePicker}
+          onKeyDown={(event) => {
+            if (!runtimeMenuOpen && menuOpeningKey(event)) toggleWorkspacePicker();
+          }}
+        >
+          {greetingContext.workspaceName}
+        </button>
+        {afterWorkspace}
+      </>
+    );
+  }
   type TurnAdmission = {
     message: QueuedComposerMessage;
     previousTurnIDs: ReadonlySet<string>;
@@ -3501,15 +3532,11 @@ export function App(): JSX.Element {
         accessMenuOpen={accessMenuOpen}
         branchMenuOpen={branchMenuOpen}
         menuRef={runtimeMenuRef}
+        menuTriggerRef={runtimeMenuTriggerRef}
         accessMenuRef={accessMenuRef}
         workspaceFilter={workspaceFilter}
         setWorkspaceFilter={setWorkspaceFilter}
-        onToggleMenu={() => {
-          setAccessMenuOpen(false);
-          setBranchMenuOpen(false);
-          setCodexRuntimeMenu(null);
-          setRuntimeMenuOpen((open) => !open);
-        }}
+        onToggleMenu={toggleWorkspacePicker}
         onToggleAccessMenu={() => {
           setRuntimeMenuOpen(false);
           setBranchMenuOpen(false);
@@ -3691,6 +3718,18 @@ export function App(): JSX.Element {
         isError: true,
       });
     }
+  }
+
+  function toggleWorkspacePicker(): void {
+    if (!runtimeMenuOpen) {
+      runtimeMenuTriggerRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    }
+    setAccessMenuOpen(false);
+    setBranchMenuOpen(false);
+    setCodexRuntimeMenu(null);
+    setRuntimeMenuOpen((open) => !open);
   }
 
   function closeWorkspaceMenus(): void {

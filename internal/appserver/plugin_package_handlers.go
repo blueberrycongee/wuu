@@ -106,6 +106,10 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 }
 
 func (s *Server) handlePluginIconRead(req Request) error {
+	return s.handlePluginImageRead(req, false)
+}
+
+func (s *Server) handlePluginImageRead(req Request, skinImage bool) error {
 	if s.rt.WuuHome != "" {
 		catalog, acquired, err := session.TryAcquirePluginCatalogReadLease(s.rt.WuuHome)
 		if err != nil {
@@ -158,10 +162,18 @@ func (s *Server) handlePluginIconRead(req Request) error {
 			}
 		}
 	}
-	check(fresh.Icon)
-	for _, entries := range [][]pluginpkg.ViewEntryContributionSpec{fresh.Navigation, fresh.WorkspaceTools, fresh.SettingsPages} {
-		for _, entry := range entries {
-			check(entry.Icon)
+	if skinImage {
+		for _, skin := range fresh.Skins {
+			if params.Path == skin.Light.Image || params.Path == skin.Dark.Image {
+				declared = true
+			}
+		}
+	} else {
+		check(fresh.Icon)
+		for _, entries := range [][]pluginpkg.ViewEntryContributionSpec{fresh.Navigation, fresh.WorkspaceTools, fresh.SettingsPages} {
+			for _, entry := range entries {
+				check(entry.Icon)
+			}
 		}
 	}
 	if !declared {
@@ -179,6 +191,10 @@ func (s *Server) handlePluginIconRead(req Request) error {
 		mediaType = "image/png"
 	case ".webp":
 		mediaType = "image/webp"
+	case ".jpg", ".jpeg":
+		if skinImage {
+			mediaType = "image/jpeg"
+		}
 	}
 	if mediaType == "" {
 		return s.writeResponse(req.ID, nil, errors.New("unsupported plugin icon format"))

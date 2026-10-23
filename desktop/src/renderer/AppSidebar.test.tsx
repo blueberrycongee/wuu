@@ -214,6 +214,43 @@ describe("AppSidebar layout", () => {
     expect(titles()).toEqual(["older"]);
   });
 
+  it("orders running and unread conversations at the top of Recent", () => {
+    const thread = (id: string, title: string, overrides: Partial<ThreadSummary> = {}): ThreadSummary => ({
+      id, title, cwd: "/repo/wuu", workspace_id: "project-1", status: "idle",
+      pinned: false, archived: false,
+      created_at: "2026-09-15T00:00:00Z", updated_at: "2026-09-15T00:00:00Z",
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 1,
+      latest_completed_turn_id: "turn-1", ...overrides,
+    });
+    const running = thread("running-session", "Running reply", {
+      status: "in_progress", updated_at: "2026-09-15T00:00:00Z", turn_count: 0,
+      latest_completed_turn_id: undefined,
+    });
+    const unread = thread("unread-session", "Unread reply", {
+      updated_at: "2026-09-16T00:00:00Z",
+    });
+    const settled = thread("settled-session", "Settled reply", {
+      updated_at: "2026-09-17T00:00:00Z",
+    });
+    renderSidebar({
+      workspaceThreadsByWorkspaceID: { "project-1": [settled, unread, running] },
+      state: {
+        ...initialState,
+        initialized: initialized(),
+        activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/wuu" },
+        lastViewedTurnByThreadID: { [settled.id]: "turn-1" },
+      },
+    });
+
+    expect(container.querySelector('[data-conversation-section="running"]')).toBeNull();
+    expect(container.querySelector('[data-conversation-section="unread"]')).toBeNull();
+    const recent = container.querySelector<HTMLElement>("[data-sidebar-recents]");
+    const titles = [...(recent?.querySelectorAll(".thread-row-title") ?? [])]
+      .map((title) => title.textContent);
+    expect(titles).toEqual([running.title, unread.title, settled.title]);
+    expect(recent?.querySelectorAll(".thread-row.has-unread")).toHaveLength(1);
+  });
+
   it.each([
     { saved: ["workspace", "pinned"], expected: ["projects", "folders", "workspace", "pinned"] },
     // Projects take the place a saved order gave Collaboration.

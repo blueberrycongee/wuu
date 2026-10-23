@@ -1054,6 +1054,8 @@ func (s *Server) handleLine(ctx context.Context, raw []byte) error {
 		return s.handlePluginDesktopModuleRead(req)
 	case MethodPluginIconRead:
 		return s.handlePluginIconRead(req)
+	case "plugin/skin-image/read":
+		return s.handlePluginImageRead(req, true)
 	case MethodPluginSettingGet:
 		return s.handlePluginSettingGet(req)
 	case MethodPluginSettingSet:

@@ -52,13 +52,11 @@
   margin-inline-start: calc(var(--source-card-step, 5px) - 32px);
 }
 .web-source-card .web-source-avatar {
-  /* A 16x34 portrait card keeps the hand within roughly two card widths
-   * while leaving its full height clear of the process row baseline. */
-  width: 16px;
-  height: 34px;
-  flex-basis: 34px;
+  /* Match the flex basis to the width so the hand stays in portrait proportion. */
+  width: 24px;
+  height: 32px;
+  flex-basis: 24px;
   padding: 2px;
-  place-items: start;
   border-radius: 4px;
   transform: rotate(var(--source-fan-angle, 0deg));
   transform-origin: 50% 100%;
@@ -68,13 +66,11 @@
     0 1px 2px -1px var(--shadow-color-medium);
 }
 .web-source-card .web-source-avatar img {
-  width: 12px;
-  height: 12px;
-  inset-block-start: 2px;
-  inset-inline-start: 2px;
+  width: 18px;
+  height: 18px;
   border-radius: 2px;
 }
-.web-source-card .web-source-fallback { font-size: 12px; line-height: 1; }
+.web-source-card .web-source-fallback { font-size: 16px; line-height: 1; }
 .web-source-card:hover,
 .web-source-card:focus-visible { z-index: 1; }
 

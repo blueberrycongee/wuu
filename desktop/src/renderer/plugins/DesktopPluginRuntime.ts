@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import type { ExtensionInventoryRecord } from "../../shared/protocol";
 import { syncExtensionTheme } from "../Theme";
+import { syncShellSkins } from "../background/ShellSkin";
 import {
   PluginHost,
   PluginGenerationSupersededError,
@@ -292,8 +293,9 @@ export function useDesktopPluginRuntime(
     desktopPluginHost.publishHostEvent(event);
   }), []);
   useEffect(() => {
-    syncExtensionTheme(inventory);
-    const syncThemeFromOtherWindow = (): void => syncExtensionTheme(inventory);
+    syncExtensionTheme(safeMode ? [] : inventory);
+    syncShellSkins(inventory, safeMode);
+    const syncThemeFromOtherWindow = (): void => syncExtensionTheme(safeMode ? [] : inventory);
     window.addEventListener("storage", syncThemeFromOtherWindow);
     void desktopPluginRuntime.sync(inventory ?? [], safeMode).then((failures) => {
       for (const failure of failures) {

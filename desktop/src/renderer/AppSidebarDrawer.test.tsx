@@ -433,7 +433,7 @@ describe("collapsed sidebar hover drawer", () => {
     expect(history.hasAttribute("inert")).toBe(false);
   });
 
-  it.each([true, false])("occludes expanded Mac ribbon history only in its narrow lane (collapsed=%s)", async (collapsed) => {
+  it.each([true, false])("keeps Mac app history visible and focused while hovering the compact ribbon (collapsed=%s)", async (collapsed) => {
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: "darwin" });
     await renderCollapsedApp();
     if (!collapsed) {
@@ -448,12 +448,12 @@ describe("collapsed sidebar hover drawer", () => {
     const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
     await act(async () => { await vi.advanceTimersByTimeAsync(120); });
-    expect(ribbon.dataset.expanded).toBe("true");
-    expect(history.hidden).toBe(collapsed);
-    expect(history.hasAttribute("inert")).toBe(collapsed);
-    expect(document.activeElement).toBe(collapsed ? appShell() : back);
+    expect(ribbon.dataset.expanded).toBeUndefined();
+    expect(history.hidden).toBe(false);
+    expect(history.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(back);
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
-    expect(ribbon.dataset.expanded).toBe("true");
+    expect(document.activeElement).toBe(back);
     await act(async () => { await vi.advanceTimersByTimeAsync(120); });
     expect(ribbon.dataset.expanded).toBeUndefined();
     expect(history.hidden).toBe(false);
@@ -461,7 +461,7 @@ describe("collapsed sidebar hover drawer", () => {
     expect(container.querySelector('[data-wuu-component="page-history-controls"]')).toBe(history);
   });
 
-  it.each(["darwin", "linux"])("releases only an occluded toggle's focus without pinning ribbon expansion on %s", async (platform) => {
+  it.each(["darwin", "linux"])("keeps the sidebar toggle reachable and focused while hovering the compact ribbon on %s", async (platform) => {
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: platform });
     await renderCollapsedApp();
     const toggle = container.querySelector<HTMLButtonElement>(".section-sidebar-toggle")!;
@@ -469,11 +469,12 @@ describe("collapsed sidebar hover drawer", () => {
     await act(async () => toggle.focus());
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
     await act(async () => { await vi.advanceTimersByTimeAsync(120); });
-    expect(toggle.hidden).toBe(platform === "darwin");
-    expect(toggle.hasAttribute("inert")).toBe(platform === "darwin");
-    expect(document.activeElement).toBe(platform === "darwin" ? appShell() : toggle);
+    expect(toggle.hidden).toBe(false);
+    expect(toggle.hasAttribute("inert")).toBe(false);
+    expect(document.activeElement).toBe(toggle);
+    expect(ribbon.dataset.expanded).toBeUndefined();
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
-    expect(ribbon.dataset.expanded).toBe("true");
+    expect(document.activeElement).toBe(toggle);
     await act(async () => { await vi.advanceTimersByTimeAsync(120); });
     expect(ribbon.dataset.expanded).toBeUndefined();
     expect(toggle.hidden).toBe(false);

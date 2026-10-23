@@ -14,7 +14,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 it("terminates canceled image jobs and does not let their late result complete the request", async () => {
   const controller = new AbortController();
-  const result = processBackground(new Blob(["source"]), "none", true, controller.signal);
+  const result = processBackground(new Blob(["source"]), "import", controller.signal);
   const rejected = expect(result).rejects.toMatchObject({ name: "AbortError" });
   controller.abort();
   WorkerStub.instances[0].onmessage?.({ data: { image: new Blob(["late"]) } });
@@ -24,11 +24,11 @@ it("terminates canceled image jobs and does not let their late result complete t
 
 it("releases workers on successful processing and decoding failures", async () => {
   const output = new Blob(["processed"]);
-  const success = processBackground(new Blob(["source"]), "dither", false);
+  const success = processBackground(new Blob(["source"]), "light");
   WorkerStub.instances[0].onmessage?.({ data: { image: output } });
   expect(await success).toBe(output);
   expect(WorkerStub.instances[0].terminate).toHaveBeenCalledOnce();
-  const failure = processBackground(new Blob(["broken"]), "none", false);
+  const failure = processBackground(new Blob(["broken"]), "import");
   const rejected = expect(failure).rejects.toThrow();
   WorkerStub.instances[1].onmessage?.({ data: { error: true } });
   await rejected;
@@ -37,7 +37,7 @@ it("releases workers on successful processing and decoding failures", async () =
 
 it("bounds a stuck decoder and frees its worker", async () => {
   vi.useFakeTimers();
-  const result = processBackground(new Blob(["source"]), "ascii", false);
+  const result = processBackground(new Blob(["source"]), "dark");
   const rejected = expect(result).rejects.toThrow("timed out");
   await vi.runAllTimersAsync();
   await rejected;

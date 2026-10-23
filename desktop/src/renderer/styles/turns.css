@@ -59,10 +59,9 @@
    * the canvas, where the brighter diff greens did not. */
   --diff-insert-color: var(--success);
   --diff-delete-color: var(--danger);
-  /* Links in prose are ink with an underline: the underline is the cue, so
-   * a reply full of PR, CI and doc links still reads as one paragraph
-   * rather than a row of blue buttons. Hover strengthens the underline. */
-  --rich-link-color: var(--wuu-color-link, var(--ink));
+  /* Blue and a subtle underline identify links within prose. Hover uses
+   * strong ink and strengthens the underline; themes can override both. */
+  --rich-link-color: var(--wuu-color-link, var(--info));
   --rich-link-hover-color: var(--wuu-color-link-hover, var(--ink-strong));
   --rich-link-underline-color: color-mix(in srgb, currentColor 35%, transparent);
   --rich-link-icon-color: var(--ink-muted);
@@ -70,13 +69,13 @@
    * gets a small contrast step without resembling a selected control. */
   --message-flow-card-bg: var(--surface-1);
   /* Answer code is an inset in the reading flow: one tonal step, no frame. */
-  --rich-code-block-bg: var(--surface-2);
+  --rich-code-block-bg: var(--surface-1);
   --message-flow-card-border: var(--hairline);
   --message-flow-card-header-bg: var(--message-flow-card-bg);
   --message-flow-card-hover-bg: var(--surface-2);
   --message-flow-card-shadow: var(--shadow-soft);
-  /* Embedded cards use a middle radius between controls and full panels. */
-  --message-flow-card-radius: calc((var(--radius-sm) + var(--radius-md)) / 2);
+  /* Embedded cards use the same panel corner as settings and tools. */
+  --message-flow-card-radius: var(--radius-md);
   --surface-chip: var(--surface-2);
   --fork-worktree-focus-ring: var(--focus-ring);
   --rich-blockquote-color: var(--wuu-color-text-muted, var(--gray-650));
@@ -86,10 +85,9 @@
   --empty-home-action-border: var(--wuu-border-subtle, var(--hairline));
   --empty-home-action-border-hover: var(--wuu-border-strong, var(--hairline-strong));
   --empty-home-action-icon-color: var(--wuu-color-text-muted, var(--gray-500));
-  /* The empty-state greeting: animated blobatar shown, serif title. */
+  /* The greeting belongs to the same readable UI family as the workbench. */
   --empty-home-mascot-display: block;
-  --empty-home-title-font: Georgia, "Iowan Old Style", Palatino,
-    "Songti SC", "Noto Serif SC", "Noto Serif CJK SC", serif;
+  --empty-home-title-font: var(--appearance-ui-font, system-ui, sans-serif);
   --project-empty-content-color: var(--wuu-color-text-muted, var(--gray-600));
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
   --project-empty-actions-hover-bg: var(--gray-50);
@@ -4352,42 +4350,61 @@ pre {
 /* The greeting follows the UI size between the display and hero roles, so
  * at large text it still leads the summary numbers beneath it. */
 .empty-home h2 {
-  flex: 1 1 10em;
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 26ch;
   overflow-wrap: anywhere;
   margin: 0;
   color: var(--ink);
   font-family: var(--empty-home-title-font);
   font-size: clamp(var(--font-display), 2.1vw, var(--font-hero));
-  font-weight: 460;
+  font-weight: var(--weight-regular);
   letter-spacing: 0;
-  line-height: 1.2;
-  text-align: left;
+  line-height: 1.3;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.empty-home-workspace-link {
+  display: inline;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+.empty-home-workspace-link:hover,
+.empty-home-workspace-link[aria-expanded="true"] {
+  text-decoration-color: currentColor;
+}
+
+.empty-home-workspace-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
 }
 
 .empty-home-header {
-  /* Span the full inner width and start at the column edge, so the
-     greeting shares its left edge with the usage overview and composer. */
+  /* A centered greeting establishes the main task before the overview. */
   grid-column: 1 / -1;
   display: flex;
-  /* Move the title below the mascot before its words become a narrow column. */
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  gap: 20px;
+  justify-content: center;
+  gap: var(--space-5);
   max-width: 100%;
   min-width: 0;
   margin: 0;
 }
 
-/* The mascot greeting mark sits to the left of the empty-state title.
-   flex keeps it from shrinking so the title can claim the remaining
-   width without squashing the avatar. Kept small and quiet — it is a
-   wave hello, not a poster. */
+/* Keep the companion at a stable size above the greeting. */
 .empty-home-mascot {
   display: var(--empty-home-mascot-display);
-  width: 64px;
-  height: 64px;
+  width: 80px;
+  height: 80px;
   flex: 0 0 auto;
   /* The idle play squashes and hops the body on its resting point. */
   transform-origin: 50% 90%;
@@ -4410,7 +4427,8 @@ pre {
   min-width: 0;
   border: 1px solid var(--hairline-soft);
   border-radius: var(--message-flow-card-radius);
-  background: var(--composer-surface-bg);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-card);
   padding: var(--panel-padding);
   --enter-y: 6px;
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;
@@ -5944,6 +5962,9 @@ button.turn-edit-summary-overview:focus-visible {
 }
 
 :root[data-message-style="im"] .user-message-time {
+  /* Match the prose metrics so centering this row also aligns its baseline. */
+  font-family: var(--appearance-content-font, var(--appearance-ui-font, system-ui, sans-serif));
+  font-size: var(--conversation-message-font-size);
   font-weight: var(--weight-regular);
 }
 

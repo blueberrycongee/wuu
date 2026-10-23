@@ -134,7 +134,9 @@ async function run() {
   const retainedDraft = "Retain the draft and recompute soft wrapping after returning from settings. ".repeat(6);
   await setDraft(win, retainedDraft);
   await geometry(win);
-  await evaluate(win, () => document.querySelector('.sidebar-ribbon button[aria-label="Settings"], .sidebar-ribbon button[aria-label="设置"]').click());
+  await evaluate(win, () => document.querySelector('.sidebar-account-trigger').click());
+  await waitFor(win, () => !!document.querySelector('.sidebar-account-menu [data-settings-page="providers"]'));
+  await evaluate(win, () => document.querySelector('.sidebar-account-menu [data-settings-page="providers"]').click());
   await waitFor(win, () => !!document.querySelector(".settings-embedded"));
   win.setContentSize(600, 820);
   await evaluate(win, () => document.documentElement.style.setProperty("--conversation-message-font-size", "20px"));

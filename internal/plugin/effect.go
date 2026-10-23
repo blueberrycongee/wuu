@@ -119,7 +119,7 @@ func (m Manifest) HasAgentSurfaces() bool {
 // surface that is rendered or served to the desktop without entering the
 // model context.
 func (m Manifest) HasCapabilitySurfaces() bool {
-	if m.Desktop != nil || len(m.Themes) > 0 || len(m.Settings) > 0 {
+	if m.Desktop != nil || len(m.Themes) > 0 || len(m.Skins) > 0 || len(m.Settings) > 0 {
 		return true
 	}
 	if len(m.Slots) > 0 || len(m.Surfaces) > 0 || len(m.Presenters) > 0 {
@@ -158,6 +158,11 @@ func (m Manifest) capabilityPathMatches(rel string) bool {
 			return true
 		}
 		if dir := path.Dir(entry); dir != "." && relPathUnder(dir, rel) {
+			return true
+		}
+	}
+	for _, skin := range m.Skins {
+		if rel == skin.Light.Image || rel == skin.Dark.Image {
 			return true
 		}
 	}

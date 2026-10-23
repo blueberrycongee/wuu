@@ -89,8 +89,9 @@
   width: 100%;
   height: auto;
   min-height: var(--web-workspace-address-height);
-  padding-inline: var(--space-2);
-  background: var(--surface-2);
+  padding-inline: var(--space-3);
+  background: var(--field-bg);
+  box-shadow: var(--shadow-soft);
 }
 
 .web-workspace-address-error {
@@ -111,6 +112,7 @@
   border: 1px solid var(--menu-border);
   border-radius: var(--menu-shell-radius);
   background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
   box-shadow: var(--menu-shadow);
   color: var(--ink);
   font-size: var(--font-ui);

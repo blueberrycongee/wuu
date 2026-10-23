@@ -205,7 +205,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
   }
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
-  const expanded = docked || nativeOpen || keyboardFocusWithin || dragging || Boolean(menuWebsite) || retainedLayers > 0;
+  const expanded = docked || nativeOpen || keyboardFocusWithin || Boolean(menuWebsite) || retainedLayers > 0;
   useRibbonReveal(nativeAvailable || isResizing ? undefined : "shell", expanded, () => navRef.current, () => {});
   useLayoutEffect(() => {
     onExpandedChange?.(expanded && !docked);

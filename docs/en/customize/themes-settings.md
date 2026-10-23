@@ -4,15 +4,21 @@ Use **Settings → Appearance** to choose a theme and adjust reading preferences
 
 ## Choose a theme
 
-**System** follows the operating system; **Light** and **Dark** keep a fixed appearance. Plugin themes appear alongside these choices and apply immediately. Choose a built-in option to remove the plugin's theme overrides.
+**System** follows the operating system; **Light** and **Dark** keep a fixed appearance. **Content theme** selects an enabled plugin theme for the current appearance. Light and dark choices are saved separately. Choose **Default** to remove the current mode's plugin overrides.
 
 Disabling or removing a plugin also removes its contributed themes. If a theme makes the interface difficult to use, return to a built-in theme or disable the plugin through plugin management.
+
+## Shell skins
+
+Shell skins decorate the ribbon and window frame. Choose a preview under **Settings → Appearance → Shell skin** to apply it immediately. The rounded workbench keeps its own content background, independently of the skin.
+
+Plugins contribute paired light and dark variants. Disabling or removing a skin plugin restores the default frame; the saved choice returns when that plugin becomes available again. Safe mode also removes plugin skins. The shell skin example in `examples/plugins/shell-skins` provides two complete skins without a runtime or desktop module.
 
 ## Use a background image
 
 On desktop, choose **Background image → Choose image** in Appearance. Import a local PNG, JPEG or WebP up to 20 MB and 64 megapixels. Wuu stores a resized copy (up to 2048 pixels on its longest edge) in this desktop profile; the original file can be moved or deleted. Images are not uploaded or synced to other devices. Animated images use a still frame.
 
-The picture covers the sidebar, conversation, settings and workspace canvas as one centered, cropped background. Menus, inputs, editors and previews keep their own surfaces for readability. Choose Original, Dither, Halftone, ASCII or Scanlines, and adjust image strength from 5% to 30%. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image.
+The picture decorates only the outer frame and ribbon, including the expanded ribbon. Conversation, settings and workspace content keep their own surfaces. Importing selects **My image**; switching to another skin retains the saved picture. Wuu centers and softens the image with Gaussian blur, preserving its color and automatically adjusting contrast for light or dark shell text. This treatment is built in, with no effect, strength or position controls. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image. Existing saved pictures adopt this treatment.
 
 ## Adjust text and motion
 

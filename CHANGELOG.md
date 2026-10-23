@@ -18,11 +18,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Select runtime modules and service providers through named `composition.profiles` and explicit `modules` / `services` overrides. Inspect binding sources, package versions and lifecycle states. Ambiguous or unavailable choices reject preparation; failed or removed providers never fall back to another implementation. Removing native modules also retires them in retained generations; safe mode starts no composition modules.
 
+- Switch workspaces from the underlined workspace name in the new-conversation greeting, using the existing workspace picker.
+
+- Select plugin-provided shell skins independently of content themes, with paired light/dark artwork, ribbon previews, native ribbon continuity and default-frame recovery. Local images use a fixed Gaussian blur with automatic contrast, replacing effect, strength and position controls. Shared controls use soft surfaces and shadows, translucent menus and neutral filled selections.
+
 - Add MiniMax-M3.1-Flash and Gemini 4 Argon to the model catalog, with their documented context and output limits, reasoning effort levels, and OpenRouter model entries.
 
 - Save images and links from website context menus, including Blob/data resources and popup pages, through the browser download manager; copy images or their addresses and open image URLs in new tabs.
 
-- Show desktop update progress above the navigation ribbon avatar in compact and expanded layouts; keep Settings in the avatar menu instead of a separate ribbon button.
+- Show desktop update progress above the navigation ribbon's gear menu in compact and expanded layouts, with settings, usage, and available account actions grouped in that menu.
 
 - Start a conversation from the Recent sidebar heading, using the scratch workspace when no project is selected.
 
@@ -30,7 +34,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Resize the workbench ribbon between compact icons and persistent titled tabs, independently of the conversation list, with saved width and keyboard controls.
 
-- Show up to 50 recently updated conversations across workspaces in the normal desktop sidebar.
+- Order the normal desktop sidebar's Recent list with running conversations first, then unread conversations, then the remaining recent conversations, showing up to 50 in total. Keep unread indicators visible and hold row positions during pointer, keyboard, and drag interaction.
 
 - Add per-tab audio controls, keyboard navigation for long vertical tab lists, persistent download history, bookmark renaming, and individual history deletion.
 - Open browser extension options in isolated windows and provide an explicit screen/window sharing picker.
@@ -73,6 +77,12 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Make web search source cards narrower with larger, centered website icons for easier recognition in the compact stack.
+
+- Reorganize plugin details around identity and enablement, prioritize plugin settings, and present descriptions and contributions in clearly separated, responsive sections.
+
+- Redesign desktop surfaces with neutral window chrome, white and charcoal reading canvases, clearer selections, regular UI-sized menus, grouped settings cards, and a consistent two-row composer across window sizes.
+
 - Grant persistent storage to the site loaded directly in a website tab without a permission dialog, matching ordinary browser behavior while keeping embedded and Agent-controlled pages excluded.
 
 - Use the same user-message background in IM list and bubble presentation modes, and keep IM frame backgrounds visible during window resizing.
@@ -108,6 +118,14 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Keep remote loop-driver callbacks in their selected generation, propagate preparation cancellation, and reject invalid driver identities, checkpoint bindings, and terminal statuses before accepting state.
+
+- Keep the composer worktree toggle next to the branch name in narrow windows, without stretching short branch labels across the context row.
+
+- Keep the navigation ribbon at its current width while dragging destinations to reorder them, without opening the native expanded ribbon.
+
+- Balance sidebar icons with their labels at default and large text sizes, apply the shared text alignment to extension navigation, and optically center folder artwork beside uppercase labels while preserving shared text baselines.
+
+- Keep TODO hover cards and expanded activity lists visible and scrollable in narrow or short windows, and reposition file context menus when the window or text size changes.
 
 - Keep the workspace add menu fully visible outside the sidebar, including its icons and padding, at narrow widths and larger text sizes.
 

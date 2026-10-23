@@ -7,6 +7,8 @@ export type ChromeOverlayAppearance = {
   locale: "en-US" | "zh-CN";
   fontFamily: string;
   variables: Record<string, string>;
+  shellSkin?: boolean;
+  shellImage?: string;
 };
 export type RibbonIconModel =
   | { kind: "conversations" }

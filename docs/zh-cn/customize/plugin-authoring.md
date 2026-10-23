@@ -56,7 +56,7 @@
 
 ## 声明式贡献
 
-主题和设置不需要桌面模块。例如，将下面的片段合并到 manifest：
+主题、外壳皮肤和设置不需要桌面模块。例如，将下面的片段合并到 manifest：
 
 ```json
 {
@@ -90,6 +90,27 @@
 首次设置在完成前中断时，会保留已经应用的插件选择。清单区分实际 `enabled` 状态与可选的 `enabled_override` 用户设置；没有 override 时使用插件默认值。
 
 UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`、`workspaceTools` 或 `settingsPages` 中，描述放置位置和入口，实际渲染仍由桌面模块注册。匹配与组合规则见[桌面 UI 插件](desktop-plugins.md)。
+
+### 外壳皮肤
+
+使用独立于 `contributes.themes` 的 `contributes.skins` 声明皮肤。每套皮肤包含插件内唯一的 `id`、`name`，以及必填的 `light` 和 `dark` 两种方案。每种方案提供不透明的 `#RRGGBB` 格式 `background` 和 `foreground`，可选包内相对路径 `image`，以及可选的 `overlay`、`hover`、`active` 颜色（`#RRGGBB` 或 `#RRGGBBAA`）。`position` 可选 `center`（默认）、`top`、`bottom`、`left` 或 `right`。
+
+```json
+{
+  "contributes": {
+    "skins": [{
+      "id": "ocean",
+      "name": "Ocean",
+      "light": { "background": "#234b60", "foreground": "#f3fafc", "image": "ocean.svg" },
+      "dark": { "background": "#112e41", "foreground": "#e3f1f6", "image": "ocean.svg", "overlay": "#06172555" }
+    }]
+  }
+}
+```
+
+图片支持 PNG、JPEG、WebP 和自包含 SVG，每张最多 8 MiB；渐变和纹理也通过图片提供。路径必须位于插件包内，SVG 不允许外部引用和脚本。桌面只提供所请求包指纹中声明的图片。图片以整个窗口为基准连续覆盖 ribbon 和外框，包括独立绘制的展开 ribbon。应用负责布局、裁切、交互和内容区边界，皮肤颜色不会覆盖内容主题变量。请搭配图片设计前景、悬停和选中颜色，保证控件清晰。
+
+皮肤选择保存在桌面配置中，跟随浅色／深色模式，并在插件更新后保留。禁用、移除插件或进入安全模式会停止装饰外框；重新启用同一插件会恢复选择。图片加载失败时显示方案底色，并在预览中报告图片不可用。同一插件可以同时提供皮肤和内容主题，用户分别选择。可安装的完整示例见外壳皮肤示例（`examples/plugins/shell-skins`）。
 
 ### 秘密设置与认证请求
 

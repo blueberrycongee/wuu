@@ -11,7 +11,7 @@ export function useBackground() {
       const current = ++generation;
       void readBackground().then(value => {
         if (generation === current) {
-          // IndexedDB clones blobs even for strength-only changes and focus refreshes.
+          // Focus refreshes clone blobs; retain image identity to avoid reprocessing.
           setPreferences(previous => value && previous?.imageID === value.imageID ? { ...value, image: previous.image } : value);
           setError(false); setLoading(false);
         }

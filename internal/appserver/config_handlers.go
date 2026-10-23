@@ -456,6 +456,13 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 			})
 		}
 		sort.Slice(themes, func(i, j int) bool { return themes[i].ID < themes[j].ID })
+		skins := make([]ExtensionSkinDescriptor, 0, len(item.Skins))
+		for _, skin := range item.Skins {
+			skins = append(skins, ExtensionSkinDescriptor{
+				ID: skin.ID, Name: skin.Name,
+				Light: ExtensionSkinVariant(skin.Light), Dark: ExtensionSkinVariant(skin.Dark),
+			})
+		}
 		settingIDs := sortedMapKeys(item.Settings)
 		settings := make([]ExtensionSettingDescriptor, 0, len(settingIDs))
 		for _, id := range settingIDs {
@@ -550,9 +557,9 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		if item.Desktop != nil {
 			packageRecord.Desktop = &ExtensionDesktopDescriptor{Entry: item.Desktop.Entry}
 		}
-		if len(commands) > 0 || len(themes) > 0 || len(settings) > 0 || len(slots) > 0 || len(surfaces) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
+		if len(commands) > 0 || len(themes) > 0 || len(skins) > 0 || len(settings) > 0 || len(slots) > 0 || len(surfaces) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
 			packageRecord.Contributions = &ExtensionContributions{
-				Commands: commands, Themes: themes, Settings: settings,
+				Commands: commands, Themes: themes, Skins: skins, Settings: settings,
 				Slots: slots, Surfaces: surfaces, Presenters: presenters,
 				Navigation: navigation, WorkspaceTools: workspaceTools, SettingsPages: settingsPages,
 			}

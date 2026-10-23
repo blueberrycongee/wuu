@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { WuuIconMascot } from "./WuuIconMascot";
 import { useI18n } from "./i18n";
@@ -65,7 +66,7 @@ export function EmptyConversationHome({
   activity = "idle",
   children
 }: {
-  title: string;
+  title: ReactNode;
   // Optional element rendered in the title's own header row, so it sits
   // beside the greeting instead of one row-gap below it with the children.
   belowTitle?: JSX.Element;

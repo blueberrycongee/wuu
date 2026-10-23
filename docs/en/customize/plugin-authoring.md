@@ -56,7 +56,7 @@ Package dependencies and runtime service requirements serve different purposes. 
 
 ## Declarative contributions
 
-Themes and settings need no desktop module. For example, merge this fragment into a manifest:
+Themes, shell skins, and settings need no desktop module. For example, merge this fragment into a manifest:
 
 ```json
 {
@@ -90,6 +90,27 @@ Commands under `contributes.commands` have a local ID and a kind. `prompt_templa
 First-run setup preserves applied plugin choices if it is interrupted before completion. Inventory distinguishes the effective `enabled` state from an optional `enabled_override` user policy; an absent override means the package default applies.
 
 UI declarations belong under `contributes.slots`, `surfaces`, `presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. See [desktop UI plugins](desktop-plugins.md) for matching and composition rules.
+
+### Shell skins
+
+Declare `contributes.skins` independently of `contributes.themes`. Each skin has a plugin-local `id`, `name`, and required `light` and `dark` variants. A variant supplies opaque `#RRGGBB` `background` and `foreground` colors, an optional package-relative `image`, and optional `overlay`, `hover`, and `active` colors (`#RRGGBB` or `#RRGGBBAA`). `position` is `center` (default), `top`, `bottom`, `left`, or `right`.
+
+```json
+{
+  "contributes": {
+    "skins": [{
+      "id": "ocean",
+      "name": "Ocean",
+      "light": { "background": "#234b60", "foreground": "#f3fafc", "image": "ocean.svg" },
+      "dark": { "background": "#112e41", "foreground": "#e3f1f6", "image": "ocean.svg", "overlay": "#06172555" }
+    }]
+  }
+}
+```
+
+Images may be PNG, JPEG, WebP, or self-contained SVG, up to 8 MiB each. Use an image for gradients or textures. Image paths remain inside the package; SVG external references and scripts are rejected. The desktop serves only declared images from the requested package fingerprint. Artwork covers the full window continuously behind the ribbon and frame, including the isolated expanded ribbon. The host owns layout, cropping, interaction and content boundaries; skin colors do not override content theme tokens. Pair foreground, hover and active colors with artwork that keeps controls readable.
+
+Skin selection is local to the desktop profile, follows light/dark mode, and survives plugin updates. Disabled, removed, or safe-mode plugins stop decorating the frame; re-enabling the same plugin restores the selection. A failed image load uses the variant background and reports the missing artwork in its preview. One package may offer both skins and content themes, and users select them independently. See the installable shell skin example in `examples/plugins/shell-skins`.
 
 ### Secret settings and authenticated requests
 

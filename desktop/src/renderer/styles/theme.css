@@ -21,23 +21,23 @@
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
    *     from the reader), 400-650 text grays, 800-900 strong text. --- */
-  --gray-0: #1c1c1d;
-  --gray-50: #252526;
-  --gray-100: #2b2b2d;
-  --gray-150: #323234;
-  --gray-200: #39393b;
-  --gray-250: #3e3e40;
-  --gray-300: #474749;
-  --gray-350: #535355;
-  --gray-400: #626264;
-  --gray-450: #757577;
-  --gray-500: #8a8a8c;
-  --gray-550: #97979a;
-  --gray-600: #a6a6a9;
-  --gray-650: #b4b4b6;
-  --gray-700: #c2c2c4;
-  --gray-800: #d4d4d7;
-  --gray-900: #e7e7e9;
+  --gray-0: #191a1c;
+  --gray-50: #222326;
+  --gray-100: #2a2b2e;
+  --gray-150: #333438;
+  --gray-200: #3d3e43;
+  --gray-250: #414247;
+  --gray-300: #4b4c51;
+  --gray-350: #5a5b60;
+  --gray-400: #6e6f74;
+  --gray-450: #808186;
+  --gray-500: #919297;
+  --gray-550: #a0a1a5;
+  --gray-600: #b0b1b5;
+  --gray-650: #bfc0c4;
+  --gray-700: #d0d1d4;
+  --gray-800: #e2e3e5;
+  --gray-900: #f3f3f4;
 
   /* --- Ink scale: light text on dark paper --- */
   --ink-strong: var(--wuu-color-text, var(--gray-900));
@@ -80,9 +80,9 @@
   --shadow-color-medium: rgba(0, 0, 0, 0.2);
   --shadow-color-strong: rgba(0, 0, 0, 0.24);
   --shadow-color-heavy: rgba(0, 0, 0, 0.3);
-  --shadow-soft: var(--wuu-elevation-panel, inset 0 0 0 0.5px var(--shadow-inset-color));
-  --shadow-card: var(--wuu-elevation-panel, var(--shadow-inset));
-  --shadow-composer: var(--wuu-elevation-panel, var(--shadow-inset));
+  --shadow-soft: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 1px 3px var(--shadow-color-medium));
+  --shadow-card: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 3px 10px -4px var(--shadow-color-strong));
+  --shadow-composer: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 4px 12px -4px var(--shadow-color-medium));
   --shadow-tray: var(--wuu-elevation-panel, var(--shadow-inset));
   --shadow-pop: var(
     --wuu-elevation-overlay,
@@ -113,7 +113,8 @@
   --danger-border: #562f29;
   --info: var(--wuu-color-info, #419cff);
 
-  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-1));
+  --surface-floating: color-mix(in srgb, var(--surface-1) 96%, transparent);
+  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-floating));
   --menu-hover: var(--surface-2);
   --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, var(--ink-overlay-4));
 
@@ -163,7 +164,7 @@
   --hljs-literal: var(--wuu-syntax-literal, #b0a0e8);
   --hljs-meta: var(--wuu-syntax-meta, #98a1a9);
   --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #8f959a);
-  --workspace-tab-active-bg: var(--surface-3);
+  --workspace-tab-active-bg: var(--selection-surface);
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
@@ -213,12 +214,10 @@
   --plugin-ui-card-bg: var(--wuu-color-surface-elevated, var(--surface-3));
 
   /* sidebar.css */
-  /* The rail sits below the canvas, as the light rail does, so
-     navigation recedes behind the reading surface. Derived from the canvas
-     so extension canvases keep the relationship. Opaque fill prevents
-     native wallpaper and browser backing surfaces from changing contrast. */
-  --sidebar-material-fill: color-mix(in oklab, var(--paper) 90%, black);
-  --sidebar-row-selected-bg: var(--wuu-nav-item-active-background, var(--surface-3));
+  /* Keep the default frame independent of content themes. Opaque fill
+     prevents native wallpaper and browser backing surfaces from changing contrast. */
+  --sidebar-material-fill: #0d0e10;
+  --sidebar-row-selected-bg: var(--wuu-nav-item-active-background, var(--selection-surface));
   --sidebar-material-edge: rgba(255, 255, 255, 0.16);
   --sidebar-material-inner-edge: rgba(255, 255, 255, 0.055);
   --sidebar-drawer-edge: rgba(255, 255, 255, 0.42);

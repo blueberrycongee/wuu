@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { readBrowserPiPHostLayout } from "./BrowserPiPHostReporter";
 import { I18nProvider } from "./i18n";
+import { HOVER_REVEAL_OPEN_DELAY_MS } from "./HoverReveal";
 import { PluginHost } from "./plugins/PluginHost";
 
 describe("ConversationStatusCluster", () => {
@@ -20,6 +21,7 @@ describe("ConversationStatusCluster", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    vi.useRealTimers();
   });
 
   it("keeps preview placement independent of the navigation and status row", () => {
@@ -86,6 +88,7 @@ describe("ConversationStatusCluster", () => {
   });
 
   it("shows only the TODO items in the hover card", async () => {
+    vi.useFakeTimers();
     const host = new PluginHost({ react: React });
 
     act(() => root.render(
@@ -107,8 +110,12 @@ describe("ConversationStatusCluster", () => {
       </I18nProvider>,
     ));
 
-    const trigger = container.querySelector(".conversation-status-todo-trigger");
-    const card = container.querySelector(".conversation-status-todo-card");
+    const trigger = container.querySelector<HTMLElement>(".conversation-status-todo-trigger");
+    act(() => {
+      trigger?.focus();
+      vi.advanceTimersByTime(HOVER_REVEAL_OPEN_DELAY_MS);
+    });
+    const card = document.querySelector(".conversation-status-todo-card");
     expect(trigger?.textContent).toBe("TODO1/3");
     expect([...card?.querySelectorAll("li") ?? []].map((item) => item.textContent)).toEqual([
       "Inspect the current task",
