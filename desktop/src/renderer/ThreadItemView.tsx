@@ -49,7 +49,7 @@ import {
 } from "./MessageActions";
 import { StreamingMarkdown } from "./StreamingMarkdown";
 import { streamTextKey, streamTextStore } from "./StreamText";
-import { streamFieldValue } from "./ThreadItemText";
+import { streamFieldValue, userMessageBodyText } from "./ThreadItemText";
 import { ToolActivityRow } from "./ToolActivity";
 import { RemoteItemContent } from "./RemoteItemContent";
 import {
@@ -604,7 +604,7 @@ function UserMessageContent({
   // numbers. The hook's `{text, expanded}` state shape is what makes
   // the toggle survive a parent re-render with a new message body
   // without flashing the previous expansion — see the module doc.
-  const bubbleText = structured ? textParts.map((part) => part.text).join("\n\n") : text;
+  const bubbleText = userMessageBodyText(text, contentParts);
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
   const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;

@@ -21,6 +21,7 @@ import {
   type ComposerImage,
 } from "./ComposerMessages";
 import { parseRequestedHandoffIntent } from "./HandoffDraft";
+import { userMessageBodyText } from "./ThreadItemText";
 import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
@@ -3090,7 +3091,7 @@ function turnPreview(turn: Turn): string {
   if (!userItem) {
     return "";
   }
-  const text = userItem.text?.trim();
+  const text = userMessageBodyText(userItem.text ?? "", userItem.content_parts).trim();
   if (text) {
     return text;
   }

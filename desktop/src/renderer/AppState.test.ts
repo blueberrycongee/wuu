@@ -1,7 +1,8 @@
-import { createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
+import { createComposerMessage, createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
 import { localTurnTiming, forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { upsertTurn } from "./AppState";
 import { projectDirectory } from "./ProjectSessions";
+import { buildFileSelectionPart } from "./FileSelectionContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -3695,6 +3696,51 @@ describe("thread session tab title sync", () => {
 it("keeps conversation state intact across a transport-only connection reset", () => {
   const state = { ...initialState, running: true, prompt: "unsent text" };
   expect(reduceServerEvent(state, { kind: "connection-reset", workdir: "" })).toBe(state);
+});
+
+describe("turnPreview structured input", () => {
+  it("derives the thread title from the visible question without changing sent references", () => {
+    const comment = buildFileSelectionPart({ workspace: "/repo", path: "review.md", start_line: 1,
+      start_column: 1, end_line: 1, end_column: 9, quote: "document", revision: "review-version" },
+    "comment", "Original comment");
+    const parts = [comment, { type: "pasted_text" as const, text: "Attached notes" },
+      { type: "text" as const, text: "Original question" }];
+    const selection = { id: "quote", text: "Earlier answer", source: {
+      thread_id: "thread", turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 14,
+    } };
+    const message = createComposerMessage(parts.map(part => part.text).join(""), [], [], parts, [selection])!;
+    const turn = createOptimisticTurn(message, 1000);
+    const before = structuredClone(turn.items[0]);
+    try {
+      expect(turnPreview(turn)).toBe("Original question");
+      const next = upsertTurn({ ...threadWithUserTexts([]), preview: "", turns: [] }, turn);
+      expect(next.preview).toBe("Original question");
+      expect(next.turns[0].items[0]).toEqual(before);
+    } finally {
+      forgetLocalTurnTiming(turn.id);
+    }
+  });
+
+  it("uses the attachment summary when structured input has no visible question", () => {
+    const comment = buildFileSelectionPart({ workspace: "/repo", path: "review.md", start_line: 1,
+      start_column: 1, end_line: 1, end_column: 9, quote: "document", revision: "review-version" }, "comment", "Review this");
+    const turn: Turn = { id: "attachments", status: "completed", items_view: "full", items: [{
+      id: "user", type: "user_message", text: comment.text, content_parts: [comment],
+      files: [{ filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" }],
+    }] };
+    const fileOnlyPreview = turnPreview({ ...turn, items: [{ ...turn.items[0], text: "", content_parts: undefined }] });
+    expect(fileOnlyPreview).not.toBe("");
+    expect(turnPreview(turn)).toBe(fileOnlyPreview);
+    turn.items[0].files = [];
+    expect(turnPreview(turn)).toBe("");
+  });
+
+  it.each([undefined, []])("preserves plain message previews with content parts %j", (parts) => {
+    const turn: Turn = { id: "plain", status: "completed", items_view: "full", items: [{
+      id: "user", type: "user_message", text: "  Original question  ", content_parts: parts,
+    }] };
+    expect(turnPreview(turn)).toBe("Original question");
+  });
 });
 
 describe("AppState English localization", () => {
