@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -81,5 +82,36 @@ func TestConfigurationServiceDoesNotLeakInvalidSecretsOrReplay(t *testing.T) {
 	})
 	if _, err := client.CompareExchange(ctx, "old", []byte(`{}`)); err == nil || calls != 1 {
 		t.Fatalf("uncertain write: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestConfigurationSourceEditsPreserveUnrelatedValues(t *testing.T) {
+	source := []byte(layerBaseConfigJSON)
+	next, err := UpdateProviderSource(source, "main", ProviderChange{Model: "next-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original, updated map[string]json.RawMessage
+	json.Unmarshal(source, &original)
+	json.Unmarshal(next, &updated)
+	if !bytes.Equal(original["memory"], updated["memory"]) {
+		var a, b any
+		json.Unmarshal(original["memory"], &a)
+		json.Unmarshal(updated["memory"], &b)
+		if !reflect.DeepEqual(a, b) {
+			t.Fatal("provider edit changed unrelated memory")
+		}
+	}
+	enabled := false
+	next, err = UpdateGeneralSettingsSource(next, GeneralSettingsUpdate{GitAttributionEnabled: &enabled})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := decodeConfig(next, "fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Providers["main"].Model != "next-model" || cfg.Agent.GitAttributionEnabledValue() {
+		t.Fatal("source edits lost explicit settings")
 	}
 }
