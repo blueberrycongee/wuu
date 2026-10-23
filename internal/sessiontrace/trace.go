@@ -371,42 +371,29 @@ func ReadEvents(path string) ([]RawEvent, error) {
 	return out, nil
 }
 
+// ReplayTrace is the explicit offline-file adapter for replay tooling.
 func ReplayTrace(path string) (ReplaySummary, error) {
-	file, err := os.Open(path)
+	events, err := ReadEvents(path)
 	if err != nil {
 		return ReplaySummary{}, err
 	}
-	defer file.Close()
+	summary, err := ReplayEvents(events)
+	summary.Path = path
+	return summary, err
+}
 
-	summary := ReplaySummary{
-		Path:       path,
-		Mode:       "session_trace_replay",
-		EventTypes: make(map[string]int),
-	}
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	line := 0
-	for scanner.Scan() {
-		line++
-		var event struct {
-			Type   string          `json:"type"`
-			TurnID string          `json:"turn_id,omitempty"`
-			Data   json.RawMessage `json:"data,omitempty"`
-		}
-		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
-			return ReplaySummary{}, fmt.Errorf("decode trace line %d: %w", line, err)
-		}
+// ReplayEvents folds selected-provider facts without consulting local storage.
+func ReplayEvents(events []RawEvent) (ReplaySummary, error) {
+	summary := ReplaySummary{Mode: "session_trace_replay", EventTypes: make(map[string]int)}
+	for index, event := range events {
 		summary.EventCount++
 		summary.EventTypes[event.Type]++
 		if err := replayEvent(&summary, event.Type, event.TurnID, event.Data); err != nil {
-			return ReplaySummary{}, fmt.Errorf("replay trace line %d type %q: %w", line, event.Type, err)
+			return ReplaySummary{}, fmt.Errorf("replay event %d type %q: %w", index+1, event.Type, err)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return ReplaySummary{}, err
-	}
 	if len(summary.Turns) == 0 {
-		return ReplaySummary{}, fmt.Errorf("trace %s has no turn event", path)
+		return ReplaySummary{}, fmt.Errorf("trace has no turn event")
 	}
 	if summary.Final == nil {
 		summary.Warnings = append(summary.Warnings, "trace has no final event")
@@ -717,10 +704,15 @@ func (summary *ReplaySummary) finalizeToolSummary() {
 	summary.ToolSummary.argumentCounts = nil
 }
 
+// AppendTurn writes an explicitly requested offline JSONL trace.
 func AppendTurn(path string, turn TurnRecord, final FinalRecord, inventory []tools.ToolInfo, records []tools.ToolExecutionRecord, contextRequests []RequestContextRecord, providerStates []ProviderStateRecord, compactAttempts []CompactRecord, barrierRejectionsArg ...[]BarrierToolBatchRejectionRecord) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
+	}
+	events, err := TurnEvents(turn, final, inventory, records, contextRequests, providerStates, compactAttempts, barrierRejectionsArg...)
+	if err != nil {
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
 		return err
@@ -730,9 +722,24 @@ func AppendTurn(path string, turn TurnRecord, final FinalRecord, inventory []too
 		return err
 	}
 	defer file.Close()
-
-	createdAt := time.Now().UTC()
 	encoder := json.NewEncoder(file)
+	for _, event := range events {
+		if err := encoder.Encode(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// TurnEvents builds the sanitized event batch without performing storage IO.
+func TurnEvents(turn TurnRecord, final FinalRecord, inventory []tools.ToolInfo, records []tools.ToolExecutionRecord, contextRequests []RequestContextRecord, providerStates []ProviderStateRecord, compactAttempts []CompactRecord, barrierRejectionsArg ...[]BarrierToolBatchRejectionRecord) ([]RawEvent, error) {
+	// Stable completion time makes an unchanged batch idempotent across recovery.
+	var createdAt time.Time
+	if turn.CompletedAt != nil {
+		createdAt = *turn.CompletedAt
+	} else if turn.StartedAt != nil {
+		createdAt = *turn.StartedAt
+	}
 	events := []Event{{
 		Type:      "turn",
 		ThreadID:  turn.ThreadID,
@@ -807,12 +814,16 @@ func AppendTurn(path string, turn TurnRecord, final FinalRecord, inventory []too
 		CreatedAt: createdAt,
 		Data:      final,
 	})
+
+	raw := make([]RawEvent, 0, len(events))
 	for _, event := range events {
-		if err := encoder.Encode(event); err != nil {
-			return err
+		data, err := json.Marshal(event.Data)
+		if err != nil {
+			return nil, err
 		}
+		raw = append(raw, RawEvent{Type: event.Type, ThreadID: event.ThreadID, TurnID: event.TurnID, CreatedAt: event.CreatedAt, Data: data})
 	}
-	return nil
+	return raw, nil
 }
 
 func cloneBarrierToolBatchRejectionRecords(records []BarrierToolBatchRejectionRecord) []BarrierToolBatchRejectionRecord {
