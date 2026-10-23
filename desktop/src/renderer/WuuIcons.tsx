@@ -65,6 +65,7 @@ export const ClipboardList = createIcon("ClipboardList");
 export const Clock = createIcon("Clock");
 export const Clock3 = createIcon("Clock3");
 export const Code2 = createIcon("Code2");
+export const Cog = createIcon("Cog");
 export const Copy = createIcon("Copy");
 export const CornerDownRight = createIcon("CornerDownRight");
 export const CornerUpLeft = createIcon("CornerUpLeft");
