@@ -408,6 +408,7 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	if err := rt.RefreshEngineSettings(); err != nil {

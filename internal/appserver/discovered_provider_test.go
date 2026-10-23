@@ -28,6 +28,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 	for _, entry := range []string{"existing conversation", "new conversation"} {
 		t.Run(entry, func(t *testing.T) {
 			rt := setupDiscoveredGrokProvider(t)
+			bindConfigSourceForTest(t, rt)
 			before, _, err := rt.LoadEffectiveConfig()
 			if err != nil {
 				t.Fatal(err)
@@ -101,6 +102,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 func TestConversationRejectsUndiscoveredProvider(t *testing.T) {
 	rt := setupDiscoveredGrokProvider(t)
 	t.Setenv("GROK_HOME", t.TempDir())
+	bindConfigSourceForTest(t, rt)
 	before, err := os.ReadFile(rt.ConfigPath)
 	if err != nil {
 		t.Fatal(err)
