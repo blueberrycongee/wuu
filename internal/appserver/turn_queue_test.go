@@ -164,8 +164,10 @@ func TestQueuedTurnCannotBeCancelledAfterCommit(t *testing.T) {
 func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 	const threadID = "thread-1"
 	const steerID = "steer-1"
+	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
 	th := &threadState{
+		state:       testRuntimeState(t, rt),
 		ID:          threadID,
 		running:     true,
 		currentTurn: "turn-1",
@@ -179,6 +181,7 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 		activeSteerDocument:   &ActiveDocument{Path: "docs/next.md"},
 	}
 	s := &Server{
+		rt:                  rt,
 		out:                 out,
 		threads:             map[string]*threadState{threadID: th},
 		pendingQueuedTurns:  make(map[string][]queuedTurn),
@@ -220,14 +223,17 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 func TestTurnRequeueSupersedesStaleQueueCancellation(t *testing.T) {
 	const threadID = "thread-1"
 	const steerID = "message-1"
+	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
 	th := &threadState{
-		ID: threadID,
+		ID:    threadID,
+		state: testRuntimeState(t, rt),
 		pendingSteers: []providers.ChatMessage{{
 			Role: "user", Content: "keep me", ClientID: steerID, Steered: true,
 		}},
 	}
 	s := &Server{
+		rt:                          rt,
 		out:                         out,
 		threads:                     map[string]*threadState{threadID: th},
 		pendingQueuedTurns:          make(map[string][]queuedTurn),

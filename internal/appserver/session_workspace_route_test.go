@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -24,11 +25,12 @@ func TestSessionCreationRoutesExplicitWorkspaceInsteadOfParentHome(t *testing.T)
 	}
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	parent, err := srv.createPluginSession(context.Background(), "test", pluginhost.SessionCreateParams{RequestID: "parent", Visibility: "user", ContextSource: "fresh"})
+	ctx := runtime.WithInvocationState(context.Background(), testRuntimeState(t, rt))
+	parent, err := srv.createPluginSession(ctx, "test", pluginhost.SessionCreateParams{RequestID: "parent", Visibility: "user", ContextSource: "fresh"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	created, err := srv.createPluginSession(context.Background(), "test", pluginhost.SessionCreateParams{RequestID: "child", Visibility: "user", ContextSource: "fresh", ParentSessionID: parent.SessionID, WorkspaceID: "target", WorkspaceRoot: project})
+	created, err := srv.createPluginSession(ctx, "test", pluginhost.SessionCreateParams{RequestID: "child", Visibility: "user", ContextSource: "fresh", ParentSessionID: parent.SessionID, WorkspaceID: "target", WorkspaceRoot: project})
 	if err != nil {
 		t.Fatal(err)
 	}

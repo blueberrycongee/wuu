@@ -65,7 +65,7 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 	}
 	write(filepath.Join(home, "config.json"), string(data))
 	rt, err := wuuRuntime.NewSession(wuuRuntime.Options{
-		RootDir: repo, HomeDir: home, ConfigPath: filepath.Join(home, "config.json"), SafeMode: true,
+		RootDir: repo, HomeDir: home, ConfigPath: filepath.Join(home, "config.json"),
 		Config: cfg,
 	})
 	if err != nil {
