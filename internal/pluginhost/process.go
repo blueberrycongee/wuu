@@ -272,10 +272,15 @@ func (c *ProcessClient) RequiredServices() []ServiceRequirement {
 	return cloneServiceRequirements(c.requiredServices)
 }
 
-// InvokeService delivers one registry-routed call to this provider plugin.
+// InvokeService delivers one call to this provider plugin. Structured provider
+// failures retain their codes as HostServiceError; transport errors stay unclassified.
 func (c *ProcessClient) InvokeService(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
 	var result json.RawMessage
 	if err := c.call(ctx, ServiceInvokeMethod, params, &result); err != nil {
+		var remoteErr *remoteCallError
+		if errors.As(err, &remoteErr) && remoteErr.code != "" {
+			return nil, &HostServiceError{Code: remoteErr.code, Message: remoteErr.message}
+		}
 		return nil, err
 	}
 	return result, nil
