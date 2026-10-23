@@ -1589,6 +1589,9 @@ func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string,
 		processManager: threadRuntime.ProcessManager,
 		done:           make(chan struct{}),
 	}
+	// Subscription callbacks transfer their own retained handle, even after
+	// the caller releases the handle used to create this subscription.
+	binding = sub.state
 	if control != nil {
 		sub.terminalUnsubscribe = control.SubscribeWorkerTerminalFinalizer(func(notification subagent.Notification) error {
 			return s.finalizeAgentTerminal(binding, threadID, control, notification)
