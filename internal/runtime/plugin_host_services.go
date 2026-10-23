@@ -391,6 +391,8 @@ type executionUpdateRecorder interface {
 const kernelHostModule = "kernel"
 
 type kernelHostServices struct {
+	stateGeneration   *PluginGeneration
+	stateOwner        *Session
 	mu                sync.RWMutex
 	active            bool
 	closed            bool
@@ -631,6 +633,7 @@ func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginh
 		return nil, serviceError("method_not_found", "kernel service method is unavailable")
 	}
 	ctx = context.WithValue(ctx, kernelServiceExecutionKey{}, params.ExecutionID)
+	ctx = context.WithValue(ctx, invocationStateKey{}, invocationStateRetainer(k.parent.retainInvocationState))
 	return services.invoke(ctx, k.method, params.Params)
 }
 
