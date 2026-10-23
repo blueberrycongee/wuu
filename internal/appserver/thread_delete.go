@@ -107,10 +107,11 @@ func (s *Server) handleThreadDelete(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.Join(err, rollbackErr))
 	}
 	releaseThreadLifecycleWriteLease(id, lifecycleLease)
-	if err := sideDelete.Commit(); err != nil {
-		// The main row is already durably gone. A staged tombstone is harmless
-		// and remains eligible for a later idempotent cleanup attempt.
-		providers.DebugLogf("commit side thread delete for %q: %v", id, err)
+	cleanupErr := sideDelete.Commit()
+	if cleanupErr != nil {
+		// Staged history remains readable until this commit succeeds. Continue
+		// independent cleanup, then report every incomplete deletion together.
+		cleanupErr = fmt.Errorf("side history cleanup: %w", cleanupErr)
 	}
 	// Code-mode state outlives cached thread runtimes, but never a successful
 	// permanent delete. This also covers owners already evicted from s.threads.
@@ -154,6 +155,9 @@ func (s *Server) handleThreadDelete(req Request) error {
 	// The document commit is irreversible. Surface an incomplete selected
 	// artifact cleanup and allow an explicit retry even when the row is gone.
 	_, artifactErr := services.Artifacts.DeleteThread(context.Background(), id)
+	if artifactErr != nil {
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("artifact cleanup: %w", artifactErr))
+	}
 
 	// Local execution projections, input copies and clean worktrees remain host-owned.
 	// Managed payloads and index data belong to their selected providers.
@@ -185,8 +189,8 @@ func (s *Server) handleThreadDelete(req Request) error {
 		_ = os.Remove(artifactDir)
 	}
 
-	if artifactErr != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("session deleted; artifact cleanup for %q is incomplete, retry thread/delete: %w", id, artifactErr))
+	if cleanupErr != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("session deleted; cleanup for %q is incomplete, retry thread/delete: %w", id, cleanupErr))
 	}
 	return s.writeResponse(req.ID, ThreadDeleteResult{ThreadID: id}, nil)
 }

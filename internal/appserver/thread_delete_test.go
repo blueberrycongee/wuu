@@ -1097,6 +1097,91 @@ func TestServerThreadDeleteRetriesSelectedArtifactsAfterDocumentCommit(t *testin
 	}
 }
 
+func TestServerThreadDeleteReportsSideCommitFailureAndRetriesWithoutMainRow(t *testing.T) {
+	for _, artifactFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("artifact_failure_%t", artifactFailure), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			fault := &deleteCommitFaultDocuments{Documents: rt.Documents, namespace: "wuu.sidethread.deleting.v1"}
+			rt.Documents = fault
+			artifacts := &threadDeleteArtifactProvider{}
+			if artifactFailure {
+				artifacts.err = errors.New("selected artifact cleanup failed")
+			}
+			bindThreadDeleteArtifacts(t, rt, artifacts)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			const id = "partial-side-delete"
+			if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			side := sideStoreForTest(t, srv)
+			if _, err := side.BeginTurn(id, "side history", "question", "answer"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := side.FinishTurn(id, "answer", "retained answer", sidethread.StatusCompleted, ""); err != nil {
+				t.Fatal(err)
+			}
+			fault.err = errors.New("selected side cleanup failed")
+			for attempt := 1; attempt <= 2; attempt++ {
+				requestID := fmt.Sprintf("delete-%d", attempt)
+				dispatchPayload(t, srv, requestID, MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+				response := responseByID(t, parseOutput(t, out.String()), requestID)
+				message := fmt.Sprint(response["error"])
+				if response["error"] == nil || response["result"] != nil || !strings.Contains(message, "session deleted") ||
+					!strings.Contains(message, "incomplete") || !strings.Contains(message, "retry thread/delete") ||
+					!strings.Contains(message, "selected side cleanup failed") {
+					t.Fatalf("attempt %d hid incomplete side cleanup: %+v", attempt, response)
+				}
+				if artifactFailure && !strings.Contains(message, "selected artifact cleanup failed") {
+					t.Fatalf("side failure hid artifact failure: %+v", response)
+				}
+				if artifacts.calls != attempt {
+					t.Fatalf("artifact cleanup calls = %d, want %d", artifacts.calls, attempt)
+				}
+				if _, found, err := rt.Sessions.Find(id); err != nil || found {
+					t.Fatalf("main deletion was not retained: found=%t err=%v", found, err)
+				}
+				if count, err := sideDeleteStageCount(fault, id); err != nil || count != 1 {
+					t.Fatalf("failed cleanup lost its staged history: count=%d err=%v", count, err)
+				}
+				if history, err := side.Load(id); err != nil || len(history.Messages) != 2 || history.Messages[1].Text != "retained answer" {
+					t.Fatalf("fixture did not retain readable side history: %+v err=%v", history, err)
+				}
+			}
+			fault.err, artifacts.err = nil, nil
+			dispatchPayload(t, srv, "cleanup-retry", MethodThreadDelete, ThreadDeleteParams{ThreadID: id})
+			response := responseByID(t, parseOutput(t, out.String()), "cleanup-retry")
+			if response["error"] != nil || response["result"] == nil || artifacts.calls != 3 {
+				t.Fatalf("explicit retry did not complete deletion: %+v calls=%d", response, artifacts.calls)
+			}
+			if exists, err := side.Exists(id); err != nil || exists {
+				t.Fatalf("successful cleanup retained side history: exists=%t err=%v", exists, err)
+			}
+			if count, err := sideDeleteStageCount(fault, id); err != nil || count != 0 {
+				t.Fatalf("successful cleanup retained deletion stage: count=%d err=%v", count, err)
+			}
+		})
+	}
+}
+
+type deleteCommitFaultDocuments struct {
+	persistence.Documents
+	namespace string
+	err       error
+}
+
+func (d *deleteCommitFaultDocuments) Commit(ctx context.Context, transaction persistence.Transaction) (persistence.Receipt, error) {
+	if d.err != nil {
+		for _, write := range transaction.Writes {
+			if write.Namespace == d.namespace && write.Delete {
+				return persistence.Receipt{}, d.err
+			}
+		}
+	}
+	return d.Documents.Commit(ctx, transaction)
+}
+
 type threadDeleteArtifactProvider struct {
 	calls int
 	err   error
