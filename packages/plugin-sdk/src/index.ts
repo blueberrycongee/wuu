@@ -1753,7 +1753,7 @@ export type RuntimeRequest =
 
 export type RuntimeResponse =
   | { id: string; result: unknown }
-  | { id: string; error: { message: string } };
+  | { id: string; error: { code?: string; message: string } };
 
 export async function handleRuntimeRequest(
   plugin: RuntimePlugin,
@@ -1801,7 +1801,13 @@ export async function handleRuntimeRequest(
         return { id: request.id, result: null };
     }
   } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+    const code = typeof error === "object" && error !== null && "code" in error
+      && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...(code ? { code } : {}),
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+        ? error.message : String(error),
+    } };
   }
 }
 
