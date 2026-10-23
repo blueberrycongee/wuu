@@ -1399,7 +1399,7 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 	// Force the root ToolLedger preflight to fail. AgentControl must not be
 	// created, because its constructor immediately restores and starts queued
 	// workers.
-	rt.SessionDir = ""
+	rt.Documents = nil
 	threadRuntime, err := rt.NewThreadRuntime(threadID)
 	if threadRuntime != nil {
 		if threadRuntime.AgentControl != nil {

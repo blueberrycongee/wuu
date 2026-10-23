@@ -101,7 +101,7 @@ func promptGenerationClient(id, text string, priority int) *generationClient {
 func TestPluginSystemPromptSectionsEvaluateBeforeActivationInPriorityOrder(t *testing.T) {
 	high := promptGenerationClient("high", "high section", 20)
 	low := promptGenerationClient("low", "low section", 5)
-	session := &Session{ProviderName: "openai", Model: "model", RootDir: "/workspace"}
+	session := &Session{WuuHome: t.TempDir(), ProviderName: "openai", Model: "model", RootDir: "/workspace"}
 	generation, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{
 		testRuntimePlugin("low"), testRuntimePlugin("high"),
 	}, nil, nil, func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
@@ -123,7 +123,7 @@ func TestPluginSystemPromptSectionsEvaluateBeforeActivationInPriorityOrder(t *te
 func TestPluginSystemPromptFailureRejectsCandidateAndPreservesOldGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	broken := promptGenerationClient("broken", "", 1)
 	broken.invoke = func(pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
 		return pluginhost.CapabilityInvokeResult{}, errors.New("prompt failed")
@@ -184,7 +184,7 @@ func TestPluginCompactionInvokesHighestPriorityAndGenerationCleanupReachesClones
 func TestFailedCandidateClosesStartedProcessesAndPreservesOldGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 
 	var closeOrder []string
 	first := &generationClient{id: "first", closeOrder: &closeOrder}
@@ -223,7 +223,7 @@ func TestRefreshCandidatePreservesHealthyRuntimeOnFailure(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			oldClient := &generationClient{id: "live"}
 			old := testPluginGeneration("live", oldClient)
-			session := testGenerationSession(old)
+			session := testGenerationSession(t, old)
 			defer session.Cleanup()
 			candidateClient := &fakeServicePluginClient{id: "live", required: []pluginhost.ServiceRequirement{{Name: "missing.service", MajorVersion: 1, Required: true}}}
 			candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("live")}, nil, nil,
@@ -254,7 +254,7 @@ func TestRefreshCandidatePreservesHealthyRuntimeOnFailure(t *testing.T) {
 
 func TestRefreshCandidateAllowsRemovalAndIsolatesNewOptionalFailure(t *testing.T) {
 	oldClient := &generationClient{id: "removed"}
-	session := testGenerationSession(testPluginGeneration("removed", oldClient))
+	session := testGenerationSession(t, testPluginGeneration("removed", oldClient))
 	defer session.Cleanup()
 	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("new")}, nil, nil,
 		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
@@ -279,7 +279,7 @@ func TestRefreshCandidateAllowsRemovalAndIsolatesNewOptionalFailure(t *testing.T
 func TestCapabilityConflictClosesCandidateAndPreservesOldGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	one := &generationClient{id: "one", capabilities: []pluginhost.CapabilityDescriptor{{
 		ID: "agent.capability.one", Kind: "transform", Version: 1, Conflicts: []string{"agent.capability.two"},
 	}}}
@@ -312,7 +312,7 @@ func TestSuccessfulCandidateSwapsThenClosesOldGeneration(t *testing.T) {
 	old.systemPrompts.Add(agent.NewStaticPromptSection("old", "old section", 1))
 	old.compactions = agent.NewCompactionRegistry()
 	old.compactions.Register(&generationCompactionProvider{key: "old"})
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	session.systemPrompts = old.systemPrompts
 	session.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, CompactionRegistry: old.compactions}
 	threadClone := cloneStreamRunnerForThread(session.StreamRunner, nil)
@@ -363,7 +363,7 @@ func TestActivatePluginGenerationKeepsPinnedConversationGeneration(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	session.ActivityRegistry = registry
 	pinned := session.RetainPluginGeneration()
 	if pinned != old {
@@ -503,7 +503,7 @@ func TestDisabledRuntimeRetiresEveryPinnedGenerationAfterCommit(t *testing.T) {
 		return generation, disabled, peer
 	}
 	first, firstDisabled, firstPeer := makeGeneration()
-	session := testGenerationSession(first)
+	session := testGenerationSession(t, first)
 	defer session.Cleanup()
 	firstPin := session.RetainPluginGeneration()
 	defer session.ReleasePluginGeneration(firstPin)
@@ -575,7 +575,7 @@ func TestDisabledRuntimeRetiresEveryPinnedGenerationAfterCommit(t *testing.T) {
 func TestBuiltPluginGenerationsRetireAfterLastOwnerReleases(t *testing.T) {
 	for _, pinnedOwners := range []int{0, 1, 2} {
 		t.Run(fmt.Sprintf("pinned_owners_%d", pinnedOwners), func(t *testing.T) {
-			session := testGenerationSession(testPluginGeneration("initial", &generationClient{id: "initial"}))
+			session := testGenerationSession(t, testPluginGeneration("initial", &generationClient{id: "initial"}))
 			session.RootDir = t.TempDir()
 			session.WuuHome = t.TempDir()
 			defer session.Cleanup()
@@ -627,11 +627,13 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 	for _, model := range []string{"default", "selected"} {
 		t.Run(model, func(t *testing.T) {
 			client := &generationClient{id: "plugin"}
-			session := testGenerationSession(testPluginGeneration("plugin", client))
+			session := testGenerationSession(t, testPluginGeneration("plugin", client))
 			session.RootDir = t.TempDir()
 			session.WuuHome = t.TempDir()
 			session.StateDir = t.TempDir()
 			session.SessionDir = t.TempDir()
+			session.Documents = testSessionDocuments(t, session.SessionDir)
+			session.Sessions = testSessionStore(t, session.SessionDir)
 			session.ProviderName = "fixture"
 			session.Model = "default"
 			session.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "default"}
@@ -645,12 +647,12 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 			selection := ThreadModelSelection{Provider: "fixture", Model: model}
 
 			// A failed construction must not leave a hidden generation owner.
-			sessionsDir := session.SessionDir
-			session.SessionDir = session.ConfigPath
+			documents := session.Documents
+			session.Documents = nil
 			if _, err := session.NewThreadRuntimeForRootModel("failed", session.RootDir, selection); err == nil {
-				t.Fatal("thread construction unexpectedly accepted a file as its session directory")
+				t.Fatal("thread construction unexpectedly accepted a missing document authority")
 			}
-			session.SessionDir = sessionsDir
+			session.Documents = documents
 
 			var threads []*ThreadRuntime
 			for _, id := range []string{"first", "second"} {
@@ -686,7 +688,7 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 
 func TestThreadModelCloneKeepsGenerationDuringConstruction(t *testing.T) {
 	client := &generationClient{id: "plugin"}
-	session := testGenerationSession(testPluginGeneration("plugin", client))
+	session := testGenerationSession(t, testPluginGeneration("plugin", client))
 	defer session.Cleanup()
 	defer session.pluginGeneration.close()
 	session.retiredPluginGenerations = make(map[*PluginGeneration]struct{})
@@ -770,7 +772,7 @@ func (c *preparedGenerationClient) Activate(context.Context) error {
 func TestCandidateActivationFailurePreservesCommittedGeneration(t *testing.T) {
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	defer session.Cleanup()
 	committed := false
 	broken := &preparedGenerationClient{
@@ -802,7 +804,7 @@ func TestCandidateActivationFailurePreservesCommittedGeneration(t *testing.T) {
 // independent declarative hooks and healthy runtime contributions remain usable.
 func TestFailedActivationDoesNotPublishPreparedNativeContributions(t *testing.T) {
 	old := testPluginGeneration("old", &generationClient{id: "old"})
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	session.RootDir = t.TempDir()
 	session.ProviderName, session.Model = "fixture", "model"
 	defer session.Cleanup()
@@ -886,7 +888,7 @@ func TestFailedActivationDoesNotPublishPreparedNativeContributions(t *testing.T)
 
 func TestCandidateCommitFailureCannotRunActivationEffects(t *testing.T) {
 	old := testPluginGeneration("old", &generationClient{id: "old"})
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	defer session.Cleanup()
 	client := &preparedGenerationClient{generationClient: &generationClient{id: "candidate"}}
 	candidate := testPluginGeneration("candidate", client)
@@ -907,7 +909,7 @@ func TestCandidateCommitFailureRollsBackAllLiveSurfaces(t *testing.T) {
 	old.hooks = hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
 		hooks.PreToolUse: {{Command: "old-hook"}},
 	}))
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	liveHooks := hooks.NewDispatcher(nil)
 	liveHooks.Replace(old.hooks)
 	session.HookDispatcher = liveHooks
@@ -990,11 +992,16 @@ func TestNewSessionDoesNotDiscoverPluginsDuringMutation(t *testing.T) {
 	}
 }
 
-func testGenerationSession(generation *PluginGeneration) *Session {
+func testGenerationSession(t *testing.T, generation *PluginGeneration) *Session {
+	t.Helper()
+	home := t.TempDir()
+	dir := filepath.Join(home, "sessions")
+	documents := testSessionDocuments(t, dir)
 	if generation != nil && generation.refs.Load() == 0 {
 		generation.retain()
 	}
 	return &Session{
+		WuuHome: home, SessionDir: dir, Documents: documents, Sessions: session.NewStore(context.Background(), documents),
 		PluginHost:       generation.host,
 		HookDispatcher:   hooks.NewDispatcher(nil),
 		Plugins:          append([]pluginpkg.Plugin(nil), generation.plugins...),
@@ -1089,7 +1096,7 @@ func TestMutableGenerationOwnsLazyAssetsAndPreservesProvenance(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			s := &Session{}
+			s := &Session{WuuHome: t.TempDir()}
 			generation, err := s.buildPluginGeneration(cfg, []pluginpkg.Plugin{item}, nil, nil, func(_ context.Context, pc pluginhost.ProcessConfig) (pluginhost.Client, error) {
 				if !strings.HasPrefix(pc.Command, pc.PluginRoot+string(filepath.Separator)) || pc.PluginRoot == root {
 					t.Fatalf("runtime not rebased: %+v", pc)
@@ -1149,7 +1156,7 @@ func TestThreadModelConstructionPinsGenerationDependencies(t *testing.T) {
 	old := testPluginGeneration("plugin", &generationClient{id: "plugin"})
 	old.mcp = mcp.NewManager()
 	old.compactions = agent.NewCompactionRegistry()
-	s := testGenerationSession(old)
+	s := testGenerationSession(t, old)
 	s.RootDir = t.TempDir()
 	s.WuuHome = t.TempDir()
 	s.StateDir = t.TempDir()

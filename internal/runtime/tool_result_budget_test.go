@@ -18,9 +18,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -132,7 +132,7 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 				fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
 			}))
 			defer server.Close()
-			modules := []string{kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer}
+			modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer}
 			rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{
 				Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
 				DefaultProvider: "synthetic", Providers: map[string]config.ProviderConfig{
@@ -159,7 +159,7 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if _, err := session.CreateWithMetadata(rt.SessionDir, "budget-thread", root); err != nil {
+			if _, err := rt.Sessions.CreateWithMetadata("budget-thread", root); err != nil {
 				t.Fatal(err)
 			}
 			engine, err := rt.WuuEngine().Open(ctx, agentengine.OpenRequest{ThreadID: "budget-thread", RootDir: root})

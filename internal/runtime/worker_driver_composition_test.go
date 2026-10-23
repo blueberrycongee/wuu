@@ -11,6 +11,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -186,7 +187,7 @@ func workerCompositionSession(t *testing.T, removed bool) (*Session, *PluginGene
 	t.Helper()
 	var selection *composition.Config
 	if removed {
-		modules := []string{kernelHostModule}
+		modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule}
 		selection = &composition.Config{Version: composition.Version, Modules: &modules}
 	}
 	host, kernel, err := buildPluginHost(nil, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, "")
@@ -196,9 +197,9 @@ func workerCompositionSession(t *testing.T, removed bool) (*Session, *PluginGene
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	generation := &PluginGeneration{host: host, driverGateways: kernel.driverGateways}
+	generation := &PluginGeneration{host: host, driverGateways: kernel.driverGateways, state: kernel.state}
 	generation.retain()
-	s := &Session{pluginGeneration: generation}
+	s := &Session{pluginGeneration: generation, Documents: kernel.state.documents, Sessions: kernel.state.sessions, InferenceJournalRuntime: kernel.state.journal}
 	t.Cleanup(func() { s.releasePluginGeneration(s.pluginGeneration) })
 	return s, generation
 }

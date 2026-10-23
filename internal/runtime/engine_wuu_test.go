@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -62,7 +63,7 @@ func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
 func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 	client := &generationClient{id: "owned"}
 	generation := testPluginGeneration("owned", client)
-	s := testGenerationSession(generation)
+	s := testGenerationSession(t, generation)
 	s.RootDir, s.WuuHome, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	s.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
 	t.Cleanup(func() { _, _ = s.Cleanup(); _ = generation.close() })
@@ -218,7 +219,7 @@ func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
 		Providers:       map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", Model: "fixture", BaseURL: "https://example.invalid/v1", APIKey: "fixture"}},
 		Engines:         &config.EnginesConfig{DefaultEngine: "codex", Codex: off, Claude: off, Cursor: off, Devin: off, DSH: off, Grok: off, Hermes: off, Pi: off, OpenCode: off, Antigravity: off},
 	}
-	modules := []string{}
+	modules := []string{sessionStateConsumer, persistence.SQLiteModule}
 	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 	root, home := t.TempDir(), t.TempDir()
 	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})

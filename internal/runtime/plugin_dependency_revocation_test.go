@@ -240,7 +240,7 @@ func TestDependencyRevocationKeepsHealthyReplacementGeneration(t *testing.T) {
 	old.host.SetPackageRequirements(map[string][]string{"consumer": {"provider"}})
 	skill := skills.Skill{Name: "review", Source: "plugin:consumer", Content: "Review."}
 	old.skills = []skills.Skill{skill}
-	s := testGenerationSession(old)
+	s := testGenerationSession(t, old)
 	s.RootDir = t.TempDir()
 	defer s.Cleanup()
 	pinned := s.RetainPluginGeneration()

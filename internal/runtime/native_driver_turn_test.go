@@ -14,7 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 )
 
@@ -38,10 +37,10 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 	if err := os.WriteFile(path, []byte("42"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Create(dir, "default-session"); err != nil {
+	if _, err := testSessionStore(t, dir).Create("default-session"); err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := toolledger.New(dir, "default-session")
+	ledger, err := toolledger.New(testSessionDocuments(t, dir), "default-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +66,7 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 	tools := &workflowEvidenceTools{path: path}
 	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger,
 		LoopDriver:            resolveLoopDriver("evidence", host, kernel.driverGateways),
-		DriverCheckpointStore: sessionDriverCheckpointStore{sessDir: dir, sessionID: "default-session"},
+		DriverCheckpointStore: sessionDriverCheckpointStore{sessions: testSessionStore(t, dir), sessionID: "default-session"},
 	}
 	runner.StreamingToolExecution = streaming
 	runner.CompactionRegistry = agent.NewCompactionRegistry()
@@ -111,10 +110,10 @@ func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 	if err := os.WriteFile(path, []byte("42"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Create(dir, "native-session"); err != nil {
+	if _, err := testSessionStore(t, dir).Create("native-session"); err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := toolledger.New(dir, "native-session")
+	ledger, err := toolledger.New(testSessionDocuments(t, dir), "native-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +140,7 @@ func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 	}
 	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger,
 		LoopDriver:            resolveLoopDriver("evidence", host, kernel.driverGateways),
-		DriverCheckpointStore: sessionDriverCheckpointStore{sessDir: dir, sessionID: "native-session"},
+		DriverCheckpointStore: sessionDriverCheckpointStore{sessions: testSessionStore(t, dir), sessionID: "native-session"},
 	}
 	history := []providers.ChatMessage{{Role: "user", Content: "Measure evidence.txt", ClientID: "native-input"}}
 	attachWorkflowHistory(t, runner, dir, "native-session", history)

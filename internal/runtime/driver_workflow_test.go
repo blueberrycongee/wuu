@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -53,7 +54,7 @@ func TestStreamingDriverProcess(t *testing.T) {
 	provider := testRuntimePlugin("streaming-evidence")
 	provider.Root, provider.Runtime.Command = fixture, node
 	provider.Runtime.Args = []string{"streaming.ts"}
-	modules := []string{kernelHostModule, sessionExecutionConsumer, provider.ID}
+	modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule, sessionExecutionConsumer, provider.ID}
 	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "streaming", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -62,10 +63,10 @@ func TestStreamingDriverProcess(t *testing.T) {
 	if err := activatePluginHost(ctx, host); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.Create(dir, "streaming-session"); err != nil {
+	if _, err := testSessionStore(t, dir).Create("streaming-session"); err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := toolledger.New(dir, "streaming-session")
+	ledger, err := toolledger.New(testSessionDocuments(t, dir), "streaming-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +75,8 @@ func TestStreamingDriverProcess(t *testing.T) {
 	model := &workflowEvidenceModel{waitForTool: started}
 	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger,
 		LoopDriver:             resolveLoopDriver("default", host, kernel.driverGateways),
-		DriverCheckpointStore:  sessionDriverCheckpointStore{sessDir: dir, sessionID: "streaming-session"},
-		ModelInputReceiptStore: sessionModelInputReceiptStore{sessDir: dir, sessionID: "streaming-session"}}
+		DriverCheckpointStore:  sessionDriverCheckpointStore{sessions: testSessionStore(t, dir), sessionID: "streaming-session"},
+		ModelInputReceiptStore: sessionModelInputReceiptStore{sessions: testSessionStore(t, dir), sessionID: "streaming-session"}}
 	history := []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}
 	attachWorkflowHistory(t, runner, dir, "streaming-session", history)
 	runner.CompactionRegistry = agent.NewCompactionRegistry()
@@ -128,7 +129,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	var selection *composition.Config
 	if profile == "default" {
 		selectedProfile = ""
-		modules := []string{kernelHostModule, sessionExecutionConsumer, provider.ID}
+		modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule, sessionExecutionConsumer, provider.ID}
 		selection = &composition.Config{Version: composition.Version, Modules: &modules}
 	}
 	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "workflow", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, selectedProfile)
@@ -155,11 +156,11 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 		}
 	}
 	sessDir := t.TempDir()
-	if _, err := session.Create(sessDir, "workflow-session"); err != nil {
+	if _, err := testSessionStore(t, sessDir).Create("workflow-session"); err != nil {
 		t.Fatal(err)
 	}
-	store := sessionDriverCheckpointStore{sessDir: sessDir, sessionID: "workflow-session"}
-	ledger, err := toolledger.New(sessDir, "workflow-session")
+	store := sessionDriverCheckpointStore{sessions: testSessionStore(t, sessDir), sessionID: "workflow-session"}
+	ledger, err := toolledger.New(testSessionDocuments(t, sessDir), "workflow-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +185,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	if !partial.HistoryRewritten || len(partial.NewMessages) != 3 || partial.NewMessages[2].ToolInvocationID == "" || len(partial.DurableNewMessages) != 0 {
 		t.Fatalf("interruption lost the committed focused context: %+v", partial)
 	}
-	originals, err := session.ReadHistoryPage(context.Background(), sessDir, "workflow-session", 1, 100)
+	originals, err := testSessionStore(t, sessDir).ReadHistoryPage("workflow-session", 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +197,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	if err := store.Save(context.Background(), loopdriver.Checkpoint{ContractVersion: partial.DriverContractVersion, DriverID: partial.DriverID, DriverVersion: partial.DriverVersion, State: partial.DriverCheckpoint}); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := session.LoadProviderHistorySnapshot(sessDir, "workflow-session")
+	restored, err := testSessionStore(t, sessDir).LoadProviderHistorySnapshot("workflow-session")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,10 +229,10 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	}
 	t.Run("driver-decides-overflow-recovery", func(t *testing.T) {
 		dir := t.TempDir()
-		if _, err := session.Create(dir, "overflow-session"); err != nil {
+		if _, err := testSessionStore(t, dir).Create("overflow-session"); err != nil {
 			t.Fatal(err)
 		}
-		store := sessionDriverCheckpointStore{sessDir: dir, sessionID: "overflow-session"}
+		store := sessionDriverCheckpointStore{sessions: testSessionStore(t, dir), sessionID: "overflow-session"}
 		model := &workflowEvidenceModel{overflowFirst: true}
 		tools := &workflowEvidenceTools{path: filepath.Join(root, "evidence.txt")}
 		owner.DriverProfile = selectedProfile
@@ -249,11 +250,11 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	})
 	t.Run("resume-planned-before-history-flush", func(t *testing.T) {
 		plannedDir := t.TempDir()
-		if _, err := session.Create(plannedDir, "planned-session"); err != nil {
+		if _, err := testSessionStore(t, plannedDir).Create("planned-session"); err != nil {
 			t.Fatal(err)
 		}
-		plannedStore := sessionDriverCheckpointStore{sessDir: plannedDir, sessionID: "planned-session"}
-		plannedLedger, err := toolledger.New(plannedDir, "planned-session")
+		plannedStore := sessionDriverCheckpointStore{sessions: testSessionStore(t, plannedDir), sessionID: "planned-session"}
+		plannedLedger, err := toolledger.New(testSessionDocuments(t, plannedDir), "planned-session")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -307,8 +308,8 @@ func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id str
 		}
 		return records
 	}
-	runner.ModelInputReceiptStore = sessionModelInputReceiptStore{sessDir: dir, sessionID: id}
-	start, _, err := session.AppendHistoryRecordsReturningRange(dir, id, toRecords(initial))
+	runner.ModelInputReceiptStore = sessionModelInputReceiptStore{sessions: testSessionStore(t, dir), sessionID: id}
+	start, _, err := testSessionStore(t, dir).AppendHistoryRecordsReturningRange(id, toRecords(initial))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +317,7 @@ func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id str
 		initial[i].Seq = start + i
 	}
 	runner.ArchiveHistory = func(ctx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
-		start, head, err := session.AppendHistoryRecordsReturningRange(dir, id, toRecords(messages))
+		start, head, err := testSessionStore(t, dir).AppendHistoryRecordsReturningRange(id, toRecords(messages))
 		if err != nil {
 			return agent.HistoryArchive{}, err
 		}
@@ -325,7 +326,7 @@ func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id str
 			seqs[i] = start + i
 		}
 		if len(messages) == 0 {
-			snapshot, err := session.LoadProviderHistorySnapshot(dir, id)
+			snapshot, err := testSessionStore(t, dir).LoadProviderHistorySnapshot(id)
 			if err != nil {
 				return agent.HistoryArchive{}, err
 			}
@@ -334,7 +335,7 @@ func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id str
 		return agent.HistoryArchive{Seqs: seqs, HeadSeq: head}, nil
 	}
 	runner.CommitFreshContext = func(ctx context.Context, messages []providers.ChatMessage, head int, key string, note agent.CompactionNote) ([]providers.ChatMessage, int, error) {
-		checkpoint, err := session.StoreContextWindow(dir, id, toRecords(messages), head, session.CompactionNote{ProviderKey: key})
+		checkpoint, err := testSessionStore(t, dir).StoreContextWindow(id, toRecords(messages), head, session.CompactionNote{ProviderKey: key})
 		if err != nil {
 			return nil, head, err
 		}
@@ -344,7 +345,7 @@ func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id str
 
 func assertDriverModelReceipts(t *testing.T, dir, id, driverID string, requests []providers.ChatRequest) {
 	t.Helper()
-	records, err := session.LoadModelInputReceipts(dir, id)
+	records, err := testSessionStore(t, dir).LoadModelInputReceipts(id)
 	if err != nil || len(records) != len(requests) {
 		t.Fatalf("model dispatches lack durable receipts: requests=%d receipts=%d err=%v", len(requests), len(records), err)
 	}
