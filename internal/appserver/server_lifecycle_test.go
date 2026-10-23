@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -79,5 +80,44 @@ func TestRunStdioClosesServerResourcesOnEOF(t *testing.T) {
 	}
 	if got := out.String(); got != "" {
 		t.Fatalf("RunStdio retained its activity subscription after EOF: %s", got)
+	}
+}
+
+// Both transport entrypoints must release connection-owned work when a late
+// composition registration fails, before returning that startup error.
+func TestRunStdioOptionFailureClosesConnectionWork(t *testing.T) {
+	for _, device := range []bool{false, true} {
+		name := "local"
+		if device {
+			name = "device"
+		}
+		t.Run(name, func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			done := make(chan struct{})
+			rejected := errors.New("registration rejected")
+			option := func(s *Server) error {
+				if s.presenceLease == nil {
+					t.Fatal("registration ran before presence initialization")
+				}
+				if !s.startBackground(func() { <-s.nativeHistoryCtx.Done(); close(done) }) {
+					t.Fatal("startup work was rejected")
+				}
+				return rejected
+			}
+			var err error
+			if device {
+				err = RunStdioForDevice(context.Background(), rt, strings.NewReader(""), &lockedBuffer{}, nil, option)
+			} else {
+				err = RunStdio(context.Background(), rt, strings.NewReader(""), &lockedBuffer{}, option)
+			}
+			if !errors.Is(err, rejected) {
+				t.Fatalf("startup error=%v", err)
+			}
+			select {
+			case <-done:
+			default:
+				t.Fatal("startup failure returned before connection cleanup")
+			}
+		})
 	}
 }

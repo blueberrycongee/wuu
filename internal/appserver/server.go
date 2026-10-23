@@ -220,6 +220,7 @@ type Server struct {
 	clientMethods               map[string]struct{}
 	deferredNotificationContent atomic.Bool
 	rendererClients             rendererClientScope
+	projectRegistration         *projectServerRegistration
 
 	// pushRegistrar is the host-side hook invoked by the device/push_*
 	// methods. The desktop main pipeline leaves it nil so the methods
@@ -341,7 +342,7 @@ type Server struct {
 	sideTurns  map[string]*sideThreadTurn
 }
 
-func New(rt *runtime.Session, out io.Writer) *Server {
+func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
 	s := &Server{
 		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
@@ -460,11 +461,14 @@ func New(rt *runtime.Session, out io.Writer) *Server {
 		s.startBackgroundWithState(binding, s.replayPendingPluginTurnLifecycles)
 	}
 	s.startInferenceJournalMaintenance()
-	if rt != nil && rt.SessionDir != "" {
-		s.startProjectRecovery(binding)
-	}
 	s.startPluginGenerationWatch()
 	s.startConfigWatch()
+	for _, option := range options {
+		if err := option(s); err != nil {
+			s.startupErr = err
+			return s
+		}
+	}
 	return s
 }
 
@@ -995,23 +999,23 @@ func shutdownExecutionActive(threads []*threadState, controls map[*agentcontrol.
 	return false
 }
 
-func RunStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer) error {
-	return runStdio(ctx, rt, in, out, nil, false)
+func RunStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, options ...ServerOption) error {
+	return runStdio(ctx, rt, in, out, nil, false, options...)
 }
 
 // RunStdioForDevice runs the protocol loop for a remote device session,
 // binding the device/push_* methods to the transport's per-device registrar.
 // Local desktop sessions call RunStdio, which leaves the registrar nil so
 // those methods fail explicitly instead of parking tokens nowhere.
-func RunStdioForDevice(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar) error {
-	return runStdio(ctx, rt, in, out, registrar, true)
+func RunStdioForDevice(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar, options ...ServerOption) error {
+	return runStdio(ctx, rt, in, out, registrar, true, options...)
 }
 
-func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar, remoteDevice bool) error {
+func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Writer, registrar PushRegistrar, remoteDevice bool, options ...ServerOption) error {
 	if rt == nil {
 		return errors.New("runtime session is required")
 	}
-	s := New(rt, out)
+	s := New(rt, out, options...)
 	s.pushRegistrar = registrar
 	s.remoteDevice = remoteDevice
 	defer s.Close()
