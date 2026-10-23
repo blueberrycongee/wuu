@@ -13,7 +13,8 @@
     "prepack": "npm run build"
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "@types/react": "19.2.15"
   },
   "files": [
     "dist/index.js",
@@ -45,7 +46,7 @@
       "import": "./dist/ui.js"
     }
   },
-  "dependencies": {
-    "@types/react": "19.0.0"
+  "peerDependencies": {
+    "@types/react": "^19.2.15"
   }
 }
