@@ -109,6 +109,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Prevent conversation previews from jumping when sending a follow-up after a delivered file by settling the outgoing file card before the submission scroll animation.
+
 - Keep the composer worktree toggle next to the branch name in narrow windows, without stretching short branch labels across the context row.
 
 - Keep the navigation ribbon at its current width while dragging destinations to reorder them, without opening the native expanded ribbon.
