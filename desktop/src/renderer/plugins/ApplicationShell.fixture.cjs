@@ -21,6 +21,7 @@ module.exports = (api) => {
   let disabled = false;
   let epoch = 0;
   let failure = "";
+  let bridgeFailure = false;
   const plugins = identities.map((id, index) => ({
     id, kind: "plugin", name: id, state: "active", approval_state: "granted", enabled: true,
     runtime_state: "active", fingerprint: `fixture-${index}`, desktop: { entry: "desktop.js", services: index < 2 ? [{ name: "ui.shell", version: "1.0.0" }] : [] },
@@ -33,11 +34,17 @@ module.exports = (api) => {
   return {
     ...api,
     initialize: async () => ({ ...await initialize(), application_shell: binding(), extension_inventory: inventory() }),
+    reportPluginDesktopActivation: async report => {
+      if (bridgeFailure) throw new Error("fixture ACK bridge unavailable");
+      await api.reportPluginDesktopActivation(report);
+    },
     getPluginConflictPreferences: async () => ({}),
     loadPluginDesktopModule: async ({ id, fingerprint }) => ({ id, fingerprint, digest: "0".repeat(64),
       url: id === identities[0] ? "wuu-builtin:default-shell" : `wuu-plugin://fixture/${id === identities[1] ? (failure === "root" ? "researchBroken" : "research") : (failure === "child" ? "evidenceBroken" : "evidence")}.js` }),
     onServerEvent: listener => { listeners.add(listener); return () => listeners.delete(listener); },
     testShell: async (mode) => {
+      bridgeFailure = mode === "bridge-failure";
+      if (bridgeFailure) { selected = identities[0]; disabled = false; }
       failure = mode === "broken-root" ? "root" : mode === "broken-child" ? "child" : "";
       if (failure) { selected = identities[1]; disabled = false; }
       epoch++;

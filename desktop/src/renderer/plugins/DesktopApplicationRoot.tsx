@@ -2,9 +2,15 @@ import { useEffect, useSyncExternalStore } from "react";
 import { getDesktopApplication, type ShellInitializeResult } from "./ApplicationController";
 import { desktopPluginHost, useDesktopPluginRuntime } from "./DesktopPluginRuntime";
 import { ApplicationShellOutlet } from "./ApplicationShell";
+import { dismissToast, showActionErrorToast } from "../Toast";
 
 export function DesktopApplicationRoot(): JSX.Element {
   const reportFailure = useSyncExternalStore(listener => desktopPluginHost.subscribe(listener), desktopPluginHost.getActivationReportFailure);
+  useEffect(() => {
+    if (!reportFailure) return;
+    const notice = showActionErrorToast(reportFailure);
+    return () => { if (notice !== undefined) dismissToast(notice); };
+  }, [reportFailure]);
   const desktopApplication = getDesktopApplication();
   const state = useSyncExternalStore(desktopApplication.subscribeState, desktopApplication.getState, desktopApplication.getState);
   useEffect(() => desktopApplication.start(), []);
@@ -12,5 +18,5 @@ export function DesktopApplicationRoot(): JSX.Element {
   const selection = (state.initialized as ShellInitializeResult | undefined)?.application_shell;
   const binding = selection ? { pluginId: selection.plugin_id, generation: selection.generation, id: selection.provider_id } : null;
   if (!state.initialized) return <div className="application-recovery" role={state.status === "connecting" ? "status" : "alert"}>{state.status === "connecting" ? "Connecting…" : state.status}</div>;
-  return <>{reportFailure && <div role="alert">{reportFailure}</div>}<ApplicationShellOutlet host={desktopPluginHost} binding={binding} /></>;
+  return <ApplicationShellOutlet host={desktopPluginHost} binding={binding} />;
 }

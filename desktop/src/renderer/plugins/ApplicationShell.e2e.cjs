@@ -68,6 +68,17 @@ app.whenReady().then(async () => {
       await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       await capture(`restored-${theme}-${size}`);
     }
+    await evaluate(() => window.wuu.testShell("bridge-failure"));
+    await until(() => document.body.textContent.includes("fixture ACK bridge unavailable") && Boolean(document.querySelector(".app-shell")));
+    const failureLayout = await evaluate(() => {
+      const shell = document.querySelector(".app-shell").getBoundingClientRect();
+      return { top: shell.top, bottom: shell.bottom, viewport: window.innerHeight };
+    });
+    assert.ok(failureLayout.top <= 1 && failureLayout.bottom <= failureLayout.viewport + 1,
+      `ACK diagnostics must not displace the active shell: ${JSON.stringify(failureLayout)}`);
+    await capture("bridge-failure");
+    await evaluate(() => window.wuu.testShell("default"));
+    await until(() => !document.body.textContent.includes("fixture ACK bridge unavailable") && Boolean(document.querySelector(".app-shell")));
     for (const [mode, owner, message] of [["broken-child", "user:evidence", "fixture child failure"], ["broken-root", "user:research-shell", "fixture root failure"]]) {
       await evaluate(mode => window.wuu.testShell(mode), mode);
       await until(() => Boolean(document.querySelector('[role="alert"]')) && !document.querySelector(".app-shell"));
@@ -87,7 +98,7 @@ app.whenReady().then(async () => {
     const unexpectedErrors = errors.filter(message => !message.includes("fixture child failure") && !message.includes("fixture root failure"));
     assert.equal(unexpectedErrors.length, 0, unexpectedErrors.join("\n"));
     fs.writeFileSync(path.join(output, "report.json"), JSON.stringify({ passed: true, title, errors: unexpectedErrors, expectedRenderErrors: errors,
-      checked: ["registration/render ACKs", "graph reactivation", "root/nested render failures", "selected default mounts", "external shell mounts", "third-party slot renders", "default unmounts", "shared settings action", "disable has no fallback", "default restores", "light/dark 15/20 screenshot evidence"] }, null, 2));
+      checked: ["ACK transport failure and recovery without layout shift", "registration/render ACKs", "graph reactivation", "root/nested render failures", "selected default mounts", "external shell mounts", "third-party slot renders", "default unmounts", "shared settings action", "disable has no fallback", "default restores", "light/dark 15/20 screenshot evidence"] }, null, 2));
     console.log(`PASS application shell assembly; evidence ${output}`);
     win.destroy(); app.exit(0);
   } catch (error) {
