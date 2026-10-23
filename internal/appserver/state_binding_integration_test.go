@@ -4,12 +4,24 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/permissionpolicy"
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -232,6 +244,7 @@ func TestTitleGenerationKeepsCapturedJournalAfterReplacement(t *testing.T) {
 	}
 	defer replacementJournal.Close()
 	rt.Documents, rt.Sessions, rt.InferenceJournalRuntime = replacement, selected, replacementJournal
+	rt.TitleClient = &fakeClient{response: providersResponse("Successor title")}
 
 	result, err := srv.generateThreadTitleCore(binding, id, []providers.ChatMessage{{Role: "user", Content: "Keep the original provider"}}, true, false, true, nil)
 	if err != nil || result.PersistedTitle != "Captured title" {
@@ -249,5 +262,62 @@ func TestTitleGenerationKeepsCapturedJournalAfterReplacement(t *testing.T) {
 	}
 	if _, found, err := selected.Find(id); err != nil || found {
 		t.Fatalf("title leaked into replacement: found=%v, err=%v", found, err)
+	}
+}
+
+// Title overrides must resolve configuration and saved credentials from the
+// request's selected services, without constructing a second workspace graph.
+func TestTitleOverrideUsesSelectedConfigurationAndCredentials(t *testing.T) {
+	ctx := context.Background()
+	header := make(chan string, 1)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header <- r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Selected override title\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer endpoint.Close()
+	selected := credentialstore.NewFileStore(filepath.Join(t.TempDir(), "credentials.json"))
+	if err := authstorage.NewBound(ctx, selected).Set("selected", authstorage.Credentials{APIKey: "selected-key"}); err != nil {
+		t.Fatal(err)
+	}
+	modules := []string{"wuu.session-state", persistence.JSONLModule, "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule}
+	cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}, DefaultProvider: "selected", Providers: map[string]config.ProviderConfig{"selected": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", Model: "base"}}}
+	binding, err := runtime.OpenState(ctx, runtime.StateOptions{
+		RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: cfg,
+		NativeProviders: []runtime.NativeProviderFactory{
+			{ID: config.Module, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+				return config.NewMemoryService(config.Module, cfg), nil
+			}},
+			{ID: credentialstore.FileModule, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+				return credentialstore.NewService(credentialstore.FileModule, func() (credentialstore.Store, error) { return selected, nil }), nil
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binding.Close()
+	out := &lockedBuffer{}
+	srv := New(newTestRuntime(t, &fakeClient{}), out)
+	defer srv.Close()
+	request := Request{ID: mustJSON("override")}
+	if err := srv.regenerateTitleWithOverride(binding, ctx, request, "selected-title", []providers.ChatMessage{{Role: "user", Content: "Use selected services"}}, ThreadRegenerateTitleParams{ModelOverride: "override", DryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "override")
+	if response["error"] != nil {
+		t.Fatalf("selected override: %+v", response)
+	}
+	result := remarshal[ThreadRegenerateTitleResult](t, response["result"])
+	if result.CleanedTitle != "Selected override title" || result.Model != "override" {
+		t.Fatalf("selected override result: %+v", result)
+	}
+	select {
+	case auth := <-header:
+		if auth != "Bearer selected-key" {
+			t.Fatalf("selected credentials = %q", auth)
+		}
+	default:
+		t.Fatal("selected provider was not called")
 	}
 }
