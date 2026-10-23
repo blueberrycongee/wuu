@@ -2,7 +2,7 @@ package pluginprotocol
 
 const (
 	DriverTurnService = "driver.turn"
-	DriverTurnMajor   = 2
+	DriverTurnMajor   = 3
 )
 
 // DriverTurnScope identifies an active driver execution. The service also checks
@@ -31,6 +31,33 @@ type DriverTurnContextResult struct {
 	Revision    uint64            `json:"revision"`
 	ArchiveHead int               `json:"archive_head"`
 	CanReplace  bool              `json:"can_replace"`
+}
+
+type DriverTurnAdmissionResult struct {
+	Messages []DriverMessageV1       `json:"messages"`
+	Context  DriverTurnContextResult `json:"context"`
+}
+
+type DriverContextBlock struct {
+	Kind        string `json:"kind"`
+	Title       string `json:"title,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Content     string `json:"content"`
+	TokenBudget int    `json:"token_budget,omitempty"`
+}
+
+type DriverContextSegment struct {
+	Messages    []DriverMessageV1    `json:"messages"`
+	Blocks      []DriverContextBlock `json:"blocks,omitempty"`
+	Lifecycle   string               `json:"lifecycle"`
+	Placement   string               `json:"placement"`
+	CachePolicy string               `json:"cache_policy"`
+	Durable     bool                 `json:"durable"`
+	VisibleInUI bool                 `json:"visible_in_ui"`
+}
+
+type DriverTurnRequestContextResult struct {
+	Segments []DriverContextSegment `json:"segments"`
 }
 
 type DriverTurnReplaceContextParams struct {

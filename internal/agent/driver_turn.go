@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -151,63 +150,10 @@ func (g *streamTurnGateway) CallModel(ctx context.Context, request providers.Cha
 	if request.Provider != g.runner.ProviderName {
 		return loopdriver.ModelRound{}, errors.New("model request must use the turn's bound provider")
 	}
-	request.Messages = providers.CloneChatMessages(request.Messages)
-	request.ProviderOptions = providers.CloneRequestObject(request.ProviderOptions)
-	request.Operation = providers.InferenceOperation{}
-	request.Execution = nil
-	request.Attempt = providers.InferenceAttempt{}
+	request = cloneDriverRequest(request)
 	request.StepIndex = g.step
 	g.step++
 	round := loopdriver.ModelRound{}
-	appendInput := func(messages []providers.ChatMessage) {
-		messages = filterDurableHistory(messages)
-		request.Messages = append(request.Messages, messages...)
-		round.Messages = append(round.Messages, messages...)
-		g.appendMessages(messages...)
-	}
-	if g.runner.BeforeStep != nil {
-		appendInput(g.runner.BeforeStep())
-	}
-	if preparer, ok := g.runner.Tools.(ModelStepPreparer); ok {
-		messages, err := preparer.PrepareModelStep(ctx, providers.CloneChatMessages(request.Messages))
-		if err != nil {
-			return round, err
-		}
-		appendInput(messages)
-	}
-	if g.runner.BeforeModelStep != nil {
-		messages, err := g.runner.BeforeModelStep(ctx, request.StepIndex, providers.CloneChatMessages(request.Messages))
-		if err != nil {
-			return round, err
-		}
-		appendInput(messages)
-	}
-	// Accepted user input must be durable before a model can act on it.
-	for _, message := range round.Messages {
-		if isUndispatchedSteeringMessage(message) && g.runner.ArchiveHistory != nil {
-			if err := g.archivePending(ctx); err != nil {
-				g.produced = slices.DeleteFunc(g.produced, isUndispatchedSteeringMessage)
-				g.durable = slices.DeleteFunc(g.durable, isUndispatchedSteeringMessage)
-				g.activeHistory = slices.DeleteFunc(g.activeHistory, isUndispatchedSteeringMessage)
-				round.Messages = slices.DeleteFunc(round.Messages, isUndispatchedSteeringMessage)
-				return round, err
-			}
-			seqs := make([]int, len(g.produced))
-			for i, produced := range g.produced {
-				seqs[i] = produced.Seq
-			}
-			request.Messages = applyArchivedHistorySeqs(request.Messages, g.produced, seqs)
-			round.Messages = applyArchivedHistorySeqs(round.Messages, g.produced, seqs)
-			break
-		}
-	}
-	segments := append(requestContextSegments(g.runner.BeforeRequestContext), g.postToolContext...)
-	request.Messages = assembleModelRequest(request.Messages, segments).Messages
-	if g.runner.BeforeRequest != nil {
-		if err := g.runner.BeforeRequest(ctx, &request); err != nil {
-			return round, err
-		}
-	}
 	if err := validateTransformedRequest(request, "", false); err != nil {
 		return round, err
 	}

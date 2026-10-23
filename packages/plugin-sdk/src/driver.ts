@@ -38,8 +38,29 @@ export interface DriverTurnContext {
   /** Both durable archive and atomic context checkpoint are available. */
   readonly can_replace: boolean;
 }
+export interface DriverInputAdmission {
+  readonly messages: readonly DriverMessage[];
+  readonly context: DriverTurnContext;
+}
+export interface DriverContextBlock {
+  readonly kind: string;
+  readonly title?: string;
+  readonly source?: string;
+  readonly content: string;
+  readonly token_budget?: number;
+}
+export interface DriverContextSegment {
+  /** Model projection of this segment, including any typed blocks. */
+  readonly messages: readonly DriverMessage[];
+  readonly blocks?: readonly DriverContextBlock[];
+  readonly lifecycle: string;
+  readonly placement: string;
+  readonly cache_policy: string;
+  readonly durable: boolean;
+  readonly visible_in_ui: boolean;
+}
 export interface DriverModelRound {
-  /** Admitted durable input contributions followed by the assistant response. */
+  /** The assistant response. Input admission is a separate operation. */
   readonly messages: readonly DriverMessage[];
   readonly usage?: {
     readonly input_tokens: number;
@@ -68,7 +89,7 @@ export interface DriverModelFailure {
   };
 }
 
-/** A model operation failed after admission. Partial messages and reported
+/** A model operation failed. Partial messages and reported
  * usage remain available. Classification alone does not authorize replay;
  * inspect partial output and the recovery executor's stopping decision.
  */
@@ -86,7 +107,7 @@ export class DriverModelError extends Error {
 
 export function requireDriverTurnServices(): ServiceRequirement[] {
   return [
-    { name: DRIVER_TURN_SERVICE, major_version: 2, required: true },
+    { name: DRIVER_TURN_SERVICE, major_version: 3, required: true },
     { name: DRIVER_CHECKPOINT_SERVICE, major_version: 1, required: true },
   ];
 }
@@ -117,6 +138,20 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
   return {
     /** Bound model defaults, available tools, and current active history. */
     read: () => call<DriverTurnInput>("read", {}),
+    /** Consume queued input at the driver's chosen boundary. Accepted steering
+     * is archived before returning its durable addresses. This operation does
+     * not build a request or call the model; retries do not repeat admission.
+     */
+    admitInput: () => call<DriverInputAdmission>("admit_input", {}),
+    /** Current request-only context, including tool-produced context. The
+     * driver chooses placement and retention; reading does not persist it.
+     */
+    requestContext: async (): Promise<readonly DriverContextSegment[]> =>
+      (await call<{ readonly segments: readonly DriverContextSegment[] }>("request_context", {})).segments,
+    /** Apply configured request transforms to the driver's assembled request.
+     * Returns an independent request; neither admits input nor calls a model.
+     */
+    transformRequest: (request: DriverTurnInput) => call<DriverTurnInput>("transform_request", { request }),
     context: () => call<DriverTurnContext>("context", {}),
     /** Replace active model context at the revision returned by context().
      * Accepted originals are archived first. The replacement and concurrent
@@ -126,8 +161,10 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
      */
     replaceContext: (revision: number, messages: readonly DriverMessage[]) =>
       call<DriverTurnContext>("replace_context", { revision, messages }),
-    /** Throws DriverModelError for a failed model operation, preserving its
-     * partial result. Transport and authorization failures remain host errors.
+    /** Send exactly the supplied request. It does not consume input, append
+     * context, or run transforms. Throws DriverModelError for a failed model
+     * operation, preserving its partial result. Transport and authorization
+     * failures remain host errors.
      */
     model: async (request: LogicalModelRequestV1): Promise<DriverModelRound> => {
       const result = await call<DriverModelRound & { readonly failure?: DriverModelFailure }>("model", { request });

@@ -40,6 +40,38 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 			return nil, err
 		}
 		return marshalServiceResult(modelwire.DriverRequestToWire(request))
+	case "admit_input":
+		if err := decodeServiceParams(params.Params, &scope); err != nil {
+			return nil, err
+		}
+		admitted, err := turn.AdmitInput(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(pluginprotocol.DriverTurnAdmissionResult{Messages: modelwire.DriverMessagesToWire(admitted.Messages), Context: driverContextToWire(admitted.Context)})
+	case "request_context":
+		if err := decodeServiceParams(params.Params, &scope); err != nil {
+			return nil, err
+		}
+		segments, err := turn.ReadRequestContext(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(pluginprotocol.DriverTurnRequestContextResult{Segments: loopdriver.ContextSegmentsToWire(segments)})
+	case "transform_request":
+		var input pluginprotocol.DriverTurnModelParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		request, err := modelwire.DriverRequestFromWire(input.Request)
+		if err != nil {
+			return nil, serviceError("invalid_request", err.Error())
+		}
+		transformed, err := turn.TransformRequest(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(modelwire.DriverRequestToWire(transformed))
 	case "context":
 		if err := decodeServiceParams(params.Params, &scope); err != nil {
 			return nil, err

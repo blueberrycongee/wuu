@@ -12,7 +12,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Compose named profiles from ordered reusable bundles, profile patches and user overrides with composition version 2; version 1 inline configurations remain supported. Patches can select or exclude modules and replace or remove service bindings; diagnostics show applied layers and individual selection sources. Explicit empty compositions remain empty after saving.
 
-- Preserve classified model failures, partial messages and reported usage for independent loop drivers through `driver.turn` 2.0. Update the SDK and service requirement together; the evidence workflow now decides its own bounded context-overflow recovery.
+- Give independent loop drivers explicit input admission, request-context and request-transform operations through `driver.turn` 3.0. Model submission preserves classified failures, partial messages and reported usage without implicitly consuming input or preparing the request. Update the SDK and service requirement together; the evidence workflow owns its preparation order and bounded context-overflow recovery.
 
 - Persist conversation driver bindings before execution, retain them across default changes and forks, and reject mismatched checkpoints or missing session owners before effects. Migrate older native conversations to their historical driver identity; retain unknown external bindings for explicit recovery.
 

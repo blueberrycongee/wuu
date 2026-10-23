@@ -62,6 +62,12 @@ const plugin: RuntimePlugin = {
     if (instance.running) throw new Error("workflow is already running");
     instance.running = true;
     const turn = driverTurn(host, instance.execution);
+    const prepareRequest = async (request: DriverTurnInput) => {
+      const segments = await turn.requestContext();
+      const context = segments.filter(segment => !segment.durable && segment.lifecycle === "request_only" && segment.placement === "after_history")
+        .flatMap(segment => segment.messages);
+      return turn.transformRequest({ ...request, messages: [...request.messages, ...context] });
+    };
     const save = async (state: State) => {
       execution.signal.throwIfAborted();
       const next = checkpoint(state);
@@ -73,13 +79,16 @@ const plugin: RuntimePlugin = {
       let state = instance.checkpoint.state;
       if (state.phase === "complete") state = { phase: "ready" };
       if (state.phase === "ready") {
+        const admitted = await turn.admitInput();
+        current = { ...current, messages: admitted.context.messages };
         const instruction: ModelMessageV1 = { role: "user", content: "Gather the evidence needed for this task in one batch of tools. A separate synthesis stage will write the answer after those results arrive.", hidden: true };
         let plan;
         try {
-          plan = await turn.model({ ...current, messages: [...current.messages, instruction] });
+          plan = await turn.model(await prepareRequest({ ...current, messages: [...current.messages, instruction] }));
         } catch (error) {
           // This workflow retries planning once after dropping earlier tasks.
-          // Partial output or admitted input needs explicit reconciliation.
+          // Partial output needs explicit reconciliation. Admission already
+          // finished; this retry must not consume another queued user message.
           if (!(error instanceof DriverModelError) || !error.failure.context_overflow || error.round.messages.length) throw error;
           const context = await turn.context();
           const task = context.messages.findLastIndex(message => message.role === "user" && !message.hidden);
@@ -89,7 +98,7 @@ const plugin: RuntimePlugin = {
           const committed = await turn.replaceContext(context.revision, focused);
           current = { ...current, messages: committed.messages };
           await save({ phase: "ready" });
-          plan = await turn.model({ ...current, messages: [...current.messages, instruction] });
+          plan = await turn.model(await prepareRequest({ ...current, messages: [...current.messages, instruction] }));
         }
         const calls = plan.messages.flatMap(message => message.tool_calls ?? []);
         state = { phase: "planned", request: { ...current, messages: [...current.messages, ...plan.messages] }, calls };
@@ -116,7 +125,7 @@ const plugin: RuntimePlugin = {
       // The context service preserves the full transcript before committing this
       // policy's replacement. Reading the committed context also makes a retry
       // after a lost commit reply harmless: an already focused window stays put.
-      const context = await turn.context();
+      const { context } = await turn.admitInput();
       if (!context.can_replace) throw new Error("workflow requires durable context replacement");
       const taskIndex = context.messages.findLastIndex(message => message.role === "user" && !message.hidden);
       if (taskIndex < 0) throw new Error("workflow context has no user task");
@@ -132,7 +141,7 @@ const plugin: RuntimePlugin = {
       await save({ phase: "synthesis", request, calls: state.calls });
       // This workflow has a fixed second stage; it does not hand control to the
       // multi-round loop and does not allow the synthesis model to execute tools.
-      const answer = await turn.model({ ...request, tools: [], force_tool_name: "" });
+      const answer = await turn.model(await prepareRequest({ ...request, tools: [], force_tool_name: "" }));
       const content = answer.messages.filter(message => message.role === "assistant").map(message => message.content ?? "").join("\n");
       if (!content.trim()) throw new Error("synthesis returned no answer");
       const receipt = await turn.complete(content);

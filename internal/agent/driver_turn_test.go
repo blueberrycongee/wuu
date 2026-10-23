@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -80,6 +81,88 @@ func TestDriverTurnCancellationAndClosureRejectEffects(t *testing.T) {
 	}
 }
 
+// Input admission, request context, and transforms are separate effects. A
+// driver must be able to compact between admission and request preparation,
+// then retry a model request without consuming more input or transforming twice.
+func TestDriverTurnExplicitRequestStages(t *testing.T) {
+	ctx := context.Background()
+	client := &mockStreamClient{events: []providers.StreamEvent{
+		{Type: providers.EventContentDelta, Content: "response"},
+		{Type: providers.EventDone, FinishReason: providers.FinishReasonStop},
+	}}
+	var operations []string
+	runner := &StreamRunner{Client: client, Model: "controlled-model",
+		BeforeStep: func() []providers.ChatMessage {
+			operations = append(operations, "input")
+			return []providers.ChatMessage{{Role: "user", ClientID: "accepted", Content: "new direction", Steered: true}}
+		},
+		BeforeModelStep: func(_ context.Context, step int, history []providers.ChatMessage) ([]providers.ChatMessage, error) {
+			operations = append(operations, "before-model")
+			if step != 0 || history[len(history)-1].ClientID != "accepted" {
+				t.Fatalf("input boundary lost step or accepted history: step=%d history=%+v", step, history)
+			}
+			return nil, nil
+		},
+		ArchiveHistory: func(_ context.Context, messages []providers.ChatMessage) (HistoryArchive, error) {
+			operations = append(operations, "archive")
+			if len(messages) != 1 || messages[0].ClientID != "accepted" {
+				t.Fatalf("archive lost accepted input: %+v", messages)
+			}
+			return HistoryArchive{Seqs: []int{2}, HeadSeq: 2}, nil
+		},
+		BeforeRequestContext: func() []ContextSegment {
+			operations = append(operations, "context")
+			return RequestOnlyContextMessages([]providers.ChatMessage{{Role: "user", Content: "dynamic guidance"}})
+		},
+		BeforeRequest: func(_ context.Context, request *providers.ChatRequest) error {
+			operations = append(operations, "transform")
+			request.Temperature = 0.25
+			return nil
+		},
+	}
+	gateway := newStreamTurnGateway(ctx, runner, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "initial", Seq: 1}}}, nil)
+	defer gateway.close()
+	request, err := gateway.ReadTurn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted, err := gateway.AdmitInput(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(admitted.Messages) != 1 || admitted.Messages[0].Seq != 2 || admitted.Context.ArchiveHead != 2 || len(admitted.Context.Messages) != 2 || len(client.requests) != 0 {
+		t.Fatalf("admission lost durable input or invoked the model: %+v requests=%d", admitted, len(client.requests))
+	}
+	segments, err := gateway.ReadRequestContext(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Messages = assembleModelRequest(admitted.Context.Messages, segments).Messages
+	transformed, err := gateway.TransformRequest(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.Temperature != 0 || transformed.Temperature != 0.25 {
+		t.Fatalf("transform mutated caller request: before=%v after=%v", request.Temperature, transformed.Temperature)
+	}
+	for range 2 {
+		round, err := gateway.CallModel(ctx, transformed)
+		if err != nil || len(round.Messages) != 1 || round.Messages[0].Role != "assistant" {
+			t.Fatalf("model repeated admission or lost response: round=%+v err=%v", round, err)
+		}
+	}
+	if want := []string{"input", "before-model", "archive", "context", "transform"}; !reflect.DeepEqual(operations, want) {
+		t.Fatalf("implicit or repeated request effects: got=%v want=%v", operations, want)
+	}
+	if len(client.requests) != 2 || len(client.requests[0].Messages) != 3 || client.requests[0].Messages[1].Seq != 2 || client.requests[0].Messages[2].Content != "dynamic guidance" || client.requests[0].Temperature != 0.25 {
+		t.Fatalf("model did not receive driver-prepared request: %+v", client.requests)
+	}
+	current, err := gateway.ReadContext(ctx)
+	if err != nil || len(current.Messages) != 4 {
+		t.Fatalf("request-only context entered durable history: %+v err=%v", current, err)
+	}
+}
+
 func TestDriverTurnDoesNotDispatchSteeringWhenArchiveFails(t *testing.T) {
 	client := &mockStreamClient{}
 	archiveErr := errors.New("archive unavailable")
@@ -97,7 +180,10 @@ func TestDriverTurnDoesNotDispatchSteeringWhenArchiveFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gateway.CallModel(context.Background(), request); !errors.Is(err, archiveErr) {
+	if len(request.Messages) != 1 {
+		t.Fatalf("read unexpectedly admitted input: %+v", request.Messages)
+	}
+	if _, err := gateway.AdmitInput(context.Background()); !errors.Is(err, archiveErr) {
 		t.Fatalf("archive failure=%v", err)
 	}
 	result, _ := gateway.result("")

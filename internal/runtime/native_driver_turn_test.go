@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
@@ -61,6 +62,23 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 	}
 	history := []providers.ChatMessage{{Role: "user", Content: "Measure evidence.txt", ClientID: "native-input"}}
 	attachWorkflowHistory(t, runner, dir, "native-session", history)
+	inputCalls, contextCalls, transformCalls := 0, 0, 0
+	runner.BeforeStep = func() []providers.ChatMessage {
+		inputCalls++
+		if inputCalls > 1 {
+			return nil
+		}
+		return []providers.ChatMessage{{Role: "user", Content: "Use the measured value", ClientID: "native-followup", Steered: true}}
+	}
+	runner.BeforeRequestContext = func() []agent.ContextSegment {
+		contextCalls++
+		return agent.RequestOnlyContextBlocks([]wuucontext.Block{{Kind: wuucontext.BlockTaskState, Source: "fixture", Content: "Use evidence", TokenBudget: 12}})
+	}
+	runner.BeforeRequest = func(_ context.Context, request *providers.ChatRequest) error {
+		transformCalls++
+		request.Temperature = 0.25
+		return nil
+	}
 	implementation.run = func(ctx context.Context, gateway loopdriver.KernelGateway) (loopdriver.ModelLoopReceipt, error) {
 		turn, ok := gateway.(loopdriver.TurnGateway)
 		if !ok {
@@ -80,6 +98,25 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 		cancel()
 		if _, err := turn.CallModel(canceled, request); err == nil || len(model.requests) != 0 {
 			return loopdriver.ModelLoopReceipt{}, errors.New("canceled callback reached model")
+		}
+		admitted, err := turn.AdmitInput(ctx)
+		if err != nil {
+			return loopdriver.ModelLoopReceipt{}, err
+		}
+		if len(admitted.Messages) != 1 || admitted.Messages[0].ClientID != "native-followup" || admitted.Messages[0].Seq == 0 || !admitted.Messages[0].Steered || admitted.Context.ArchiveHead < 2 {
+			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("admission lost durable input addresses: %+v", admitted)
+		}
+		segments, err := turn.ReadRequestContext(ctx)
+		if err != nil {
+			return loopdriver.ModelLoopReceipt{}, err
+		}
+		if len(segments) != 1 || len(segments[0].Blocks) != 1 || segments[0].Blocks[0].Kind != wuucontext.BlockTaskState || segments[0].Blocks[0].TokenBudget != 12 || segments[0].Durable || segments[0].Lifecycle != loopdriver.ContextSegmentRequestOnly {
+			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("request context lost typed projection: %+v", segments)
+		}
+		request.Messages = append(admitted.Context.Messages, segments[0].Messages...)
+		request, err = turn.TransformRequest(ctx, request)
+		if err != nil {
+			return loopdriver.ModelLoopReceipt{}, err
 		}
 		planned, err := turn.CallModel(ctx, request)
 		if err != nil {
@@ -109,14 +146,14 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 		if err != nil {
 			return loopdriver.ModelLoopReceipt{}, err
 		}
-		if !current.CanReplace || len(current.Messages) != 3 || current.Messages[2].ToolInvocationID != results[0].ToolInvocationID {
+		if !current.CanReplace || len(current.Messages) != 4 || current.Messages[3].ToolInvocationID != results[0].ToolInvocationID {
 			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("context lost tool receipt: %+v", current)
 		}
 		committed, err := turn.ReplaceContext(ctx, loopdriver.ContextReplacement{Revision: current.Revision, Messages: current.Messages})
 		if err != nil {
 			return loopdriver.ModelLoopReceipt{}, err
 		}
-		if committed.Revision <= current.Revision || committed.ArchiveHead < 3 || committed.Messages[2].Seq == 0 {
+		if committed.Revision <= current.Revision || committed.ArchiveHead < 4 || committed.Messages[3].Seq == 0 {
 			return loopdriver.ModelLoopReceipt{}, fmt.Errorf("context commit lost durable addresses: %+v", committed)
 		}
 		if _, err := turn.ReplaceContext(ctx, loopdriver.ContextReplacement{Revision: current.Revision, Messages: current.Messages}); err == nil {
@@ -137,6 +174,10 @@ func TestNativeDriverIndependentTurn(t *testing.T) {
 	if result.Content != "The measured value is 42." || tools.calls != 1 || len(model.requests) != 2 {
 		t.Fatalf("native control flow failed: result=%+v model=%d tools=%d", result, len(model.requests), tools.calls)
 	}
+	if inputCalls != 1 || contextCalls != 1 || transformCalls != 1 || model.requests[0].Temperature != 0.25 || len(model.requests[0].Messages) != 3 || model.requests[0].Messages[1].ClientID != "native-followup" {
+		t.Fatalf("native model repeated request effects or lost transformed input: input=%d context=%d transform=%d requests=%+v", inputCalls, contextCalls, transformCalls, model.requests)
+	}
+	runner.BeforeStep, runner.BeforeRequestContext, runner.BeforeRequest = nil, nil, nil
 	// A provider-owned loop must receive classified failure evidence and the
 	// accepted partial response, then decide whether another round is allowed.
 	for _, partial := range []bool{false, true} {

@@ -1,6 +1,6 @@
 # Evidence workflow driver
 
-This independent TypeScript plugin plans one evidence-gathering tool batch, commits a focused active context, and then synthesizes an answer with tools disabled. It requires the durable context operations in `driver.turn` 2.0. It uses only `@wuu/plugin-sdk` and runs directly with Node's TypeScript support.
+This independent TypeScript plugin plans one evidence-gathering tool batch, commits a focused active context, and then synthesizes an answer with tools disabled. It requires `driver.turn` 3.0: input admission, request context, and request transforms are explicit stages, so an overflow retry cannot consume more input or transform a request twice. It uses only `@wuu/plugin-sdk` and runs directly with Node's TypeScript support.
 
 From the repository root:
 

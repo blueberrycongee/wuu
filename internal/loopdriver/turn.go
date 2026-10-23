@@ -13,6 +13,9 @@ import (
 // cancellation. Model and tool events use the turn's existing event stream.
 type TurnGateway interface {
 	ReadTurn(context.Context) (providers.ChatRequest, error)
+	AdmitInput(context.Context) (InputAdmission, error)
+	ReadRequestContext(context.Context) ([]ContextSegment, error)
+	TransformRequest(context.Context, providers.ChatRequest) (providers.ChatRequest, error)
 	ReadContext(context.Context) (TurnContext, error)
 	ReplaceContext(context.Context, ContextReplacement) (TurnContext, error)
 	CallModel(context.Context, providers.ChatRequest) (ModelRound, error)
@@ -41,15 +44,23 @@ type ContextReplacement struct {
 	Messages []providers.ChatMessage
 }
 
-// ModelRound includes durable input contributions admitted before the request,
-// followed by its assistant message. Request-only context is not included.
+// InputAdmission contains new durable input and the resulting active context.
+// Admission runs only when requested by the driver, before its compaction or
+// request-building policy. It does not call a model or transform a request.
+type InputAdmission struct {
+	Messages []providers.ChatMessage
+	Context  TurnContext
+}
+
+// ModelRound includes the assistant response. Model calls do not admit queued
+// input, assemble request context, or run request transforms.
 type ModelRound struct {
 	Messages []providers.ChatMessage
 	Usage    *providers.TokenUsage
 }
 
 // ModelRoundError retains the classified failure of a model operation. The
-// accompanying ModelRound still contains accepted input and partial output.
+// accompanying ModelRound still contains partial output.
 // Transport and authorization errors do not imply a completed model operation.
 type ModelRoundError struct {
 	Failure pluginprotocol.DriverModelFailure

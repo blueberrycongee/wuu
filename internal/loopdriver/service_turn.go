@@ -32,6 +32,32 @@ func (g serviceGateway) ReadTurn(ctx context.Context) (providers.ChatRequest, er
 	return modelwire.DriverRequestFromWire(result)
 }
 
+func (g serviceGateway) AdmitInput(ctx context.Context) (InputAdmission, error) {
+	var result pluginprotocol.DriverTurnAdmissionResult
+	if err := g.callTurn(ctx, "admit_input", pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, &result); err != nil {
+		return InputAdmission{}, err
+	}
+	return InputAdmission{Messages: modelwire.DriverMessagesFromWire(result.Messages), Context: turnContextFromWire(result.Context)}, nil
+}
+
+func (g serviceGateway) ReadRequestContext(ctx context.Context) ([]ContextSegment, error) {
+	var result pluginprotocol.DriverTurnRequestContextResult
+	if err := g.callTurn(ctx, "request_context", pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, &result); err != nil {
+		return nil, err
+	}
+	return ContextSegmentsFromWire(result.Segments), nil
+}
+
+func (g serviceGateway) TransformRequest(ctx context.Context, request providers.ChatRequest) (providers.ChatRequest, error) {
+	var result pluginprotocol.DriverTurnReadResult
+	if err := g.callTurn(ctx, "transform_request", pluginprotocol.DriverTurnModelParams{
+		DriverTurnScope: pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, Request: modelwire.DriverRequestToWire(request),
+	}, &result); err != nil {
+		return providers.ChatRequest{}, err
+	}
+	return modelwire.DriverRequestFromWire(result)
+}
+
 func (g serviceGateway) ReadContext(ctx context.Context) (TurnContext, error) {
 	var result pluginprotocol.DriverTurnContextResult
 	if err := g.callTurn(ctx, "context", pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, &result); err != nil {
