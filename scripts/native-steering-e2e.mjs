@@ -2,15 +2,14 @@
 // Real Wuu stdio server and a controlled native subprocess. No credentials,
 // external inference, or user data. Set WUU_E2E_CORE to a source-built binary.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { appendFile, chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 if (process.argv.includes("--native-fixture")) {
@@ -106,7 +105,8 @@ if (process.argv.includes("--native-fixture")) {
 }
 
 async function run() {
-  const binary = resolve(process.env.WUU_E2E_CORE || "bin/wuu");
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const binary = resolve(root, process.env.WUU_E2E_CORE || "bin/wuu");
   const output = resolve(process.env.WUU_STEER_E2E_OUTPUT || ".tmp/e2e/native-steering");
   await mkdir(output, { recursive: true });
   const scratch = await mkdtemp(join(output, "run-")), home = join(scratch, "home");
@@ -117,9 +117,37 @@ async function run() {
   await writeFile(fake, `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))} --native-fixture "$@"\n`);
   await chmod(fake, 0o755);
   await writeFile(config, JSON.stringify({ default_provider: "fixture", providers: { fixture: { type: "openai-compatible", base_url: "http://127.0.0.1:1/v1", api_key: "synthetic-only", model: "fixture", models: { fixture: {} } } }, engines: { ...Object.fromEntries(["claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])), codex: { enabled: true, binary_path: fake } }, agent: { permission_mode: "standard" }, ptc: { enabled: false } }));
+  for (const marker of [".wuu-session-fixture", ".wuu-synthetic-fixture"]) {
+    await writeFile(join(home, marker), "wuu-session-fixture-v1\n");
+  }
+  const fixtureBinary = resolve(root, process.env.WUU_E2E_SESSION_FIXTURE || join(scratch, "session-fixture"));
+  const stateProvider = resolve(root, process.env.WUU_E2E_SESSION_PROVIDER || join(scratch, "session-fixture-provider"));
+  for (const [provided, binary, pkg] of [[process.env.WUU_E2E_SESSION_FIXTURE, fixtureBinary, "session-fixture"],
+    [process.env.WUU_E2E_SESSION_PROVIDER, stateProvider, "session-fixture-provider"]]) {
+    if (!provided) {
+      const build = spawnSync("go", ["build", "-o", binary, `./scripts/${pkg}`], { cwd: root, encoding: "utf8" });
+      assert.equal(build.status, 0, build.stderr);
+    }
+  }
+  const installed = spawnSync(stateProvider, ["install", "--home", home], { encoding: "utf8" });
+  assert.equal(installed.status, 0, installed.stderr);
+  function fixture(input) {
+    const reply = spawnSync(fixtureBinary, [], { input: JSON.stringify({ home, workdir: scratch, ...input }),
+      encoding: "utf8", timeout: 20000, maxBuffer: 64 * 1024 * 1024 });
+    assert.equal(reply.status, 0, reply.stderr);
+    return JSON.parse(reply.stdout);
+  }
+  const history = id => fixture({ op: "read", ids: [id] }).sessions[0].history;
+  const stored = id => fixture({ op: "read", ids: [id] }).sessions[0].session;
+  const faultPath = join(home, "session-fixture-provider", "faults.json");
+  async function faults(rules) {
+    if (!rules.length) { await rm(faultPath); return; }
+    await writeFile(faultPath + ".tmp", JSON.stringify({ version: 1, faults: rules }));
+    await rename(faultPath + ".tmp", faultPath);
+  }
   const transcript = [], clients = [], events = new EventEmitter(), checks = [];
   const results = { status: "failed", scratch, checks, binary, binary_sha256: createHash("sha256").update(await readFile(binary)).digest("hex"), limitations: ["Synthetic native protocol subprocess; no official engine binary, external inference, desktop UI, or crash-durability/fsync claim."] };
-  let sequence = 0, db;
+  let sequence = 0;
   function check(name, fn) { fn(); checks.push(name); console.log("PASS", name); }
   function waitFor(predicate, label, timeout = 12000) {
     const found = transcript.find(predicate); if (found) return Promise.resolve(found);
@@ -167,21 +195,18 @@ async function run() {
   const steer = (client, id, turn, clientID, prompt, extra = {}) => rpc(client, "turn/steer", { thread_id: id, expected_turn_id: turn, client_id: clientID, prompt, ...extra });
   const resume = (client, id) => rpc(client, "thread/resume", { session_id: id, response_only: true });
   const held = result => result.held_user_messages ?? [];
-  const row = id => db.prepare("SELECT * FROM held_user_work WHERE id=?").get(id);
-  const messages = id => db.prepare("SELECT * FROM session_messages WHERE client_id=?").all(id);
+  const row = id => fixture({ op: "inspect", domains: ["held_user_work"] }).documents.held_user_work
+    .map(document => document.value).find(entry => entry.ID === id);
+  const messages = id => fixture({ op: "read" }).sessions.flatMap(thread => thread.history).filter(row => row.client_id === id);
   const receipt = (client, id, turn, clientID) => waitFor(m => m.client === client.name && m.method === "item/completed" && m.params?.turn_id === turn && m.params?.item?.source_id === clientID, "consumed " + clientID);
   try {
     let a = await start("a1");
-    const { readdir } = await import("node:fs/promises");
-    async function findDB(dir) { for (const e of await readdir(dir, { withFileTypes: true })) { const p = join(dir, e.name); if (e.isDirectory()) { const found = await findDB(p); if (found) return found; } else if (e.name === "sessions.sqlite3") return p; } }
     const id = await create(a), active = await begin(a, id);
-    db = new DatabaseSync(await findDB(home));
-    db.exec("PRAGMA busy_timeout=5000");
     const firstSteer = await steer(a, id, active.turn, "native-one", "First supplement");
     await nativeWait(m => m.request?.method === "turn/steer", "current native turn receives steering", process.env.WUU_EXPECT_BASELINE ? 1000 : 12000);
     await receipt(a, id, active.turn, "native-one");
     const request = (await native()).find(m => m.request?.method === "turn/steer").request;
-    check("current native turn receives human input with stable client ID and native expectedTurnId", () => { assert.equal(firstSteer.delivery, "active_turn"); assert.equal(request.params.expectedTurnId, active.nativeTurn); assert.equal(request.params.clientUserMessageId, "native-one"); assert.equal(messages("native-one").length, 1); assert.equal(row("native-one").state, "consumed"); });
+    check("current native turn receives human input with stable client ID and native expectedTurnId", () => { assert.equal(firstSteer.delivery, "active_turn"); assert.equal(request.params.expectedTurnId, active.nativeTurn); assert.equal(request.params.clientUserMessageId, "native-one"); assert.equal(messages("native-one").length, 1); assert.equal(row("native-one").State, "consumed"); });
     const image = { media_type: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg==" };
     await steer(a, id, active.turn, "native-two", "Second supplement", { images: [image], active_document: { path: "guide.md" } });
     await receipt(a, id, active.turn, "native-two");
@@ -191,40 +216,40 @@ async function run() {
     check("acknowledged stable ID cannot be sent twice", () => assert(duplicate.error));
     await control(active.nativeTurn);
     await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === active.turn, "native completion");
-    check("native answer includes both supplements without a successor turn", () => { const answer = db.prepare("SELECT content FROM session_messages WHERE session_id=? AND role='assistant' ORDER BY seq DESC LIMIT 1").get(id); assert(answer.content.includes("First supplement")); assert(answer.content.includes("Second supplement")); });
+    check("native answer includes both supplements without a successor turn", () => { const answer = history(id).findLast(row => row.role === "assistant"); assert(answer.content.includes("First supplement")); assert(answer.content.includes("Second supplement")); });
     if (process.env.WUU_STEER_HISTORY === "1") {
-      const historyRows = db.prepare("SELECT * FROM session_messages WHERE session_id=? ORDER BY seq").all(id);
+      const historyRows = history(id);
       check("acknowledged supplements persist the same native ID without clearing primary admission", () => {
         const users = historyRows.filter(row => row.role === "user");
         assert.equal(users.length, 3, "native user items must not duplicate acknowledged Wuu messages");
         assert(users.every(row => row.engine_turn_id === active.nativeTurn));
-        assert(users.every(row => row.engine_turn_pending === 0));
+        assert(users.every(row => !row.engine_turn_pending));
       });
       const restored = (await resume(a, id)).thread, selected = restored.turns[0];
       const final = selected.items.findLast(item => item.type === "agent_message");
       const supplemental = selected.items.find(item => item.source_id === "native-one");
       assert(final && supplemental);
-      const before = historyRows, sourceRef = db.prepare("SELECT engine_ref FROM sessions WHERE id=?").get(id).engine_ref;
+      const before = historyRows, sourceRef = stored(id).engine_ref;
       const full = (await rpc(a, "thread/fork", { thread_id: id, turn_id: selected.id, item_id: final.id })).thread;
-      const copiedUsers = db.prepare("SELECT * FROM session_messages WHERE session_id=? AND role='user'").all(full.id);
+      const copiedUsers = history(full.id).filter(row => row.role === "user");
       check("complete native turn fork preserves primary input and every acknowledged supplement", () => {
         assert.equal(copiedUsers.length, 3);
         assert(copiedUsers.every(row => row.engine_turn_id === active.nativeTurn));
-        assert.notEqual(db.prepare("SELECT engine_ref FROM sessions WHERE id=?").get(full.id).engine_ref, sourceRef);
+        assert.notEqual(stored(full.id).engine_ref, sourceRef);
       });
       for (const method of ["thread/fork", "thread/edit-message"]) {
         const partial = await raw(a, method, { thread_id: id, turn_id: selected.id, item_id: supplemental.id });
         check(`${method} refuses a supplemental cut inside one native turn`, () => {
           assert(partial.error, "partial native turn must not be guessed");
-          assert.deepEqual(db.prepare("SELECT * FROM session_messages WHERE session_id=? ORDER BY seq").all(id), before);
-          assert.equal(db.prepare("SELECT engine_ref FROM sessions WHERE id=?").get(id).engine_ref, sourceRef);
+          assert.deepEqual(history(id), before);
+          assert.equal(stored(id).engine_ref, sourceRef);
         });
       }
     }
     const rejectID = await create(a), rejectTurn = await begin(a, rejectID);
     await steer(a, rejectID, rejectTurn.turn, "native-rejected", "REJECT safely");
     await waitFor(m => m.method === "turn/held" && m.params?.thread_id === rejectID && m.params?.error, "rejected held");
-    check("definite rejection preserves editable held input without history or retry", () => { assert.equal(row("native-rejected").state, "pending"); assert.equal(messages("native-rejected").length, 0); });
+    check("definite rejection preserves editable held input without history or retry", () => { assert.equal(row("native-rejected").State, "pending"); assert.equal(messages("native-rejected").length, 0); });
     await control(rejectTurn.nativeTurn); await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === rejectTurn.turn, "reject turn completes");
     const rejectedView = await resume(a, rejectID);
     check("rejected steering does not automatically run in the next turn", () => { assert.equal(held(rejectedView)[0].id, "native-rejected"); assert.equal(rejectedView.pending_user_messages?.length ?? 0, 0); });
@@ -233,7 +258,7 @@ async function run() {
     check("stale Wuu turn precondition fails before native submission", () => assert(wrong.error));
     await steer(a, delayID, delayTurn.turn, "native-delayed", "DELAY until acknowledgement");
     await nativeWait(m => m.accepted === "native-delayed", "delayed native admission");
-    check("native dispatch seals recovery input without prematurely consuming it", () => { assert.equal(row("native-delayed").state, "dispatching"); assert.equal(messages("native-delayed").length, 0); });
+    check("native dispatch seals recovery input without prematurely consuming it", () => { assert.equal(row("native-delayed").State, "dispatching"); assert.equal(messages("native-delayed").length, 0); });
     const live = await resume(a, delayID);
     check("slow native acknowledgement does not block the app-server request loop", () => assert.equal(live.thread.id, delayID));
     const parallelID = await create(a), parallelTurn = await begin(a, parallelID);
@@ -255,40 +280,40 @@ async function run() {
     await control(delayTurn.nativeTurn, "ack");
     await receipt(a, delayID, delayTurn.turn, "native-delayed");
     await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === delayTurn.turn, "terminal joins late ack");
-    check("terminal history waits for an already in-flight acknowledgement", () => { assert.equal(row("native-delayed").state, "consumed"); assert.equal(messages("native-delayed").length, 1); });
+    check("terminal history waits for an already in-flight acknowledgement", () => { assert.equal(row("native-delayed").State, "consumed"); assert.equal(messages("native-delayed").length, 1); });
     const internalID = await create(a), internalTurn = await begin(a, internalID);
     await steer(a, internalID, internalTurn.turn, "native-internal", "INTERNAL outcome uncertain");
     await waitFor(m => m.method === "turn/held" && m.params?.thread_id === internalID && m.params?.error, "internal native error held");
-    check("internal native errors do not prove rejection or allow replay", () => { assert.equal(row("native-internal").state, "dispatching"); assert.equal(messages("native-internal").length, 0); });
+    check("internal native errors do not prove rejection or allow replay", () => { assert.equal(row("native-internal").State, "dispatching"); assert.equal(messages("native-internal").length, 0); });
     await control(internalTurn.nativeTurn); await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === internalTurn.turn, "internal error turn ends");
     const badID = await create(a), badTurn = await begin(a, badID);
     await steer(a, badID, badTurn.turn, "native-bad-id", "BAD_ID receipt");
     await waitFor(m => m.method === "turn/held" && m.params?.thread_id === badID && m.params?.error, "mismatched ack held");
     const badView = await resume(a, badID);
-    check("mismatched native turn acknowledgement is held as unconfirmed", () => { assert.equal(row("native-bad-id").state, "dispatching"); assert.equal(messages("native-bad-id").length, 0); assert.equal(held(badView)[0].delivery_unconfirmed, true); });
+    check("mismatched native turn acknowledgement is held as unconfirmed", () => { assert.equal(row("native-bad-id").State, "dispatching"); assert.equal(messages("native-bad-id").length, 0); assert.equal(held(badView)[0].delivery_unconfirmed, true); });
     const badRequeue = await raw(a, "turn/requeue", { thread_id: badID, steer_id: "native-bad-id" });
-    check("unconfirmed delivery cannot be reported as consumed by requeue", () => { assert(badRequeue.error); assert.equal(row("native-bad-id").state, "dispatching"); });
+    check("unconfirmed delivery cannot be reported as consumed by requeue", () => { assert(badRequeue.error); assert.equal(row("native-bad-id").State, "dispatching"); });
     await control(badTurn.nativeTurn); await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === badTurn.turn, "bad ack turn ends");
     const lostID = await create(a), lostTurn = await begin(a, lostID);
     await steer(a, lostID, lostTurn.turn, "native-lost", "LOST response");
     await nativeWait(m => m.accepted === "native-lost", "lost native admission");
     await rpc(a, "turn/interrupt", { thread_id: lostID });
     await waitFor(m => ["turn/completed", "turn/error"].includes(m.method) && m.params?.turn?.id === lostTurn.turn, "cancelled native turn");
-    check("cancellation after send retains uncertain input without claiming consumption", () => { assert.equal(row("native-lost").state, "dispatching"); assert.equal(messages("native-lost").length, 0); });
+    check("cancellation after send retains uncertain input without claiming consumption", () => { assert.equal(row("native-lost").State, "dispatching"); assert.equal(messages("native-lost").length, 0); });
     const faultID = await create(a), faultTurn = await begin(a, faultID);
-    db.exec("CREATE TRIGGER fail_native_ack BEFORE INSERT ON session_messages WHEN NEW.client_id='native-save-fault' BEGIN SELECT RAISE(ABORT,'synthetic ack persistence failure'); END");
+    await faults([{ kind: "ack-history", client_id: "native-save-fault" }]);
     await steer(a, faultID, faultTurn.turn, "native-save-fault", "Accepted but disk fails");
     await waitFor(m => m.method === "turn/held" && m.params?.thread_id === faultID && m.params?.error, "failed ack persistence held");
-    db.exec("DROP TRIGGER fail_native_ack");
-    check("acknowledged native input stays non-replayable when history persistence fails", () => { assert.equal(row("native-save-fault").state, "dispatching"); assert.equal(messages("native-save-fault").length, 0); });
+    await faults([]);
+    check("acknowledged native input stays non-replayable when history persistence fails", () => { assert.equal(row("native-save-fault").State, "dispatching"); assert.equal(messages("native-save-fault").length, 0); });
     await control(faultTurn.nativeTurn); await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === faultTurn.turn, "fault turn ends");
     const claimID = await create(a), claimTurn = await begin(a, claimID);
-    db.exec("CREATE TRIGGER fail_native_claim BEFORE UPDATE ON held_user_work WHEN NEW.id='native-claim-fault' AND NEW.state='dispatching' BEGIN SELECT RAISE(ABORT,'synthetic claim failure'); END");
+    await faults([{ kind: "claim", id: "native-claim-fault" }]);
     await steer(a, claimID, claimTurn.turn, "native-claim-fault", "Must never be sent");
     await waitFor(m => m.method === "turn/held" && m.params?.thread_id === claimID && m.params?.error, "failed claim held");
-    db.exec("DROP TRIGGER fail_native_claim");
+    await faults([]);
     const claimedRequests = await native();
-    check("failed durable claim sends no native input and preserves held payload", () => { assert.equal(row("native-claim-fault").state, "pending"); assert(!claimedRequests.some(m => m.request?.params?.clientUserMessageId === "native-claim-fault")); });
+    check("failed durable claim sends no native input and preserves held payload", () => { assert.equal(row("native-claim-fault").State, "pending"); assert(!claimedRequests.some(m => m.request?.params?.clientUserMessageId === "native-claim-fault")); });
     await control(claimTurn.nativeTurn); await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === claimTurn.turn, "claim turn ends");
     const crossID = await create(a), crossTurn = await begin(a, crossID);
     await steer(a, crossID, crossTurn.turn, "native-cross-gate", "DELAY crossing process edit");
@@ -303,31 +328,31 @@ async function run() {
     await waitFor(m => m.client === a.name && m.method === "turn/held" && m.params?.thread_id === crossID && m.params?.error?.includes("changed before native dispatch"), "cross-process stale send fenced");
     const crossNative = await native();
     const editedRow = row("native-cross-edited");
-    check("cross-process edit fences stale native steering and preserves edited attachments", () => { assert.equal(editedRow.state, "pending"); assert.equal(editedRow.message_json, editedRowBefore.message_json); assert(!crossNative.some(m => m.request?.params?.clientUserMessageId === "native-cross-edited")); assert.equal(messages("native-cross-edited").length, 0); });
-    const editedMessage = JSON.parse(editedRow.message_json);
+    check("cross-process edit fences stale native steering and preserves edited attachments", () => { assert.equal(editedRow.State, "pending"); assert.equal(editedRow.MessageJSON, editedRowBefore.MessageJSON); assert(!crossNative.some(m => m.request?.params?.clientUserMessageId === "native-cross-edited")); assert.equal(messages("native-cross-edited").length, 0); });
+    const editedMessage = JSON.parse(Buffer.from(editedRow.MessageJSON, "base64").toString("utf8"));
     const editedFile = editedMessage.Files[0];
     assert.equal(await readFile(editedFile.local_path, "utf8"), "edited bytes");
     await steer(a, crossID, crossTurn.turn, "native-cross-edited", "Use the canonical edited payload");
     await receipt(a, crossID, crossTurn.turn, "native-cross-edited");
     const retriedNative = (await native()).filter(m => m.request?.params?.clientUserMessageId === "native-cross-edited");
-    check("explicit held retry sends canonical edited file context exactly once", () => { assert.equal(retriedNative.length, 1); const input = retriedNative[0].request.params.input; assert(input.some(v => v.text?.includes("Edited in another process") && v.text.includes(editedFile.local_path))); assert.equal(row("native-cross-edited").state, "consumed"); });
+    check("explicit held retry sends canonical edited file context exactly once", () => { assert.equal(retriedNative.length, 1); const input = retriedNative[0].request.params.input; assert(input.some(v => v.text?.includes("Edited in another process") && v.text.includes(editedFile.local_path))); assert.equal(row("native-cross-edited").State, "consumed"); });
     await control(crossTurn.nativeTurn);
     await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === crossTurn.turn, "cross-process test ends");
     const releaseID = await create(a), releaseTurn = await begin(a, releaseID);
-    db.exec("CREATE TRIGGER fail_native_release BEFORE UPDATE ON held_user_work WHEN NEW.id='native-release-fault' AND OLD.state='dispatching' AND NEW.state='pending' BEGIN SELECT RAISE(ABORT,'synthetic release failure'); END");
+    await faults([{ kind: "release", id: "native-release-fault" }]);
     await steer(a, releaseID, releaseTurn.turn, "native-release-fault", "UNSUPPORTED release fails");
     await nativeWait(m => m.request?.params?.clientUserMessageId === "native-release-fault", "unsupported release request");
     await control(releaseTurn.nativeTurn);
     await waitFor(m => m.method === "turn/completed" && m.params?.turn?.id === releaseTurn.turn, "release fault turn ends");
-    db.exec("DROP TRIGGER fail_native_release");
-    check("failed native fallback release publishes recoverable held state", () => { assert.equal(row("native-release-fault").state, "dispatching"); assert(transcript.some(m => m.method === "turn/held" && m.params?.thread_id === releaseID && m.params?.messages?.some(v => v.id === "native-release-fault" && v.delivery_unconfirmed)), "no turn/held notification after failed release"); });
+    await faults([]);
+    check("failed native fallback release publishes recoverable held state", () => { assert.equal(row("native-release-fault").State, "dispatching"); assert(transcript.some(m => m.method === "turn/held" && m.params?.thread_id === releaseID && m.params?.messages?.some(v => v.id === "native-release-fault" && v.delivery_unconfirmed)), "no turn/held notification after failed release"); });
     const fallbackID = await create(a), fallbackTurn = await begin(a, fallbackID);
     await steer(a, fallbackID, fallbackTurn.turn, "native-unsupported", "UNSUPPORTED queued fallback");
     await nativeWait(m => m.request?.params?.clientUserMessageId === "native-unsupported", "unsupported request");
     await control(fallbackTurn.nativeTurn);
     const fallbackThread = (await native()).find(m => m.started === fallbackTurn.nativeTurn).threadID;
     const queuedNative = await nativeWait(m => m.started && m.started !== fallbackTurn.nativeTurn && m.threadID === fallbackThread, "fallback next native turn");
-    check("unsupported native steering uses one ordinary queued successor", () => assert.equal(row("native-unsupported").state, "consumed"));
+    check("unsupported native steering uses one ordinary queued successor", () => assert.equal(row("native-unsupported").State, "consumed"));
     await control(queuedNative.started);
     await waitFor(m => m.method === "turn/completed" && m.params?.thread_id === fallbackID && m.params?.turn?.id !== fallbackTurn.turn, "fallback turn completes");
     const crashID = await create(a), crashTurn = await begin(a, crashID);
@@ -349,7 +374,7 @@ async function run() {
       ["turn/queue", { client_id: "native-crash", prompt: "duplicate" }],
       ["turn/start", { client_id: "native-crash", prompt: "duplicate" }],
     ]) mutationResponses.push([method, await raw(a, method, { thread_id: crashID, ...params })]);
-    check("every mutation and dispatch route fences unconfirmed input after restart", () => { for (const [method, response] of mutationResponses) assert(response.error, method + " must reject"); assert.equal(row("native-crash").state, "dispatching"); });
+    check("every mutation and dispatch route fences unconfirmed input after restart", () => { for (const [method, response] of mutationResponses) assert(response.error, method + " must reject"); assert.equal(row("native-crash").State, "dispatching"); });
     const finalNative = await native();
     check("unconfirmed inputs were each submitted only once", () => { for (const id of ["native-crash", "native-internal", "native-bad-id", "native-lost", "native-save-fault"]) assert.equal(finalNative.filter(m => m.request?.params?.clientUserMessageId === id).length, 1); });
     check("server stderr contains no race detector report", () => assert(!clients.some(client => client.stderr.includes("DATA RACE"))));
@@ -358,7 +383,6 @@ async function run() {
     results.error = String(error); console.error(error);
   } finally {
     for (const client of clients) if (client.child.exitCode === null && client.child.signalCode === null) client.child.kill("SIGKILL");
-    db?.close();
     await writeFile(join(output, "results.json"), JSON.stringify(results, null, 2));
     await writeFile(join(output, "transcript.json"), JSON.stringify(transcript, null, 2));
     await writeFile(join(output, "native.json"), JSON.stringify(await native(), null, 2));

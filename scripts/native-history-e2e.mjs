@@ -2,13 +2,12 @@
 // Real Wuu stdio app-server + stateful fake Codex subprocess, no vendor keys or
 // inference. Build bin/wuu and bin/fakecodex before running this Node 22.13+ script.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -19,12 +18,36 @@ await mkdir(output, { recursive: true });
 const scratch = await mkdtemp(join(output, "run-"));
 const home = join(scratch, "home"), nativePath = join(scratch, "native.json"), controlPath = join(scratch, "control.json");
 await mkdir(home);
-const env = { ...process.env, WUU_HOME: home, WUU_CODEX_BINARY: fake, WUU_TEST_CODEX_HISTORY: nativePath,
+const env = { PATH: process.env.PATH, HOME: scratch, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath,
+  WUU_CODEX_BINARY: fake, WUU_TEST_CODEX_HISTORY: nativePath,
   WUU_TEST_CODEX_HISTORY_CONTROL: controlPath, WUU_TEST_CODEX_REQUESTS: join(scratch, "native-requests.jsonl"),
   WUU_TEST_CODEX_LIFECYCLE: join(scratch, "native-lifecycle.jsonl") };
-for (const key of Object.keys(env)) if (/API_KEY|TOKEN|ANTHROPIC_AUTH/.test(key)) delete env[key];
+await writeFile(join(home, ".wuu-session-fixture"), "wuu-session-fixture-v1\n");
+await writeFile(join(home, ".wuu-synthetic-fixture"), "wuu-session-fixture-v1\n");
+const fixtureBinary = resolve(root, process.env.WUU_E2E_SESSION_FIXTURE || join(scratch, "session-fixture"));
+if (!process.env.WUU_E2E_SESSION_FIXTURE) {
+  const build = spawnSync("go", ["build", "-o", fixtureBinary, "./scripts/session-fixture"], { cwd: root, encoding: "utf8" });
+  assert.equal(build.status, 0, build.stderr);
+}
+function fixture(input) {
+  const reply = spawnSync(fixtureBinary, [], { input: JSON.stringify({ home, workdir: scratch, ...input }),
+    encoding: "utf8", timeout: 20000, maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(reply.status, 0, reply.stderr);
+  return JSON.parse(reply.stdout);
+}
+const stateProvider = resolve(root, process.env.WUU_E2E_SESSION_PROVIDER || join(scratch, "session-fixture-provider"));
+if (!process.env.WUU_E2E_SESSION_PROVIDER) {
+  const build = spawnSync("go", ["build", "-o", stateProvider, "./scripts/session-fixture-provider"], { cwd: root, encoding: "utf8" });
+  assert.equal(build.status, 0, build.stderr);
+}
+const faultPath = join(home, "session-fixture-provider", "faults.json");
+async function faults(rules) {
+  if (!rules.length) { await rm(faultPath); return; }
+  await writeFile(faultPath + ".tmp", JSON.stringify({ version: 1, faults: rules }));
+  await rename(faultPath + ".tmp", faultPath);
+}
 const events = new EventEmitter(), transcript = [], checks = [];
-let child, stderr = "", sequence = 0, db;
+let child, stderr = "", sequence = 0;
 const result = { scratch, status: "failed", checks };
 function waitFor(predicate, label, timeout = 15_000) {
   const value = transcript.find(predicate);
@@ -48,9 +71,9 @@ async function rpc(method, params = {}) {
 function check(name) { checks.push(name); console.log(`PASS ${name}`); }
 const native = async () => JSON.parse(await readFile(nativePath, "utf8"));
 const mode = async value => writeFile(controlPath, JSON.stringify({ mode: value }));
-const stored = id => db.prepare("SELECT * FROM sessions WHERE id = ?").get(id);
-const rows = id => db.prepare("SELECT * FROM session_messages WHERE session_id = ? ORDER BY seq").all(id);
-const count = () => db.prepare("SELECT count(*) AS n FROM sessions").get().n;
+const stored = id => fixture({ op: "read", ids: [id] }).sessions[0].session;
+const rows = id => fixture({ op: "read", ids: [id] }).sessions[0].history;
+const count = () => fixture({ op: "read" }).sessions.length;
 const target = turn => {
   const item = turn.items.findLast(item => item.type === "agent_message");
   assert(item, "fixture turn needs a final answer");
@@ -88,9 +111,10 @@ try {
     providers: { fixture: { type: "openai-compatible", base_url: `http://127.0.0.1:${provider.address().port}`, api_key: "synthetic", model: "fixture" } },
     engines: { codex: { enabled: true, binary_path: fake }, claude: { enabled: false } },
     skills: { enabled: false }, ptc: { enabled: false }, agent: { permission_mode: "standard" } }));
+  const installed = spawnSync(stateProvider, ["install", "--home", home], { env, encoding: "utf8" });
+  assert.equal(installed.status, 0, installed.stderr);
   await start();
   const source = (await rpc("thread/start", { engine: "codex", model: "gpt-6-astra" })).thread;
-  db = new DatabaseSync(join(home, "sessions", "sessions.sqlite3"));
   const one = await run(source.id, "one"), two = await run(source.id, "two"), three = await run(source.id, "three");
   const sourceRef = stored(source.id).engine_ref;
   assert(rows(source.id).filter(row => row.role === "user").every(row => row.engine_turn_id));
@@ -171,21 +195,22 @@ try {
 
   const editUser = two.items.find(item => item.type === "user_message");
   const editParams = { thread_id: source.id, turn_id: two.id, item_id: editUser.id };
-  db.exec(`CREATE TRIGGER fail_native_edit BEFORE UPDATE OF engine_ref ON sessions WHEN OLD.id = '${source.id}' BEGIN SELECT RAISE(ABORT, 'injected edit commit failure'); END`);
+  await faults([{ kind: "edit-binding", session_id: source.id }]);
   const beforeEdit = rows(source.id);
   const rejected = await raw("thread/edit-message", editParams);
   assert(rejected.error);
   assert.equal(stored(source.id).engine_ref, sourceRef);
   assert.deepEqual(rows(source.id), beforeEdit);
-  assert.equal(db.prepare("SELECT count(*) AS n FROM session_history_retractions WHERE session_id = ?").get(source.id).n, 0);
-  db.exec("DROP TRIGGER fail_native_edit");
+  const retractions = fixture({ op: "inspect", domains: ["session_history_retractions"] }).documents.session_history_retractions;
+  assert.equal(retractions.filter(document => document.key === source.id).flatMap(document => document.value).length, 0);
+  await faults([]);
   check("failed edit transaction cannot replace native binding or retract visible history");
 
   const countBeforeCreate = count();
-  db.exec("CREATE TRIGGER fail_native_create BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'injected fork commit failure'); END");
+  await faults([{ kind: "fork-create" }]);
   assert((await raw("thread/fork", { thread_id: source.id, ...target(one) })).error);
   assert.equal(count(), countBeforeCreate);
-  db.exec("DROP TRIGGER fail_native_create");
+  await faults([]);
   check("failed fork transaction leaves no partially initialized Wuu child");
 
   const edited = await rpc("thread/edit-message", editParams);
@@ -225,20 +250,26 @@ try {
 
   // Legacy records remain usable only if stable native output IDs prove the
   // same prefix; neither repeated text nor recycled Wuu turn positions suffice.
-  db.prepare("UPDATE session_messages SET engine_turn_id = '' WHERE session_id = ?").run(fork.id);
-  const legacy = await resume(fork.id);
-  const legacyFork = (await rpc("thread/fork", { thread_id: fork.id, ...target(legacy.turns[0]) })).thread;
+  const legacySeed = fixture({ op: "read", ids: [fork.id] }).sessions[0];
+  legacySeed.session.id = `legacy-${fork.id}`;
+  for (const record of legacySeed.history) delete record.engine_turn_id;
+  fixture({ op: "seed", sessions: [legacySeed] });
+  const legacy = await resume(legacySeed.session.id);
+  const legacyFork = (await rpc("thread/fork", { thread_id: legacy.id, ...target(legacy.turns[0]) })).thread;
   assert.equal((await native()).threads[stored(legacyFork.id).engine_ref].turns.length, 1);
   check("legacy history can fork when native item identity proves its complete turn boundary");
-  db.prepare("UPDATE session_messages SET provider_item_id = '', engine_turn_id = '' WHERE session_id = ?").run(legacyFork.id);
-  assert((await raw("thread/fork", { thread_id: legacyFork.id })).error);
+  const missingIdentitySeed = fixture({ op: "read", ids: [legacyFork.id] }).sessions[0];
+  missingIdentitySeed.session.id = `unidentified-${legacyFork.id}`;
+  for (const record of missingIdentitySeed.history) { delete record.provider_item_id; delete record.engine_turn_id; }
+  fixture({ op: "seed", sessions: [missingIdentitySeed] });
+  assert((await raw("thread/fork", { thread_id: missingIdentitySeed.session.id })).error);
   check("legacy history without native identity is refused instead of matching repeated text");
-  assert.equal((await run(legacyFork.id, "legacy-continues")).status, "completed");
+  assert.equal((await run(missingIdentitySeed.session.id, "legacy-continues")).status, "completed");
   check("ordinary legacy history without native identity still permits continuation");
 
   const clean = (await rpc("thread/start", { engine: "codex" })).thread;
   const cleanFork = (await rpc("thread/fork", { thread_id: clean.id })).thread;
-  assert.equal(stored(cleanFork.id).engine_ref, "");
+  assert.equal(stored(cleanFork.id).engine_ref ?? "", "");
   check("never-run empty native threads still fork safely");
 
   await mode("reject-turn");
@@ -329,14 +360,14 @@ try {
   }
 
   const boundary = (await rpc("thread/start", { engine: "codex" })).thread;
-  db.exec(`CREATE TRIGGER fail_native_boundary BEFORE UPDATE OF engine_turn_id ON session_messages WHEN NEW.session_id = '${boundary.id}' AND NEW.engine_turn_id <> '' BEGIN SELECT RAISE(ABORT, 'injected native boundary commit failure'); END`);
+  await faults([{ kind: "native-boundary", session_id: boundary.id }]);
   await mode("no-interrupt-reply");
   const boundaryStart = Date.now();
   const rejectedBoundary = await run(boundary.id, "cannot-persist-boundary");
   assert.equal(rejectedBoundary.status, "failed");
   assert(Date.now() - boundaryStart < 12_000, "native interrupt timeout must not wedge Wuu finalization");
   assert.equal((await resume(boundary.id)).id, boundary.id);
-  db.exec("DROP TRIGGER fail_native_boundary");
+  await faults([]);
   await mode("");
   check("failed native boundary persistence and an unresponsive interrupt still finalize within a bounded time");
   const startsBeforeRetry = await nativeStarts();
@@ -350,16 +381,18 @@ try {
 
 
   await stop();
-  db.prepare("UPDATE sessions SET engine_id = 'claude', provider = 'claude' WHERE id = ?").run(fork.id);
+  const unsupportedSeed = fixture({ op: "read", ids: [fork.id] }).sessions[0];
+  unsupportedSeed.session = { ...unsupportedSeed.session, id: `unsupported-${fork.id}`, engine_id: "claude", provider: "claude" };
+  fixture({ op: "seed", sessions: [unsupportedSeed] });
   await start();
-  const unsupported = await resume(fork.id), unsupportedRows = rows(fork.id), unsupportedRef = stored(fork.id).engine_ref;
+  const unsupported = await resume(unsupportedSeed.session.id), unsupportedRows = rows(unsupported.id), unsupportedRef = stored(unsupported.id).engine_ref;
   const unsupportedUser = unsupported.turns[0].items.find(item => item.type === "user_message");
-  const unsupportedFork = await raw("thread/fork", { thread_id: fork.id });
-  const unsupportedEdit = await raw("thread/edit-message", { thread_id: fork.id, turn_id: unsupported.turns[0].id, item_id: unsupportedUser.id });
+  const unsupportedFork = await raw("thread/fork", { thread_id: unsupported.id });
+  const unsupportedEdit = await raw("thread/edit-message", { thread_id: unsupported.id, turn_id: unsupported.turns[0].id, item_id: unsupportedUser.id });
   assert.match(unsupportedFork.error?.message ?? "", /native history cutoff/);
   assert.match(unsupportedEdit.error?.message ?? "", /native history cutoff/);
-  assert.deepEqual(rows(fork.id), unsupportedRows);
-  assert.equal(stored(fork.id).engine_ref, unsupportedRef);
+  assert.deepEqual(rows(unsupported.id), unsupportedRows);
+  assert.equal(stored(unsupported.id).engine_ref, unsupportedRef);
   check("unsupported external histories remain readable and unchanged after explicit fork/edit refusal");
 
   const lifecycle = (await readFile(env.WUU_TEST_CODEX_LIFECYCLE, "utf8")).trim().split("\n").map(JSON.parse);
@@ -375,7 +408,7 @@ try {
   result.status = "passed";
 } catch (error) { result.error = String(error.stack || error); throw error;
 } finally {
-  try { await stop(); } finally { db?.close(); provider.close();
+  try { await stop(); } finally { provider.close();
     await writeFile(join(scratch, "transcript.jsonl"), transcript.map(value => JSON.stringify(value)).join("\n") + "\n");
     await writeFile(join(scratch, "stderr.log"), stderr);
     await writeFile(join(output, "results.json"), JSON.stringify(result, null, 2));
