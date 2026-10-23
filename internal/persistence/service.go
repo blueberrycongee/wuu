@@ -40,6 +40,7 @@ func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
 		{Name: "read", InputSchema: "state.documents.read.input.v1", OutputSchema: "state.documents.read.output.v1"},
 		{Name: "commit", InputSchema: "state.documents.commit.input.v1", OutputSchema: "state.documents.commit.output.v1"},
+		{Name: "import", InputSchema: "state.documents.import.input.v1", OutputSchema: "state.documents.import.output.v1"},
 		{Name: "compact", InputSchema: "state.documents.compact.input.v1", OutputSchema: "state.documents.compact.output.v1"},
 		{Name: "export", InputSchema: "state.documents.export.input.v1", OutputSchema: "state.documents.export.output.v1"},
 	}}}
@@ -110,6 +111,11 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 		var request Transaction
 		if err = decode(params.Params, &request); err == nil {
 			result, err = s.store.Commit(ctx, request)
+		}
+	case "import":
+		var request Snapshot
+		if err = decode(params.Params, &request); err == nil {
+			result, err = s.store.Import(ctx, request)
 		}
 	case "compact":
 		var request struct{}

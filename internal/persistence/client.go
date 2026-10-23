@@ -23,6 +23,12 @@ type Compactor interface {
 	Compact(context.Context) (Compaction, error)
 }
 
+// SnapshotImporter is explicit maintenance for an empty target. It preserves
+// original operation receipts and never implies that source writers are stopped.
+type SnapshotImporter interface {
+	Import(context.Context, Snapshot) (ImportResult, error)
+}
+
 // Client routes every operation through the caller's selected service binding.
 // The callback must be captured from that generation, never look up the latest
 // host, and must preserve cleanup admission when a dependent is shutting down.
@@ -49,6 +55,12 @@ func (c *Client) Commit(ctx context.Context, tx Transaction) (Receipt, error) {
 func (c *Client) Compact(ctx context.Context) (Compaction, error) {
 	var result Compaction
 	err := c.invoke(ctx, "compact", struct{}{}, &result)
+	return result, err
+}
+
+func (c *Client) Import(ctx context.Context, snapshot Snapshot) (ImportResult, error) {
+	var result ImportResult
+	err := c.invoke(ctx, "import", snapshot, &result)
 	return result, err
 }
 

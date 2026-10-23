@@ -54,6 +54,10 @@ export interface StateCompaction {
   readonly bytes_before: number;
   readonly bytes_after: number;
 }
+/** Import acknowledgement; verify a full export before publishing a new authority. */
+export interface StateImportResult {
+  readonly revision: StateRevision;
+}
 export interface StateSnapshot<Value = unknown> {
   readonly version: 1;
   readonly revision: StateRevision;
@@ -66,11 +70,15 @@ export function requireDocumentStore(): ServiceRequirement {
   return { name: DOCUMENT_STORE_SERVICE, major_version: 1, required: true };
 }
 
-export function documentStoreDescriptor(): ServiceDescriptor {
+/** Advertise optional maintenance only when the provider actually implements it. */
+export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean } = {}): ServiceDescriptor {
+  const methods = ["read", "commit", "export"];
+  if (options.compact) methods.push("compact");
+  if (options.import) methods.push("import");
   return {
     name: DOCUMENT_STORE_SERVICE,
     version: "1.0.0",
-    methods: ["read", "commit", "export", "compact"].map((name) => ({
+    methods: methods.map((name) => ({
       name,
       input_schema: `state.documents.${name}.input.v1`,
       output_schema: `state.documents.${name}.output.v1`,
@@ -94,6 +102,7 @@ export function documentStore(host: RuntimeHost) {
     read: <Value = unknown>(query: StateQuery) => call<StateView<Value>>("read", query),
     commit: <Value = unknown>(transaction: StateTransaction<Value>) => call<StateReceipt>("commit", transaction),
     compact: () => call<StateCompaction>("compact", {}),
+    import: <Value = unknown>(snapshot: StateSnapshot<Value>) => call<StateImportResult>("import", snapshot),
     export: <Value = unknown>() => call<StateSnapshot<Value>>("export", {}),
   };
 }

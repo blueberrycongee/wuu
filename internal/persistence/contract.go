@@ -117,6 +117,12 @@ type Compaction struct {
 	BytesAfter  int64    `json:"bytes_after"`
 }
 
+// ImportResult acknowledges installation; callers independently verify the full
+// exported checkpoint before publishing a new host authority.
+type ImportResult struct {
+	Revision Revision `json:"revision,string"`
+}
+
 type Write struct {
 	Namespace string          `json:"namespace"`
 	Key       string          `json:"key"`
