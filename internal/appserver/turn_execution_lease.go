@@ -385,6 +385,28 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		}
 		structuredCause = string(encoded)
 	}
+	var startedAt, answerReadyAt *time.Time
+	th.mu.Lock()
+	for _, turn := range th.Turns {
+		if turn.ID != turnID {
+			continue
+		}
+		if turn.StartedAt != nil {
+			value := *turn.StartedAt
+			startedAt = &value
+		}
+		if turn.AnswerReadyAt != nil {
+			value := *turn.AnswerReadyAt
+			answerReadyAt = &value
+		}
+		break
+	}
+	th.mu.Unlock()
+	// Settlement is also the visible completion boundary when an engine did
+	// not emit a final message. Keep the same boundary as finishTurnLocked.
+	if answerReadyAt == nil && status == TurnStatusCompleted {
+		answerReadyAt = &at
+	}
 	if err := th.state.Sessions.AppendHistoryRecord(th.ID, session.HistoryRecord{
 		Role:                "meta",
 		Content:             turnTerminalHistoryRecord,
@@ -399,6 +421,8 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		ClientID:            clientID,
 		StopReason:          string(status),
 		At:                  at,
+		StartedAt:           startedAt,
+		AnswerReadyAt:       answerReadyAt,
 	}); err != nil {
 		return err
 	}

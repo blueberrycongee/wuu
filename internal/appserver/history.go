@@ -82,6 +82,8 @@ type persistedMessage struct {
 	Truncated           bool                               `json:"truncated,omitempty"`
 	Name                string                             `json:"name,omitempty"`
 	At                  time.Time                          `json:"at,omitempty"`
+	StartedAt           *time.Time                         `json:"started_at,omitempty"`
+	AnswerReadyAt       *time.Time                         `json:"answer_ready_at,omitempty"`
 	InputTokens         int                                `json:"input_tokens,omitempty"`
 	OutputTokens        int                                `json:"output_tokens,omitempty"`
 	ContextTokens       int                                `json:"context_tokens,omitempty"`
@@ -92,7 +94,7 @@ type persistedMessage struct {
 	RetryCount int `json:"retry_count,omitempty"`
 	MaxRetries int `json:"max_retries,omitempty"`
 	// Provider carries native-state provenance for chat rows and token-usage
-	// provenance for meta rows. Model is currently used by token-usage rows;
+	// provenance for meta rows. Model is used by token-usage and terminal rows;
 	// provider-native chat state keeps its model in ProviderItemModel.
 	Provider string `json:"provider,omitempty"`
 	Model    string `json:"model,omitempty"`
@@ -557,6 +559,8 @@ func historyRecordFromPersistedMessage(rec persistedMessage) sessionstore.Histor
 		Truncated:           rec.Truncated,
 		Name:                rec.Name,
 		At:                  rec.At,
+		StartedAt:           rec.StartedAt,
+		AnswerReadyAt:       rec.AnswerReadyAt,
 		InputTokens:         rec.InputTokens,
 		OutputTokens:        rec.OutputTokens,
 		ContextTokens:       rec.ContextTokens,
@@ -600,6 +604,8 @@ func persistedMessageFromHistoryRecord(rec sessionstore.HistoryRecord) (persiste
 		Truncated:           rec.Truncated,
 		Name:                rec.Name,
 		At:                  rec.At,
+		StartedAt:           rec.StartedAt,
+		AnswerReadyAt:       rec.AnswerReadyAt,
 		InputTokens:         rec.InputTokens,
 		OutputTokens:        rec.OutputTokens,
 		ContextTokens:       rec.ContextTokens,

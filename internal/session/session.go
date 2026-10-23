@@ -148,6 +148,10 @@ type HistoryRecord struct {
 	ContextTokens       int             `json:"context_tokens,omitempty"`
 	CacheCreationTokens int             `json:"cache_creation_tokens,omitempty"`
 	CacheReadTokens     int             `json:"cache_read_tokens,omitempty"`
+	// Terminal rows preserve admission and answer readiness separately from At,
+	// which records settlement. Legacy rows may omit these boundaries.
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	AnswerReadyAt *time.Time `json:"answer_ready_at,omitempty"`
 	// RetryCount and MaxRetries carry the final retry counters of a
 	// stream_reconnect meta row (the reconnect attempt the stream gave up
 	// on, out of the configured cap). Zero for all other record types.
