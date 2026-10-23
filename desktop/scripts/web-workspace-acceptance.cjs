@@ -636,6 +636,19 @@ async function runWebsiteAcceptance(h, fixture) {
   }
   async function traceLoadedTabSwitches() {
     const traces = [], originalBounds = win.getBounds();
+    const fixtureIDs = [siteIDs.get('Fixture Alpha'), siteIDs.get('Fixture Beta')];
+    const before = await readSite();
+    assert.ok(fixtureIDs.every(id => before.tabs.some(tab => tab.id === id)), 'Both loaded fixture tabs exist before isolating the switch circuit');
+    // Earlier failed journeys may leave a blank tab in the native cycle. This
+    // independent trace needs exactly two loaded pages for frame sampling.
+    const removed = before.tabs.filter(tab => !fixtureIDs.includes(tab.id));
+    for (const tab of removed) await evaluate(({ id, tabId }) => window.wuu.webWorkspace.closeTab(id, tabId), { id: ribbonGroup, tabId: tab.id });
+    await until(async () => {
+      const tabs = (await readSite()).tabs;
+      return tabs.length === fixtureIDs.length && tabs.every(tab => fixtureIDs.includes(tab.id));
+    }, 'Independent switch circuit contains only Alpha and Beta');
+    report.actions.push({ label: 'isolate-loaded-tab-switch-fixtures', setupOnly: true,
+      before: before.tabs.map(tab => tab.id), removed: removed.map(tab => tab.id), after: (await readSite()).tabs.map(tab => tab.id), atMs: Date.now() - started }); save();
     let current = await openSite('Fixture Alpha', '/alpha');
     try {
       for (const [pathname, width, mode] of [['/beta', 1280, 'keyboard'], ['/alpha', 1280, 'keyboard'], ['/beta', 960, 'keyboard'], ['/alpha', 960, 'pointer']]) {
@@ -667,7 +680,14 @@ async function runWebsiteAcceptance(h, fixture) {
         }
         report.activeTabSwitchTrace = trace;
         try {
-          if (mode === 'keyboard') xinput(['key', '--clearmodifiers', 'ctrl+Tab']);
+          if (mode === 'keyboard') {
+            const state = await readSite();
+            trace.tabOrder = state.tabs.map(tab => ({ id: tab.id, url: tab.url }));
+            const index = state.tabs.findIndex(tab => tab.id === state.activeTabId);
+            assert.equal(state.tabs[index]?.url, current.getURL(), 'Native shortcut starts from the focused fixture page');
+            assert.equal(state.tabs[(index + 1) % state.tabs.length]?.url, origin + pathname, 'Actual Ctrl+Tab successor is the sampled incoming page');
+            xinput(['key', '--clearmodifiers', 'ctrl+Tab']);
+          }
           else {
             const before = win.contentView.children.find(view => view.webContents === current).getBounds();
             await expandTabRail(alphaID);
