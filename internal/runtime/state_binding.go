@@ -30,6 +30,7 @@ type runtimeState struct {
 	documents persistence.Documents
 	sessions  *session.Store
 	journal   *session.InferenceJournalRuntime
+	authority *StateAuthority
 }
 
 func newRuntimeState(registry *pluginhost.ServiceRegistry, workspaceScope string) *runtimeState {
@@ -74,12 +75,24 @@ func (s *runtimeState) RequiredServices() []pluginhost.ServiceRequirement {
 	return []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}}
 }
 
+func (s *runtimeState) Prepare(ctx context.Context) error {
+	if s.authority != nil {
+		return s.authority.Preflight(ctx, s.documents)
+	}
+	return nil
+}
+
 func (s *runtimeState) Activate(ctx context.Context) error {
 	s.mu.Lock()
 	prepared := s.status == pluginhost.StatePrepared
 	s.mu.Unlock()
 	if !prepared {
 		return errors.New("session state consumer is not prepared")
+	}
+	if s.authority != nil {
+		if err := s.authority.Activate(ctx, s.documents); err != nil {
+			return err
+		}
 	}
 	if s.sessDir != "" {
 		if err := initializeSessionState(ctx, s.sessDir, s.documents, s.sessions); err != nil {
@@ -101,15 +114,19 @@ func (s *runtimeState) Activate(ctx context.Context) error {
 	return nil
 }
 
-func (s *runtimeState) Close(context.Context) error {
+func (s *runtimeState) Close(ctx context.Context) error {
 	s.mu.Lock()
 	s.status = pluginhost.StateStopped
 	journal := s.journal
 	s.mu.Unlock()
-	if journal == nil {
-		return nil
+	var err error
+	if journal != nil {
+		err = journal.Close()
 	}
-	return journal.Close()
+	if s.authority != nil {
+		err = errors.Join(err, s.authority.Close(ctx))
+	}
+	return err
 }
 
 func initializeSessionState(ctx context.Context, dir string, documents persistence.Documents, store *session.Store) error {

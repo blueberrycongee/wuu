@@ -297,6 +297,16 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		cancel()
 		return nil, nil, errors.Join(err, closeErr)
 	}
+	if kernel.state != nil {
+		authority, err := NewStateAuthority(wuuHome)
+		if err != nil {
+			return nil, nil, errors.Join(err, closeStarted())
+		}
+		kernel.state.authority = authority
+		if err := registry.WrapServiceInvoker(persistence.ServiceName, 1, authority.Wrap); err != nil {
+			return nil, nil, errors.Join(err, closeStarted())
+		}
+	}
 	if err := host.Prepare(context.Background()); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
 	}
