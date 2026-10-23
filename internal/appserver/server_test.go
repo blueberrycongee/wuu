@@ -6263,6 +6263,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 	}
 	rt := newTestRuntime(t, client)
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -6448,6 +6449,7 @@ func TestServerThreadForkDoesNotReuseSourceToolInvocationOwnership(t *testing.T)
 	}
 
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	resumeReq := fmt.Sprintf(`{"id":"resume-tool-fork","method":%q,"params":{"session_id":%q}}`, MethodThreadResume, sess.ID)
 	if err := srv.handleLine(context.Background(), []byte(resumeReq)); err != nil {
@@ -6693,6 +6695,7 @@ func TestServerThreadForkToWorktree(t *testing.T) {
 	rt.ProcessManager = manager
 
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -6859,6 +6862,7 @@ func TestServerWorktreeBoundTurnExecutesInWorktree(t *testing.T) {
 	rt.ProcessManager = manager
 
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {

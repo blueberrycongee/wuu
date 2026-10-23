@@ -227,6 +227,7 @@ func TestServerThreadForkInheritsSourceSelection(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{{Content: "answer"}}}
 	rt := newTestRuntime(t, client)
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -457,6 +458,7 @@ func TestServerThreadForkPreservesExternalNativeSelection(t *testing.T) {
 		t.Run("model="+model, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			out := &lockedBuffer{}
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 			const sourceID = "external-fork-source"

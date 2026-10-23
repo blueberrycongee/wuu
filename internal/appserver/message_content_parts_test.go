@@ -519,6 +519,7 @@ func TestServerContentPartsSurviveResumeAndFork(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &fakeClient{response: providersResponse("answer")}
 			rt := newTestRuntime(t, client)
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)

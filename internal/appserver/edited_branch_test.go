@@ -23,6 +23,7 @@ func TestEditedBranchSurvivesReloadAndFork(t *testing.T) {
 		t.Run(scenario.name, func(t *testing.T) {
 			client := &fakeClient{response: providersResponse("replacement answer")}
 			rt := newTestRuntime(t, client)
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -235,6 +236,7 @@ func TestEditedBranchRejectsForkFromStaleConnection(t *testing.T) {
 	for _, wholeBranch := range []bool{false, true} {
 		t.Run(fmt.Sprintf("whole_branch_%t", wholeBranch), func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			writerOut, readerOut := &lockedBuffer{}, &lockedBuffer{}
 			writer, reader := New(rt, writerOut), New(rt, readerOut)
 			t.Cleanup(writer.Close)

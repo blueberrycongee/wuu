@@ -22,6 +22,7 @@ import (
 func TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
@@ -107,6 +108,7 @@ func TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer(t *testing.
 func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
@@ -228,6 +230,7 @@ func TestServerThreadForkPublishesPersistedWorkspaceIdentity(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WorkspaceID = "project-stable"
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	sourceID := "fork-workspace-source"
@@ -346,6 +349,7 @@ func TestServerThreadForkLiveAnswerAfterInterleavedThinking(t *testing.T) {
 			rt.StreamRunner.Client = providers.AdaptStreamClient(client)
 			rt.StreamRunner.Tools = fastToolExecutor{}
 			out := &lockedBuffer{}
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 
