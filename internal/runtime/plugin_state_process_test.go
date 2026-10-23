@@ -108,6 +108,18 @@ func TestStateServiceContractsThroughExternalProcess(t *testing.T) {
 	if err != nil || !strings.Contains(fork.URI, "/fork/") {
 		t.Fatalf("external fork: %+v %v", fork, err)
 	}
+	for attempt := 0; attempt < 2; attempt++ {
+		receipt, err := artifacts.DeleteThread(ctx, "thread")
+		if err != nil || !receipt.Deleted {
+			t.Fatalf("external cleanup: %+v %v", receipt, err)
+		}
+	}
+	if _, _, err := artifacts.Read(ctx, "thread", part.URI, 100); err == nil {
+		t.Fatal("external provider payload survived selected cleanup")
+	}
+	if raw, _, err := artifacts.Read(ctx, "fork", fork.URI, 100); err != nil || string(raw) != "external artifact" {
+		t.Fatalf("external cleanup touched another thread: %q %v", raw, err)
+	}
 	decision, err := call(pluginhost.SecurityAuthorizeService)(ctx, "authorize", json.RawMessage(`{"cwd":"/workspace","permission_mode":"standard","tool":{"name":"write"}}`))
 	if err != nil || !strings.Contains(string(decision), `"deny"`) {
 		t.Fatalf("external policy: %s %v", decision, err)
@@ -169,7 +181,7 @@ func runStateServiceFixture(path string) {
 		switch request.Method {
 		case "initialize":
 			var descriptors []pluginhost.ServiceDescriptor
-			for name, methods := range map[string][]string{"state.config": {"read", "compare-exchange"}, "state.plugin-settings": {"read", "update", "read-state", "update-state"}, "state.artifacts": {"import", "resolve", "read", "fork"}, "security.authorize": {"authorize"}, "host.data.query": {"call", "append-turn"}} {
+			for name, methods := range map[string][]string{"state.config": {"read", "compare-exchange"}, "state.plugin-settings": {"read", "update", "read-state", "update-state"}, "state.artifacts": {"import", "resolve", "read", "fork", "delete-thread"}, "security.authorize": {"authorize"}, "host.data.query": {"call", "append-turn"}} {
 				descriptor := pluginhost.ServiceDescriptor{Name: name, Version: "1.0.0"}
 
 				for _, method := range methods {
@@ -225,8 +237,19 @@ func runStateServiceFixture(path string) {
 				}
 				result = map[string]any{"document": document, "revision": "fixture-revision"}
 			case "state.artifacts":
+				var thread string
+				json.Unmarshal(input["thread_id"], &thread)
+				if params.Method == "read" && saved["artifact-deleted:"+thread] != nil {
+					if encoder.Encode(map[string]any{"id": request.ID, "error": &pluginhost.HostServiceError{Code: "artifact_unavailable", Message: "artifact was deleted"}}) != nil {
+						os.Exit(10)
+					}
+					continue
+				}
 				artifact := map[string]any{"id": "fixture", "uri": "external-artifact://fixture/thread/report.txt", "name": "report.txt", "mime_type": "text/plain", "size": 17, "sha256": "fixture-digest"}
 				switch params.Method {
+				case "delete-thread":
+					saved["artifact-deleted:"+thread] = json.RawMessage(`true`)
+					result = map[string]any{"thread_id": thread, "deleted": true}
 				case "import":
 					result = artifact
 				case "resolve":

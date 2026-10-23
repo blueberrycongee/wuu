@@ -141,7 +141,13 @@ func importArtifact(ctx context.Context, wuuHome, stateDir string, scope pluginh
 	if err != nil {
 		return pluginhost.ArtifactImportResult{}, fmt.Errorf("create artifact id: %w", err)
 	}
-	dir := filepath.Join(statepath.SessionArtifactDir(stateDir, scope.ThreadID), "artifacts", artifactID)
+	artifactRoot := filepath.Join(statepath.SessionArtifactDir(stateDir, scope.ThreadID), "artifacts")
+	lock, err := storelock.AcquireContext(ctx, artifactRoot)
+	if err != nil {
+		return pluginhost.ArtifactImportResult{}, err
+	}
+	defer lock.Release()
+	dir := filepath.Join(artifactRoot, artifactID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return pluginhost.ArtifactImportResult{}, fmt.Errorf("create artifact directory: %w", err)
 	}
@@ -479,6 +485,16 @@ type ArtifactForkRequest struct {
 	URI            string `json:"uri"`
 }
 
+// DeleteThread removes current payloads after the caller drains producers.
+// It is idempotent even when session documents were already removed.
+type ArtifactDeleteThreadRequest struct {
+	ThreadID string `json:"thread_id"`
+}
+type ArtifactDeleteThreadResult struct {
+	ThreadID string `json:"thread_id"`
+	Deleted  bool   `json:"deleted"`
+}
+
 type artifactService struct {
 	mu                 sync.RWMutex
 	id, home, stateDir string
@@ -497,10 +513,10 @@ func (s *artifactService) Status() pluginhost.Status {
 func (*artifactService) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*artifactService) ProvidedServices() []pluginhost.ServiceDescriptor {
 	var methods []pluginhost.ServiceMethodDescriptor
-	for _, method := range []string{"import", "resolve", "read", "fork"} {
+	for _, method := range []string{"import", "resolve", "read", "fork", "delete-thread"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: method, InputSchema: ArtifactServiceName + "." + method + ".input.v1", OutputSchema: ArtifactServiceName + "." + method + ".output.v1"})
 	}
-	return []pluginhost.ServiceDescriptor{{Name: ArtifactServiceName, Version: "1.0.0", Methods: methods}}
+	return []pluginhost.ServiceDescriptor{{Name: ArtifactServiceName, Version: "1.1.0", Methods: methods}}
 }
 func (s *artifactService) Activate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -599,6 +615,15 @@ func (s *artifactService) InvokeService(ctx context.Context, params pluginhost.S
 			return nil, err
 		}
 		result, err = s.fork(ctx, request)
+	case "delete-thread":
+		var request ArtifactDeleteThreadRequest
+		if err := decodeServiceParams(params.Params, &request); err != nil {
+			return nil, err
+		}
+		if !validArtifactThreadID(request.ThreadID) {
+			return nil, serviceError("invalid_params", "artifact thread id is invalid")
+		}
+		result, err = s.deleteThread(ctx, request.ThreadID)
 	default:
 		return nil, serviceError("method_not_found", "artifact method is unavailable")
 	}
@@ -607,6 +632,59 @@ func (s *artifactService) InvokeService(ctx context.Context, params pluginhost.S
 	}
 	return json.Marshal(result)
 }
+func (s *artifactService) deleteThread(ctx context.Context, threadID string) (ArtifactDeleteThreadResult, error) {
+	receipt := ArtifactDeleteThreadResult{ThreadID: threadID}
+	root, err := os.OpenRoot(s.stateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		receipt.Deleted = true
+		return receipt, nil
+	}
+	if err != nil {
+		return receipt, serviceError("artifact_unavailable", "artifact cleanup could not open its storage")
+	}
+	defer root.Close()
+	artifacts, err := root.OpenRoot(filepath.Join("sessions", threadID, "artifacts"))
+	if errors.Is(err, os.ErrNotExist) {
+		receipt.Deleted = true
+		return receipt, nil
+	}
+	if err != nil {
+		return receipt, serviceError("artifact_unavailable", "artifact cleanup could not open its thread")
+	}
+	defer artifacts.Close()
+	lock, err := storelock.AcquireContext(ctx, filepath.Join(statepath.SessionArtifactDir(s.stateDir, threadID), "artifacts"))
+	if err != nil {
+		return receipt, serviceError("artifact_unavailable", "artifact cleanup lock is unavailable")
+	}
+	defer lock.Release()
+	dir, err := artifacts.Open(".")
+	if err != nil {
+		return receipt, serviceError("artifact_unavailable", "artifact cleanup could not inspect its thread")
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return receipt, serviceError("artifact_unavailable", "artifact cleanup could not inspect its thread")
+	}
+	for _, entry := range entries {
+		// Keep the lock inode so concurrent generations serialize on the same file.
+		if entry.Name() == storelock.FileName {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return receipt, err
+		}
+		if err := artifacts.RemoveAll(entry.Name()); err != nil {
+			return receipt, serviceError("artifact_unavailable", "artifact cleanup is incomplete; retry the same thread")
+		}
+	}
+	if err := dir.Sync(); err != nil {
+		return receipt, serviceError("artifact_unavailable", "artifact cleanup outcome is uncertain; retry the same thread")
+	}
+	receipt.Deleted = true
+	return receipt, nil
+}
+
 func validArtifactThreadID(id string) bool {
 	return id != "" && id != "." && id != ".." && len(id) <= 256 && !strings.ContainsAny(id, "/\\\x00")
 }
@@ -728,6 +806,28 @@ func (c *ArtifactClient) Fork(ctx context.Context, sourceThreadID, targetThreadI
 	err := c.invoke(ctx, "fork", ArtifactForkRequest{SourceThreadID: sourceThreadID, TargetThreadID: targetThreadID, URI: uri}, &result)
 	return result, err
 }
+
+// DeleteThread is safe to retry explicitly after an uncertain response. The
+// client never retries automatically or substitutes a local filesystem delete.
+func (c *ArtifactClient) DeleteThread(ctx context.Context, threadID string) (ArtifactDeleteThreadResult, error) {
+	if !validArtifactThreadID(threadID) {
+		return ArtifactDeleteThreadResult{}, serviceError("invalid_params", "artifact thread id is invalid")
+	}
+	var result ArtifactDeleteThreadResult
+	if err := c.invoke(ctx, "delete-thread", ArtifactDeleteThreadRequest{ThreadID: threadID}, &result); err != nil {
+		var hostErr *pluginhost.HostServiceError
+		code := "artifact_unavailable"
+		if errors.As(err, &hostErr) {
+			code = hostErr.Code
+		}
+		return ArtifactDeleteThreadResult{}, serviceError(code, "selected artifact cleanup failed; its outcome may be partial or unknown; retry the same thread")
+	}
+	if result.ThreadID != threadID || !result.Deleted {
+		return ArtifactDeleteThreadResult{}, serviceError("invalid_response", "artifact cleanup outcome is unconfirmed; retry the same thread")
+	}
+	return result, nil
+}
+
 func (c *ArtifactClient) invoke(ctx context.Context, method string, input, output any) error {
 	if c == nil || c.call == nil {
 		return serviceError("service_unavailable", "artifact binding is unavailable")
