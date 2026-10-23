@@ -667,6 +667,19 @@ func TestServerInitializeHidesInactivePluginMCPOverrides(t *testing.T) {
 	}
 }
 
+func testProviderCredentials(t *testing.T, home string) credentialstore.Store {
+	t.Helper()
+	resolved, err := statepath.Home(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := authstorage.NewNativeStore(credentialstore.NewFileStore(filepath.Join(home, "test-credentials.json")), resolved, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return selected
+}
+
 func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 	cfg := config.Config{
 		DefaultProvider: "xiaomi",
@@ -693,7 +706,7 @@ func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	var xiaomi, anthropic, openai, openrouter ProviderSummary
 	for _, summary := range summaries {
 		switch summary.Name {
@@ -811,7 +824,7 @@ func TestProviderHasAuthRequiresAvailableCredentials(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := providerHasAuth("provider", tt.provider, home); got != tt.want {
+			if got := providerHasSelectedAuth("provider", tt.provider, testProviderCredentials(t, home)); got != tt.want {
 				t.Fatalf("providerHasAuth() = %v, want %v", got, tt.want)
 			}
 		})
@@ -820,47 +833,43 @@ func TestProviderHasAuthRequiresAvailableCredentials(t *testing.T) {
 
 func TestProviderHasAuthUsesDefaultEnvironmentAndStoredCredentials(t *testing.T) {
 	home := t.TempDir()
+	selected := testProviderCredentials(t, home)
 	t.Setenv("OPENAI_API_KEY", "default-openai-key")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 
-	if !providerHasAuth("openai", config.ProviderConfig{Type: "openai"}, home) {
+	if !providerHasSelectedAuth("openai", config.ProviderConfig{Type: "openai"}, selected) {
 		t.Fatal("expected the default OpenAI environment variable to be detected")
 	}
 
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := authstorage.NewBound(context.Background(), selected)
 	if err := store.Set("anthropic", authstorage.Credentials{AuthToken: "stored-token"}); err != nil {
 		t.Fatal(err)
 	}
-	if !providerHasAuth("anthropic", config.ProviderConfig{Type: "anthropic"}, home) {
+	if !providerHasSelectedAuth("anthropic", config.ProviderConfig{Type: "anthropic"}, selected) {
 		t.Fatal("expected the stored Anthropic auth token to be detected")
 	}
 }
 
 func TestProviderHasAuthChecksCodexOAuthAvailability(t *testing.T) {
 	home := t.TempDir()
+	selected := testProviderCredentials(t, home)
 	t.Setenv("WUU_TEST_MISSING_CODEX_KEY", "")
 	provider := config.ProviderConfig{
 		Type:                  "openai-codex",
 		APIKeyEnv:             "WUU_TEST_MISSING_CODEX_KEY",
 		ReuseCodexCredentials: true,
 	}
-	if providerHasAuth("codex-provider", provider, home) {
+	if providerHasSelectedAuth("codex-provider", provider, selected) {
 		t.Fatal("credential reuse and an env name must not report unavailable Codex credentials as configured")
 	}
 
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := authstorage.NewBound(context.Background(), selected)
 	if err := store.Set("openai-codex", authstorage.Credentials{AccessToken: "stored-access-token"}); err != nil {
 		t.Fatal(err)
 	}
 	provider.ReuseCodexCredentials = false
-	if !providerHasAuth("codex-provider", provider, home) {
+	if !providerHasSelectedAuth("codex-provider", provider, selected) {
 		t.Fatal("expected Wuu Codex OAuth credentials to be detected without CLI credential reuse")
 	}
 }
@@ -940,7 +949,7 @@ func TestProviderSummariesExposeGrokBuildLoginAndModelDefaults(t *testing.T) {
 			Type: "grok-build", Model: "grok-4.5", ReuseGrokCredentials: true,
 		},
 	}}
-	summaries := providerSummariesFromConfig(cfg, home)
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, home))
 	if len(summaries) != 1 || !summaries[0].APIKeyConfigured || !summaries[0].ConnectionLocked {
 		t.Fatalf("summary = %+v", summaries)
 	}
@@ -1081,7 +1090,7 @@ func TestProviderSummariesExposeGPT56CatalogForCompatibleGateway(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1142,7 +1151,7 @@ func TestProviderSummariesExposeMiniMaxM31AndGemini4(t *testing.T) {
 				DefaultProvider: "service",
 				Providers:       map[string]config.ProviderConfig{"service": tc.provider},
 			}
-			summaries := providerSummariesFromConfig(cfg, t.TempDir())
+			summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 			if len(summaries) != 1 {
 				t.Fatalf("unexpected summaries: %+v", summaries)
 			}
@@ -1177,7 +1186,7 @@ func TestProviderSummariesEnrichPartialGPT56ConfigForCompatibleGateway(t *testin
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1217,7 +1226,7 @@ func TestProviderSummariesMergeConfiguredVariants(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 || len(summaries[0].Models) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1249,7 +1258,7 @@ func TestProviderSummariesPreferConfiguredVariantsOverCatalog(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	model := providerModelByID(t, summaries[0], "gpt-5.5")
 	if model.Source != "config" || model.DisplayName != "GPT-5.5" {
 		t.Fatalf("unexpected configured model summary: %+v", model)
@@ -1271,7 +1280,7 @@ func TestProviderSummariesDoNotShowOfficialModelsForCustomAnthropicEndpoint(t *t
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1292,7 +1301,7 @@ func TestProviderSummariesExposeCodexSubscriptionAliasesOnly(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1330,7 +1339,7 @@ func TestProviderSummariesClampCodexCatalogInputLimit(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -3399,23 +3408,23 @@ func TestCachedCodexModelsReplaceCatalogOnlyReasoningLevels(t *testing.T) {
 	if model.ContextWindow != 1_050_000 || model.Limit == nil || model.Limit.Context != 1_050_000 || model.Limit.Input != 272_000 || model.Limit.Output != 128_000 {
 		t.Fatalf("live Codex model did not receive subscription limits: %+v", model)
 	}
-	summaries := providerSummariesFromConfig(config.Config{
+	summaries := selectedProviderSummariesFromConfig(config.Config{
 		DefaultProvider: "openai-codex",
 		Providers: map[string]config.ProviderConfig{
 			"openai-codex": merged,
 		},
-	}, t.TempDir())
+	}, testProviderCredentials(t, t.TempDir()))
 	summary := providerModelByID(t, summaries[0], "gpt-5.6-sol")
 	if summary.Capabilities.ContextWindow != 1_050_000 || summary.Capabilities.InputLimit != 272_000 {
 		t.Fatalf("Codex model summary exposed API limits instead of subscription limits: %+v", summary.Capabilities)
 	}
 	merged.ContextWindow = 922_000
-	overriddenSummaries := providerSummariesFromConfig(config.Config{
+	overriddenSummaries := selectedProviderSummariesFromConfig(config.Config{
 		DefaultProvider: "openai-codex",
 		Providers: map[string]config.ProviderConfig{
 			"openai-codex": merged,
 		},
-	}, t.TempDir())
+	}, testProviderCredentials(t, t.TempDir()))
 	overridden := providerModelByID(t, overriddenSummaries[0], "gpt-5.6-sol")
 	if overridden.Capabilities.ContextWindow != 922_000 || overridden.Capabilities.InputLimit != 0 {
 		t.Fatalf("explicit Codex context override was clamped in model summary: %+v", overridden.Capabilities)
