@@ -20,9 +20,9 @@ type nativeStore struct {
 // NewNativeStore is called only when the explicitly selected native credential
 // provider activates. Migration is atomic and one-time; external providers are
 // never wrapped or made to consult a local recovery file.
-func NewNativeStore(base credentialstore.Store, home string) (credentialstore.Store, error) {
-	if base == nil || !filepath.IsAbs(home) {
-		return nil, errors.New("native credentials require a selected backend and resolved home")
+func NewNativeStore(base credentialstore.Store, resolvedWuuHome, userHome string) (credentialstore.Store, error) {
+	if base == nil || !filepath.IsAbs(resolvedWuuHome) || !filepath.IsAbs(userHome) {
+		return nil, errors.New("native credentials require a selected backend and resolved Wuu/user homes")
 	}
 	ctx := context.Background()
 	raw, err := base.Get(ctx, ModelCredentialNamespace, ModelCredentialKey)
@@ -35,11 +35,7 @@ func NewNativeStore(base credentialstore.Store, home string) (credentialstore.St
 		return nil, err
 	}
 	if !current.LegacyImported {
-		legacy, err := ForHome(home)
-		if err != nil {
-			return nil, errors.New("legacy credential source is unavailable")
-		}
-		previous, err := legacy.Load()
+		previous, err := New(filepath.Join(resolvedWuuHome, "auth.json")).Load()
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return nil, errors.New("legacy credential source is invalid or unavailable")
 		}
@@ -64,11 +60,11 @@ func NewNativeStore(base credentialstore.Store, home string) (credentialstore.St
 	}
 	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
 	if codexHome == "" {
-		codexHome = filepath.Join(home, ".codex")
+		codexHome = filepath.Join(userHome, ".codex")
 	}
 	grokHome := strings.TrimSpace(os.Getenv("GROK_HOME"))
 	if grokHome == "" {
-		grokHome = filepath.Join(home, ".grok")
+		grokHome = filepath.Join(userHome, ".grok")
 	}
 	return &nativeStore{Store: base, codexPath: filepath.Join(codexHome, "auth.json"), grokPath: filepath.Join(grokHome, "auth.json")}, nil
 }

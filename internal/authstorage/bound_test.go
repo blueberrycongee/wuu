@@ -71,7 +71,7 @@ func TestNativeCredentialMigrationDoesNotOverwriteOrResurrect(t *testing.T) {
 	if err := NewBound(ctx, base).Set("existing", Credentials{AccessToken: "selected-oauth"}); err != nil {
 		t.Fatal(err)
 	}
-	native, err := NewNativeStore(base, home)
+	native, err := NewNativeStore(base, filepath.Join(home, ".wuu"), home)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestNativeCredentialMigrationDoesNotOverwriteOrResurrect(t *testing.T) {
 	if err := os.WriteFile(legacy.path, []byte(`invalid later legacy bytes`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := NewNativeStore(credentialstore.NewFileStore(path), home)
+	reopened, err := NewNativeStore(credentialstore.NewFileStore(path), filepath.Join(home, ".wuu"), home)
 	if err != nil {
 		t.Fatalf("completed migration reread legacy file: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestNativeCLIRecordsAreReadOnlyAndPathsAreCaptured(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := credentialstore.NewFileStore(filepath.Join(t.TempDir(), "credentials.json"))
-	native, err := NewNativeStore(base, home)
+	native, err := NewNativeStore(base, filepath.Join(home, ".wuu"), home)
 	if err != nil {
 		t.Fatal(err)
 	}
