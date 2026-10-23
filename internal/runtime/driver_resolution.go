@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -51,6 +52,55 @@ func (s *Session) currentDriverGatewayTable() *driverGatewayTable {
 		return nil
 	}
 	return s.pluginGeneration.driverGateways
+}
+
+// workerDriverResolver retains the same generation as the worker's parent.
+// Root workers acquire the current generation at each execution boundary;
+// thread workers inherit their thread's retained generation.
+func (s *Session) workerDriverResolver(parent *PluginGeneration) loopdriver.AcquireFunc {
+	return func(ctx context.Context, expected *loopdriver.Binding) (driver loopdriver.Driver, binding loopdriver.Binding, release func(), err error) {
+		generation := parent
+		if generation == nil {
+			generation = s.retainPluginGeneration()
+		} else {
+			generation.retain()
+		}
+		release = func() { s.releasePluginGeneration(generation) }
+		defer func() {
+			if err != nil {
+				release()
+			}
+		}()
+		profile := strings.TrimSpace(s.DriverProfile)
+		if profile == "" {
+			profile = "default"
+		}
+		if expected != nil {
+			profile = expected.Profile
+		}
+		providerID := ""
+		if generation != nil && generation.driverGateways != nil {
+			driver = resolveLoopDriver(profile, generation.host, generation.driverGateways)
+			if generation.host != nil && generation.host.ServiceRegistry() != nil {
+				providerID, _ = generation.host.ServiceRegistry().ProviderPluginID(DriverServicePrefix+profile, 1)
+			}
+		} else if s.StreamRunner != nil {
+			// Embedded callers own their explicit driver and its lifetime.
+			driver = s.StreamRunner.LoopDriver
+		}
+		if driver == nil {
+			return nil, binding, release, errors.New("worker loop driver is not configured")
+		}
+		descriptor, err := driver.Descriptor(ctx)
+		if err != nil {
+			return nil, binding, release, fmt.Errorf("resolve worker loop driver: %w", err)
+		}
+		binding = loopdriver.Binding{Profile: profile, ProviderID: providerID, ContractVersion: loopdriver.ContractVersion, DriverID: descriptor.ID, DriverVersion: descriptor.Version}
+		if expected != nil && *expected != binding {
+			return nil, binding, release, fmt.Errorf("worker loop driver binding requires %+v; selected binding is %+v", *expected, binding)
+		}
+		return driver, binding, release, nil
+	}
 }
 
 // resolveLoopDriver binds one session's selected driver profile to a Driver:

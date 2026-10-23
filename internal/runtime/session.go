@@ -703,6 +703,9 @@ func NewSession(opts Options) (*Session, error) {
 				applyWorkerToolFilter(wkit, wt)
 				return wkit, nil
 			},
+			AcquireLoopDriver: func(ctx context.Context, binding *loopdriver.Binding) (loopdriver.Driver, loopdriver.Binding, func(), error) {
+				return runtimeSession.workerDriverResolver(nil)(ctx, binding)
+			},
 			WorkerWakeAuthority: workerWakeAuthority(toolkit),
 			OnSubagentStart: func(ctx context.Context, agentID string) error {
 				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStart, &hooks.Input{CWD: rootDir, AgentID: agentID})
@@ -1492,6 +1495,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					applyWorkerToolFilter(workerKit, wt)
 					return workerKit, nil
 				},
+				AcquireLoopDriver:   s.workerDriverResolver(generation),
 				WorkerWakeAuthority: workerWakeAuthority(kit),
 				OnSubagentStart: func(ctx context.Context, agentID string) error {
 					dispatcher := s.HookDispatcher

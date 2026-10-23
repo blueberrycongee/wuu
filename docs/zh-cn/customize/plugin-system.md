@@ -142,6 +142,8 @@ Generation 拥有的 `host.background` 任务与会话工作者的生命周期�
 
 空驱动 profile 通过服务图选择 `driver.default`。原生 `wuu.default-loop` 模块与外部提供者使用相同的驱动协议、声明式依赖、取消和清理路径。排除该模块会停止其驱动；组合可以改为包含提供 `driver.default` 的外部插件。没有提供者时，新回合会明确失败。实验性的 `driver.<profile>` 桥接将提供者和回调表固定在同一 generation。描述信息、创建和恢复调用遵循回合取消。描述信息须包含非空 ID 与语义化版本，读取失败会在创建实例前返回错误。创建、恢复及终态 checkpoint 须匹配所选驱动的 ID、版本和 checkpoint 契约。未知终态或不兼容 checkpoint 会明确失败，保留最近接受的状态。取消后迟到的实例会收到有时限的关闭请求。回合在保存 checkpoint 后失败或取消时，返回结果会保留最近接受的 checkpoint，防止应用终结流程将它覆盖为实例初始状态。即使取消导致终态回执未能送达，执行中已观察到的历史仍可用于最终持久化。失败的 `run` 回复可在状态、回执和 checkpoint 之外携带 `error` 字符串。
 
+后台 worker 同样使用所选驱动。在产生效果前，会保存服务 profile、提供者 ID、驱动 ID/版本及 checkpoint 契约。后续回合和重启恢复保留该绑定；提供者缺失或不兼容时明确失败。驱动选择功能引入前的记录保留原生默认驱动身份。worker 执行持有 generation 租约，直到终态持久化和清理完成，并使用与父执行不同的回调 ID。待恢复的 checkpoint 与其执行输入单独保存，不覆盖最近已提交的终态结果，避免崩溃恢复抹去尚待投递的结果；终态快照提交对应的执行 ID。worker checkpoint 文件属于恢复数据，须与历史一同保留；忽略驱动绑定的旧版本不能安全恢复使用替代驱动的 worker。
+
 独立驱动可声明 `driver.turn` 主版本 1 和 `driver.checkpoint` 主版本 1。SDK 的 `driverTurn(host, execution)` 提供以下操作：
 
 | 操作 | 可观察行为 |
