@@ -11,7 +11,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
-	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -187,10 +186,12 @@ func workerCompositionSession(t *testing.T, removed bool) (*Session, *PluginGene
 	t.Helper()
 	var selection *composition.Config
 	if removed {
-		modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule}
+		modules := append(testStateModules(), kernelHostModule)
 		selection = &composition.Config{Version: composition.Version, Modules: &modules}
 	}
-	host, kernel, err := buildPluginHost(nil, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, "")
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
+	host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, selection, "")
 	if err != nil {
 		t.Fatal(err)
 	}

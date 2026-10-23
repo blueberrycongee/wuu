@@ -51,7 +51,8 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 		{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 		{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 	})
-	clients := append([]pluginhost.Client{kernel, provider}, runtimeServiceConsumers("evidence")...)
+	clients := append(testKernelStateProviders(t, dir), kernel, provider)
+	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)
 	if len(conflicts) != 0 {
@@ -127,7 +128,8 @@ func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 		{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 		{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 	})
-	clients := append([]pluginhost.Client{kernel, provider}, runtimeServiceConsumers("evidence")...)
+	clients := append(testKernelStateProviders(t, dir), kernel, provider)
+	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)
 	if len(conflicts) != 0 {

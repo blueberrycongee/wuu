@@ -18,7 +18,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
-	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -132,7 +131,7 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 				fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
 			}))
 			defer server.Close()
-			modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer}
+			modules := append(testStateModules(), kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer)
 			rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{
 				Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
 				DefaultProvider: "synthetic", Providers: map[string]config.ProviderConfig{

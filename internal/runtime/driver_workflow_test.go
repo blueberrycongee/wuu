@@ -19,7 +19,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
-	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -54,8 +53,9 @@ func TestStreamingDriverProcess(t *testing.T) {
 	provider := testRuntimePlugin("streaming-evidence")
 	provider.Root, provider.Runtime.Command = fixture, node
 	provider.Runtime.Args = []string{"streaming.ts"}
-	modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule, sessionExecutionConsumer, provider.ID}
-	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "streaming", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
+	modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, provider.ID)
+	home, stateDir := testWorkspaceState(t, root)
+	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "streaming", home, stateDir, nil, startPluginClient, nil, nil, &composition.Config{Version: composition.Version, Modules: &modules}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,10 +129,11 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	var selection *composition.Config
 	if profile == "default" {
 		selectedProfile = ""
-		modules := []string{kernelHostModule, sessionStateConsumer, persistence.SQLiteModule, sessionExecutionConsumer, provider.ID}
+		modules := append(testStateModules(), kernelHostModule, sessionExecutionConsumer, provider.ID)
 		selection = &composition.Config{Version: composition.Version, Modules: &modules}
 	}
-	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "workflow", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, selectedProfile)
+	home, stateDir := testWorkspaceState(t, root)
+	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "workflow", home, stateDir, nil, startPluginClient, nil, nil, selection, selectedProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
