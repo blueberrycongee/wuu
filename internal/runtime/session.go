@@ -204,6 +204,8 @@ type Session struct {
 	pluginTransitionMu sync.Mutex
 	pluginGenerationMu sync.Mutex
 	pluginGeneration   *PluginGeneration
+	// Thread-model shadows release a reference without stopping the root host.
+	borrowedPluginGeneration bool
 	// mcpOAuth outlives individual connection managers, including retained turns.
 	mcpOAuth *mcp.OAuthManager
 	// Retired generations are tracked without an extra reference so policy
@@ -267,6 +269,7 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		ExtensionSettings:           s.ExtensionSettings,
 		PluginHost:                  s.PluginHost,
 		pluginGeneration:            s.pluginGeneration,
+		borrowedPluginGeneration:    true,
 		mcpOAuth:                    s.mcpOAuth,
 		UserQuestions:               s.UserQuestions,
 		DriverProfile:               s.DriverProfile,
@@ -2186,6 +2189,9 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		cleanupErr = errors.Join(cleanupErr, shutdownAndCleanupAgentControl(s.AgentControl))
 		s.AgentControl = nil
 	}
+	if !s.borrowedPluginGeneration {
+		cleanupErr = errors.Join(cleanupErr, s.stopPluginModelInvocations())
+	}
 	s.pluginGenerationMu.Lock()
 	generation := s.pluginGeneration
 	if generation != nil {
@@ -2194,7 +2200,7 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	}
 	s.pluginGenerationMu.Unlock()
 	if generation != nil {
-		s.releasePluginGeneration(generation)
+		cleanupErr = errors.Join(cleanupErr, s.releasePluginGeneration(generation))
 	} else if s.Toolkit != nil {
 		if manager := s.Toolkit.MCPManager(); manager != nil {
 			cleanupErr = errors.Join(cleanupErr, manager.Close())

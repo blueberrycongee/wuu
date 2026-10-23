@@ -83,6 +83,34 @@ func (k *kernelHostServices) retainState() (*State, error) {
 	return &State{SystemPrompt: prompt, Documents: documents, Sessions: sessions, Generation: generation, Host: generation.host, InferenceJournalRuntime: journal, models: captureGenerationStateModels(generation), close: close}, nil
 }
 
+// The generation lease protects storage; this finite task also lets root
+// shutdown join terminal accounting without waiting on unrelated State handles.
+func (k *kernelHostServices) retainModelInvocation() (*State, func(context.Context) error, error) {
+	binding, err := k.retainState()
+	if err != nil {
+		return nil, nil, err
+	}
+	generation := binding.Generation
+	generation.modelMu.Lock()
+	if generation.modelStopped {
+		generation.modelMu.Unlock()
+		_ = binding.Close()
+		return nil, nil, serviceError("generation_closed", "model invocation admission is closed")
+	}
+	generation.modelInvocations.Add(1)
+	generation.modelMu.Unlock()
+	return binding, func(ctx context.Context) error {
+		release := func() error {
+			defer generation.modelInvocations.Done()
+			return binding.Close()
+		}
+		if pluginhost.DeferServiceCompletion(ctx, release) {
+			return nil
+		}
+		return release()
+	}, nil
+}
+
 // Keep the invocation's own reference through the callback and its service
 // chain. The last release must not close a registry that is still dispatching it.
 func (k *kernelHostServices) captureInvocationState(ctx context.Context) (context.Context, func() error) {

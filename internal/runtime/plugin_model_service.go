@@ -122,11 +122,11 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	}
 	// Transport cancellation can precede terminal accounting. Keep this
 	// generation's authority until Execute has persisted the complete outcome.
-	binding, err := k.parent.retainState()
+	binding, complete, err := k.parent.retainModelInvocation()
 	if err != nil {
 		return nil, err
 	}
-	defer func() { callErr = errors.Join(callErr, completeInvocationState(callCtx, binding)) }()
+	defer func() { callErr = errors.Join(callErr, complete(callCtx)) }()
 
 	// Load one coherent host configuration instead of reading the mutable
 	// foreground runner while another client changes its selected model.

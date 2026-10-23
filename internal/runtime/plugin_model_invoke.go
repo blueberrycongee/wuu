@@ -80,14 +80,14 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	if err := decodeServiceParams(params.Params, &input); err != nil {
 		return nil, err
 	}
-	binding, err := k.parent.retainState()
+	binding, complete, err := k.parent.retainModelInvocation()
 	if err != nil {
 		return nil, err
 	}
 	streamOwnsState := false
 	defer func() {
 		if !streamOwnsState {
-			callErr = errors.Join(callErr, completeInvocationState(callCtx, binding))
+			callErr = errors.Join(callErr, complete(callCtx))
 		}
 	}()
 	var client providers.StreamClient
@@ -190,7 +190,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	streamOwnsState = true
 	go func() {
 		defer func() {
-			if err := binding.Close(); err != nil {
+			if err := complete(context.Background()); err != nil {
 				providers.DebugLogf("model stream generation cleanup: %v", err)
 			}
 		}()

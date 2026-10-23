@@ -73,9 +73,64 @@ type PluginGeneration struct {
 	// zero is reserved for a prepared candidate that has not been published.
 	refs         atomic.Int32
 	revocationMu sync.Mutex
+	// Admission closes under modelMu before root shutdown starts Wait.
+	modelMu          sync.Mutex
+	modelStopped     bool
+	modelInvocations sync.WaitGroup
 	// revokedMu also protects host detachment from read-only diagnostics.
 	revokedMu      sync.Mutex
 	revokedPlugins map[string]bool
+}
+
+// Root shutdown drains model effects separately from passive State references.
+// A retained document reader must not prevent exit or lose its provider early.
+func (s *Session) stopPluginModelInvocations() (err error) {
+	s.pluginGenerationMu.Lock()
+	var generations []*PluginGeneration
+	current := s.pluginGeneration
+	if current != nil {
+		current.retain()
+		generations = append(generations, current)
+	}
+	for generation := range s.retiredPluginGenerations {
+		if generation == current {
+			continue
+		}
+		for refs := generation.refs.Load(); refs > 0; refs = generation.refs.Load() {
+			if generation.refs.CompareAndSwap(refs, refs+1) {
+				generations = append(generations, generation)
+				break
+			}
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	defer func() {
+		for _, generation := range generations {
+			err = errors.Join(err, s.releasePluginGeneration(generation))
+		}
+	}()
+	for _, generation := range generations {
+		generation.modelMu.Lock()
+		generation.modelStopped = true
+		generation.modelMu.Unlock()
+		generation.host.StopBackground()
+		generation.host.CancelExecutions(context.Canceled)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		for _, generation := range generations {
+			generation.modelInvocations.Wait()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		err = fmt.Errorf("drain model invocations: %w", ctx.Err())
+	}
+	return err
 }
 
 // PreflightExtensions discovers and builds a replacement without changing the
