@@ -576,8 +576,6 @@ func TestBuiltPluginGenerationsRetireAfterLastOwnerReleases(t *testing.T) {
 	for _, pinnedOwners := range []int{0, 1, 2} {
 		t.Run(fmt.Sprintf("pinned_owners_%d", pinnedOwners), func(t *testing.T) {
 			session := testGenerationSession(t, testPluginGeneration("initial", &generationClient{id: "initial"}))
-			session.RootDir = t.TempDir()
-			session.WuuHome = t.TempDir()
 			defer session.Cleanup()
 			var previous *generationClient
 			for cycle := 0; cycle < 3; cycle++ {
@@ -628,12 +626,6 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 		t.Run(model, func(t *testing.T) {
 			client := &generationClient{id: "plugin"}
 			session := testGenerationSession(t, testPluginGeneration("plugin", client))
-			session.RootDir = t.TempDir()
-			session.WuuHome = t.TempDir()
-			session.StateDir = t.TempDir()
-			session.SessionDir = t.TempDir()
-			session.Documents = testSessionDocuments(t, session.SessionDir)
-			session.Sessions = testSessionStore(t, session.SessionDir)
 			session.ProviderName = "fixture"
 			session.Model = "default"
 			session.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "default"}
@@ -642,6 +634,14 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 			if err := os.WriteFile(session.ConfigPath, []byte(`{"default_provider":"fixture","providers":{"fixture":{"type":"openai-compatible","base_url":"http://127.0.0.1:9/v1","api_key":"fixture","model":"default"}}}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			configuration := config.NewService(config.Module, session.ConfigPath, "")
+			if err := configuration.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = configuration.Close(context.Background()) })
+			session.configClient = config.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+				return configuration.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: config.ServiceName, Method: method, Params: raw})
+			})
 			defer session.Cleanup()
 			defer session.pluginGeneration.close()
 			selection := ThreadModelSelection{Provider: "fixture", Model: model}
@@ -805,7 +805,6 @@ func TestCandidateActivationFailurePreservesCommittedGeneration(t *testing.T) {
 func TestFailedActivationDoesNotPublishPreparedNativeContributions(t *testing.T) {
 	old := testPluginGeneration("old", &generationClient{id: "old"})
 	session := testGenerationSession(t, old)
-	session.RootDir = t.TempDir()
 	session.ProviderName, session.Model = "fixture", "model"
 	defer session.Cleanup()
 	makeClient := func(id string, priority int, activationErr error) *preparedGenerationClient {
@@ -994,14 +993,15 @@ func TestNewSessionDoesNotDiscoverPluginsDuringMutation(t *testing.T) {
 
 func testGenerationSession(t *testing.T, generation *PluginGeneration) *Session {
 	t.Helper()
-	home := t.TempDir()
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
 	dir := filepath.Join(home, "sessions")
 	documents := testSessionDocuments(t, dir)
 	if generation != nil && generation.refs.Load() == 0 {
 		generation.retain()
 	}
 	return &Session{
-		WuuHome: home, SessionDir: dir, Documents: documents, Sessions: session.NewStore(context.Background(), documents),
+		RootDir: root, StateDir: state, WuuHome: home, SessionDir: dir, Documents: documents, Sessions: session.NewStore(context.Background(), documents),
 		PluginHost:       generation.host,
 		HookDispatcher:   hooks.NewDispatcher(nil),
 		Plugins:          append([]pluginpkg.Plugin(nil), generation.plugins...),

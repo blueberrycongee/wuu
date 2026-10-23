@@ -67,7 +67,9 @@ func buildServiceTestHost(t *testing.T, clients map[string]pluginhost.Client, pl
 	start := func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		return clients[cfg.ID], nil
 	}
-	host, _, err := buildPluginHost(plugins, t.TempDir(), "test-workspace", t.TempDir(), t.TempDir(), nil, start, nil, nil, nil, "")
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
+	host, _, err := buildPluginHost(plugins, root, "test-workspace", home, state, nil, start, nil, nil, nil, "")
 	if err != nil {
 		t.Fatalf("buildPluginHost() = %v", err)
 	}
@@ -624,7 +626,9 @@ func TestNativeProviderRetirementDrainsConsumers(t *testing.T) {
 			reader.SubjectID, reader.Fingerprint = "plugin:user:reader", "native-lifecycle"
 			consumer := &nativeLifecycleConsumer{fakeServicePluginClient: &fakeServicePluginClient{id: reader.ID,
 				required: pluginhost.KernelServiceRequirements(pluginhost.KernelStorageSetService)}}
-			host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil,
+			root := t.TempDir()
+			home, state := testWorkspaceState(t, root)
+			host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, root, "workspace", home, state, nil,
 				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil, "")
 			if err != nil {
 				t.Fatal(err)
@@ -673,7 +677,8 @@ func TestCompositionRemovalRetiresNativeProviderInPinnedGeneration(t *testing.T)
 	reader.SubjectID, reader.Fingerprint = "plugin:user:reader", "profile-retirement"
 	consumer := &nativeLifecycleConsumer{fakeServicePluginClient: &fakeServicePluginClient{id: reader.ID,
 		required: pluginhost.KernelServiceRequirements(pluginhost.KernelStorageSetService)}}
-	root, home, state := t.TempDir(), t.TempDir(), t.TempDir()
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
 	host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, root, "workspace", home, state, nil,
 		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil, "")
 	if err != nil {

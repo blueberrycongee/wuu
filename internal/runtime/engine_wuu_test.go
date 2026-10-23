@@ -16,7 +16,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
-	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -219,10 +218,18 @@ func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
 		Providers:       map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", Model: "fixture", BaseURL: "https://example.invalid/v1", APIKey: "fixture"}},
 		Engines:         &config.EnginesConfig{DefaultEngine: "codex", Codex: off, Claude: off, Cursor: off, Devin: off, DSH: off, Grok: off, Hermes: off, Pi: off, OpenCode: off, Antigravity: off},
 	}
-	modules := []string{sessionStateConsumer, persistence.SQLiteModule}
+	modules := testStateModules()
 	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 	root, home := t.TempDir(), t.TempDir()
-	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})
+	configPath := filepath.Join(root, "settings.json")
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg, ConfigPath: configPath, ConfigLoadMode: ConfigLoadFile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,14 +240,6 @@ func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
 	})
 	if s.DefaultEngine() != "codex" || s.EngineAvailable("codex") {
 		t.Fatalf("startup changed unavailable selection: default=%q available=%v", s.DefaultEngine(), s.EngineAvailable("codex"))
-	}
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.ConfigPath, s.ConfigLoadMode = filepath.Join(root, "settings.json"), ConfigLoadFile
-	if err := os.WriteFile(s.ConfigPath, data, 0600); err != nil {
-		t.Fatal(err)
 	}
 	if err := s.RefreshEngineSettings(); err != nil {
 		t.Fatal(err)

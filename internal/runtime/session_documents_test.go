@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -46,6 +47,9 @@ func testWorkspaceState(t *testing.T, root string) (string, string) {
 	home := t.TempDir()
 	state, err := statepath.WorkspaceDir(home, root)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	return home, state

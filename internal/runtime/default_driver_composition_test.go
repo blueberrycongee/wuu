@@ -19,7 +19,9 @@ func TestDefaultDriverComposition(t *testing.T) {
 	for _, name := range []string{"success", "default-callback", "partial-failure", "cancel"} {
 		fail := name == "partial-failure" || name == "cancel"
 		t.Run(name, func(t *testing.T) {
-			host, kernel, err := buildPluginHost(nil, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, nil, "")
+			root := t.TempDir()
+			home, state := testWorkspaceState(t, root)
+			host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, nil, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -78,9 +80,11 @@ func TestDefaultDriverComposition(t *testing.T) {
 		})
 	}
 	t.Run("removed", func(t *testing.T) {
-		modules := []string{kernelHostModule}
+		modules := append(testStateModules(), kernelHostModule)
 		selection := &composition.Config{Version: composition.Version, Modules: &modules}
-		host, kernel, err := buildPluginHost(nil, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, "")
+		root := t.TempDir()
+		home, state := testWorkspaceState(t, root)
+		host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, selection, "")
 		if err != nil {
 			t.Fatal(err)
 		}

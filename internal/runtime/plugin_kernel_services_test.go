@@ -16,14 +16,24 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 )
 
-func activateServiceTestHost(t *testing.T, native pluginhost.Client, registry *pluginhost.ServiceRegistry, clients ...pluginhost.Client) {
+func activateServiceTestHost(t *testing.T, native *kernelHostServices, registry *pluginhost.ServiceRegistry, clients ...pluginhost.Client) {
 	t.Helper()
-	host := pluginhost.New(append([]pluginhost.Client{native}, clients...)...)
+	dependencies := testKernelStateProviders(t, t.TempDir())
+	if conflicts := registry.RegisterClients(dependencies...); len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host := pluginhost.New(append(append(dependencies, native), clients...)...)
 	host.AttachServiceRegistry(registry, nil)
+	for _, handler := range native.services {
+		handler.settingsClient = pluginsettings.NewClient(kernelServiceCall(host, registry, pluginsettings.ServiceName))
+		handler.credentials = credentialstore.NewClient(kernelServiceCall(host, registry, credentialstore.ServiceName))
+	}
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +220,8 @@ if(q.method==='tool.execute'){if(q.params.tool_id==='crash'){process.exit(3)}con
 		if err := os.WriteFile(filepath.Join(fixtureRoot, "runtime.mjs"), []byte(fixture), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		stateDir, userHome, project := t.TempDir(), t.TempDir(), t.TempDir()
+		project := t.TempDir()
+		userHome, stateDir := testWorkspaceState(t, project)
 		makeHost := func(withConsumer bool) (*pluginhost.Host, *kernelHostServices) {
 			memory := serviceTestPlugin("memory", "plugin:user:memory", "one")
 			memory.Root = memoryRoot
@@ -358,14 +369,11 @@ func TestKernelRegistryIntrospectRoutesThroughRegistry(t *testing.T) {
 	}
 	foundStorage, foundIntrospect := false, false
 	for _, entry := range snapshot.Services {
-		if entry.Provider != "kernel" {
-			t.Fatalf("unexpected non-kernel entry: %+v", entry)
-		}
 		switch entry.Service {
 		case pluginhost.KernelStorageGetService:
-			foundStorage = true
+			foundStorage = entry.Provider == kernel.ID()
 		case pluginhost.KernelRegistryIntrospectService:
-			foundIntrospect = true
+			foundIntrospect = entry.Provider == kernel.ID()
 		}
 	}
 	if !foundStorage || !foundIntrospect {
