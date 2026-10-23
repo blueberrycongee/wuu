@@ -7,6 +7,7 @@ import {
   documentStore, type StateImportResult, type StateCompaction, type RuntimeHost,
   type PluginGenerationApi, type DataQueryResult, type DataAppendTurn, type DataAppendTurnResult,
   type ManagedSessionCreate, type CredentialCompareExchange, type ConfigSourceView,
+  type ArtifactDeleteThreadRequest, type ArtifactDeleteThreadResult,
 } from '@wuu/plugin-sdk';
 
 // The document owner adds these to persistence.ts; the public barrel must
@@ -72,7 +73,18 @@ export default {
     const emptyConfig = await configurationStore(host).read();
     const emptySource = emptyConfig.source === null ? null : atob(emptyConfig.source);
     const settings = await pluginSettingsStore(host).read({subject:'author',scope:'workspace'});
-    const artifact = await artifactStore(host).read({thread_id:'worker',uri:'artifact:one',max_bytes:8});
+    const artifacts = artifactStore(host);
+    const artifactInput = params.params as { artifact_thread: string };
+    const artifactAddress = {thread_id:artifactInput.artifact_thread,uri:'artifact:one',max_bytes:8};
+    const artifact = await artifacts.read(artifactAddress);
+    const deletion: ArtifactDeleteThreadRequest = {thread_id:artifactInput.artifact_thread};
+    const deleted: ArtifactDeleteThreadResult = await artifacts.deleteThread(deletion);
+    const deletedAgain = await artifacts.deleteThread(deletion);
+    let artifactUncertain: unknown, deletedRead: unknown;
+    try { await artifacts.deleteThread({thread_id:'uncertain-thread'}); }
+    catch (error) { artifactUncertain = (error as {code:string}).code; }
+    try { await artifacts.read(artifactAddress); }
+    catch (error) { deletedRead = (error as {code:string}).code; }
     const indexInput = params.params as { index_thread: string; index_turn: string; index_payload: string };
     const index = dataIndex(host);
     const batch: DataAppendTurn = {
@@ -99,6 +111,6 @@ export default {
     }});
     const admitted = await sessions.submit({session_id:created.session_id,message:{Role:'user',Content:'inspect',ClientID:'input-2'},allow_start:true});
     const admission = await projectCoordination(host).admission();
-    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,facts,emptyFacts,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
+    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
   },
 } satisfies RuntimePlugin;

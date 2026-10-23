@@ -42,9 +42,11 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     const launchPrompt = randomUUID();
     const launchIntent = randomUUID();
     const indexThread = randomUUID(), indexTurn = randomUUID(), indexPayload = randomUUID();
+    const artifactThread = randomUUID();
+    let artifactDeleted = false, artifactDeleteCount = 0;
     let indexBatch;
     let appendCount = 0, queryCount = 0;
-    send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent,index_thread:indexThread,index_turn:indexTurn,index_payload:indexPayload}}});
+    send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent,index_thread:indexThread,index_turn:indexTurn,index_payload:indexPayload,artifact_thread:artifactThread}}});
     const seen=[];
     let credential=null;
     let configReads=0;
@@ -66,7 +68,27 @@ test('packed provider clients preserve wire values and callback scope', {timeout
         reply={source:method==='read' && configReads++ > 0 ? '' : null,revision:'config-1',config:{}};
         if (method==='compare-exchange') { assert.deepEqual(params,{expected_revision:'config-1',source:null}); reply={...reply,committed:true,activation_error:'project_overlay_invalid'}; }
       } else if (service==='state.plugin-settings') reply={revision:'settings-1',document:{schema_version:1,plugin_id:'author',values:{}}};
-      else if (service==='state.artifacts') { assert.equal(params.max_bytes,8); reply={data:'AAEC',mime_type:'application/octet-stream'}; }
+      else if (service==='state.artifacts') {
+        if (method==='delete-thread') {
+          artifactDeleteCount++;
+          if (artifactDeleteCount <= 2) {
+            assert.deepEqual(params,{thread_id:artifactThread});
+            artifactDeleted=true;
+            reply={thread_id:artifactThread,deleted:true};
+          } else {
+            assert.equal(artifactDeleteCount,3,'artifact helper retried an uncertain deletion');
+            assert.deepEqual(params,{thread_id:'uncertain-thread'});
+            send({id:message.id,error:{code:'artifact_unavailable',message:'cleanup outcome unknown'}}); continue;
+          }
+        } else {
+          assert.equal(method,'read');
+          assert.deepEqual(params,{thread_id:artifactThread,uri:'artifact:one',max_bytes:8});
+          if (artifactDeleted) {
+            send({id:message.id,error:{code:'artifact_not_found',message:'selected provider no longer has payload'}}); continue;
+          }
+          reply={data:'AAEC',mime_type:'application/octet-stream'};
+        }
+      }
       else if (service==='host.data.query') {
         if (method==='append-turn') {
           appendCount++;
@@ -124,6 +146,11 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     assert.equal(result.changed.committed,true);
     assert.equal(result.changed.activation_error,'project_overlay_invalid');
     assert.equal(result.artifact.data,'AAEC');
+    assert.equal(artifactDeleteCount,3);
+    assert.deepEqual(result.deleted,{thread_id:artifactThread,deleted:true});
+    assert.deepEqual(result.deletedAgain,result.deleted);
+    assert.equal(result.artifactUncertain,'artifact_unavailable');
+    assert.equal(result.deletedRead,'artifact_not_found');
     assert.equal(appendCount,4);
     assert.equal(queryCount,2);
     assert.deepEqual(result.appended,{version:'2.0.0',thread_id:indexThread,turn_id:indexTurn,committed:true,diagnostic_path:'provider://diagnostic'});

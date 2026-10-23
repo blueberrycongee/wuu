@@ -98,7 +98,7 @@ export async function readNotes(host: RuntimeHost) {
 | 凭据 | `get`、`set`、`delete`、`compare-exchange`。字节使用标准 base64。`null` 表示不存在，`""` 表示存在且为空。CAS 比较字节；`value: null` 删除，`{ exchanged: false }` 表示确定不匹配。`set` 的值不能为 null。 |
 | 配置 | `read`、`compare-exchange`。`source` 用 base64 保留完整原始字节，字节缺失时为 `null`；`config` 是验证后的产品有效配置。`expected_revision` 比较源身份。响应可能包含 `committed: true` 和 `activation_error`；此时应报告写入已持久化，但应用失败。 |
 | 插件设置 | 对 `{ subject, scope: "user" \| "workspace" }` 执行 `read`、`update`、`read-state`、`update-state`。更新在 `expected_revision` 上替换完整值映射，设置还携带 fingerprint。收到 `settings_conflict` 后先重读，再构造更新。 |
-| 产物 | `import`、`resolve`、`read`、`fork`。提供者 scope 来自获得准入的消费者。读取要求正数 `max_bytes`，返回 base64 字节与 MIME 类型。Resolve 返回该产物是否由提供者管理。普通工具导入使用带认证的网关。 |
+| 产物 | `import`、`resolve`、`read`、`fork`、`delete-thread`。提供者 scope 来自获得准入的消费者。读取要求正数 `max_bytes`，返回 base64 字节与 MIME 类型。Resolve 返回该产物是否由提供者管理。普通工具导入使用带认证的网关。 |
 | 数据索引 | `host.data.query@2` 提供 `call` 查询和 `append-turn` 完整回合原子追加。查询接收 thread、可选事件类型、turn 和 limit；未知类型名也可作为过滤条件。省略或零 limit 不设置显式上限；负数返回 `invalid_params`。事件不授予配置或凭据访问。 |
 
 原生配置文件缺失时读出 `source: null`，存在但零字节时读出 `source: ""`。解码前先判断 `null`，客户端不得将这两个值互相归一化。配置 CAS 的 `source: null` 表示提供零个替换字节：原生文件模式会写入空文件，而不是删除；可信项目模式拒绝空 JSON。CAS 响应即使在空文件已存在时也可能保留 `null`，因此该字段描述返回的源字节，不是文件是否存在。
@@ -108,6 +108,12 @@ export async function readNotes(host: RuntimeHost) {
 原生配置模式保留来源边界：显式文件模式使用指定文件，嵌入模式从传入配置开始，显式项目模式使用项目基础配置和设置层，仅在 `.wuu.json` 不存在时回退到 `wuu.json`。叠加在用户配置上的受限项目覆盖不会获得替换凭据或授权的权限。
 
 模型认证及登录/刷新状态使用捕获 generation 的凭据服务。原生 auth 适配器可以在不覆盖目标已有条目的前提下导入旧账号数据，该兼容行为属于原生实现。外部凭据提供者不会被悄悄包上原生文件查询。进行中的登录 ID 保持关联原 generation，直至清理结束。
+
+## 会话产物清理
+
+`ARTIFACT_STORE_DESCRIPTOR` 以 `1.1.0` 声明 `state.artifacts@1`，新增 `delete-thread`：输入 `{ thread_id }`，结果 `{ thread_id, deleted: true }`。获得准入的消费者使用捕获的 host 调用 `artifactStore(host).deleteThread({ thread_id })`。成功表示所选提供者已移除该会话当前的载荷及清单；会话不存在或已经为空也成功。其他会话、fork 副本、索引数据和会话文档不属于此操作范围。
+
+删除前先停止产物生产者并等待其完成。该操作不会禁止同一 ID 之后再次导入。原生导入、fork 和删除按目标会话跨进程串行化，并保留锁文件 inode。清理仍是普通的已准入服务调用，不绕过生命周期准入。会话文档已移除但产物清理失败时，应报告部分完成，并保留同一提供者和会话以供显式重试清理；不要重建文档，也不要用删除原生路径代替所选提供者。调用结果不确定时，helper 不会自动重试；删除具有幂等性，调用者可以显式再次执行。
 
 ## 完整回合索引
 

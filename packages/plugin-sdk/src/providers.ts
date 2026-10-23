@@ -18,7 +18,10 @@ function descriptor(name: string, methods: readonly string[], preparation: reado
 export const CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ['get', 'set', 'delete', 'compare-exchange']);
 export const CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ['read', 'compare-exchange'], ['read']);
 export const PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ['read', 'update', 'read-state', 'update-state'], ['read', 'read-state']);
-export const ARTIFACT_STORE_DESCRIPTOR = descriptor(ARTIFACT_STORE_SERVICE, ['import', 'resolve', 'read', 'fork']);
+export const ARTIFACT_STORE_DESCRIPTOR: ServiceDescriptor = {
+  ...descriptor(ARTIFACT_STORE_SERVICE, ['import', 'resolve', 'read', 'fork', 'delete-thread']),
+  version: '1.1.0',
+};
 export const DATA_QUERY_DESCRIPTOR: ServiceDescriptor = {
   name: DATA_QUERY_SERVICE, version: '2.0.0', methods: [
     { name: 'call', input_schema: 'host.data.query.input.v2', output_schema: 'host.data.query.output.v2' },
@@ -102,6 +105,8 @@ export interface ArtifactResolved { artifact: ImportedArtifact; managed: boolean
 export interface ArtifactRead extends ArtifactResolve { max_bytes: number }
 export interface ArtifactBytes { data: Base64Bytes; mime_type: string }
 export interface ArtifactFork { source_thread_id: string; target_thread_id: string; uri: string }
+export interface ArtifactDeleteThreadRequest { thread_id: string }
+export interface ArtifactDeleteThreadResult { thread_id: string; deleted: boolean }
 export interface DataQuery {
   thread_id: string;
   /** Filter by event type; unknown names are valid. Empty or absent means all types. */
@@ -179,6 +184,11 @@ export function artifactStore(host: RuntimeHost) {
     resolve: (input: ArtifactResolve) => call<ArtifactResolved>(host, ARTIFACT_STORE_SERVICE, 'resolve', input),
     read: (input: ArtifactRead) => call<ArtifactBytes>(host, ARTIFACT_STORE_SERVICE, 'read', input),
     fork: (input: ArtifactFork) => call<ImportedArtifact>(host, ARTIFACT_STORE_SERVICE, 'fork', input),
+    /** Delete this provider's current thread payloads/manifests, including an
+     * already empty thread. Drain producers first: this does not block future
+     * imports. Unknown outcomes are not retried; explicit repetition is safe.
+     */
+    deleteThread: (input: ArtifactDeleteThreadRequest) => call<ArtifactDeleteThreadResult>(host, ARTIFACT_STORE_SERVICE, 'delete-thread', input),
   };
 }
 /** Requires host.data.query@2. A successful append confirms the entire batch.
