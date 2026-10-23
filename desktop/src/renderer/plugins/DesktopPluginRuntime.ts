@@ -36,15 +36,17 @@ export const desktopPluginHost = new PluginHost({
     subscribe: listener => getDesktopApplication().subscribe(listener),
     invoke: (action, input, options) => getDesktopApplication().invoke(action, input, options),
   },
-  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, workspaceRoot, signal }) => {
+  invokeRuntime: async ({ pluginId, generation, graphGeneration, service, method, input, workspaceId, workspaceRoot, signal }) => {
     signal?.throwIfAborted();
     const bridge = window.wuu;
     if (!bridge?.requestPluginRuntime || !bridge.cancelPluginRuntime) {
       throw new Error("Plugin runtime requests are unavailable");
     }
-    const identity = { id: pluginId, fingerprint: generation, request_id: crypto.randomUUID() };
+    // Desktop activation requires a committed graph before admitting requests.
+    const identity = { id: pluginId, fingerprint: generation, graph_generation: graphGeneration!, request_id: crypto.randomUUID() };
     const response = bridge.requestPluginRuntime({
       ...identity,
+      ...(service !== undefined ? { service } : {}),
       method,
       input,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),

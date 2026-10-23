@@ -1,3 +1,4 @@
+import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1,
   ApplicationShellDefinition, UISlotDefinition, UIContributionDefinition,
@@ -182,6 +183,7 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   /** Aborted when staging fails, is superseded, or this generation is disposed. */
   readonly signal: AbortSignal;
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
+  invokeService<TOutput = unknown>(request: PluginServiceCall, options?: PluginRuntimeInvokeOptions): Promise<TOutput>;
   readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
   /** List live threads inside a workspace, addressed by its root path (the
@@ -421,6 +423,8 @@ export interface PluginHostOptions {
   invokeRuntime?: (request: Readonly<{
     pluginId: string;
     generation: string;
+    graphGeneration?: string;
+    service?: string;
     method: string;
     input?: unknown;
     workspaceId?: string;
@@ -1153,6 +1157,36 @@ export class PluginHost {
 
   private createGenerationApi(state: GenerationState): PluginGenerationApi {
     const application = this.createApplicationService(state);
+    const invokeRequest = async (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions, service?: string): Promise<unknown> => {
+      if (!this.runtimeInvoker) {
+        throw new Error("Plugin runtime requests are unavailable");
+      }
+      this.assertActive(state);
+      options?.signal?.throwIfAborted();
+      const controller = new AbortController();
+      const abort = () => controller.abort(options?.signal?.reason);
+      options?.signal?.addEventListener("abort", abort, { once: true });
+      state.runtimeRequests.add(controller);
+      try {
+        const result = await this.runtimeInvoker({
+          pluginId: state.pluginId,
+          generation: state.generation,
+          graphGeneration: state.graphGeneration,
+          ...(service !== undefined ? { service } : {}),
+          method: requireNonEmpty(method, "plugin runtime method"),
+          input,
+          signal: controller.signal,
+          ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+          ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
+        });
+        this.assertActive(state);
+        controller.signal.throwIfAborted();
+        return result;
+      } finally {
+        state.runtimeRequests.delete(controller);
+        options?.signal?.removeEventListener("abort", abort);
+      }
+    };
     const registerViewPlacement = (
       contribution: {
         id: string;
@@ -1228,34 +1262,9 @@ export class PluginHost {
       pluginId: state.pluginId,
       generation: state.generation,
       signal: state.lifetime.signal,
-      invokeRuntime: async (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions) => {
-        if (!this.runtimeInvoker) {
-          throw new Error("Plugin runtime requests are unavailable");
-        }
-        this.assertActive(state);
-        options?.signal?.throwIfAborted();
-        const controller = new AbortController();
-        const abort = () => controller.abort(options?.signal?.reason);
-        options?.signal?.addEventListener("abort", abort, { once: true });
-        state.runtimeRequests.add(controller);
-        try {
-          const result = await this.runtimeInvoker({
-            pluginId: state.pluginId,
-            generation: state.generation,
-            method: requireNonEmpty(method, "plugin runtime method"),
-            input,
-            signal: controller.signal,
-            ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
-            ...(options?.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
-          });
-          this.assertActive(state);
-          controller.signal.throwIfAborted();
-          return result;
-        } finally {
-          state.runtimeRequests.delete(controller);
-          options?.signal?.removeEventListener("abort", abort);
-        }
-      },
+      invokeRuntime: (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions) => invokeRequest(method, input, options),
+      invokeService: async <TOutput = unknown>(request: PluginServiceCall, options?: PluginRuntimeInvokeOptions): Promise<TOutput> =>
+        await invokeRequest(request.method, request.params, options, requireNonEmpty(request.service, "plugin service name")) as TOutput,
       readVisibleHistory: async (request: PluginVisibleHistoryRequest) => {
         if (!this.visibleHistoryReader) throw new Error("Visible conversation history is unavailable");
         this.assertActive(state);

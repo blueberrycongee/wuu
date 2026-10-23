@@ -2,7 +2,7 @@ import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtensionInventoryRecord, WuuDesktopApi } from "../../shared/protocol";
-import { DesktopPluginRuntime } from "./DesktopPluginRuntime";
+import { DesktopPluginRuntime, desktopPluginHost } from "./DesktopPluginRuntime";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
 const originalWuu = window.wuu;
@@ -13,18 +13,47 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
-  it("fences and reactivates unchanged source after the committed graph changes", async () => {
+  it.each(["runtime", "service"])("fences %s requests and cancellation across same-source graph replacement", async (kind) => {
     installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: "fixture" }));
+    const request = vi.fn<WuuDesktopApi["requestPluginRuntime"]>();
+    const cancel = vi.fn<WuuDesktopApi["cancelPluginRuntime"]>(async () => ({ cancelled: true }));
+    window.wuu.reportPluginDesktopActivation = vi.fn(async () => {});
+    window.wuu.requestPluginRuntime = request;
+    window.wuu.cancelPluginRuntime = cancel;
+    let finish!: (value: { result: unknown }) => void;
+    request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
     const handles: PluginGenerationApi[] = [];
-    const host = new PluginHost({ react: React });
-    const runtime = new DesktopPluginRuntime(host, async () => ({ activate: (api: PluginGenerationApi) => { handles.push(api); } }));
-    await runtime.sync([{ ...inventoryPlugin(), graph_generation: "first" }]);
-    await runtime.sync([{ ...inventoryPlugin(), graph_generation: "second" }]);
-    expect(handles).toHaveLength(2);
-    expect(handles[0].signal.aborted).toBe(true);
-    expect(handles[1].signal.aborted).toBe(false);
+    const runtime = new DesktopPluginRuntime(desktopPluginHost, async () => ({ activate: (api: PluginGenerationApi) => { handles.push(api); } }));
+    const call = (api: PluginGenerationApi, signal?: AbortSignal) => kind === "runtime"
+      ? api.invokeRuntime("read", { item: "one" }, { workspaceId: "workspace", workspaceRoot: "/workspace", signal })
+      : api.invokeService({ service: "catalog", method: "read", params: { item: "one" } }, { workspaceId: "workspace", workspaceRoot: "/workspace", signal });
+    try {
+      await runtime.sync([{ ...inventoryPlugin(), graph_generation: "first" }]);
+      const pending = call(handles[0]);
+      expect(request).toHaveBeenCalledExactlyOnceWith({
+        id: "user:demo", fingerprint: "fingerprint-one", graph_generation: "first", request_id: expect.any(String),
+        ...(kind === "service" ? { service: "catalog" } : {}),
+        method: "read", input: { item: "one" }, workspace_id: "workspace", workspace_root: "/workspace",
+      });
+      await runtime.sync([{ ...inventoryPlugin(), graph_generation: "second" }]);
+      expect(handles).toHaveLength(2);
+      expect(handles[0].signal.aborted).toBe(true);
+      expect(handles[1].signal.aborted).toBe(false);
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({ id: "user:demo", fingerprint: "fingerprint-one", graph_generation: "first", request_id: request.mock.calls[0][0].request_id });
+      finish({ result: "old result" });
+      await expect(pending).rejects.toThrow();
+      await expect(call(handles[0])).rejects.toThrow("no longer active");
+      request.mockResolvedValueOnce({ result: "new result" });
+      const controller = new AbortController();
+      await expect(call(handles[1], controller.signal)).resolves.toBe("new result");
+      expect(request.mock.calls[1][0]).toMatchObject({ graph_generation: "second" });
+      expect(request.mock.calls[1][0].request_id).not.toBe(request.mock.calls[0][0].request_id);
+      controller.abort();
+      expect(cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      await runtime.sync([]);
+    }
   });
-
 
   it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {
     let release!: () => void;
