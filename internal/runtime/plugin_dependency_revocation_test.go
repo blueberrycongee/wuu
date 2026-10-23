@@ -28,7 +28,7 @@ func TestDependencyRevocationReachesPinnedSkillCatalogs(t *testing.T) {
 	cfg := config.Config{DefaultProvider: "test", Providers: map[string]config.ProviderConfig{
 		"test": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKeyEnv: "TEST_WUU_KEY", Model: "test-model"},
 	}}
-	s, err := NewSession(Options{RootDir: root, HomeDir: home, ConfigPath: filepath.Join(root, ".wuu.json"), Config: cfg})
+	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})
 	if err != nil {
 		t.Fatal(err)
 	}

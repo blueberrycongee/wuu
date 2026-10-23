@@ -251,9 +251,8 @@ func TestNewSessionStartsLegacyAgentControlQueue(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -334,9 +333,8 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -623,9 +621,8 @@ func TestNewSessionUsesUserStateNotWorkspaceDotWuu(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -680,9 +677,8 @@ func TestNewSessionKeepsGitContextOutOfBaseSystemPrompt(t *testing.T) {
 	writeSessionTestFile(t, filepath.Join(root, "changed.txt"), "dirty\n")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -772,10 +768,9 @@ func TestApplyGeneralConfigRefreshesPromptAndGitAttribution(t *testing.T) {
 		},
 	}
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     baseConfig,
+		RootDir: root,
+		HomeDir: home,
+		Config:  baseConfig,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -894,10 +889,9 @@ Brainstorm options.
 	}
 	grantSessionTestPlugin(t, &cfg, root, filepath.Join(home, "state"), "compose-kit")
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     cfg,
+		RootDir: root,
+		HomeDir: home,
+		Config:  cfg,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -1002,10 +996,9 @@ Review the change.
 	}
 	grantSessionTestPlugin(t, &cfg, root, filepath.Join(home, "state"), "codex-kit")
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     cfg,
+		RootDir: root,
+		HomeDir: home,
+		Config:  cfg,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -1149,10 +1142,9 @@ func TestNewSessionWiresPluginHooks(t *testing.T) {
 	}
 	grantSessionTestPlugin(t, &cfg, root, filepath.Join(home, "state"), "hook-kit")
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     cfg,
+		RootDir: root,
+		HomeDir: home,
+		Config:  cfg,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -1218,9 +1210,8 @@ func TestNewThreadRuntimeOrdinarySpawnIsMemoryless(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -1268,9 +1259,8 @@ func TestNewThreadRuntimePropagatesQueuedSpawnRestoreFailure(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -1320,9 +1310,8 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -1454,9 +1443,8 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 			t.Setenv("TEST_ANTHROPIC_KEY", "abc")
 
 			rt, err := NewSession(Options{
-				RootDir:    root,
-				HomeDir:    home,
-				ConfigPath: filepath.Join(root, ".wuu.json"),
+				RootDir: root,
+				HomeDir: home,
 				Config: config.Config{
 					DefaultProvider: "openai",
 					Providers: map[string]config.ProviderConfig{
@@ -1562,9 +1550,8 @@ func TestNewThreadRuntimeLocalWorkerDoesNotTeachTerminalPaths(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "ollama",
 			Providers: map[string]config.ProviderConfig{
@@ -1651,9 +1638,8 @@ func TestNewSessionResolvesConfiguredVariantOptions(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "xiaomi",
 			Providers: map[string]config.ProviderConfig{
@@ -1695,9 +1681,8 @@ func TestNewSessionUsesConfiguredModelLimitForContextWindow(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -1741,9 +1726,8 @@ func TestNewSessionUnknownModelDisablesProactiveContextWindow(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -1776,9 +1760,8 @@ func TestNewSessionUsesCatalogModelAPIIDAndOptions(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1820,9 +1803,8 @@ func TestNewSessionAutoUsesNativeDeferredForFirstPartyAnthropic(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "anthropic",
 			Providers: map[string]config.ProviderConfig{
@@ -1855,9 +1837,8 @@ func TestNewSessionAutoUsesNativeDeferredForFirstPartyOpenAIResponses(t *testing
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1894,9 +1875,8 @@ func TestReconfigureToolLoadingClearsNativeDiscoveryForCompatibleProvider(t *tes
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1938,9 +1918,8 @@ func TestNewSessionAutoUsesClientDiscoveryForUnsupportedFirstPartyOpenAIResponse
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1986,9 +1965,8 @@ func TestNewSessionAutoProgressivelyLoadsCompatibleOpenAIResponses(t *testing.T)
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "compatible",
 			Providers: map[string]config.ProviderConfig{
@@ -2032,9 +2010,8 @@ func TestNewSessionAllowsCompatibleEndpointToOptIntoNativeDeferred(t *testing.T)
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "anthropic",
 			Providers: map[string]config.ProviderConfig{
@@ -2065,9 +2042,8 @@ func TestNewSessionAllowsCompatibleOpenAIResponsesToOptIntoNativeDeferred(t *tes
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "compatible",
 			Providers: map[string]config.ProviderConfig{
@@ -2122,9 +2098,8 @@ func TestNewSessionExplicitNativeFallsBackToClientForUnsupportedOpenAIResponsesM
 	defer restore()
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "compatible",
 			Providers: map[string]config.ProviderConfig{
@@ -2191,9 +2166,8 @@ func TestNewSessionTreatsRetiredWuuToolSearchConfigAsAuto(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "generic",
 			Providers: map[string]config.ProviderConfig{
@@ -2240,9 +2214,8 @@ func TestNewSessionFlattensToolSurfaceWhenToolLoadingFlat(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "generic",
 			Providers: map[string]config.ProviderConfig{
@@ -2275,9 +2248,8 @@ func TestNewSessionResolvesRoleModelSelections(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -2335,9 +2307,8 @@ func TestNewSessionAppliesPermissionBoundary(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -2361,7 +2332,7 @@ func TestNewSessionAppliesPermissionBoundary(t *testing.T) {
 		Name:      "write_file",
 		Arguments: `{"path":"blocked.txt","content":"nope"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "error_kind=boundary_denied") {
+	if err == nil || !strings.Contains(err.Error(), "error_kind=authorization_denied") {
 		t.Fatalf("expected read-only runtime boundary, got %v", err)
 	}
 }
@@ -2373,9 +2344,8 @@ func TestNewThreadRuntimeWorkerInheritsCurrentPermissionBoundary(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -2435,7 +2405,7 @@ func TestNewThreadRuntimeWorkerInheritsCurrentPermissionBoundary(t *testing.T) {
 		joined.WriteByte('\n')
 	}
 	content := joined.String()
-	if !strings.Contains(content, "boundary_denied") ||
+	if !strings.Contains(content, "authorization_denied") ||
 		!strings.Contains(content, "this agent is read-only") {
 		t.Fatalf("worker did not inherit read-only permission boundary:\n%s", content)
 	}
@@ -2456,9 +2426,8 @@ func TestThreadWorkerWakeAppliesCurrentPermissionBoundary(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -2539,7 +2508,7 @@ func TestThreadWorkerWakeAppliesCurrentPermissionBoundary(t *testing.T) {
 		joined.WriteByte('\n')
 	}
 	content := joined.String()
-	if !strings.Contains(content, "boundary_denied") ||
+	if !strings.Contains(content, "authorization_denied") ||
 		!strings.Contains(content, "this agent is read-only") {
 		t.Fatalf("woken worker kept its spawn-time writable boundary:\n%s", content)
 	}
@@ -2997,9 +2966,8 @@ func TestNewThreadRuntimeCreatesIsolatedMutableRuntime(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -3068,9 +3036,8 @@ func TestNewSessionAutoUsesNativeDeferredForKimiK3(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
