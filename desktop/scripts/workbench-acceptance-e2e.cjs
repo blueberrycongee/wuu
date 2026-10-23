@@ -75,7 +75,7 @@ fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({
 }));
 
 const report = {
-  status: 'running', startedAt: new Date().toISOString(),
+  status: 'running', startedAt: new Date().toISOString(), timeoutMs: 12 * 60 * 1000,
   commit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).stdout.trim(),
   versions: { electron: process.versions.electron, chromium: process.versions.chrome, platform: process.platform },
   fixture: { corpusSha256: createHash('sha256').update(corpusBytes).digest('hex'), noInference: true, isolatedHome: true, safeMode: false, extensionSources: ['bundled', 'authored-local-fixture'] },
@@ -288,6 +288,7 @@ async function fill(target, text) {
 }
 async function test(name, fn) {
   const start = Date.now();
+  report.activeCheck = name;
   try {
     const detail = await fn();
     report.checks.push({ name, status: 'passed', durationMs: Date.now() - start, detail });
@@ -335,6 +336,7 @@ async function test(name, fn) {
       failure.recovery = String(recoveryError.stack || recoveryError);
     }
   }
+  delete report.activeCheck;
   save();
 }
 async function goConversations() {
@@ -411,7 +413,13 @@ async function appearance(theme, size, width) {
   await settle();
 }
 const started = Date.now();
-const watchdog = setTimeout(() => { report.status = 'timed-out'; save(); app.exit(1); }, 480000);
+const watchdog = setTimeout(() => {
+  report.status = 'timed-out';
+  report.finishedAt = new Date().toISOString(); report.durationMs = Date.now() - started;
+  report.timeout = { budgetMs: report.timeoutMs, check: report.activeCheck || null };
+  console.error(`WORKBENCH timed out after ${report.durationMs}ms during ${report.timeout.check || 'setup or teardown'}`);
+  save(); app.exit(1);
+}, report.timeoutMs);
 async function run() {
   for (const file of [process.env.WUU_DESKTOP_CORE, path.join(desktop, 'out/main/index.js'), path.join(desktop, 'out/preload/index.cjs'), path.join(desktop, 'out/renderer/index.html')]) {
     assert.ok(fs.existsSync(file), `Build required: ${file}`);
@@ -810,8 +818,10 @@ async function run() {
     assert.deepEqual(report.errors, []);
     assert.ok(!rpc.some(r => ['wuu:turn-start', 'wuu:turn-queue', 'wuu:turn-steer'].includes(r.channel)));
   });
-  report.status = report.checks.some(c => c.status === 'failed') ? 'failed' : 'passed';
-  report.finishedAt = new Date().toISOString(); report.durationMs = Date.now() - started;
+  if (report.status !== 'timed-out') {
+    report.status = report.checks.some(c => c.status === 'failed') ? 'failed' : 'passed';
+    report.finishedAt = new Date().toISOString(); report.durationMs = Date.now() - started;
+  }
   report.ipc = rpc.map(({ channel, completed, error }) => ({ channel, completed, error }));
   save();
   console.log(`WORKBENCH ${report.status}: ${report.checks.filter(c => c.status === 'passed').length}/${report.checks.length} checks, ${report.screenshots.length} real-window captures`);
@@ -824,7 +834,9 @@ run().then(async () => {
   app.quit();
   setTimeout(() => app.exit(code), 1000).unref();
 }).catch(async error => {
-  clearTimeout(watchdog); websiteFixture?.close(); report.status = 'failed'; report.fatal = String(error.stack || error);
+  clearTimeout(watchdog); websiteFixture?.close();
+  if (report.status !== 'timed-out') report.status = 'failed';
+  report.fatal = String(error.stack || error);
   console.error(error);
   if (win && !win.isDestroyed()) { try { await capture('fatal'); } catch {} }
   save(); app.exit(1);

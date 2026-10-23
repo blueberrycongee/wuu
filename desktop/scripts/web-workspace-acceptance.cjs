@@ -1003,18 +1003,31 @@ async function runWebsiteAcceptance(h, fixture) {
     report.actions.push({ label: 'restore-independent-synthetic-cookie', setupOnly: true, journey, reason: 'The earlier cookie journey did not pass', atMs: Date.now() - started }); save();
   }
   const testNative = (name, action) => test(name, async () => {
+    let actionFailed = false;
     try {
       if (independentFixtures) await ensureIndependentFixtures(name);
       return await action();
     }
     catch (error) {
+      actionFailed = true;
       try { await capture(`failure-${name}`); } catch {}
       // Keep the original failure, then dismiss only this fixture's popups.
-      for (const popup of BrowserWindow.getAllWindows()) {
-        if (popup !== win && (popup.webContents.getURL().startsWith(origin) || popup.webContents.getURL() === 'about:blank')) popup.close();
+      try {
+        for (const popup of BrowserWindow.getAllWindows()) {
+          if (popup !== win && (popup.webContents.getURL().startsWith(origin) || popup.webContents.getURL() === 'about:blank')) popup.close();
+        }
+        win.focus();
+      } catch (recoveryError) {
+        report.errors.push({ kind: 'website-recovery', journey: name, message: String(recoveryError.stack || recoveryError) });
       }
-      win.focus(); throw error;
-    } finally { await evaluate(() => window.__wuuMascotAcceptance?.cleanup()); }
+      throw error;
+    } finally {
+      try { await evaluate(() => window.__wuuMascotAcceptance?.cleanup()); }
+      catch (cleanupError) {
+        if (!actionFailed) throw cleanupError;
+        report.errors.push({ kind: 'website-cleanup', journey: name, message: String(cleanupError.stack || cleanupError) });
+      }
+    }
   });
   let alphaID, savedOrder;
 

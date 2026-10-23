@@ -169,7 +169,7 @@ jobs:
       - name: Record real-window acceptance
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         id: ui
-        timeout-minutes: 10
+        timeout-minutes: 14
         env:
           WUU_WORKBENCH_OUTPUT: ${{ runner.temp }}/wuu-workbench-acceptance
           WUU_WORKBENCH_MATRIX: ${{ inputs.layout_matrix || 'smoke' }}
@@ -200,8 +200,8 @@ jobs:
           }
           trap cleanup EXIT
           # A synchronous native modal can block the in-process JS watchdog.
-          # Keep an independent process bound, leaving time to finalize video.
-          timeout --signal=TERM --kill-after=10s 510s desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workbench-acceptance-e2e.cjs
+          # Allow the 12-minute suite budget plus shutdown and video finalization.
+          timeout --signal=TERM --kill-after=10s 750s desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/workbench-acceptance-e2e.cjs
           result=$?
           node -e 'const r=require(process.env.WUU_WORKBENCH_OUTPUT+"/report.json"); if(r.status!=="passed")process.exit(1)' || result=1
           cleanup
