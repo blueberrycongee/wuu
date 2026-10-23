@@ -377,6 +377,7 @@ async function runWebsiteAcceptance(h, fixture) {
       await focusAddress(`${label}-return-to-browser-chrome`);
     }
     await waitFor(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded !== 'true');
+    await until(() => !chromeView('ribbon')?.getVisible(), `${label}: native rail finishes dismissal`, 4000);
     if (wc) await until(() => !wc.isDestroyed() && win.contentView.children.some(view => view.webContents === wc && view.getVisible()), `${label}: leaving rail restores the same native page`);
   }
   async function focusAddress(label) {
@@ -1189,13 +1190,15 @@ async function runWebsiteAcceptance(h, fixture) {
       assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Compact hover leaves the page viewport unchanged');
       await expandTabRail(siteIDs.get('Fixture Beta'));
       vertical.expanded = await verticalTabGeometry(true);
-      await liveChrome('ribbon', nativeView('/alpha').webContents, 'keyboard-opened rail');
       assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Keyboard expansion does not resize the native website');
       assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Keyboard expansion leaves the page viewport unchanged');
       await until(() => evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, siteIDs.get('Fixture Beta')), 'Hovered native tab exposes its close control after its reveal transition', 4000);
       await capture('vertical-left-tabs-with-hover-close');
-      await leaveRail();
-      await until(() => nativeView('/alpha')?.getVisible() && !chromeView('ribbon')?.getVisible(), 'Pointer leave dismisses chrome while retaining the same live page');
+      await leaveRail(false);
+      await liveChrome('ribbon', nativeView('/alpha').webContents, 'keyboard-retained rail after pointer leave');
+      assert.ok(chromeView('ribbon').webContents.isFocused(), 'Pointer departure preserves keyboard ownership of the expanded rail');
+      await finishRailInteraction(nativeView('/alpha').webContents, 'expanded-tab-geometry');
+      await until(() => nativeView('/alpha')?.getVisible() && !chromeView('ribbon')?.getVisible(), 'Explicit browser focus dismisses keyboard chrome while retaining the same live page');
       vertical.restored = await verticalTabGeometry();
       await capture('collapsed-left-tabs-unchanged-web-viewport');
       return { alphaID, betaID: siteIDs.get('Fixture Beta'), options, tabs: (await readSite()).tabs, vertical };
