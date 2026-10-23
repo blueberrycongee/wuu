@@ -93,8 +93,8 @@ func (s *Store) acquire(ctx context.Context) (*storelock.Lock, error) {
 }
 
 func (s *Store) Read(ctx context.Context, q Query) (View, error) {
-	if q.Namespace == "" {
-		return View{}, fmt.Errorf("%w: namespace is required", ErrInvalid)
+	if err := validateQuery(q); err != nil {
+		return View{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -18,6 +18,9 @@ import (
 
 const ServiceName = "state.documents"
 
+// MaxReadLimit bounds an explicitly paged read; zero retains legacy full scans.
+const MaxReadLimit = 10000
+
 var (
 	ErrConflict          = errors.New("store revision conflict")
 	ErrOperationConflict = errors.New("operation ID already has different intent")
@@ -37,17 +40,73 @@ type Document struct {
 	Value     json.RawMessage `json:"value"`
 }
 
+// Query intersects namespace, prefix, explicit keys, and the [Start, End) range.
+// Keys nil selects all keys; an empty slice selects none. Keys use UTF-8 byte
+// order. Limit zero is unbounded; positive limits cannot exceed MaxReadLimit.
+// Cursor is an exclusive key in the selected direction and requires AtRevision.
+// Continue with the same selector and View.Revision; any intervening commit
+// returns ErrConflict, so callers must restart a pure read from its first page.
 type Query struct {
-	Namespace string   `json:"namespace"`
-	Prefix    string   `json:"prefix,omitempty"`
-	Keys      []string `json:"keys,omitzero"`
+	Namespace  string    `json:"namespace"`
+	Prefix     string    `json:"prefix,omitempty"`
+	Keys       []string  `json:"keys,omitzero"`
+	Start      string    `json:"start,omitempty"`
+	End        string    `json:"end,omitempty"`
+	Reverse    bool      `json:"reverse,omitempty"`
+	Limit      int       `json:"limit,omitempty"`
+	Cursor     string    `json:"cursor,omitempty"`
+	AtRevision *Revision `json:"at_revision,string,omitempty"`
 }
 
-// View is one consistent read, ordered by key. A transaction using its revision
-// fails if any namespace changed since the read, including newly inserted keys.
+// View is one consistent read, ordered by key (descending with Reverse).
+// NextCursor is the last returned key only when more matching keys exist.
+// Revisions compare the entire store, including changes in other namespaces.
 type View struct {
-	Revision  Revision   `json:"revision,string"`
-	Documents []Document `json:"documents"`
+	Revision   Revision   `json:"revision,string"`
+	Documents  []Document `json:"documents"`
+	NextCursor string     `json:"next_cursor,omitempty"`
+}
+
+func validateQuery(q Query) error {
+	if strings.TrimSpace(q.Namespace) == "" || q.Limit < 0 || q.Limit > MaxReadLimit {
+		return fmt.Errorf("%w: namespace and a limit between zero and %d are required", ErrInvalid, MaxReadLimit)
+	}
+	if q.End != "" && q.Start > q.End {
+		return fmt.Errorf("%w: start must not exceed end", ErrInvalid)
+	}
+	if q.Cursor != "" && q.AtRevision == nil {
+		return fmt.Errorf("%w: cursor requires at_revision", ErrInvalid)
+	}
+	return nil
+}
+
+// keyBounds combines prefix and range without turning prefix characters into
+// SQL patterns. The upper bound may be non-UTF-8 internally; ordering is bytes.
+func keyBounds(q Query) (string, string) {
+	start, end := q.Start, q.End
+	if q.Prefix > start {
+		start = q.Prefix
+	}
+	if q.Prefix != "" {
+		upper := []byte(q.Prefix)
+		for i := len(upper) - 1; i >= 0; i-- {
+			if upper[i] != 255 {
+				upper[i]++
+				if end == "" || string(upper[:i+1]) < end {
+					end = string(upper[:i+1])
+				}
+				break
+			}
+		}
+	}
+	return start, end
+}
+
+func finishPage(view *View, q Query) {
+	if q.Limit > 0 && len(view.Documents) > q.Limit {
+		view.Documents = view.Documents[:q.Limit]
+		view.NextCursor = view.Documents[len(view.Documents)-1].Key
+	}
 }
 
 type Write struct {
@@ -140,7 +199,7 @@ func sortDocuments(docs []Document) {
 }
 
 func matchesQuery(d Document, q Query) bool {
-	if d.Namespace != q.Namespace || !strings.HasPrefix(d.Key, q.Prefix) {
+	if d.Namespace != q.Namespace || !strings.HasPrefix(d.Key, q.Prefix) || d.Key < q.Start || (q.End != "" && d.Key >= q.End) || (q.Cursor != "" && ((!q.Reverse && d.Key <= q.Cursor) || (q.Reverse && d.Key >= q.Cursor))) {
 		return false
 	}
 	if q.Keys == nil {

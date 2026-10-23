@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 )
 
 // Tx buffers domain writes against one store revision. It owns no backend lock
@@ -94,41 +95,76 @@ func Update(ctx context.Context, store Documents, body func(*Tx) error) error {
 }
 
 func (tx *Tx) Read(query Query) ([]Document, error) {
+	view, err := tx.ReadView(query)
+	return view.Documents, err
+}
+
+// ReadView applies buffered writes before key ordering and pagination. Keep the
+// same buffered writes while walking pages. Every read is pinned to the first
+// revision observed by this transaction, including reads of other namespaces.
+func (tx *Tx) ReadView(query Query) (View, error) {
 	if tx.err != nil {
-		return nil, tx.err
+		return View{}, tx.err
 	}
-	view, err := tx.store.Read(tx.ctx, query)
-	if err != nil {
+	if err := validateQuery(query); err != nil {
 		tx.err = err
-		return nil, err
+		return View{}, err
 	}
-	if tx.revision == nil {
-		tx.revision = &view.Revision
-	} else if *tx.revision != view.Revision {
+	if tx.revision != nil && query.AtRevision != nil && *tx.revision != *query.AtRevision {
 		tx.err = ErrConflict
-		return nil, tx.err
+		return View{}, tx.err
 	}
-	documents := make(map[documentKey]Document, len(view.Documents))
-	for _, document := range view.Documents {
-		documents[documentKey{document.Namespace, document.Key}] = document
+	request := query
+	if tx.revision != nil {
+		request.AtRevision = tx.revision
+	}
+	documents := make(map[documentKey]Document)
+	surviving := 0
+	for {
+		if query.Limit > 0 {
+			request.Limit = min(query.Limit+1-surviving, MaxReadLimit)
+		}
+		view, err := tx.store.Read(tx.ctx, request)
+		if err != nil {
+			tx.err = err
+			return View{}, err
+		}
+		if tx.revision == nil {
+			tx.revision = &view.Revision
+		} else if *tx.revision != view.Revision {
+			tx.err = ErrConflict
+			return View{}, tx.err
+		}
+		for _, d := range view.Documents {
+			key := documentKey{d.Namespace, d.Key}
+			if write, ok := tx.writes[key]; ok && write.Delete {
+				continue
+			}
+			documents[key] = d
+			surviving++
+		}
+		if query.Limit == 0 || surviving > query.Limit || view.NextCursor == "" {
+			break
+		}
+		request.Cursor = view.NextCursor
+		request.AtRevision = tx.revision
 	}
 	for key, write := range tx.writes {
-		document := Document{Namespace: write.Namespace, Key: write.Key, Value: write.Value}
-		if !matchesQuery(document, query) {
-			continue
-		}
-		if write.Delete {
-			delete(documents, key)
-		} else {
-			documents[key] = document
+		d := Document{Namespace: write.Namespace, Key: write.Key, Value: write.Value}
+		if !write.Delete && matchesQuery(d, query) {
+			documents[key] = d
 		}
 	}
-	result := make([]Document, 0, len(documents))
-	for _, document := range documents {
-		result = append(result, document)
+	view := View{Revision: *tx.revision, Documents: make([]Document, 0, len(documents))}
+	for _, d := range documents {
+		view.Documents = append(view.Documents, d)
 	}
-	sortDocuments(result)
-	return result, nil
+	sortDocuments(view.Documents)
+	if query.Reverse {
+		slices.Reverse(view.Documents)
+	}
+	finishPage(&view, query)
+	return view, nil
 }
 
 func (tx *Tx) Get(namespace, key string, target any) (bool, error) {

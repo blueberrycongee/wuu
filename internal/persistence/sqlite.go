@@ -66,7 +66,48 @@ func (b *sqliteBackend) read(ctx context.Context, q Query) (View, error) {
 	if err := b.db.QueryRowContext(ctx, `SELECT revision FROM state_metadata WHERE id = 1`).Scan(&view.Revision); err != nil {
 		return View{}, err
 	}
-	rows, err := b.db.QueryContext(ctx, `SELECT key, value FROM state_documents WHERE namespace = ? ORDER BY key`, q.Namespace)
+	if q.AtRevision != nil && *q.AtRevision != view.Revision {
+		return View{}, ErrConflict
+	}
+	if q.Keys != nil && len(q.Keys) == 0 {
+		return view, nil
+	}
+	statement := `SELECT key, value FROM state_documents WHERE namespace = ?`
+	args := []any{q.Namespace}
+	start, end := keyBounds(q)
+	if start != "" {
+		statement += ` AND key >= ?`
+		args = append(args, start)
+	}
+	if end != "" {
+		statement += ` AND key < ?`
+		args = append(args, end)
+	}
+	if q.Cursor != "" {
+		if q.Reverse {
+			statement += ` AND key < ?`
+		} else {
+			statement += ` AND key > ?`
+		}
+		args = append(args, q.Cursor)
+	}
+	if q.Keys != nil {
+		keys, err := json.Marshal(q.Keys)
+		if err != nil {
+			return View{}, err
+		}
+		statement += ` AND key IN (SELECT value FROM json_each(?))`
+		args = append(args, string(keys))
+	}
+	statement += ` ORDER BY key`
+	if q.Reverse {
+		statement += ` DESC`
+	}
+	if q.Limit > 0 {
+		statement += ` LIMIT ?`
+		args = append(args, q.Limit+1)
+	}
+	rows, err := b.db.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return View{}, err
 	}
@@ -76,10 +117,9 @@ func (b *sqliteBackend) read(ctx context.Context, q Query) (View, error) {
 		if err := rows.Scan(&d.Key, &d.Value); err != nil {
 			return View{}, err
 		}
-		if matchesQuery(d, q) {
-			view.Documents = append(view.Documents, d)
-		}
+		view.Documents = append(view.Documents, d)
 	}
+	finishPage(&view, q)
 	return view, rows.Err()
 }
 

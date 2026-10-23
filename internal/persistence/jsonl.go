@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
@@ -24,6 +25,7 @@ type jsonlBackend struct {
 	initialized bool
 	revision    Revision
 	documents   map[documentKey]Document
+	keys        map[string][]string
 	receipts    map[string]CommitRecord
 	ordered     []CommitRecord
 }
@@ -44,7 +46,7 @@ func openJSONL(path string) (*jsonlBackend, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &jsonlBackend{file: file, documents: make(map[documentKey]Document), receipts: make(map[string]CommitRecord), ordered: []CommitRecord{}}
+	b := &jsonlBackend{file: file, keys: make(map[string][]string), documents: make(map[documentKey]Document), receipts: make(map[string]CommitRecord), ordered: []CommitRecord{}}
 	if err := b.refresh(); err != nil {
 		file.Close()
 		return nil, err
@@ -120,7 +122,7 @@ func (b *jsonlBackend) apply(record journalRecord) error {
 		}
 		b.revision = s.Revision
 		for _, d := range s.Documents {
-			b.documents[documentKey{d.Namespace, d.Key}] = d
+			b.putDocument(d)
 		}
 		for _, r := range s.Receipts {
 			b.receipts[r.ID] = r
@@ -141,8 +143,13 @@ func (b *jsonlBackend) apply(record journalRecord) error {
 			key := documentKey{w.Namespace, w.Key}
 			if w.Delete {
 				delete(b.documents, key)
+				keys := b.keys[w.Namespace]
+				i := sort.SearchStrings(keys, w.Key)
+				if i < len(keys) && keys[i] == w.Key {
+					b.keys[w.Namespace] = append(keys[:i], keys[i+1:]...)
+				}
 			} else {
-				b.documents[key] = Document{Namespace: w.Namespace, Key: w.Key, Value: append(json.RawMessage(nil), w.Value...)}
+				b.putDocument(Document{Namespace: w.Namespace, Key: w.Key, Value: append(json.RawMessage(nil), w.Value...)})
 			}
 		}
 		b.revision++
@@ -190,6 +197,19 @@ func (b *jsonlBackend) append(ctx context.Context, record journalRecord) error {
 	return nil
 }
 
+func (b *jsonlBackend) putDocument(d Document) {
+	key := documentKey{d.Namespace, d.Key}
+	if _, exists := b.documents[key]; !exists {
+		keys := b.keys[d.Namespace]
+		i := sort.SearchStrings(keys, d.Key)
+		keys = append(keys, "")
+		copy(keys[i+1:], keys[i:])
+		keys[i] = d.Key
+		b.keys[d.Namespace] = keys
+	}
+	b.documents[key] = d
+}
+
 func (b *jsonlBackend) read(ctx context.Context, q Query) (View, error) {
 	if err := ctx.Err(); err != nil {
 		return View{}, err
@@ -201,13 +221,62 @@ func (b *jsonlBackend) read(ctx context.Context, q Query) (View, error) {
 		return View{}, ErrCorrupt
 	}
 	view := View{Revision: b.revision, Documents: []Document{}}
-	for _, d := range b.documents {
-		if matchesQuery(d, q) {
-			d.Value = append(json.RawMessage(nil), d.Value...)
-			view.Documents = append(view.Documents, d)
+	if q.AtRevision != nil && *q.AtRevision != b.revision {
+		return View{}, ErrConflict
+	}
+	keys := b.keys[q.Namespace]
+	if q.Keys != nil {
+		keys = append([]string{}, q.Keys...)
+		sort.Strings(keys)
+	}
+	start, end := keyBounds(q)
+	lo := sort.SearchStrings(keys, start)
+	hi := len(keys)
+	if end != "" {
+		hi = sort.SearchStrings(keys, end)
+	}
+	if q.Cursor != "" {
+		if q.Reverse {
+			cursor := sort.SearchStrings(keys, q.Cursor)
+			if cursor < hi {
+				hi = cursor
+			}
+		} else {
+			cursor := sort.Search(len(keys), func(i int) bool { return keys[i] > q.Cursor })
+			if cursor > lo {
+				lo = cursor
+			}
 		}
 	}
-	sortDocuments(view.Documents)
+	for i := 0; i < hi-lo; i++ {
+		if err := ctx.Err(); err != nil {
+			return View{}, err
+		}
+		at := lo + i
+		if q.Reverse {
+			at = hi - 1 - i
+		}
+		key := keys[at]
+		if i > 0 {
+			previous := at - 1
+			if q.Reverse {
+				previous = at + 1
+			}
+			if keys[previous] == key {
+				continue
+			}
+		}
+		d, exists := b.documents[documentKey{q.Namespace, key}]
+		if !exists {
+			continue
+		}
+		d.Value = append(json.RawMessage(nil), d.Value...)
+		view.Documents = append(view.Documents, d)
+		if q.Limit > 0 && len(view.Documents) > q.Limit {
+			break
+		}
+	}
+	finishPage(&view, q)
 	return view, nil
 }
 

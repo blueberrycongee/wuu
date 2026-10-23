@@ -13,10 +13,27 @@ export interface StateQuery {
   readonly prefix?: string;
   /** Omit to scan the namespace; an empty array selects no keys. */
   readonly keys?: readonly string[];
+  /** Inclusive lower key bound; selectors intersect in UTF-8 byte order. */
+  readonly start?: string;
+  /** Exclusive upper key bound. */
+  readonly end?: string;
+  /** Descending key order; defaults to ascending. */
+  readonly reverse?: boolean;
+  /** 1..10000 bounds page size. Omitted or zero retains an unbounded read. */
+  readonly limit?: number;
+  /** Exclusive last key in this direction; requires at_revision. */
+  readonly cursor?: string;
+  /** Any intervening store commit rejects the read with state_conflict. */
+  readonly at_revision?: StateRevision;
 }
 export interface StateView<Value = unknown> {
   readonly revision: StateRevision;
   readonly documents: readonly StateDocument<Value>[];
+  /** Present only when more keys match. Continue with unchanged selectors,
+   * cursor=next_cursor and at_revision=revision. This is not a saved snapshot:
+   * after state_conflict, restart a pure read from the first page.
+   */
+  readonly next_cursor?: string;
 }
 export type StateWrite<Value = unknown> =
   | (StateDocument<Value> & { readonly delete?: false })
