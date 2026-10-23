@@ -55,7 +55,7 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					peer := New(rt, &lockedBuffer{})
+					peer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 					defer peer.Close()
 					start := func(prompt string) RunStartResult {
 						var result RunStartResult
