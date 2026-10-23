@@ -248,7 +248,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       case "composer.submit": {
         if (this.submitting) throw new Error("A composer submission is already pending");
         const text = this.draft;
-        const draftRevision = this.draftRevision;
+        let draftRevision = this.draftRevision;
         if (!text.trim()) throw new Error("The composer draft is empty");
         const mode = (input as ApplicationActionMapV1["composer.submit"]["input"]).mode ?? "send";
         let thread = activeThreadForState(this.state);
@@ -260,7 +260,13 @@ export class ApplicationController implements ApplicationServiceV1 {
             const created = await window.wuu.startThread(undefined, context);
             signal?.throwIfAborted();
             thread = created.thread;
+            const currentDraft = this.draft;
+            const unchanged = this.draftRevision === draftRevision;
             this.adoptThread(thread, true);
+            // Moving a draft into its first thread must not acknowledge delivery
+            // or discard text typed while that thread was being created.
+            this.setDraft(currentDraft);
+            if (unchanged) draftRevision = this.draftRevision;
           }
           const clientId = crypto.randomUUID();
           signal?.throwIfAborted();

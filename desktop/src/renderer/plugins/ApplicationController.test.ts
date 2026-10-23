@@ -39,6 +39,33 @@ describe("shared application state", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(controller.getSnapshot().composer.draftText).toBe("Keep me");
   });
+
+  it("preserves the draft when creating a thread succeeds but submitting fails", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const send = vi.fn(async () => { throw new Error("uncertain delivery"); });
+    window.wuu = { startThread: vi.fn(async () => ({ thread: { id: "created", cwd: context.cwd, turns: [], status: "idle" } })), startTurn: send } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context });
+    await controller.invoke("composer.set-draft", { text: "Keep the first message" });
+    await expect(controller.invoke("composer.submit", {})).rejects.toThrow("uncertain delivery");
+    expect(controller.getSnapshot().conversation.threadId).toBe("created");
+    expect(controller.getSnapshot().composer.draftText).toBe("Keep the first message");
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps edits made during thread creation after the original draft is submitted", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    let created!: (value: unknown) => void;
+    const send = vi.fn(async () => ({ turn: { id: "sent", status: "in_progress", started_at: "2026-10-24T00:00:00Z", items: [] } }));
+    window.wuu = { startThread: vi.fn(() => new Promise(resolve => { created = resolve; })), startTurn: send } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context });
+    await controller.invoke("composer.set-draft", { text: "Original" });
+    const submitting = controller.invoke("composer.submit", {});
+    await controller.invoke("composer.set-draft", { text: "Next message" });
+    created({ thread: { id: "created", cwd: context.cwd, preview: "", updated_at: "2026-10-24T00:00:00Z", turns: [], status: "idle" } });
+    await submitting;
+    expect(send).toHaveBeenCalledWith("created", "Original", undefined, undefined, undefined, undefined, undefined, context, expect.any(String));
+    expect(controller.getSnapshot().composer.draftText).toBe("Next message");
+  });
   it("selects the target tab and restores its saved draft through the public action", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const first = { id: "first", cwd: context.cwd, turns: [], status: "idle" } as never;
