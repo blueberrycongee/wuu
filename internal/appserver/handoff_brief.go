@@ -17,12 +17,12 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 	if params.ContextSource != pluginhost.SessionContextSourceSeed || params.Seed == nil || strings.TrimSpace(params.Seed.Body) != "" {
 		return params, nil
 	}
-	if s == nil || s.rt == nil || s.rt.StreamRunner == nil {
+	if s == nil {
 		return params, errors.New("handoff brief generation requires a runtime")
 	}
-	provider, ok := s.rt.StreamRunner.CompactionRegistry.Resolve(nil).(agent.HandoffBriefProvider)
-	if !ok || provider == nil {
-		return params, errors.New("handoff brief generator is unavailable")
+	provider, model, fork, err := s.rt.HandoffBriefForState(binding)
+	if err != nil {
+		return params, err
 	}
 	sourceID := strings.TrimSpace(params.Seed.Source.SessionID)
 	if sourceID == "" {
@@ -55,7 +55,7 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 	if params.Launch != nil {
 		intent = strings.TrimSpace(params.Launch.Intent)
 	}
-	plan, err := provider.PlanHandoffBrief(ctx, s.rt.Model, messages, previous, intent, sourceID, params.Seed.Source.ThroughSeq)
+	plan, err := provider.PlanHandoffBrief(ctx, model, messages, previous, intent, sourceID, params.Seed.Source.ThroughSeq)
 	if err != nil {
 		return params, err
 	}
@@ -64,10 +64,6 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 	}
 	if plan.MaxBytes <= 0 {
 		plan.MaxBytes = 24 * 1024
-	}
-	fork := s.rt.StreamRunner.CompactionNoteFork()
-	if fork == nil {
-		return params, errors.New("handoff brief generator is unavailable")
 	}
 	result, err := fork(ctx, messages, plan)
 	if err != nil {
@@ -89,7 +85,7 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 		}
 	}
 	if strings.TrimSpace(params.Seed.Provenance.SourceModel) == "" {
-		params.Seed.Provenance.SourceModel = strings.TrimSpace(s.rt.Model)
+		params.Seed.Provenance.SourceModel = strings.TrimSpace(model)
 	}
 	return params, nil
 }

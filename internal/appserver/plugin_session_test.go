@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1075,4 +1076,91 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 			})
 		}
 	}
+}
+
+// Replacement may happen before handoff admission or while plugin planning
+// yields. Neither boundary may send an old transcript to the successor client.
+func TestHandoffBriefDoesNotCrossCapturedState(t *testing.T) {
+	for _, replaceAt := range []string{"before-admission", "during-plan"} {
+		t.Run(replaceAt, func(t *testing.T) {
+			oldClient := &fakeClient{response: providersResponse("# Original brief")}
+			newClient := &fakeClient{response: providersResponse("# Successor brief")}
+			original := newTestRuntime(t, oldClient)
+			successor := newTestRuntime(t, newClient)
+			original.Model, original.StreamRunner.Model = "original-model", "original-model"
+			successor.Model, successor.StreamRunner.Model = "successor-model", "successor-model"
+			var plannedModel string
+			successorPlans := 0
+			planner := handoffBriefPlanningProvider{plan: func(model string) { plannedModel = model }}
+			original.StreamRunner.CompactionRegistry = agent.NewCompactionRegistry()
+			original.StreamRunner.CompactionRegistry.Register(planner)
+			successor.StreamRunner.CompactionRegistry = agent.NewCompactionRegistry()
+			successor.StreamRunner.CompactionRegistry.Register(handoffBriefPlanningProvider{plan: func(string) { successorPlans++ }})
+			if _, err := original.Sessions.CreateWithMetadata("source", original.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			if err := original.Sessions.AppendHistoryRecords("source", []session.HistoryRecord{{Role: "user", Content: "ORIGINAL-TRANSCRIPT"}}); err != nil {
+				t.Fatal(err)
+			}
+			binding, err := original.RetainState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer binding.Close()
+			srv := &Server{rt: original}
+			if replaceAt == "before-admission" {
+				srv.rt = successor
+			} else {
+				// This embedded runtime replaces its root runner during the callback,
+				// matching publication's in-place client/model update after admission.
+				planner.plan = func(model string) {
+					plannedModel = model
+					original.Model = successor.Model
+					original.StreamRunner = successor.StreamRunner
+				}
+				original.StreamRunner.CompactionRegistry.Register(planner)
+			}
+			params := pluginhost.SessionCreateParams{RequestID: "captured-handoff", Visibility: pluginhost.SessionVisibilityPlugin, Provider: "fake-provider", Model: "original-model", ContextSource: pluginhost.SessionContextSourceSeed, Seed: &pluginhost.SessionContextSeed{Source: pluginhost.SessionHistorySnapshot{SessionID: "source"}}}
+			var result pluginhost.SessionCreateParams
+			if replaceAt == "before-admission" {
+				_, err = srv.createPluginSession(runtime.WithInvocationState(context.Background(), binding), "handoff-test", params)
+			} else {
+				result, err = srv.prepareHandoffSeed(binding, context.Background(), params)
+			}
+			newClient.mu.Lock()
+			newerCalls := len(newClient.requests)
+			newClient.mu.Unlock()
+			if newerCalls != 0 || successorPlans != 0 {
+				t.Fatalf("captured transcript reached successor client: calls=%d result=%+v err=%v", newerCalls, result.Seed, err)
+			}
+			oldClient.mu.Lock()
+			originalRequests := append([]providers.ChatRequest(nil), oldClient.requests...)
+			oldClient.mu.Unlock()
+			if replaceAt == "before-admission" {
+				if !errors.Is(err, runtime.ErrStateGenerationChanged) || plannedModel != "" || len(originalRequests) != 0 {
+					t.Fatalf("stale handoff was not rejected before effects: planned=%q calls=%d err=%v", plannedModel, len(originalRequests), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(originalRequests) != 1 || originalRequests[0].Model != "original-model" {
+				t.Fatalf("fork lost captured model: %+v", originalRequests)
+			}
+			if result.Seed.Body != "# Original brief" || result.Seed.Provenance.SourceModel != "original-model" || plannedModel != "original-model" {
+				t.Fatalf("mixed handoff: seed=%+v plannedModel=%q", result.Seed, plannedModel)
+			}
+		})
+	}
+}
+
+type handoffBriefPlanningProvider struct {
+	handoffBriefProvider
+	plan func(string)
+}
+
+func (p handoffBriefPlanningProvider) PlanHandoffBrief(_ context.Context, model string, _ []providers.ChatMessage, _ agent.CompactionNote, _, _ string, _ int) (agent.CompactionNotePlan, error) {
+	p.plan(model)
+	return agent.CompactionNotePlan{Prompt: "write the brief", MaxBytes: 24000}, nil
 }
