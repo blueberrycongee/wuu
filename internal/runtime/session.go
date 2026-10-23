@@ -47,6 +47,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -123,6 +124,10 @@ type Session struct {
 	Documents                persistence.Documents
 	Sessions                 *session.Store
 	nativeProviders          []NativeProviderFactory
+	credentials              credentialstore.Store
+	configClient             *config.Client
+	chatGPTManager           *siwc.Manager
+	artifactClient           *ArtifactClient
 	ProviderName             string
 	Model                    string
 	RootDir                  string
@@ -228,14 +233,21 @@ func (s *Session) MaxParallel() int {
 // generation reference after construction; a successful ThreadRuntime retains
 // its own reference. The retired-generation index belongs to the publishing
 // Session and is intentionally not shared with these independently locked shadows.
-func (s *Session) cloneForThreadModel() (*Session, error) {
+func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 	if s == nil {
 		return nil, errors.New("runtime session is required")
 	}
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
+	if len(expected) > 0 {
+		binding := expected[0]
+		if binding == nil || binding.Generation != s.pluginGeneration || binding.Sessions != s.Sessions {
+			return nil, ErrStateGenerationChanged
+		}
+	}
 	clone := &Session{
 		Documents: s.Documents, Sessions: s.Sessions, nativeProviders: s.nativeProviders,
+		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient,
 		ProviderName:                s.ProviderName,
 		Model:                       s.Model,
 		RootDir:                     s.RootDir,
@@ -396,6 +408,11 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, err
 	}
 	cfg := withDesktopExecutionDefaults(opts.Config, opts.DesktopExecutionDefaults)
+	configRoot := rootDir
+	if opts.ConfigLoadMode == ConfigLoadFile {
+		configRoot = ""
+	}
+	opts.NativeProviders = withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, configRoot, cfg)
 
 	wuuHome, err := statepath.Home(opts.HomeDir)
 	if err != nil {
@@ -420,51 +437,6 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, fmt.Errorf("resolve workspace state directory: %w", err)
 	}
 	sessionDir := statepath.SessionsDir(wuuHome)
-	permissions := config.ResolveAgentPermissions(cfg.Agent)
-
-	providerCfg, resolvedName, err := cfg.ResolveProvider(opts.ProviderName)
-	if err != nil {
-		return nil, err
-	}
-	if opts.ModelOverride != "" {
-		providerCfg.Model = opts.ModelOverride
-	}
-	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
-		ProviderName:   resolvedName,
-		ProviderConfig: providerCfg,
-		Model:          providerCfg.Model,
-		Effort:         cfg.Agent.Effort,
-		Variant:        cfg.Agent.Variant,
-	})
-	if err != nil {
-		return nil, err
-	}
-	mainRole := roleSelections.Main
-	ruleProviderName, ruleProviderCfg := mainRole.RuleProvider, mainRole.RuleProviderConfig
-	toolModeModel := mainRole.APIModel
-
-	client, clientErr := providerfactory.BuildRuntimeStreamClient(ruleProviderCfg, resolvedName)
-	if client == nil {
-		return nil, clientErr
-	}
-	var readinessIssues []ReadinessIssue
-	if clientErr != nil {
-		readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: resolvedName, Message: clientErr.Error()})
-	}
-	titleClient := providers.Client(client)
-	if !roleSelections.Title.Inherited {
-		roleClient, roleErr := providerfactory.BuildRuntimeStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
-		if roleClient == nil {
-			return nil, fmt.Errorf("build title client: %w", roleErr)
-		}
-		if roleErr != nil {
-			readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: roleSelections.Title.Provider, Message: roleErr.Error()})
-		}
-		titleClient = roleClient
-	}
-
-	providers.InitDebugLog(statepath.LogDir(wuuHome))
-	setupCatwalk(cfg)
 
 	catalogLease, catalogAcquired, err := session.TryAcquirePluginCatalogReadLease(wuuHome)
 	if err != nil {
@@ -533,6 +505,72 @@ func NewSession(opts Options) (*Session, error) {
 	if journalRuntime != nil {
 		workspaceJournal = journalRuntime.ForOwner("workspace-runtime")
 	}
+	var credentials credentialstore.Store
+	var configClient *config.Client
+	var chatGPTManager *siwc.Manager
+	var artifacts *ArtifactClient
+	if pluginKernel.selectedServices != nil {
+		credentials = pluginKernel.selectedServices.credentials
+		configClient = pluginKernel.selectedServices.config
+		chatGPTManager = pluginKernel.selectedServices.chatGPT
+		artifacts = pluginKernel.selectedServices.artifacts
+	}
+	if !safeMode {
+		if configClient == nil {
+			return nil, errors.New("selected configuration provider is unavailable")
+		}
+		view, err := configClient.Read(context.Background())
+		if err != nil {
+			return nil, fmt.Errorf("load selected configuration: %w", err)
+		}
+		cfg = withDesktopExecutionDefaults(view.Config, opts.DesktopExecutionDefaults)
+	}
+	permissions := config.ResolveAgentPermissions(cfg.Agent)
+
+	providerCfg, resolvedName, err := cfg.ResolveProvider(opts.ProviderName)
+	if err != nil {
+		return nil, err
+	}
+	if opts.ModelOverride != "" {
+		providerCfg.Model = opts.ModelOverride
+	}
+	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
+		ProviderName:   resolvedName,
+		ProviderConfig: providerCfg,
+		Model:          providerCfg.Model,
+		Effort:         cfg.Agent.Effort,
+		Variant:        cfg.Agent.Variant,
+	})
+	if err != nil {
+		return nil, err
+	}
+	mainRole := roleSelections.Main
+	ruleProviderName, ruleProviderCfg := mainRole.RuleProvider, mainRole.RuleProviderConfig
+	toolModeModel := mainRole.APIModel
+
+	client, clientErr := providerfactory.BuildRuntimeStreamClient(ruleProviderCfg, resolvedName, chatGPTManager)
+	if client == nil {
+		return nil, clientErr
+	}
+	var readinessIssues []ReadinessIssue
+	if clientErr != nil {
+		readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: resolvedName, Message: clientErr.Error()})
+	}
+	titleClient := providers.Client(client)
+	if !roleSelections.Title.Inherited {
+		roleClient, roleErr := providerfactory.BuildRuntimeStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider, chatGPTManager)
+		if roleClient == nil {
+			return nil, fmt.Errorf("build title client: %w", roleErr)
+		}
+		if roleErr != nil {
+			readinessIssues = append(readinessIssues, ReadinessIssue{Code: "credential_missing", Provider: roleSelections.Title.Provider, Message: roleErr.Error()})
+		}
+		titleClient = roleClient
+	}
+
+	providers.InitDebugLog(statepath.LogDir(wuuHome))
+	setupCatwalk(cfg)
+
 	activePlugins = availablePluginPackages(activePlugins, pluginHost)
 	systemPrompts, compactions, capabilityErr := buildPluginAgentCapabilities(context.Background(), pluginHost, resolvedName, providerCfg.Model, rootDir)
 	if capabilityErr != nil {
@@ -550,14 +588,10 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, err
 	}
 	mcpOAuth := opts.MCPOAuth
-	if mcpOAuth == nil {
-		store, err := credentialstore.NewDesktopStore()
-		if err != nil {
-			providers.DebugLogf("desktop credential store: %v", err)
-		} else {
-			mcpOAuth = mcp.NewOAuthManager(store, nil)
-		}
+	if mcpOAuth == nil && pluginKernel.selectedServices != nil {
+		mcpOAuth = pluginKernel.selectedServices.oauth
 	}
+
 	activityRegistry := activity.NewRegistry()
 	var toolExecutor agent.ToolExecutor
 	var toolkit *tools.Toolkit
@@ -571,7 +605,7 @@ func NewSession(opts Options) (*Session, error) {
 		kit.SetStateDir(workspaceStateDir)
 		kit.SetSessionStore(sessions)
 		kit.SetWorkingNotesHome(wuuHome)
-		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
+		kit.SetArtifactPublisher(NewArtifactPublisher(artifacts))
 		kit.SetWorkspaceID(workspaceID)
 		kit.SetProcessManager(processMgr)
 		kit.SetSkills(discoveredSkills)
@@ -657,7 +691,7 @@ func NewSession(opts Options) (*Session, error) {
 		}
 		workerBaseSystemPrompt := buildBaseSystemPromptContent(rootDir, sessionDate, config.WorkerSystemPrompt(), "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, "", "", discoveredSkills)
 		var werr error
-		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
+		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider, chatGPTManager)
 		if werr != nil {
 			if providerfactory.IsCredentialError(werr) {
 				workerClient = &providers.UnavailableClient{Reason: werr.Error()}
@@ -797,6 +831,7 @@ func NewSession(opts Options) (*Session, error) {
 
 	runtimeSession = &Session{
 		Documents: documents, Sessions: sessions, nativeProviders: append([]NativeProviderFactory(nil), opts.NativeProviders...),
+		credentials: credentials, configClient: configClient, chatGPTManager: chatGPTManager, artifactClient: artifacts,
 		ProviderName:                resolvedName,
 		Model:                       providerCfg.Model,
 		RootDir:                     rootDir,
@@ -914,7 +949,8 @@ func NewSession(opts Options) (*Session, error) {
 	initialHooks.Replace(hookDispatcher)
 	generationID := newPluginGenerationID(wuuHome)
 	runtimeSession.pluginGeneration = &PluginGeneration{
-		state:         pluginKernel.state,
+		state:       pluginKernel.state,
+		credentials: credentials, configClient: configClient, chatGPTManager: chatGPTManager, artifactClient: artifacts, mcpOAuth: mcpOAuth,
 		id:            generationID,
 		ownedRoots:    initialSnapshotRoots,
 		settings:      cfg,
@@ -986,6 +1022,13 @@ func (s *Session) InferenceJournalForOwner(ownerID string) providers.InferenceJo
 func (s *Session) LoadEffectiveConfig() (config.Config, string, error) {
 	if s == nil {
 		return config.Config{}, "", errors.New("runtime session is nil")
+	}
+	if s.configClient != nil {
+		view, err := s.configClient.Read(context.Background())
+		return withDesktopExecutionDefaults(view.Config, s.DesktopExecutionDefaults), s.ConfigPath, err
+	}
+	if !s.SafeMode && s.pluginGeneration != nil {
+		return config.Config{}, "", errors.New("selected configuration provider is unavailable")
 	}
 	var cfg config.Config
 	var path string
@@ -1198,7 +1241,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
 		return nil, err
 	}
-	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
+	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName, s.chatGPTManager)
 	if err != nil {
 		return nil, fmt.Errorf("build thread model client: %w", err)
 	}
@@ -1267,7 +1310,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		}
 		shadow.DeferredToolCatalogPrompt = catalog
 	}
-	workerClient, err := providerfactory.BuildStreamClient(roles.Worker.RuleProviderConfig, roles.Worker.Provider)
+	workerClient, err := providerfactory.BuildStreamClient(roles.Worker.RuleProviderConfig, roles.Worker.Provider, s.chatGPTManager)
 	if err != nil {
 		return nil, fmt.Errorf("build thread worker client: %w", err)
 	}
@@ -1381,7 +1424,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			return nil, err
 		}
 		kit.SetStateDir(stateDir)
-		kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
+		kit.SetArtifactPublisher(NewArtifactPublisher(s.artifactClient))
 		kit.SetPluginManager(s.pluginManager(generation, runPluginManagementCommand))
 		kit.SetProcessManager(threadProcessManager)
 		kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)

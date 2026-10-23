@@ -79,6 +79,17 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return epoch
 	}, host)
 	nativeConsumers := runtimeServiceConsumers(driverProfile)
+	if resolved.Includes(StateServicesConsumer) {
+		kernel.selectedServices, err = newRuntimeServices(host, wuuHome)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, consumer := range nativeConsumers {
+			if consumer.ID() == StateServicesConsumer {
+				consumer.(*runtimeServiceConsumer).cleanup = func(context.Context) error { return kernel.selectedServices.chatGPT.Close() }
+			}
+		}
+	}
 	if resolved.Includes(sessionStateConsumer) {
 		kernel.state = newRuntimeState(registry, inferenceJournalWorkspaceScope(workspaceID, projectRoot))
 		kernel.state.sessDir = statepath.SessionsDir(wuuHome)
@@ -168,6 +179,9 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	for _, id := range []string{kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer} {
 		if resolved.Includes(id) {
 			packageRequirements[id] = append(packageRequirements[id], sessionStateConsumer)
+			if resolved.Includes(StateServicesConsumer) {
+				packageRequirements[id] = append(packageRequirements[id], StateServicesConsumer)
+			}
 		}
 	}
 	host.SetPackageRequirements(packageRequirements)
@@ -217,8 +231,8 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			if kernel.state != nil {
 				handler.sessions = kernel.state.sessions
 			}
-			handler.credentials = credentialstore.NewClient(boundServiceCall(host, kernel.ID(), credentialstore.ServiceName))
-			handler.settingsClient = pluginsettings.NewClient(boundServiceCall(host, kernel.ID(), pluginsettings.ServiceName))
+			handler.credentials = credentialstore.NewClient(kernelServiceCall(host, registry, credentialstore.ServiceName))
+			handler.settingsClient = pluginsettings.NewClient(kernelServiceCall(host, registry, pluginsettings.ServiceName))
 			kernel.add(item.ID, handler)
 			onClose = handler.close
 		}

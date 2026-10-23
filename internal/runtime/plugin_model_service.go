@@ -26,7 +26,11 @@ const (
 
 func (k *kernelHostServices) bindModelSession(session *Session, host *pluginhost.Host) {
 	k.mu.Lock()
-	k.modelSession = session
+	k.modelSession = &Session{RootDir: session.RootDir, HomeDir: session.HomeDir, ConfigPath: session.ConfigPath, ConfigLoadMode: session.ConfigLoadMode, DesktopExecutionDefaults: session.DesktopExecutionDefaults, InferenceJournalRuntime: session.InferenceJournalRuntime}
+	if k.selectedServices != nil {
+		k.modelSession.configClient = k.selectedServices.config
+		k.modelSession.chatGPTManager = k.selectedServices.chatGPT
+	}
 	k.modelHost = host
 	k.mu.Unlock()
 }
@@ -165,7 +169,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 			}
 		}
 	}
-	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider)
+	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider, runtimeSession.chatGPTManager)
 	if err != nil {
 		return nil, serviceError("service_unavailable", "configured model client is unavailable")
 	}
@@ -179,7 +183,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// capabilities have no parent inference journal, so attribute them to the
 	// validated plugin instead of creating a hidden conversation.
 	if providers.InferenceJournalFromContext(ctx) == nil {
-		journal := runtimeSession.InferenceJournalForOwner("plugin:" + params.Caller)
+		journal := k.parent.inferenceJournalForOwner("plugin:" + params.Caller)
 		if journal == nil {
 			return nil, serviceError("service_unavailable", "inference accounting is unavailable")
 		}
@@ -230,4 +234,20 @@ func modelRequestError(err error) error {
 	// Keep the typed category, not the provider's raw error, on the plugin wire.
 	failure := providers.NormalizeFailure(err)
 	return serviceError("inference_failed", "model request failed: "+string(failure.Category))
+}
+
+func (k *kernelHostServices) inferenceJournalForOwner(owner string) providers.InferenceJournal {
+	if k.state != nil {
+		k.state.mu.Lock()
+		journal := k.state.journal
+		k.state.mu.Unlock()
+		if journal == nil {
+			return nil
+		}
+		return journal.ForOwner(owner)
+	}
+	k.mu.RLock()
+	captured := k.modelSession
+	k.mu.RUnlock()
+	return captured.InferenceJournalForOwner(owner)
 }

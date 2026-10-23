@@ -108,3 +108,27 @@ func TestOpenStateAdmitsConfiguredNativeFactory(t *testing.T) {
 		t.Fatalf("implicit default backend: %v", err)
 	}
 }
+
+func TestStateTransferKeepsExactAuthority(t *testing.T) {
+	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transferred := state.Retain()
+	if transferred == nil || transferred.Generation != state.Generation || transferred.InferenceJournalRuntime != state.InferenceJournalRuntime {
+		t.Fatal("state transfer changed authority")
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transferred.Sessions.Create("retained"); err != nil {
+		t.Fatal(err)
+	}
+	if state.Retain() != nil {
+		t.Fatal("closed handle transferred ownership")
+	}
+	if err := transferred.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

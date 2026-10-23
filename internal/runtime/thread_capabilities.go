@@ -55,6 +55,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		}
 	}
 	documents, sessions, host := s.Documents, s.Sessions, s.PluginHost
+	artifacts := s.artifactClient
 	generation := s.pluginGeneration
 	generation.retain()
 	dispatcher := s.HookDispatcher
@@ -94,7 +95,7 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: selection.PermissionMode})
 	kit.SetApproveForMe(false)
 	kit.SetStateDir(stateDir)
-	kit.SetArtifactPublisher(newArtifactPublisher(wuuHome))
+	kit.SetArtifactPublisher(NewArtifactPublisher(artifacts))
 	kit.SetSessionID(id)
 	kit.SetSessionDir(artifactDir)
 	kit.SetSessionStore(sessions)

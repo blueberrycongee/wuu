@@ -132,7 +132,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		origin = parent
 	}
 	if providers.InferenceJournalFromContext(ctx) == nil && !direct {
-		journal := session.InferenceJournalForOwner("plugin:" + scope.PluginID)
+		journal := k.parent.inferenceJournalForOwner("plugin:" + scope.PluginID)
 		if journal == nil {
 			cancel()
 			return nil, serviceError("service_unavailable", "inference accounting is unavailable")
@@ -240,7 +240,7 @@ func (k *modelInvokeInvoker) prepareIndependent(ctx context.Context, session *Se
 	if err != nil {
 		return nil, request, err
 	}
-	client, err := providerfactory.BuildRuntimeStreamClient(selection.RuleProviderConfig, selection.Provider)
+	client, err := providerfactory.BuildRuntimeStreamClient(selection.RuleProviderConfig, selection.Provider, session.chatGPTManager)
 	if err != nil && (client == nil || request.Adapter == "" || request.Adapter == "native") {
 		return nil, request, serviceError("service_unavailable", "configured model client is unavailable")
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -19,13 +20,16 @@ import (
 // Close releases its generation after all consumers and leases finish cleanup.
 // Documents and Sessions never resolve a later published generation.
 type State struct {
-	Documents  persistence.Documents
-	Sessions   *session.Store
-	Generation *PluginGeneration
-	Host       *pluginhost.Host
-	once       sync.Once
-	close      func() error
-	closeErr   error
+	Documents               persistence.Documents
+	Sessions                *session.Store
+	Generation              *PluginGeneration
+	Host                    *pluginhost.Host
+	InferenceJournalRuntime *session.InferenceJournalRuntime
+	mu                      sync.Mutex
+	closed                  bool
+	once                    sync.Once
+	close                   func() error
+	closeErr                error
 }
 
 func (s *State) Close() error {
@@ -33,6 +37,9 @@ func (s *State) Close() error {
 		return nil
 	}
 	s.once.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
 		if s.close != nil {
 			s.closeErr = s.close()
 		}
@@ -58,10 +65,13 @@ func (s *Session) RetainState() (*State, error) {
 	if documents == nil || sessions == nil {
 		return nil, errors.New("selected composition has no session state")
 	}
-	result := &State{Documents: documents, Sessions: sessions, Host: s.PluginHost, Generation: generation}
+	result := &State{Documents: documents, Sessions: sessions, Host: s.PluginHost, Generation: generation, InferenceJournalRuntime: s.InferenceJournalRuntime}
 	if generation != nil {
 		generation.retain()
 		result.Host = generation.host
+		if generation.state != nil {
+			result.InferenceJournalRuntime = generation.state.journal
+		}
 		result.close = func() error { s.releasePluginGeneration(generation); return generation.closeErr }
 	}
 	return result, nil
@@ -79,6 +89,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	opts.NativeProviders = withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, opts.RootDir, opts.Config)
 	root := strings.TrimSpace(opts.RootDir)
 	if root == "" {
 		return nil, errors.New("root dir is required")
@@ -141,5 +152,51 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	generation := &PluginGeneration{host: host, state: kernel.state, ownedRoots: roots}
 	generation.retain()
 	owned = false
-	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, close: func() error { generation.Release(); return generation.closeErr }}, nil
+	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, InferenceJournalRuntime: kernel.state.journal, close: func() error { generation.Release(); return generation.closeErr }}, nil
+}
+
+// Retain transfers a live capture without observing the publishing Session.
+// A closed handle cannot be used to resurrect an already released generation.
+func (s *State) Retain() *State {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.Generation.retain()
+	return &State{Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, close: s.close}
+}
+
+var ErrStateGenerationChanged = errors.New("state generation changed before runtime admission")
+
+// NewThreadRuntimeForState either constructs against the admitted generation or
+// rejects before effects so its caller can retry admission with a new capture.
+func (s *Session) NewThreadRuntimeForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection) (*ThreadRuntime, error) {
+	shadow, err := s.cloneForThreadModel(binding)
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.NewThreadRuntimeForRootModel(sessionID, rootDir, selected)
+}
+
+func (s *Session) NewThreadCapabilityRuntimeForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection) (*ThreadRuntime, error) {
+	shadow, err := s.cloneForThreadModel(binding)
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.NewThreadCapabilityRuntime(sessionID, rootDir, selected)
+}
+
+func (s *Session) NewSideThreadRunnerForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection, prompt string, parentSession ...string) (*agent.StreamRunner, error) {
+	shadow, err := s.cloneForThreadModel(binding)
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.newSideThreadRunner(sessionID, rootDir, selected, prompt, parentSession...)
 }

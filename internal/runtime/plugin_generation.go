@@ -17,12 +17,14 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -38,6 +40,11 @@ import (
 type PluginGeneration struct {
 	id                string
 	state             *runtimeState
+	credentials       credentialstore.Store
+	configClient      *config.Client
+	chatGPTManager    *siwc.Manager
+	artifactClient    *ArtifactClient
+	mcpOAuth          *mcp.OAuthManager
 	settings          config.Config
 	plugins           []pluginpkg.Plugin
 	active            []pluginpkg.Plugin
@@ -363,7 +370,14 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
-	generation.mcp, err = startMCPManager(cfg, active, required, s.mcpOAuth)
+	if kernel.selectedServices != nil {
+		generation.credentials = kernel.selectedServices.credentials
+		generation.configClient = kernel.selectedServices.config
+		generation.chatGPTManager = kernel.selectedServices.chatGPT
+		generation.artifactClient = kernel.selectedServices.artifacts
+		generation.mcpOAuth = kernel.selectedServices.oauth
+	}
+	generation.mcp, err = startMCPManager(cfg, active, required, generation.mcpOAuth)
 	if err != nil {
 		_ = generation.close()
 		s.persistRevocationReport(generation)
@@ -766,7 +780,8 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	hookSnapshot.Replace(s.HookDispatcher)
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                generationID,
+		id:          generationID,
+		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient, mcpOAuth: s.mcpOAuth,
 		state:             &runtimeState{documents: s.Documents, sessions: s.Sessions, journal: s.InferenceJournalRuntime},
 		settings:          config.Config{Extensions: s.ExtensionSettings},
 		plugins:           append([]pluginpkg.Plugin(nil), s.Plugins...),
@@ -799,6 +814,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.ActivePlugins = append([]pluginpkg.Plugin(nil), generation.active...)
 	s.ExtensionSettings = generation.settings.Extensions
 	s.PluginHost = generation.host
+	s.credentials, s.configClient, s.chatGPTManager, s.artifactClient, s.mcpOAuth = generation.credentials, generation.configClient, generation.chatGPTManager, generation.artifactClient, generation.mcpOAuth
 	if generation.state != nil {
 		s.Documents, s.Sessions, s.InferenceJournalRuntime = generation.state.documents, generation.state.sessions, generation.state.journal
 	} else {

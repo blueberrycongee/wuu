@@ -25,6 +25,7 @@ type runtimeServiceConsumer struct {
 	requirements []pluginhost.ServiceRequirement
 	mu           sync.Mutex
 	state        pluginhost.State
+	cleanup      func(context.Context) error
 }
 
 func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
@@ -67,9 +68,13 @@ func (c *runtimeServiceConsumer) Activate(context.Context) error {
 	c.state = pluginhost.StateActive
 	return nil
 }
-func (c *runtimeServiceConsumer) Close(context.Context) error {
+func (c *runtimeServiceConsumer) Close(ctx context.Context) error {
+	var err error
+	if c.cleanup != nil {
+		err = c.cleanup(ctx)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.state = pluginhost.StateStopped
-	return nil
+	return err
 }

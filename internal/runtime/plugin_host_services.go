@@ -405,6 +405,7 @@ type kernelHostServices struct {
 	modelSession      *Session
 	modelHost         *pluginhost.Host
 	state             *runtimeState
+	selectedServices  *runtimeServices
 	providers         map[string]nativeServiceRegistration
 }
 
@@ -629,6 +630,7 @@ func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginh
 	if params.Method != pluginhost.KernelServiceMethod {
 		return nil, serviceError("method_not_found", "kernel service method is unavailable")
 	}
+	ctx = context.WithValue(ctx, kernelServiceExecutionKey{}, params.ExecutionID)
 	return services.invoke(ctx, k.method, params.Params)
 }
 
