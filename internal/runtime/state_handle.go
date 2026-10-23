@@ -90,6 +90,11 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	var err error
+	opts.NativeProviders, err = withCredentialProviders(opts.NativeProviders, opts.HomeDir)
+	if err != nil {
+		return nil, err
+	}
 	opts.NativeProviders = withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, opts.RootDir, opts.Config, opts.ConfigLoadMode)
 	root := strings.TrimSpace(opts.RootDir)
 	if root == "" {
@@ -150,7 +155,11 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 		_ = host.Close(context.Background())
 		return nil, errors.New("selected composition has no active session state")
 	}
-	generation := &PluginGeneration{host: host, state: kernel.state, ownedRoots: roots}
+	generation := &PluginGeneration{id: newPluginGenerationID(home), host: host, state: kernel.state, ownedRoots: roots, settings: opts.Config, plugins: plugins, active: availablePluginPackages(plugins, host)}
+	if services := kernel.selectedServices; services != nil {
+		generation.credentials, generation.configClient = services.credentials, services.config
+		generation.chatGPTManager, generation.artifactClient, generation.mcpOAuth = services.chatGPT, services.artifacts, services.oauth
+	}
 	generation.retain()
 	kernel.bindStateGeneration(generation, nil)
 	owned = false

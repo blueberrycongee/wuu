@@ -3,8 +3,11 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
@@ -112,4 +115,42 @@ func withConfigurationProvider(factories []NativeProviderFactory, path, root str
 		}
 	}
 	return append(result, configurationProviderFactory(path, root, cfg, mode))
+}
+
+// Native compatibility sources belong to the chosen native provider. External
+// replacements receive no wrapper and never read the user's local auth files.
+func withCredentialProviders(factories []NativeProviderFactory, userHome string) ([]NativeProviderFactory, error) {
+	var err error
+	if strings.TrimSpace(userHome) == "" {
+		userHome, err = os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+	}
+	userHome, err = filepath.Abs(userHome)
+	if err != nil {
+		return nil, err
+	}
+	result := append([]NativeProviderFactory(nil), factories...)
+	for _, id := range []string{credentialstore.OSModule, credentialstore.FileModule} {
+		if slices.ContainsFunc(result, func(factory NativeProviderFactory) bool { return factory.ID == id }) {
+			continue
+		}
+		result = append(result, NativeProviderFactory{ID: id, DefaultEnabled: id == credentialstore.OSModule, Build: func(input NativeProviderContext) (pluginhost.Client, error) {
+			return credentialstore.NewService(id, func() (credentialstore.Store, error) {
+				var backend credentialstore.Store
+				if id == credentialstore.OSModule {
+					var err error
+					backend, err = credentialstore.NewDesktopStore()
+					if err != nil {
+						return nil, err
+					}
+				} else {
+					backend = credentialstore.NewFileStore(filepath.Join(input.WuuHome, "credentials.json"))
+				}
+				return authstorage.NewNativeStore(backend, input.WuuHome, userHome)
+			}), nil
+		}})
+	}
+	return result, nil
 }

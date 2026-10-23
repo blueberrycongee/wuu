@@ -51,7 +51,7 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 		return err
 	}
 	build := func(role modelroles.Selection) (providers.StreamClient, error) {
-		client, err := providerfactory.BuildRuntimeStreamClient(role.RuleProviderConfig, role.Provider, g.chatGPTManager)
+		client, err := providerfactory.BuildRuntimeStreamClient(role.RuleProviderConfig, role.Provider, providerfactory.Bindings{Credentials: g.credentials, ChatGPT: g.chatGPTManager})
 		if client != nil && err != nil {
 			models.issues = append(models.issues, ReadinessIssue{Code: "credential_missing", Provider: role.Provider, Message: err.Error()})
 			return client, nil

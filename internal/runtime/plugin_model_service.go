@@ -29,6 +29,7 @@ func (k *kernelHostServices) bindModelSession(session *Session, host *pluginhost
 	k.modelSession = &Session{RootDir: session.RootDir, HomeDir: session.HomeDir, ConfigPath: session.ConfigPath, ConfigLoadMode: session.ConfigLoadMode, DesktopExecutionDefaults: session.DesktopExecutionDefaults, InferenceJournalRuntime: session.InferenceJournalRuntime}
 	if k.selectedServices != nil {
 		k.modelSession.configClient = k.selectedServices.config
+		k.modelSession.credentials = k.selectedServices.credentials
 		k.modelSession.chatGPTManager = k.selectedServices.chatGPT
 	}
 	k.modelHost = host
@@ -169,7 +170,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 			}
 		}
 	}
-	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider, runtimeSession.chatGPTManager)
+	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider, providerfactory.Bindings{Credentials: runtimeSession.credentials, ChatGPT: runtimeSession.chatGPTManager})
 	if err != nil {
 		return nil, serviceError("service_unavailable", "configured model client is unavailable")
 	}

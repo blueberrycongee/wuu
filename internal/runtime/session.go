@@ -412,6 +412,10 @@ func NewSession(opts Options) (*Session, error) {
 	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
 		configLoadMode = ConfigLoadFile
 	}
+	opts.NativeProviders, err = withCredentialProviders(opts.NativeProviders, opts.HomeDir)
+	if err != nil {
+		return nil, err
+	}
 	factories := withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, rootDir, cfg, configLoadMode)
 
 	wuuHome, err := statepath.Home(opts.HomeDir)
@@ -548,7 +552,7 @@ func NewSession(opts Options) (*Session, error) {
 	ruleProviderName, ruleProviderCfg := mainRole.RuleProvider, mainRole.RuleProviderConfig
 	toolModeModel := mainRole.APIModel
 
-	client, clientErr := providerfactory.BuildRuntimeStreamClient(ruleProviderCfg, resolvedName, chatGPTManager)
+	client, clientErr := providerfactory.BuildRuntimeStreamClient(ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 	if client == nil {
 		return nil, clientErr
 	}
@@ -558,7 +562,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	titleClient := providers.Client(client)
 	if !roleSelections.Title.Inherited {
-		roleClient, roleErr := providerfactory.BuildRuntimeStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider, chatGPTManager)
+		roleClient, roleErr := providerfactory.BuildRuntimeStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 		if roleClient == nil {
 			return nil, fmt.Errorf("build title client: %w", roleErr)
 		}
@@ -691,7 +695,7 @@ func NewSession(opts Options) (*Session, error) {
 		}
 		workerBaseSystemPrompt := buildBaseSystemPromptContent(rootDir, sessionDate, config.WorkerSystemPrompt(), "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, "", "", discoveredSkills)
 		var werr error
-		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider, chatGPTManager)
+		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 		if werr != nil {
 			if providerfactory.IsCredentialError(werr) {
 				workerClient = &providers.UnavailableClient{Reason: werr.Error()}
@@ -1234,7 +1238,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
 		return nil, err
 	}
-	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName, s.chatGPTManager)
+	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return nil, fmt.Errorf("build thread model client: %w", err)
 	}
@@ -1303,7 +1307,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		}
 		shadow.DeferredToolCatalogPrompt = catalog
 	}
-	workerClient, err := providerfactory.BuildStreamClient(roles.Worker.RuleProviderConfig, roles.Worker.Provider, s.chatGPTManager)
+	workerClient, err := providerfactory.BuildStreamClient(roles.Worker.RuleProviderConfig, roles.Worker.Provider, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return nil, fmt.Errorf("build thread worker client: %w", err)
 	}
