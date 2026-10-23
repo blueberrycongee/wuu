@@ -1907,7 +1907,7 @@ html[data-focus-modality="keyboard"] :is(
     color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-top-color: var(--sidebar-project-loading-notch);
   border-radius: var(--radius-pill);
-  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
+  animation: wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
   transition:
     opacity var(--motion-fast) var(--ease-out),
     scale var(--motion-fast) var(--ease-out);
@@ -1919,7 +1919,7 @@ html[data-focus-modality="keyboard"] :is(
 .project-row .project-row-loading.deferred {
   animation:
     wuu-fade-in var(--motion-fast) var(--ease-out) 240ms backwards,
-    wuu-spin var(--session-loading-spin-duration) linear infinite;
+    wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
 }
 
 .project-row-unread {
@@ -2236,7 +2236,7 @@ html[data-focus-modality="keyboard"] :is(
     color-mix(in srgb, var(--ink-strong) 65%, transparent);
   border-top-color: var(--sidebar-thread-spinner-notch);
   border-radius: var(--radius-pill);
-  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
+  animation: wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
   pointer-events: none;
   transition: opacity var(--motion-fast) var(--ease-out);
 }

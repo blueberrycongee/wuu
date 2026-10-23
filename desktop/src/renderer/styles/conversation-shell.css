@@ -754,7 +754,7 @@
   border-top-color: var(--shell-session-tab-status-running-notch);
   box-sizing: border-box;
   opacity: 1;
-  animation: wuu-spin var(--session-loading-spin-duration) linear infinite;
+  animation: wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
 }
 
 /* Selection loading must not turn an existing running spinner into a dot. */

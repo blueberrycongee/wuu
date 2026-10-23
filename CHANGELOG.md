@@ -121,6 +121,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Limit ambient loading rings in project rows, conversation rows, and session tabs to 30 angle updates per second while preserving their existing rotation speed.
+
 - Give the regular conversation input the full card inset above its first line, matching the welcome input and keeping placeholders, typed text, and the caret clear of rounded corners.
 
 - Resolve wallpaper cover sizing in CSS during window resizing, avoiding inherited style updates across the conversation while retaining wallpaper alignment in the native navigation ribbon.
