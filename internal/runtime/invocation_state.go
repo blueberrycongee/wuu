@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
@@ -39,7 +40,7 @@ func (k *kernelHostServices) bindStateGeneration(generation *PluginGeneration, o
 	k.stateGeneration, k.stateOwner = generation, owner
 }
 
-func (k *kernelHostServices) retainInvocationState() (*State, error) {
+func (k *kernelHostServices) retainState() (*State, error) {
 	k.mu.RLock()
 	generation, owner := k.stateGeneration, k.stateOwner
 	k.mu.RUnlock()
@@ -71,4 +72,25 @@ func (k *kernelHostServices) retainInvocationState() (*State, error) {
 		return nil, serviceError("service_unavailable", "selected generation has no session state")
 	}
 	return &State{Documents: documents, Sessions: sessions, Generation: generation, Host: generation.host, InferenceJournalRuntime: journal, close: close}, nil
+}
+
+// Keep the invocation's own reference outside the service callback lock. A
+// callback may release its last client handle while publication drops the graph
+// owner; shutting down the kernel inside that callback would lock against itself.
+func (k *kernelHostServices) captureInvocationState(ctx context.Context) (context.Context, func()) {
+	var once sync.Once
+	var binding *State
+	var err error
+	ctx = context.WithValue(ctx, invocationStateKey{}, invocationStateRetainer(func() (*State, error) {
+		once.Do(func() { binding, err = k.retainState() })
+		if err != nil {
+			return nil, err
+		}
+		return binding.Retain(), nil
+	}))
+	return ctx, func() {
+		if binding != nil {
+			_ = binding.Close()
+		}
+	}
 }

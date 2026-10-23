@@ -117,7 +117,8 @@ type processServiceInvoker struct{ parent *kernelHostServices }
 func (k *processServiceInvoker) ID() string                { return k.parent.ID() }
 func (k *processServiceInvoker) Status() pluginhost.Status { return k.parent.Status() }
 func (k *processServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
-	ctx = context.WithValue(ctx, invocationStateKey{}, invocationStateRetainer(k.parent.retainInvocationState))
+	ctx, releaseState := k.parent.captureInvocationState(ctx)
+	defer releaseState()
 	k.parent.mu.RLock()
 	s := k.parent.services[params.Caller]
 	k.parent.mu.RUnlock()
