@@ -115,9 +115,9 @@ Select a runtime service provider in the trusted user configuration:
 }
 ```
 
-The selected package must already be enabled and trusted and must declare the requested service major. Bindings do not install or enable packages. Duplicate bindings, an unavailable selected provider, and an ambiguous service reject preparation and preserve the previous running generation. A selected provider that crashes or is removed causes calls to fail; another registered implementation is never used as a fallback. With no explicit binding, a service must have exactly one provider. Registry inspection reports `binding_source` as `composition`, `profile:<name>`, or `unique-provider` alongside its version and provider ID.
+The selected package must already be enabled and trusted and must declare the requested service major. Bindings do not install or enable packages. Duplicate bindings, an unavailable selected provider, and an ambiguous service reject preparation and preserve the previous running generation. A selected provider that crashes or is removed causes calls to fail; another registered implementation is never used as a fallback. With no explicit binding, a service must have exactly one provider. Registry inspection reports the selection layer in `binding_source`, or `unique-provider` for an unambiguous discovered service, alongside its version and provider ID.
 
-Composition version 1 is independent of product CalVer and service versions. Existing configurations without this section retain unique-provider discovery. A configuration that previously depended on first-registration precedence must add explicit selections. Normal startup ignores project overrides of `composition`, including case variants, because bindings can select execution and credential policies. Apply a changed configuration at generation preparation; retained executions keep their existing registry. Restoring a previous selection creates a new generation and does not undo completed effects or migrate provider data.
+Composition versions 1 and 2 are independent of product CalVer and service versions. Version 1 retains inline profiles and module/service choices. Bundles and patches require version 2, so older hosts reject the configuration instead of ignoring overrides. To downgrade, first replace the layered configuration with its complete resolved `modules` and `services` using version 1; merely changing the version number is unsafe. Existing configurations without this section retain unique-provider discovery. A configuration that previously depended on first-registration precedence must add explicit selections. Normal startup ignores project overrides of `composition`, including case variants, because bindings can select execution and credential policies. Apply a changed configuration at generation preparation; retained executions keep their existing registry. Restoring a previous selection creates a new generation and does not undo completed effects or migrate provider data.
 
 A named runtime composition can also select the complete module set. For example, after installing and enabling both [service composition example packages](../../../examples/plugins/service-composition/README.md):
 
@@ -138,11 +138,41 @@ A named runtime composition can also select the complete module set. For example
 }
 ```
 
-`profile` selects one entry in `profiles`. Each profile must supply a complete `modules` array, including dependencies. A top-level `modules` array replaces that set; top-level `services` override profile bindings individually by service name and major. Module order does not determine service selection or lifecycle order. An explicit empty array starts no modules. Omitting both a profile and `modules` preserves enabled, trusted discovery defaults. An unknown profile, duplicate module, excluded binding target, unavailable selected module, or failed selected runtime rejects preparation. Module selection cannot install, enable, or trust a package. Filtering happens before runtime, hook, skill, and MCP contributions are loaded.
+`profile` selects one entry in `profiles`. A profile supplies `modules`, ordered `bundles`, or `patches`, including all dependencies. Module order does not determine service selection or lifecycle order. An explicit empty array starts no modules. Omitting a profile, `modules`, and `patches` preserves enabled, trusted discovery defaults. An unknown profile or bundle, repeated bundle, duplicate module, excluded binding target, unavailable selected module, or failed selected runtime rejects preparation. Module selection cannot install, enable, or trust a package. Filtering happens before runtime, hook, skill, and MCP contributions are loaded.
+
+Bundles are reusable static configuration. For example, the same analysis capability can be shared by several profiles:
+
+```json
+{
+  "composition": {
+    "version": 2,
+    "profile": "writing",
+    "bundles": {
+      "analysis": {
+        "patches": [{
+          "modules": { "text-analysis-example": true },
+          "services": [{ "service": "example.text.analysis", "major": 1, "provider": "text-analysis-example" }]
+        }]
+      }
+    },
+    "profiles": {
+      "analysis": { "bundles": ["analysis"] },
+      "writing": {
+        "bundles": ["analysis"],
+        "patches": [{ "modules": { "writing-report-example": true } }]
+      }
+    }
+  }
+}
+```
+
+Resolution starts with an empty module set and applies the selected profile’s bundles in listed order, then its inline `modules` / `services`, then its `patches`. Top-level `modules` / `services` follow, and top-level `patches` apply last. Each inline `modules` array replaces the complete set; services override by name and major. A patches-only composition also starts empty. Bundles contain only patches and do not execute code or include other bundles.
+
+In a patch, `modules` maps IDs to `true` (include) or `false` (exclude). `services` replaces individual bindings; `remove_services` accepts `{ "service": "...", "major": 1 }` entries to remove explicit selections. Removing a binding returns to unique-provider resolution, so multiple remaining providers still fail. Excluding a module does not silently erase bindings that target it: remove or replace those in the same composition. Duplicate or conflicting operations within one patch fail; later patches may intentionally override earlier choices. Empty arrays survive configuration saves. Resolution builds fresh state, so one profile cannot mutate another.
 
 The current native runtime modules are `kernel` (the native service collection), `wuu.default-loop` (the provider for `driver.default`), `wuu.tool-execution` (the declared consumer for tool security services), and `wuu.session-execution` (the declared consumer for the selected driver). Explicit module sets include these only when needed. Excluding `kernel` removes its services and result materializer; it does not select a substitute. These runtime choices do not yet replace the application shell or the complete session persistence implementation. Safe mode starts no composition modules, even when the configured selection refers to unavailable packages; discovery remains available for recovery.
 
-`plugin/registry/introspect` returns `composition.profile`, `module_source`, and selected module IDs with package versions and current runtime states. Native module versions identify the product build; service versions remain separate. Packages without a runtime have no runtime state. This diagnostic also works when the native registry-introspection provider is excluded. Same-ID updates retain running executions; removing a module revokes it across retained generations, with consumers completing cleanup before their providers stop.
+`plugin/registry/introspect` returns `composition.profile`, ordered `layers`, the last module-set change in `module_source`, and each selected module’s `source`, package version and current runtime state. Sources identify inline choices (`profile:<name>` or `composition`) and zero-based patches (`bundle:<name>:patch:<index>`, `profile:<name>:patch:<index>`, or `composition:patch:<index>`). Native module versions identify the product build; service versions remain separate. Packages without a runtime have no runtime state. This diagnostic also works when the native registry-introspection provider is excluded. Same-ID updates retain running executions; removing a module revokes it across retained generations, with consumers completing cleanup before their providers stop.
 
 Package dependencies and selected service dependencies share one generation lifecycle graph. Providers activate before consumers; cleanup runs in reverse order while provider resources remain available. A required missing service, incompatible major, or failed provider blocks transitive consumers. An absent optional service does not block activation; an available optional service participates in ordering. Cycles across package and service edges reject preparation before activation. Retained generations keep their own resolved graph when newer versions change requirements. Removing a provider stops its required consumers; independent plugins remain active.
 

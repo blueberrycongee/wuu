@@ -796,11 +796,13 @@ type ServiceRegistrySnapshot struct {
 type CompositionSnapshot struct {
 	Profile      string                      `json:"profile,omitempty"`
 	ModuleSource string                      `json:"module_source"`
+	Layers       []string                    `json:"layers,omitempty"`
 	Modules      []CompositionModuleSnapshot `json:"modules"`
 }
 
 type CompositionModuleSnapshot struct {
 	ID      string `json:"id"`
+	Source  string `json:"source"`
 	Version string `json:"version,omitempty"`
 	State   State  `json:"state,omitempty"`
 	Error   string `json:"error,omitempty"`
@@ -809,6 +811,7 @@ type CompositionModuleSnapshot struct {
 // SetComposition binds diagnostic metadata before candidate preparation.
 // Runtime states come from the owning Host's authoritative lifecycle graph.
 func (r *ServiceRegistry) SetComposition(snapshot CompositionSnapshot) {
+	snapshot.Layers = append([]string(nil), snapshot.Layers...)
 	snapshot.Modules = append([]CompositionModuleSnapshot{}, snapshot.Modules...)
 	sort.Slice(snapshot.Modules, func(i, j int) bool { return snapshot.Modules[i].ID < snapshot.Modules[j].ID })
 	r.mu.Lock()
@@ -824,6 +827,7 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 	var composition *CompositionSnapshot
 	if r.composition != nil {
 		copy := *r.composition
+		copy.Layers = append([]string(nil), copy.Layers...)
 		copy.Modules = append([]CompositionModuleSnapshot{}, copy.Modules...)
 		composition = &copy
 	}

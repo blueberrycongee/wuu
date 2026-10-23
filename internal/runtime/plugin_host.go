@@ -98,12 +98,12 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	for _, module := range nativeModules {
 		host.Add(module)
 	}
-	diagnostic := pluginhost.CompositionSnapshot{Profile: resolved.Profile, ModuleSource: resolved.ModuleSource}
+	diagnostic := pluginhost.CompositionSnapshot{Profile: resolved.Profile, ModuleSource: resolved.ModuleSource, Layers: resolved.Layers}
 	for _, module := range nativeModules {
-		diagnostic.Modules = append(diagnostic.Modules, pluginhost.CompositionModuleSnapshot{ID: module.ID(), Version: currentWuuVersion()})
+		diagnostic.Modules = append(diagnostic.Modules, pluginhost.CompositionModuleSnapshot{ID: module.ID(), Source: resolved.SourceForModule(module.ID()), Version: currentWuuVersion()})
 	}
 	for _, item := range plugins {
-		diagnostic.Modules = append(diagnostic.Modules, pluginhost.CompositionModuleSnapshot{ID: item.ID, Version: item.Version})
+		diagnostic.Modules = append(diagnostic.Modules, pluginhost.CompositionModuleSnapshot{ID: item.ID, Source: resolved.SourceForModule(item.ID), Version: item.Version})
 	}
 	registry.SetComposition(diagnostic)
 	conflicts := registry.RegisterClients(nativeModules...)

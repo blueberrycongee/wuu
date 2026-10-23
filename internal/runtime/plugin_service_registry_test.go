@@ -22,11 +22,20 @@ type fakeServicePluginClient struct {
 	provided []pluginhost.ServiceDescriptor
 	required []pluginhost.ServiceRequirement
 	closed   bool
+	active   bool
 }
 
 func (c *fakeServicePluginClient) ID() string { return c.id }
 func (c *fakeServicePluginClient) Status() pluginhost.Status {
-	return pluginhost.Status{ID: c.id, State: pluginhost.StatePrepared}
+	state := pluginhost.StatePrepared
+	if c.active {
+		state = pluginhost.StateActive
+	}
+	return pluginhost.Status{ID: c.id, State: state}
+}
+func (c *fakeServicePluginClient) Activate(context.Context) error {
+	c.active = true
+	return nil
 }
 func (c *fakeServicePluginClient) Close(context.Context) error { c.closed = true; return nil }
 func (c *fakeServicePluginClient) ProvidedServices() []pluginhost.ServiceDescriptor {
@@ -185,7 +194,15 @@ createInterface({ input: process.stdin }).on('line', line => {
 	}
 	reader := testRuntimePlugin("reader")
 	var selection composition.Config
-	if err := json.Unmarshal([]byte(`{"version":1,"profile":"external","profiles":{"external":{"modules":["reader","file-storage"],"services":[{"service":"host.storage.get","major":1,"provider":"file-storage"}]}}}`), &selection); err != nil {
+	if err := json.Unmarshal([]byte(`{
+		"version": 2,
+		"profile": "external",
+		"bundles": {
+			"base": {"patches": [{"modules": {"reader": true, "kernel": true}, "services": [{"service": "host.storage.get", "major": 1, "provider": "kernel"}]}]},
+			"file": {"patches": [{"modules": {"file-storage": true}, "services": [{"service": "host.storage.get", "major": 1, "provider": "file-storage"}]}]}
+		},
+		"profiles": {"external": {"bundles": ["base", "file"], "patches": [{"modules": {"kernel": false}}]}}
+	}`), &selection); err != nil {
 		t.Fatal(err)
 	}
 	host, _, err := buildPluginHost([]pluginpkg.Plugin{reader, provider}, root, "workspace", t.TempDir(), t.TempDir(), nil,
@@ -205,7 +222,7 @@ createInterface({ input: process.stdin }).on('line', line => {
 		}
 	}
 	snapshot := host.ServiceRegistry().Snapshot(1)
-	if len(snapshot.Services) != 1 || snapshot.Services[0].Provider != "file-storage" || snapshot.Services[0].BindingSource != "profile:external" {
+	if len(snapshot.Services) != 1 || snapshot.Services[0].Provider != "file-storage" || snapshot.Services[0].BindingSource != "bundle:file:patch:0" {
 		t.Fatalf("external-only composition = %+v", snapshot)
 	}
 	if err := activatePluginHost(context.Background(), host); err != nil {
@@ -217,10 +234,12 @@ createInterface({ input: process.stdin }).on('line', line => {
 	}
 	var inspected struct {
 		Composition struct {
-			Profile      string `json:"profile"`
-			ModuleSource string `json:"module_source"`
+			Profile      string   `json:"profile"`
+			ModuleSource string   `json:"module_source"`
+			Layers       []string `json:"layers"`
 			Modules      []struct {
 				ID      string `json:"id"`
+				Source  string `json:"source"`
 				Version string `json:"version"`
 				State   string `json:"state"`
 			} `json:"modules"`
@@ -229,11 +248,11 @@ createInterface({ input: process.stdin }).on('line', line => {
 	if err := json.Unmarshal(diagnostic, &inspected); err != nil {
 		t.Fatal(err)
 	}
-	if inspected.Composition.Profile != "external" || inspected.Composition.ModuleSource != "profile:external" || len(inspected.Composition.Modules) != 2 {
+	if inspected.Composition.Profile != "external" || inspected.Composition.ModuleSource != "profile:external:patch:0" || len(inspected.Composition.Modules) != 2 || strings.Join(inspected.Composition.Layers, ",") != "bundle:base:patch:0,bundle:file:patch:0,profile:external:patch:0" {
 		t.Fatalf("composition diagnostics = %s", diagnostic)
 	}
 	for _, module := range inspected.Composition.Modules {
-		if module.ID == "file-storage" && (module.Version != "2.3.4" || module.State != "active") {
+		if module.ID == "file-storage" && (module.Version != "2.3.4" || module.State != "active" || module.Source != "bundle:file:patch:0") {
 			t.Fatalf("running module version/state = %+v", module)
 		}
 	}
@@ -372,11 +391,20 @@ createInterface({ input: process.stdin }).on('line', async line => {
 
 func TestCompositionPreparationFailurePreservesRunningGeneration(t *testing.T) {
 	for _, input := range []string{
+		`{"version":1,"patches":[]}`,
+		`{"version":1,"profile":"legacy","profiles":{"legacy":{"modules":[],"patches":[]}}}`,
 		`{"version":1,"services":[{"service":"search.provider","major":1,"provider":"missing"}]}`,
 		`{"version":1,"profile":"missing"}`,
 		`{"version":1,"modules":["missing"]}`,
 		`{"version":1,"modules":["kernel","kernel"]}`,
 		`{"version":1,"modules":[],"services":[{"service":"host.storage.get","major":1,"provider":"kernel"}]}`,
+		`{"version":2,"profile":"broken","profiles":{"broken":{"bundles":["missing"]}}}`,
+		`{"version":2,"profile":"broken","bundles":{"base":{"patches":[]}},"profiles":{"broken":{"bundles":["base","base"]}}}`,
+		`{"version":2,"modules":["kernel"],"patches":[{"modules":{"kernel":false},"services":[{"service":"host.storage.get","major":1,"provider":"kernel"}]}]}`,
+		`{"version":2,"patches":[{"modules":{"missing":true}}]}`,
+		`{"version":2,"patches":[{"services":[{"service":"search.provider","major":1,"provider":"a"},{"service":"search.provider","major":1,"provider":"b"}]}]}`,
+		`{"version":2,"patches":[{"services":[{"service":"search.provider","major":1,"provider":"a"}],"remove_services":[{"service":"search.provider","major":1}]}]}`,
+		`{"version":2,"patches":[{"remove_services":[{"service":"search.provider","major":1},{"service":"search.provider","major":1}]}]}`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			oldClient := &generationClient{id: "old"}
@@ -465,6 +493,101 @@ func TestCompositionOverridesProfileBeforeStartingModules(t *testing.T) {
 	snapshot := host.ServiceRegistry().Snapshot(1)
 	if len(snapshot.Services) != 1 || snapshot.Services[0].Provider != "b" || snapshot.Services[0].BindingSource != "composition" {
 		t.Fatalf("profile override was not resolved before registration: %+v", snapshot)
+	}
+}
+
+func TestCompositionBundlePatchesResolveBeforeStartup(t *testing.T) {
+	for _, test := range []struct {
+		name, bundles, profile, overrides, provider, source string
+		ambiguous                                           bool
+	}{
+		{name: "ordered bundles", bundles: `["first","second"]`, provider: "b", source: "bundle:second:patch:0"},
+		{name: "reversed bundles", bundles: `["second","first"]`, provider: "a", source: "bundle:first:patch:0"},
+		{name: "profile patch", bundles: `["first","second"]`, profile: `,"patches":[{"services":[{"service":"search.provider","major":1,"provider":"a"}]}]`, provider: "a", source: "profile:chosen:patch:0"},
+		{name: "top-level selection", bundles: `["first","second"]`, overrides: `,"modules":["a","reader"],"services":[{"service":"search.provider","major":1,"provider":"a"}]`, provider: "a", source: "composition"},
+		{name: "user patches win", bundles: `["first","second"]`, overrides: `,"services":[{"service":"search.provider","major":1,"provider":"a"}],"patches":[{"modules":{"a":false},"services":[{"service":"search.provider","major":1,"provider":"b"}]}]`, provider: "b", source: "composition:patch:0"},
+		{name: "removed binding", bundles: `["first","second"]`, overrides: `,"patches":[{"modules":{"a":false},"remove_services":[{"service":"search.provider","major":1}]}]`, provider: "b", source: "unique-provider"},
+		{name: "removed ambiguous binding", bundles: `["first","second"]`, overrides: `,"patches":[{"remove_services":[{"service":"search.provider","major":1}]}]`, ambiguous: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			input := `{"version":2,"profile":"chosen","bundles":{
+				"first":{"patches":[{"modules":{"a":true,"reader":true},"services":[{"service":"search.provider","major":1,"provider":"a"}]}]},
+				"second":{"patches":[{"modules":{"b":true,"reader":true},"services":[{"service":"search.provider","major":1,"provider":"b"}]}]}
+			},"profiles":{"chosen":{"bundles":` + test.bundles + test.profile + `}}` + test.overrides + `}`
+			var selection composition.Config
+			if err := json.Unmarshal([]byte(input), &selection); err != nil {
+				t.Fatal(err)
+			}
+			var started []string
+			host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("a"), testRuntimePlugin("b"), testRuntimePlugin("reader")}, "", "", "", "", nil,
+				func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					started = append(started, cfg.ID)
+					if cfg.ID == "reader" {
+						return &fakeServicePluginClient{id: cfg.ID, required: []pluginhost.ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}, nil
+					}
+					return &fakeServicePluginClient{id: cfg.ID, provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}}, nil
+				}, nil, nil, &selection, "")
+			if host != nil {
+				defer host.Close(context.Background())
+			}
+			if test.ambiguous {
+				if err == nil || host != nil || strings.Join(started, ",") != "a,b,reader" {
+					t.Fatalf("removed selection must expose ambiguity: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.overrides != "" && strings.Join(started, ",") != test.provider+",reader" {
+				t.Fatalf("removed module still started: %v", started)
+			}
+			snapshot := host.ServiceRegistry().Snapshot(1)
+			if len(snapshot.Services) != 1 || snapshot.Services[0].Provider != test.provider || snapshot.Services[0].BindingSource != test.source {
+				t.Fatalf("resolved service = %+v", snapshot.Services)
+			}
+			if err := host.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := host.ServiceRegistry().Call(context.Background(), "reader", pluginhost.ServiceCallParams{Service: "search.provider", Method: "query", Params: json.RawMessage(`{}`)}); err != nil {
+				t.Fatalf("selected provider could not serve its consumer: %v", err)
+			}
+		})
+	}
+}
+
+func TestCompositionEmptyLayersRemainEmptyAfterSaving(t *testing.T) {
+	for _, input := range []string{
+		`{"version":2,"patches":[]}`,
+		`{"version":2,"profile":"empty","profiles":{"empty":{"bundles":[]}}}`,
+		`{"version":2,"profile":"empty","profiles":{"empty":{"patches":[]}}}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			var selection composition.Config
+			if err := json.Unmarshal([]byte(input), &selection); err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(selection)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved composition.Config
+			if err := json.Unmarshal(data, &saved); err != nil {
+				t.Fatal(err)
+			}
+			host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("excluded")}, "", "", "", "", nil,
+				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
+					t.Error("saving an empty composition activated an excluded module")
+					return &fakeServicePluginClient{id: "excluded"}, nil
+				}, nil, nil, &saved, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer host.Close(context.Background())
+			if statuses := host.Statuses(); len(statuses) != 0 {
+				t.Fatalf("saving an empty composition activated native modules: %+v", statuses)
+			}
+		})
 	}
 }
 

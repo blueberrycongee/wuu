@@ -703,21 +703,47 @@ export function requireModelRequestService(): ServiceRequirement {
 }
 
 /** Bootstrap choices; independent of runtime protocol and product version. */
-export interface ProductComposition {
-  version: 1;
+export type ProductComposition = {
   profile?: string;
-  profiles?: Record<string, CompositionProfile>;
   /** Replaces the profile's complete module set. [] starts no modules. */
   modules?: string[];
   /** Overrides profile bindings by service name and major version. */
   services?: ServiceBinding[];
+} & ({
+  version: 1;
+  profiles?: Record<string, { modules: string[]; services?: ServiceBinding[] }>;
+} | {
+  version: 2;
+  profiles?: Record<string, CompositionProfile>;
+  bundles?: Record<string, CompositionBundle>;
+  /** Applied last. Without a profile/modules, patches start from an empty set. */
+  patches?: CompositionPatch[];
+});
+
+/** Bundles, then inline choices, then patches. Inclusion never grants trust. */
+export interface CompositionProfile {
+  /** Applied in order, starting from an empty module set. */
+  bundles?: string[];
+  /** When present, replaces the complete set produced by the bundles. */
+  modules?: string[];
+  services?: ServiceBinding[];
+  patches?: CompositionPatch[];
 }
 
-/** Named module and service choices. Inclusion never grants package trust. */
-export interface CompositionProfile {
-  modules: string[];
-  services?: ServiceBinding[];
+/** Reusable static configuration; bundles do not execute code or grant trust. */
+export interface CompositionBundle {
+  patches: CompositionPatch[];
 }
+
+export interface CompositionPatch {
+  /** true selects a module, false excludes it without removing its bindings. */
+  modules?: Record<string, boolean>;
+  services?: ServiceBinding[];
+  /** Restores unique-provider resolution; multiple providers remain an error. */
+  remove_services?: Pick<ServiceBinding, "service" | "major">[];
+}
+
+export type CompositionSource = "composition" | `profile:${string}` | `bundle:${string}` | `composition:patch:${number}`;
 
 /** Public registry diagnostics; no provider configuration or private data. */
 export interface ServiceRegistrySnapshot {
@@ -727,13 +753,16 @@ export interface ServiceRegistrySnapshot {
     version: string;
     provider: string;
     methods: string[];
-    binding_source: "composition" | "unique-provider" | `profile:${string}`;
+    binding_source: CompositionSource | "unique-provider";
   }[];
   composition?: {
     profile?: string;
-    module_source: "composition" | "discovery-default" | `profile:${string}`;
+    module_source: CompositionSource | "discovery-default";
+    /** Ordered applied layers, including patches that remove selections. */
+    layers?: CompositionSource[];
     modules: {
       id: string;
+      source: CompositionSource | "discovery-default";
       /** Package version, or product build for a native module. */
       version?: string;
       /** Omitted for a package without a runtime. */
