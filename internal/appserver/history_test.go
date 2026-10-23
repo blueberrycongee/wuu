@@ -118,7 +118,7 @@ func TestPersistFreshContextKeepsReleasedOriginalsAddressable(t *testing.T) {
 		{Role: "assistant", Content: "post-switch answer"},
 	}
 	server := &Server{rt: &runtime.Session{SessionDir: sessDir}}
-	thread := &threadState{ID: sess.ID, PersistHistory: true, History: cloneHistory(replacement)}
+	thread := &threadState{ID: sess.ID, state: &runtime.State{Sessions: sessDirStore}, PersistHistory: true, History: cloneHistory(replacement)}
 	result := agent.LoopResult{
 		NewMessages:            cloneHistory(replacement),
 		DurableNewMessages:     []providers.ChatMessage{{Role: "assistant", Content: "post-switch answer"}},

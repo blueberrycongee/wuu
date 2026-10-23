@@ -21,6 +21,7 @@ func TestServerActivityLifecycleRequestsAndNotifications(t *testing.T) {
 
 	defer srv.Close()
 	srv.threads["thread-1"] = newThreadState("thread-1", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	srv.threads["thread-1"].state = testRuntimeState(t, rt)
 	started, _, err := rt.ActivityRegistry.Start(activity.StartOptions{
 		ID:       "activity-1",
 		Kind:     activity.KindBrowser,
