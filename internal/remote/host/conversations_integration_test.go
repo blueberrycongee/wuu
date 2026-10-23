@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/remote/account"
 	"github.com/blueberrycongee/wuu/internal/remote/conversations"
 	"github.com/blueberrycongee/wuu/internal/remote/pgtest"
@@ -59,17 +60,27 @@ func TestConversationPublisherPersistsHistoryWithoutAnOnlineHost(t *testing.T) {
 	phone := login(phoneID, "phone", false)
 	c := account.Credentials{Server: server.URL, Token: hostSession.Token, Username: hostSession.Username}
 	rt := &runtime.Session{RootDir: root, ConfigPath: filepath.Join(root, "config.json"), SessionDir: filepath.Join(root, "sessions"), StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}}}
-	h := &Host{store: store, rt: rt}
-	thread, err := session.CreateWithMetadata(rt.SessionDir, "server-history", root)
+	documents, err := persistence.Open(context.Background(), filepath.Join(rt.SessionDir, "documents"), "sqlite")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.UpdateTitle(rt.SessionDir, thread.ID, "Stored on the account server"); err != nil {
+	t.Cleanup(func() {
+		if err := documents.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	rt.Documents, rt.Sessions = documents, session.NewStore(context.Background(), documents)
+	h := &Host{store: store, rt: rt}
+	thread, err := rt.Sessions.CreateWithMetadata("server-history", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.UpdateTitle(thread.ID, "Stored on the account server"); err != nil {
 		t.Fatal(err)
 	}
 	appendText := func(role, text string) {
 		t.Helper()
-		if err := session.AppendHistoryRecord(rt.SessionDir, thread.ID, session.HistoryRecord{Role: role, Content: text, At: time.Now().UTC()}); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(thread.ID, session.HistoryRecord{Role: role, Content: text, At: time.Now().UTC()}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -149,14 +160,14 @@ func TestConversationPublisherPersistsHistoryWithoutAnOnlineHost(t *testing.T) {
 	if body := read(); len(body.Messages) != 4 || body.Messages[3].Text != "Response after reconnect" {
 		t.Fatalf("missing continuation: %+v", body)
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, thread.ID, true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived(thread.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	pass()
 	if len(read().Messages) != 4 {
 		t.Fatal("archiving deleted the server history")
 	}
-	if _, err := session.Delete(rt.SessionDir, thread.ID); err != nil {
+	if _, err := rt.Sessions.Delete(thread.ID); err != nil {
 		t.Fatal(err)
 	}
 	pass()
