@@ -59,7 +59,7 @@
 
 /* Row actions share the navigation glyph scale. Utility classes must not
  * make pin/archive smaller than new-thread. */
-:is(.sidebar-row-icon-button, .sidebar-notifications-button) {
+.sidebar-row-icon-button {
   --control-icon-size: var(--sidebar-primary-icon-size);
 }
 

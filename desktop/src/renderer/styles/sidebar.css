@@ -937,9 +937,6 @@
 .sidebar-notifications-button svg {
   position: relative;
   z-index: 1;
-  width: var(--sidebar-primary-icon-size);
-  height: var(--sidebar-primary-icon-size);
-  stroke-width: var(--icon-stroke);
   transform-origin: 50% 15%;
 }
 
