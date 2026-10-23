@@ -50,6 +50,8 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   constructor(state?: AppState) {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
+    const tab = activeSessionTab(this.state);
+    this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";
     this.snapshot = this.project();
   }
 
@@ -60,7 +62,15 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   updateState = (update: SetStateAction<AppState>): void => {
     this.flushBackgroundEvents();
-    const next = typeof update === "function" ? update(this.state) : update;
+    // The live composer owns its text immediately. Persist it into its tab
+    // before structural changes or navigation, without rerendering the default
+    // shell for every keystroke.
+    let current = this.state;
+    const activeTab = activeSessionTab(current);
+    if (activeTab && activeTab.kind !== "skills" && activeTab.prompt !== this.draft) {
+      current = { ...current, sessionTabs: current.sessionTabs.map(tab => tab === activeTab ? { ...tab, prompt: this.draft } : tab) };
+    }
+    const next = typeof update === "function" ? update(current) : update;
     if (next === this.state) return;
     if (next.activeSessionTabID !== this.state.activeSessionTabID) {
       const tab = activeSessionTab(next);
@@ -163,10 +173,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     if (text === this.draft) return;
     this.draft = text;
     this.draftRevision++;
-    const activeTab = this.state.activeSessionTabID;
-    const sessionTabs = this.state.sessionTabs.map(tab => tab.id === activeTab && tab.kind !== "skills" ? { ...tab, prompt: text } : tab);
-    if (sessionTabs.some((tab, index) => tab !== this.state.sessionTabs[index])) this.updateState(state => ({ ...state, sessionTabs }));
-    else this.publish();
+    this.publish();
   }
 
   setSettings(open: boolean, pageId = this.settings.pageId): void {

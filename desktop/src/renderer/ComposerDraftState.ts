@@ -189,13 +189,14 @@ export function useComposerDraftState(
     cancelPromptCommit();
     const pendingCommit = { value };
     pendingPromptCommitRef.current = pendingCommit;
+    // Shared ownership must precede shell disposal; only local rendering waits.
+    if (application) void application.invoke("composer.set-draft", { text: value }).catch(showErrorToast);
     promptCommitTimerRef.current = setTimeout(() => {
       promptCommitTimerRef.current = undefined;
       if (pendingPromptCommitRef.current !== pendingCommit) {
         return;
       }
       pendingPromptCommitRef.current = null;
-      if (application) void application.invoke("composer.set-draft", { text: pendingCommit.value }).catch(showErrorToast);
       startTransition(() => {
         setPromptState((current) =>
           promptRef.current === pendingCommit.value && current !== pendingCommit.value

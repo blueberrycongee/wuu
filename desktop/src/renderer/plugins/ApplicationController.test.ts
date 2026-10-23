@@ -100,7 +100,9 @@ describe("shared application state", () => {
         { id: "thread:first", kind: "thread", context, threadID: "first", title: "First", prompt: "First draft", images: [], files: [] },
         { id: "thread:second", kind: "thread", context, threadID: "second", title: "Second", prompt: "Second draft", images: [], files: [] },
       ] });
+    await controller.invoke("composer.set-draft", { text: "Fresh outgoing draft" });
     await controller.invoke("thread.select", { threadId: "second" });
+    expect(controller.getState().sessionTabs.find(tab => tab.id === "thread:first")).toMatchObject({ prompt: "Fresh outgoing draft" });
     expect(controller.getSnapshot().conversation.threadId).toBe("second");
     expect(controller.getSnapshot().composer.draftText).toBe("Second draft");
   });

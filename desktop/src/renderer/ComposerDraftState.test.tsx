@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { ApplicationController } from "./plugins/ApplicationController";
 import type { ComposerDraftState } from "./AppState";
 import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, initialState, type AppState } from "./AppState";
 import { createWorkspaceActions } from "./WorkspaceActions";
@@ -33,13 +35,14 @@ async function flushEffects(): Promise<void> {
   await Promise.resolve();
 }
 
-async function renderComposerDraftState(): Promise<{
+async function renderComposerDraftState(application?: ApplicationServiceV1): Promise<{
+  unmount: () => void;
   get: () => ComposerDraftStateController;
 }> {
   let latest: ComposerDraftStateController | undefined;
 
   function Probe() {
-    latest = useComposerDraftState();
+    latest = useComposerDraftState(undefined, application);
     return null;
   }
 
@@ -54,6 +57,7 @@ async function renderComposerDraftState(): Promise<{
   });
 
   return {
+    unmount: () => { act(() => root.unmount()); mountedRoots = mountedRoots.filter(value => value !== root); },
     get: () => {
       if (!latest) {
         throw new Error("composer draft state was not rendered");
@@ -317,6 +321,29 @@ describe("useComposerDraftState", () => {
 
     expect(hook.get().prompt).toBe("abc");
     expect(hook.get().promptRevision).toBe(0);
+  });
+
+  it("retains rapid input across shell teardown without per-keystroke structural publication", async () => {
+    vi.useFakeTimers();
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const application = new ApplicationController({ ...initialState, activeSessionTabID: "draft", sessionTabs: [
+      createDraftSessionTab("draft", context),
+    ] });
+    const structural = vi.fn();
+    application.subscribeState(structural);
+    const hook = await renderComposerDraftState(application);
+    act(() => {
+      hook.get().setPromptFromInput("Keep");
+      hook.get().setPromptFromInput("Keep this draft");
+    });
+    expect(hook.get().prompt).toBe("");
+    expect(application.getSnapshot().composer.draftText).toBe("Keep this draft");
+    expect(structural).not.toHaveBeenCalled();
+    hook.unmount();
+    act(() => vi.advanceTimersByTime(COMPOSER_PROMPT_IDLE_COMMIT_MS));
+    expect(application.getSnapshot().composer.draftText).toBe("Keep this draft");
+    application.updateState(state => ({ ...state, status: "shell replaced" }));
+    expect(application.getState().sessionTabs[0]).toMatchObject({ prompt: "Keep this draft" });
   });
 
   it("does not let a pending input commit overwrite an immediate draft restore", async () => {
