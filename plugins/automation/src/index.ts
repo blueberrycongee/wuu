@@ -169,6 +169,7 @@ export function createAutomationPlugin(): RuntimePlugin {
     });
   }
   async function clientRequest(host: RuntimeHost, method: string, input: Mutation = {}): Promise<unknown> {
+    if (stopped) throw new Error("automation provider is stopped");
     switch (method.trim()) {
       case "automation.list": return locked(() => ({ tasks: snapshotTasks(), workspace: { id: workspaceID, root: workspaceRoot } }));
       case "automation.run.list": return locked(() => ({ runs: structuredClone(runs) }));
@@ -196,12 +197,22 @@ export function createAutomationPlugin(): RuntimePlugin {
     const runID = `run-${task.id}-${Math.floor(scheduledAt / 1000)}`, requestID = `automation-${runID}`;
     const settled = await locked(async () => {
       const existing = runs.find(run => run.id === runID);
-      if (existing && terminal.has(existing.status)) return true;
+      if (existing) {
+        // A recovered intent may already have reached a remote session. Preserve
+        // its request identity for inspection; activation never repeats effects.
+        if (existing.status === "starting") {
+          existing.status = "uncertain";
+          existing.error = "Dispatch outcome is unknown; inspect the session before scheduling replacement work";
+          await save(host);
+        }
+        return true;
+      }
       if (!existing) {
         runs.push({ id: runID, task_id: task.id, task: structuredClone(task), request_id: requestID, status: "starting", triggered_at: now.toISOString() });
         if (runs.length > 500) runs = runs.slice(-500);
       }
-      await saveBestEffort(host);
+      // The durable intent must precede every externally visible action.
+      await save(host);
       return false;
     });
     if (settled) return true;
@@ -230,16 +241,10 @@ export function createAutomationPlugin(): RuntimePlugin {
       if (!run) return true;
       if (terminal.has(run.status)) return true;
       const message = error instanceof Error ? error.message : String(error);
-      if (error && message.includes("session service is unavailable")) {
-        if (run.status !== "starting") return true;
-        runs.splice(index, 1);
-        await saveBestEffort(host);
-        return false;
-      }
       run.session_id = sessionID || undefined;
       run.workspace_root = executionRoot || undefined;
       if (error) {
-        run.status = "failed"; run.completed_at = new Date().toISOString(); run.error = message;
+        run.status = "uncertain"; run.error = message;
       } else if (run.status === "running" && sent!.state !== "running") {
         run.queue_id ||= sent!.queue_id;
       } else {
@@ -261,8 +266,9 @@ export function createAutomationPlugin(): RuntimePlugin {
     }).catch(error => { console.error("automation dispatch failed:", error); });
   }
   async function settle(host: RuntimeHost, input: TurnLifecycleInput): Promise<void> {
-    if (input.state !== "running" && !terminal.has(input.state)) return;
+    if (stopped || (input.state !== "running" && !terminal.has(input.state))) return;
     await locked(async () => {
+      if (stopped) return;
       const run = runs.find(value => value.request_id === input.request_id);
       if (!run) return;
       if (input.state === "running") {
@@ -284,6 +290,7 @@ export function createAutomationPlugin(): RuntimePlugin {
       tasks = new Map(); runs = []; stopped = false;
       return {
         tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root" as const] }],
+        provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }] }],
         capabilities: [{ id: "plugin.client.request", kind: "decision" as const, version: 1 }, { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
         required_services: (["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService),
       };
@@ -309,7 +316,13 @@ export function createAutomationPlugin(): RuntimePlugin {
       fireDue(); timer = setInterval(fireDue, 15_000);
     },
     async shutdown() { stop(); await dispatch; await stateQueue; },
+    async invokeService(call, host) {
+      if (call.service !== "automation.scheduler" || call.method !== "request") throw new Error("unknown automation service method");
+      const request = call.params as { method: string; input?: Mutation };
+      return clientRequest(host, request.method, request.input);
+    },
     async executeTool(call: ToolExecuteParams, host: RuntimeHost) {
+      if (stopped) throw new Error("automation provider is stopped");
       const input = mutationInput(call.arguments);
       let value: unknown;
       switch (input.action?.trim()) {

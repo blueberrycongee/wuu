@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=automation"
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=automation",
+    "test": "node --test test/*.test.mjs"
   },
   "wuu": {
     "dev": {
