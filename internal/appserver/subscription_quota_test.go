@@ -63,6 +63,7 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	writeConfig(firstToken)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	list := func(id string, include bool) EngineListResult {
 		t.Helper()
 		if err := srv.handleEngineList(Request{ID: json.RawMessage(`"` + id + `"`), Params: json.RawMessage(fmt.Sprintf(`{"include_quota":%t}`, include))}); err != nil {
@@ -109,9 +110,16 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	if stale.Status != "stale" || stale.ObservedAt != first.ObservedAt || stale.ExpiresAt != first.ExpiresAt || *stale.Windows[0].UsedPercent != 37 || stale.ErrorCode == "" {
 		t.Fatalf("last-known observation was refilled or relabelled: %+v", stale)
 	}
-	// A fresh server must use the same credential-scoped durable observation.
+	// Restart with a new runtime after the old server's owned watchers stop.
+	// Only persisted configuration and credential-scoped observations survive.
+	srv.Close()
+	restartedRuntime := newTestRuntime(t, &fakeClient{})
+	restartedRuntime.RootDir, restartedRuntime.ConfigPath = rt.RootDir, rt.ConfigPath
+	restartedRuntime.WuuHome, restartedRuntime.SessionDir = rt.WuuHome, rt.SessionDir
+	rt = restartedRuntime
 	out = &lockedBuffer{}
 	srv = New(rt, out)
+	t.Cleanup(srv.Close)
 	if restarted := quota(list("restart", true), "first"); restarted.Status != "stale" || restarted.ObservedAt != first.ObservedAt {
 		t.Fatalf("restart lost observation: %+v", restarted)
 	}

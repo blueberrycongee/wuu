@@ -57,6 +57,7 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 			require.NoError(t, rewriteChatHistory(rt.SessionDir, sess.ID, history))
 			out := &lockedBuffer{}
 			srv := New(rt, out)
+			t.Cleanup(srv.Close)
 			require.NoError(t, srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"resume","method":"thread/resume","params":{"session_id":%q}}`, sess.ID))))
 			resumed := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, out.String()), "resume")["result"])
 			require.Len(t, resumed.Thread.Turns, 1)
@@ -72,7 +73,7 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 			require.JSONEq(t, oldResult, historicalItem.Result)
 
 			require.NoError(t, srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"turn","method":"turn/start","params":{"thread_id":%q,"prompt":"Update value.txt and create ready.txt, then verify both files."}}`, sess.ID))))
-			messages := waitForMethod(t, out, NotificationTurnCompleted)
+			messages := waitForTurnCompletedForThread(t, out, sess.ID)
 			completed := remarshal[TurnCompletedNotification](t, notificationByMethod(t, messages, NotificationTurnCompleted)["params"])
 			require.Equal(t, TurnStatusCompleted, completed.Turn.Status)
 			results := map[string]ThreadItem{}
