@@ -1,3 +1,5 @@
+// Legacy SQLite fixture code is test-only. Production sessions use Store;
+// explicit conversion reads legacy databases through legacysqlite.
 package session
 
 import (

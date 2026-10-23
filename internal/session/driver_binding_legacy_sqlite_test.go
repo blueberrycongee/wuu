@@ -1,3 +1,5 @@
+// Legacy SQLite fixture code is test-only. Production sessions use Store;
+// explicit conversion reads legacy databases through legacysqlite.
 package session
 
 import (
@@ -121,9 +123,7 @@ func migrateDriverBindings(db *sql.DB) error {
 )`); err != nil {
 		return err
 	}
-	// These are historical identities, not current defaults. Old external
-	// checkpoints did not record a provider or profile; leave those unknown
-	// rather than inventing authority. Their original binding needs migration.
+
 	if _, err := tx.Exec(`INSERT INTO session_driver_bindings
 (session_id, profile, provider_id, contract_version, driver_id, driver_version)
 SELECT s.id,
