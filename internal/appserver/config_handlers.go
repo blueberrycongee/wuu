@@ -37,7 +37,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/skills"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/version"
@@ -938,7 +937,12 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseMutation()
-	snapshot := s.rt.ExtensionSnapshot()
+	services, releaseServices, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseServices()
+	snapshot := services.Snapshot
 	var selected *pluginpkg.Plugin
 	for index := range snapshot.Plugins {
 		if snapshot.Plugins[index].SubjectID == strings.TrimSpace(params.ID) {
@@ -963,36 +967,41 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("official bundled packages cannot be granted or rejected"))
 	}
 
-	userConfigPath, err := statepath.ConfigPath(s.rt.HomeDir)
+	view, err := services.Config.Read(context.Background())
 	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("resolve user config: %w", err))
-	}
-	approvedAt := time.Now().UTC()
-	preparedSettings := cloneExtensionSettings(snapshot.ExtensionSettings)
-	if err := applyExtensionPackageAction(&preparedSettings, params.Action, *selected, approvedAt); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	cfg := s.currentExtensionConfig()
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	approvedAt := time.Now().UTC()
+	next, preparedSettings, err := config.UpdateExtensionSettingsSource(source, func(settings *extensions.Settings) error {
+		return applyExtensionPackageAction(settings, params.Action, *selected, approvedAt)
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg := view.Config
 	cfg.Extensions = &preparedSettings
 	candidate, err := s.rt.PreflightExtensionPolicy(cfg)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	var persistedSettings extensions.Settings
+	var committedView config.SourceView
 	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
-		updated, updateErr := config.UpdateExtensionSettings(userConfigPath, func(settings *extensions.Settings) error {
-			return applyExtensionPackageAction(settings, params.Action, *selected, approvedAt)
-		})
+		var updateErr error
+		committedView, updateErr = services.Config.CompareExchange(context.Background(), view.Revision, next)
 		if updateErr != nil {
 			return fmt.Errorf("persist extension policy: %w", updateErr)
 		}
-		persistedSettings = updated
 		return nil
 	})
 	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
 		return s.writeResponse(req.ID, nil, activationErr)
 	}
-	s.rt.SetExtensionSettings(&persistedSettings)
+	activationErr = errors.Join(activationErr, configActivationError(committedView))
+	s.rt.SetExtensionSettings(&preparedSettings)
 	s.schedulePluginTurnLifecycleReplay()
 	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
 }
@@ -1040,7 +1049,11 @@ func (s *Server) handleExtensionCatalogRefresh(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer releaseMutation()
-	if err := s.rt.RefreshExtensions(s.currentExtensionConfig()); err != nil {
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if err := s.rt.RefreshExtensions(cfg); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	inventory, skills := s.currentExtensionState()
@@ -1086,25 +1099,25 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	if err := config.UpdateAdvancedRuntime(s.rt.ConfigPath, s.rt.ProviderName, config.AdvancedRuntimeUpdate{
-		MaxSteps:                params.MaxSteps,
-		MaxContextTokens:        params.MaxContextTokens,
-		Temperature:             params.Temperature,
-		CompactThresholdPct:     params.CompactThresholdPct,
-		CompactKeepRecentTokens: params.CompactKeepRecentTokens,
-		DisableAutoCompact:      params.DisableAutoCompact,
-		ProviderContextWindow:   params.ProviderContextWindow,
-		ModelAliases:            modelAliases,
-		VerificationModel:       verificationModel,
-		ProjectModels:           params.ProjectModels,
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.UpdateAdvancedRuntimeSource(source, s.rt.ProviderName, config.AdvancedRuntimeUpdate{
+			MaxSteps:                params.MaxSteps,
+			MaxContextTokens:        params.MaxContextTokens,
+			Temperature:             params.Temperature,
+			CompactThresholdPct:     params.CompactThresholdPct,
+			CompactKeepRecentTokens: params.CompactKeepRecentTokens,
+			DisableAutoCompact:      params.DisableAutoCompact,
+			ProviderContextWindow:   params.ProviderContextWindow,
+			ModelAliases:            modelAliases,
+			VerificationModel:       verificationModel,
+			ProjectModels:           params.ProjectModels,
+		})
+	})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+
+	cfg := view.Config
 	providerCfg, resolvedName, err := cfg.ResolveProvider(s.rt.ProviderName)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1211,18 +1224,18 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
-	if err := config.UpdateGeneralSettings(s.rt.ConfigPath, config.GeneralSettingsUpdate{
-		PTC:                   params.PTC,
-		ExecutionEnvironments: params.ExecutionEnvironments,
-		GitAttributionEnabled: params.GitAttributionEnabled,
-		MCPEnabledToggles:     params.MCPEnabledToggles,
-	}); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.UpdateGeneralSettingsSource(source, config.GeneralSettingsUpdate{
+			PTC:                   params.PTC,
+			ExecutionEnvironments: params.ExecutionEnvironments,
+			GitAttributionEnabled: params.GitAttributionEnabled,
+			MCPEnabledToggles:     params.MCPEnabledToggles,
+		})
+	})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	cfg := view.Config
 	systemPrompt := s.rt.ApplyGeneralConfig(cfg, os.Getenv("HOME"))
 	s.resetThreadRuntimesForGeneralSettings(systemPrompt)
 	return s.writeResponse(req.ID, ConfigGeneralUpdateResult{
@@ -1621,7 +1634,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 	if addedModel != "" {
 		change.AddedModels = []string{addedModel}
 	}
-	if err := config.UpdateProvider(s.rt.ConfigPath, resolvedName, change); err != nil {
+	if _, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) { return config.UpdateProviderSource(source, resolvedName, change) }); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if keepSelection && resolvedName != s.rt.ProviderName {
@@ -1860,7 +1873,9 @@ func (s *Server) handleConfigCodexCredentials(req Request) error {
 	if _, err := codex.LocalOAuthStatus(os.Getenv("HOME"), true); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := config.UseCodexCredentials(s.rt.ConfigPath, strings.TrimSpace(params.Provider)); err != nil {
+	if _, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.UseCodexCredentialsSource(source, strings.TrimSpace(params.Provider))
+	}); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	if err := s.refreshConfigIfChanged(); err != nil {
@@ -2019,8 +2034,16 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 			return s.writeResponse(req.ID, nil, restoreCredentials(fmt.Errorf("remove provider credential: %w", err)))
 		}
 	}
-	newDefault, removeErr := config.RemoveProvider(s.rt.ConfigPath, providerName, params.FallbackProvider, params.FallbackModel)
+	var newDefault string
+	committedView, removeErr := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		next, selected, err := config.RemoveProviderSource(source, providerName, params.FallbackProvider, params.FallbackModel)
+		newDefault = selected
+		return next, err
+	})
 	if removeErr != nil {
+		if committedView.Committed {
+			return s.writeResponse(req.ID, nil, removeErr)
+		}
 		return s.writeResponse(req.ID, nil, restoreCredentials(removeErr))
 	}
 	if !removedWasDefault {
@@ -2765,11 +2788,13 @@ func (s *Server) registerDiscoveredProvider(cfg config.Config, providerName stri
 	if !discovered {
 		return cfg, nil
 	}
-	if err := config.AddProviderIfMissing(s.rt.ConfigPath, providerName, provider); err != nil {
+	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.AddProviderIfMissingSource(source, providerName, provider)
+	})
+	if err != nil {
 		return cfg, err
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
-	return cfg, err
+	return view.Config, nil
 }
 
 func localGrokBuildProvider(cfg config.Config, providerName, home string) (config.ProviderConfig, bool) {

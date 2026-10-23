@@ -26,6 +26,7 @@ func writeProviderSettingsConfig(t *testing.T, rt *runtime.Session, body string)
 	if err := os.WriteFile(rt.ConfigPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	bindConfigSourceForTest(t, rt)
 }
 
 func readProviderSettingsConfig(t *testing.T, rt *runtime.Session) config.Config {

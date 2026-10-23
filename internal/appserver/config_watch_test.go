@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -58,6 +60,7 @@ func TestAgentFileEditsPersistAndRefreshUserConfig(t *testing.T) {
 			if result, err := call("read_file", map[string]any{"path": rt.ConfigPath}); err != nil || !strings.Contains(result, "fake-model") {
 				t.Fatalf("read user config: result=%q err=%v", result, err)
 			}
+			bindConfigSourceForTest(t, rt)
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -178,6 +181,7 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 		}
 	}
 	write(valid)
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -191,7 +195,8 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 
 	// A newer build can add a field unknown to this reader.
 	write(strings.Replace(valid, `"default_provider"`, `"future_setting":{},"default_provider"`, 1))
-	if err := srv.refreshConfigIfChanged(); err == nil || !strings.Contains(err.Error(), "unknown field") {
+	var configErr *pluginhost.HostServiceError
+	if err := srv.refreshConfigIfChanged(); !errors.As(err, &configErr) || configErr.Code != "config_invalid" {
 		t.Fatalf("expected strict config error, got %v", err)
 	}
 	messages := parseOutput(t, out.String())
@@ -213,7 +218,7 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 		t.Fatal(err)
 	}
 	rejection := remarshal[ResponseError](t, responseByID(t, parseOutput(t, out.String()), "blocked")["error"])
-	if !strings.Contains(rejection.Message, "unknown field") {
+	if rejection.Code == "" {
 		t.Fatalf("mutation must reject the invalid config, got %+v", rejection)
 	}
 

@@ -1,13 +1,13 @@
 package appserver
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -224,15 +224,19 @@ func (s *Server) refreshConfigIfChanged() error {
 	// Compute under the same lock used to apply an interactive config update.
 	// Computing first could leave `next` stale while waiting for the lock, then
 	// hot-apply the interactive update a second time after it completed.
-	sources := s.configSourceFingerprint()
-	if s.configRejectedSources != "" && sources == s.configRejectedSources {
-		return nil
-	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, release, err := s.rt.RetainStateServices()
 	if err != nil {
-		// Retry a rejected document only after its bytes change. Runtime apply
-		// failures below remain retryable because their cause can be transient.
-		s.configRejectedSources = sources
+		return err
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		// Poll the selected source again so repair can be observed even without
+		// local files. Suppress repeated notifications for the same failure.
+		if s.configRejectedSources == err.Error() {
+			return nil
+		}
+		s.configRejectedSources = err.Error()
 		if s.out != nil {
 			if notifyErr := s.writeNotification(NotificationConfigError, ConfigErrorNotification{Message: err.Error()}); notifyErr != nil {
 				return notifyErr
@@ -240,6 +244,7 @@ func (s *Server) refreshConfigIfChanged() error {
 		}
 		return err
 	}
+	cfg := view.Config
 	data, err := json.Marshal(cfg)
 	if err != nil {
 		return err
@@ -316,28 +321,24 @@ func (s *Server) applyExternalConfigChange(cfg config.Config) error {
 	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousProvider, client, true)
 }
 
-// Hash source bytes, including absent files, so invalid JSON and new fields can
-// be watched without decoding them. Include every overlay that can repair a load.
+// Catalog refresh admission keys come from the selected provider too. Local
+// file events are only wake-up hints; external sources remain observable.
 func (s *Server) configSourceFingerprint() string {
-	paths := make([]string, 0)
-	for path := range s.configWatchPaths() {
-		paths = append(paths, path)
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return "error:" + err.Error()
 	}
-	sort.Strings(paths)
-	hash := sha256.New()
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		hash.Write([]byte(path))
-		hash.Write([]byte{0})
-		if err != nil {
-			hash.Write([]byte(err.Error()))
-		} else {
-			sum := sha256.Sum256(data)
-			hash.Write(sum[:])
-		}
-		hash.Write([]byte{0})
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return "error:" + err.Error()
 	}
-	return hex.EncodeToString(hash.Sum(nil))
+	data, err := json.Marshal(view.Config)
+	if err != nil {
+		return "error:invalid selected configuration"
+	}
+	sum := sha256.Sum256(data)
+	return view.Revision + ":" + hex.EncodeToString(sum[:])
 }
 
 func (s *Server) effectiveConfigFingerprint() (string, error) {

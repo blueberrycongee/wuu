@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -314,20 +315,28 @@ func (s *Server) enrichChatGPTSummaries(summaries []ProviderSummary, cfg config.
 func (s *Server) saveChatGPTCatalog(accountID string, models []chatgpt.ModelInfo) error {
 	s.configRefreshMu.Lock()
 	defer s.configRefreshMu.Unlock()
-	cfg, _, err := s.rt.LoadEffectiveConfig()
-	if err != nil {
-		return err
-	}
 	catalog := make([]config.ChatGPTModelConfig, 0, len(models))
 	for _, model := range models {
 		catalog = append(catalog, config.ChatGPTModelConfig{ID: model.Slug, DisplayName: model.DisplayName, AccountDescriptor: model.Raw})
 	}
-	for name, provider := range cfg.Providers {
-		if provider.Type == "chatgpt" && provider.ChatGPTAccountID == accountID {
-			if err := config.UpdateProvider(s.rt.ConfigPath, name, config.ProviderChange{Model: provider.Model, ChatGPTModels: &catalog}); err != nil {
-				return err
+	_, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		var document struct {
+			Providers map[string]config.ProviderConfig `json:"providers"`
+		}
+		if err := json.Unmarshal(source, &document); err != nil {
+			return nil, errors.New("selected configuration cannot be edited")
+		}
+		next := source
+		for name, provider := range document.Providers {
+			if provider.Type == "chatgpt" && provider.ChatGPTAccountID == accountID {
+				var err error
+				next, err = config.UpdateProviderSource(next, name, config.ProviderChange{Model: provider.Model, ChatGPTModels: &catalog})
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
-	}
-	return nil
+		return next, nil
+	})
+	return err
 }
