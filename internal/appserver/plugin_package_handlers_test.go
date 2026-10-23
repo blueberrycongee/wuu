@@ -172,6 +172,7 @@ func TestPluginDesktopModuleReadRejectsDisabledPlugin(t *testing.T) {
 func TestPluginPackageInstallDirectoryIsPendingAndDoesNotActivate(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	source := t.TempDir()
 	marker := filepath.Join(source, "executed")
 	writePluginPackageFile(t, filepath.Join(source, "plugin.json"), `{
@@ -220,6 +221,7 @@ func TestPluginPackageInstallDirectoryIsPendingAndDoesNotActivate(t *testing.T) 
 func TestPluginPackageUpdateWaitsForExactApprovalBeforePromotion(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	configPath, err := statepath.ConfigPath(rt.HomeDir)
 	if err != nil {
 		t.Fatalf("resolve config path: %v", err)
@@ -228,6 +230,8 @@ func TestPluginPackageUpdateWaitsForExactApprovalBeforePromotion(t *testing.T) {
   "default_provider": "fake-provider",
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "fake-model"}}
 }`)
+	rt.ConfigPath = configPath
+	bindConfigSourceForTest(t, rt)
 
 	versionOne := writeManagedPluginPackage(t, "update-demo", "1.0.0", "first generation")
 	out := &lockedBuffer{}
@@ -320,6 +324,7 @@ func TestPluginPackageUpdateWaitsForExactApprovalBeforePromotion(t *testing.T) {
 func TestPluginPackageUpdateActivationFailureKeepsInstalledAndPendingGenerations(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	configPath, err := statepath.ConfigPath(rt.HomeDir)
 	if err != nil {
 		t.Fatal(err)
@@ -328,6 +333,8 @@ func TestPluginPackageUpdateActivationFailureKeepsInstalledAndPendingGenerations
   "default_provider": "fake-provider",
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "fake-model"}}
 }`)
+	rt.ConfigPath = configPath
+	bindConfigSourceForTest(t, rt)
 
 	versionOne := writeManagedPluginPackage(t, "activation-failure", "1.0.0", "working generation")
 	out := &lockedBuffer{}
@@ -418,9 +425,9 @@ func TestPluginGenerationMutationExcludesActiveAndNewThreadWork(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	newThread := &threadState{ID: "new"}
+	newThread := &threadState{ID: "new", state: testRuntimeState(t, rt)}
 	newThread.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(newThread)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(newThread, 0)
 	newThread.mu.Unlock()
 	if err != nil {
 		release()
@@ -433,7 +440,7 @@ func TestPluginGenerationMutationExcludesActiveAndNewThreadWork(t *testing.T) {
 	release()
 
 	newThread.mu.Lock()
-	acquired, err = srv.tryAcquireThreadExecutionLeaseLocked(newThread)
+	acquired, err = srv.tryAcquireThreadExecutionLeaseLocked(newThread, 0)
 	if acquired {
 		newThread.releaseThreadExecutionLeaseLocked()
 	}
@@ -500,6 +507,49 @@ func TestPluginGenerationMutationPublicationFailureReachesResponse(t *testing.T)
 	}
 }
 
+func TestPluginGenerationResponsePublishesCommittedStateBeforeReply(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("activation-failed=%v", failed), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "committed", Desktop: &pluginpkg.DesktopSpec{Entry: "desktop.js"}}, SubjectID: "plugin:user:committed", Fingerprint: "committed-source", Source: "user"}}
+			out := &lockedBuffer{}
+			srv := &Server{rt: rt, out: out}
+			inventory, _ := srv.currentExtensionState()
+			var activationErr error
+			if failed {
+				activationErr = errors.New("committed activation failed")
+			}
+			finish := func() error {
+				srv.pluginGenerationEpoch.Store(7)
+				// Releasing mutation ownership permits a later generation. The
+				// publication must retain the snapshot belonging to this reply.
+				rt.Plugins = nil
+				return nil
+			}
+			if err := srv.writePluginGenerationResponse(Request{ID: json.RawMessage(`"origin"`)}, ExtensionPackageUpdateResult{ExtensionInventory: inventory}, activationErr, finish); err != nil {
+				t.Fatal(err)
+			}
+			messages := parseOutput(t, out.String())
+			if len(messages) != 2 || messages[0]["method"] != NotificationPluginInventoryChanged || messages[1]["id"] != "origin" {
+				t.Fatalf("origin must receive the committed publication before its response: %+v", messages)
+			}
+			publication := remarshal[map[string]any](t, messages[0]["params"])
+			if shell, present := publication["application_shell"]; !present || shell != nil {
+				t.Fatalf("publication must explicitly clear an absent shell: %+v", publication)
+			}
+			actual, _ := json.Marshal(publication["extension_inventory"])
+			want, _ := json.Marshal(remarshal[any](t, inventory))
+			if string(actual) != string(want) || publication["epoch"] != float64(7) {
+				t.Fatalf("publication lost its committed inventory: %s, want %s (epoch=%v)", actual, want, publication["epoch"])
+			}
+			response := messages[1]
+			if failed && (response["error"] == nil || response["result"] != nil) || !failed && (response["error"] != nil || response["result"] == nil) {
+				t.Fatalf("publication changed the mutation outcome: %+v", response)
+			}
+		})
+	}
+}
+
 func TestPluginGenerationMutationFinishIsIdempotent(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
@@ -525,10 +575,10 @@ func TestPluginGenerationMutationIsBlockedByAnotherAppServerExecution(t *testing
 	rt.WuuHome = retryingTempDir(t)
 	executingServer := &Server{rt: rt, threads: map[string]*threadState{}}
 	mutatingServer := &Server{rt: rt, threads: map[string]*threadState{}}
-	thread := &threadState{ID: "other-server-turn"}
+	thread := &threadState{ID: "other-server-turn", state: testRuntimeState(t, rt)}
 
 	thread.mu.Lock()
-	acquired, err := executingServer.tryAcquireThreadExecutionLeaseLocked(thread)
+	acquired, err := executingServer.tryAcquireThreadExecutionLeaseLocked(thread, 0)
 	thread.mu.Unlock()
 	if err != nil || !acquired {
 		t.Fatalf("acquire execution generation: acquired=%v err=%v", acquired, err)
@@ -555,6 +605,8 @@ func TestPluginGenerationMutationIsBlockedByAnotherAppServerExecution(t *testing
 func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	mutation, acquired, err := session.TryAcquirePluginGenerationMutationLease(rt.WuuHome)
 	if err != nil || !acquired {
 		t.Fatalf("acquire mutation generation: acquired=%v err=%v", acquired, err)
@@ -585,10 +637,11 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 		err      error
 	}
 	results := make(chan admissionResult, 2)
+	binding := testRuntimeState(t, rt)
 	admit := func(id string) {
-		thread := &threadState{ID: id}
+		thread := &threadState{ID: id, state: binding}
 		thread.mu.Lock()
-		ok, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
+		ok, err := srv.tryAcquireThreadExecutionLeaseLocked(thread, 0)
 		if ok {
 			thread.releaseThreadExecutionLeaseLocked()
 		}
@@ -622,6 +675,9 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 func TestServerStartupRefreshesGenerationAdvancedAfterRuntimeConstruction(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	oldHost := rt.PluginHost
 	mutation, acquired, err := session.TryAcquirePluginGenerationMutationLease(rt.WuuHome)
 	if err != nil || !acquired {
@@ -651,6 +707,7 @@ func TestServerStartupRefreshesGenerationAdvancedAfterRuntimeConstruction(t *tes
 func TestPluginPackageRemoveRefreshesInventory(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	configPath, err := statepath.ConfigPath(rt.HomeDir)
 	if err != nil {
 		t.Fatalf("resolve config path: %v", err)
@@ -659,6 +716,8 @@ func TestPluginPackageRemoveRefreshesInventory(t *testing.T) {
   "default_provider": "fake-provider",
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "fake-model"}}
 }`)
+	rt.ConfigPath = configPath
+	bindConfigSourceForTest(t, rt)
 	source := t.TempDir()
 	writePluginPackageFile(t, filepath.Join(source, "plugin.json"), `{"id":"remove-demo","skills":["skills"]}`)
 	writePluginPackageFile(t, filepath.Join(source, "skills", "remove-skill", "SKILL.md"), `---
@@ -766,11 +825,14 @@ func TestPluginPackageHandlersRejectInvalidPathAndID(t *testing.T) {
 func TestPluginPackageMutationsPreserveUnrelatedRunningTurn(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	configPath, err := statepath.ConfigPath(rt.HomeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writePluginPackageFile(t, configPath, `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"}}}`)
+	rt.ConfigPath = configPath
+	bindConfigSourceForTest(t, rt)
 
 	source := t.TempDir()
 	writePluginPackageFile(t, filepath.Join(source, "plugin.json"), `{"id":"busy-demo"}`)

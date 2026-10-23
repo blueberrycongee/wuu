@@ -33,7 +33,9 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 		}
 	}
 	client := &dependencyInventoryClient{id: provider.ID}
-	rt.PluginHost = pluginhost.New(client)
+	preparePluginRuntimePathsForTest(t, rt)
+	bindConfigSourceForTest(t, rt)
+	rt.PluginHost.Add(client)
 	rt.PluginHost.SetPackageRequirements(map[string][]string{provider.ID: nil, consumer.ID: {provider.ID}})
 	out := &lockedBuffer{}
 	srv := &Server{rt: rt, out: out}

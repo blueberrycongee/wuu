@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/modelroles"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -117,6 +118,7 @@ func TestPluginReloadBehaviorProcess(t *testing.T) {
 func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	control := t.TempDir()
 	attemptsPath := filepath.Join(control, "attempts")
 	failurePath := filepath.Join(control, "failure")
@@ -194,9 +196,9 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 	}
 	for range 8 {
 		_ = srv.refreshPluginGenerationIfChanged()
-		thread := &threadState{ID: "waiting-for-recovery"}
+		thread := &threadState{ID: "waiting-for-recovery", state: testRuntimeState(t, rt)}
 		thread.mu.Lock()
-		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread, 0)
 		thread.mu.Unlock()
 		if err != nil || acquired {
 			t.Fatalf("turn admission did not wait for recovery: acquired=%t err=%v", acquired, err)
@@ -226,8 +228,44 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 	t.Logf("real plugin initialize attempts=%d; failed candidates retained callable old process; manual failure and recovery reported through Refresh RPC", attempts())
 }
 
+func preparePluginRuntimePathsForTest(t *testing.T, rt *runtime.Session) {
+	t.Helper()
+	if rt.WuuHome == "" {
+		rt.WuuHome = filepath.Dir(rt.SessionDir)
+	}
+	var err error
+	rt.StateDir, err = statepath.WorkspaceDir(rt.WuuHome, rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(rt.ConfigPath); os.IsNotExist(err) {
+		writeTargetedUpdateConfig(t, rt)
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	if rt.PluginHost == nil && rt.StreamRunner != nil {
+		cfg, _, err := config.LoadPath(rt.ConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		provider, name, err := cfg.ResolveProvider(rt.ProviderName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{ProviderName: name, ProviderConfig: provider, Model: rt.Model, Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rt.ModelRoles = roles
+		rt.StreamRunner.Effort, rt.StreamRunner.Variant = roles.Main.LegacyEffort, roles.Main.Variant
+		rt.StreamRunner.ProviderOptions = roles.Main.ProviderOptions
+	}
+}
+
 func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, description string) {
 	t.Helper()
+	preparePluginRuntimePathsForTest(t, rt)
+	modelClient, titleClient, workerClient := rt.StreamRunner.Client, rt.TitleClient, rt.WorkerClient
 	if rt.Toolkit == nil {
 		kit, err := tools.New(rt.RootDir)
 		if err != nil {
@@ -258,6 +296,9 @@ func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, 
 	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
+	// Publication rebuilds configured clients; these lifecycle tests keep their
+	// explicitly injected model fixture for both old and subsequent turns.
+	rt.StreamRunner.Client, rt.TitleClient, rt.WorkerClient = modelClient, titleClient, workerClient
 	if len(rt.PluginHost.ToolDefinitions()) != 1 {
 		t.Fatalf("fixture did not register its tool: %+v", rt.PluginHost.Statuses())
 	}
@@ -347,7 +388,7 @@ func TestPluginReloadAdoptsNextIdleTurnWithoutLosingConversation(t *testing.T) {
 			assertResult(requests[1], "old-call", "old implementation")
 			assertResult(requests[2], "old-call", "old implementation")
 			assertResult(requests[3], "new-call", "new implementation")
-			persisted, err := loadChatMessages(rt.SessionDir, threadID)
+			persisted, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -362,8 +403,8 @@ func TestPluginReloadAdoptsNextIdleTurnWithoutLosingConversation(t *testing.T) {
 			if !changedSurface && requests[0].Messages[0].Content != requests[2].Messages[0].Content {
 				t.Fatal("implementation-only reload changed the stable system prompt")
 			}
-			if srv.thread(threadID) != th {
-				t.Fatal("reload replaced conversation identity")
+			if current := srv.thread(threadID); current == nil || current.ID != th.ID || current.state.Sessions != rt.Sessions {
+				t.Fatal("reload lost conversation identity or kept the superseded state binding")
 			}
 		})
 	}
@@ -399,6 +440,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	t.Cleanup(func() { unblock(); control.StopAll(); control.Close() })
 	th := newThreadState("reload-background", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	srv.mu.Lock()
+	th.state = testRuntimeState(t, rt)
 	srv.threads[th.ID] = th
 	srv.mu.Unlock()
 	first, err := srv.ensureThreadRuntime(th)
@@ -408,7 +450,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	// Use a deterministic local worker instead of any network-backed provider.
 	releaseThreadRuntimeSubscription(first, th.runtimeSubscription)
 	first.AgentControl = control
-	th.runtimeSubscription = srv.subscribeThreadRuntime(th.ID, first)
+	th.runtimeSubscription = srv.subscribeThreadRuntime(th.state, th.ID, first)
 	// Drop terminal status fanout while leaving the reliable finalizer attached.
 	// Retirement must be driven by the lease quiescence boundary, not notifications.
 	control.Unsubscribe(th.runtimeSubscription.statusCh)
@@ -424,7 +466,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 		t.Fatal("worker did not start")
 	}
 	th.mu.Lock()
-	acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th)
+	acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
 	if admissionErr == nil && acquired {
 		th.releaseThreadExecutionLeaseLocked()
 	}
@@ -505,7 +547,7 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	if oldRuntime == nil {
 		t.Fatal("completed turn did not retain its current runtime")
 	}
-	persistedBefore, err := loadChatMessages(rt.SessionDir, threadID)
+	persistedBefore, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -550,7 +592,7 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	if !reflect.DeepEqual(history, historyAfter) || srv.thread(threadID) != th {
 		t.Fatal("idle retirement changed conversation identity or in-memory history")
 	}
-	persistedAfter, err := loadChatMessages(rt.SessionDir, threadID)
+	persistedAfter, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -563,11 +605,14 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 func TestPluginGrantActivationFailurePublishesCommittedInventory(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	configPath, err := statepath.ConfigPath(rt.HomeDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writePluginPackageFile(t, configPath, `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"}}}`)
+	rt.ConfigPath = configPath
+	bindConfigSourceForTest(t, rt)
 	root := t.TempDir()
 	manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "activate-failure", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"}, Env: map[string]string{"WUU_RELOAD_TEST_MARKER": "failed", "WUU_RELOAD_TEST_DESCRIPTION": "read fixture", "WUU_RELOAD_TEST_ACTIVATE_ERROR": "activation refused", "WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(t.TempDir(), "shutdown")}}}
 	raw, err := json.Marshal(manifest)
@@ -622,10 +667,13 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			// Start without a watcher; drive the exact refresh boundary deterministically.
 			rt.WuuHome = ""
 			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+			writeTargetedUpdateConfig(t, rt)
+			bindConfigSourceForTest(t, rt)
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			defer srv.Close()
-			rt.WuuHome = retryingTempDir(t)
+			rt.WuuHome = filepath.Dir(rt.SessionDir)
+			preparePluginRuntimePathsForTest(t, rt)
 			callPluginPackageRPC(t, srv, "thread", MethodThreadStart, ThreadStartParams{})
 			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
 			root := t.TempDir()
@@ -654,12 +702,12 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			}
 			epoch := advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)
 			if admission {
-				th, err := srv.ensureThreadLoaded(threadID)
+				th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), threadID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				th.mu.Lock()
-				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
+				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
 				if acquired {
 					th.releaseThreadExecutionLeaseLocked()
 				}
@@ -710,6 +758,7 @@ func TestPluginReloadRetiresAfterLeaseReleasedBeforePoll(t *testing.T) {
 	t.Cleanup(srv.Close)
 	th := newThreadState("released-before-poll", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	srv.mu.Lock()
+	th.state = testRuntimeState(t, rt)
 	srv.threads[th.ID] = th
 	srv.mu.Unlock()
 	if _, err := srv.ensureThreadRuntime(th); err != nil {

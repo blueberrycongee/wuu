@@ -216,7 +216,10 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// Keep this observed epoch with the prepared candidate. Publication can
 	// advance again during activation; recording that newer epoch here would
 	// hide a change this candidate never loaded. The next refresh adopts it.
-	cfg := s.currentExtensionConfig()
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return err
+	}
 	inputs, err := json.Marshal(struct {
 		Epoch         uint64
 		ConfigSources string
@@ -288,7 +291,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		providers.DebugLogf("refresh plugin generation: %v", err)
 	}
 	*failure = pluginGenerationRefreshFailure{}
-	s.schedulePluginTurnLifecycleReplay()
+	s.scheduleCurrentPluginTurnLifecycleReplay()
 	inventory, skills := s.currentExtensionState()
 	refreshed = true
 	// The refresh mutex still serializes local mutations while the shared lease
@@ -306,4 +309,16 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		ExtensionInventory: inventory,
 		Skills:             skills,
 	})
+}
+
+// Publication is a new admission boundary. Existing events retain their own
+// state; replay of the newly selected graph captures only that graph here.
+func (s *Server) scheduleCurrentPluginTurnLifecycleReplay() {
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		providers.DebugLogf("capture plugin lifecycle replay state: %v", err)
+		return
+	}
+	defer binding.Close()
+	s.schedulePluginTurnLifecycleReplay(binding)
 }

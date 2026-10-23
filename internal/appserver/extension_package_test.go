@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
 func TestExtensionPackageGrantEnablesDefaultDisabledPackage(t *testing.T) {
@@ -78,8 +81,26 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 		EffectivePermissions: []string{extensions.PermCommandsExecute},
 	}}
 
+	preparePluginRuntimePathsForTest(t, rt)
+	source := config.NewService(config.Module, filepath.Join(wuuHome, "config.json"), rt.RootDir)
+	credentials := credentialstore.NewService("test.package-credentials", func() (credentialstore.Store, error) {
+		return nativeCredentialFixture(t, home), nil
+	})
+	consumer := &configSourceConsumer{}
+	host := pluginhost.New(source, credentials, consumer)
+	registry, conflicts := pluginhost.BuildServiceRegistry(source, credentials, consumer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rt.PluginHost = host
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	grant := `{"id":"grant","method":"extension/package/update","params":{"id":"plugin:project:prompt-kit","fingerprint":"sha256:prompt-kit","action":"grant"}}`
 	if err := srv.handleLine(context.Background(), []byte(grant)); err != nil {
 		t.Fatalf("grant package: %v", err)
@@ -172,6 +193,8 @@ func TestExtensionCatalogRefreshRediscoversPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	preparePluginRuntimePathsForTest(t, rt)
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()

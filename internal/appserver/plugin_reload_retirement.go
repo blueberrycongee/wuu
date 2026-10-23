@@ -1,5 +1,7 @@
 package appserver
 
+import "github.com/blueberrycongee/wuu/internal/runtime"
+
 // retireIdlePluginRuntimes releases superseded generations without waiting for
 // another user turn. Call after publishing a generation and releasing the
 // refresh mutex: turn admission takes that mutex while holding a thread lock.
@@ -14,17 +16,20 @@ func (s *Server) retireIdlePluginRuntimes() {
 	}
 	s.mu.Unlock()
 	var retired []detachedThreadRuntime
+	var states []*runtime.State
 	for _, th := range threads {
 		if th == nil {
 			continue
 		}
 		th.mu.Lock()
 		rt := th.execRuntime
-		if rt != nil && rt.PluginGeneration != nil &&
+		if th.state != nil && th.state.Generation != nil &&
 			!th.running && !th.admissionReserved && th.executionLease == nil && !th.runtimeSelectionMutation &&
-			!s.rt.IsCurrentPluginGeneration(rt.PluginGeneration) && !threadRuntimeHasOutstandingWork(th.ID, rt) {
+			!th.nativeHistoryMutation && s.activeExecutionRunID(th.ID) == "" &&
+			!s.rt.IsCurrentPluginGeneration(th.state.Generation) && !threadRuntimeHasOutstandingWork(th.ID, rt) {
 			retired = append(retired, detachThreadRuntimeLocked(th))
 			th.maybeReleasePluginGenerationExecutionLeaseLocked()
+			states = append(states, th.state)
 		}
 		th.mu.Unlock()
 	}
@@ -32,5 +37,11 @@ func (s *Server) retireIdlePluginRuntimes() {
 	// locks may be held while the detached generation drains.
 	for _, detached := range retired {
 		s.releaseDetachedThreadRuntime(detached)
+	}
+	// Keep the display projection cached, but release its superseded ownership.
+	// The next request loads through its own captured store; running callbacks
+	// already hold independent State references through their final writes.
+	for _, state := range states {
+		_ = state.Close()
 	}
 }
