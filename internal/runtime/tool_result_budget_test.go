@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -130,7 +131,9 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 				fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
 			}))
 			defer server.Close()
-			rt, err := NewSession(Options{RootDir: root, HomeDir: home, SafeMode: true, Config: config.Config{
+			modules := []string{kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer}
+			rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{
+				Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
 				DefaultProvider: "synthetic", Providers: map[string]config.ProviderConfig{
 					"synthetic": {Type: "openai-compatible", WireAPI: "chat", Model: "gpt-4o", ContextWindow: 262144, BaseURL: server.URL, APIKey: "synthetic-key", AuthToken: "synthetic-token"},
 				},

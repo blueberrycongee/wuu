@@ -90,9 +90,9 @@ type Options struct {
 	// NonInteractive disables human questions and interactive engine approvals
 	// for this runtime, including plugin generations loaded later.
 	NonInteractive bool
-	// DriverProfile selects the loop driver for new turns: empty keeps the
-	// in-process default; a profile name binds the plugin that provides the
-	// versioned "driver.<profile>" service. Unknown profiles fail closed.
+	// DriverProfile selects the versioned driver.<profile> service. Empty
+	// selects driver.default through the same composition binding. Missing
+	// providers fail closed, including when the default module is removed.
 	DriverProfile string
 	// SafeMode discovers plugin manifests for management but activates no
 	// runtime, tool, skill, hook, or desktop contribution from a plugin.
@@ -911,12 +911,9 @@ func NewSession(opts Options) (*Session, error) {
 		pluginKernel.bindModelSession(runtimeSession, pluginHost)
 		runtimeSession.pluginGeneration.driverGateways = pluginKernel.driverGateways
 	}
-	// Bind the session-selected loop driver: an installed profile resolves to
-	// a remote driver behind the registry; a missing one fails closed.
-	if driver := resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable()); driver != nil {
-		streamRunner.LoopDriver = driver
-		runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
-	}
+	// The default and external drivers share the selected service binding.
+	streamRunner.LoopDriver = resolveLoopDriver(opts.DriverProfile, pluginHost, runtimeSession.currentDriverGatewayTable())
+	runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
 	if toolkit != nil {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
 	}
@@ -1580,8 +1577,8 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		if runner.CompactionRegistry == nil {
 			runner.CompactionRegistry = generation.compactions
 		}
-		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
-			runner.LoopDriver = resolveLoopDriver(profile, generation.host, generation.driverGateways)
+		if generation.driverGateways != nil {
+			runner.LoopDriver = resolveLoopDriver(s.DriverProfile, generation.host, generation.driverGateways)
 		}
 	}
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)

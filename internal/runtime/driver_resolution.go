@@ -54,14 +54,14 @@ func (s *Session) currentDriverGatewayTable() *driverGatewayTable {
 }
 
 // resolveLoopDriver binds one session's selected driver profile to a Driver:
-// an empty profile keeps the in-process default; a profile with a live
-// provider becomes a RemoteDriver routed through the registry; anything else
+// an empty profile selects driver.default. Every live provider becomes a
+// RemoteDriver routed through the registry; anything else
 // fails closed so history stays readable but new runs are rejected with a
 // diagnostic error.
 func resolveLoopDriver(profile string, host *pluginhost.Host, table *driverGatewayTable) loopdriver.Driver {
 	profile = strings.TrimSpace(profile)
 	if profile == "" {
-		return nil
+		profile = "default"
 	}
 	service := DriverServicePrefix + profile
 	var registry *pluginhost.ServiceRegistry

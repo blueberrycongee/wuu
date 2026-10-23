@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -257,6 +258,15 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	}
 	input := loopdriver.PersistedInput{Messages: providers.CloneChatMessages(history)}
 	execution := loopdriver.ExecutionContextFromContext(ctx)
+	if execution.ExecutionID == "" {
+		// Embedded callers do not have an app-server turn. The runner owns
+		// their execution identity and carries it to every model/tool callback.
+		execution.ExecutionID = rand.Text()
+		if execution.SessionID == "" {
+			execution.SessionID = r.PromptCacheKey
+		}
+		ctx = loopdriver.WithExecutionContext(ctx, execution)
+	}
 
 	var instance loopdriver.Instance
 	if r.DriverCheckpointStore != nil {
@@ -320,6 +330,11 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		outcome.Checkpoint = *gateway.lastCheckpoint
 	}
 
+	if runErr != nil && gateway.lastLegacyError != nil {
+		// Keep the original typed failure for local consumers after the service
+		// protocol has carried its diagnostic. All drivers share this path.
+		runErr = errors.Join(runErr, gateway.lastLegacyError)
+	}
 	res, ok := gateway.result(outcome.ReceiptID)
 	if outcome.ReceiptID != "" && !ok {
 		runErr = errors.Join(runErr, fmt.Errorf("loop driver returned unknown kernel receipt %q", outcome.ReceiptID))
@@ -334,13 +349,14 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 
 type streamDriverGateway struct {
 	*streamTurnGateway
-	runner         *StreamRunner
-	onEvent        StreamCallback
-	descriptor     loopdriver.Descriptor
-	execution      loopdriver.ExecutionContext
-	results        map[string]LoopResult
-	lastCheckpoint *loopdriver.Checkpoint
-	next           int
+	runner          *StreamRunner
+	onEvent         StreamCallback
+	descriptor      loopdriver.Descriptor
+	execution       loopdriver.ExecutionContext
+	results         map[string]LoopResult
+	lastCheckpoint  *loopdriver.Checkpoint
+	lastLegacyError error
+	next            int
 }
 
 func (gateway *streamDriverGateway) ExecuteModelLoop(ctx context.Context, input loopdriver.PersistedInput, policy loopdriver.LoopPolicy) (loopdriver.ModelLoopReceipt, error) {
@@ -357,6 +373,7 @@ func (gateway *streamDriverGateway) ExecuteModelLoop(ctx context.Context, input 
 	receipt := loopdriver.ModelLoopReceipt{ID: fmt.Sprintf("model-loop-%d", gateway.next)}
 	result, err := gateway.runner.runModelToolLoop(ctx, input.Messages, gateway.onEvent, policy, gateway.descriptor, gateway.execution)
 	gateway.results[receipt.ID] = result
+	gateway.lastLegacyError = err
 	return receipt, err
 }
 
@@ -380,6 +397,11 @@ func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpo
 }
 
 func (gateway *streamDriverGateway) result(receiptID string) (LoopResult, bool) {
+	if receiptID == "" && gateway.next > 0 {
+		// Cancellation can end the protocol call before its receipt arrives.
+		// The execution still owns everything the gateway already observed.
+		receiptID = fmt.Sprintf("model-loop-%d", gateway.next)
+	}
 	result, ok := gateway.results[receiptID]
 	if !ok {
 		return gateway.streamTurnGateway.result(receiptID)

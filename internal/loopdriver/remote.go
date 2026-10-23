@@ -68,6 +68,7 @@ type remoteRunResult struct {
 	Status     TerminalStatus `json:"status"`
 	ReceiptID  string         `json:"receipt_id,omitempty"`
 	Checkpoint Checkpoint     `json:"checkpoint"`
+	Error      string         `json:"error,omitempty"`
 }
 
 type remoteShutdownParams struct {
@@ -253,6 +254,7 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 		status := TerminalFailed
 		if runCtx.Err() != nil {
 			status = TerminalCanceled
+			err = errors.Join(err, runCtx.Err(), context.Cause(runCtx))
 		}
 		return TerminalOutcome{Status: status, Checkpoint: i.Checkpoint()}, fmt.Errorf("remote driver run: %w", err)
 	}
@@ -266,7 +268,11 @@ func (i *RemoteInstance) Run(ctx context.Context, gateway KernelGateway) (Termin
 	switch decoded.Status {
 	case TerminalSucceeded:
 	case TerminalFailed:
-		err = errors.New("remote driver reported failure")
+		if decoded.Error != "" {
+			err = errors.New(decoded.Error)
+		} else {
+			err = errors.New("remote driver reported failure")
+		}
 	case TerminalCanceled:
 		err = context.Canceled
 	default:

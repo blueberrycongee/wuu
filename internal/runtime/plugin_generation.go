@@ -804,8 +804,10 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
-		if profile := strings.TrimSpace(s.DriverProfile); profile != "" {
-			s.StreamRunner.LoopDriver = resolveLoopDriver(profile, generation.host, generation.driverGateways)
+		// Only a managed composition owns this binding. Embedded runtimes keep
+		// the driver explicitly supplied with their runner.
+		if generation.driverGateways != nil {
+			s.StreamRunner.LoopDriver = resolveLoopDriver(s.DriverProfile, generation.host, generation.driverGateways)
 		}
 	}
 	s.HookDispatcher = generation.hooks

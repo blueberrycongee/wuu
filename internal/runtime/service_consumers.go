@@ -31,9 +31,12 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 			{Name: pluginhost.ProcessSandboxService, MajorVersion: pluginhost.SecurityServiceMajor},
 		},
 	}
-	loop := &runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared}
-	if profile := strings.TrimSpace(driverProfile); profile != "" {
-		loop.requirements = []pluginhost.ServiceRequirement{{Name: DriverServicePrefix + profile, MajorVersion: 1, Required: true}}
+	profile := strings.TrimSpace(driverProfile)
+	if profile == "" {
+		profile = "default"
+	}
+	loop := &runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared,
+		requirements: []pluginhost.ServiceRequirement{{Name: DriverServicePrefix + profile, MajorVersion: 1, Required: true}},
 	}
 	return []pluginhost.Client{tool, loop}
 }

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
@@ -24,6 +25,12 @@ import (
 // Run through scripts/workflow-driver-e2e.mjs, which installs a packed public
 // SDK and the example in an independent directory before invoking this check.
 func TestWorkflowDriverProcess(t *testing.T) {
+	for _, profile := range []string{"workflow", "default"} {
+		t.Run(profile, func(t *testing.T) { testWorkflowDriverProcess(t, profile) })
+	}
+}
+
+func testWorkflowDriverProcess(t *testing.T, profile string) {
 	fixture := os.Getenv("WUU_WORKFLOW_FIXTURE")
 	if fixture == "" {
 		t.Skip("run node scripts/workflow-driver-e2e.mjs")
@@ -39,7 +46,15 @@ func TestWorkflowDriverProcess(t *testing.T) {
 	provider := testRuntimePlugin("evidence-workflow")
 	provider.Root, provider.Runtime.Command = fixture, node
 	provider.Runtime.Args = []string{"runtime.ts"}
-	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "workflow", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, nil, "workflow")
+	provider.Runtime.Env = map[string]string{"WUU_WORKFLOW_PROFILE": profile}
+	selectedProfile := profile
+	var selection *composition.Config
+	if profile == "default" {
+		selectedProfile = ""
+		modules := []string{kernelHostModule, sessionExecutionConsumer, provider.ID}
+		selection = &composition.Config{Version: composition.Version, Modules: &modules}
+	}
+	host, kernel, err := buildPluginHost([]pluginpkg.Plugin{provider}, root, "workflow", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, selectedProfile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +62,17 @@ func TestWorkflowDriverProcess(t *testing.T) {
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		t.Fatal(err)
 	}
-	driver := resolveLoopDriver("workflow", host, kernel.driverGateways)
+	driver := resolveLoopDriver(selectedProfile, host, kernel.driverGateways)
+	if owner, ok := host.ServiceRegistry().ProviderPluginID("driver."+profile, 1); !ok || owner != provider.ID {
+		t.Fatalf("workflow binding = %q, %v", owner, ok)
+	}
+	if profile == "default" {
+		for _, status := range host.Statuses() {
+			if status.ID == loopdriver.DefaultDriverID {
+				t.Fatal("default implementation remained loaded in replacement composition")
+			}
+		}
+	}
 	sessDir := t.TempDir()
 	if _, err := session.Create(sessDir, "workflow-session"); err != nil {
 		t.Fatal(err)

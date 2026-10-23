@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -78,6 +79,12 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		kernel.bindWuuHome(wuuHome)
 		host.SetToolResultMaterializer(kernel.materializeToolResult)
 		kernel.bindRegistry(registry)
+	}
+	if resolved.Includes(loopdriver.DefaultDriverID) {
+		nativeModules = append(nativeModules, loopdriver.NewService(loopdriver.DefaultDriverID, DriverServicePrefix+"default", loopdriver.DefaultDriver{}, registry))
+		if resolved.Modules != nil {
+			required[loopdriver.DefaultDriverID] = true
+		}
 	}
 	for _, consumer := range nativeConsumers {
 		if resolved.Includes(consumer.ID()) {
@@ -199,7 +206,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer}
+	available := []string{kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer}
 	identities := map[string]bool{}
 	for _, id := range available {
 		identities[id] = true

@@ -7,6 +7,7 @@ import {
 
 const id = "example.evidence-workflow";
 const version = "1.0.0";
+const profile = process.env.WUU_WORKFLOW_PROFILE ?? "workflow";
 
 type State = {
   phase: "ready" | "planned" | "executing" | "synthesis" | "complete";
@@ -25,11 +26,11 @@ function checkpoint(state: State): DriverCheckpoint<State> {
 }
 
 const plugin: RuntimePlugin = {
-  concurrentServices: ["driver.workflow"],
+  concurrentServices: [`driver.${profile}`],
   initialize() {
     return {
       protocol_version: 3, lifecycle_version: 2,
-      provided_services: [driverServiceDescriptor("workflow", version)],
+      provided_services: [driverServiceDescriptor(profile, version)],
       required_services: requireDriverTurnServices(),
     };
   },
