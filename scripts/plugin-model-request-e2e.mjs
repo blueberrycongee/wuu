@@ -10,7 +10,6 @@ import { cp, mkdir, mkdtemp, readFile, unlink, writeFile } from "node:fs/promise
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -22,6 +21,28 @@ const home = join(scratch, "state"), pkg = join(scratch, "plugin");
 const initializeAttempts = join(scratch, "initialize-attempts.jsonl");
 const initializeFailure = join(scratch, "initialize-failure");
 await mkdir(home);
+await writeFile(join(home, ".wuu-session-fixture"), "wuu-session-fixture-v1\n");
+const fixtureBinary = resolve(root, process.env.WUU_E2E_SESSION_FIXTURE || join(scratch, "session-fixture"));
+if (!process.env.WUU_E2E_SESSION_FIXTURE) {
+  const build = spawnSync("go", ["build", "-o", fixtureBinary, "./scripts/session-fixture"], { cwd: root, encoding: "utf8" });
+  assert.equal(build.status, 0, build.stderr);
+}
+function fixture(input) {
+  const reply = spawnSync(fixtureBinary, [], { input: JSON.stringify({ home, workdir: scratch, ...input }),
+    encoding: "utf8", timeout: 20000, maxBuffer: 64 * 1024 * 1024 });
+  assert.equal(reply.status, 0, reply.stderr);
+  return reply.stdout;
+}
+function journal() {
+  const { documents } = JSON.parse(fixture({ op: "inspect",
+    domains: ["inference_operations", "inference_submissions", "inference_workflows"] }));
+  return {
+    operations: documents.inference_operations.map(document => document.value).sort((a, b) => a.CreatedAt - b.CreatedAt),
+    submissions: documents.inference_submissions.map(document => document.value).sort((a, b) => Date.parse(a.StartedAt) - Date.parse(b.StartedAt) || a.Ordinal - b.Ordinal),
+    workflows: documents.inference_workflows.map(document => document.value).sort((a, b) => a.CreatedAt - b.CreatedAt),
+  };
+}
+
 await mkdir(pkg);
 const events = new EventEmitter(), transcript = [], requests = [], providerCalls = [], closed = [];
 const result = { started_at: new Date().toISOString(), scratch, checks: [], status: "failed" };
@@ -156,6 +177,7 @@ runJSONLRuntime({
     };
   },
   async invokeCapability(params, host, execution) {
+    if (params.input.method === "noop") return { output: { result: {} } };
     if (params.input.method === "hold") {
       await reportExecutionUpdate(host, { execution_id: execution.executionId,
         message: params.input.input.tag, detail: { generation: params.input.input.tag } });
@@ -237,12 +259,14 @@ runJSONLRuntime({
   assert.equal(item.runtime_state, "active", JSON.stringify(item));
   result.plugin = item;
   const registry = await rpc("plugin/registry/introspect");
-  assert(registry.services.some(service => service.service === "host.model.request" && service.version === "1.0.0" && service.kernel));
+  assert(registry.services.some(service => service.service === "host.model.request" && service.version === "1.0.0" && service.provider === "kernel"));
   result.checks.push("versioned service registration");
   // Real plugin processes keep foreground client calls alive across reloads.
-  // Their first execution IDs deliberately collide; cancellation stays scoped
+  // Align host-local execution IDs despite normal composition startup work;
+  // cancellation stays scoped
   // to the original client identity, never to a diagnostic display key.
-  const snapshots = async () => (await rpc("plugin/executions/list")).executions;
+  // Normal composition also runs unrelated generation-owned callbacks.
+  const snapshots = async () => (await rpc("plugin/executions/list")).executions.filter(execution => execution.plugin_id === "model-fixture");
   const waitForExecution = async tag => {
     const deadline = Date.now() + 10_000;
     do {
@@ -254,8 +278,26 @@ runJSONLRuntime({
     throw new Error(`Missing live execution: ${tag}`);
   };
   const hold = tag => {
-    const identity = { id: item.id, fingerprint: item.fingerprint, request_id: tag };
+    const identity = { id: item.id, fingerprint: item.fingerprint, graph_generation: item.graph_generation, request_id: tag };
     return { identity, response: rpcRaw("plugin/client/request", { ...identity, method: "hold", input: { tag } }) };
+  };
+  const holdWithID = async (tag, expectedID) => {
+    for (let attempt = 0; attempt < 128; attempt++) {
+      const probeTag = `${tag}-${attempt}`, probe = hold(probeTag);
+      const row = await waitForExecution(probeTag);
+      if (row.id === expectedID) return { ...probe, row };
+      assert.equal((await rpc("plugin/client/cancel", probe.identity)).cancelled, true);
+      assert((await probe.response).error);
+      const remaining = Number(expectedID.slice("exec-".length)) - Number(row.id.slice("exec-".length));
+      assert(remaining > 1, `fixture passed retained execution ${expectedID} at ${row.id}`);
+      // A hold allocates its callback and its progress service call. A no-op
+      // allocates only the callback, so both execution-ID parities are reachable.
+      if (remaining % 2 === 1) await rpc("plugin/client/request", {
+        id: item.id, fingerprint: item.fingerprint, graph_generation: item.graph_generation,
+        request_id: `${probeTag}-align`, method: "noop", input: {},
+      });
+    }
+    assert.fail(`fixture could not align ${tag} with retained execution ${expectedID}`);
   };
   const publishUpdate = async () => {
     const source = join(pkg, "runtime.mjs");
@@ -275,8 +317,8 @@ runJSONLRuntime({
   const initialRow = await waitForExecution("diagnostics-initial");
   result.execution_diagnostics = { before_reload: await snapshots() };
   await reload();
-  const secondHold = hold("diagnostics-second");
-  const secondRow = await waitForExecution("diagnostics-second");
+  const secondHold = await holdWithID("diagnostics-second", initialRow.id);
+  const secondRow = secondHold.row;
   const during = await snapshots();
   result.execution_diagnostics.during_reload = during;
   assert.equal(during.length, 2, "retained foreground execution disappeared after reload");
@@ -317,8 +359,8 @@ runJSONLRuntime({
   await unlink(initializeFailure);
   await reload();
   result.checks.push("failed refresh backs off across home notifications and preserves current/retained calls until repaired publication");
-  const thirdHold = hold("diagnostics-third");
-  const thirdRow = await waitForExecution("diagnostics-third");
+  const thirdHold = await holdWithID("diagnostics-third", initialRow.id);
+  const thirdRow = thirdHold.row;
   const multiple = await snapshots();
   result.execution_diagnostics.multiple_retained = multiple;
   assert.equal(multiple.length, 3);
@@ -354,7 +396,8 @@ runJSONLRuntime({
   result.checks.push("retained execution diagnostics across repeated reload, colliding IDs, isolated cancellation, and disable");
   const before = await rpc("thread/list");
   const input = tag => ({ messages: [{ role: "system", content: "Return fixture data." }, { role: "user", content: tag }], max_output_tokens: 32 });
-  const params = (request_id, value) => ({ id: item.id, fingerprint: item.fingerprint, request_id, method: "model", input: value });
+  const params = (request_id, value) => ({ id: item.id, fingerprint: item.fingerprint,
+    graph_generation: item.graph_generation, request_id, method: "model", input: value });
   const call = async (requestID, value) => (await rpc("plugin/client/request", params(requestID, value))).result;
   const success = await call("success", input("success"));
   assert.deepEqual(await snapshots(), [], "completed invocation remained in diagnostics");
@@ -463,13 +506,15 @@ runJSONLRuntime({
   const cancelled = rpcRaw("plugin/client/request", params("cancel", input("hold-cancel")));
   await waitFor("provider", providerCalls, call => call.tag === "hold-cancel", "cancel request started");
   for (const overrides of [{ id: item.id + "-other" }, { fingerprint: "other" }, { request_id: "other" }]) {
-    const invalid = await rpc("plugin/client/cancel", { id: item.id, fingerprint: item.fingerprint, request_id: "cancel", ...overrides });
+    const invalid = await rpc("plugin/client/cancel", { id: item.id, fingerprint: item.fingerprint,
+      graph_generation: item.graph_generation, request_id: "cancel", ...overrides });
     assert.equal(invalid.cancelled, false);
     assert(!closed.includes("hold-cancel"));
   }
   assert((await rpcRaw("plugin/client/request", params("cancel", input("duplicate")))).error);
   assert(!providerCalls.some(call => call.tag === "duplicate"));
-  const cancellation = await rpc("plugin/client/cancel", { id: item.id, fingerprint: item.fingerprint, request_id: "cancel" });
+  const cancellation = await rpc("plugin/client/cancel", { id: item.id, fingerprint: item.fingerprint,
+    graph_generation: item.graph_generation, request_id: "cancel" });
   assert.equal(cancellation.cancelled, true);
   assert((await cancelled).error);
   await waitFor("closed", closed, tag => tag === "hold-cancel", "provider cancel disconnect");
@@ -483,24 +528,18 @@ runJSONLRuntime({
   await waitFor("closed", closed, tag => tag === "hold-disable", "provider disable disconnect");
   result.checks.push("disable revokes in-flight inference");
   await stopChild();
-  const db = new DatabaseSync(join(home, "sessions/sessions.sqlite3"), { readOnly: true });
-  try {
-    result.accounting = {
-      operations: db.prepare("SELECT owner_id, kind, status FROM inference_operations ORDER BY created_at").all(),
-      submissions: db.prepare("SELECT cost_state, reported_input_tokens, reported_output_tokens, has_reported_usage FROM inference_submissions ORDER BY started_at").all(),
-      workflows: db.prepare("SELECT owner_id, status FROM inference_workflows ORDER BY created_at").all(),
-      sessions: db.prepare("SELECT count(*) AS count FROM sessions").get().count,
-      messages: db.prepare("SELECT count(*) AS count FROM session_messages").get().count,
-    };
-  } finally { db.close(); }
+  const historyJSON = fixture({ op: "read" });
+  const persisted = JSON.parse(historyJSON).sessions;
+  result.accounting = { ...journal(), sessions: persisted.length,
+    messages: persisted.flatMap(thread => thread.history).length };
   const accounting = result.accounting;
   assert.equal(accounting.operations.length, 9);
-  assert(accounting.operations.every(operation => operation.owner_id === "plugin:model-fixture" && operation.kind === "auxiliary" && operation.status !== "active"));
-  assert(accounting.workflows.every(workflow => workflow.status !== "active"));
+  assert(accounting.operations.every(operation => operation.OwnerID === "plugin:model-fixture" && operation.Kind === "auxiliary" && operation.Status !== "active"));
+  assert(accounting.workflows.every(workflow => workflow.Status !== "active"));
   assert.equal(accounting.submissions.length, 9);
-  const reported = accounting.submissions.filter(submission => submission.has_reported_usage);
+  const reported = accounting.submissions.filter(submission => submission.ReportedUsage);
   assert.equal(reported.length, 6);
-  assert.equal(reported.reduce((total, usage) => total + usage.reported_input_tokens + usage.reported_output_tokens, 0), 60);
+  assert.equal(reported.reduce((total, usage) => total + usage.ReportedUsage.InputTokens + usage.ReportedUsage.OutputTokens, 0), 60);
   assert.equal(accounting.sessions, 0);
   assert.equal(accounting.messages, 0);
   result.checks.push("durable terminal accounting, reported usage, zero sessions/messages");
