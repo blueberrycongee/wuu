@@ -10,6 +10,7 @@ import {
   PluginHost,
   type PluginContributionDeclarations,
   type PluginGenerationApi,
+  type PluginHostOptions,
 } from "./PluginHost";
 import { PluginViewContent, WorkbenchController } from "./Workbench";
 
@@ -34,7 +35,7 @@ const repositoryRoot = basename(process.cwd()) === "desktop"
   ? resolve(process.cwd(), "..")
   : process.cwd();
 const bundledRoot = resolve(repositoryRoot, "internal/plugin/bundled");
-const firstPartyPluginIds = ["subagent", "automation", "memory", "dream", "todo"] as const;
+const firstPartyPluginIds = ["subagent", "automation-client", "memory", "dream", "todo"] as const;
 
 afterEach(() => {
   for (const style of document.head.querySelectorAll("style[data-wuu-plugin-id]")) {
@@ -61,13 +62,13 @@ describe("first-party desktop plugin lifecycle", () => {
     ]);
     expect(host.getSlotSnapshot("composer.toolbar")).toEqual([]);
     expect(host.getViewTypes().map((item) => `${item.pluginId}:${item.id}`)).toEqual([
-      "automation:automation.catalog",
+      "automation-client:automation.catalog",
       "dream:dream.settings",
       "memory:memory.settings",
       "subagent:subagent.settings",
     ]);
     expect(host.getNavigationEntries().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
-      "automation:automation.catalog",
+      "automation-client:automation.catalog",
     ]);
     expect(host.getSettingsPages().map((item) => `${item.pluginId}:${item.view}`)).toEqual([
       "memory:memory.settings",
@@ -223,18 +224,31 @@ describe("first-party desktop plugin lifecycle", () => {
   });
 
   it.each([
-    ["automation", "automation.catalog", "还没有自动化任务"],
+    ["automation-client", "automation.catalog", "还没有自动化任务"],
     ["memory", "memory.settings", "笔记本原文"],
     ["dream", "dream.settings", "后台整合"],
   ] as const)("renders the real %s view with localized host UI", async (pluginId, viewTypeId, expectedText) => {
+    const invokeRuntime = vi.fn<NonNullable<PluginHostOptions["invokeRuntime"]>>(async ({ service, method, input, workspaceId }) => {
+      if (service !== undefined) {
+        expect(service).toBe("automation.scheduler");
+        expect(method).toBe("request");
+        return firstPartyRuntimeResponse((input as { method: string }).method, workspaceId);
+      }
+      return firstPartyRuntimeResponse(method);
+    });
     const host = new PluginHost({
       react: React,
-      invokeRuntime: async ({ method }) => firstPartyRuntimeResponse(method),
+      invokeRuntime,
+      listWorkspaces: async () => ({
+        activeWorkspaceId: "workspace",
+        workspaces: [{ id: "workspace", name: "Workspace", root: "/workspace", available: true }],
+      }),
     });
     const { manifest, module } = await loadFirstPartyPlugin(pluginId);
     await host.activateGeneration({
       pluginId,
       generation: "render-test",
+      graphGeneration: "localized-graph",
       contributions: contributionDeclarations(manifest),
       register: module.activate,
     });
@@ -253,6 +267,17 @@ describe("first-party desktop plugin lifecycle", () => {
       expect(container.querySelector('[data-wuu-component="plugin-ui-page"]')).not.toBeNull();
       expect(container.textContent).toContain(expectedText);
       expect([...container.querySelectorAll("input, textarea")].every((control) => control.closest("label"))).toBe(true);
+      if (pluginId === "automation-client") {
+        expect(invokeRuntime).toHaveBeenCalledWith(expect.objectContaining({
+          pluginId,
+          generation: "render-test",
+          graphGeneration: "localized-graph",
+          service: "automation.scheduler",
+          method: "request",
+          input: expect.objectContaining({ method: "automation.list" }),
+          workspaceId: "workspace",
+        }));
+      }
     } finally {
       act(() => root.unmount());
       container.remove();
@@ -261,10 +286,12 @@ describe("first-party desktop plugin lifecycle", () => {
   });
 });
 
-function firstPartyRuntimeResponse(method: string): unknown {
+function firstPartyRuntimeResponse(method: string, workspaceId?: string): unknown {
   switch (method) {
     case "automation.list":
-      return { tasks: [] };
+      return { tasks: [], workspace: { id: workspaceId } };
+    case "automation.run.list":
+      return { runs: [] };
     case "dream.get":
       return {
         settings: { enabled: false, interval_days: 7, min_sessions: 5, model_alias: "" },
