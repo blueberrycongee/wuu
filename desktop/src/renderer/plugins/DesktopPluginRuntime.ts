@@ -11,6 +11,7 @@ import {
   type PluginGenerationApi,
 } from "./PluginHost";
 import { settleOnAbort } from "./activation";
+import { getDesktopApplication } from "./ApplicationController";
 import { WorkbenchController } from "./Workbench";
 import { PluginHostService, WorkbenchService, createDesktopCompositionRoot } from "./composition";
 
@@ -28,6 +29,12 @@ export interface DesktopPluginFailure {
 
 export const desktopPluginHost = new PluginHost({
   react: React,
+  application: {
+    contractVersion: 1,
+    getSnapshot: () => getDesktopApplication().getSnapshot(),
+    subscribe: listener => getDesktopApplication().subscribe(listener),
+    invoke: (action, input, options) => getDesktopApplication().invoke(action, input, options),
+  },
   invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, workspaceRoot, signal }) => {
     signal?.throwIfAborted();
     const bridge = window.wuu;
@@ -163,11 +170,12 @@ export class DesktopPluginRuntime {
       return (active !== undefined && active !== signature) || (pending !== undefined && pending !== signature);
     };
 
-    const unload = (id: string): void => {
-      this.host.unload(id);
+    const unload = (id: string): Promise<void> | undefined => {
+      const cleanup = this.host.unloadAndWait(id);
       this.activeGenerations.delete(id);
       this.activeDependencies.delete(id);
       this.pendingDependencies.delete(id);
+      return cleanup;
     };
     const previousDesired = this.desiredPlugins;
     this.desiredPlugins = desired;
@@ -178,7 +186,9 @@ export class DesktopPluginRuntime {
     for (const pluginId of knownPluginIds) {
       const plugin = desired.get(pluginId);
       if (!plugin?.desktop || dependenciesChanged(pluginId)) {
-        unload(pluginId);
+        const cleanup = unload(pluginId);
+        if (cleanup) await cleanup;
+        if (epoch !== this.syncEpoch) return [];
       }
     }
 
@@ -242,7 +252,9 @@ export class DesktopPluginRuntime {
             // every affected consumer in reverse order before any can restart.
             for (const dependent of dependencyOrder(desired).reverse()) {
               if (dependenciesChanged(dependent, true)) {
-                unload(dependent);
+                const cleanup = unload(dependent);
+                if (cleanup) await cleanup;
+                if (epoch !== this.syncEpoch) return false;
               }
             }
           }
@@ -348,5 +360,6 @@ function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
 }
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {
+  if (url === "wuu-builtin:default-shell") return import("./DefaultApplicationShell");
   return import(/* @vite-ignore */ url);
 }

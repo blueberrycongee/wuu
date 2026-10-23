@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { UICompositionV1, UISlotProps } from "../../../../packages/plugin-sdk/src/ui";
-import type { PluginHost, RegisteredApplicationShell } from "./PluginHost";
+import type { PluginHost, RegisteredApplicationShell, RegisteredUIContribution } from "./PluginHost";
 
 export interface ApplicationShellBinding {
   readonly pluginId: string;
@@ -28,16 +28,23 @@ function compositionFor(host: PluginHost): UICompositionV1 {
     const contributions = host.getUIContributions(name);
     return <SlotAncestors.Provider value={[...ancestors, name]}>
       {contributions.length === 0 ? fallback : contributions.map(contribution => {
-        const View = contribution.render;
         return <ShellBoundary key={`${contribution.pluginId}:${contribution.generation}:${contribution.id}`}
           identity={`${contribution.pluginId}/${contribution.id}`}>
-          <View application={contribution.application} slots={composition} context={context} />
+          <Contribution host={host} contribution={contribution} slots={composition} context={context} />
         </ShellBoundary>;
       })}
     </SlotAncestors.Provider>;
   }
   const composition: UICompositionV1 = Object.freeze({ Slot });
   return composition;
+}
+
+function Contribution({ host, contribution, slots, context }: {
+  host: PluginHost; contribution: RegisteredUIContribution; slots: UICompositionV1; context: Readonly<Record<string, unknown>>;
+}): React.ReactNode {
+  React.useEffect(() => host.retainGeneration(contribution.pluginId, contribution.generation), [host, contribution]);
+  const View = contribution.render;
+  return <View application={contribution.application} slots={slots} context={context} />;
 }
 
 class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string }, { error?: Error }> {
@@ -52,6 +59,7 @@ class ShellBoundary extends React.Component<{ children: React.ReactNode; identit
 
 function SelectedShell({ host, shell }: { host: PluginHost; shell: RegisteredApplicationShell }): React.ReactNode {
   const slots = React.useMemo(() => compositionFor(host), [host]);
+  React.useEffect(() => host.retainGeneration(shell.pluginId, shell.generation), [host, shell]);
   const View = shell.render;
   return <View application={shell.application} slots={slots} />;
 }

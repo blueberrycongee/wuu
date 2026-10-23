@@ -3,9 +3,9 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
-import { activeThreadForState, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
+import { activeSessionTab, activeThreadForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, type AppState } from "../AppState";
-import { loadPopOutRuntime, loadRuntime, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
+import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
 import { subscribeServerEvents } from "../ServerEvents";
@@ -62,6 +62,11 @@ export class ApplicationController implements ApplicationServiceV1 {
     this.flushBackgroundEvents();
     const next = typeof update === "function" ? update(this.state) : update;
     if (next === this.state) return;
+    if (next.activeSessionTabID !== this.state.activeSessionTabID) {
+      const tab = activeSessionTab(next);
+      this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";
+      this.draftRevision++;
+    }
     this.state = next;
     this.publish();
     for (const listener of this.stateListeners) listener();
@@ -123,13 +128,6 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private receive(event: ServerEvent): void {
-    if (event.kind === "notification" && event.message.method === "plugin/inventory/changed") {
-      const params = event.message.params as { application_shell?: ApplicationShellSelection | null };
-      if ("application_shell" in params && this.state.initialized) {
-        const initialized: ShellInitializeResult = { ...this.state.initialized, application_shell: params.application_shell };
-        this.updateState(state => ({ ...state, initialized }));
-      }
-    }
     if (!serverEventTargetsActiveContext(event, this.state)) return;
     const handling = handleStreamingNotification(event, this.state);
     if (handling === "stream" || handling === "background-stream") {
@@ -176,7 +174,10 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   private adoptThread(thread: Thread, select = false): void {
     this.updateState(state => select
-      ? withLoadedRuntimeSessionTab({ ...state, threads: upsertThread(state.threads, thread) }, { thread, running: isThreadRunning(thread) })
+      ? withLoadedRuntimeSessionTab({ ...state, threads: upsertThread(state.threads, thread) }, {
+        thread, activeContext: state.activeContext ?? resolveThreadRuntimeContext(thread, state.projects),
+        secondaryThread: undefined, activePane: "primary", running: isThreadRunning(thread),
+      })
       : updateThreadByID(state, thread.id, () => thread));
   }
 
@@ -203,10 +204,24 @@ export class ApplicationController implements ApplicationServiceV1 {
       case "thread.select": {
         const request = ++this.navigationRequest;
         const { threadId } = input as ApplicationActionMapV1["thread.select"]["input"];
+        const known = this.state.threads.find(thread => thread.id === threadId);
+        const target = known ? resolveThreadRuntimeContext(known, this.state.projects) : undefined;
+        let configuration: Partial<AppState> | undefined;
+        if (target && !sameRuntimeContext(this.state.activeContext, target)) {
+          const workspace = await selectRuntimeContext(target);
+          signal?.throwIfAborted();
+          if (request !== this.navigationRequest) return;
+          configuration = await loadRuntimeConfiguration(workspace);
+          signal?.throwIfAborted();
+        }
+        if (request !== this.navigationRequest) return;
         const result = await window.wuu.resumeThread(threadId);
         signal?.throwIfAborted();
         if (!result.thread) throw new Error("Thread resume returned no thread");
-        if (request === this.navigationRequest) this.adoptThread(result.thread, true);
+        if (request === this.navigationRequest) {
+          if (configuration) this.updateState(state => ({ ...state, ...configuration }));
+          this.adoptThread(reconcileResumedThreadTurns(result.thread, known), true);
+        }
         return;
       }
       case "thread.create": {
@@ -238,7 +253,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         const mode = (input as ApplicationActionMapV1["composer.submit"]["input"]).mode ?? "send";
         let thread = activeThreadForState(this.state);
         if (thread?.read_only) throw new Error("The selected thread is read-only");
-        const context = this.state.activeContext;
+        const context = thread ? resolveThreadRuntimeContext(thread, this.state.projects) : this.state.activeContext;
         this.submitting = true; this.publish();
         try {
           if (!thread) {
@@ -361,13 +376,3 @@ let desktopApplication: ApplicationController | undefined;
 export function getDesktopApplication(): ApplicationController {
   return desktopApplication ??= new ApplicationController();
 }
-
-// The service is constructed before renderer modules finish loading. Resolve
-// the store on first use so domain-module imports never observe half-initialized state.
-export const desktopApplicationService: ApplicationServiceV1 = Object.freeze({
-  contractVersion: 1,
-  getSnapshot: () => getDesktopApplication().getSnapshot(),
-  subscribe: (listener: () => void) => getDesktopApplication().subscribe(listener),
-  invoke: <Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal }) =>
-    getDesktopApplication().invoke(action, input, options),
-});

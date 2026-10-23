@@ -91,4 +91,24 @@ describe("application shell assembly", () => {
     } })).rejects.toThrow(/conflict/i);
     expect(host.getUIContributions("owner/only").map(item => item.pluginId)).toEqual(["one"]);
   });
+  it("retains a provider until mounted shell effects finish cleanup", async () => {
+    const { host } = fixture();
+    const order: string[] = [];
+    await host.activateGeneration({ pluginId: "shell", generation: "v1", register: api => {
+      api.registerCleanup(() => { order.push("provider"); });
+      api.registerApplicationShell({ id: "ui.shell", render: () => {
+        React.useEffect(() => () => { order.push("view"); }, []);
+        return <main>Mounted</main>;
+      } });
+    } });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    act(() => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "v1", id: "ui.shell" }} />));
+    let cleanup: Promise<void> | undefined;
+    act(() => { cleanup = host.unloadAndWait("shell"); });
+    await cleanup;
+    expect(order).toEqual(["view", "provider"]);
+    act(() => root.unmount());
+  });
+
 });

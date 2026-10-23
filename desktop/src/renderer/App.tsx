@@ -1,9 +1,11 @@
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { ApplicationController, getDesktopApplication } from "./plugins/ApplicationController";
 import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { usePageHistory } from "./PageHistory";
 import { PageHistoryControls } from "./PageHistoryControls";
 import { visibleWorkbenchView } from "./plugins/Workbench";
 import { useAppContextDraftTarget } from "./AppContextCapture";
-import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
+import { sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { SideConversationAvailableContext } from "./ResponseSelection";
@@ -14,7 +16,7 @@ import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
 import { isCodexSubscription, isGrokBuild } from "./SubscriptionSources";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
-import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
+import { writeThreadReadState } from "./ThreadReadState";
 import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 /// <reference path="../shared/jsx-compat.d.ts" />
@@ -136,9 +138,7 @@ import {
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
-  isCoalescedBackgroundThreadEvent,
   initialSplitComposerDrafts,
-  initialState,
   isStateActiveThreadRunning,
   isThreadExecuting,
   isThreadRunning,
@@ -152,7 +152,6 @@ import {
   SCRATCH_PSEUDO_PROJECT_ID,
   scratchThreadSummaries,
   requestedHandoffIntentForThread,
-  reduceServerEvent,
   reconcileListedThreadState,
   resolveComposerRunningAction,
   resolveThreadRuntimeContext,
@@ -271,7 +270,6 @@ import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation"
 import {
   desktopPluginHost,
   desktopWorkbenchController,
-  useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
 import { WebWorkspacePanel } from "./WebWorkspace";
@@ -297,11 +295,8 @@ import {
   serverEventCarriesActivitySessionUpdate,
 } from "./ActivitySessions";
 import {
-  loadPopOutRuntime,
   loadRuntime,
-  loadRuntimeRestore,
   loadThreadListRefresh,
-  applyRuntimeRestore,
   selectRuntimeContext,
 } from "./RuntimeLoadState";
 import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
@@ -469,16 +464,16 @@ function projectNameFromGoal(goal: string): string {
   return line.length > 48 ? `${line.slice(0, 47)}…` : line;
 }
 
-export function App(): JSX.Element {
+export function App({ application: providedApplication }: { application?: ApplicationServiceV1 } = {}): JSX.Element {
+  const [applicationController] = useState(() => providedApplication ? getDesktopApplication() : new ApplicationController());
+  const application = providedApplication ?? applicationController;
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
-  const [recoveredDrafts] = useState(readComposerDraftRecovery);
-  const [state, setState] = useState<AppState>(() => ({
-    ...initialState,
-    sessionTabs: recoveredDrafts.tabs,
-    lastViewedTurnByThreadID: readThreadReadState(),
-  }));
+  const recoveredDrafts = applicationController.recoveredDrafts;
+  const state = useSyncExternalStore(applicationController.subscribeState, applicationController.getState, applicationController.getState);
+  const setState = applicationController.updateState;
+  useEffect(() => applicationController.start(), [applicationController]);
   useEffect(() => {
     writeThreadReadState(state.lastViewedTurnByThreadID);
   }, [state.lastViewedTurnByThreadID]);
@@ -488,10 +483,6 @@ export function App(): JSX.Element {
     typeof window.wuu.listUserQuestions === "function" &&
     typeof window.wuu.answerUserQuestion === "function" &&
     typeof window.wuu.cancelUserQuestion === "function";
-  useDesktopPluginRuntime(
-    state.initialized?.extension_inventory,
-    state.initialized?.features?.safe_mode,
-  );
   const projectAgentEnabled = state.initialized?.features?.project_agent === true;
   const {
     prompt,
@@ -526,7 +517,7 @@ export function App(): JSX.Element {
       return sessionTabs.every((tab, index) => tab === current.sessionTabs[index])
         ? current : { ...current, sessionTabs };
     });
-  });
+  }, application);
   useEffect(() => {
     const addSelection = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
@@ -567,7 +558,10 @@ export function App(): JSX.Element {
   const closeWorkspaceMenu = useCallback(() => setWorkspaceMenuOpen(false), []);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpen = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.open);
+  const setSettingsOpen = useCallback((open: boolean): void => {
+    void application.invoke(open ? "settings.open" : "settings.close", {}).catch(showErrorToast);
+  }, [application]);
   const ribbonWidth = useNavigationRibbonPreferences().width ?? SIDEBAR_RIBBON_WIDTH;
   const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
   const [nativeRibbonExpanded, setNativeRibbonExpanded] = useState(false);
@@ -763,8 +757,10 @@ export function App(): JSX.Element {
     () => window.wuu?.initialOnboardingComplete ?? true,
   );
 
-  const [settingsInitialPage, setSettingsInitialPage] =
-    useState<SettingsPage>("providers");
+  const settingsInitialPage = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.activePageId ?? "providers") as SettingsPage;
+  const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
+    void application.invoke("settings.open", { pageId }).catch(showErrorToast);
+  }, [application]);
   const {
     settingsUsage,
     settingsUsageLoading,
@@ -1942,26 +1938,6 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  const pendingBackgroundThreadEventsRef = useRef<ServerEvent[]>([]);
-  const backgroundThreadEventTimerRef = useRef<number | undefined>(undefined);
-  const flushBackgroundThreadEventsRef = useRef<() => void>(() => {});
-  flushBackgroundThreadEventsRef.current = () => {
-    if (backgroundThreadEventTimerRef.current !== undefined) {
-      window.clearTimeout(backgroundThreadEventTimerRef.current);
-      backgroundThreadEventTimerRef.current = undefined;
-    }
-    const pending = pendingBackgroundThreadEventsRef.current;
-    if (pending.length === 0) {
-      return;
-    }
-    pendingBackgroundThreadEventsRef.current = [];
-    setState((current) => pending.reduce(reduceServerEvent, current));
-  };
-  useLayoutEffect(() => {
-    // Opening a session has to see the tool rows that were still queued.
-    flushBackgroundThreadEventsRef.current();
-  }, [activeThreadID, state.secondaryThread?.id]);
-
   useEffect(() => {
     let mounted = true;
     const off = subscribeServerEvents((event) => {
@@ -2066,50 +2042,15 @@ export function App(): JSX.Element {
       if (handling === "skip") {
         return;
       }
-      // A background ACP session emits a tool row for every harness call.
-      // Fold those into one update so the open conversation is not reconciled
-      // on each of them. The sort key of a running session does not change.
-      if (isCoalescedBackgroundThreadEvent(event, appStateRef.current)) {
-        pendingBackgroundThreadEventsRef.current.push(event);
-        if (backgroundThreadEventTimerRef.current === undefined) {
-          backgroundThreadEventTimerRef.current = window.setTimeout(() => {
-            backgroundThreadEventTimerRef.current = undefined;
-            flushBackgroundThreadEventsRef.current();
-          }, 150);
-        }
-        return;
-      }
-      flushBackgroundThreadEventsRef.current();
       if (serverEventShouldRefreshGit(event)) {
         scheduleGitStatusRefresh(600);
       }
-      setState((current) => reduceServerEvent(current, event));
+
     });
 
     void (async () => {
       try {
-        if (popOutInit?.kind && popOutInit.context) {
-          const loadedState = await loadPopOutRuntime(popOutInit);
-          if (!mounted) {
-            return;
-          }
-          const { heldComposerMessages, ...runtimeAppState } = loadedState;
-          restoreInitialComposerRuntime(runtimeAppState);
-          if (loadedState.thread) {
-            seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
-          }
-          return;
-        }
-        const listedWorkspaces = await window.wuu.listProjects();
-        const runtimeState = listedWorkspaces.active_context
-          ? listedWorkspaces
-          : await window.wuu.selectNoProject(false);
-        const activeRecovery = recoveredDrafts.tabs.find((tab) => tab.id === recoveredDrafts.activeTabID &&
-          runtimeState.active_context && sameRecoveryContext(tab.context, runtimeState.active_context));
-        const loadedState = await loadRuntime(runtimeState, {
-          resumeLatestThread: activeRecovery?.kind !== "draft",
-          resumeThreadID: activeRecovery?.kind === "thread" ? activeRecovery.threadID : undefined,
-        });
+        const loadedState = await applicationController.initialize();
         if (!mounted) {
           return;
         }
@@ -2132,11 +2073,6 @@ export function App(): JSX.Element {
     return () => {
       mounted = false;
       off();
-      if (backgroundThreadEventTimerRef.current !== undefined) {
-        window.clearTimeout(backgroundThreadEventTimerRef.current);
-        backgroundThreadEventTimerRef.current = undefined;
-      }
-      pendingBackgroundThreadEventsRef.current = [];
       if (gitRefreshTimerRef.current !== undefined) {
         window.clearTimeout(gitRefreshTimerRef.current);
         gitRefreshTimerRef.current = undefined;
@@ -2147,17 +2083,8 @@ export function App(): JSX.Element {
   useEffect(() => {
     let mounted = true;
     const unsubscribe = window.wuu.onRuntimeRestore?.(async () => {
-      const snapshot = await loadRuntimeRestore(appStateRef.current);
       const questions = await window.wuu.listUserQuestions();
       if (!mounted) return;
-      setState((current) => applyRuntimeRestore(current, snapshot));
-      for (const resumed of snapshot.resumed) {
-        syncPendingComposerMessagesFromServerEvent({
-          workdir: resumed.thread.cwd,
-          kind: "notification",
-          message: { method: "thread/resumed", params: resumed },
-        });
-      }
       setUserQuestions(questions.questions.filter(
         (request) => !resolvedUserQuestionIDsRef.current.has(request.request_id),
       ));

@@ -39,4 +39,19 @@ describe("shared application state", () => {
     expect(send).toHaveBeenCalledTimes(1);
     expect(controller.getSnapshot().composer.draftText).toBe("Keep me");
   });
+  it("selects the target tab and restores its saved draft through the public action", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const first = { id: "first", cwd: context.cwd, turns: [], status: "idle" } as never;
+    const second = { id: "second", cwd: context.cwd, turns: [], status: "idle" } as never;
+    window.wuu = { resumeThread: vi.fn(async () => ({ thread: second })) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: first,
+      threads: [first, second], activeSessionTabID: "thread:first", sessionTabs: [
+        { id: "thread:first", kind: "thread", context, threadID: "first", title: "First", prompt: "First draft", images: [], files: [] },
+        { id: "thread:second", kind: "thread", context, threadID: "second", title: "Second", prompt: "Second draft", images: [], files: [] },
+      ] });
+    await controller.invoke("thread.select", { threadId: "second" });
+    expect(controller.getSnapshot().conversation.threadId).toBe("second");
+    expect(controller.getSnapshot().composer.draftText).toBe("Second draft");
+  });
+
 });

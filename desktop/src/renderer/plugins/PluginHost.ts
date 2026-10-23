@@ -536,6 +536,10 @@ interface UISlotRecord extends OrderedRecord { readonly definition: RegisteredUI
 interface UIContributionRecord extends OrderedRecord { readonly definition: RegisteredUIContribution }
 
 interface GenerationState {
+  retainedViews: number;
+  cleaned: boolean;
+  readonly cleanupComplete: Promise<void>;
+  readonly completeCleanup: () => void;
   readonly shells: ApplicationShellRecord[];
   readonly uiSlots: UISlotRecord[];
   readonly uiContributions: UIContributionRecord[];
@@ -765,6 +769,27 @@ export class PluginHost {
     active.active = false;
     this.disposeGeneration(active);
     this.refreshPublicState();
+  }
+
+  /** A mounted React consumer keeps this activation's resources through effect cleanup. */
+  retainGeneration(pluginId: string, generation: string): () => void {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state || state.generation !== generation || state.disposed) throw new Error("Plugin generation is no longer active");
+    state.retainedViews++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      // Passive unmount cleanup runs parent-first. Release after the complete
+      // subtree has had an opportunity to dispose its captured resources.
+      queueMicrotask(() => { state.retainedViews--; this.finishGenerationCleanup(state); });
+    };
+  }
+
+  unloadAndWait(pluginId: string): Promise<void> | undefined {
+    const state = this.activeGenerations.get(pluginId);
+    this.unload(pluginId);
+    return state && !state.cleaned ? state.cleanupComplete : undefined;
   }
 
   getApplicationShells = (): readonly RegisteredApplicationShell[] => this.applicationShells;
@@ -1836,9 +1861,14 @@ export class PluginHost {
     state.acceptingRegistrations = false;
     state.lifetime.abort(reason);
     for (const request of state.runtimeRequests) request.abort();
-    for (const disposable of [...state.teardown].reverse()) {
-      disposable.dispose();
-    }
+    this.finishGenerationCleanup(state);
+  }
+
+  private finishGenerationCleanup(state: GenerationState): void {
+    if (!state.disposed || state.retainedViews > 0 || state.cleaned) return;
+    state.cleaned = true;
+    for (const disposable of [...state.teardown].reverse()) disposable.dispose();
+    state.completeCleanup();
   }
 
   private refreshPublicState(replaceSnapshots = false): void {
@@ -2209,7 +2239,13 @@ function createGenerationState(
   generation: string,
   declaredContributions?: PluginContributionDeclarations,
 ): GenerationState {
+  let completeCleanup!: () => void;
+  const cleanupComplete = new Promise<void>(resolve => { completeCleanup = resolve; });
   return {
+    retainedViews: 0,
+    cleaned: false,
+    cleanupComplete,
+    completeCleanup,
     pluginId,
     generation,
     declaredContributions,

@@ -697,6 +697,7 @@ function reduceNotification(
         initialized: {
           ...state.initialized,
           extension_inventory: params.extension_inventory,
+          ...("application_shell" in params ? { application_shell: params.application_shell } : {}),
         },
       };
     }
