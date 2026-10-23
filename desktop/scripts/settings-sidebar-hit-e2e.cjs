@@ -387,12 +387,15 @@ async function verifyRibbonControlFocus(win, page) {
   const snapshot = () => evaluate(win, () => {
     const toggle = document.querySelector('.section-sidebar-toggle');
     const history = document.querySelector('.shell-page-history-controls');
-    const settings = document.querySelector('.app-shell').hasAttribute('data-settings-open');
+    const shell = document.querySelector('.app-shell');
+    const settings = shell.hasAttribute('data-settings-open');
     return { toggle: { hidden: toggle.hidden, inert: toggle.inert, rect: toggle.getBoundingClientRect().toJSON() },
       history: { hidden: history.hidden, inert: history.inert },
       title: document.querySelector(settings ? '.settings-page-title' : '.conversation-title-heading').getBoundingClientRect().toJSON(),
       content: document.querySelector(settings ? '.settings-workbench-layer' : '.conversation-pane').getBoundingClientRect().toJSON(),
       ribbonExpanded: !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'),
+      drawerVisible: shell.classList.contains('sidebar-drawer-open'),
+      focusedControl: document.activeElement.getAttribute('data-wuu-component'),
       focusInRibbon: !!document.activeElement.closest('.sidebar-ribbon'), focusOnShell: document.activeElement === document.querySelector('.app-shell') };
   });
   // The caller first records/asserts the unmodified settings transition. Move
@@ -414,8 +417,25 @@ async function verifyRibbonControlFocus(win, page) {
       }, owner);
       assert.ok(focused, `${page}/${layout}/${owner}: the tested control must own focus`);
       const before = await snapshot();
+      assert.equal(before.drawerVisible, layout === 'drawer', `${page}/${layout}/${owner}: the requested drawer state is active`);
+      assert.deepEqual(before.history, { hidden: layout === 'drawer', inert: layout === 'drawer' },
+        `${page}/${layout}/${owner}: only an open drawer covers the compact-ribbon history lane`);
       await hoverCompactRibbon(win);
-      assert.deepEqual(await snapshot(), before, 'Hover preserves control focus, accessibility and geometry');
+      await settleChrome(win);
+      const hovered = await snapshot();
+      results.push({ scenario: `ribbon-hover-${page}-${layout}-${owner}`, before, hovered });
+      saveResults();
+      if (page === 'settings' && layout === 'drawer') {
+        // The ribbon is outside .settings-sidebar, so leaving that hover
+        // drawer restores history. Reopen it before testing keyboard reveal.
+        assert.deepEqual(hovered, { ...before, drawerVisible: false, history: { hidden: false, inert: false } },
+          'Leaving the settings drawer restores history without moving controls or their focus');
+        await revealDrawerAtEdge(win);
+        await settleChrome(win);
+        assert.deepEqual(await snapshot(), before, 'The same drawer and focused control return before keyboard reveal');
+      } else {
+        assert.deepEqual(hovered, before, `${page}/${layout}/${owner}: hover preserves control focus, accessibility and geometry`);
+      }
       await expandRibbonWithKeyboard(win);
       const expanded = await snapshot();
       assert.ok(expanded.toggle.hidden && expanded.toggle.inert, 'Expanded Mac ribbon explicitly removes its covered toggle');
