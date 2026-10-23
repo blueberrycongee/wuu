@@ -1242,7 +1242,7 @@ export interface HostServiceContracts {
         artifacts?: Array<{ id: string; label?: string }>;
         provenance: { producer: string; source_model?: string; created_at?: string };
       };
-      launch?: { revision?: number; kind?: string; intent?: string };
+      launch?: { revision?: number; kind?: string; intent?: string; prompt?: string };
     };
     result: { session_id: string; created: boolean; workspace_root?: string };
   };

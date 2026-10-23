@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, writeFile, copyFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,9 +37,12 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     send({id:'init',method:'initialize',params:{supported_host_services:['host.service.call']}});
     assert.ok((await next()).result);
     send({id:'active',method:'activate'}); await next();
-    send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one'}});
+    const launchPrompt = randomUUID();
+    const launchIntent = randomUUID();
+    send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent}}});
     const seen=[];
     let credential=null;
+    let configReads=0;
     let result;
     for (;;) {
       const message=await next();
@@ -54,14 +58,17 @@ test('packed provider clients preserve wire values and callback scope', {timeout
         else if (method==='set') { send({id:message.id,error:{code:'credential_unavailable',message:'write outcome unknown'}}); continue; }
         else assert.fail(`unexpected credential operation ${method}`);
       } else if (service==='state.config') {
-        reply={source:'e30=',revision:'config-1',config:{}};
-        if (method==='compare-exchange') { assert.deepEqual(params,{expected_revision:'config-1',source:'e30='}); reply={...reply,committed:true,activation_error:'project_overlay_invalid'}; }
+        reply={source:method==='read' && configReads++ > 0 ? '' : null,revision:'config-1',config:{}};
+        if (method==='compare-exchange') { assert.deepEqual(params,{expected_revision:'config-1',source:null}); reply={...reply,committed:true,activation_error:'project_overlay_invalid'}; }
       } else if (service==='state.plugin-settings') reply={revision:'settings-1',document:{schema_version:1,plugin_id:'author',values:{}}};
       else if (service==='state.artifacts') { assert.equal(params.max_bytes,8); reply={data:'AAEC',mime_type:'application/octet-stream'}; }
       else if (service==='host.data.query') { assert.equal(method,'call'); reply={version:'1.0.0',thread_id:'worker',events:[]}; }
       else if (service==='security.authorize') { assert.equal(method,'authorize'); reply={outcome:'allow'}; }
       else if (service==='host.managed-session' && method==='create') {
         assert.deepEqual(params.initial_input,{ClientID:'initial-1',SessionID:'worker',Content:'inspect',Wake:true});
+        // An authored launch input must survive independently from the brief.
+        assert.equal(params.launch.prompt,launchPrompt);
+        assert.equal(params.launch.intent,launchIntent);
         reply={session_id:'worker',created:false};
       } else if (service==='host.managed-session' && method==='submit') {
         assert.deepEqual(params.message,{Role:'user',Content:'inspect',ClientID:'input-2'});
@@ -75,6 +82,9 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     assert.equal(result.swapped.exchanged,true);
     assert.equal(result.errorCode,'credential_unavailable');
     assert.equal(seen.filter(value=>value==='state.credentials/set').length,1);
+    assert.equal(result.decodedSource,null);
+    assert.equal(result.emptySource,'');
+    assert.equal(result.changed.source,null);
     assert.equal(result.changed.committed,true);
     assert.equal(result.changed.activation_error,'project_overlay_invalid');
     assert.equal(result.artifact.data,'AAEC');

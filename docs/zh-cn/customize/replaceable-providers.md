@@ -94,10 +94,12 @@ export async function readNotes(host: RuntimeHost) {
 | 协议 | 可观察行为 |
 | --- | --- |
 | 凭据 | `get`、`set`、`delete`、`compare-exchange`。字节使用标准 base64。`null` 表示不存在，`""` 表示存在且为空。CAS 比较字节；`value: null` 删除，`{ exchanged: false }` 表示确定不匹配。`set` 的值不能为 null。 |
-| 配置 | `read`、`compare-exchange`。`source` 用 base64 保留完整原始字节；`config` 是验证后的产品有效配置。`expected_revision` 比较源身份。响应可能包含 `committed: true` 和 `activation_error`；此时应报告写入已持久化，但应用失败。 |
+| 配置 | `read`、`compare-exchange`。`source` 用 base64 保留完整原始字节，字节缺失时为 `null`；`config` 是验证后的产品有效配置。`expected_revision` 比较源身份。响应可能包含 `committed: true` 和 `activation_error`；此时应报告写入已持久化，但应用失败。 |
 | 插件设置 | 对 `{ subject, scope: "user" \| "workspace" }` 执行 `read`、`update`、`read-state`、`update-state`。更新在 `expected_revision` 上替换完整值映射，设置还携带 fingerprint。收到 `settings_conflict` 后先重读，再构造更新。 |
 | 产物 | `import`、`resolve`、`read`、`fork`。提供者 scope 来自获得准入的消费者。读取要求正数 `max_bytes`，返回 base64 字节与 MIME 类型。Resolve 返回该产物是否由提供者管理。普通工具导入使用带认证的网关。 |
-| 数据索引 | `host.data.query` 的 `call` 接收 thread、可选事件类型、turn 和 limit。未知类型不匹配事件。零/负数 limit 不设置显式上限。事件是事实数据，不授予配置或凭据访问。 |
+| 数据索引 | `host.data.query` 的 `call` 接收 thread、可选事件类型、turn 和 limit。未知类型不匹配事件。省略或零 limit 不设置显式上限；负数返回 `invalid_params`。事件是事实数据，不授予配置或凭据访问。 |
+
+原生配置文件缺失时读出 `source: null`，存在但零字节时读出 `source: ""`。解码前先判断 `null`，客户端不得将这两个值互相归一化。配置 CAS 的 `source: null` 表示提供零个替换字节：原生文件模式会写入空文件，而不是删除；可信项目模式拒绝空 JSON。CAS 响应即使在空文件已存在时也可能保留 `null`，因此该字段描述返回的源字节，不是文件是否存在。
 
 配置和设置 revision 都是不透明字符串，与文档存储的数字 revision 不同。这两个服务不提供文档事务回执协议。只有确定的 CAS 冲突可以在重读后重试；不可用或已取消的写入需要先核对结果。不要记录凭据字节、原始配置或包含秘密的有效配置。
 

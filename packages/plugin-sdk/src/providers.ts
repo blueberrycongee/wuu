@@ -45,14 +45,21 @@ export interface CredentialExchangeResult { exchanged: boolean }
  * not a second configuration schema maintained by this SDK.
  */
 export interface ConfigSourceView {
-  source: Base64Bytes;
+  /** null preserves absent source bytes; an empty string is present zero-byte source. */
+  source: Base64Bytes | null;
   revision: string;
   config: Readonly<Record<string, unknown>>;
   /** A durable write succeeded even if applying its overlay then failed. */
   committed?: boolean;
   activation_error?: string;
 }
-export interface ConfigSourceCompareExchange { expected_revision: string; source: Base64Bytes }
+export interface ConfigSourceCompareExchange {
+  expected_revision: string;
+  /** null supplies zero replacement bytes, not deletion. Native file mode
+   * creates/overwrites an empty file; trusted project mode rejects empty JSON.
+   */
+  source: Base64Bytes | null;
+}
 export interface PluginSettingsAddress { subject: string; scope: 'user' | 'workspace' }
 export interface PluginSettingsDocument {
   schema_version: number;
@@ -99,7 +106,7 @@ export interface DataQuery {
   /** Unknown fact types match no events. Empty or absent means all types. */
   types?: readonly string[];
   turn_id?: string;
-  /** Zero or negative means no explicit bound. */
+  /** Nonnegative event bound. Omitted or zero is unbounded; negatives fail. */
   limit?: number;
 }
 export interface DataEvent {

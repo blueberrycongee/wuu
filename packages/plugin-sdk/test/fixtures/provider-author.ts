@@ -36,7 +36,7 @@ void invalidCAS;
 
 export default {
   initialize() { return { protocol_version: 3 }; },
-  async invokeService(_params, host) {
+  async invokeService(params, host) {
     const credentials = credentialStore(host);
     const absent = await credentials.get({namespace:'auth',key:'token'});
     const swapped = await credentials.compareExchange({namespace:'auth',key:'token',expected:absent.value,value:''});
@@ -45,15 +45,25 @@ export default {
     try { await credentials.set({namespace:'auth',key:'token',value:'eA=='}); }
     catch (error) { errorCode = (error as {code:string}).code; }
     const config: ConfigSourceView = await configurationStore(host).read();
+    // Missing source bytes remain null; callers must narrow before decoding.
+    // @ts-expect-error A source response is not always a base64 string.
+    const unsafeDecode: string = config.source;
+    void unsafeDecode;
+    const decodedSource = config.source === null ? null : atob(config.source);
     const changed = await configurationStore(host).compareExchange({expected_revision:config.revision,source:config.source});
+    const emptyConfig = await configurationStore(host).read();
+    const emptySource = emptyConfig.source === null ? null : atob(emptyConfig.source);
     const settings = await pluginSettingsStore(host).read({subject:'author',scope:'workspace'});
     const artifact = await artifactStore(host).read({thread_id:'worker',uri:'artifact:one',max_bytes:8});
     const facts = await queryData(host, {thread_id:'worker',types:['turn']});
     const permission = await authorize(host, {cwd:'/workspace',permission_mode:'read_only',tool:{name:'read',kind:'file',read_only:true,concurrency_safe:true,destructive:false}});
     const sessions = managedSessions(host);
-    const created = await sessions.create(create);
+    const launch = params.params as { launch_prompt: string; launch_intent: string };
+    const created = await sessions.create({...create, launch: {
+      kind: 'handoff', intent: launch.launch_intent, prompt: launch.launch_prompt,
+    }});
     const admitted = await sessions.submit({session_id:created.session_id,message:{Role:'user',Content:'inspect',ClientID:'input-2'},allow_start:true});
     const admission = await projectCoordination(host).admission();
-    return {absent,swapped,empty,errorCode,changed,settings,artifact,facts,permission,created,admitted,admission,descriptorCount:descriptors.length};
+    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,facts,permission,created,admitted,admission,descriptorCount:descriptors.length};
   },
 } satisfies RuntimePlugin;
