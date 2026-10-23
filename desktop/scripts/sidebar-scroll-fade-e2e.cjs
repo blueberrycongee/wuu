@@ -521,7 +521,13 @@ app.whenReady().then(async () => {
     console.log("PASS: sidebar fades track scroll bounds across stream, control/window focus, light/dark, 14/20px, wide/narrow, and accessibility states.");
     }
   } catch (error) {
-    await capture("failure");
+    // A failed diagnostic screenshot must not replace the original failure.
+    fs.writeFileSync(path.join(output, "failure.txt"), String(error.stack || error));
+    try {
+      await capture("failure");
+    } catch (captureError) {
+      console.error("Could not capture failure state", captureError);
+    }
     throw error;
   } finally {
     fs.writeFileSync(path.join(output, "results.json"), JSON.stringify({ versions: process.versions, results }, null, 2));
