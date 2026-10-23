@@ -840,9 +840,9 @@ async function runWebsiteAcceptance(h, fixture) {
       const alignment = await evaluateRibbon(() => {
         const center = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return r.x + r.width / 2; };
         return { rows: { upper: center('.sidebar-ribbon-main [data-ribbon-id="conversations"]'),
-          settings: center('.sidebar-ribbon-footer .sidebar-ribbon-button'), account: center('.sidebar-ribbon-footer .sidebar-account-trigger') },
+          account: center('.sidebar-ribbon-footer .sidebar-account-trigger') },
         icons: { upper: center('.sidebar-ribbon-main [data-ribbon-id="conversations"] > svg'),
-          settings: center('.sidebar-ribbon-footer .sidebar-ribbon-button > svg'), account: center('.sidebar-ribbon-footer .sidebar-account-avatar') } };
+          account: center('.sidebar-ribbon-footer .sidebar-account-avatar') } };
       });
       assert.ok([alignment.rows, alignment.icons].every(group => Object.values(group).every(x => Math.abs(x - group.upper) <= 0.5))
         && alignment.icons.upper < alignment.rows.upper - 16,
@@ -1091,7 +1091,7 @@ async function runWebsiteAcceptance(h, fixture) {
       await click(pick('.sidebar-section-item', 'Plugins'), 'notion-plugin-list');
       await waitFor(() => document.querySelector('.catalog-row-open[aria-label*="Notion"]'));
       await click('.catalog-row-open[aria-label*="Notion"]', 'review-optional-notion');
-      await click(pick('.settings-detail-actions button', 'Approve and enable'), 'approve-optional-notion');
+      await click(pick('.plugin-page-actions button', 'Approve and enable'), 'approve-optional-notion');
       await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]'), undefined, 'optional Notion ribbon activation', 20000);
       diagnostic.ribbonID = await evaluate(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]').dataset.ribbonId);
       assert.ok(diagnostic.ribbonID.startsWith('plugin:'), 'Notion is a registered plugin destination, not a website shortcut');
@@ -1804,7 +1804,7 @@ async function runWebsiteAcceptance(h, fixture) {
     await click(pick('.sidebar-section-item', 'Plugins'), 'select-plugin-inventory');
     await waitFor(() => document.querySelector('.catalog-row-open[aria-label*="Acceptance Webpage"]'));
     await click('.catalog-row-open[aria-label*="Acceptance Webpage"]', 'review-authored-extension');
-    await click(pick('.settings-detail-actions button', 'Approve and enable'), 'approve-authored-local-fixture');
+    await click(pick('.plugin-page-actions button', 'Approve and enable'), 'approve-authored-local-fixture');
     await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]'), undefined, 'production extension activation', 20000);
     const wc = await openSite('Fixture Website', '/extension');
     security(wc);
