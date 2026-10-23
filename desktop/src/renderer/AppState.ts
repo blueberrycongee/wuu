@@ -139,7 +139,10 @@ type AppState = {
   catalogSection?: "plugins" | "skills";
   catalogPluginID?: string;
   // Pending search addresses survive shell replacement during workspace activation.
-  conversationSearchTarget?: { id: string; result: ThreadSearchResultItem; query: string; ready: boolean };
+  conversationSearchTarget?: {
+    id: string; result: ThreadSearchResultItem; query: string; ready: boolean;
+    isReadingIntentCurrent?: () => boolean;
+  };
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProjectId?: string;

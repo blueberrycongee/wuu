@@ -13,7 +13,7 @@ export function useConversationSearchNavigation({
   target: AppState["conversationSearchTarget"];
   switching: boolean;
   activateThread: (id: string) => Promise<void>;
-  captureConversationScrollIntent: () => () => boolean;
+  captureConversationScrollIntent: (options?: { forHandoff?: boolean }) => () => boolean;
   jumpToConversationMessage: (turnID: string, item: ThreadItem, query?: string) => () => void;
   setAppState: Dispatch<SetStateAction<AppState>>;
 }): (result: ThreadSearchResultItem, query: string) => void {
@@ -38,13 +38,21 @@ export function useConversationSearchNavigation({
     // Bind on arrival, before activation or remote message content finishes.
     // Leaving and returning must not make an old search a new reading intent.
     if (target && !targetIntent.current && thread?.id === target.result.thread.id) {
+      if (target.isReadingIntentCurrent && !target.isReadingIntentCurrent()) {
+        finishTarget(target);
+        return;
+      }
       targetIntent.current = { id: target.id, isCurrent: captureConversationScrollIntent() };
+      const isReadingIntentCurrent = captureConversationScrollIntent({ forHandoff: true });
+      setAppState(current => current.conversationSearchTarget?.id === target.id
+        ? { ...current, conversationSearchTarget: { ...current.conversationSearchTarget, isReadingIntentCurrent } }
+        : current);
     }
     if (targetIntent.current && !targetIntent.current.isCurrent()) {
       cancelPendingJump();
       if (target) finishTarget(target);
     }
-  }, [target?.id, thread?.id, captureConversationScrollIntent, cancelPendingJump, finishTarget]);
+  }, [target?.id, thread?.id, captureConversationScrollIntent, cancelPendingJump, finishTarget, setAppState]);
 
   // Streaming snapshots must not cancel retries while an old turn mounts.
   // Only a destination change or unmount abandons the pending jump.
@@ -67,7 +75,7 @@ export function useConversationSearchNavigation({
       return;
     }
     const stillCurrent = () => {
-      if (!mounted.current || currentDestination.current.target !== target || currentDestination.current.threadID !== thread.id) return false;
+      if (!mounted.current || currentDestination.current.target?.id !== target.id || currentDestination.current.threadID !== thread.id) return false;
       if (targetIntent.current?.isCurrent()) return true;
       finishTarget(target);
       return false;
@@ -135,8 +143,8 @@ export function useConversationSearchNavigation({
     const next = result.message_seq ? { id: crypto.randomUUID(), result, query, ready: false } : undefined;
     setAppState(current => ({ ...current, conversationSearchTarget: next }));
     void activateThread(result.thread.id).then(() => {
-      setAppState(current => next && current.conversationSearchTarget === next
-        ? { ...current, conversationSearchTarget: { ...next, ready: true } } : current);
+      setAppState(current => next && current.conversationSearchTarget?.id === next.id
+        ? { ...current, conversationSearchTarget: { ...current.conversationSearchTarget, ready: true } } : current);
     });
   };
 }

@@ -1,4 +1,4 @@
-import { act, createElement, useState, type ReactNode } from "react";
+import { act, createElement, useSyncExternalStore, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -12,6 +12,7 @@ import {
 import type { Thread, ThreadItem, Turn } from "../shared/protocol";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import { initialState } from "./AppState";
+import { ApplicationController } from "./plugins/ApplicationController";
 
 function makeLongTurns(): Turn[] {
   return [
@@ -795,11 +796,12 @@ describe("split conversation scroll ownership", () => {
   let searchThread: Thread;
   let remotePreview = false;
   let completeItem: ThreadItem | undefined;
+  let searchApplication: ApplicationController;
   const layouts = new Map<string, StubbedLayout>();
   const nodes = new Map<string, HTMLDivElement>();
   const turns = makeLongTurns();
   function SplitProbe({ pane }: { pane: "primary" | "secondary" }): ReactNode {
-    const [searchState, setSearchState] = useState(initialState);
+    const searchState = useSyncExternalStore(searchApplication.subscribeState, searchApplication.getState);
     current = useConversationScrollState({
       activeThreadID: pane === "primary" ? "thread-A" : "thread-B",
       primaryThreadID: "thread-A", secondaryThreadID: "thread-B",
@@ -819,7 +821,7 @@ describe("split conversation scroll ownership", () => {
       thread: searchThread, switching: false, activateThread: () => activation ?? Promise.resolve(),
       captureConversationScrollIntent: current.captureConversationScrollIntent,
       jumpToConversationMessage: current.jumpToConversationMessage,
-      setAppState: setSearchState,
+      setAppState: searchApplication.updateState,
     });
     return createElement("div", null, ...(["primary", "secondary"] as const).map((id) => createElement("div", {
       key: id, className: "conversation-split-body", "data-pane": id,
@@ -839,11 +841,40 @@ describe("split conversation scroll ownership", () => {
   });
   beforeEach(() => {
     activation = undefined; remotePreview = false; completeItem = undefined;
+    searchApplication = new ApplicationController(initialState);
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
   afterEach(() => {
     act(() => root.unmount()); host.remove(); nodes.clear(); layouts.clear(); vi.restoreAllMocks(); vi.useRealTimers();
     Reflect.deleteProperty(window, "wuu");
+  });
+  it.each([false, true])("preserves reader cancellation across remount before hydration returns (wheel=%s)", async (wheel) => {
+    vi.useFakeTimers();
+    remotePreview = true;
+    const reads: Array<(item: ThreadItem) => void> = [];
+    const read = vi.fn(() => new Promise<ThreadItem>(resolve => reads.push(resolve)));
+    window.wuu = { readRemoteItem: read } as unknown as typeof window.wuu;
+    render("primary");
+    await act(async () => navigate({ thread: searchThread, message_seq: 7, snippet: "needle" }, "needle"));
+    expect(read).toHaveBeenCalledOnce();
+    if (wheel) act(() => nodes.get("primary")!.dispatchEvent(new WheelEvent("wheel", { deltaY: 1, bubbles: true })));
+    act(() => root.render(null));
+    nodes.clear(); layouts.clear();
+    render("primary");
+    expect(read).toHaveBeenCalledTimes(wheel ? 1 : 2);
+    const anchor = document.createElement("div"); anchor.id = "message-late-turn-late-item";
+    anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
+    nodes.get("primary")!.appendChild(anchor);
+    await act(async () => vi.advanceTimersByTimeAsync(40));
+    const before = nodes.get("primary")!.scrollTop;
+    const full: ThreadItem = { id: "late-item", type: "agent_message", seq: 7, text: "needle" };
+    await act(async () => reads[0](full));
+    expect(nodes.get("primary")!.scrollTop).toBe(before);
+    completeItem = full;
+    if (!wheel) await act(async () => reads[1](full));
+    render("primary");
+    await act(async () => vi.runAllTimersAsync());
+    expect(nodes.get("primary")!.scrollTop).toBe(wheel ? before : before - 64);
   });
   it("keeps inactive native layout clamping out of the active thread's follow state and restore snapshot", () => {
     render("secondary"); act(() => current.disableConversationAutoFollow()); scroll("secondary", 1800);
