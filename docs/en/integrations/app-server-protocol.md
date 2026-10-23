@@ -169,6 +169,13 @@ when the interrupted turn has already settled. This lets clients retain messages
 whose preparation or admission finishes after a Stop request. Held input remains
 available through the existing pending-input controls and resume snapshots.
 
+`turn/completed` and `turn/error` may include `index_error` when the selected
+index provider did not confirm the trace append. This diagnostic is separate
+from the model turn's status: the index write may already have committed, and
+clients must not rerun the turn or replay tools to repair it. An absent
+`trace_path` alone is not an error; external index providers need not export a
+local trace file.
+
 For persistent conversations, human queue/steer acceptance and pending-input edits
 or cancellation commit before a successful RPC response. Reuse a stable
 `client_id` when retrying an ambiguous response: a pending queue duplicate returns

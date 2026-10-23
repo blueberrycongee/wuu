@@ -3352,8 +3352,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	th.mu.Unlock()
 
 	tracePath, traceErr := s.persistTurnTrace(binding, threadRuntime, runner, th.ID, turnRuntime, turn, res, err, toolRecordStart, contextRequests, providerStates, compactAttempts, barrierRejections)
+	indexError := ""
 	if traceErr != nil {
 		tracePath = ""
+		indexError = "Selected index write was not confirmed; its outcome may be unknown."
 	}
 
 	// Surface the Go core's typed error classification to clients while
@@ -3504,6 +3506,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			Category:   string(structured.Category),
 			Provider:   structured.Provider,
 			StatusCode: structured.StatusCode,
+			IndexError: indexError,
 			Turn:       turn,
 		})
 	} else {
@@ -3520,6 +3523,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			StopReason:               res.StopReason,
 			Truncated:                res.Truncated,
 			TracePath:                tracePath,
+			IndexError:               indexError,
 			AwaitingAutoContinuation: awaitingAutoContinuation,
 		})
 	}

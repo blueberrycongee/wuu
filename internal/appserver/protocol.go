@@ -2314,6 +2314,7 @@ type TurnErrorNotification struct {
 	Category   string `json:"category,omitempty"`
 	Provider   string `json:"provider,omitempty"`
 	StatusCode int    `json:"status_code,omitempty"`
+	IndexError string `json:"index_error,omitempty"`
 	Turn       Turn   `json:"turn"`
 }
 
@@ -2348,6 +2349,7 @@ type TurnCompletedNotification struct {
 	StopReason               string `json:"stop_reason,omitempty"`
 	Truncated                bool   `json:"truncated,omitempty"`
 	TracePath                string `json:"trace_path,omitempty"`
+	IndexError               string `json:"index_error,omitempty"`
 	AwaitingAutoContinuation bool   `json:"awaiting_auto_continuation,omitempty"`
 }
 

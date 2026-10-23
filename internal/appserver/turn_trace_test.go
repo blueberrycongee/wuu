@@ -144,6 +144,48 @@ func TestPersistTurnTraceDoesNotReplayUncertainAppend(t *testing.T) {
 	}
 }
 
+// A model answer remains successful when only its selected index write fails,
+// but the public completion must expose that unconfirmed secondary outcome.
+func TestTurnCompletionReportsUnconfirmedIndexWrite(t *testing.T) {
+	provider := &turnTraceIndexProvider{err: errors.New("private-index-payload-secret")}
+	fixture, _ := newTurnTraceIndexFixture(t, provider)
+	fixture.rt.StreamRunner.Client = providers.AdaptStreamClient(&fakeClient{response: providers.ChatResponse{Content: "answer"}})
+	out := &lockedBuffer{}
+	srv := New(fixture.rt, out)
+	defer srv.Close()
+	if err := srv.handleLine(context.Background(), []byte(`{"id":"create","method":"thread/start"}`)); err != nil {
+		t.Fatal(err)
+	}
+	created := responseByID(t, parseOutput(t, out.String()), "create")
+	if created["error"] != nil {
+		t.Fatalf("create: %v", created)
+	}
+	id := remarshal[ThreadStartResult](t, created["result"]).Thread.ID
+	raw, _ := json.Marshal(map[string]any{"id": "start", "method": MethodTurnStart, "params": TurnStartParams{ThreadID: id, Prompt: "hello"}})
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	start := responseByID(t, parseOutput(t, out.String()), "start")
+	if start["error"] != nil {
+		t.Fatalf("start: %v", start)
+	}
+	messages := waitForMethod(t, out, NotificationTurnCompleted)
+	params := notificationByMethod(t, messages, NotificationTurnCompleted)["params"].(map[string]any)
+	if diagnostic, _ := params["index_error"].(string); diagnostic == "" || strings.Contains(diagnostic, "private-index-payload-secret") {
+		t.Fatalf("missing or unsafe index outcome: %v", params)
+	}
+	if params["content"] != "answer" || params["trace_path"] != nil {
+		t.Fatalf("model answer or trace outcome: %v", params)
+	}
+	if strings.Contains(out.String(), "private-index-payload-secret") {
+		t.Fatal("index payload leaked")
+	}
+	srv.Close()
+	if provider.calls != 1 {
+		t.Fatalf("unconfirmed index append retried %d times", provider.calls)
+	}
+}
+
 type turnTraceIndexProvider struct {
 	calls   int
 	batches []pluginhost.DataAppendTurnParams
