@@ -2,7 +2,6 @@ package session
 
 import (
 	"crypto/sha256"
-
 	"encoding/hex"
 	"errors"
 	"fmt"

@@ -2,7 +2,6 @@ package session
 
 import (
 	"errors"
-
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/participant"
@@ -36,27 +35,4 @@ func retiredAfter(a, b participant.Participant) bool {
 		return at.After(bt)
 	}
 	return a.UpdatedAt.After(b.UpdatedAt)
-}
-
-func scanParticipantRun(scanner interface {
-	Scan(dest ...any) error
-}) (ParticipantRun, error) {
-	var run ParticipantRun
-	var createdAt, updatedAt string
-	if err := scanner.Scan(
-		&run.ID,
-		&run.ParticipantID,
-		&run.AgentID,
-		&run.TaskID,
-		&run.SessionID,
-		&run.Summary,
-		&run.Outcome,
-		&createdAt,
-		&updatedAt,
-	); err != nil {
-		return ParticipantRun{}, err
-	}
-	run.CreatedAt = parseTime(createdAt)
-	run.UpdatedAt = parseTime(updatedAt)
-	return run, nil
 }

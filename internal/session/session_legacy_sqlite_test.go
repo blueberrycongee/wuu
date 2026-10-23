@@ -1,24 +1,184 @@
-// Legacy SQLite fixture code is test-only. Production sessions use Store;
-// explicit conversion reads legacy databases through legacysqlite.
+// Legacy SQLite fixture code is test-only; production uses captured documents.
 package session
 
 import (
 	"database/sql"
-	"sync"
-
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-
+	"net/url"
 	"os"
-
+	"path/filepath"
+	"sort"
 	"strings"
-
+	"sync"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
+
+func insertSessionSQL() string {
+	return `INSERT INTO sessions (
+		id, created_at, updated_at, title, title_revision, summary, entries, cwd,
+		forked_from_id, forked_from_turn_id, forked_from_item_id,
+		pinned_at, folder_id, archived_at, archive_reason, worktree_path, worktree_base_head, worktree_base_repo,
+		workspace_id, source, owner, visibility, parent_id, context_source, creation_request_id,
+		provider, model, variant, effort, speed, model_options_json, permission_mode, approve_for_me, engine_id, engine_ref, instructions, project_role, tool_policy_json
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+}
+
+func sqliteDSN(path string) string {
+
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	u := url.URL{Scheme: "file", Path: p}
+	q := u.Query()
+	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "foreign_keys(1)")
+	q.Set("_txlock", "immediate")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+func modelOptionsJSON(options map[string]string) string {
+	encoded, _ := json.Marshal(options)
+	return string(encoded)
+}
+
+func sessionArgs(sess Session) []any {
+	return []any{
+		sess.ID,
+		timeText(sess.CreatedAt),
+		timeText(sess.UpdatedAt),
+		sess.Title,
+		sess.TitleRevision,
+		sess.Summary,
+		sess.Entries,
+		normalizeCWD(sess.CWD),
+		sess.ForkedFromID,
+		sess.ForkedFromTurnID,
+		sess.ForkedFromItemID,
+		nullableTimeText(sess.PinnedAt),
+		strings.TrimSpace(sess.FolderID),
+		nullableTimeText(sess.ArchivedAt),
+		sess.ArchiveReason,
+		normalizeCWD(sess.WorktreePath),
+		sess.WorktreeBaseHEAD,
+		normalizeCWD(sess.WorktreeBaseRepo),
+		strings.TrimSpace(sess.WorkspaceID),
+		strings.TrimSpace(sess.Source),
+		strings.TrimSpace(sess.Owner),
+		strings.TrimSpace(sess.Visibility),
+		strings.TrimSpace(sess.ParentID),
+		strings.TrimSpace(sess.ContextSource),
+		strings.TrimSpace(sess.CreationRequestID),
+		strings.TrimSpace(sess.Provider),
+		strings.TrimSpace(sess.Model),
+		strings.TrimSpace(sess.Variant),
+		strings.TrimSpace(sess.Effort), strings.TrimSpace(sess.Speed), modelOptionsJSON(sess.ModelOptions),
+		strings.TrimSpace(sess.PermissionMode),
+		boolToInt(sess.ApproveForMe),
+		strings.TrimSpace(sess.EngineID),
+		strings.TrimSpace(sess.EngineRef),
+		sess.Instructions,
+		sess.ProjectRole,
+		strings.TrimSpace(sess.ToolPolicyJSON),
+	}
+}
+
+const historyRecordsSelect = `
+	SELECT seq, role, content, display_content, origin, origin_id, cause, presentation_kind, related_session_id, read_only, phase, client_id, hidden, steered, reasoning_content,
+	       provider_item_id, engine_turn_id, engine_turn_pending, provider_item_model,
+	       reasoning_blocks_json, provider_items_json, content_parts_json, images_json, files_json, tool_calls_json, discovered_tools_json,
+	       tool_call_id, tool_invocation_id, tool_result_kind, tool_result_json, finish_reason, stop_reason, truncated, name, at, input_tokens, output_tokens, context_tokens, cache_creation_tokens, cache_read_tokens, retry_count, max_retries,
+	       provider, model
+	FROM session_messages`
+
+func sortSessions(sessions []Session) {
+	sort.Slice(sessions, func(i, j int) bool {
+		leftPinned := sessions[i].PinnedAt != nil
+		rightPinned := sessions[j].PinnedAt != nil
+		if leftPinned != rightPinned {
+			return leftPinned
+		}
+		leftTime := sessionActivityAt(sessions[i])
+		rightTime := sessionActivityAt(sessions[j])
+		if !leftTime.Equal(rightTime) {
+			return leftTime.After(rightTime)
+		}
+		return sessions[i].ID > sessions[j].ID
+	})
+}
+
+func timeText(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func nullableTimeText(t *time.Time) any {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return timeText(*t)
+}
+
+func nullableValueTimeText(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return timeText(t)
+}
+
+func parseTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}
+	}
+	return t.UTC()
+}
+
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+func rawJSONText(raw json.RawMessage) string {
+	raw = bytesTrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	return string(raw)
+}
+
+func rawMessage(raw string) json.RawMessage {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	return json.RawMessage(raw)
+}
+
+func bytesTrimSpace(raw []byte) []byte {
+	return []byte(strings.TrimSpace(string(raw)))
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
 
 // Create initializes a new session.
 // If id is non-empty, it is used as the session ID; otherwise a new one is generated.

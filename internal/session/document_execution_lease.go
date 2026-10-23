@@ -95,6 +95,8 @@ func (s *Store) TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID
 		}
 	}()
 	ownerID, operationID := NewID(), NewID()
+
+attempt:
 	for {
 		resetView, err := s.documents.Read(s.ctx, persistence.Query{Namespace: documentNamespace("thread_execution_resets"), Keys: []string{threadID}})
 		if err != nil {
@@ -107,14 +109,24 @@ func (s *Store) TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID
 			}
 		}
 		if limit > 0 {
-			members, err := s.documents.Read(s.ctx, persistence.Query{Namespace: documentNamespace("sessions")})
-			if err != nil {
-				return nil, false, err
+			query := persistence.Query{Namespace: documentNamespace("sessions"), Limit: 256, AtRevision: &resetView.Revision}
+			var members []persistence.Document
+			for {
+				view, err := s.documents.Read(s.ctx, query)
+				if errors.Is(err, persistence.ErrConflict) {
+					continue attempt
+				}
+				if err != nil {
+					return nil, false, err
+				}
+				members = append(members, view.Documents...)
+				if view.NextCursor == "" {
+					break
+				}
+				query.Cursor = view.NextCursor
 			}
-			if members.Revision != resetView.Revision {
-				continue
-			}
-			if err := checkDocumentProjectCapacity(members.Documents, sessDir, threadID, limit); err != nil {
+
+			if err := checkDocumentProjectCapacity(members, sessDir, threadID, limit); err != nil {
 				return nil, false, err
 			}
 		}

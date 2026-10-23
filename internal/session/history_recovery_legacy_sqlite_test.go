@@ -6,10 +6,8 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-
 	"errors"
 	"fmt"
-
 	"strings"
 
 	"modernc.org/sqlite"

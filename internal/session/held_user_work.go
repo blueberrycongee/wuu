@@ -2,7 +2,6 @@ package session
 
 import (
 	"errors"
-
 	"strings"
 )
 

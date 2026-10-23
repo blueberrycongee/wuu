@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-
 	"time"
 )
 

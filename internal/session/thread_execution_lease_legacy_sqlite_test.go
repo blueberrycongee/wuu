@@ -4,11 +4,9 @@ package session
 
 import (
 	"database/sql"
-
 	"errors"
 	"fmt"
 	"os"
-
 	"strings"
 	"sync"
 

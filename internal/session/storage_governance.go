@@ -2,7 +2,6 @@ package session
 
 import (
 	"encoding/json"
-
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/toolresult"

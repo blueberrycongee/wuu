@@ -1,5 +1,4 @@
-// Legacy SQLite fixture code is test-only. Production sessions use Store;
-// explicit conversion reads legacy databases through legacysqlite.
+// Legacy SQLite fixture code is test-only; production uses captured documents.
 package session
 
 import (
@@ -11,6 +10,29 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/participant"
 )
+
+func scanParticipantRun(scanner interface {
+	Scan(dest ...any) error
+}) (ParticipantRun, error) {
+	var run ParticipantRun
+	var createdAt, updatedAt string
+	if err := scanner.Scan(
+		&run.ID,
+		&run.ParticipantID,
+		&run.AgentID,
+		&run.TaskID,
+		&run.SessionID,
+		&run.Summary,
+		&run.Outcome,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		return ParticipantRun{}, err
+	}
+	run.CreatedAt = parseTime(createdAt)
+	run.UpdatedAt = parseTime(updatedAt)
+	return run, nil
+}
 
 // UpsertParticipant inserts or updates a participant record.
 func UpsertParticipant(sessDir string, p participant.Participant) error {
