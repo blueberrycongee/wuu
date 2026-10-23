@@ -123,21 +123,21 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	if _, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	if _, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "wrong-workspace", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		WorkspaceID: "workspace-two", WorkspaceRoot: rt.RootDir,
 	}); err == nil {
 		t.Fatal("session creation accepted a different target workspace")
 	}
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "create-1", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		WorkspaceID: rt.WorkspaceID, WorkspaceRoot: rt.RootDir,
 	})
 	if err != nil || created.SessionID == "" || !created.Created {
 		t.Fatalf("create = %+v, %v", created, err)
 	}
-	result, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+	result, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{
 		RequestID: "request-1", SessionID: created.SessionID,
 		Input:        pluginhost.SessionInput{Prompt: "internal inspect prompt", ContextBlocks: []pluginhost.SessionContextBlock{{Kind: "TRIGGER", Source: "schedule", Content: "fired at 09:00"}}},
 		Presentation: &pluginhost.SessionInputPresentation{Kind: pluginhost.SessionPresentationQueryBubble, Text: "后台任务已唤醒 Agent"}, Cause: "schedule:daily",
@@ -161,11 +161,11 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	default:
 	}
 
-	persisted, ok, err := session.Find(rt.SessionDir, result.SessionID)
+	persisted, ok, err := rt.Sessions.Find(result.SessionID)
 	if err != nil || !ok || persisted.Source != "plugin:schedule" || persisted.Owner != "plugin:schedule" || persisted.Visibility != pluginhost.SessionVisibilityUser {
 		t.Fatalf("persisted thread = %+v, %t, %v", persisted, ok, err)
 	}
-	records, err := session.LoadHistoryRecords(rt.SessionDir, result.SessionID, true)
+	records, err := rt.Sessions.LoadHistoryRecords(result.SessionID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	if !providerHasGeneratedQuery || !providerHasRequestContext {
 		t.Fatalf("provider request missing plugin context: %+v", requests)
 	}
-	loaded, err := srv.ensureThreadLoaded(result.SessionID)
+	loaded, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), result.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestPluginSessionInstructionsReachProviderAfterReload(t *testing.T) {
 	rt.PluginHost = pluginhost.New(owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "create-instructions", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 		WorkspaceID: rt.WorkspaceID, WorkspaceRoot: rt.RootDir, Instructions: instructions,
 	})
@@ -231,7 +231,7 @@ func TestPluginSessionInstructionsReachProviderAfterReload(t *testing.T) {
 	}
 	send := func(requestID string, out *lockedBuffer) {
 		t.Helper()
-		result, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+		result, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{
 			RequestID: requestID, SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: requestID},
 		})
 		if err != nil {
@@ -283,14 +283,14 @@ func TestPluginSessionSendTurnOutlivesHostCallContext(t *testing.T) {
 		srv.Close()
 	})
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
 		RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	callCtx, cancelCall := context.WithCancel(context.Background())
-	result, err := rt.PluginSessionRouter.Send(callCtx, owner.id, pluginhost.SessionSendParams{
+	result, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, callCtx), owner.id, pluginhost.SessionSendParams{
 		RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"},
 	})
 	if err != nil || result.State != pluginhost.TurnLifecycleRunning {
@@ -341,11 +341,11 @@ func TestPluginSessionListAndCancelAreOwnerScoped(t *testing.T) {
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(func() { close(release); srv.Close() })
-	created, err := rt.PluginSessionRouter.Create(context.Background(), "subagent", pluginhost.SessionCreateParams{RequestID: "owned", Name: "review_parser", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{RequestID: "owned", Name: "review_parser", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.PluginSessionRouter.Send(context.Background(), "subagent", pluginhost.SessionSendParams{RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}}); err != nil {
+	if _, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionSendParams{RequestID: "run", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -353,18 +353,18 @@ func TestPluginSessionListAndCancelAreOwnerScoped(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("turn did not start")
 	}
-	listed, err := rt.PluginSessionRouter.List(context.Background(), "subagent", pluginhost.SessionListParams{})
+	listed, err := rt.PluginSessionRouter.List(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionListParams{})
 	if err != nil || len(listed.Sessions) != 1 || listed.Sessions[0].SessionID != created.SessionID || listed.Sessions[0].Name != "review_parser" || listed.Sessions[0].State != pluginhost.TurnLifecycleRunning {
 		t.Fatalf("list = %+v, %v", listed, err)
 	}
-	other, err := rt.PluginSessionRouter.List(context.Background(), "other", pluginhost.SessionListParams{})
+	other, err := rt.PluginSessionRouter.List(pluginInvocationContext(t, rt, context.Background()), "other", pluginhost.SessionListParams{})
 	if err != nil || len(other.Sessions) != 0 {
 		t.Fatalf("other list = %+v, %v", other, err)
 	}
-	if _, err := rt.PluginSessionRouter.Cancel(context.Background(), "other", pluginhost.SessionCancelParams{SessionID: created.SessionID}); err == nil {
+	if _, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), "other", pluginhost.SessionCancelParams{SessionID: created.SessionID}); err == nil {
 		t.Fatal("another plugin cancelled an owned session")
 	}
-	cancelled, err := rt.PluginSessionRouter.Cancel(context.Background(), "subagent", pluginhost.SessionCancelParams{SessionID: created.SessionID})
+	cancelled, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCancelParams{SessionID: created.SessionID})
 	if err != nil || !cancelled.Cancelled {
 		t.Fatalf("cancel = %+v, %v", cancelled, err)
 	}
@@ -380,13 +380,13 @@ func TestPluginSessionCancelIsTurnScopedAndBroadcastsInterruption(t *testing.T) 
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(func() { close(release); srv.Close() })
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), observer.id, pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCreateParams{
 		RequestID: "owned-turn", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := rt.PluginSessionRouter.Send(context.Background(), observer.id, pluginhost.SessionSendParams{
+	started, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionSendParams{
 		RequestID: "run-turn", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"},
 	})
 	if err != nil || started.TurnID == "" {
@@ -397,22 +397,22 @@ func TestPluginSessionCancelIsTurnScopedAndBroadcastsInterruption(t *testing.T) 
 	case <-time.After(3 * time.Second):
 		t.Fatal("turn did not start")
 	}
-	queued, err := rt.PluginSessionRouter.Send(context.Background(), observer.id, pluginhost.SessionSendParams{
+	queued, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionSendParams{
 		RequestID: "queued-turn", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "later"},
 	})
 	if err != nil || queued.QueueID == "" {
 		t.Fatalf("queued send = %+v, %v", queued, err)
 	}
-	queuedCancel, err := rt.PluginSessionRouter.Cancel(context.Background(), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, QueueID: queued.QueueID})
+	queuedCancel, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, QueueID: queued.QueueID})
 	if err != nil || !queuedCancel.Cancelled || queuedCancel.QueueID != queued.QueueID {
 		t.Fatalf("queued cancel = %+v, %v", queuedCancel, err)
 	}
 
-	mismatch, err := rt.PluginSessionRouter.Cancel(context.Background(), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: "not-current"})
+	mismatch, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: "not-current"})
 	if err != nil || mismatch.Cancelled {
 		t.Fatalf("mismatched cancel = %+v, %v", mismatch, err)
 	}
-	cancelled, err := rt.PluginSessionRouter.Cancel(context.Background(), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: started.TurnID})
+	cancelled, err := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), observer.id, pluginhost.SessionCancelParams{SessionID: created.SessionID, TurnID: started.TurnID})
 	if err != nil || !cancelled.Cancelled || cancelled.TurnID != started.TurnID {
 		t.Fatalf("exact cancel = %+v, %v", cancelled, err)
 	}
@@ -441,13 +441,13 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 		srv.Close()
 	})
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), lifecycle.ID(), pluginhost.SessionCreateParams{
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionCreateParams{
 		RequestID: "create", Name: "child", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	started, err := rt.PluginSessionRouter.Send(context.Background(), lifecycle.ID(), pluginhost.SessionSendParams{
+	started, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionSendParams{
 		RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first"},
 	})
 	if err != nil || started.State != pluginhost.TurnLifecycleRunning {
@@ -458,7 +458,7 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 	case <-time.After(2 * time.Second):
 		t.Fatal("child turn did not start")
 	}
-	queued, err := rt.PluginSessionRouter.Send(context.Background(), lifecycle.ID(), pluginhost.SessionSendParams{
+	queued, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionSendParams{
 		RequestID: "second", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "second"},
 	})
 	if err != nil || queued.State != pluginhost.TurnLifecycleQueued || queued.QueueID == "" {
@@ -467,7 +467,7 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 
 	cancelled := make(chan error, 1)
 	go func() {
-		_, cancelErr := rt.PluginSessionRouter.Cancel(context.Background(), lifecycle.ID(), pluginhost.SessionCancelParams{SessionID: created.SessionID})
+		_, cancelErr := rt.PluginSessionRouter.Cancel(pluginInvocationContext(t, rt, context.Background()), lifecycle.ID(), pluginhost.SessionCancelParams{SessionID: created.SessionID})
 		cancelled <- cancelErr
 	}()
 	select {
@@ -491,19 +491,19 @@ func TestPluginSessionCreateIsIdempotentAndPrivateSessionsStayOutOfSearch(t *tes
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
 	params := pluginhost.SessionCreateParams{Speed: "fast", RequestID: "same-create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh}
-	first, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
+	first, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "dream", params)
 	if err != nil || !first.Created {
 		t.Fatalf("first create = %+v, %v", first, err)
 	}
-	saved, found, err := session.Find(rt.SessionDir, first.SessionID)
+	saved, found, err := rt.Sessions.Find(first.SessionID)
 	if err != nil || !found || saved.Speed != "fast" {
 		t.Fatalf("plugin speed selection was lost: %+v, %v", saved, err)
 	}
-	second, err := rt.PluginSessionRouter.Create(context.Background(), "dream", params)
+	second, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), "dream", params)
 	if err != nil || second.Created || second.SessionID != first.SessionID {
 		t.Fatalf("idempotent create = %+v, %v", second, err)
 	}
-	sources, err := srv.threadSearchSources()
+	sources, err := srv.threadSearchSources(testRuntimeState(t, rt))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,11 +534,11 @@ func TestPluginSessionSendQueuesBusyThreadAndReportsLaterTransitions(t *testing.
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh})
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first"}})
+	first, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "first"}})
 	if err != nil || first.State != pluginhost.TurnLifecycleRunning {
 		t.Fatalf("first submit = %+v, %v", first, err)
 	}
@@ -547,7 +547,7 @@ func TestPluginSessionSendQueuesBusyThreadAndReportsLaterTransitions(t *testing.
 	case <-time.After(3 * time.Second):
 		t.Fatal("first turn did not start")
 	}
-	second, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{
+	second, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{
 		RequestID: "second", SessionID: first.SessionID, Input: pluginhost.SessionInput{Prompt: "second"},
 	})
 	if err != nil || second.State != pluginhost.TurnLifecycleQueued || second.QueueID == "" {
@@ -596,11 +596,11 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
-	created, err := rt.PluginSessionRouter.Create(context.Background(), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
+	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}})
+	first, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionSendParams{RequestID: "first", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "work"}})
 	if err != nil || first.State != pluginhost.TurnLifecycleRunning {
 		t.Fatalf("first submit = %+v, %v", first, err)
 	}
@@ -614,11 +614,11 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 		RequestID: "steer", SessionID: created.SessionID,
 		Input: pluginhost.SessionInput{Prompt: "summarize now"}, IfRunning: pluginhost.SessionIfRunningSteer,
 	}
-	steered, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, params)
+	steered, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, params)
 	if err != nil || !steered.Steered || steered.State != pluginhost.TurnLifecycleRunning || steered.TurnID != first.TurnID || steered.QueueID != "" {
 		t.Fatalf("steer = %+v, %v", steered, err)
 	}
-	replayed, err := rt.PluginSessionRouter.Send(context.Background(), owner.id, params)
+	replayed, err := rt.PluginSessionRouter.Send(pluginInvocationContext(t, rt, context.Background()), owner.id, params)
 	if err != nil || !replayed.Steered || replayed.TurnID != first.TurnID {
 		t.Fatalf("idempotent steer = %+v, %v", replayed, err)
 	}
@@ -681,13 +681,13 @@ func TestPluginTurnLifecycleOutboxDropsInactivePluginEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.PutPluginTurnLifecycleOutbox(rt.SessionDir, "ghost", input.RequestID, payload); err != nil {
+	if err := rt.Sessions.PutPluginTurnLifecycleOutbox("ghost", input.RequestID, payload); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.notifyPluginTurnLifecycle(context.Background(), "ghost", input); err != nil {
+	if err := srv.notifyPluginTurnLifecycle(testRuntimeState(t, rt), context.Background(), "ghost", input); err != nil {
 		t.Fatalf("notifyPluginTurnLifecycle: %v", err)
 	}
-	entries, err := session.ListPluginTurnLifecycleOutbox(rt.SessionDir)
+	entries, err := rt.Sessions.ListPluginTurnLifecycleOutbox()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,6 +723,8 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 		response: providersResponse("# Handoff brief\nContinue from the verified performance fix."),
 	}
 	rt := newTestRuntime(t, client)
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	rt.StreamRunner.CompactionRegistry = agent.NewCompactionRegistry()
 	rt.StreamRunner.CompactionRegistry.Register(handoffBriefProvider{})
@@ -734,7 +736,7 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 		t.Fatalf("source thread/start: %v", err)
 	}
 	sourceID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "source")["result"]).Thread.ID
-	if err := session.AppendHistoryRecords(rt.SessionDir, sourceID, []session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecords(sourceID, []session.HistoryRecord{
 		{Role: "user", Content: "SENTINEL-SOURCE-ONLY"},
 		{Role: "assistant", Content: "investigation notes"},
 	}); err != nil {
@@ -767,7 +769,7 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 	}
 	waitForTurnCompletedForThread(t, out, started.ID)
 
-	page, err := session.ReadHistoryPage(context.Background(), rt.SessionDir, started.ID, 1, 20)
+	page, err := rt.Sessions.ReadHistoryPage(started.ID, 1, 20)
 	if err != nil {
 		t.Fatalf("read target history: %v", err)
 	}
@@ -786,7 +788,7 @@ func TestHandoffThreadStartUsesTargetModelWithoutCopyingSourceHistory(t *testing
 	if sawSentinel || !sawSeed || !sawIntent {
 		t.Fatalf("target history = %+v", page.Records)
 	}
-	metadata, ok, err := session.Find(rt.SessionDir, started.ID)
+	metadata, ok, err := rt.Sessions.Find(started.ID)
 	if err != nil || !ok || metadata.Owner != "user" || metadata.Provider != "fake-provider" || metadata.Model != "fake-model" {
 		t.Fatalf("target metadata = %+v ok=%v err=%v", metadata, ok, err)
 	}
@@ -847,13 +849,13 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
 			ctx := context.Background()
-			created, err := rt.PluginSessionRouter.Create(ctx, "workspace-test", pluginhost.SessionCreateParams{
+			created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.SessionCreateParams{
 				RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh, Workspace: "worktree",
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			metadata, found, err := session.Find(rt.SessionDir, created.SessionID)
+			metadata, found, err := rt.Sessions.Find(created.SessionID)
 			if err != nil || !found {
 				t.Fatalf("session lookup: found=%t err=%v", found, err)
 			}
@@ -881,7 +883,7 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 			if mode == "untracked" {
 				write(metadata.WorktreePath, "untracked.txt", "keep me\n")
 			}
-			status, statusErr := rt.PluginSessionRouter.WorkspaceStatus(ctx, "workspace-test", pluginhost.WorkspaceStatusParams{SessionID: created.SessionID})
+			status, statusErr := rt.PluginSessionRouter.WorkspaceStatus(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.WorkspaceStatusParams{SessionID: created.SessionID})
 			if statusErr != nil {
 				t.Fatal(statusErr)
 			}
@@ -892,14 +894,14 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 				if !reflect.DeepEqual(status.ChangedFiles, wantFiles) || !status.CanApply {
 					t.Errorf("status=%+v, want files %v", status, wantFiles)
 				}
-				inspected, err := rt.PluginSessionRouter.Inspect(ctx, "workspace-test", pluginhost.SessionInspectParams{SessionID: created.SessionID})
+				inspected, err := rt.PluginSessionRouter.Inspect(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.SessionInspectParams{SessionID: created.SessionID})
 				if err != nil || inspected.Workspace == nil || !inspected.Workspace.Dirty || !reflect.DeepEqual(inspected.Workspace.ChangedFiles, wantFiles) {
 					t.Errorf("inspect=%+v err=%v", inspected, err)
 				}
 			} else if status.CanApply {
 				t.Errorf("unsafe workspace advertised as applicable: %+v", status)
 			}
-			result, err := rt.PluginSessionRouter.WorkspaceApply(ctx, "workspace-test", pluginhost.WorkspaceApplyParams{SessionID: created.SessionID})
+			result, err := rt.PluginSessionRouter.WorkspaceApply(pluginInvocationContext(t, rt, ctx), "workspace-test", pluginhost.WorkspaceApplyParams{SessionID: created.SessionID})
 			if mode == "conflict" || mode == "untracked" {
 				if err == nil {
 					t.Fatalf("unsafe apply succeeded: %+v", result)
@@ -907,7 +909,7 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 				if _, err := os.Stat(metadata.WorktreePath); err != nil {
 					t.Fatalf("workspace lost: %v", err)
 				}
-				stored, found, err := session.Find(rt.SessionDir, created.SessionID)
+				stored, found, err := rt.Sessions.Find(created.SessionID)
 				if err != nil || !found || stored.WorktreePath != metadata.WorktreePath {
 					t.Fatalf("binding lost: %+v %v", stored, err)
 				}
@@ -940,7 +942,7 @@ func TestPluginWorkspaceCommittedDelivery(t *testing.T) {
 			if _, err := os.Stat(metadata.WorktreePath); !os.IsNotExist(err) {
 				t.Fatalf("applied worktree remains: %v", err)
 			}
-			stored, found, err := session.Find(rt.SessionDir, created.SessionID)
+			stored, found, err := rt.Sessions.Find(created.SessionID)
 			if err != nil || !found || stored.WorktreePath != "" {
 				t.Fatalf("workspace not rebound: %+v %v", stored, err)
 			}
@@ -954,13 +956,13 @@ func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
-			parent, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+			parent, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{
 				RequestID: "parent", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh,
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
-			child, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+			child, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{
 				RequestID: "child", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh, ParentSessionID: parent.SessionID,
 			})
 			if err != nil {
@@ -970,7 +972,7 @@ func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
 			var release func()
 			switch activity {
 			case "durable_lease":
-				lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, child.SessionID)
+				lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, child.SessionID)
 				if err != nil || !acquired {
 					t.Fatalf("reserve child execution: %v, %v", acquired, err)
 				}
@@ -997,12 +999,12 @@ func TestPluginProcessRecipientWaitsForChildExecutionOwnership(t *testing.T) {
 			var once sync.Once
 			releaseOnce := func() { once.Do(release) }
 			t.Cleanup(releaseOnce)
-			id, closed, err := srv.resolvePluginProcessSession(context.Background(), child.SessionID, true)
+			id, closed, err := srv.resolvePluginProcessSession(pluginInvocationContext(t, rt, context.Background()), child.SessionID, true)
 			if err != nil || closed || id != child.SessionID {
 				t.Fatalf("active child recipient = %q, closed=%v, err=%v", id, closed, err)
 			}
 			releaseOnce()
-			id, closed, err = srv.resolvePluginProcessSession(context.Background(), child.SessionID, true)
+			id, closed, err = srv.resolvePluginProcessSession(pluginInvocationContext(t, rt, context.Background()), child.SessionID, true)
 			if err != nil || closed || id != parent.SessionID {
 				t.Fatalf("completed child recipient = %q, closed=%v, err=%v", id, closed, err)
 			}
@@ -1021,13 +1023,13 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 				if strings.HasPrefix(manager, "plugin:") {
 					visibility = pluginhost.SessionVisibilityPlugin
 				}
-				created, err := srv.createPluginSession(context.Background(), "subagent", pluginhost.SessionCreateParams{
+				created, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "subagent", pluginhost.SessionCreateParams{
 					RequestID: "recipient", Visibility: visibility, ContextSource: pluginhost.SessionContextFresh,
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
-				control, err := session.ChangeControl(rt.SessionDir, created.SessionID, manager, state, 0)
+				control, err := rt.Sessions.ChangeControl(created.SessionID, manager, state, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -1040,11 +1042,11 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 					RequestID: "observation", SessionID: created.SessionID, IfRunning: pluginhost.SessionIfRunningSteer,
 					Input: pluginhost.SessionInput{Prompt: "The monitored command completed."},
 				}
-				if _, err := srv.sendPluginSession(context.Background(), "monitor", params); err == nil {
+				if _, err := srv.sendPluginSession(pluginInvocationContext(t, rt, context.Background()), "monitor", params); err == nil {
 					t.Fatal("ordinary plugin send bypassed recipient ownership or control")
 				}
 				ctx := pluginhost.WithProcessSessionDelivery(context.Background(), created.SessionID)
-				result, err := srv.sendPluginSession(ctx, "monitor", params)
+				result, err := srv.sendPluginSession(pluginInvocationContext(t, rt, ctx), "monitor", params)
 				if state != session.ControlActive {
 					if err == nil {
 						t.Fatalf("process event bypassed %s control: %+v", state, result)
@@ -1060,7 +1062,7 @@ func TestPluginProcessDeliveryHonorsRecipientControl(t *testing.T) {
 				if captured != control {
 					t.Fatalf("delivery control = %+v, want %+v", captured, control)
 				}
-				if _, err := session.ChangeControl(rt.SessionDir, created.SessionID, manager, session.ControlPaused, control.Revision); err != nil {
+				if _, err := rt.Sessions.ChangeControl(created.SessionID, manager, session.ControlPaused, control.Revision); err != nil {
 					t.Fatal(err)
 				}
 				th.mu.Lock()

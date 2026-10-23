@@ -60,7 +60,7 @@ func TestPluginDiagnosticsExposeIsolatedCapabilityFailures(t *testing.T) {
 	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
 		return &isolatedFailureClient{id: id, invokeErr: errors.New("observer boom")}
 	})
-	if err := srv.notifyPluginTurnCompleted(context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
+	if err := srv.notifyPluginTurnCompleted(testRuntimeState(t, srv.rt), context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
 		t.Fatal(err)
 	}
 	callPluginPackageRPC(t, srv, "diagnostics", MethodPluginDiagnosticsList, PluginDiagnosticsParams{
@@ -159,6 +159,7 @@ func newPluginStateTestServer(t *testing.T, runtimeClients ...func(string) plugi
 func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -194,6 +195,7 @@ func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {
 func TestPluginExecutionsListReturnsLiveTable(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()

@@ -8,7 +8,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestPluginQueuedSendRecoveryDistinguishesShutdownFromCancellation(t *testing.T) {
@@ -20,10 +19,11 @@ func TestPluginQueuedSendRecoveryDistinguishesShutdownFromCancellation(t *testin
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			rt := newTestRuntime(t, &fakeClient{})
-			rt.PluginHost = pluginhost.New()
+			writeTargetedUpdateConfig(t, rt)
+			bindConfigSourceForTest(t, rt)
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(func() { srv.Close() })
-			created, err := srv.createPluginSession(ctx, "messenger", pluginhost.SessionCreateParams{
+			created, err := srv.createPluginSession(pluginInvocationContext(t, rt, ctx), "messenger", pluginhost.SessionCreateParams{
 				RequestID: "target", Visibility: "user", ContextSource: "fresh",
 			})
 			if err != nil {
@@ -36,7 +36,7 @@ func TestPluginQueuedSendRecoveryDistinguishesShutdownFromCancellation(t *testin
 			th.running = true
 			th.mu.Unlock()
 			params := pluginhost.SessionSendParams{RequestID: "reply", SessionID: created.SessionID, Input: pluginhost.SessionInput{Prompt: "result"}}
-			queued, err := srv.sendPluginSession(ctx, "messenger", params)
+			queued, err := srv.sendPluginSession(pluginInvocationContext(t, rt, ctx), "messenger", params)
 			if err != nil || queued.State != "queued" {
 				t.Fatalf("queue: %+v, %v", queued, err)
 			}
@@ -46,7 +46,7 @@ func TestPluginQueuedSendRecoveryDistinguishesShutdownFromCancellation(t *testin
 				th.mu.Unlock()
 				srv.Close()
 				srv = New(rt, &lockedBuffer{})
-				th, err = srv.ensureThreadLoaded(created.SessionID)
+				th, err = srv.ensureThreadLoaded(testRuntimeState(t, rt), created.SessionID)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -54,17 +54,17 @@ func TestPluginQueuedSendRecoveryDistinguishesShutdownFromCancellation(t *testin
 				th.running = true
 				th.mu.Unlock()
 			} else {
-				if _, err := srv.cancelPluginSession(ctx, "messenger", pluginhost.SessionCancelParams{SessionID: created.SessionID, QueueID: queued.QueueID}); err != nil {
+				if _, err := srv.cancelPluginSession(pluginInvocationContext(t, rt, ctx), "messenger", pluginhost.SessionCancelParams{SessionID: created.SessionID, QueueID: queued.QueueID}); err != nil {
 					t.Fatal(err)
 				}
 			}
 			t.Cleanup(func() { th.mu.Lock(); th.running = false; th.mu.Unlock() })
 			inspect := pluginhost.SessionInspectParams{SessionID: created.SessionID, RequestID: params.RequestID}
-			result, err := srv.inspectPluginSession(ctx, "messenger", inspect)
+			result, err := srv.inspectPluginSession(pluginInvocationContext(t, rt, ctx), "messenger", inspect)
 			if err != nil || result.Turn == nil || result.Turn.State != "discarded" || result.Turn.Retryable != shutdown {
 				t.Fatalf("discard receipt: %+v, %v", result.Turn, err)
 			}
-			retried, err := srv.sendPluginSession(ctx, "messenger", params)
+			retried, err := srv.sendPluginSession(pluginInvocationContext(t, rt, ctx), "messenger", params)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -77,11 +77,11 @@ func TestPluginQueuedSendRecoveryDistinguishesShutdownFromCancellation(t *testin
 			if retried.State != "queued" {
 				t.Fatalf("shutdown discard was not retried: %+v", retried)
 			}
-			result, err = srv.inspectPluginSession(ctx, "messenger", inspect)
+			result, err = srv.inspectPluginSession(pluginInvocationContext(t, rt, ctx), "messenger", inspect)
 			if err != nil || result.Turn == nil || result.Turn.State != "queued" || result.Turn.QueueID != retried.QueueID {
 				t.Fatalf("stale discard hid the retry: %+v, %v", result.Turn, err)
 			}
-			duplicate, err := srv.sendPluginSession(ctx, "messenger", params)
+			duplicate, err := srv.sendPluginSession(pluginInvocationContext(t, rt, ctx), "messenger", params)
 			if err != nil || duplicate.QueueID != retried.QueueID {
 				t.Fatalf("retry enqueued twice: %+v, %v", duplicate, err)
 			}
@@ -95,10 +95,11 @@ func TestClaimedPluginDeliveryShutdownRespectsDurableAdmission(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			client := &fakeClient{}
 			rt := newTestRuntime(t, client)
-			rt.PluginHost = pluginhost.New()
+			writeTargetedUpdateConfig(t, rt)
+			bindConfigSourceForTest(t, rt)
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
-			created, err := srv.createPluginSession(context.Background(), "messenger", pluginhost.SessionCreateParams{RequestID: "target", Visibility: "user", ContextSource: "fresh"})
+			created, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "messenger", pluginhost.SessionCreateParams{RequestID: "target", Visibility: "user", ContextSource: "fresh"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -121,8 +122,8 @@ func TestClaimedPluginDeliveryShutdownRespectsDurableAdmission(t *testing.T) {
 			if !srv.enqueueQueuedUserTurn(created.SessionID, entry) {
 				t.Fatal("queue rejected")
 			}
-			srv.drainQueuedTurns(created.SessionID)
-			receipt, ok, err := session.FindPluginTurnLifecycle(rt.SessionDir, "messenger", requestID, created.SessionID, "")
+			srv.drainQueuedTurns(testRuntimeState(t, rt), created.SessionID)
+			receipt, ok, err := rt.Sessions.FindPluginTurnLifecycle("messenger", requestID, created.SessionID, "")
 			if err != nil || !ok {
 				t.Fatalf("receipt: %v %v", ok, err)
 			}
@@ -156,10 +157,11 @@ func TestPluginQueueThreadLookupShutdownKeepsReplayPolicy(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
-			rt.PluginHost = pluginhost.New()
+			writeTargetedUpdateConfig(t, rt)
+			bindConfigSourceForTest(t, rt)
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
-			created, err := srv.createPluginSession(context.Background(), "messenger", pluginhost.SessionCreateParams{RequestID: "target", Visibility: "user", ContextSource: "fresh"})
+			created, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "messenger", pluginhost.SessionCreateParams{RequestID: "target", Visibility: "user", ContextSource: "fresh"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -180,8 +182,8 @@ func TestPluginQueueThreadLookupShutdownKeepsReplayPolicy(t *testing.T) {
 			if !srv.enqueueQueuedUserTurn(created.SessionID, entry) {
 				t.Fatal("queue rejected")
 			}
-			srv.drainQueuedTurns(created.SessionID)
-			receipt, ok, err := session.FindPluginTurnLifecycle(rt.SessionDir, "messenger", "reply", created.SessionID, "")
+			srv.drainQueuedTurns(testRuntimeState(t, rt), created.SessionID)
+			receipt, ok, err := rt.Sessions.FindPluginTurnLifecycle("messenger", "reply", created.SessionID, "")
 			if err != nil || !ok {
 				t.Fatalf("receipt: %v %v", ok, err)
 			}
