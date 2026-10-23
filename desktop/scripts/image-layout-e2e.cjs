@@ -58,7 +58,8 @@ function layoutMotionSettled() {
 }
 async function select(id) {
   await evaluate(id => {
-    const row = [...document.querySelectorAll(".thread-row")].find(row => row.textContent.includes(id));
+    const row = [...document.querySelectorAll(".project-thread-list .thread-row")]
+      .find(row => row.querySelector(".thread-row-title").textContent === id);
     if (!row) throw new Error(`Missing conversation ${id}`);
     row.querySelector(".thread-row-main").click();
   }, id);
@@ -136,7 +137,7 @@ app.whenReady().then(async () => {
         preload: path.join(__dirname, "image-layout-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
       } });
       await win.loadFile(path.join(desktop, "out/renderer/index.html"));
-      await until(() => document.querySelectorAll(".thread-row").length === 2);
+      await until(() => document.querySelectorAll(".project-thread-list .thread-row").length === 2);
       await select("pictures");
       if (width === 420) {
         await evaluate(() => {
