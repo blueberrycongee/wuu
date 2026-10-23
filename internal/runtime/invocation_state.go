@@ -78,19 +78,32 @@ func (k *kernelHostServices) retainState() (*State, error) {
 // callback may release its last client handle while publication drops the graph
 // owner; shutting down the kernel inside that callback would lock against itself.
 func (k *kernelHostServices) captureInvocationState(ctx context.Context) (context.Context, func()) {
-	var once sync.Once
+	var mu sync.Mutex
 	var binding *State
-	var err error
+	var captureErr error
+	var initialized, closed bool
 	ctx = context.WithValue(ctx, invocationStateKey{}, invocationStateRetainer(func() (*State, error) {
-		once.Do(func() { binding, err = k.retainState() })
-		if err != nil {
-			return nil, err
+		mu.Lock()
+		defer mu.Unlock()
+		if closed {
+			return nil, serviceError("generation_closed", "invocation has completed")
+		}
+		if !initialized {
+			binding, captureErr = k.retainState()
+			initialized = true
+		}
+		if captureErr != nil {
+			return nil, captureErr
 		}
 		return binding.Retain(), nil
 	}))
 	return ctx, func() {
-		if binding != nil {
-			_ = binding.Close()
+		mu.Lock()
+		closed = true
+		held := binding
+		mu.Unlock()
+		if held != nil {
+			_ = held.Close()
 		}
 	}
 }

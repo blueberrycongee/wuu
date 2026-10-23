@@ -19,8 +19,10 @@ func TestInvocationStateRetainsOriginalAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var completedContext context.Context
 	router := NewPluginSessionRouter()
 	router.Bind(nil, nil, func(ctx context.Context, _ string, _ pluginhost.SessionListParams) (pluginhost.SessionListResult, error) {
+		completedContext = ctx
 		captured, err := RetainInvocationState(ctx)
 		if err != nil {
 			return pluginhost.SessionListResult{}, err
@@ -40,6 +42,9 @@ func TestInvocationStateRetainsOriginalAuthority(t *testing.T) {
 	invoker := &kernelServiceInvoker{parent: kernel, method: pluginhost.HostServiceSessionList}
 	if _, err := invoker.InvokeService(context.Background(), pluginhost.ServiceInvokeParams{Caller: "caller", Method: pluginhost.KernelServiceMethod, Params: json.RawMessage(`{}`)}); err != nil {
 		t.Fatalf("kernel invocation state: %v", err)
+	}
+	if _, err := RetainInvocationState(completedContext); err == nil {
+		t.Fatal("completed invocation admitted another state capture")
 	}
 	ctx := WithInvocationState(context.Background(), original)
 	held, err := RetainInvocationState(ctx)
