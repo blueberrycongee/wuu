@@ -2458,7 +2458,6 @@ func TestServerConfigModelUpdateAppliesPermissionBoundary(t *testing.T) {
 }
 
 func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test-key")
 	rt := newTestRuntime(t, &fakeClient{})
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
@@ -2476,6 +2475,7 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
     "fake-provider": {
       "type": "openai-compatible",
       "base_url": "https://example.test/v1",
+      "api_key": "test-key",
       "model": "fake-model"
     }
   }
@@ -2484,6 +2484,7 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	if _, err := rt.Sessions.CreateWithMetadata("thread-1", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
