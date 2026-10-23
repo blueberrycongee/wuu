@@ -76,6 +76,27 @@ func (s *Session) RetainStateServices() (*StateServices, func(), error) {
 	}
 	generation := s.pluginGeneration
 	generation.retain()
+	s.pluginGenerationMu.Unlock()
+	var once sync.Once
+	release := func() { once.Do(func() { s.ReleasePluginGeneration(generation) }) }
+	return stateServicesForGeneration(generation), release, nil
+}
+
+// Services uses this retained state's generation, never the Session's latest
+// publication. The caller must keep the State alive throughout the operation.
+func (s *State) Services() (*StateServices, error) {
+	if s == nil {
+		return nil, serviceError("service_unavailable", "state is unavailable")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.Generation == nil || s.Host == nil {
+		return nil, serviceError("service_unavailable", "state service generation is unavailable")
+	}
+	return stateServicesForGeneration(s.Generation), nil
+}
+
+func stateServicesForGeneration(generation *PluginGeneration) *StateServices {
 	snapshot := ExtensionSnapshot{GenerationID: generation.id, Plugins: append([]pluginpkg.Plugin(nil), generation.plugins...), ExtensionSettings: generation.settings.Extensions, PluginHost: generation.host}
 	generation.revokedMu.Lock()
 	for _, item := range generation.active {
@@ -84,7 +105,6 @@ func (s *Session) RetainStateServices() (*StateServices, func(), error) {
 		}
 	}
 	generation.revokedMu.Unlock()
-	s.pluginGenerationMu.Unlock()
 	call := func(service string) func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 		return func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
 			result, err := snapshot.PluginHost.CallService(ctx, StateServicesConsumer, service, method, raw)
@@ -94,7 +114,5 @@ func (s *Session) RetainStateServices() (*StateServices, func(), error) {
 			return result, nil
 		}
 	}
-	var once sync.Once
-	release := func() { once.Do(func() { s.ReleasePluginGeneration(generation) }) }
-	return &StateServices{GenerationID: generation.id, ChatGPT: generation.chatGPTManager, Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName))}, release, nil
+	return &StateServices{GenerationID: generation.id, ChatGPT: generation.chatGPTManager, Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName))}
 }

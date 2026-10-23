@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
@@ -2143,7 +2144,12 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 		}
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
-	th, err := s.ensureThreadLoaded(threadID)
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return nil, "", err
+	}
+	defer binding.Close()
+	th, err := s.ensureThreadLoaded(binding, threadID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -2218,7 +2224,17 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 	if threadID == "" {
 		return nil, func() {}, nil
 	}
-	th, err := s.ensureThreadLoaded(threadID)
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return nil, func() {}, err
+	}
+	owned := true
+	defer func() {
+		if owned {
+			_ = binding.Close()
+		}
+	}()
+	th, err := s.ensureThreadLoaded(binding, threadID)
 	if err != nil {
 		return nil, func() {}, err
 	}
@@ -2233,9 +2249,9 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 	persist := th.PersistHistory
 	th.mu.Unlock()
 
-	var mutationLease *session.ThreadExecutionLease
+	var mutationLease *session.DocumentThreadExecutionLease
 	if persist {
-		mutationLease, err = s.tryAcquireThreadMutationLease(threadID)
+		mutationLease, err = s.tryAcquireThreadMutationLease(binding, threadID)
 		if err != nil {
 			th.mu.Lock()
 			th.runtimeSelectionMutation = false
@@ -2246,7 +2262,9 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 			return nil, func() {}, err
 		}
 	}
+	owned = false
 	release := func() {
+		defer binding.Close()
 		releaseThreadMutationLease(threadID, mutationLease)
 		th.mu.Lock()
 		th.runtimeSelectionMutation = false
@@ -2329,11 +2347,16 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if strings.TrimSpace(params.Model) != "" {
 		model = strings.TrimSpace(params.Model)
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	services, err := th.state.Services()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	cfg, err = s.registerDiscoveredProvider(cfg, provider)
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg, err = s.registerDiscoveredProviderFromServices(cfg, provider, services)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -2434,7 +2457,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 		ApproveForMe:   approveForMe,
 	}
 	if th.PersistHistory {
-		if _, err := session.SetRuntimeSelection(s.rt.SessionDir, th.ID, selection); err != nil {
+		if _, err := th.state.Sessions.SetRuntimeSelection(th.ID, selection); err != nil {
 			return err
 		}
 	}
@@ -2453,7 +2476,7 @@ func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName
 	if detached.runtime != nil || detached.subscription != nil {
 		s.releaseDetachedThreadRuntime(detached)
 	}
-	return s.notifyThreadUpdated(thread)
+	return s.notifyThreadUpdated(th.state, thread)
 }
 
 func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
@@ -2467,7 +2490,7 @@ func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
 		if strings.TrimSpace(systemPrompt) != "" {
 			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
 			if th.PersistHistory {
-				if err := rewriteChatHistory(s.rt.SessionDir, th.ID, th.History); err != nil {
+				if err := rewriteChatHistory(th.state.Sessions, th.ID, th.History); err != nil {
 					providers.DebugLogf("rewrite thread %q system prompt after general settings update: %v", th.ID, err)
 				}
 			}
@@ -2667,7 +2690,19 @@ func (s *Server) pinLegacyRuntimeSelections() {
 	if s == nil || s.rt == nil {
 		return
 	}
-	cfg, _, err := s.rt.LoadEffectiveConfig()
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		providers.DebugLogf("capture state to pin legacy runtime selections: %v", err)
+		return
+	}
+	defer binding.Close()
+	services, err := binding.Services()
+	if err != nil {
+		providers.DebugLogf("capture services to pin legacy runtime selections: %v", err)
+		return
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
 	if err != nil {
 		providers.DebugLogf("load config to pin legacy runtime selections: %v", err)
 		return
@@ -2689,7 +2724,7 @@ func (s *Server) pinLegacyRuntimeSelections() {
 	}
 	// Strict workspace scoping: DM and group sessions of other workspaces
 	// must keep their own defaults, so the DM-inclusive listing is wrong here.
-	sessions, err := session.ListForCWD(s.rt.SessionDir, s.rt.RootDir, s.rt.WorkspaceID, 0)
+	sessions, err := binding.Sessions.ListForCWD(s.rt.RootDir, s.rt.WorkspaceID, 0)
 	if err != nil {
 		providers.DebugLogf("list sessions to pin legacy runtime selections: %v", err)
 		return
@@ -2718,7 +2753,7 @@ func (s *Server) pinLegacyRuntimeSelections() {
 			changed = true
 		}
 		if changed {
-			if _, err := session.SetRuntimeSelection(s.rt.SessionDir, sess.ID, selection); err != nil {
+			if _, err := binding.Sessions.SetRuntimeSelection(sess.ID, selection); err != nil {
 				providers.DebugLogf("pin runtime selection for session %q: %v", sess.ID, err)
 			}
 		}
@@ -2788,18 +2823,46 @@ func (s *Server) providerSummaries() []ProviderSummary {
 // picker. Save only the connection so subsequent runtime builds and restarts
 // resolve the pin without changing workspace defaults or other conversations.
 func (s *Server) registerDiscoveredProvider(cfg config.Config, providerName string) (config.Config, error) {
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return cfg, err
+	}
+	defer release()
+	return s.registerDiscoveredProviderFromServices(cfg, providerName, services)
+}
+
+func (s *Server) registerDiscoveredProviderFromServices(cfg config.Config, providerName string, services *runtime.StateServices) (config.Config, error) {
 	providerName = strings.TrimSpace(providerName)
-	provider, discovered := localGrokBuildProvider(cfg, providerName, os.Getenv("HOME"))
+	provider, discovered := selectedGrokBuildProvider(cfg, providerName, services.Credentials)
 	if !discovered {
 		return cfg, nil
 	}
-	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+	view, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
 		return config.AddProviderIfMissingSource(source, providerName, provider)
 	})
 	if err != nil {
 		return cfg, err
 	}
 	return view.Config, nil
+}
+
+func selectedGrokBuildProvider(cfg config.Config, providerName string, selected credentialstore.Store) (config.ProviderConfig, bool) {
+	if strings.TrimSpace(providerName) != "grok-build" {
+		return config.ProviderConfig{}, false
+	}
+	if _, exists := cfg.Providers[providerName]; exists {
+		return config.ProviderConfig{}, false
+	}
+	for _, provider := range cfg.Providers {
+		if config.IsGrokBuildProvider(provider.Type) {
+			return config.ProviderConfig{}, false
+		}
+	}
+	record, err := authstorage.ReadCLI(context.Background(), selected, "grok")
+	if err != nil || strings.TrimSpace(record.AccessToken) == "" {
+		return config.ProviderConfig{}, false
+	}
+	return config.ApplyGrokBuildProviderDefaults(config.ProviderConfig{Type: "grok-build"}), true
 }
 
 func localGrokBuildProvider(cfg config.Config, providerName, home string) (config.ProviderConfig, bool) {

@@ -17,7 +17,11 @@ func (s *Server) updateConfigSource(ctx context.Context, edit func([]byte) ([]by
 		return config.SourceView{}, err
 	}
 	defer release()
-	view, err := services.Config.Read(ctx)
+	return updateConfigSourceClient(ctx, services.Config, edit)
+}
+
+func updateConfigSourceClient(ctx context.Context, sourceClient *config.Client, edit func([]byte) ([]byte, error)) (config.SourceView, error) {
+	view, err := sourceClient.Read(ctx)
 	if err != nil {
 		return view, err
 	}
@@ -32,7 +36,7 @@ func (s *Server) updateConfigSource(ctx context.Context, edit func([]byte) ([]by
 	if bytes.Equal(next, source) {
 		return view, nil
 	}
-	view, err = services.Config.CompareExchange(ctx, view.Revision, next)
+	view, err = sourceClient.CompareExchange(ctx, view.Revision, next)
 	if err != nil {
 		return view, err
 	}
