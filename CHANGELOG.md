@@ -91,6 +91,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Group onboarding choices in shared cards and show the companion beside workspace selection. Long workspace lists scroll within the card while selection tools and navigation actions remain visible; narrow windows give the list the full width.
+
 - Align External Connections with the other settings pages using shared grouped lists, consistent detail sections and spacing, and a labeled add action; retain responsive quota readouts and connection status.
 
 - Make web search source cards narrower with larger, centered website icons for easier recognition in the compact stack.

@@ -119,7 +119,7 @@ export function FirstRunOnboarding({
   onUpdateEngines?: (params: EngineUpdateParams) => Promise<unknown>;
   onComplete: (paths?: string[]) => Promise<void>;
 }): JSX.Element {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const titleID = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
   const pluginBodyRef = useRef<HTMLDivElement>(null);
@@ -134,8 +134,6 @@ export function FirstRunOnboarding({
   const initializedPluginSelection = useRef(bundledPlugins.length > 0);
   const [applyingPlugins, setApplyingPlugins] = useState(false);
   const [savingProvider, setSavingProvider] = useState(false);
-  // A preview connection is not saved, so the ready step learns of it here.
-  const [connected, setConnected] = useState(false);
   const [savingRuntime, setSavingRuntime] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [importingBrowser, setImportingBrowser] = useState(false);
@@ -360,7 +358,6 @@ export function FirstRunOnboarding({
           ? { reuse_codex_credentials: true }
           : {});
       }
-      setConnected(true);
       setStep(afterProvider);
     } catch (reason) {
       failure(reason, "provider.saveFailed");
@@ -407,7 +404,6 @@ export function FirstRunOnboarding({
   const lead = step === "browser" ? t("onboarding.browserLead")
     : step === "permissions" ? t("permissions.description")
     : step === "provider" && externalEngine ? t("onboarding.externalEngineConnection", { agent: externalEngine })
-    : step === "ready" && selectedEngine === RECOMMENDED_ENGINE && !providerReady && !connected ? t("onboarding.readyNoModel")
       : undefined;
 
   const connector = (
@@ -421,10 +417,7 @@ export function FirstRunOnboarding({
         // The preview never persists; it only walks the flow.
         if (!preview) await onSaveProvider(name, model, connection ?? {});
       }}
-      onConnected={() => {
-        setConnected(true);
-        setStep(afterProvider);
-      }}
+      onConnected={() => setStep(afterProvider)}
     />
   );
 
@@ -481,12 +474,11 @@ export function FirstRunOnboarding({
             <h1 id={titleID} ref={titleRef} tabIndex={-1}>
               {t(step === "provider" && providerReady ? "onboarding.providerReadyTitle" : STEP_TITLES[step])}
             </h1>
-            {step === "ready" ? <p className="onboarding-lead">{t("onboarding.workspacesLead")}</p> : null}
             {lead ? <p className="onboarding-lead">{lead}</p> : null}
           </div>
 
           {step === "plugins" ? (
-            <div className="onboarding-body" ref={pluginBodyRef} data-scroll-fade="">
+            <SettingsGroup className="onboarding-choice-card">
               <div className="theme-segmented onboarding-presets" role="group" aria-label={t("onboarding.presets")}>
                 {(["minimal", "recommended", "all"] as const).map((item) => (
                   <button
@@ -500,55 +492,59 @@ export function FirstRunOnboarding({
                   </button>
                 ))}
               </div>
-              {inventory === undefined ? (
-                <p className="onboarding-status" role="status">
-                  <LoaderCircle className="icon settings-spin" aria-hidden="true" />
-                  {t("onboarding.loadingPlugins")}
-                </p>
-              ) : bundledPlugins.length === 0 ? (
-                <p className="onboarding-status" role="alert">{t("onboarding.pluginsUnavailable")}</p>
-              ) : (
-                <div className="onboarding-plugins">
-                  {bundledPlugins.map((plugin) => (
-                    <OnboardingPluginChoice
-                      key={plugin.id}
-                      plugin={plugin}
-                      selected={selectedPluginIDs.has(plugin.id)}
-                      disabled={applyingPlugins}
-                      onToggle={() => togglePlugin(plugin.id)}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+              <div className="onboarding-body" ref={pluginBodyRef} data-scroll-fade="compact">
+                {inventory === undefined ? (
+                  <p className="onboarding-status" role="status">
+                    <LoaderCircle className="icon settings-spin" aria-hidden="true" />
+                    {t("onboarding.loadingPlugins")}
+                  </p>
+                ) : bundledPlugins.length === 0 ? (
+                  <p className="onboarding-status" role="alert">{t("onboarding.pluginsUnavailable")}</p>
+                ) : (
+                  <div className="onboarding-plugins">
+                    {bundledPlugins.map((plugin) => (
+                      <OnboardingPluginChoice
+                        key={plugin.id}
+                        plugin={plugin}
+                        selected={selectedPluginIDs.has(plugin.id)}
+                        disabled={applyingPlugins}
+                        onToggle={() => togglePlugin(plugin.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </SettingsGroup>
           ) : null}
 
           {step === "runtime" ? (
-            <div className="onboarding-body" data-scroll-fade="">
-              <div className="onboarding-engines" role="radiogroup" aria-labelledby={titleID}>
-                {selectableEngines.map((engine) => {
-                  const nameID = `${titleID}-engine-${engine.id}`;
-                  return (
-                    <label key={engine.id} className="onboarding-engine">
-                      <input
-                        className="settings-engine-radio"
-                        type="radio"
-                        name={`${titleID}-engine`}
-                        checked={selectedEngine === engine.id}
-                        disabled={savingRuntime}
-                        aria-labelledby={nameID}
-                        data-testid={`onboarding-engine-${engine.id}`}
-                        onChange={() => setSelectedEngine(engine.id)}
-                      />
-                      <span className="catalog-row-mark" aria-hidden="true">
-                        <EngineIcon engine={engine.id} />
-                      </span>
-                      <span className="catalog-row-title" id={nameID}>{engine.label}</span>
-                    </label>
-                  );
-                })}
+            <SettingsGroup className="onboarding-choice-card">
+              <div className="onboarding-body" data-scroll-fade="compact">
+                <div className="onboarding-engines" role="radiogroup" aria-labelledby={titleID}>
+                  {selectableEngines.map((engine) => {
+                    const nameID = `${titleID}-engine-${engine.id}`;
+                    return (
+                      <label key={engine.id} className="onboarding-engine">
+                        <input
+                          className="settings-engine-radio"
+                          type="radio"
+                          name={`${titleID}-engine`}
+                          checked={selectedEngine === engine.id}
+                          disabled={savingRuntime}
+                          aria-labelledby={nameID}
+                          data-testid={`onboarding-engine-${engine.id}`}
+                          onChange={() => setSelectedEngine(engine.id)}
+                        />
+                        <span className="catalog-row-mark" aria-hidden="true">
+                          <EngineIcon engine={engine.id} />
+                        </span>
+                        <span className="catalog-row-title" id={nameID}>{engine.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
+            </SettingsGroup>
           ) : null}
 
           {step === "provider" ? (
@@ -606,21 +602,7 @@ export function FirstRunOnboarding({
           {step === "browser" ? <OnboardingBrowserImport preview={preview} onBusyChange={setImportingBrowser} onImported={() => setBrowserImported(true)} /> : null}
 
           {step === "ready" ? (
-            <div className="onboarding-workspace-browser">
-              <div className="onboarding-workspace-toolbar">
-                <span className="onboarding-workspace-section-title">{t("onboarding.recentWorkspaces")}</span>
-                {(workspaceScan?.candidates.length ?? 0) > 0 ? <button className="settings-button settings-button-ghost onboarding-workspace-select" type="button" disabled={busy} onClick={() => setSelectedPaths(selectedPaths.size === workspaceScan!.candidates.length ? new Set() : new Set(workspaceScan!.candidates.map((item) => item.path)))}>
-                  {t(selectedPaths.size === workspaceScan!.candidates.length ? "onboarding.selectNone" : "onboarding.selectAll")}
-                </button> : null}
-                <div className="onboarding-workspace-tools">
-                  <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !window.wuu?.chooseWorkspaceDirectory)} onClick={() => void chooseWorkspace()}>
-                    <FolderOpen className="icon" aria-hidden="true" />{t("onboarding.chooseWorkspace")}
-                  </button>
-                  <button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} title={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setScanAttempt((attempt) => attempt + 1)}>
-                    <RefreshCw className={`icon${scanningWorkspaces ? " settings-spin" : ""}`} aria-hidden="true" />
-                  </button>
-                </div>
-              </div>
+            <SettingsGroup className="onboarding-choice-card onboarding-workspace-browser">
               {workspaceScan?.incomplete ? <p className="onboarding-status onboarding-workspace-notice" role="status"><Info className="icon" aria-hidden="true" />{t("onboarding.workspaceScanIncomplete")}</p> : null}
               <div className="onboarding-body onboarding-workspaces" data-scroll-fade="compact">
                 {scanningWorkspaces ? <p className="onboarding-status" role="status"><LoaderCircle className="icon settings-spin" aria-hidden="true" />{t("onboarding.scanningWorkspaces")}</p> : null}
@@ -639,12 +621,24 @@ export function FirstRunOnboarding({
                       <span className="onboarding-workspace-sources">
                         {item.sources.map((source) => <span key={source} role="img" aria-label={engineLabel(source)} title={engineLabel(source)}><EngineIcon engine={source} className="onboarding-workspace-source-icon" /></span>)}
                       </span>
-                      {item.lastUsedAt ? <time dateTime={item.lastUsedAt} title={new Date(item.lastUsedAt).toLocaleString(locale)}>{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(new Date(item.lastUsedAt))}</time> : null}
                     </label>
                   ))}
                 </div>
               </div>
-            </div>
+              <div className="onboarding-workspace-toolbar">
+                {(workspaceScan?.candidates.length ?? 0) > 0 ? <button className="settings-button settings-button-ghost onboarding-workspace-select" type="button" disabled={busy} onClick={() => setSelectedPaths(selectedPaths.size === workspaceScan!.candidates.length ? new Set() : new Set(workspaceScan!.candidates.map((item) => item.path)))}>
+                  {t(selectedPaths.size === workspaceScan!.candidates.length ? "onboarding.selectNone" : "onboarding.selectAll")}
+                </button> : null}
+                <div className="onboarding-workspace-tools">
+                  <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !window.wuu?.chooseWorkspaceDirectory)} onClick={() => void chooseWorkspace()}>
+                    {t("onboarding.chooseWorkspace")}
+                  </button>
+                  <button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} title={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setScanAttempt((attempt) => attempt + 1)}>
+                    <RefreshCw className={`icon${scanningWorkspaces ? " settings-spin" : ""}`} aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            </SettingsGroup>
           ) : null}
 
           {error ? (
