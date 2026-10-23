@@ -26,6 +26,7 @@ export const DATA_QUERY_DESCRIPTOR: ServiceDescriptor = {
   name: DATA_QUERY_SERVICE, version: '2.0.0', methods: [
     { name: 'call', input_schema: 'host.data.query.input.v2', output_schema: 'host.data.query.output.v2' },
     { name: 'append-turn', input_schema: 'host.data.query.append-turn.input.v2', output_schema: 'host.data.query.append-turn.output.v2' },
+    { name: 'latest-context', input_schema: 'host.data.query.latest-context.input.v2', output_schema: 'host.data.query.latest-context.output.v2' },
   ],
 };
 
@@ -129,6 +130,11 @@ export interface DataQueryResult {
   /** Optional export metadata, never a local-file read fallback. */
   diagnostic_path?: string;
 }
+export interface DataLatestContextRequest { thread_id: string }
+/** At most four projected events for one request and its own turn. Absence is
+ * an empty array; oversized or unavailable metadata is an error, never truncation.
+ */
+export interface DataLatestContextResult extends Omit<DataQueryResult, 'events'> { events: DataEvent[] }
 export interface DataAppendTurn {
   thread_id: string;
   turn_id: string;
@@ -198,6 +204,8 @@ export function artifactStore(host: RuntimeHost) {
 export function dataIndex(host: RuntimeHost) {
   return {
     query: (input: DataQuery) => queryData(host, input),
+    /** Bounded latest-request projection; no full-history query fallback. */
+    latestContext: (input: DataLatestContextRequest) => call<DataLatestContextResult>(host, DATA_QUERY_SERVICE, 'latest-context', input),
     appendTurn: (input: DataAppendTurn) => call<DataAppendTurnResult>(host, DATA_QUERY_SERVICE, 'append-turn', input),
   };
 }

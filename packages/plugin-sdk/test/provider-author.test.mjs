@@ -45,7 +45,7 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     const artifactThread = randomUUID();
     let artifactDeleted = false, artifactDeleteCount = 0;
     let indexBatch;
-    let appendCount = 0, queryCount = 0;
+    let appendCount = 0, queryCount = 0, latestContextCount = 0;
     send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent,index_thread:indexThread,index_turn:indexTurn,index_payload:indexPayload,artifact_thread:artifactThread}}});
     const seen=[];
     let credential=null;
@@ -110,6 +110,19 @@ test('packed provider clients preserve wire values and callback scope', {timeout
             send({id:message.id,error:{code:'index_unavailable',message:'append outcome unknown'}}); continue;
           } else assert.fail('index helper retried an append');
           reply={version:'2.0.0',thread_id:indexThread,turn_id:indexTurn,committed:true,...(appendCount===2?{duplicate:true}:{diagnostic_path:'provider://diagnostic'})};
+        } else if (method==='latest-context') {
+          latestContextCount++;
+          if (latestContextCount===1) {
+            assert.deepEqual(params,{thread_id:indexThread});
+            reply={version:'2.0.0',thread_id:indexThread,events:[
+              {type:'turn',thread_id:indexThread,turn_id:indexTurn,data:{thread_id:indexThread,turn_id:indexTurn,model:indexPayload}},
+              {type:'context_requests',thread_id:indexThread,turn_id:indexTurn,data:[{step_index:4,input_tokens:37}]},
+            ]};
+          } else {
+            assert.equal(latestContextCount,2,'latest context helper retried or fell back');
+            assert.deepEqual(params,{thread_id:'oversized-context'});
+            send({id:message.id,error:{code:'limit_exceeded',message:'latest context exceeds read budget'}}); continue;
+          }
         } else {
           assert.equal(method,'call'); queryCount++;
           if (queryCount===1) {
@@ -153,6 +166,10 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     assert.equal(result.deletedRead,'artifact_not_found');
     assert.equal(appendCount,4);
     assert.equal(queryCount,2);
+    assert.equal(latestContextCount,2);
+    assert.equal(result.contextLimit,'limit_exceeded');
+    assert.equal(result.latestContext.events[0].data.model,indexPayload);
+    assert.equal(result.latestContext.events[1].data[0].input_tokens,37);
     assert.deepEqual(result.appended,{version:'2.0.0',thread_id:indexThread,turn_id:indexTurn,committed:true,diagnostic_path:'provider://diagnostic'});
     assert.deepEqual(result.duplicate,{version:'2.0.0',thread_id:indexThread,turn_id:indexTurn,committed:true,duplicate:true});
     assert.equal(result.indexConflict,'index_conflict');

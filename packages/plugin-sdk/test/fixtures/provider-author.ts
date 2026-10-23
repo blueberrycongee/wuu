@@ -5,7 +5,7 @@ import {
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
   MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR,
   documentStore, type StateImportResult, type StateCompaction, type RuntimeHost,
-  type PluginGenerationApi, type DataQueryResult, type DataAppendTurn, type DataAppendTurnResult,
+  type PluginGenerationApi, type DataLatestContextResult, type DataQueryResult, type DataAppendTurn, type DataAppendTurnResult,
   type ManagedSessionCreate, type CredentialCompareExchange, type ConfigSourceView,
   type ArtifactDeleteThreadRequest, type ArtifactDeleteThreadResult,
 } from '@wuu/plugin-sdk';
@@ -103,6 +103,10 @@ export default {
     catch (error) { indexUncertain = (error as {code:string}).code; }
     const facts = await index.query({thread_id:batch.thread_id,types:['future_fact'],turn_id:batch.turn_id,limit:1});
     const emptyFacts = await queryData(host, {thread_id:batch.thread_id});
+    const latestContext: DataLatestContextResult = await index.latestContext({thread_id:batch.thread_id});
+    let contextLimit: unknown;
+    try { await index.latestContext({thread_id:'oversized-context'}); }
+    catch(error) { contextLimit = (error as {code:string}).code; }
     const permission = await authorize(host, {cwd:'/workspace',permission_mode:'read_only',tool:{name:'read',kind:'file',read_only:true,concurrency_safe:true,destructive:false}});
     const sessions = managedSessions(host);
     const launch = params.params as { launch_prompt: string; launch_intent: string };
@@ -111,6 +115,6 @@ export default {
     }});
     const admitted = await sessions.submit({session_id:created.session_id,message:{Role:'user',Content:'inspect',ClientID:'input-2'},allow_start:true});
     const admission = await projectCoordination(host).admission();
-    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
+    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,deleted,deletedAgain,artifactUncertain,deletedRead,facts,emptyFacts,latestContext,contextLimit,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
   },
 } satisfies RuntimePlugin;
