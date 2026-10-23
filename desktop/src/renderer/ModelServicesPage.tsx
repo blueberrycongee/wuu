@@ -412,10 +412,10 @@ export function ModelServicesPage({
   return (
     <div className="model-services" data-testid="settings-providers" ref={rootRef}>
       <SettingsPageHeader title={t("settings.providers")} actions={!adding && !detailProvider && !selectedEngine ?
-        <button type="button" className="settings-button settings-button-ghost settings-icon-button"
+        <button type="button" className="settings-button settings-button-ghost"
           data-testid="settings-connection-add" ref={addButtonRef} disabled={running}
           aria-label={t("provider.addConnection")} title={t("provider.addConnection")}
-          onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" /></button> : undefined} />
+          onClick={() => setAdding(true)}><Plus className="icon" aria-hidden="true" />{t("provider.addConnection")}</button> : undefined} />
       {!adding && !detailProvider && !selectedEngine ? <ServicesOverview providers={overviewProviders} initialized={initialized} quotaLoading={quotaLoading} now={quotaNow}
         onOpenService={setOpenService} /> : null}
       {onRefreshEngines && onUpdateEngines && !detailProvider && (!adding || selectedEngine) ? <EngineSettingsSection embedded
@@ -433,14 +433,14 @@ export function ModelServicesPage({
             const engines = inventory?.engines.filter(engine => engine.id !== "wuu" && `${engine.id} ${engineLabel(engine.id, engine)}`.toLowerCase().includes(query.trim().toLowerCase()));
             return onUpdateEngines && (!inventory || engines?.length) ? <SettingsSection title={t("provider.engineConnections")}>
             <SettingsGroup>
-              {engines?.map(engine =>
-                <button key={engine.id} type="button" className="connection-catalog-row" data-testid={`settings-connection-catalog-engine-${engine.id}`}
-                  onClick={() => setSelectedEngine(engine.id)}>
-                  <EngineIcon engine={engine.id} /><span>{engineLabel(engine.id, engine)}</span>
-                  <ChevronRight className="icon" aria-hidden="true" />
-                </button>)}
-              {!inventory ? <p role="status">{inventoryError || t("settings.engineDetecting")}</p> : null}
-            </SettingsGroup>
+                {engines?.map(engine =>
+                  <button key={engine.id} type="button" className="connection-catalog-row" data-testid={`settings-connection-catalog-engine-${engine.id}`}
+                    onClick={() => setSelectedEngine(engine.id)}>
+                    <EngineIcon engine={engine.id} /><span>{engineLabel(engine.id, engine)}</span>
+                    <ChevronRight className="icon" aria-hidden="true" />
+                  </button>)}
+                {!inventory ? <p role="status">{inventoryError || t("settings.engineDetecting")}</p> : null}
+              </SettingsGroup>
           </SettingsSection> : null; }} />
       </div> : null}
       {detailProvider ? <ServiceDetail key={detailProvider.name} provider={detailProvider}
@@ -634,47 +634,49 @@ function ServicesOverview({
 
       {providers.length > 0 ? (
         <SettingsSection title={t("provider.connectionModels")}>
-          <div className="model-service-grid" role="list" aria-label={t("provider.connectionModels")}>
-            {providers.map((provider) => {
-              const identity = serviceIdentity(provider, t);
-              const label = display.label(`provider:${provider.name}`, identity.label);
-              const isDefault = provider.name === initialized?.provider;
-              const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("settings.subscriptionSignIn") : undefined);
-              const status = attention ?? t("settings.engineReady");
-              const plan = provider.quota?.plan?.trim();
-              return (
-                <div role="listitem" key={provider.name}>
-                  <button
-                    type="button"
-                    className="connection-summary-row"
-                    data-testid="settings-provider-card"
-                    data-provider={provider.name}
-                    data-default={isDefault ? "" : undefined}
-                    aria-label={label}
-                    title={label}
-                    aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-status ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
-                    onClick={() => onOpenService(provider.name)}
-                  >
-                    <span className="connection-summary-icon"><ServiceMark identity={identity} /></span>
-                    <span className="connection-summary-copy">
-                      <span className="connection-summary-heading">
-                        <span className="model-service-card-title connection-summary-name">{label}</span>
-                        <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="connection-summary-meta">{plan}</span>
+          <SettingsGroup>
+            <div className="connection-summary-list" role="list" aria-label={t("provider.connectionModels")}>
+              {providers.map((provider) => {
+                const identity = serviceIdentity(provider, t);
+                const label = display.label(`provider:${provider.name}`, identity.label);
+                const isDefault = provider.name === initialized?.provider;
+                const attention = identity.attention ?? (provider.quota?.status === "sign_in" ? t("settings.subscriptionSignIn") : undefined);
+                const status = attention ?? t("settings.engineReady");
+                const plan = provider.quota?.plan?.trim();
+                return (
+                  <div role="listitem" key={provider.name}>
+                    <button
+                      type="button"
+                      className="connection-summary-row"
+                      data-testid="settings-provider-card"
+                      data-provider={provider.name}
+                      data-default={isDefault ? "" : undefined}
+                      aria-label={label}
+                      title={label}
+                      aria-describedby={`${summaryID}-${encodeURIComponent(provider.name)} ${summaryID}-${encodeURIComponent(provider.name)}-status ${summaryID}-${encodeURIComponent(provider.name)}-quota`}
+                      onClick={() => onOpenService(provider.name)}
+                    >
+                      <span className="connection-summary-icon"><ServiceMark identity={identity} /></span>
+                      <span className="connection-summary-copy">
+                        <span className="connection-summary-heading">
+                          <span className="model-service-card-title connection-summary-name">{label}</span>
+                          <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="connection-summary-meta">{plan}</span>
+                        </span>
+                        <span className="connection-summary-secondary">
+                          <span id={`${summaryID}-${encodeURIComponent(provider.name)}-status`} className={attention ? "connection-summary-status" : "sr-only"} data-attention={attention ? "" : undefined}>{status}</span>
+                          {!attention ? <ConnectionUsageSummary compact id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} loading={quotaLoading && identity.subscription} now={now}
+                            fallback={<span className="connection-summary-status" data-ready>{status}</span>} /> : null}
+                        </span>
                       </span>
-                      <span className="connection-summary-secondary">
-                        <span id={`${summaryID}-${encodeURIComponent(provider.name)}-status`} className={attention ? "connection-summary-status" : "sr-only"} data-attention={attention ? "" : undefined}>{status}</span>
-                        {!attention ? <ConnectionUsageSummary compact id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} loading={quotaLoading && identity.subscription} now={now}
-                          fallback={<span className="connection-summary-status" data-ready>{status}</span>} /> : null}
-                      </span>
-                    </span>
-                    <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                      <ChevronRight className="icon settings-disclosure-chevron" aria-hidden="true" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </SettingsGroup>
         </SettingsSection>
-      ) : <SettingsSection title={t("provider.connectionModels")}><p className="settings-muted-line">{t("provider.noService")}</p></SettingsSection>}
+      ) : <SettingsSection title={t("provider.connectionModels")}><SettingsGroup><p className="settings-group-empty">{t("provider.noService")}</p></SettingsGroup></SettingsSection>}
 
     </>
   );
@@ -1347,8 +1349,8 @@ function ModelChoices({
         onSelect: () => { setRemoving(modelMenu.model); setReplacement(""); setRemoveError(""); },
       }]} /> : null}
       {preferenceError ? <p role="alert" className="settings-error">{preferenceError}</p> : null}
-      <div className="connection-model-table-heading"><span>{t("connection.modelName")}</span><span>{t("connection.modelID")}</span><span>{t("connection.enabled")}</span><span /></div>
       <div className="settings-group model-choice-list connection-model-table" role="group" aria-label={t("provider.modelsSection")}>
+        <div className="connection-model-table-heading"><span>{t("connection.modelName")}</span><span>{t("connection.modelID")}</span><span>{t("connection.enabled")}</span><span /><span /></div>
         {visible.map((model) => {
           const name = providerModelDisplayName(model);
           const selected = model.id === serviceModel;
@@ -1649,6 +1651,7 @@ function BrowseServicesDialog({
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const Surface = inline ? ConnectionPage : Modal;
+  const services = <CatalogServiceGroups catalogProviders={catalog.providers ?? []} providers={providers} query={query} grouped={!inline} disabled={disabled} onConnect={onConnect} />;
   return (
     <Surface
       ariaLabel={t("provider.browseTitle")}
@@ -1665,7 +1668,9 @@ function BrowseServicesDialog({
       {catalogExtras?.(query)}
       <div className="model-browse-list" data-scroll-fade="">
         {catalog.failed ? <p className="settings-section-note">{t("provider.catalogUnavailable")}</p> : null}
-      <SettingsSection title={inline ? t("provider.providerConnections") : undefined}><CatalogServiceGroups catalogProviders={catalog.providers ?? []} providers={providers} query={query} grouped={!inline} disabled={disabled} onConnect={onConnect} /></SettingsSection>
+        <SettingsSection title={inline ? t("provider.providerConnections") : undefined}>
+          {inline ? <SettingsGroup>{services}</SettingsGroup> : services}
+        </SettingsSection>
       </div>
     </Surface>
   );

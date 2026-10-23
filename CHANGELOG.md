@@ -87,7 +87,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Align external connection names, plans and quota readouts in responsive cards, with consistent icon sizing, colored readiness and quota states, and reserved space for loading snapshots.
+- Align External Connections with the other settings pages using shared grouped lists, consistent detail sections and spacing, and a labeled add action; retain responsive quota readouts and connection status.
 
 - Make web search source cards narrower with larger, centered website icons for easier recognition in the compact stack.
 
