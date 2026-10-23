@@ -15,15 +15,27 @@ func historyDocumentKey(id string, seq int) string {
 }
 
 func deleteDocumentPrefix(tx *persistence.Tx, table, prefix string) error {
-	rows, err := tx.Read(persistence.Query{Namespace: documentNamespace(table), Prefix: prefix})
-	if err != nil {
-		return err
+	query := persistence.Query{Namespace: documentNamespace(table), Prefix: prefix, Limit: 256}
+	var keys []string
+	for {
+		view, err := tx.ReadView(query)
+		if err != nil {
+			return err
+		}
+		for _, document := range view.Documents {
+			keys = append(keys, document.Key)
+		}
+		if view.NextCursor == "" {
+			break
+		}
+		query.Cursor, query.AtRevision = view.NextCursor, &view.Revision
 	}
-	for _, row := range rows {
-		if err := tx.Delete(row.Namespace, row.Key); err != nil {
+	for _, key := range keys {
+		if err := tx.Delete(query.Namespace, key); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 

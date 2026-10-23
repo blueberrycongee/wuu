@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -75,26 +76,34 @@ func (s *Store) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
 		if end < start {
 			return nil
 		}
-		records, err := loadHistoryDocuments(tx, id, false, false)
-		if err != nil {
-			return err
-		}
-		for _, record := range records {
-			if err := s.ctx.Err(); err != nil {
+		scan := persistence.Query{Namespace: documentNamespace("session_messages"), Prefix: documentPrefix(id), Start: historyDocumentKey(id, start), End: historyDocumentKey(id, end+1), Limit: min(query.Limit+1, 256)}
+		for {
+			view, err := tx.ReadView(scan)
+			if err != nil {
 				return err
 			}
-			if record.Seq < start || record.Seq > end {
-				continue
+			for _, document := range view.Documents {
+				var record HistoryRecord
+				if err := json.Unmarshal(document.Value, &record); err != nil {
+					return err
+				}
+				if strings.EqualFold(record.Role, "meta") {
+					continue
+				}
+				if len(page.Records) == query.Limit {
+					page.HasMore = true
+					page.Next = &HistoryCursor{SessionID: id, SnapshotSeq: snapshot, Seq: page.Records[len(page.Records)-1].Seq + 1}
+					return nil
+				}
+				hydrateHistoryRecordFromStorage(&record)
+				page.Records = append(page.Records, record)
 			}
-			if len(page.Records) == query.Limit {
-				page.HasMore = true
+			if view.NextCursor == "" {
 				break
 			}
-			page.Records = append(page.Records, record)
+			scan.Cursor, scan.AtRevision = view.NextCursor, &view.Revision
 		}
-		if page.HasMore {
-			page.Next = &HistoryCursor{SessionID: id, SnapshotSeq: snapshot, Seq: page.Records[len(page.Records)-1].Seq + 1}
-		}
+
 		return nil
 	})
 	return page, err
@@ -135,32 +144,39 @@ func (s *Store) SearchHistoryQuery(query HistorySearchQuery) (HistoryPage, error
 		if upper <= start {
 			return nil
 		}
-		records, err := loadHistoryDocuments(tx, id, false, false)
-		if err != nil {
-			return err
-		}
+		scan := persistence.Query{Namespace: documentNamespace("session_messages"), Prefix: documentPrefix(id), Start: historyDocumentKey(id, start), End: historyDocumentKey(id, upper), Reverse: true, Limit: 256}
 		needle := strings.ToLower(query.Query)
-		for i := len(records) - 1; i >= 0; i-- {
-			if err := s.ctx.Err(); err != nil {
+		for {
+			view, err := tx.ReadView(scan)
+			if err != nil {
 				return err
 			}
-			record := records[i]
-			if record.Seq < start || record.Seq >= upper || record.Seq > end {
-				continue
+			for _, document := range view.Documents {
+				var record HistoryRecord
+				if err := json.Unmarshal(document.Value, &record); err != nil {
+					return err
+				}
+				if strings.EqualFold(record.Role, "meta") {
+					continue
+				}
+				hydrateHistoryRecordFromStorage(&record)
+				text := strings.Join([]string{record.Content, record.DisplayContent, record.ReasoningContent, string(record.ToolCalls), string(record.ToolResult), record.Name}, "\n")
+				if !strings.Contains(strings.ToLower(text), needle) {
+					continue
+				}
+				if len(page.Records) == query.Limit {
+					page.HasMore = true
+					page.Next = &HistoryCursor{SessionID: id, SnapshotSeq: snapshot, Seq: page.Records[len(page.Records)-1].Seq}
+					return nil
+				}
+				page.Records = append(page.Records, record)
 			}
-			text := strings.Join([]string{record.Content, record.DisplayContent, record.ReasoningContent, string(record.ToolCalls), string(record.ToolResult), record.Name}, "\n")
-			if !strings.Contains(strings.ToLower(text), needle) {
-				continue
-			}
-			if len(page.Records) == query.Limit {
-				page.HasMore = true
+			if view.NextCursor == "" {
 				break
 			}
-			page.Records = append(page.Records, record)
+			scan.Cursor, scan.AtRevision = view.NextCursor, &view.Revision
 		}
-		if page.HasMore {
-			page.Next = &HistoryCursor{SessionID: id, SnapshotSeq: snapshot, Seq: page.Records[len(page.Records)-1].Seq}
-		}
+
 		return nil
 	})
 	return page, err

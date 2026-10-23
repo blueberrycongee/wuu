@@ -23,6 +23,9 @@ func (s *Store) deleteSession(id string, onlyIfArchived bool) (Session, error) {
 		if onlyIfArchived && deleted.ArchivedAt == nil {
 			return fmt.Errorf("%w: %q", ErrSessionNotArchived, id)
 		}
+		if err := tx.Delete(documentNamespace("session_order"), sessionOrderKey(deleted)); err != nil {
+			return err
+		}
 		for _, table := range []string{"sessions", "session_request_context", "session_history_heads", "session_history_checkpoints", "session_history_retractions", "session_controls", "session_driver_bindings", "session_driver_checkpoints", "session_plugin_generation_snapshots"} {
 			if err := tx.Delete(documentNamespace(table), id); err != nil {
 				return err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -40,18 +41,26 @@ func (s *Store) transaction(body func(*persistence.Tx) error) error {
 }
 
 func readDocumentRows[T any](tx *persistence.Tx, table, prefix string) ([]T, error) {
-	documents, err := tx.Read(persistence.Query{Namespace: documentNamespace(table), Prefix: prefix})
-	if err != nil {
-		return nil, err
-	}
-	rows := make([]T, 0, len(documents))
-	for _, document := range documents {
-		var row T
-		if err := json.Unmarshal(document.Value, &row); err != nil {
-			return nil, fmt.Errorf("%w: decode %s/%s: %v", persistence.ErrCorrupt, table, document.Key, err)
+	query := persistence.Query{Namespace: documentNamespace(table), Prefix: prefix, Limit: 256}
+	var rows []T
+	for {
+		view, err := tx.ReadView(query)
+		if err != nil {
+			return nil, err
 		}
-		rows = append(rows, row)
+		for _, document := range view.Documents {
+			var row T
+			if err := json.Unmarshal(document.Value, &row); err != nil {
+				return nil, fmt.Errorf("%w: decode %s/%s: %v", persistence.ErrCorrupt, table, document.Key, err)
+			}
+			rows = append(rows, row)
+		}
+		if view.NextCursor == "" {
+			break
+		}
+		query.Cursor, query.AtRevision = view.NextCursor, &view.Revision
 	}
+
 	return rows, nil
 }
 
@@ -81,6 +90,28 @@ func putSessionDocument(tx *persistence.Tx, sess Session) error {
 		&sess.Effort, &sess.Speed, &sess.PermissionMode, &sess.EngineID, &sess.EngineRef, &sess.ToolPolicyJSON} {
 		*field = strings.TrimSpace(*field)
 	}
+	prior, found, err := getSessionDocument(tx, sess.ID)
+	if err != nil {
+		return err
+	}
+	if found {
+		if err := tx.Delete(documentNamespace("session_order"), sessionOrderKey(prior)); err != nil {
+			return err
+		}
+	} else {
+		existing, err := tx.Read(persistence.Query{Namespace: documentNamespace("sessions"), Limit: 1})
+		if err != nil {
+			return err
+		}
+		if len(existing) == 0 {
+			if err := tx.Put(documentNamespace("session_indexes"), "listing", 1); err != nil {
+				return err
+			}
+		}
+	}
+	if err := tx.Put(documentNamespace("session_order"), sessionOrderKey(sess), sess.ID); err != nil {
+		return err
+	}
 	return tx.Put(documentNamespace("sessions"), sess.ID, sess)
 }
 
@@ -104,38 +135,32 @@ func (s *Store) List(limit int) ([]Session, error) {
 }
 
 func (s *Store) ListForCWD(cwd, workspaceID string, limit int) ([]Session, error) {
-	target, workspaceID := normalizeCWD(cwd), strings.TrimSpace(workspaceID)
-	return s.listSessions(limit, func(sess Session) bool {
-		if target == "" && workspaceID == "" {
-			return true
-		}
-		if workspaceID != "" {
-			return sess.WorkspaceID == workspaceID || (sess.WorkspaceID == "" && target != "" && (sess.CWD == target || sess.WorktreeBaseRepo == target))
-		}
-		return sess.CWD == target || sess.WorktreeBaseRepo == target
-	})
+	return s.listSessions(limit, sessionListMatches(cwd, workspaceID))
 }
 
 func (s *Store) listSessions(limit int, matches func(Session) bool) ([]Session, error) {
-	var result []Session
-	err := s.transaction(func(tx *persistence.Tx) error {
-		rows, err := readDocumentRows[Session](tx, "sessions", "")
-		if err != nil {
-			return err
-		}
-		result = make([]Session, 0, len(rows))
-		for _, sess := range rows {
-			if matches(sess) {
-				result = append(result, sess)
+	for {
+		var result []Session
+		var cursor *SessionListCursor
+		for {
+			count := 256
+			if limit > 0 {
+				count = min(limit-len(result), count)
 			}
+			page, err := s.readSessionListPage(count, cursor, matches)
+			if errors.Is(err, persistence.ErrConflict) {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, page.Sessions...)
+			if page.Next == nil || limit > 0 && len(result) == limit {
+				return result, nil
+			}
+			cursor = page.Next
 		}
-		return nil
-	})
-	sortSessions(result)
-	if limit > 0 && len(result) > limit {
-		result = result[:limit]
 	}
-	return result, err
 }
 
 func (s *Store) FindPinnedArchived(ids []string) (map[string]PinnedArchived, error) {

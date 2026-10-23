@@ -138,7 +138,7 @@ func MigrateLegacySQLite(ctx context.Context, sessDir string, documents persiste
 			namespaces[write.Namespace] = true
 		}
 		for namespace := range namespaces {
-			existing, err := tx.Read(persistence.Query{Namespace: namespace})
+			existing, err := tx.Read(persistence.Query{Namespace: namespace, Limit: 1})
 			if err != nil {
 				return err
 			}
@@ -378,6 +378,9 @@ func (c *legacySessionConversion) finish() error {
 		if err := c.put("sessions", id, sess); err != nil {
 			return err
 		}
+		if err := c.put("session_order", sessionOrderKey(sess), id); err != nil {
+			return err
+		}
 		if err := c.put("session_history_heads", id, c.heads[id]); err != nil {
 			return err
 		}
@@ -395,6 +398,9 @@ func (c *legacySessionConversion) finish() error {
 				return err
 			}
 		}
+	}
+	if err := c.put("session_indexes", "listing", 1); err != nil {
+		return err
 	}
 	for id, retractions := range c.retractions {
 		if err := c.put("session_history_retractions", id, retractions); err != nil {
