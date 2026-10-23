@@ -35,11 +35,16 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     const next = async () => { const line=await responses.next(); assert.equal(line.done,false,stderr); return JSON.parse(line.value); };
     watchdog = setTimeout(()=>child.kill(),15000);
     send({id:'init',method:'initialize',params:{supported_host_services:['host.service.call']}});
-    assert.ok((await next()).result);
+    const initialized = (await next()).result;
+    assert.ok(initialized);
+    assert.ok(initialized.required_services.some(service => service.name === 'host.data.query' && service.major_version === 2));
     send({id:'active',method:'activate'}); await next();
     const launchPrompt = randomUUID();
     const launchIntent = randomUUID();
-    send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent}}});
+    const indexThread = randomUUID(), indexTurn = randomUUID(), indexPayload = randomUUID();
+    let indexBatch;
+    let appendCount = 0, queryCount = 0;
+    send({id:'run',method:'service.invoke',params:{service:'author.check',method:'call',execution_id:'execution-one',params:{launch_prompt:launchPrompt,launch_intent:launchIntent,index_thread:indexThread,index_turn:indexTurn,index_payload:indexPayload}}});
     const seen=[];
     let credential=null;
     let configReads=0;
@@ -62,7 +67,38 @@ test('packed provider clients preserve wire values and callback scope', {timeout
         if (method==='compare-exchange') { assert.deepEqual(params,{expected_revision:'config-1',source:null}); reply={...reply,committed:true,activation_error:'project_overlay_invalid'}; }
       } else if (service==='state.plugin-settings') reply={revision:'settings-1',document:{schema_version:1,plugin_id:'author',values:{}}};
       else if (service==='state.artifacts') { assert.equal(params.max_bytes,8); reply={data:'AAEC',mime_type:'application/octet-stream'}; }
-      else if (service==='host.data.query') { assert.equal(method,'call'); reply={version:'1.0.0',thread_id:'worker',events:[]}; }
+      else if (service==='host.data.query') {
+        if (method==='append-turn') {
+          appendCount++;
+          assert.equal(params.thread_id,indexThread);
+          assert.equal(params.events.length,3);
+          assert.ok(params.events.every(event => event.thread_id === params.thread_id && event.turn_id === params.turn_id));
+          if (appendCount === 1) {
+            assert.equal(params.turn_id,indexTurn);
+            assert.deepEqual(params.events.map(event => event.type),['turn','future_fact','final']);
+            assert.ok(params.events.every(event => event.data.text === indexPayload && event.data.nested.zero === 0 && event.data.nested.absent === null));
+            indexBatch=params;
+          } else if (appendCount === 2) assert.deepEqual(params,indexBatch);
+          else if (appendCount === 3) {
+            assert.equal(params.turn_id,indexTurn);
+            assert.ok(params.events.every(event => event.data.changed === true));
+            send({id:message.id,error:{code:'index_conflict',message:'turn already has different events'}}); continue;
+          } else if (appendCount === 4) {
+            assert.equal(params.turn_id,'uncertain');
+            send({id:message.id,error:{code:'index_unavailable',message:'append outcome unknown'}}); continue;
+          } else assert.fail('index helper retried an append');
+          reply={version:'2.0.0',thread_id:indexThread,turn_id:indexTurn,committed:true,...(appendCount===2?{duplicate:true}:{diagnostic_path:'provider://diagnostic'})};
+        } else {
+          assert.equal(method,'call'); queryCount++;
+          if (queryCount===1) {
+            assert.deepEqual(params,{thread_id:indexThread,types:['future_fact'],turn_id:indexTurn,limit:1});
+            reply={version:'2.0.0',thread_id:indexThread,events:[indexBatch.events[1]],diagnostic_path:'provider://diagnostic'};
+          } else {
+            assert.deepEqual(params,{thread_id:indexThread});
+            reply={version:'2.0.0',thread_id:indexThread,events:null};
+          }
+        }
+      }
       else if (service==='security.authorize') { assert.equal(method,'authorize'); reply={outcome:'allow'}; }
       else if (service==='host.managed-session' && method==='create') {
         assert.deepEqual(params.initial_input,{ClientID:'initial-1',SessionID:'worker',Content:'inspect',Wake:true});
@@ -88,6 +124,15 @@ test('packed provider clients preserve wire values and callback scope', {timeout
     assert.equal(result.changed.committed,true);
     assert.equal(result.changed.activation_error,'project_overlay_invalid');
     assert.equal(result.artifact.data,'AAEC');
+    assert.equal(appendCount,4);
+    assert.equal(queryCount,2);
+    assert.deepEqual(result.appended,{version:'2.0.0',thread_id:indexThread,turn_id:indexTurn,committed:true,diagnostic_path:'provider://diagnostic'});
+    assert.deepEqual(result.duplicate,{version:'2.0.0',thread_id:indexThread,turn_id:indexTurn,committed:true,duplicate:true});
+    assert.equal(result.indexConflict,'index_conflict');
+    assert.equal(result.indexUncertain,'index_unavailable');
+    assert.deepEqual(result.facts.events,[indexBatch.events[1]]);
+    assert.equal(result.facts.diagnostic_path,'provider://diagnostic');
+    assert.equal(result.emptyFacts.events,null);
     assert.deepEqual(result.admitted,{admitted:false,capacity_full:true});
     assert.equal(result.admission.max_parallel,3);
     send({id:'stop',method:'shutdown'}); await next(); child.stdin.end();

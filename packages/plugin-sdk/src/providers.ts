@@ -20,8 +20,9 @@ export const CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ['read
 export const PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ['read', 'update', 'read-state', 'update-state'], ['read', 'read-state']);
 export const ARTIFACT_STORE_DESCRIPTOR = descriptor(ARTIFACT_STORE_SERVICE, ['import', 'resolve', 'read', 'fork']);
 export const DATA_QUERY_DESCRIPTOR: ServiceDescriptor = {
-  name: DATA_QUERY_SERVICE, version: '1.0.0', methods: [
-    { name: 'call', input_schema: 'host.data.query.input.v1', output_schema: 'host.data.query.output.v1' },
+  name: DATA_QUERY_SERVICE, version: '2.0.0', methods: [
+    { name: 'call', input_schema: 'host.data.query.input.v2', output_schema: 'host.data.query.output.v2' },
+    { name: 'append-turn', input_schema: 'host.data.query.append-turn.input.v2', output_schema: 'host.data.query.append-turn.output.v2' },
   ],
 };
 
@@ -103,7 +104,7 @@ export interface ArtifactBytes { data: Base64Bytes; mime_type: string }
 export interface ArtifactFork { source_thread_id: string; target_thread_id: string; uri: string }
 export interface DataQuery {
   thread_id: string;
-  /** Unknown fact types match no events. Empty or absent means all types. */
+  /** Filter by event type; unknown names are valid. Empty or absent means all types. */
   types?: readonly string[];
   turn_id?: string;
   /** Nonnegative event bound. Omitted or zero is unbounded; negatives fail. */
@@ -116,7 +117,30 @@ export interface DataEvent {
   created_at?: string;
   data?: unknown;
 }
-export interface DataQueryResult { version: string; thread_id: string; events: DataEvent[] | null }
+export interface DataQueryResult {
+  version: string;
+  thread_id: string;
+  events: DataEvent[] | null;
+  /** Optional export metadata, never a local-file read fallback. */
+  diagnostic_path?: string;
+}
+export interface DataAppendTurn {
+  thread_id: string;
+  turn_id: string;
+  /** Every event matches these IDs. The atomic batch starts with turn and ends
+   * with final; unknown intermediate event types remain valid. Data must be JSON.
+   */
+  events: readonly (DataEvent & { thread_id: string; turn_id: string; data: unknown })[];
+}
+export interface DataAppendTurnResult {
+  version: string;
+  thread_id: string;
+  turn_id: string;
+  committed: boolean;
+  duplicate?: boolean;
+  /** Export metadata only; export failure does not undo a committed batch. */
+  diagnostic_path?: string;
+}
 
 async function call<T>(host: RuntimeHost, service: string, method: string, params: object): Promise<T> {
   return await host.call('host.service.call', {service, method, params}) as T;
@@ -157,6 +181,17 @@ export function artifactStore(host: RuntimeHost) {
     fork: (input: ArtifactFork) => call<ImportedArtifact>(host, ARTIFACT_STORE_SERVICE, 'fork', input),
   };
 }
+/** Requires host.data.query@2. A successful append confirms the entire batch.
+ * An identical committed turn returns a duplicate receipt; changed events for
+ * that turn fail with index_conflict. Unknown outcomes are never auto-retried.
+ */
+export function dataIndex(host: RuntimeHost) {
+  return {
+    query: (input: DataQuery) => queryData(host, input),
+    appendTurn: (input: DataAppendTurn) => call<DataAppendTurnResult>(host, DATA_QUERY_SERVICE, 'append-turn', input),
+  };
+}
+/** Query the same selected v2 index used by dataIndex(host).appendTurn. */
 export function queryData(host: RuntimeHost, input: DataQuery): Promise<DataQueryResult> {
   return call(host, DATA_QUERY_SERVICE, 'call', input);
 }

@@ -13,13 +13,13 @@ Use [product composition](plugin-system.md#services-and-executions) to select mo
 | `state.config@1` | `wuu.config.local` | `configurationStore`, `CONFIG_SOURCE_DESCRIPTOR` |
 | `state.plugin-settings@1` | `wuu.settings.local` | `pluginSettingsStore`, `PLUGIN_SETTINGS_STORE_DESCRIPTOR` |
 | `state.artifacts@1` | `wuu.artifacts.local` | `artifactStore`, `ARTIFACT_STORE_DESCRIPTOR` |
-| `host.data.query@1` | `wuu.index.trace` | `queryData`, `DATA_QUERY_DESCRIPTOR` |
+| `host.data.query@2` | `wuu.index.trace` | `dataIndex`, `queryData`, `DATA_QUERY_DESCRIPTOR` |
 | `security.authorize@1` | `wuu.permissions.default` | `authorize`, `AUTHORIZATION_SERVICE_DESCRIPTOR` |
 | `project.coordination@1` | `wuu.project-coordination` | `projectCoordination`, `PROJECT_COORDINATION_DESCRIPTOR` |
 | `host.managed-session@1` | `wuu.managed-sessions` | `managedSessions`, `MANAGED_SESSION_DESCRIPTOR` |
 | `ui.shell@1` | `wuu.default-shell` or a renderer plugin | `APPLICATION_SHELL_SERVICE`, `ApplicationGenerationAPI` |
 
-Descriptors belong in a provider's `provided_services`; consumers declare `required_services` with the service name, `major_version: 1`, and `required: true` when absence must block activation. Merely importing a client grants no call authority. Renderer services belong in the package's `desktop.services` declaration.
+Descriptors belong in a provider's `provided_services`; consumers declare `required_services` with the service name, the major version shown above, and `required: true` when absence must block activation. Merely importing a client grants no call authority. Renderer services belong in the package's `desktop.services` declaration.
 
 The low-level state services are for implementations and admitted consumers. Ordinary plugins use `host.settings.get/list`, `host.storage.*`, `host.credentials.request`, and `importArtifact(host, input)` for their own settings, opaque storage, authenticated requests and tool artifacts. Those gateways retain ownership checks and route to the selected backend. A supplied `subject`, `owner`, `plugin_id` or `session_id` is domain data, never proof of identity.
 
@@ -99,7 +99,7 @@ For native directory administration, use `wuu state check/export/import/migrate`
 | Configuration | `read`, `compare-exchange`. `source` preserves complete raw bytes in base64 or `null` for absent bytes; `config` is the validated effective product configuration. `expected_revision` compares the source identity. A reply may contain `committed: true` and `activation_error`; report that the write persisted even though applying it failed. |
 | Plugin settings | `read`, `update`, `read-state`, `update-state` for `{ subject, scope: "user" \| "workspace" }`. Updates replace complete value maps at `expected_revision`; settings also carry a fingerprint. `settings_conflict` means reread before rebuilding an update. |
 | Artifacts | `import`, `resolve`, `read`, `fork`. Provider scope comes from an admitted consumer. Read requires a positive `max_bytes` and returns base64 data plus MIME type. Resolve reports whether the provider manages the artifact. Ordinary tool imports use the authenticated gateway. |
-| Data index | `host.data.query` method `call` accepts a thread, optional event types, turn and limit. Unknown types match nothing. Omitted/zero limits have no explicit bound; negative limits fail with `invalid_params`. Events are facts, not configuration or credential access. |
+| Data index | `host.data.query@2` supplies `call` for queries and `append-turn` for atomic completed-turn batches. Queries accept a thread, optional event types, turn and limit. Unknown type names are valid filters. Omitted/zero limits have no explicit bound; negative limits fail with `invalid_params`. Events do not grant configuration or credential access. |
 
 A missing native config file reads as `source: null`; a present zero-byte file reads as `source: ""`. Check for `null` before decoding. These values must not be normalized into each other by the client. A config CAS with `source: null` supplies zero replacement bytes: native file mode writes an empty file, rather than deleting it; trusted project mode rejects empty JSON. The CAS response can retain `null` even though the empty file now exists, so it describes returned source bytes rather than file existence.
 
@@ -108,6 +108,37 @@ Configuration revisions and settings revisions are opaque strings, distinct from
 Native configuration modes preserve their source boundaries: explicit-file mode uses that file; embedded mode starts from the supplied configuration; explicit project mode uses the project's base and settings layers, falling back from `.wuu.json` to `wuu.json` only when the primary is missing. Restricted project overlays on user configuration do not gain permission to replace credentials or grants.
 
 Model authentication and login/refresh state use the captured generation's credential service. The native auth adapter can import legacy account data without overwriting the selected entry; that compatibility behavior belongs to the native implementation. An external credential provider is not silently wrapped with native-file lookups. In-flight login IDs remain associated with their original generation until cleanup.
+
+## Completed-turn index
+
+The selected `host.data.query@2` provider owns both completed-turn writes and queries. Version 1 granted read-only authority; version 2 adds append authority, so consumers must explicitly declare major 2. `DATA_QUERY_DESCRIPTOR` advertises both methods at version `2.0.0`; there is no implicit v1 adapter or separate native writer.
+
+```ts
+import {
+  dataIndex, type DataAppendTurn, type RuntimeHost, type ServiceRequirement,
+} from "@wuu/plugin-sdk";
+
+export const requiredServices = [
+  { name: "host.data.query", major_version: 2, required: true },
+] satisfies ServiceRequirement[];
+
+export async function recordTurn(host: RuntimeHost, batch: DataAppendTurn) {
+  const index = dataIndex(host);
+  const receipt = await index.appendTurn(batch);
+  const facts = await index.query({
+    thread_id: batch.thread_id, turn_id: batch.turn_id,
+  });
+  return { receipt, facts };
+}
+```
+
+`DataAppendTurn` contains `thread_id`, `turn_id` and `events`. Every event must carry matching IDs and JSON `data`; the batch starts with a `turn` event and ends with `final`. Unknown intermediate event types remain intact. Providers admit and commit the complete batch atomically, never a partial prefix.
+
+`DataAppendTurnResult` carries `version`, both IDs and `committed`. Appending the same committed turn with the same batch returns a committed receipt with `duplicate: true`; different events for that turn fail with `index_conflict`. Cancellation or transport failure can leave the outcome unknown. The SDK makes one attempt per call and never retries an uncertain append. Reconcile against the selected provider before deciding what to do next.
+
+`queryData(host, input)` and `dataIndex(host).query(input)` use the same selected v2 service and preserve the existing filters and event envelope. Results keep provider order; optional filters apply before the limit. `events: null` and an empty array remain distinct wire values. Returned events can be folded into context summaries without opening a native trace file.
+
+Both query results and append receipts may include `diagnostic_path`. It is export metadata, not permission or a fallback data source. The selected native provider owns any legacy JSONL import and diagnostic export; an external index never triggers native-file reads or writes. Export failure cannot undo a confirmed append. Disabling the selected index stops its behavior rather than activating native storage. Keep late turn completion bound to its admitted generation until append settles.
 
 ## Project coordination protocol
 

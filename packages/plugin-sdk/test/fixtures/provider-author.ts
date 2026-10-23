@@ -1,11 +1,11 @@
 import {
   type RuntimePlugin, credentialStore, configurationStore, pluginSettingsStore,
-  artifactStore, queryData, authorize, managedSessions, projectCoordination,
+  artifactStore, dataIndex, queryData, authorize, managedSessions, projectCoordination,
   CREDENTIAL_STORE_DESCRIPTOR, CONFIG_SOURCE_DESCRIPTOR,
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
   MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR,
   documentStore, type StateImportResult, type StateCompaction, type RuntimeHost,
-  type PluginGenerationApi, type DataQueryResult,
+  type PluginGenerationApi, type DataQueryResult, type DataAppendTurn, type DataAppendTurnResult,
   type ManagedSessionCreate, type CredentialCompareExchange, type ConfigSourceView,
 } from '@wuu/plugin-sdk';
 
@@ -44,9 +44,16 @@ const invalidCAS: CredentialCompareExchange = {
   value: 42,
 };
 void invalidCAS;
+const incompleteBatch: DataAppendTurn = { thread_id: 'thread', turn_id: 'turn', events: [
+  // @ts-expect-error Append events require scope and JSON data, unlike sparse query envelopes.
+  { type: 'turn' },
+] };
+void incompleteBatch;
 
 export default {
-  initialize() { return { protocol_version: 3 }; },
+  initialize() { return { protocol_version: 3, required_services: descriptors.map(({name, version}) => ({
+    name, major_version: Number(version.split('.')[0]), required: true,
+  })) }; },
   async invokeService(params, host) {
     const credentials = credentialStore(host);
     const absent = await credentials.get({namespace:'auth',key:'token'});
@@ -66,7 +73,24 @@ export default {
     const emptySource = emptyConfig.source === null ? null : atob(emptyConfig.source);
     const settings = await pluginSettingsStore(host).read({subject:'author',scope:'workspace'});
     const artifact = await artifactStore(host).read({thread_id:'worker',uri:'artifact:one',max_bytes:8});
-    const facts = await queryData(host, {thread_id:'worker',types:['turn']});
+    const indexInput = params.params as { index_thread: string; index_turn: string; index_payload: string };
+    const index = dataIndex(host);
+    const batch: DataAppendTurn = {
+      thread_id: indexInput.index_thread, turn_id: indexInput.index_turn,
+      events: ['turn', 'future_fact', 'final'].map(type => ({
+        type, thread_id: indexInput.index_thread, turn_id: indexInput.index_turn,
+        created_at: '2026-10-24T00:00:00Z', data: { text: indexInput.index_payload, nested: { zero: 0, absent: null } },
+      })),
+    };
+    const appended: DataAppendTurnResult = await index.appendTurn(batch);
+    const duplicate = await index.appendTurn(batch);
+    let indexConflict: unknown, indexUncertain: unknown;
+    try { await index.appendTurn({...batch, events: batch.events.map(event => ({...event, data: { changed: true }}))}); }
+    catch (error) { indexConflict = (error as {code:string}).code; }
+    try { await index.appendTurn({...batch, turn_id: 'uncertain', events: batch.events.map(event => ({...event, turn_id: 'uncertain'}))}); }
+    catch (error) { indexUncertain = (error as {code:string}).code; }
+    const facts = await index.query({thread_id:batch.thread_id,types:['future_fact'],turn_id:batch.turn_id,limit:1});
+    const emptyFacts = await queryData(host, {thread_id:batch.thread_id});
     const permission = await authorize(host, {cwd:'/workspace',permission_mode:'read_only',tool:{name:'read',kind:'file',read_only:true,concurrency_safe:true,destructive:false}});
     const sessions = managedSessions(host);
     const launch = params.params as { launch_prompt: string; launch_intent: string };
@@ -75,6 +99,6 @@ export default {
     }});
     const admitted = await sessions.submit({session_id:created.session_id,message:{Role:'user',Content:'inspect',ClientID:'input-2'},allow_start:true});
     const admission = await projectCoordination(host).admission();
-    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,facts,permission,created,admitted,admission,descriptorCount:descriptors.length};
+    return {absent,swapped,empty,errorCode,decodedSource,emptySource,changed,settings,artifact,facts,emptyFacts,appended,duplicate,indexConflict,indexUncertain,permission,created,admitted,admission,descriptorCount:descriptors.length};
   },
 } satisfies RuntimePlugin;

@@ -13,13 +13,13 @@ Wuu 通过同一张带版本的服务图选择存储、权限策略、协调和�
 | `state.config@1` | `wuu.config.local` | `configurationStore`、`CONFIG_SOURCE_DESCRIPTOR` |
 | `state.plugin-settings@1` | `wuu.settings.local` | `pluginSettingsStore`、`PLUGIN_SETTINGS_STORE_DESCRIPTOR` |
 | `state.artifacts@1` | `wuu.artifacts.local` | `artifactStore`、`ARTIFACT_STORE_DESCRIPTOR` |
-| `host.data.query@1` | `wuu.index.trace` | `queryData`、`DATA_QUERY_DESCRIPTOR` |
+| `host.data.query@2` | `wuu.index.trace` | `dataIndex`、`queryData`、`DATA_QUERY_DESCRIPTOR` |
 | `security.authorize@1` | `wuu.permissions.default` | `authorize`、`AUTHORIZATION_SERVICE_DESCRIPTOR` |
 | `project.coordination@1` | `wuu.project-coordination` | `projectCoordination`、`PROJECT_COORDINATION_DESCRIPTOR` |
 | `host.managed-session@1` | `wuu.managed-sessions` | `managedSessions`、`MANAGED_SESSION_DESCRIPTOR` |
 | `ui.shell@1` | `wuu.default-shell` 或渲染器插件 | `APPLICATION_SHELL_SERVICE`、`ApplicationGenerationAPI` |
 
-提供者将描述符放入 `provided_services`；消费者在 `required_services` 中声明服务名和 `major_version: 1`，缺失时必须阻止激活的依赖还需 `required: true`。导入客户端本身不授予调用权限。渲染器服务声明放在包的 `desktop.services` 中。
+提供者将描述符放入 `provided_services`；消费者在 `required_services` 中声明服务名和上表对应的主版本号，缺失时必须阻止激活的依赖还需 `required: true`。导入客户端本身不授予调用权限。渲染器服务声明放在包的 `desktop.services` 中。
 
 底层状态服务供实现者和获得调用准入的消费者使用。普通插件通过 `host.settings.get/list`、`host.storage.*`、`host.credentials.request` 和 `importArtifact(host, input)` 操作自身设置、不透明存储、带认证的请求及工具产物。这些网关保留所有权检查，再路由到所选后端。请求里的 `subject`、`owner`、`plugin_id` 或 `session_id` 都是领域数据，不是身份凭证。
 
@@ -99,7 +99,7 @@ export async function readNotes(host: RuntimeHost) {
 | 配置 | `read`、`compare-exchange`。`source` 用 base64 保留完整原始字节，字节缺失时为 `null`；`config` 是验证后的产品有效配置。`expected_revision` 比较源身份。响应可能包含 `committed: true` 和 `activation_error`；此时应报告写入已持久化，但应用失败。 |
 | 插件设置 | 对 `{ subject, scope: "user" \| "workspace" }` 执行 `read`、`update`、`read-state`、`update-state`。更新在 `expected_revision` 上替换完整值映射，设置还携带 fingerprint。收到 `settings_conflict` 后先重读，再构造更新。 |
 | 产物 | `import`、`resolve`、`read`、`fork`。提供者 scope 来自获得准入的消费者。读取要求正数 `max_bytes`，返回 base64 字节与 MIME 类型。Resolve 返回该产物是否由提供者管理。普通工具导入使用带认证的网关。 |
-| 数据索引 | `host.data.query` 的 `call` 接收 thread、可选事件类型、turn 和 limit。未知类型不匹配事件。省略或零 limit 不设置显式上限；负数返回 `invalid_params`。事件是事实数据，不授予配置或凭据访问。 |
+| 数据索引 | `host.data.query@2` 提供 `call` 查询和 `append-turn` 完整回合原子追加。查询接收 thread、可选事件类型、turn 和 limit；未知类型名也可作为过滤条件。省略或零 limit 不设置显式上限；负数返回 `invalid_params`。事件不授予配置或凭据访问。 |
 
 原生配置文件缺失时读出 `source: null`，存在但零字节时读出 `source: ""`。解码前先判断 `null`，客户端不得将这两个值互相归一化。配置 CAS 的 `source: null` 表示提供零个替换字节：原生文件模式会写入空文件，而不是删除；可信项目模式拒绝空 JSON。CAS 响应即使在空文件已存在时也可能保留 `null`，因此该字段描述返回的源字节，不是文件是否存在。
 
@@ -108,6 +108,37 @@ export async function readNotes(host: RuntimeHost) {
 原生配置模式保留来源边界：显式文件模式使用指定文件，嵌入模式从传入配置开始，显式项目模式使用项目基础配置和设置层，仅在 `.wuu.json` 不存在时回退到 `wuu.json`。叠加在用户配置上的受限项目覆盖不会获得替换凭据或授权的权限。
 
 模型认证及登录/刷新状态使用捕获 generation 的凭据服务。原生 auth 适配器可以在不覆盖目标已有条目的前提下导入旧账号数据，该兼容行为属于原生实现。外部凭据提供者不会被悄悄包上原生文件查询。进行中的登录 ID 保持关联原 generation，直至清理结束。
+
+## 完整回合索引
+
+选中的 `host.data.query@2` 提供者同时拥有完整回合写入和查询。v1 只授予读取权限，v2 增加追加权限，因此消费者必须明确声明主版本 2。`DATA_QUERY_DESCRIPTOR` 以 `2.0.0` 声明两个方法，不提供隐式 v1 适配或另一个原生写入者。
+
+```ts
+import {
+  dataIndex, type DataAppendTurn, type RuntimeHost, type ServiceRequirement,
+} from "@wuu/plugin-sdk";
+
+export const requiredServices = [
+  { name: "host.data.query", major_version: 2, required: true },
+] satisfies ServiceRequirement[];
+
+export async function recordTurn(host: RuntimeHost, batch: DataAppendTurn) {
+  const index = dataIndex(host);
+  const receipt = await index.appendTurn(batch);
+  const facts = await index.query({
+    thread_id: batch.thread_id, turn_id: batch.turn_id,
+  });
+  return { receipt, facts };
+}
+```
+
+`DataAppendTurn` 包含 `thread_id`、`turn_id` 和 `events`。每个事件必须携带匹配的两个 ID 和 JSON `data`；整批以 `turn` 事件开始，以 `final` 结束，中间的未知事件类型原样保留。提供者必须原子提交完整批次，不得只提交前缀。
+
+`DataAppendTurnResult` 包含 `version`、两个 ID 和 `committed`。相同回合、相同事件批次再次追加时，返回带 `duplicate: true` 的已提交回执；同一回合使用不同事件则返回 `index_conflict`。取消或传输失败可能导致结果不确定。SDK 每次调用只尝试一次，不会自动重试不确定的追加；先向选中提供者核对结果，再决定下一步。
+
+`queryData(host, input)` 和 `dataIndex(host).query(input)` 访问同一个选中的 v2 服务，保留原查询过滤器和事件格式。结果保持提供者顺序，先过滤再应用 limit；`events: null` 和空数组保留各自的协议值。消费者可以用返回事件计算上下文摘要，无须打开原生 trace 文件。
+
+查询结果和追加回执都可包含 `diagnostic_path`。它只是导出元数据，不是访问权限或备用数据源。旧 JSONL 导入和诊断导出由选中的原生提供者拥有；使用外部索引不会触发原生文件读写。导出失败不能撤销已确认的追加。禁用选中索引会停止其行为，不会自动启用原生存储。延迟完成的回合应一直保留获准执行时的 generation，直到追加结束。
 
 ## Project 协调协议
 
