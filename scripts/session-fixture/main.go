@@ -33,6 +33,7 @@ type request struct {
 	Domains  []string                `json:"domains,omitempty"`
 	ID       string                  `json:"id,omitempty"`
 	History  []session.HistoryRecord `json:"history,omitempty"`
+	Repeat   *int                    `json:"repeat,omitempty"`
 }
 
 func main() {
@@ -59,6 +60,9 @@ func run(ctx context.Context, input io.Reader, output io.Writer) error {
 	if req.Op == "append" {
 		if strings.TrimSpace(req.ID) == "" || req.ID != strings.TrimSpace(req.ID) || len(req.History) == 0 {
 			return errors.New("append requires an existing session ID and nonempty history")
+		}
+		if req.Repeat != nil && (*req.Repeat <= 0 || *req.Repeat > int(^uint(0)>>1)/len(req.History)) {
+			return errors.New("repeat must be positive and total history count must fit an integer")
 		}
 		for _, record := range req.History {
 			if record.Seq != 0 {
@@ -112,12 +116,22 @@ func execute(ctx context.Context, req request, opts runtime.StateOptions) (resul
 	if err != nil {
 		return nil, err
 	}
-	defer func() { err = errors.Join(err, state.Close()) }()
+	defer func() {
+		closeErr := state.Close()
+		if closeErr != nil && req.Op == "append" && req.Repeat != nil && *req.Repeat > 1 {
+			closeErr = fmt.Errorf("repeated append batches may already be committed; discard this fixture before retrying after close failure: %w", closeErr)
+		}
+		err = errors.Join(err, closeErr)
+	}()
 	if req.Op == "inspect" {
 		return inspectDocuments(ctx, state.Documents, req.Domains)
 	}
 	if req.Op == "append" {
-		first, last, err := state.Sessions.AppendHistoryRecordsReturningRange(req.ID, req.History)
+		repeat := 1
+		if req.Repeat != nil {
+			repeat = *req.Repeat
+		}
+		first, last, err := appendRepeatedHistory(state.Sessions, req.ID, req.History, repeat)
 		if err != nil {
 			return nil, fmt.Errorf("append %q: %w", req.ID, err)
 		}
@@ -177,6 +191,64 @@ func execute(ctx context.Context, req request, opts runtime.StateOptions) (resul
 	return struct {
 		Sessions []fixtureSession `json:"sessions"`
 	}{fixtures}, nil
+}
+
+func appendRepeatedHistory(store *session.Store, id string, pattern []session.HistoryRecord, repeat int) (first, last int, err error) {
+	if repeat == 1 {
+		return store.AppendHistoryRecordsReturningRange(id, pattern)
+	}
+	const maxBatchBytes = 4 << 20
+	sizes := make([]int, len(pattern))
+	for i, record := range pattern {
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			return 0, 0, err
+		}
+		// Include the array brackets and a conservative comma per record.
+		sizes[i] = len(encoded) + 1
+		if sizes[i]+2 > maxBatchBytes {
+			return 0, 0, fmt.Errorf("repeat history record %d exceeds the 4 MiB batch limit", i+1)
+		}
+	}
+	confirmed := 0
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("repeated append stopped after %d confirmed records; prior batches may already be committed and the failed batch outcome may be unknown; discard this fixture before retrying: %w", confirmed, err)
+		}
+	}()
+	var batch []session.HistoryRecord
+	batchBytes := 2
+	flush := func() error {
+		start, end, err := store.AppendHistoryRecordsReturningRange(id, batch)
+		if err != nil {
+			return err
+		}
+		if end-start+1 != len(batch) || confirmed > 0 && start != last+1 {
+			return fmt.Errorf("noncontiguous append range %d..%d after %d", start, end, last)
+		}
+		if confirmed == 0 {
+			first = start
+		}
+		last = end
+		confirmed += len(batch)
+		batch, batchBytes = batch[:0], 2
+		return nil
+	}
+	for iteration := 0; iteration < repeat; iteration++ {
+		for i, record := range pattern {
+			if batchBytes+sizes[i] > maxBatchBytes {
+				if err := flush(); err != nil {
+					return first, last, err
+				}
+			}
+			batch = append(batch, record)
+			batchBytes += sizes[i]
+		}
+	}
+	if len(batch) > 0 {
+		err = flush()
+	}
+	return first, last, err
 }
 
 type inspection struct {
