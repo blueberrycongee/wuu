@@ -77,6 +77,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Align external connection names, plans and quota readouts in responsive cards, with consistent icon sizing, colored readiness and quota states, and reserved space for loading snapshots.
+
 - Make web search source cards narrower with larger, centered website icons for easier recognition in the compact stack.
 
 - Reorganize plugin details around identity and enablement, prioritize plugin settings, and present descriptions and contributions in clearly separated, responsive sections.

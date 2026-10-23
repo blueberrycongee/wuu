@@ -330,21 +330,29 @@ export function EngineSettingsSection({
       </div> : visible.length ? <div className="connection-summary-list" role="list" aria-label={t("provider.connectionEngines")}>
         {visible.map(engine => {
           const quota = quotaFor(engine);
+          const state = status(engine);
           return <div role="listitem" key={engine.id}>
             <button type="button"
               className="connection-summary-row"
               data-testid={`settings-engine-${engine.id}-status`}
-              aria-label={`${display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))} · ${status(engine)}`}
-              aria-describedby={`${usageID}-${engine.id} ${usageID}-${engine.id}-quota`}
+              aria-label={`${display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))} · ${state}`}
+              title={display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))}
+              aria-describedby={`${usageID}-${engine.id} ${usageID}-${engine.id}-status ${usageID}-${engine.id}-quota`}
               onClick={() => { setError(""); onSelectEngine(engine.id); }}>
               <span className="connection-summary-icon" aria-hidden="true"><EngineIcon engine={engine.id} /></span>
-              <span className="connection-summary-copy" id={`${usageID}-${engine.id}`}>
-                <span className="connection-summary-name">{display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))}</span>
-                <span className="connection-summary-meta"><span>{quota?.plan?.trim() || t("provider.localEngine")}</span><span aria-hidden="true"> · </span>
-                  <span className="connection-summary-status">{status(engine)}</span>
+              <span className="connection-summary-copy">
+                <span className="connection-summary-heading">
+                  <span className="connection-summary-name">{display.label(`engine:${engine.id}`, engineLabel(engine.id, engine))}</span>
+                  <span className="connection-summary-meta" id={`${usageID}-${engine.id}`}>{quota?.plan?.trim()}</span>
+                </span>
+                <span className="connection-summary-secondary">
+                  <span id={`${usageID}-${engine.id}-status`} className={state === t("settings.engineReady") ? "sr-only" : "connection-summary-status"}
+                    data-attention={state !== t("settings.engineReady") ? "" : undefined}>{state}</span>
+                  <ConnectionUsageSummary compact id={`${usageID}-${engine.id}-quota`} quota={quota}
+                    loading={(quotaLoading || refreshing) && state === t("settings.engineReady")} now={quotaNow}
+                    fallback={state === t("settings.engineReady") ? <span className="connection-summary-status" data-ready>{state}</span> : null} />
                 </span>
               </span>
-              <ConnectionUsageSummary id={`${usageID}-${engine.id}-quota`} quota={quota} loading={quotaLoading || refreshing} now={quotaNow} />
               <ChevronRight className="icon" aria-hidden="true" />
             </button>
           </div>;
