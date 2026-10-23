@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -29,6 +30,7 @@ type request struct {
 	Op       string           `json:"op"`
 	Sessions []fixtureSession `json:"sessions,omitempty"`
 	IDs      []string         `json:"ids,omitempty"`
+	Domains  []string         `json:"domains,omitempty"`
 }
 
 func main() {
@@ -49,7 +51,7 @@ func run(ctx context.Context, input io.Reader, output io.Writer) error {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("expected one JSON request")
 	}
-	if req.Op != "seed" && req.Op != "read" {
+	if req.Op != "seed" && req.Op != "read" && req.Op != "inspect" {
 		return fmt.Errorf("unsupported operation %q", req.Op)
 	}
 	if req.Op == "seed" {
@@ -99,6 +101,9 @@ func execute(ctx context.Context, req request, opts runtime.StateOptions) (resul
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, state.Close()) }()
+	if req.Op == "inspect" {
+		return inspectDocuments(ctx, state.Documents, req.Domains)
+	}
 	if req.Op == "seed" {
 		ids := make([]string, 0, len(req.Sessions))
 		for _, fixture := range req.Sessions {
@@ -144,6 +149,49 @@ func execute(ctx context.Context, req request, opts runtime.StateOptions) (resul
 	return struct {
 		Sessions []fixtureSession `json:"sessions"`
 	}{fixtures}, nil
+}
+
+type inspection struct {
+	Revision  persistence.Revision              `json:"revision,string"`
+	Documents map[string][]persistence.Document `json:"documents"`
+}
+
+// Receipt and accounting projections omit fields needed by recovery E2Es. This
+// test-only reader retains the selected provider's complete domain documents.
+func inspectDocuments(ctx context.Context, documents persistence.Documents, domains []string) (inspection, error) {
+	var result inspection
+	if len(domains) == 0 {
+		return result, errors.New("inspect requires explicit domains")
+	}
+	for _, domain := range domains {
+		switch domain {
+		case "held_user_work", "session_history_retractions", "inference_operations", "inference_submissions", "inference_workflows":
+		default:
+			return result, fmt.Errorf("unsupported inspection domain %q", domain)
+		}
+	}
+	err := persistence.Update(ctx, documents, func(tx *persistence.Tx) error {
+		// A concurrent commit restarts the whole read, not only its last page.
+		result.Documents = make(map[string][]persistence.Document, len(domains))
+		for _, domain := range domains {
+			result.Documents[domain] = []persistence.Document{}
+			query := persistence.Query{Namespace: "wuu." + domain + ".v1", Limit: 256}
+			for {
+				view, err := tx.ReadView(query)
+				if err != nil {
+					return err
+				}
+				result.Revision = view.Revision
+				result.Documents[domain] = append(result.Documents[domain], view.Documents...)
+				if view.NextCursor == "" {
+					break
+				}
+				query.Cursor, query.AtRevision = view.NextCursor, &view.Revision
+			}
+		}
+		return nil
+	})
+	return result, err
 }
 
 func fixturePaths(home, workdir string) (string, string, error) {
