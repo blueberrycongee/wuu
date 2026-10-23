@@ -31,6 +31,10 @@ func TestAgentSelfExtensionProcess(t *testing.T) {
 		t.Skip("node is required")
 	}
 	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	home := filepath.Join(root, "state")
 	if err := os.MkdirAll(home, 0700); err != nil {
 		t.Fatal(err)
@@ -61,14 +65,14 @@ export default {
   { id: "agent.request.transform", kind: "transform", version: 1 }
  ] }; },
  invokeCapability(call) {
-  appendFileSync(lifecycle, JSON.stringify({event:"capability",version,capability:call.capability}) + "\n");
+  appendFileSync(lifecycle, JSON.stringify({event:"capability",pid:process.pid,version,capability:call.capability}) + "\n");
   if (call.capability === "agent.system_prompt.section") return { output: { text: "GENERATION_PROMPT_" + version } };
   if (call.capability === "agent.request.transform") return { output: { prepend_system_messages: ["GENERATION_INTERCEPTOR_" + version] } };
   throw new Error("unexpected capability");
  },
- shutdown() { appendFileSync(lifecycle, JSON.stringify({event:"shutdown",version}) + "\n"); },
+ shutdown() { appendFileSync(lifecycle, JSON.stringify({event:"shutdown",pid:process.pid,version}) + "\n"); },
  executeTool() {
-  appendFileSync(lifecycle, JSON.stringify({event:"tool",version}) + "\n");
+  appendFileSync(lifecycle, JSON.stringify({event:"tool",pid:process.pid,version}) + "\n");
   const disk = readFileSync(new URL(import.meta.url), "utf8").match(/const version = "([^"]+)"/)[1];
   return { result: { content: [{ type: "text", text: "memory:" + version + ";disk:" + disk }] } };
  }
@@ -89,17 +93,21 @@ export default {
 		}
 		return write + "text(await tools.bash(" + encode(map[string]string{"command": publish}) + "));"
 	}
-	// Await the real watcher-driven retirement before the disabling tool returns,
-	// so the next model step must exercise its retained transform chain.
+	// Preparation can close another process running the same source version.
+	// Await the process that actually handled this turn's last transform.
 	waitForRetirement := "node -e " + shellQuote(`const fs = require("node:fs");
 const path = process.argv[1];
+function events() {
+  return fs.readFileSync(path, "utf8").split("\n").flatMap(line => {
+    try { return [JSON.parse(line)]; } catch { return []; }
+  });
+}
+const active = events().findLast(value => value.event === "capability" && value.capability === "agent.request.transform" && value.version === "v2");
+if (!active) throw new Error("active v2 transform process was not observed");
 const watcher = fs.watch(path, check);
 const timeout = setTimeout(() => { watcher.close(); process.exit(1); }, 10000);
 function check() {
-  const retired = fs.readFileSync(path, "utf8").split("\n").some(line => {
-    try { const value = JSON.parse(line); return value.event === "shutdown" && value.version === "v2"; }
-    catch { return false; }
-  });
+  const retired = events().some(value => value.event === "shutdown" && value.pid === active.pid);
   if (retired) { clearTimeout(timeout); watcher.close(); console.log("runtime retired"); }
 }
 check();`) + " " + shellQuote(lifecyclePath)
