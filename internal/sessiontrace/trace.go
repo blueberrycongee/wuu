@@ -855,9 +855,15 @@ func redactAndTruncate(value string) string {
 	if value == "" {
 		return ""
 	}
-	value = secretLikeRE.ReplaceAllString(value, "$1=[REDACTED]")
-	if len(value) <= finalAnswerPreviewBytes {
-		return value
+	// Only inspect the preview window: scanning a multi-megabyte answer here
+	// can exhaust shutdown's drain deadline before the Run is settled. Redact
+	// the bounded prefix before adding a suffix so a cut secret stays hidden.
+	prefix := stringutil.Truncate(value, finalAnswerPreviewBytes, "")
+	preview := secretLikeRE.ReplaceAllString(prefix, "$1=[REDACTED]")
+	truncated := len(prefix) < len(value) || len(preview) > finalAnswerPreviewBytes
+	preview = stringutil.Truncate(preview, finalAnswerPreviewBytes, "")
+	if truncated {
+		preview += "...[truncated]"
 	}
-	return stringutil.Truncate(value, finalAnswerPreviewBytes, "...[truncated]")
+	return preview
 }
