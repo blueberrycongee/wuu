@@ -104,6 +104,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	for _, module := range nativeRendererModules() {
 		if resolved.Includes(module.ID) {
 			nativeModules = append(nativeModules, newRendererService(module, nil, nil))
+			registry.RegisterRenderer(module.ID, module.Fingerprint)
 			required[module.ID] = true
 		}
 	}
@@ -158,7 +159,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		if !resolved.Includes(factory.ID) || (resolved.Modules == nil && !factory.DefaultEnabled) {
 			continue
 		}
-		input := NativeProviderContext{Registry: registry, WuuHome: wuuHome, RootDir: projectRoot, WorkspaceID: workspaceID}
+		input := NativeProviderContext{RetainState: kernel.retainState, Registry: registry, WuuHome: wuuHome, RootDir: projectRoot, WorkspaceID: workspaceID}
 		if kernel.state != nil {
 			input.Documents, input.Sessions = kernel.state.documents, kernel.state.sessions
 		}
@@ -263,6 +264,11 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		host.Add(client)
 		if item.Desktop != nil && len(item.Desktop.Services) > 0 {
 			rendererServices = append(rendererServices, newRendererService(rendererModule(item), item.Desktop.RequiredServices, client))
+		}
+	}
+	for _, item := range plugins {
+		if item.Desktop != nil && resolved.Includes(item.ID) {
+			registry.RegisterRenderer(item.ID, item.Fingerprint)
 		}
 	}
 	// Resolve the complete graph before activation. Prepared registrations are

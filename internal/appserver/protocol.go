@@ -41,6 +41,7 @@ const (
 	MethodPluginPackageInstall            = "plugin/package/install"
 	MethodPluginPackageRemove             = "plugin/package/remove"
 	MethodPluginDesktopModuleRead         = "plugin/desktop-module/read"
+	MethodPluginDesktopActivation         = "plugin/desktop-activation"
 	MethodPluginIconRead                  = "plugin/icon/read"
 	MethodPluginSettingGet                = "plugin/setting/get"
 	MethodPluginSettingSet                = "plugin/setting/set"
@@ -868,7 +869,8 @@ type ExtensionPluginActivationIssue struct {
 }
 
 type ExtensionInventoryRecord struct {
-	ID string `json:"id"`
+	GraphGeneration string `json:"graph_generation,omitempty"`
+	ID              string `json:"id"`
 	// Name and Description are what people see: a plugin manifest's
 	// interface displayName and shortDescription, then its name and
 	// description, and the id when it names nothing.

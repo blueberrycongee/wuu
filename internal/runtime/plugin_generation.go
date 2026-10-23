@@ -372,6 +372,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
+	kernel.bindStateGeneration(generation, s)
 	if kernel.selectedServices != nil {
 		generation.credentials = kernel.selectedServices.credentials
 		generation.configClient = kernel.selectedServices.config
@@ -445,6 +446,8 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	old.host.StopBackground()
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
+	// Own the candidate before effectful callbacks can retain its state.
+	candidate.retain()
 	activationErr := activatePluginHost(context.Background(), candidate.host)
 	modelErr := s.bindGenerationModels(candidate)
 	activationErr = errors.Join(activationErr, modelErr)
@@ -477,7 +480,6 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	s.pluginGenerationMu.Lock()
 	s.applyPluginGeneration(candidate)
 	s.pluginGeneration = candidate
-	candidate.retain()
 	// Conversations that already pinned the previous generation keep using it
 	// until they rebuild. The Session reference is released here; remaining
 	// thread runtimes keep the processes and tools alive.

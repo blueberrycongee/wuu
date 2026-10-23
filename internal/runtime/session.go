@@ -958,6 +958,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	if pluginKernel != nil {
 		pluginKernel.bindModelSession(runtimeSession, pluginHost)
+		pluginKernel.bindStateGeneration(runtimeSession.pluginGeneration, runtimeSession)
 		runtimeSession.pluginGeneration.driverGateways = pluginKernel.driverGateways
 	}
 	// The default and external drivers share the selected service binding.

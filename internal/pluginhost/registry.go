@@ -84,6 +84,7 @@ type serviceExecution struct {
 
 // ServiceRegistry resolves and routes service calls for one generation.
 type ServiceRegistry struct {
+	renderers            map[string]*rendererRegistration
 	mu                   sync.RWMutex
 	active               bool
 	open                 bool
@@ -801,11 +802,12 @@ type CompositionSnapshot struct {
 }
 
 type CompositionModuleSnapshot struct {
-	ID      string `json:"id"`
-	Source  string `json:"source"`
-	Version string `json:"version,omitempty"`
-	State   State  `json:"state,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Renderer *RendererActivationSnapshot `json:"renderer,omitempty"`
+	ID       string                      `json:"id"`
+	Source   string                      `json:"source"`
+	Version  string                      `json:"version,omitempty"`
+	State    State                       `json:"state,omitempty"`
+	Error    string                      `json:"error,omitempty"`
 }
 
 // SetComposition binds diagnostic metadata before candidate preparation.
@@ -830,6 +832,9 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 		copy.Layers = append([]string(nil), copy.Layers...)
 		copy.Modules = append([]CompositionModuleSnapshot{}, copy.Modules...)
 		composition = &copy
+		for i := range composition.Modules {
+			composition.Modules[i].Renderer = r.rendererSnapshot(composition.Modules[i].ID)
+		}
 	}
 	moduleStatuses := r.moduleStatuses
 	entries := make([]ServiceRegistryEntry, 0, len(r.providers))

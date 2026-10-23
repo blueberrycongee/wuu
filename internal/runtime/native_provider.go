@@ -16,6 +16,7 @@ type NativeProviderFactory struct {
 }
 
 type NativeProviderContext struct {
+	RetainState                   func() (*State, error)
 	Registry                      *pluginhost.ServiceRegistry
 	Documents                     persistence.Documents
 	Sessions                      *session.Store
