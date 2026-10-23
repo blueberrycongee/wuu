@@ -48,6 +48,12 @@ export interface StateReceipt {
   readonly id: string;
   readonly revision: StateRevision;
 }
+/** Optional provider maintenance; document revision and receipts are unchanged. */
+export interface StateCompaction {
+  readonly revision: StateRevision;
+  readonly bytes_before: number;
+  readonly bytes_after: number;
+}
 export interface StateSnapshot<Value = unknown> {
   readonly version: 1;
   readonly revision: StateRevision;
@@ -64,7 +70,7 @@ export function documentStoreDescriptor(): ServiceDescriptor {
   return {
     name: DOCUMENT_STORE_SERVICE,
     version: "1.0.0",
-    methods: ["read", "commit", "export"].map((name) => ({
+    methods: ["read", "commit", "export", "compact"].map((name) => ({
       name,
       input_schema: `state.documents.${name}.input.v1`,
       output_schema: `state.documents.${name}.output.v1`,
@@ -88,6 +94,7 @@ export function documentStore(host: RuntimeHost) {
   return {
     read: <Value = unknown>(query: StateQuery) => call<StateView<Value>>("read", query),
     commit: <Value = unknown>(transaction: StateTransaction<Value>) => call<StateReceipt>("commit", transaction),
+    compact: () => call<StateCompaction>("compact", {}),
     export: <Value = unknown>() => call<StateSnapshot<Value>>("export", {}),
   };
 }

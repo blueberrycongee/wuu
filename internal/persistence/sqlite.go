@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -14,7 +15,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type sqliteBackend struct{ db *sql.DB }
+type sqliteBackend struct {
+	db   *sql.DB
+	path string
+}
 
 func openSQLite(path string, create bool) (*sqliteBackend, error) {
 	if err := securefs.PreCreateFile(path); err != nil {
@@ -41,7 +45,7 @@ func openSQLite(path string, create bool) (*sqliteBackend, error) {
 			db.Close()
 			return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
 		}
-		return &sqliteBackend{db: db}, nil
+		return &sqliteBackend{db: db, path: path}, nil
 	}
 	for _, statement := range []string{
 		`PRAGMA journal_mode = WAL`,
@@ -55,7 +59,7 @@ func openSQLite(path string, create bool) (*sqliteBackend, error) {
 			return nil, err
 		}
 	}
-	return &sqliteBackend{db: db}, nil
+	return &sqliteBackend{db: db, path: path}, nil
 }
 
 func (b *sqliteBackend) close() error { return b.db.Close() }
@@ -257,4 +261,45 @@ func (b *sqliteBackend) restore(ctx context.Context, snapshot Snapshot) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (b *sqliteBackend) fileBytes() (int64, error) {
+	var total int64
+	for _, path := range []string{b.path, b.path + "-wal"} {
+		info, err := os.Stat(path)
+		if path != b.path && errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		total += info.Size()
+	}
+	return total, nil
+}
+
+func (b *sqliteBackend) compact(ctx context.Context) (Compaction, error) {
+	var result Compaction
+	if err := b.db.QueryRowContext(ctx, `SELECT revision FROM state_metadata WHERE id = 1`).Scan(&result.Revision); err != nil {
+		return result, err
+	}
+	var err error
+	result.BytesBefore, err = b.fileBytes()
+	if err != nil {
+		return result, err
+	}
+	for _, statement := range []string{`PRAGMA auto_vacuum = INCREMENTAL`, `VACUUM`} {
+		if _, err := b.db.ExecContext(ctx, statement); err != nil {
+			return result, err
+		}
+	}
+	var busy, frames, checkpointed int
+	if err := b.db.QueryRowContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`).Scan(&busy, &frames, &checkpointed); err != nil {
+		return result, err
+	}
+	if busy != 0 {
+		return result, errors.New("document database compacted but WAL checkpoint is busy")
+	}
+	result.BytesAfter, err = b.fileBytes()
+	return result, err
 }

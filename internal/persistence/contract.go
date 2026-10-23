@@ -109,6 +109,14 @@ func finishPage(view *View, q Query) {
 	}
 }
 
+// Compaction reports physical file sizes without changing documents, receipts,
+// or the logical revision. It is optional provider maintenance, not a write.
+type Compaction struct {
+	Revision    Revision `json:"revision,string"`
+	BytesBefore int64    `json:"bytes_before"`
+	BytesAfter  int64    `json:"bytes_after"`
+}
+
 type Write struct {
 	Namespace string          `json:"namespace"`
 	Key       string          `json:"key"`

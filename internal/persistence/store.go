@@ -19,6 +19,7 @@ type backend interface {
 	read(context.Context, Query) (View, error)
 	commit(context.Context, Transaction, string) (Receipt, error)
 	export(context.Context) (Snapshot, error)
+	compact(context.Context) (Compaction, error)
 	restore(context.Context, Snapshot) error
 	close() error
 }
@@ -134,6 +135,20 @@ func (s *Store) Export(ctx context.Context) (Snapshot, error) {
 	}
 	defer lock.Release()
 	return s.backend.export(ctx)
+}
+
+// Compact serializes physical maintenance with every handle's reads/writes.
+// Once journal replacement begins, its durability barrier completes even if
+// the caller cancels. Compaction never replays writes or drops their receipts.
+func (s *Store) Compact(ctx context.Context) (Compaction, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lock, err := s.acquire(ctx)
+	if err != nil {
+		return Compaction{}, err
+	}
+	defer lock.Release()
+	return s.backend.compact(ctx)
 }
 
 func (s *Store) Close() error {

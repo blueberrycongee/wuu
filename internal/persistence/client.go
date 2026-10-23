@@ -16,6 +16,13 @@ type Documents interface {
 	Commit(context.Context, Transaction) (Receipt, error)
 }
 
+// Compactor is optional physical maintenance supplied by the selected provider.
+// A provider without compact support fails visibly; callers must not fall back
+// to opening a local store or infer its backend from a filesystem path.
+type Compactor interface {
+	Compact(context.Context) (Compaction, error)
+}
+
 // Client routes every operation through the caller's selected service binding.
 // The callback must be captured from that generation, never look up the latest
 // host, and must preserve cleanup admission when a dependent is shutting down.
@@ -37,6 +44,12 @@ func (c *Client) Commit(ctx context.Context, tx Transaction) (Receipt, error) {
 	var receipt Receipt
 	err := c.invoke(ctx, "commit", tx, &receipt)
 	return receipt, err
+}
+
+func (c *Client) Compact(ctx context.Context) (Compaction, error) {
+	var result Compaction
+	err := c.invoke(ctx, "compact", struct{}{}, &result)
+	return result, err
 }
 
 func (c *Client) Export(ctx context.Context) (Snapshot, error) {

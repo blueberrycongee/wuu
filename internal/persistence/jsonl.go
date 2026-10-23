@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"github.com/blueberrycongee/wuu/internal/securefs"
@@ -63,6 +64,21 @@ func (b *jsonlBackend) refresh() error {
 	info, err := b.file.Stat()
 	if err != nil {
 		return err
+	}
+	current, err := os.Stat(b.file.Name())
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(info, current) {
+		// Compaction replaces the journal atomically under the authority lock.
+		// Rebuild before appending so no writer can extend a retired inode.
+		next, err := openJSONL(b.file.Name())
+		if err != nil {
+			return err
+		}
+		closeErr := b.file.Close()
+		*b = *next
+		return closeErr
 	}
 	if info.Size() < b.offset {
 		return fmt.Errorf("%w: journal was truncated behind its reader", ErrCorrupt)
@@ -175,17 +191,25 @@ func (b *jsonlBackend) apply(record journalRecord, line []byte) error {
 	return nil
 }
 
-func (b *jsonlBackend) append(ctx context.Context, record journalRecord) error {
+func encodeJournalRecord(record journalRecord) ([]byte, []byte, error) {
 	payload, err := json.Marshal(record)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	sum := sha256.Sum256(payload)
 	line, err := json.Marshal(journalFrame{Payload: payload, Digest: hex.EncodeToString(sum[:])})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	line = append(line, '\n')
+	return payload, line, nil
+}
+
+func (b *jsonlBackend) append(ctx context.Context, record journalRecord) error {
+	payload, line, err := encodeJournalRecord(record)
+	if err != nil {
+		return err
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -213,6 +237,7 @@ func (b *jsonlBackend) append(ctx context.Context, record journalRecord) error {
 type valueLocation struct {
 	offset int64
 	length int
+	digest [sha256.Size]byte
 }
 
 // jsonMember locates a member in validated JSON. Decoder offsets refer to the
@@ -272,7 +297,7 @@ func journalLocations(line []byte, kind, collection string, base int64) ([]value
 		if err != nil {
 			return nil, err
 		}
-		locations = append(locations, valueLocation{offset: base + entryOffset + valueOffset, length: len(value)})
+		locations = append(locations, valueLocation{offset: base + entryOffset + valueOffset, length: len(value), digest: sha256.Sum256(value)})
 	}
 	return locations, nil
 }
@@ -294,6 +319,9 @@ func (b *jsonlBackend) readDocument(namespace, key string, location valueLocatio
 	d := Document{Namespace: namespace, Key: key, Value: make(json.RawMessage, location.length)}
 	if _, err := b.file.ReadAt(d.Value, location.offset); err != nil {
 		return Document{}, err
+	}
+	if sha256.Sum256(d.Value) != location.digest {
+		return Document{}, fmt.Errorf("%w: indexed document checksum", ErrCorrupt)
 	}
 	return d, nil
 }
@@ -429,4 +457,35 @@ func (b *jsonlBackend) restore(ctx context.Context, s Snapshot) error {
 		return err
 	}
 	return b.append(ctx, journalRecord{Kind: "snapshot", Snapshot: &s})
+}
+
+func (b *jsonlBackend) compact(ctx context.Context) (Compaction, error) {
+	snapshot, err := b.export(ctx)
+	if err != nil {
+		return Compaction{}, err
+	}
+	info, err := b.file.Stat()
+	if err != nil {
+		return Compaction{}, err
+	}
+	result := Compaction{Revision: snapshot.Revision, BytesBefore: info.Size()}
+	_, line, err := encodeJournalRecord(journalRecord{Kind: "snapshot", Snapshot: &snapshot})
+	if err != nil {
+		return result, err
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	path := b.file.Name()
+	if err := securefs.WriteFileAtomic(path, line); err != nil {
+		return result, err
+	}
+	if err := syncDirectory(filepath.Dir(path)); err != nil {
+		return result, err
+	}
+	if err := b.refresh(); err != nil {
+		return result, err
+	}
+	result.BytesAfter = int64(len(line))
+	return result, nil
 }
