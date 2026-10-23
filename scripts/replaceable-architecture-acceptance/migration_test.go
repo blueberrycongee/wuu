@@ -66,7 +66,7 @@ func TestAcceptanceCrossDomainMigration(t *testing.T) {
 			}
 			require.NoError(t, sessions.SettleInbox("delivered", thread))
 
-			ledger, err := toolledger.NewDocuments(documents, thread)
+			ledger, err := toolledger.New(documents, thread)
 			require.NoError(t, err)
 			batch, err := ledger.BeginBatch(ctx, input.OperationID, 0)
 			require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestAcceptanceCrossDomainMigration(t *testing.T) {
 
 			journal, err := sessions.NewInferenceJournalRuntime("acceptance-workspace")
 			require.NoError(t, err)
-			runs, err := execution.NewDocumentStore(documents)
+			runs, err := execution.NewStore(documents)
 			require.NoError(t, err)
 			params := execution.CreateParams{RuntimeID: journal.RuntimeID(), ThreadID: thread,
 				Request:   execution.Request{Mode: execution.ModeStart, HasPrompt: true},
@@ -145,7 +145,7 @@ func TestAcceptanceCrossDomainMigration(t *testing.T) {
 			_, err = sessions.AppendControlledHistoryRecord(thread, session.HistoryRecord{Role: "user", Content: "stale"}, &control)
 			require.ErrorIs(t, err, session.ErrControlChanged)
 
-			ledger, err = toolledger.NewDocuments(documents, thread)
+			ledger, err = toolledger.New(documents, thread)
 			require.NoError(t, err)
 			require.NoError(t, ledger.Reconcile(ctx))
 			decision, err := ledger.DecideReplay(ctx, batch)
@@ -156,7 +156,7 @@ func TestAcceptanceCrossDomainMigration(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { require.NoError(t, journal.Close()) }()
 			params.RuntimeID = journal.RuntimeID()
-			runs, err = execution.NewDocumentStore(documents)
+			runs, err = execution.NewStore(documents)
 			require.NoError(t, err)
 			_, err = runs.Create(ctx, params)
 			require.ErrorIs(t, err, execution.ErrConflict, "active-thread admission index must survive migration")

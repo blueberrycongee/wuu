@@ -13,12 +13,13 @@ const { values } = parseArgs({ options: {
   help: { type: "boolean" },
 } });
 if (values.help) {
-  console.log("node scripts/replaceable-architecture-acceptance.mjs --suite domains|boundaries|sdk|external|all [--candidate SHA] [--output DIR]");
-  console.log("Domains validates real cross-domain document migration. Boundaries runs existing race-tested storage/graph contracts. SDK runs the independent SDK process and CLI journey. These checks do not certify production composition, legacy import, or UI acceptance.");
+  console.log("node scripts/replaceable-architecture-acceptance.mjs --suite domains|legacy|boundaries|sdk|external|all [--candidate SHA] [--output DIR]");
+  console.log("Domains validates real cross-domain document migration. Boundaries runs existing race-tested storage/graph contracts. SDK runs the independent SDK process and CLI journey. Legacy validates the joint converters with a stopped-writer fixture. These checks do not certify production composition or UI acceptance.");
   process.exit(0);
 }
 const suites = {
   domains: [["cross-domain-migration", "go", ["test", "-race", "-count=1", "-json", "./scripts/replaceable-architecture-acceptance", "-run", "^TestAcceptanceCrossDomainMigration$"]]],
+  legacy: [["joint-legacy-migration", "go", ["test", "-race", "-count=1", "-json", "./scripts/replaceable-architecture-acceptance", "-run", "^TestAcceptanceJointLegacyMigration$"]]],
   boundaries: [
     ["storage-and-host", "go", ["test", "-race", "-count=1", "-json", "./internal/persistence", "./internal/pluginhost"]],
     ["retained-generations", "go", ["test", "-race", "-count=1", "-json", "./internal/runtime", "-run", "Test(RetainedGeneration|Candidate|FailedCandidate|ActivatePluginGeneration|DisabledRuntime|ThreadModel|BuiltPluginGenerations|PluginSystemPromptFailure|RefreshCandidate|PackageDependency)"]],
@@ -47,7 +48,7 @@ const report = {
   checks: [],
   limitations: [
     "Passing domain/host contracts does not establish that all production consumers use the selected authority.",
-    "Document backend transfer does not cover legacy SQLite domain conversion.",
+    "The separate legacy suite covers a synthetic stopped-writer SQLite fixture, not automatic production admission or a live user profile.",
     "The SDK journey uses an external consumer with built-in SQLite/JSONL providers; it does not prove an external storage implementation.",
     "Both full shells, third-party nesting, author TSX preview/reload and visual acceptance require separate evidence.",
     "No real-account inference or macOS native integration/performance is exercised.",
