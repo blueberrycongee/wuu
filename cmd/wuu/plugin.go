@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -256,6 +258,18 @@ func runPluginRemove(args []string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("resolve Wuu home: %w", err)
 	}
+	ctx, cancel := signalContext()
+	defer cancel()
+	// Opening the selected graph reads the catalog; do it before its mutation lease.
+	binding, err := openCommandState(ctx, "")
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, binding.Close()) }()
+	services, err := binding.Services()
+	if err != nil {
+		return err
+	}
 	releaseMutation, err := beginPluginCLIMutation(home, "remove")
 	if err != nil {
 		return pluginCLIError(err)
@@ -265,14 +279,15 @@ func runPluginRemove(args []string) (retErr error) {
 	if pendingErr != nil && !errors.Is(pendingErr, pluginpkg.ErrPendingUpdateNotFound) {
 		return pluginCLIError(pendingErr)
 	}
-	configPath, err := statepath.ConfigPath("")
+	view, source, err := preparePluginPolicy(ctx, services.Config, func(settings *extensions.Settings) error {
+		settings.Revoke(extensions.SubjectID("user", id))
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("resolve user config: %w", err)
+		return err
 	}
-	_, configStatErr := os.Stat(configPath)
-	if configStatErr != nil && !os.IsNotExist(configStatErr) {
-		return fmt.Errorf("inspect plugin policy: %w", configStatErr)
-	}
+	defer clear(view.Source)
+	defer clear(source)
 	packageRemoval, result, err := pluginpkg.PrepareUninstallPackage(home, id)
 	if err != nil {
 		return pluginCLIError(err)
@@ -298,19 +313,30 @@ func runPluginRemove(args []string) (retErr error) {
 				return pluginCLIError(rollback(fmt.Errorf("clear pending plugin update: %w", err)))
 			}
 		}
-		if configStatErr == nil {
-			if _, err := config.UpdateExtensionSettings(configPath, func(settings *extensions.Settings) error {
-				settings.Revoke(extensions.SubjectID("user", id))
-				return nil
-			}); err != nil {
-				return pluginCLIError(rollback(fmt.Errorf("clear plugin policy: %w", err)))
+		// An absent selected source has no stored grant to revoke. In particular,
+		// removing a freshly installed package must not create first-run config.
+		var policyErr error
+		if view.Source != nil {
+			committed, writeErr := commitPluginPolicy(ctx, services.Config, view.Revision, source)
+			if !committed {
+				// Only package files are restored. An uncertain CAS may already have
+				// revoked the grant; never issue a compensating configuration write.
+				return pluginCLIError(rollback(fmt.Errorf("clear plugin policy; restoring package files only: %w", writeErr)))
 			}
+			policyErr = writeErr
 		}
+		var cleanupErr error
 		if pendingRemoval != nil {
-			_ = pendingRemoval.Commit()
+			cleanupErr = errors.Join(cleanupErr, pendingRemoval.Commit())
 		}
 		if packageRemoval != nil {
-			_ = packageRemoval.Commit()
+			cleanupErr = errors.Join(cleanupErr, packageRemoval.Commit())
+		}
+		if cleanupErr != nil {
+			cleanupErr = fmt.Errorf("plugin package removed, but recovery-copy cleanup failed: %w", cleanupErr)
+		}
+		if err := errors.Join(policyErr, cleanupErr); err != nil {
+			return err
 		}
 	}
 	output := pluginPackageOutput{ID: result.ID, Destination: result.Destination, Removed: result.Removed}
@@ -335,6 +361,18 @@ func runPluginPolicy(action string, args []string) (retErr error) {
 	if err != nil {
 		return fmt.Errorf("resolve Wuu home: %w", err)
 	}
+	ctx, cancel := signalContext()
+	defer cancel()
+	// Opening the selected graph reads the catalog; do it before its mutation lease.
+	binding, err := openCommandState(ctx, *workdir)
+	if err != nil {
+		return err
+	}
+	defer func() { retErr = errors.Join(retErr, binding.Close()) }()
+	services, err := binding.Services()
+	if err != nil {
+		return err
+	}
 	releaseMutation, err := beginPluginCLIMutation(home, action)
 	if err != nil {
 		return pluginCLIError(err)
@@ -347,6 +385,7 @@ func runPluginPolicy(action string, args []string) (retErr error) {
 	if item.Official {
 		return pluginCLIError(fmt.Errorf("official bundled plugin %q does not use user policy actions", item.ID))
 	}
+	var approvedUpdate *pluginpkg.PendingUpdate
 	if (action == "approve" || action == "reject") && item.Source == "user" {
 		pending, pendingErr := pluginpkg.ReadPendingUpdate(home, item.ID)
 		switch {
@@ -360,22 +399,14 @@ func runPluginPolicy(action string, args []string) (retErr error) {
 			output.PolicyAction = "reject_update"
 			return printPluginPackageOutput(output, *jsonOutput, "Rejected pending plugin update; the installed generation remains active")
 		case pendingErr == nil && action == "approve":
-			if _, err := pluginpkg.PromotePendingUpdate(home, item.ID, pending.Package.Fingerprint); err != nil {
-				return pluginCLIError(err)
-			}
-			item, err = discoverPluginForPolicy(id, *workdir)
-			if err != nil {
-				return pluginCLIError(fmt.Errorf("plugin update was promoted but could not be rediscovered: %w", err))
-			}
+			approvedUpdate = &pending
+			item.Fingerprint = pending.Package.Fingerprint
+			item.EffectivePermissions = append([]string(nil), pending.Package.EffectivePermissions...)
 		case pendingErr != nil && !errors.Is(pendingErr, pluginpkg.ErrPendingUpdateNotFound):
 			return pluginCLIError(pendingErr)
 		}
 	}
-	configPath, err := statepath.ConfigPath("")
-	if err != nil {
-		return fmt.Errorf("resolve user config: %w", err)
-	}
-	_, err = config.UpdateExtensionSettings(configPath, func(settings *extensions.Settings) error {
+	view, source, err := preparePluginPolicy(ctx, services.Config, func(settings *extensions.Settings) error {
 		switch action {
 		case "approve":
 			scope := extensions.GrantScopeUser
@@ -406,7 +437,25 @@ func runPluginPolicy(action string, args []string) (retErr error) {
 		}
 	})
 	if err != nil {
-		return fmt.Errorf("persist plugin policy in %s: %w", configPath, err)
+		return err
+	}
+	defer clear(view.Source)
+	defer clear(source)
+	committed, policyErr := commitPluginPolicy(ctx, services.Config, view.Revision, source)
+	if !committed {
+		return policyErr
+	}
+	if approvedUpdate != nil {
+		// Publish package bytes only after the exact fingerprint grant is known
+		// durable. Unknown CAS outcomes leave the old and pending packages intact.
+		promoted, err := pluginpkg.PromotePendingUpdate(home, item.ID, approvedUpdate.Package.Fingerprint)
+		if err != nil {
+			return errors.Join(policyErr, fmt.Errorf("plugin policy committed, but pending update promotion failed: %w", err))
+		}
+		item = promoted.Plugin
+	}
+	if policyErr != nil {
+		return policyErr
 	}
 	output := pluginPackageOutput{
 		ID:                   item.ID,
@@ -419,6 +468,47 @@ func runPluginPolicy(action string, args []string) (retErr error) {
 		PolicyAction:         action,
 	}
 	return printPluginPackageOutput(output, *jsonOutput, "Updated plugin policy")
+}
+
+func preparePluginPolicy(ctx context.Context, client *config.Client, update func(*extensions.Settings) error) (config.SourceView, []byte, error) {
+	view, err := client.Read(ctx)
+	if err != nil {
+		return config.SourceView{}, nil, fmt.Errorf("read selected plugin policy: %w", err)
+	}
+	source := view.Source
+	if len(source) == 0 {
+		// Empty source still has the selected provider's validated defaults.
+		source, err = json.Marshal(view.Config)
+		if err != nil {
+			return config.SourceView{}, nil, fmt.Errorf("prepare initial selected plugin policy: %w", err)
+		}
+		defer clear(source)
+	}
+	next, _, err := config.UpdateExtensionSettingsSource(source, update)
+	if err != nil {
+		clear(view.Source)
+		return config.SourceView{}, nil, fmt.Errorf("prepare selected plugin policy: %w", err)
+	}
+	return view, next, nil
+}
+
+func commitPluginPolicy(ctx context.Context, client *config.Client, revision string, source []byte) (bool, error) {
+	result, err := client.CompareExchange(ctx, revision, source)
+	defer clear(result.Source)
+	if err != nil {
+		var serviceErr *pluginhost.HostServiceError
+		if errors.As(err, &serviceErr) && serviceErr.Code == "config_conflict" {
+			return false, fmt.Errorf("persist selected plugin policy: configuration changed; reread before retry: %w", err)
+		}
+		return false, fmt.Errorf("persist selected plugin policy: write outcome may be unknown; reconcile before retry: %w", err)
+	}
+	if !result.Committed {
+		return false, errors.New("selected plugin policy write outcome is unknown: provider did not confirm commit; reconcile before retry")
+	}
+	if result.ActivationError != "" {
+		return true, fmt.Errorf("plugin policy committed, but activation failed: %s", result.ActivationError)
+	}
+	return true, nil
 }
 
 func beginPluginCLIMutation(wuuHome, action string) (func() error, error) {
