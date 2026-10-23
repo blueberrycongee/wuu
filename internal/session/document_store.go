@@ -90,6 +90,16 @@ func putSessionDocument(tx *persistence.Tx, sess Session) error {
 		&sess.Effort, &sess.Speed, &sess.PermissionMode, &sess.EngineID, &sess.EngineRef, &sess.ToolPolicyJSON} {
 		*field = strings.TrimSpace(*field)
 	}
+	var indexVersion int
+	indexExists, err := tx.Get(documentNamespace("session_indexes"), "listing", &indexVersion)
+	if err != nil {
+		return err
+	}
+	if indexExists {
+		if err := checkSessionIndexVersion(indexVersion); err != nil {
+			return err
+		}
+	}
 	prior, found, err := getSessionDocument(tx, sess.ID)
 	if err != nil {
 		return err
@@ -104,7 +114,7 @@ func putSessionDocument(tx *persistence.Tx, sess Session) error {
 			return err
 		}
 		if len(existing) == 0 {
-			if err := tx.Put(documentNamespace("session_indexes"), "listing", 1); err != nil {
+			if err := tx.Put(documentNamespace("session_indexes"), "listing", sessionListingIndexVersion); err != nil {
 				return err
 			}
 		}

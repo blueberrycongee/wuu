@@ -111,5 +111,18 @@ func TestDocumentIndexUpgradeIsExplicit(t *testing.T) {
 		if err != nil || len(listed) != 0 {
 			t.Fatalf("orphan index: %+v %v", listed, err)
 		}
+		if err := store.transaction(func(tx *persistence.Tx) error { return tx.Put(documentNamespace("session_indexes"), "listing", 2) }); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.RebuildSessionIndexes(); !errors.Is(err, persistence.ErrMigrationRequired) {
+			t.Fatalf("unknown index version downgraded: %v", err)
+		}
+		if _, err := store.Create("new-session"); !errors.Is(err, persistence.ErrMigrationRequired) {
+			t.Fatalf("write downgraded unknown index: %v", err)
+		}
+		if _, err := store.ListPage(SessionListQuery{Limit: 1, Cursor: &SessionListCursor{}}); !errors.Is(err, persistence.ErrInvalid) {
+			t.Fatalf("malformed cursor: %v", err)
+		}
+
 	})
 }

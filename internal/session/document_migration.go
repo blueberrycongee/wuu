@@ -417,7 +417,7 @@ func (c *legacySessionConversion) finish() error {
 			}
 		}
 	}
-	if err := c.put("session_indexes", "listing", 1); err != nil {
+	if err := c.put("session_indexes", "listing", sessionListingIndexVersion); err != nil {
 		return err
 	}
 	for id, retractions := range c.retractions {

@@ -9,6 +9,15 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
+const sessionListingIndexVersion = 1
+
+func checkSessionIndexVersion(version int) error {
+	if version != sessionListingIndexVersion {
+		return fmt.Errorf("%w: unsupported session listing index version %d", persistence.ErrMigrationRequired, version)
+	}
+	return nil
+}
+
 // SessionListCursor pins a page to the selected provider revision. Any write
 // invalidates it; callers restart the list rather than silently mixing pages.
 type SessionListCursor struct {
@@ -44,8 +53,8 @@ func (s *Store) RebuildSessionIndexes() error {
 		if err != nil {
 			return err
 		}
-		if found && version == 1 {
-			return nil
+		if found {
+			return checkSessionIndexVersion(version)
 		}
 		if err := deleteDocumentPrefix(tx, "session_order", ""); err != nil {
 			return err
@@ -59,7 +68,7 @@ func (s *Store) RebuildSessionIndexes() error {
 				return err
 			}
 		}
-		return tx.Put(documentNamespace("session_indexes"), "listing", 1)
+		return tx.Put(documentNamespace("session_indexes"), "listing", sessionListingIndexVersion)
 	})
 }
 
@@ -77,6 +86,9 @@ func sessionListMatches(cwd, workspaceID string) func(Session) bool {
 }
 
 func (s *Store) ListPage(query SessionListQuery) (SessionListPage, error) {
+	if query.Cursor != nil && query.Cursor.Key == "" {
+		return SessionListPage{}, fmt.Errorf("%w: session page cursor key is required", persistence.ErrInvalid)
+	}
 	if query.Limit < 1 || query.Limit > persistence.MaxReadLimit {
 		return SessionListPage{}, fmt.Errorf("%w: session page limit must be 1..%d", persistence.ErrInvalid, persistence.MaxReadLimit)
 	}
@@ -112,8 +124,8 @@ func (s *Store) readSessionListPage(limit int, cursor *SessionListCursor, matche
 	if err := json.Unmarshal(version.Documents[0].Value, &indexVersion); err != nil {
 		return result, err
 	}
-	if indexVersion != 1 {
-		return result, fmt.Errorf("%w: unsupported session listing index", persistence.ErrMigrationRequired)
+	if err := checkSessionIndexVersion(indexVersion); err != nil {
+		return result, err
 	}
 	query := persistence.Query{Namespace: documentNamespace("session_order"), Reverse: true, Limit: min(limit, 256), AtRevision: &version.Revision}
 	if cursor != nil {
