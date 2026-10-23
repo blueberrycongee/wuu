@@ -52,6 +52,7 @@ class PersonalFixtureActivity : ComponentActivity() {
             keyboard?.show()
         }
     }
+    PersonalMessageActionsHost(context = "fixture", reply = { quote -> value += "> " + quote + "\n\n" }) {
     Scaffold(topBar = {
         CenterAlignedTopAppBar(title = {
             TextButton(onClick = {}) { PersonalIdentityTitle("twin", "就绪", false) }
@@ -71,10 +72,10 @@ class PersonalFixtureActivity : ComponentActivity() {
     }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            item { PersonalMessageBubble("今天想先推进哪件事？我可以帮你整理步骤，也可以继续上次的工作。", false) }
-            item { PersonalMessageBubble("把移动端 Twin 的聊天页对齐桌面端，并保留附件和活动入口。", true) }
+            item { PersonalMessageBubble("今天想先推进哪件事？我可以帮你整理步骤，也可以继续上次的工作。", false, messageID = 1) }
+            item { PersonalMessageBubble("把移动端 Twin 的聊天页对齐桌面端，并保留附件和活动入口。", true, messageID = 2) }
             item {
-                PersonalMessageBubble("我会先完成界面壳层：\n\n- 对话与输入保持在同一页\n- 活动从右上角进入\n- 键盘出现时输入区随安全区上移", false) {
+                PersonalMessageBubble("我会先完成界面壳层：\n\n- 对话与输入保持在同一页\n- 活动从右上角进入\n- 键盘出现时输入区随安全区上移", false, messageID = 3) {
                     FilledTonalButton(onClick = {}) {
                         Icon(Icons.Default.Description, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -83,6 +84,7 @@ class PersonalFixtureActivity : ComponentActivity() {
                 }
             }
         }
+    }
     }
 }
 

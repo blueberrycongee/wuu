@@ -70,7 +70,11 @@ struct RootView: View {
     }
     @ViewBuilder private var fixture: some View {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--native-composer-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--native-personal-fixture") {
+            PersonalUIFixtureView()
+                .frame(width: ProcessInfo.processInfo.arguments.contains("--native-menu-narrow") ? 280 : nil)
+                .preferredColorScheme(ProcessInfo.processInfo.arguments.contains("--native-menu-dark") ? .dark : nil)
+        } else if ProcessInfo.processInfo.arguments.contains("--native-composer-fixture") {
             ConversationView(model: model, drafts: drafts)
                 .task {
                     let arguments = ProcessInfo.processInfo.arguments

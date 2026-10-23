@@ -288,6 +288,9 @@ struct PersonalView: View {
             }
             .toolbar(.hidden, for: .navigationBar)
         }
+        .modifier(PersonalMessageActionsHost(context: "\(personal.contextID)-\(activityPresented)-\(personal.active)", reply: personal.canSend && !personal.hasPending ? { quote in
+            personal.text += (personal.text.isEmpty ? "" : "\n\n") + quote.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
+        } : nil))
         .task(id: personal.active && personal.available) {
             guard personal.active, personal.available else { return }
             while !Task.isCancelled {

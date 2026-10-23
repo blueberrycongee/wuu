@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add native Personal message menus for copying, text selection, and plain-text quotation, with bounded previews and reduced-motion support. Formal reply bindings and reactions remain unavailable in these menus.
+
 - Add Personal interactive answer forms with durable submission receipts and read-only Google Calendar connection settings. Calendar remains unavailable until configured; Personal action review remains unavailable pending its production policy and authorization adapters.
 
 - Add experimental Personal agents with persistent conversations, attributed shared memory, background tasks, attachment history, reminders, and desktop/native entry points. Personal now defaults to logical memory-domain isolation with explicit capability reporting. Verified host isolation remains an optional, fail-closed embedding mode; same-OS Shell confidentiality is not promised.

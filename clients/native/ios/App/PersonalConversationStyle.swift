@@ -160,13 +160,8 @@ struct PersonalMessageRow: View {
                     .disabled(!attachmentsEnabled || attachment["name"].string == nil)
                 }
                 if !content.isEmpty {
-                    MessageText(text: content, markdown: !user)
-                        .foregroundStyle(user ? Color.white : Color.primary)
-                        .tint(user ? Color.white : personalAccent)
-                        .padding(.horizontal, user ? 16 : 0)
-                        .padding(.vertical, user ? 10 : 0)
-                        .background(user ? personalAccent : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    PersonalMessageBody(text: content, user: user)
+                        .modifier(PersonalMessageInteraction(id: Int(record["seq"].number ?? 0), text: content, user: user))
                 }
             }
             .accessibilityElement(children: .contain)
@@ -260,16 +255,34 @@ struct PersonalComposer: View {
 #if DEBUG
 /// A local, account-free acceptance surface for simulator screenshots.
 struct PersonalUIFixtureView: View {
+    @State private var fixtureContext = "fixture"
+    @State private var fixtureNarrow = false
     @State private var text = ""
     @State private var keyboardText = ""
     @State private var attachments: [InputAttachment] = []
     @State private var model = AppModel()
     @FocusState private var keyboardPresented: Bool
-    private let messages: [JSONValue] = [
+    private var messages: [JSONValue] {
+        if ProcessInfo.processInfo.arguments.contains("--native-menu-motion") {
+            return [
+                ["seq": 1, "role": "user", "content": "请用合成数据演示手机消息操作。"],
+                ["seq": 4, "role": "assistant", "content": "这是一组仅用于界面验收的对话。\n\n前面的消息仍然保留在原位置，打开操作菜单不会改变历史记录的滚动位置。\n\n下面的消息比较长，可以观察它从原来的位置抬升，并确认前后文字换行一致。\n\n关闭后，消息回到原处，后面的内容也不应该跳动。\n\n我们还会检查屏幕底部的消息，确保操作菜单不会挡住系统安全区域。\n\n键盘打开时，可用的高度会变小。长消息应在预览内部滚动，历史保持原位。\n\n字体和颜色跟随当前系统设置，减少动态效果时取消大幅度位移。\n\n这里的前置内容只为把目标消息放到屏幕下方，不会改变正式页面的布局。\n\n下面开始查看目标消息。"],
+                ["seq": 2, "role": "assistant", "content": "今晚先把两件事情做好：检查消息布局，再验证长按动效。\n\n消息抬起时，文字应保持原来的宽度和换行。背景会先变暗，菜单随后平稳出现。\n\n复制和选择文本使用本机能力。引用文本会把内容放进输入框，不会创建正式回复链。\n\n这段内容只用于模拟器验收，不会发送到任何服务。"],
+                ["seq": 3, "role": "user", "content": "收到，继续检查关闭和重复操作。"]
+            ]
+        }
+        if ProcessInfo.processInfo.arguments.contains("--native-long-menu-fixture") {
+            return [
+                ["seq": 1, "role": "user", "content": "请整理这份合成验收说明。"],
+                ["seq": 2, "role": "assistant", "content": .string(Array(repeating: "这是一段仅用于界面验收的合成文本。保持原来的文字换行，菜单打开时历史不移动。", count: 35).joined(separator: "\n\n"))]
+            ]
+        }
+        return [
         ["seq": 1, "role": "user", "content": "帮我把今天剩下的事情理清楚，先从最重要的一件开始。"],
         ["seq": 2, "role": "assistant", "content": "可以。先把**必须今天完成**的事情发给我，我会替你排出顺序，也会把可以推迟的部分单独放好。"],
         ["seq": 3, "role": "user", "content": "先准备明早的产品评审，再提醒我晚上给家里回电话。"]
     ]
+    }
     var body: some View {
         VStack(spacing: 0) {
             PersonalConversationHeader(agents: [.init(id: "twin", name: "twin")], name: "twin", status: "已就绪",
@@ -286,14 +299,24 @@ struct PersonalUIFixtureView: View {
             PersonalComposer(text: $text, attachments: $attachments, model: model, composerID: UUID(), available: true,
                 enabled: true, sending: false, pending: false, onSend: {}, onDiscard: {})
         }
+        .modifier(PersonalMessageActionsHost(context: fixtureContext, reply: { quote in
+            text += (text.isEmpty ? "" : "\n\n") + quote.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n") + "\n\n"
+        }))
         .overlay {
             TextField("", text: $keyboardText)
                 .frame(width: 1, height: 1).opacity(0.01)
                 .focused($keyboardPresented)
                 .accessibilityHidden(true)
         }
+        .frame(width: fixtureNarrow ? 280 : nil)
         .task {
-            if ProcessInfo.processInfo.arguments.contains("--native-keyboard-fixture") { keyboardPresented = true }
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("--native-keyboard-fixture") { keyboardPresented = true }
+            if arguments.contains("--native-menu-context-change") || arguments.contains("--native-menu-resize") {
+                do { try await Task.sleep(for: .milliseconds(1400)) } catch { return }
+                if arguments.contains("--native-menu-context-change") { fixtureContext = "fixture-next" }
+                if arguments.contains("--native-menu-resize") { fixtureNarrow = true }
+            }
         }
     }
 }

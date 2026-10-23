@@ -1,6 +1,12 @@
 package ai.wuu.nativeapp
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -303,6 +309,9 @@ private fun personalAgentLabel(agent: JSONObject?): String {
         val index = personal.records.indexOfFirst { it.optLong("seq") == personal.messageSequence }
         if (index >= 0) list.scrollToItem(index + (if (personal.hasEarlier) 1 else 0) + (if (personal.messageSequence != null) 1 else 0))
     }
+    PersonalMessageActionsHost(context = "${personal.contextID}-$section-${personal.active}-$activityOpen", reply = if (personal.canSend && !personal.hasPending) { quote ->
+        personal.text += (if (personal.text.isBlank()) "" else "\n\n") + quote.lines().joinToString("\n") { "> $it" } + "\n\n"
+    } else null) {
     Scaffold(topBar = { CenterAlignedTopAppBar(title = {
         Box {
             TextButton(onClick = { agentsOpen = true }, enabled = !personal.busy && personal.agents.isNotEmpty()) {
@@ -410,6 +419,7 @@ private fun personalAgentLabel(agent: JSONObject?): String {
             }
         }
     }
+    }
     editingTask?.let { snapshot -> AlertDialog(onDismissRequest = { editingTask = null }, title = { Text(snapshot.optString("title", "更新事项")) }, text = {
         Column { if (taskAction == PersonalTaskAction.UPDATE) OutlinedTextField(taskGoal, { taskGoal = it }, label = { Text("新的事项要求") }, minLines = 3)
             Text(if (taskAction == PersonalTaskAction.STOP) "请求停止后台事项。远端已开始的操作可能仍需核对，状态以宿主返回为准。" else "会提交当前显示版本的修改；版本冲突时请刷新后重新审阅。") }
@@ -489,17 +499,23 @@ private fun personalStatusText(personal: PersonalModel): String = when {
 
 @Composable private fun PersonalMessageRow(model: AppModel, record: JSONObject) {
     val user = record.optString("role") == "user"
-    PersonalMessageBubble(record.optString("content"), user) { PersonalAttachmentButtons(model, record, user = user) }
+    PersonalMessageBubble(record.optString("display_content").ifEmpty { record.optString("content") }, user, messageID = record.getLong("seq")) { PersonalAttachmentButtons(model, record, user = user) }
 }
 
-@Composable internal fun PersonalMessageBubble(content: String, user: Boolean, attachments: @Composable () -> Unit = {}) {
+@OptIn(ExperimentalFoundationApi::class)
+@Composable internal fun PersonalMessageBubble(content: String, user: Boolean, messageID: Long, attachments: @Composable () -> Unit = {}) {
+    val actions = LocalPersonalMessageActions.current
+    var bounds by remember { mutableStateOf(Rect.Zero) }
+    val open = { actions?.open(PersonalMessageSelection(messageID, content, user, bounds)); Unit }
     Box(Modifier.fillMaxWidth(), contentAlignment = if (user) Alignment.CenterEnd else Alignment.CenterStart) {
-        Surface(modifier = Modifier.widthIn(max = 320.dp), shape = RoundedCornerShape(18.dp),
-            color = if (user) personalAccent else Color.Transparent, contentColor = if (user) Color.White else MaterialTheme.colorScheme.onSurface) {
-            Column(Modifier.padding(horizontal = if (user) 14.dp else 0.dp, vertical = if (user) 10.dp else 0.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (content.isNotEmpty()) MessageText(content, !user)
-                attachments()
+        Column(Modifier.widthIn(max = 320.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (content.isNotEmpty()) Surface(modifier = Modifier.onGloballyPositioned { bounds = it.boundsInWindow() }
+                .graphicsLayer { alpha = if (actions?.selected?.id == messageID) 0f else 1f }
+                .combinedClickable(onClick = {}, onLongClickLabel = "消息操作", onLongClick = open), shape = RoundedCornerShape(18.dp),
+                color = if (user) personalAccent else Color.Transparent, contentColor = if (user) Color.White else MaterialTheme.colorScheme.onSurface) {
+                PersonalMessageText(content, user, onLongClick = open)
             }
+            attachments()
         }
     }
 }
