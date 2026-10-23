@@ -1308,7 +1308,10 @@ function updateThreadByID(
       ...patch,
       thread: primaryActive ? thread : state.thread,
       secondaryThread: secondaryActive ? thread : state.secondaryThread,
-      threads: upsertThread(state.threads, thread),
+      // Explicit updates, including title rollback, must reach every projection.
+      // Incoming snapshots reconcile their titles before entering this callback.
+      threads: replaceThreadPreservingOrder(state.threads, thread)
+        ?? sortThreads([...state.threads.filter((item) => item.id !== thread.id), thread]),
       sessionTabs: syncThreadSessionTabTitle(state.sessionTabs, thread),
     };
   }
