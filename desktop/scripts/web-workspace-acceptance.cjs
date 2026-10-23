@@ -316,9 +316,36 @@ async function runWebsiteAcceptance(h, fixture) {
       }), 'Native hover rail acknowledges pointer leave and finishes motion', 4000);
   }
   async function hoverTab(id) {
+    assert.equal(await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true'), false, 'Pointer-only hover starts with a compact rail');
+    const before = await evaluate(() => document.querySelector('.sidebar-ribbon').getBoundingClientRect().toJSON());
+    const focused = webContents.getFocusedWebContents()?.id;
     const p = await chromePoint(tabButton(id)), outer = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
     xinput(['mousemove', String(Math.round(outer.x + 26 * zoom)), String(Math.round(outer.y + p.y * zoom))]);
+    await waitFor(selector => document.querySelector(selector)?.matches(':hover'), tabButton(id));
+    await settle();
+    assert.equal(await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true'), false, 'Pointer hover keeps the rail compact');
+    assert.ok(!chromeView('ribbon')?.getVisible(), 'Pointer hover does not open native ribbon chrome');
+    assert.deepEqual(await evaluate(() => document.querySelector('.sidebar-ribbon').getBoundingClientRect().toJSON()), before, 'Pointer hover does not move or resize the compact rail');
+    assert.equal(webContents.getFocusedWebContents()?.id, focused, 'Pointer hover preserves native keyboard ownership');
+  }
+  async function expandTabRail(id) {
+    if (!await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true')) {
+      // Hover intentionally keeps the rail compact. Enter from the visible
+      // browser input with real keyboard traversal, without selecting a tab.
+      if (await evaluate(selector => document.querySelector(selector)?.getBoundingClientRect().width > 0, startInput)) {
+        await click(startInput, 'anchor-ribbon-keyboard-in-new-tab', false);
+      } else await focusAddress('anchor-ribbon-keyboard-in-address');
+      await until(() => win.webContents.isFocused(), 'Browser input owns native keyboard focus before entering the rail');
+      const stops = await evaluate(() => [...document.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')]
+        .filter(node => node.tabIndex >= 0 && !node.disabled && node.getBoundingClientRect().width > 0).length);
+      for (let step = 0; step < stops; step++) {
+        xinput(['key', '--clearmodifiers', 'shift+Tab']);
+        await settle();
+        if (await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true')) break;
+      }
+    }
     await waitFor(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true');
+    const zoom = win.webContents.getZoomFactor();
     await until(() => chromeView('ribbon')?.getVisible(), 'Native expanded ribbon paints');
     await until(async () => {
       const shell = await evaluate(() => {
@@ -336,8 +363,11 @@ async function runWebsiteAcceptance(h, fixture) {
         if (!node || node.disabled || Math.abs(innerWidth - width) > 1) return false;
         const rect = node.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0 && node.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
-      }, { selector: tabButton(id), width: view.getBounds().width / view.webContents.getZoomFactor() }, 'hoverTab native reveal readiness');
-    }, 'Native hover reveal reaches the click targets');
+      }, { selector: tabButton(id), width: view.getBounds().width / view.webContents.getZoomFactor() }, 'expandTabRail native reveal readiness');
+    }, 'Native keyboard reveal reaches the click targets');
+    const p = await chromePoint(tabButton(id)), outer = win.getContentBounds();
+    xinput(['mousemove', String(Math.round(outer.x + p.x * zoom)), String(Math.round(outer.y + p.y * zoom))]);
+    await until(() => evaluateRibbon(selector => document.querySelector(selector)?.matches(':hover'), tabButton(id)), 'Native expanded rail acknowledges the pointer target');
   }
   async function finishRailInteraction(wc, label) {
     await leaveRail(false);
@@ -640,6 +670,7 @@ async function runWebsiteAcceptance(h, fixture) {
           if (mode === 'keyboard') xinput(['key', '--clearmodifiers', 'ctrl+Tab']);
           else {
             const before = win.contentView.children.find(view => view.webContents === current).getBounds();
+            await expandTabRail(alphaID);
             await click(tabButton(alphaID), 'pointer-switch-loaded-tab', false, true);
             await verticalTabGeometry(true);
             await liveChrome('ribbon', incoming.webContents, 'hovered incoming tab');
@@ -751,7 +782,7 @@ async function runWebsiteAcceptance(h, fixture) {
     report.actions.push({ label: `${label}-live-popover`, contentsID: layer.view.webContents.id, pageID: wc.id, bounds, clip: layer.top.getBounds(), atMs: Date.now() - started }); save();
   }
   async function profileMenu(label, wc) {
-    if (label === 'narrow-new-tab') await hoverTab((await readSite()).activeTabId);
+    if (label === 'narrow-new-tab') await expandTabRail((await readSite()).activeTabId);
     if (label === 'narrow-new-tab') {
       const alignment = await evaluateRibbon(() => {
         const center = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return r.x + r.width / 2; };
@@ -831,7 +862,7 @@ async function runWebsiteAcceptance(h, fixture) {
     await until(() => nativeView(pathname)?.getVisible() && !nativeView(pathname).webContents.isLoading(), `native address navigation ${pathname}`);
   }
   async function tabMenu(id, label) {
-    await hoverTab(id);
+    await expandTabRail(id);
     const p = await chromePoint(tabButton(id)), bounds = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
     const wc = chromeView('ribbon').webContents, trace = { label, id, point: p, commands: [] };
     const observe = (event, message) => {
@@ -862,7 +893,7 @@ async function runWebsiteAcceptance(h, fixture) {
     const index = before.tabs.findIndex(tab => tab.id === id);
     const remaining = before.tabs.filter(tab => tab.id !== id);
     const expected = remaining[Math.min(index, remaining.length - 1)]?.id ?? '';
-    await hoverTab(id);
+    await expandTabRail(id);
     await click(`.sidebar-ribbon-close[data-ribbon-close-id="${id}"]`, label);
     await until(async () => !(await readSite()).tabs.some(tab => tab.id === id), 'Direct close button removes the web tab from the ribbon');
     await until(async () => (await readSite()).activeTabId === expected, 'Closing the active left tab selects its adjacent surviving tab');
@@ -1133,11 +1164,14 @@ async function runWebsiteAcceptance(h, fixture) {
       const viewportBefore = await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})');
       const focusBeforeHover = nativeView('/alpha').webContents.isFocused();
       await hoverTab(siteIDs.get('Fixture Beta'));
-      vertical.expanded = await verticalTabGeometry(true);
-      await liveChrome('ribbon', nativeView('/alpha').webContents, 'hover rail');
       assert.equal(nativeView('/alpha').webContents.isFocused(), focusBeforeHover, 'Pointer hover preserves existing native keyboard focus');
-      assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Hover expansion does not resize the native website');
-      assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Hover expansion leaves the page viewport unchanged');
+      assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Compact hover does not resize the native website');
+      assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Compact hover leaves the page viewport unchanged');
+      await expandTabRail(siteIDs.get('Fixture Beta'));
+      vertical.expanded = await verticalTabGeometry(true);
+      await liveChrome('ribbon', nativeView('/alpha').webContents, 'keyboard-opened rail');
+      assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Keyboard expansion does not resize the native website');
+      assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Keyboard expansion leaves the page viewport unchanged');
       await until(() => evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, siteIDs.get('Fixture Beta')), 'Hovered native tab exposes its close control after its reveal transition', 4000);
       await capture('vertical-left-tabs-with-hover-close');
       await leaveRail();
@@ -1161,9 +1195,9 @@ async function runWebsiteAcceptance(h, fixture) {
   });
 
   independentFixtures = true;
-  await testNative('hover ribbon stays open across website and app destinations', async () => {
+  await testNative('keyboard-opened ribbon stays open across website and app destinations', async () => {
     await openSite('Fixture Alpha', '/alpha');
-    await hoverTab(alphaID);
+    await expandTabRail(alphaID);
     const retainedRibbon = chromeView('ribbon');
     const width = retainedRibbon.getBounds().width;
     const trace = report.hoverRibbonSelectionTrace = { commands: [], forwarded: [], models: [], nativeInput: [] };
@@ -1641,7 +1675,7 @@ async function runWebsiteAcceptance(h, fixture) {
     xinput(['key', 'Home', 'key', 'Return']);
     await waitFor(id => { const button = document.querySelector(`[data-ribbon-id="${id}"]`); return button && button.dataset.pinned !== 'true'; }, alphaID);
     assert.equal((await readSite()).activeTabId, siteIDs.get('Fixture Beta'), 'Unpinning a background tab preserves the active Beta tab');
-    await hoverTab(alphaID);
+    await expandTabRail(alphaID);
     try {
       await until(() => evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, alphaID), 'Native background close control settles before clicking', 4000);
     } catch (error) {
@@ -1844,7 +1878,10 @@ async function runWebsiteAcceptance(h, fixture) {
             await hoverTab(site.tabID);
             assert.ok(await publicSurface(site, wc), 'Rail hover preserves the public page or navigation error');
             assert.deepEqual(view.getBounds(), bounds, 'Rail hover does not resize the public page');
-            await capture(`public-${site.name}-hover-rail`);
+            await expandTabRail(site.tabID);
+            assert.ok(await publicSurface(site, wc), 'Keyboard-opened rail preserves the public page or navigation error');
+            assert.deepEqual(view.getBounds(), bounds, 'Keyboard-opened rail does not resize the public page');
+            await capture(`public-${site.name}-keyboard-opened-rail`);
             await finishRailInteraction(null, `public-${site.name}-hover`);
             const popup = Menu.prototype.popup;
             Menu.prototype.popup = function (...args) { visit.menu = this.items.map(item => ({ label: item.label, enabled: item.enabled })); return popup.apply(this, args); };
