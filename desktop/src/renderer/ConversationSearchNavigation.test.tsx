@@ -1,9 +1,10 @@
-import { act, useState } from "react";
+import { act, useSyncExternalStore } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { Thread, ThreadItem } from "../shared/protocol";
-import { initialState, type AppState } from "./AppState";
+import { initialState } from "./AppState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
+import { ApplicationController } from "./plugins/ApplicationController";
 
 const { jump, cancelJump, unscopedJump, showErrorToast } = vi.hoisted(() => {
   const cancelJump = vi.fn();
@@ -18,7 +19,7 @@ afterEach(() => {
   Reflect.deleteProperty(window, "wuu");
 });
 
-function setup(items?: ThreadItem[]) {
+function setup(items?: ThreadItem[], options?: { deferActivation?: boolean; startElsewhere?: boolean }) {
   vi.useFakeTimers();
   const item: ThreadItem = {
     id: "answer", seq: 7, type: "agent_message", text: "Leading preview",
@@ -33,27 +34,83 @@ function setup(items?: ThreadItem[]) {
   const pending: { resolve: (item: ThreadItem) => void; reject: (error: Error) => void }[] = [];
   const read = vi.fn(() => new Promise<ThreadItem>((resolve, reject) => pending.push({ resolve, reject })));
   window.wuu = { readRemoteItem: read } as unknown as typeof window.wuu;
+  const activation: Array<() => void> = [];
+  const application = new ApplicationController({ ...initialState, thread: options?.startElsewhere ? { ...thread, id: "source" } : thread, threads: [thread] });
   let navigate: ReturnType<typeof useConversationSearchNavigation>;
-  let setState: React.Dispatch<React.SetStateAction<AppState>>;
-  let state: AppState;
+  let generation = 0;
+  let readingIntent = 0;
   function Harness() {
-    [state, setState] = useState<AppState>({ ...initialState, thread, threads: [thread] });
-    navigate = useConversationSearchNavigation({
-      thread: state.thread, switching: false, activateThread: async () => {},
-      captureConversationScrollIntent: () => () => true, jumpToConversationMessage: jump, setAppState: setState,
-    });
+    const state = useSyncExternalStore(application.subscribeState, application.getState);
+    const props = {
+      thread: state.thread, target: state.conversationSearchTarget, switching: false,
+      activateThread: () => options?.deferActivation ? new Promise<void>(resolve => activation.push(resolve)) : Promise.resolve(),
+      captureConversationScrollIntent: () => { const captured = readingIntent; return () => captured === readingIntent; },
+      jumpToConversationMessage: jump, setAppState: application.updateState,
+    };
+    navigate = useConversationSearchNavigation(props);
     return null;
   }
   root = createRoot(document.createElement("div"));
   act(() => root.render(<Harness />));
   return {
-    item, thread, read, pending,
-    get state() { return state; },
-    select: () => act(async () => navigate({ thread, message_seq: 7, snippet: "late needle" }, "late needle")),
-    leave: () => act(() => setState(current => ({ ...current, thread: { ...thread, id: "other" } }))),
-    install: (thread: Thread) => setState(current => ({ ...current, thread })),
+    item, thread, read, pending, activation,
+    get state() { return application.getState(); },
+    select: (query = "late needle") => act(async () => navigate({ thread, message_seq: 7, snippet: query }, query)),
+    leave: () => act(() => { readingIntent++; application.updateState(current => ({ ...current, thread: { ...thread, id: "other" } })); }),
+    install: (thread: Thread) => application.updateState(current => ({ ...current, thread })),
+    remount: () => act(() => root.render(<Harness key={++generation} />)),
+    readerInput: () => { readingIntent++; },
   };
 }
+
+it("retains a cross-workspace search through shell remount, paging and full-content hydration", async () => {
+  const h = setup([{ id: "tool", type: "tool_call", seq: 7, name: "read_file" }], { deferActivation: true, startElsewhere: true });
+  window.wuu.loadEarlierThreadHistory = vi.fn(async () => h.install({
+    ...h.thread, history_cursor: undefined, turns: [{ ...h.thread.turns[0], items: [h.item] }],
+  }));
+  await h.select();
+  h.remount();
+  await act(async () => { h.install(h.thread); h.activation[0](); });
+  expect(window.wuu.loadEarlierThreadHistory).toHaveBeenCalledExactlyOnceWith("history", "earlier-items");
+  expect(h.read).toHaveBeenCalledExactlyOnceWith("content:old-answer");
+  expect(jump).not.toHaveBeenCalled();
+  const full = { ...h.item, remote_content_ref: undefined, text: "Leading preview\n" + "context ".repeat(10000) + "late needle" };
+  await act(async () => h.pending[0].resolve(full));
+  expect(jump).toHaveBeenCalledExactlyOnceWith("old-turn", full, "late needle");
+  h.remount();
+  expect(jump).toHaveBeenCalledOnce();
+});
+
+it("resumes hydration in the new shell without accepting the disposed shell's response", async () => {
+  const h = setup(); await h.select(); h.remount();
+  expect(h.read).toHaveBeenCalledTimes(2);
+  await act(async () => h.pending[0].resolve({ ...h.item, remote_content_ref: undefined, text: "obsolete late needle" }));
+  expect(h.state.thread?.turns[0].items[0]).toEqual(h.item);
+  expect(jump).not.toHaveBeenCalled();
+  const full = { ...h.item, remote_content_ref: undefined, text: "current late needle" };
+  await act(async () => h.pending[1].resolve(full));
+  expect(jump).toHaveBeenCalledExactlyOnceWith("old-turn", full, "late needle");
+});
+
+it("cannot revive an older activation after a new search is selected in the replacement shell", async () => {
+  const h = setup(undefined, { deferActivation: true });
+  await h.select(); h.remount(); await h.select("new needle");
+  await act(async () => h.activation[0]());
+  expect(h.read).not.toHaveBeenCalled();
+  await act(async () => h.activation[1]());
+  const full = { ...h.item, remote_content_ref: undefined, text: "new needle" };
+  await act(async () => h.pending[0].resolve(full));
+  expect(jump).toHaveBeenCalledExactlyOnceWith("old-turn", full, "new needle");
+});
+
+it("does not revive a search after newer reader input rejected its late content", async () => {
+  const h = setup(); await h.select(); h.readerInput();
+  await act(async () => h.pending[0].resolve({ ...h.item, remote_content_ref: undefined, text: "late needle" }));
+  h.remount();
+  expect(h.read).toHaveBeenCalledOnce();
+  expect(h.state.thread?.turns[0].items[0]).toEqual(h.item);
+  expect(jump).not.toHaveBeenCalled();
+});
 
 it("hydrates an addressed preview before matching and revealing the full historical message", async () => {
   const h = setup();

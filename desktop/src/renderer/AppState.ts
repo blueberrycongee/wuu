@@ -12,6 +12,7 @@ import type {
   ServerEvent,
   Thread,
   ThreadItem,
+  ThreadSearchResultItem,
   Turn,
 } from "../shared/protocol";
 import {
@@ -137,6 +138,8 @@ type AppState = {
   nativeSection?: "conversations" | "catalog";
   catalogSection?: "plugins" | "skills";
   catalogPluginID?: string;
+  // Pending search addresses survive shell replacement during workspace activation.
+  conversationSearchTarget?: { id: string; result: ThreadSearchResultItem; query: string; ready: boolean };
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProjectId?: string;

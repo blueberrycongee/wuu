@@ -3857,6 +3857,7 @@ export function App({ application: providedApplication }: { application?: Applic
 
   const openSearchResult = useConversationSearchNavigation({
     thread: activeThread,
+    target: state.conversationSearchTarget,
     switching: viewSwitchPending,
     activateThread,
     captureConversationScrollIntent,

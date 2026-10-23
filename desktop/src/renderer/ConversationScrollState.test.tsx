@@ -1,4 +1,4 @@
-import { act, createElement, type ReactNode } from "react";
+import { act, createElement, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -11,6 +11,7 @@ import {
 } from "./WindowResizeState";
 import type { Thread, ThreadItem, Turn } from "../shared/protocol";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
+import { initialState } from "./AppState";
 
 function makeLongTurns(): Turn[] {
   return [
@@ -798,6 +799,7 @@ describe("split conversation scroll ownership", () => {
   const nodes = new Map<string, HTMLDivElement>();
   const turns = makeLongTurns();
   function SplitProbe({ pane }: { pane: "primary" | "secondary" }): ReactNode {
+    const [searchState, setSearchState] = useState(initialState);
     current = useConversationScrollState({
       activeThreadID: pane === "primary" ? "thread-A" : "thread-B",
       primaryThreadID: "thread-A", secondaryThreadID: "thread-B",
@@ -813,10 +815,11 @@ describe("split conversation scroll ownership", () => {
       }] }],
     };
     navigate = useConversationSearchNavigation({
+      target: searchState.conversationSearchTarget,
       thread: searchThread, switching: false, activateThread: () => activation ?? Promise.resolve(),
       captureConversationScrollIntent: current.captureConversationScrollIntent,
       jumpToConversationMessage: current.jumpToConversationMessage,
-      setAppState: () => {},
+      setAppState: setSearchState,
     });
     return createElement("div", null, ...(["primary", "secondary"] as const).map((id) => createElement("div", {
       key: id, className: "conversation-split-body", "data-pane": id,
