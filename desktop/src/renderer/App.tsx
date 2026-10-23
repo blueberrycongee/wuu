@@ -4422,6 +4422,7 @@ export function App({ application: providedApplication }: { application?: Applic
 
   const { activateConversationPane, closeConversationPane } = createConversationPaneActions({
     setAppState: setState,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     moveSplitDraftToGlobalComposer,
   });
 
