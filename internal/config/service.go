@@ -45,10 +45,17 @@ type Service struct {
 	state             pluginhost.State
 	memory            *SourceView
 	initializationErr error
+	trustedProject    bool
 }
 
 func NewService(id, path, projectRoot string) *Service {
 	return &Service{id: id, path: path, project: projectRoot, state: pluginhost.StatePrepared}
+}
+
+// NewProjectService explicitly trusts the project's standalone base and its
+// complete settings layers. Only a missing primary permits the fallback file.
+func NewProjectService(id, projectRoot string) *Service {
+	return &Service{id: id, path: filepath.Join(projectRoot, localPrimaryConfig), project: projectRoot, trustedProject: true, state: pluginhost.StatePrepared}
 }
 
 // NewMemoryService selects caller-supplied embedded configuration without
@@ -141,48 +148,73 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	source, err := os.ReadFile(s.path)
-	if errors.Is(err, os.ErrNotExist) {
+	sourcePath := s.path
+	source, err := os.ReadFile(sourcePath)
+	if errors.Is(err, os.ErrNotExist) && s.trustedProject {
+		sourcePath = filepath.Join(s.project, localFallbackConfig)
+		source, err = os.ReadFile(sourcePath)
+	}
+	if errors.Is(err, os.ErrNotExist) && !s.trustedProject {
 		source, err = nil, nil
 	}
 	if err != nil {
 		return nil, configServiceError("config_unavailable", "configuration source is unavailable")
 	}
 	if replacement != nil {
-		if replacement.ExpectedRevision != sourceRevision(source) {
+		if replacement.ExpectedRevision != s.revision(sourcePath, source) {
 			return nil, configServiceError("config_conflict", "configuration changed")
 		}
-		if err := securefs.WriteFileAtomic(s.path, replacement.Source); err != nil {
+		if s.trustedProject {
+			if _, err := s.effectiveConfig(sourcePath, replacement.Source); err != nil {
+				return nil, configServiceError("invalid_params", "replacement configuration is invalid")
+			}
+		}
+		if err := securefs.WriteFileAtomic(sourcePath, replacement.Source); err != nil {
 			return nil, configServiceError("config_unavailable", "configuration write failed; it may have been applied")
 		}
 		source = replacement.Source
 	}
-	cfg, err := s.decodeSource(source)
+	cfg, err := s.effectiveConfig(sourcePath, source)
 	if err != nil {
-		code := "config_invalid"
 		if replacement != nil {
-			code = "config_committed_activation_failed"
+			return json.Marshal(SourceView{Source: source, Revision: s.revision(sourcePath, source), Committed: true, ActivationError: "project_overlay_invalid"})
 		}
-		return nil, configServiceError(code, "configuration source or project overlay is invalid")
+		return nil, configServiceError("config_invalid", "configuration source or project overlay is invalid")
 	}
-	if s.project != "" {
-		cfg, _, err = applyRestrictedProjectLayers(s.path, s.project, cfg)
-		if err == nil {
-			applyMCPJsonServers(&cfg, s.project)
-			applyDefaults(&cfg)
-			err = cfg.Validate()
-		}
-		if err != nil {
-			if replacement != nil {
-				return json.Marshal(SourceView{Source: source, Revision: sourceRevision(source), Committed: true, ActivationError: "project_overlay_invalid"})
-			}
-			return nil, configServiceError("config_invalid", "configuration project overlay is invalid")
-		}
-	}
-	return json.Marshal(SourceView{Source: source, Revision: sourceRevision(source), Config: cfg, Committed: replacement != nil})
+	return json.Marshal(SourceView{Source: source, Revision: s.revision(sourcePath, source), Config: cfg, Committed: replacement != nil})
 }
+
+func (s *Service) revision(path string, source []byte) string {
+	if !s.trustedProject {
+		return sourceRevision(source)
+	}
+	digest := sha256.New()
+	digest.Write([]byte(path))
+	digest.Write([]byte{0})
+	digest.Write(source)
+	return hex.EncodeToString(digest.Sum(nil))
+}
+
+func (s *Service) effectiveConfig(path string, source []byte) (Config, error) {
+	cfg, err := s.decodeSource(source)
+	if err != nil || s.project == "" {
+		return cfg, err
+	}
+	if s.trustedProject {
+		cfg, _, err = applySettingsLayersSource(path, source, cfg, projectSettingsLayers(s.project))
+	} else {
+		cfg, _, err = applyRestrictedProjectLayers(path, s.project, cfg)
+	}
+	if err != nil {
+		return Config{}, err
+	}
+	applyMCPJsonServers(&cfg, s.project)
+	applyDefaults(&cfg)
+	return cfg, cfg.Validate()
+}
+
 func (s *Service) decodeSource(source []byte) (Config, error) {
-	if len(source) == 0 {
+	if len(source) == 0 && !s.trustedProject {
 		return Default(), nil
 	}
 	if len(source) > maxConfigSourceBytes || !json.Valid(source) {
@@ -191,6 +223,9 @@ func (s *Service) decodeSource(source []byte) (Config, error) {
 	cfg, err := decodeConfig(source, "selected source")
 	if err != nil {
 		return Config{}, err
+	}
+	if s.trustedProject {
+		return cfg, nil
 	}
 	applyDefaults(&cfg)
 	return cfg, cfg.Validate()
