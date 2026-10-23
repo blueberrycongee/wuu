@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -20,13 +21,7 @@ type Descriptor struct {
 // Binding is the durable identity of a selected loop implementation. A new
 // default never changes an existing binding; switching requires an explicit
 // migration of its state and checkpoint.
-type Binding struct {
-	Profile         string `json:"profile"`
-	ProviderID      string `json:"provider_id"`
-	ContractVersion int    `json:"contract_version"`
-	DriverID        string `json:"driver_id"`
-	DriverVersion   string `json:"driver_version"`
-}
+type Binding = pluginprotocol.DriverBinding
 
 // AcquireFunc retains the selected provider until release is called. A nil
 // expected binding selects the configured default; a saved binding must match
@@ -89,6 +84,13 @@ type Instance interface {
 	Checkpoint() Checkpoint
 	Cancel(reason string)
 	Shutdown()
+}
+
+// BindingStore commits admission before a driver can create an instance.
+// Bind must compare an existing identity atomically and never replace it.
+type BindingStore interface {
+	LoadBinding(context.Context) (Binding, bool, error)
+	Bind(context.Context, Binding) error
 }
 
 type CheckpointStore interface {

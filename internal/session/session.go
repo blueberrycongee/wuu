@@ -345,6 +345,15 @@ func createInitialized(sessDir string, sess Session, records []HistoryRecord, se
 	if err := insertSessionTx(tx, sess); err != nil {
 		return nil, err
 	}
+	if sess.ForkedFromID != "" {
+		// A fork starts new execution state under the source implementation.
+		if _, err := tx.Exec(`INSERT INTO session_driver_bindings
+(session_id, profile, provider_id, contract_version, driver_id, driver_version)
+SELECT ?, profile, provider_id, contract_version, driver_id, driver_version
+FROM session_driver_bindings WHERE session_id = ?`, sess.ID, sess.ForkedFromID); err != nil {
+			return nil, fmt.Errorf("inherit fork driver binding: %w", err)
+		}
+	}
 	if input != nil {
 		control := Control{SessionID: sess.ID, ManagerID: sess.ParentID, Revision: 1, State: ControlActive}
 		if control.ManagerID == "" {
@@ -2052,7 +2061,7 @@ WHERE workflow_id = ''`); err != nil {
 	if err := migration.addColumnIfMissing("session_inbox", "controls_json", "TEXT NOT NULL DEFAULT '[]'"); err != nil {
 		return err
 	}
-	return nil
+	return migrateDriverBindings(db)
 }
 
 // Schema inspection is shared only within one migration. Each store open reads

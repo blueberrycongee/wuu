@@ -54,10 +54,10 @@ func (s *Session) currentDriverGatewayTable() *driverGatewayTable {
 	return s.pluginGeneration.driverGateways
 }
 
-// workerDriverResolver retains the same generation as the worker's parent.
+// driverResolver retains the selected generation through execution cleanup.
 // Root workers acquire the current generation at each execution boundary;
-// thread workers inherit their thread's retained generation.
-func (s *Session) workerDriverResolver(parent *PluginGeneration) loopdriver.AcquireFunc {
+// conversations and their workers inherit the thread's retained generation.
+func (s *Session) driverResolver(parent *PluginGeneration) loopdriver.AcquireFunc {
 	return func(ctx context.Context, expected *loopdriver.Binding) (driver loopdriver.Driver, binding loopdriver.Binding, release func(), err error) {
 		generation := parent
 		if generation == nil {
@@ -76,6 +76,9 @@ func (s *Session) workerDriverResolver(parent *PluginGeneration) loopdriver.Acqu
 			profile = "default"
 		}
 		if expected != nil {
+			if expected.Profile == "" || expected.ProviderID == "" {
+				return nil, binding, release, fmt.Errorf("legacy loop driver %s@%s lacks a provider binding; restore and explicitly migrate its original composition", expected.DriverID, expected.DriverVersion)
+			}
 			profile = expected.Profile
 		}
 		providerID := ""
@@ -89,18 +92,18 @@ func (s *Session) workerDriverResolver(parent *PluginGeneration) loopdriver.Acqu
 			driver = s.StreamRunner.LoopDriver
 		}
 		if driver == nil {
-			return nil, binding, release, errors.New("worker loop driver is not configured")
+			return nil, binding, release, errors.New("loop driver is not configured")
 		}
 		descriptor, err := driver.Descriptor(ctx)
 		if err != nil {
-			return nil, binding, release, fmt.Errorf("resolve worker loop driver: %w", err)
+			return nil, binding, release, fmt.Errorf("resolve loop driver: %w", err)
 		}
 		if generation == nil || generation.driverGateways == nil {
 			providerID = descriptor.ID
 		}
 		binding = loopdriver.Binding{Profile: profile, ProviderID: providerID, ContractVersion: loopdriver.ContractVersion, DriverID: descriptor.ID, DriverVersion: descriptor.Version}
 		if expected != nil && *expected != binding {
-			return nil, binding, release, fmt.Errorf("worker loop driver binding requires %+v; selected binding is %+v", *expected, binding)
+			return nil, binding, release, fmt.Errorf("loop driver binding requires %+v; selected binding is %+v", *expected, binding)
 		}
 		return driver, binding, release, nil
 	}

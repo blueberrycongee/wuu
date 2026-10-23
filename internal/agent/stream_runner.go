@@ -177,8 +177,11 @@ type StreamRunner struct {
 	InferenceJournal providers.InferenceJournal
 	// LoopDriver owns turn policy while the runner remains the kernel gateway
 	// for provider, tool-ledger, history, and streaming invariants. Callers
-	// must select a driver explicitly; a missing driver rejects execution.
+	// must select a driver explicitly or supply AcquireLoopDriver. Durable
+	// conversations pair the resolver with a DriverBindingStore.
 	LoopDriver             loopdriver.Driver
+	AcquireLoopDriver      loopdriver.AcquireFunc
+	DriverBindingStore     loopdriver.BindingStore
 	DriverCheckpointStore  loopdriver.CheckpointStore
 	ModelInputReceiptStore ModelInputReceiptStore
 	RequestContextStore    RequestContextStore
@@ -249,6 +252,27 @@ func (r *StreamRunner) systemPromptSnapshot() (string, []SystemPromptSectionInfo
 
 func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (LoopResult, error) {
 	driver := r.LoopDriver
+	var binding loopdriver.Binding
+	if r.AcquireLoopDriver != nil {
+		var expected *loopdriver.Binding
+		if r.DriverBindingStore != nil {
+			stored, ok, err := r.DriverBindingStore.LoadBinding(ctx)
+			if err != nil {
+				return LoopResult{}, fmt.Errorf("load loop driver binding: %w", err)
+			}
+			if ok {
+				expected = &stored
+			}
+		}
+		selected, selectedBinding, release, err := r.AcquireLoopDriver(ctx, expected)
+		if err != nil {
+			return LoopResult{}, fmt.Errorf("acquire loop driver: %w", err)
+		}
+		defer release()
+		driver, binding = selected, selectedBinding
+	} else if r.DriverBindingStore != nil {
+		return LoopResult{}, errors.New("durable loop driver binding requires a resolver")
+	}
 	if driver == nil {
 		return LoopResult{}, errors.New("loop driver is not configured")
 	}
@@ -268,7 +292,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		ctx = loopdriver.WithExecutionContext(ctx, execution)
 	}
 
-	var instance loopdriver.Instance
+	var resume *loopdriver.Checkpoint
 	if r.DriverCheckpointStore != nil {
 		checkpoint, ok, err := r.DriverCheckpointStore.Load(ctx)
 		if err != nil {
@@ -286,14 +310,24 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 					loopdriver.ContractVersion,
 				)
 			}
-			instance, err = driver.Resume(ctx, execution, input, checkpoint)
-			if err != nil {
-				return LoopResult{}, fmt.Errorf("resume loop driver: %w", err)
-			}
+			resume = &checkpoint
 		}
 	}
-	if instance == nil {
-		var err error
+	if r.DriverBindingStore != nil {
+		if binding.ContractVersion != loopdriver.ContractVersion || binding.DriverID != descriptor.ID || binding.DriverVersion != descriptor.Version {
+			return LoopResult{}, errors.New("resolved loop driver descriptor does not match its binding")
+		}
+		if err := r.DriverBindingStore.Bind(ctx, binding); err != nil {
+			return LoopResult{}, fmt.Errorf("bind loop driver: %w", err)
+		}
+	}
+	var instance loopdriver.Instance
+	if resume != nil {
+		instance, err = driver.Resume(ctx, execution, input, *resume)
+		if err != nil {
+			return LoopResult{}, fmt.Errorf("resume loop driver: %w", err)
+		}
+	} else {
 		instance, err = driver.Create(ctx, execution, input)
 		if err != nil {
 			return LoopResult{}, fmt.Errorf("create loop driver: %w", err)

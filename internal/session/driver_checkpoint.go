@@ -88,6 +88,13 @@ func SaveDriverCheckpoint(sessDir, sessionID string, record DriverCheckpointReco
 	} else if !ok {
 		return fmt.Errorf("%w: %q", ErrSessionNotFound, sessionID)
 	}
+	binding, bound, err := loadDriverBinding(tx, sessionID)
+	if err != nil {
+		return err
+	}
+	if bound && (binding.ContractVersion != record.ContractVersion || binding.DriverID != record.DriverID || binding.DriverVersion != record.DriverVersion) {
+		return fmt.Errorf("driver checkpoint does not match session binding %+v", binding)
+	}
 	if _, err := tx.Exec(`
 INSERT INTO session_driver_checkpoints (
     session_id, contract_version, driver_id, driver_version, state_json, updated_at

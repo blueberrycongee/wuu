@@ -1297,6 +1297,10 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	}
 	th.mu.Lock()
 	coordinator := th.Source == projectSource || th.Source == projectSessionSource
+	if th.Ephemeral && threadRuntime.StreamRunner != nil {
+		threadRuntime.StreamRunner.DriverBindingStore = &th.ephemeralDriver
+		threadRuntime.StreamRunner.DriverCheckpointStore = &th.ephemeralDriver
+	}
 	th.mu.Unlock()
 	if coordinator && threadRuntime.Toolkit != nil {
 		threadRuntime.Toolkit.SetProjectSessions(s.projectSessionHandler(th.ID))

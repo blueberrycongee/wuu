@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -158,6 +159,9 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
+			if _, err := session.CreateWithMetadata(rt.SessionDir, "budget-thread", root); err != nil {
+				t.Fatal(err)
+			}
 			engine, err := rt.WuuEngine().Open(ctx, agentengine.OpenRequest{ThreadID: "budget-thread", RootDir: root})
 			if err != nil {
 				t.Fatal(err)

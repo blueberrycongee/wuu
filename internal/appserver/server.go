@@ -95,6 +95,7 @@ type threadState struct {
 	PersistHistory           bool
 	ReadOnly                 bool
 	Ephemeral                bool
+	ephemeralDriver          ephemeralDriverState
 	execRuntime              *runtime.ThreadRuntime
 	pendingRuntimeReset      bool
 	runtimeSelectionMutation bool

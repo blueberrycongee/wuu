@@ -63,7 +63,11 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	if err := activatePluginHost(context.Background(), host); err != nil {
 		t.Fatal(err)
 	}
-	driver := resolveLoopDriver(selectedProfile, host, kernel.driverGateways)
+	generation := &PluginGeneration{host: host, driverGateways: kernel.driverGateways}
+	generation.retain()
+	owner := &Session{DriverProfile: selectedProfile, pluginGeneration: generation}
+	defer owner.releasePluginGeneration(generation)
+	acquire := owner.driverResolver(generation)
 	if owner, ok := host.ServiceRegistry().ProviderPluginID("driver."+profile, 1); !ok || owner != provider.ID {
 		t.Fatalf("workflow binding = %q, %v", owner, ok)
 	}
@@ -87,7 +91,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	model := &workflowEvidenceModel{cancelSynthesis: cancel}
-	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger, LoopDriver: driver, DriverCheckpointStore: store}
+	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger, AcquireLoopDriver: acquire, DriverBindingStore: store, DriverCheckpointStore: store}
 	history := []providers.ChatMessage{{Role: "user", Content: "A previous task"}, {Role: "assistant", Content: "Previous result"}, {Role: "user", Content: "Read evidence.txt and report the measured value."}}
 	attachWorkflowHistory(t, runner, sessDir, "workflow-session", history)
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "workflow-session", ExecutionID: "workflow-first"})
@@ -126,6 +130,8 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	}
 	resumedModel := &workflowEvidenceModel{synthesisOnly: true}
 	runner.Client = resumedModel
+	// A changed application default cannot reroute the saved workflow.
+	owner.DriverProfile = "unavailable"
 	resumeCtx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "workflow-session", ExecutionID: "workflow-resume"})
 	result, err := runner.RunWithCallback(resumeCtx, history, nil)
 	if err != nil {
@@ -156,7 +162,8 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 		planningCtx, stopPlanning := context.WithCancel(context.Background())
 		defer stopPlanning()
 		plannedTools := &workflowEvidenceTools{path: filepath.Join(root, "evidence.txt")}
-		plannedRunner := &agent.StreamRunner{Client: &workflowEvidenceModel{}, Model: "controlled-evidence", Tools: plannedTools, ToolLedger: plannedLedger, LoopDriver: driver,
+		owner.DriverProfile = selectedProfile
+		plannedRunner := &agent.StreamRunner{Client: &workflowEvidenceModel{}, Model: "controlled-evidence", Tools: plannedTools, ToolLedger: plannedLedger, AcquireLoopDriver: acquire, DriverBindingStore: plannedStore,
 			DriverCheckpointStore: workflowCheckpointBarrier{CheckpointStore: plannedStore, phase: "planned", cancel: stopPlanning}}
 		originalHistory := []providers.ChatMessage{{Role: "user", Content: "Read evidence.txt and report the measured value."}}
 		attachWorkflowHistory(t, plannedRunner, plannedDir, "planned-session", originalHistory)

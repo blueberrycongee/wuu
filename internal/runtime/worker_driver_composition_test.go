@@ -24,7 +24,7 @@ func TestWorkerDriverComposition(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s, _ := workerCompositionSession(t, name == "removed")
 			client := &defaultBindingModel{}
-			manager := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.workerDriverResolver(nil)})
+			manager := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.driverResolver(nil)})
 			path := filepath.Join(t.TempDir(), "worker.json")
 			if name == "persist-failure" {
 				block := filepath.Join(t.TempDir(), "not-a-directory")
@@ -67,7 +67,7 @@ func TestWorkerDriverComposition(t *testing.T) {
 				saved.DriverBinding = nil
 				saved.DriverCheckpoint = nil
 			}
-			restarted := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.workerDriverResolver(nil)})
+			restarted := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.driverResolver(nil)})
 			if _, err := restarted.Restore(subagent.RestoreOptions{Run: saved, Toolkit: workerBindingTools{}, HistoryPath: path}); err != nil {
 				t.Fatal(err)
 			}
@@ -96,7 +96,7 @@ func TestWorkerDriverComposition(t *testing.T) {
 func TestWorkerDriverRetainsGenerationUntilCleanup(t *testing.T) {
 	s, generation := workerCompositionSession(t, false)
 	client := &blockingWorkerBindingModel{started: make(chan struct{}), release: make(chan struct{})}
-	manager := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.workerDriverResolver(nil)})
+	manager := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.driverResolver(nil)})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	worker, err := manager.Spawn(ctx, subagent.SpawnOptions{ID: "worker", Prompt: "Say hello", Toolkit: workerBindingTools{}, HistoryPath: filepath.Join(t.TempDir(), "worker.json")})
@@ -142,7 +142,7 @@ func TestWorkerDriverRetainsGenerationUntilCleanup(t *testing.T) {
 func TestWorkerDriverRecoversBeforeFirstTerminalSnapshot(t *testing.T) {
 	s, _ := workerCompositionSession(t, false)
 	client := &blockingWorkerBindingModel{started: make(chan struct{}), release: make(chan struct{})}
-	manager := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.workerDriverResolver(nil)})
+	manager := subagent.NewManagerWithOptions(client, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.driverResolver(nil)})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "parent", ExecutionID: "parent-execution"})
@@ -169,7 +169,7 @@ func TestWorkerDriverRecoversBeforeFirstTerminalSnapshot(t *testing.T) {
 	}
 	// Rebuild from the durable image captured while the writer was in flight.
 	restartedClient := &defaultBindingModel{}
-	restarted := subagent.NewManagerWithOptions(restartedClient, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.workerDriverResolver(nil)})
+	restarted := subagent.NewManagerWithOptions(restartedClient, "controlled", subagent.ManagerOptions{AcquireLoopDriver: s.driverResolver(nil)})
 	if _, err := restarted.Restore(subagent.RestoreOptions{Run: interrupted, Toolkit: workerBindingTools{}, HistoryPath: path}); err != nil {
 		t.Fatal(err)
 	}

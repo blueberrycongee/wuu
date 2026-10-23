@@ -704,7 +704,7 @@ func NewSession(opts Options) (*Session, error) {
 				return wkit, nil
 			},
 			AcquireLoopDriver: func(ctx context.Context, binding *loopdriver.Binding) (loopdriver.Driver, loopdriver.Binding, func(), error) {
-				return runtimeSession.workerDriverResolver(nil)(ctx, binding)
+				return runtimeSession.driverResolver(nil)(ctx, binding)
 			},
 			WorkerWakeAuthority: workerWakeAuthority(toolkit),
 			OnSubagentStart: func(ctx context.Context, agentID string) error {
@@ -1495,7 +1495,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					applyWorkerToolFilter(workerKit, wt)
 					return workerKit, nil
 				},
-				AcquireLoopDriver:   s.workerDriverResolver(generation),
+				AcquireLoopDriver:   s.driverResolver(generation),
 				WorkerWakeAuthority: workerWakeAuthority(kit),
 				OnSubagentStart: func(ctx context.Context, agentID string) error {
 					dispatcher := s.HookDispatcher
@@ -1563,6 +1563,8 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	runner.PromptCacheKey = strings.TrimSpace(id)
 	runner.InferenceJournal = s.InferenceJournalForOwner(id)
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
+	runner.DriverBindingStore = sessionDriverCheckpointStore{sessDir: s.SessionDir, sessionID: id}
+	runner.AcquireLoopDriver = s.driverResolver(generation)
 	runner.RequestContextStore = sessionRequestContextStore{sessDir: s.SessionDir, sessionID: id}
 	runner.CompactionNoteStore = sessionCompactionNoteStore{sessDir: s.SessionDir, sessionID: id}
 	if kit != nil {
@@ -1580,9 +1582,6 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		bindPluginCompactionHooks(runner, generation.hooks, id, threadRoot)
 		if runner.CompactionRegistry == nil {
 			runner.CompactionRegistry = generation.compactions
-		}
-		if generation.driverGateways != nil {
-			runner.LoopDriver = resolveLoopDriver(s.DriverProfile, generation.host, generation.driverGateways)
 		}
 	}
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
@@ -1713,6 +1712,17 @@ func (store sessionModelInputReceiptStore) SaveModelInputReceipt(ctx context.Con
 	return err
 }
 
+func (store sessionDriverCheckpointStore) LoadBinding(ctx context.Context) (loopdriver.Binding, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return loopdriver.Binding{}, false, err
+	}
+	return session.LoadDriverBinding(store.sessDir, store.sessionID)
+}
+
+func (store sessionDriverCheckpointStore) Bind(ctx context.Context, binding loopdriver.Binding) error {
+	return session.BindDriver(ctx, store.sessDir, store.sessionID, binding)
+}
+
 func (store sessionDriverCheckpointStore) Load(ctx context.Context) (loopdriver.Checkpoint, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return loopdriver.Checkpoint{}, false, err
@@ -1736,16 +1746,12 @@ func (store sessionDriverCheckpointStore) Save(ctx context.Context, checkpoint l
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	err := session.SaveDriverCheckpoint(store.sessDir, store.sessionID, session.DriverCheckpointRecord{
+	return session.SaveDriverCheckpoint(store.sessDir, store.sessionID, session.DriverCheckpointRecord{
 		ContractVersion: checkpoint.ContractVersion,
 		DriverID:        checkpoint.DriverID,
 		DriverVersion:   checkpoint.DriverVersion,
 		State:           append(json.RawMessage(nil), checkpoint.State...),
 	})
-	if errors.Is(err, session.ErrSessionNotFound) {
-		return nil
-	}
-	return err
 }
 
 func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.ToolExecutor) *agent.StreamRunner {
@@ -1793,6 +1799,8 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		InferenceWorkloadProfile:    base.InferenceWorkloadProfile,
 		InferenceJournal:            base.InferenceJournal,
 		LoopDriver:                  base.LoopDriver,
+		AcquireLoopDriver:           base.AcquireLoopDriver,
+		DriverBindingStore:          base.DriverBindingStore,
 		DriverCheckpointStore:       base.DriverCheckpointStore,
 		ModelInputReceiptStore:      base.ModelInputReceiptStore,
 		RequestContextStore:         base.RequestContextStore,

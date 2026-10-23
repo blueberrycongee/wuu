@@ -105,6 +105,36 @@ func TestRunStartSettlesManifest(t *testing.T) {
 	if srv.executionRunAttached(run.ID) {
 		t.Fatal("terminal Run should not remain attached")
 	}
+	first, err := srv.ensureThreadRuntime(thread)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, bound, err := first.StreamRunner.DriverBindingStore.LoadBinding(context.Background())
+	if err != nil || !bound {
+		t.Fatalf("ephemeral admission: bound=%v err=%v", bound, err)
+	}
+	checkpoint, saved, err := first.StreamRunner.DriverCheckpointStore.Load(context.Background())
+	if err != nil || !saved {
+		t.Fatalf("ephemeral checkpoint: saved=%v err=%v", saved, err)
+	}
+	thread.mu.Lock()
+	thread.pendingRuntimeReset = true
+	thread.mu.Unlock()
+	rebuilt, err := srv.ensureThreadRuntime(thread)
+	if err != nil || rebuilt == first {
+		t.Fatalf("rebuild ephemeral runtime: %v", err)
+	}
+	restored, bound, err := rebuilt.StreamRunner.DriverBindingStore.LoadBinding(context.Background())
+	if err != nil || !bound || restored != binding {
+		t.Fatalf("ephemeral binding lost across runtime rebuild: %+v %v", restored, err)
+	}
+	resumed, saved, err := rebuilt.StreamRunner.DriverCheckpointStore.Load(context.Background())
+	if err != nil || !saved || resumed.DriverID != checkpoint.DriverID || string(resumed.State) != string(checkpoint.State) {
+		t.Fatalf("ephemeral checkpoint lost across runtime rebuild: %+v %v", resumed, err)
+	}
+	if _, _, err := session.LoadDriverBinding(rt.SessionDir, thread.ID); !errors.Is(err, session.ErrSessionNotFound) {
+		t.Fatalf("ephemeral execution created a persistent session: %v", err)
+	}
 }
 
 func TestExecutionRunSchemaOutcomeRetriesWithinOneRun(t *testing.T) {
