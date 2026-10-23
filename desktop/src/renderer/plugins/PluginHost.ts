@@ -633,6 +633,7 @@ export class PluginHost {
   private readonly reportActivation?: PluginHostOptions["reportActivation"];
   private reportQueue: Promise<void> = Promise.resolve();
   private reportFailure?: string;
+  private readonly reportFailures = new Map<string, string>();
   private inventoryGraphs?: Map<string, string | undefined>;
   private readonly activationCounts = new Map<string, number>();
   private readonly reportedActivations = new Map<string, number>();
@@ -1920,10 +1921,16 @@ export class PluginHost {
       if (state.activation < (this.reportedActivations.get(state.pluginId) ?? 0)) return;
       if (phase === "registration") this.reportedActivations.set(state.pluginId, state.activation);
       await send(params);
+      if (phase === "registration" && this.reportFailures.delete(state.pluginId)) {
+        this.reportFailure = [...this.reportFailures.values()].join("\n") || undefined;
+        this.notifyListeners();
+      }
     }).catch((error: unknown) => {
       if (this.inventoryGraphs && this.inventoryGraphs.get(state.pluginId) !== state.graphGeneration) return;
-      this.reportFailure = `Desktop activation report failed: ${errorMessage(error)}`;
-      this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "activation", message: this.reportFailure, cause: error });
+      const message = `Desktop activation report failed for ${state.pluginId}: ${errorMessage(error)}`;
+      this.reportFailures.set(state.pluginId, message);
+      this.reportFailure = [...this.reportFailures.values()].join("\n");
+      this.addDiagnostic({ pluginId: state.pluginId, generation: state.generation, kind: "activation", message, cause: error });
     });
   }
 
@@ -1934,14 +1941,13 @@ export class PluginHost {
   flushActivationReports(): Promise<void> { return this.reportQueue; }
   getActivationReportFailure = (): string | undefined => this.reportFailure;
 
-  observeGenerationRender(pluginId: string, generation: string): { failed(error: Error): void; dispose(): void } {
+  observeGenerationRender(pluginId: string, generation: string, initialError?: Error): { failed(error: Error): void; dispose(): void } {
     const state = this.activeGenerations.get(pluginId);
     if (!state || state.generation !== generation) throw new Error("Plugin generation is no longer active");
     state.renderedViews++;
-    if (!state.renderFailed && state.renderedViews === 1) this.report(state, "render", "active");
     let disposed = false;
-    return {
-      failed: error => {
+    const observer = {
+      failed: (error: Error) => {
         if (disposed || state.cleaned || state.renderFailed) return;
         state.renderFailed = true;
         this.addDiagnostic({ pluginId, generation, kind: "render", message: `Plugin UI render failed: ${errorMessage(error)}`, cause: error });
@@ -1954,6 +1960,9 @@ export class PluginHost {
         if (!state.cleaned && !state.renderFailed && state.renderedViews === 0) this.report(state, "render", "disposed");
       },
     };
+    if (initialError) observer.failed(initialError);
+    else if (!state.renderFailed && state.renderedViews === 1) this.report(state, "render", "active");
+    return observer;
   }
 
   private refreshPublicState(replaceSnapshots = false): void {

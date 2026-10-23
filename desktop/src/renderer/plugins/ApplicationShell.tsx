@@ -50,8 +50,7 @@ function Contribution({ host, contribution, slots, context }: {
 class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string }, { error?: Error }> {
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
   componentDidMount(): void {
-    this.observer = this.props.host.observeGenerationRender(this.props.pluginId, this.props.generation);
-    if (this.state.error) this.observer.failed(this.state.error);
+    this.observer = this.props.host.observeGenerationRender(this.props.pluginId, this.props.generation, this.state.error);
   }
   componentDidCatch(error: Error): void { this.observer?.failed(error); }
   componentWillUnmount(): void { this.observer?.dispose(); }

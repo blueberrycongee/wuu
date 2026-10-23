@@ -42,6 +42,7 @@ describe("application shell assembly", () => {
       const reports = report.mock.calls.map(call => call[0]).filter(item => item.id === owner);
       expect(reports[0]).toMatchObject({ phase: "registration", status: "active", graph_generation: "graph", activation: 1 });
       expect(reports.at(-1)).toMatchObject({ phase: "render", status: "failed" });
+      if (target === "root") expect(reports.some(item => item.phase === "render" && item.status === "active")).toBe(false);
       expect(JSON.stringify(reports)).not.toContain("private render detail");
     } finally { act(() => root.unmount()); logging.mockRestore(); }
   });
@@ -92,6 +93,18 @@ describe("application shell assembly", () => {
     const reports = report.mock.calls.map(call => call[0]);
     expect(reports.at(-1)).toMatchObject({ activation: 2, phase: "registration", status: "active" });
     expect(reports.filter(item => item.activation === 1 && item.phase === "cleanup")).toHaveLength(0);
+  });
+
+  it("clears a reporting failure only after that module registers successfully again", async () => {
+    const report = vi.fn(async (_params: PluginDesktopActivationParams) => {});
+    report.mockRejectedValueOnce(new Error("temporary failure"));
+    const { host } = fixture({ reportActivation: report });
+    const activate = (pluginId: string) => host.activateGeneration({ pluginId, generation: "source", graphGeneration: "graph", register: () => {} });
+    await activate("failed"); await host.flushActivationReports();
+    await activate("healthy"); await host.flushActivationReports();
+    expect(host.getActivationReportFailure()).toContain("temporary failure");
+    await activate("failed"); await host.flushActivationReports();
+    expect(host.getActivationReportFailure()).toBeUndefined();
   });
 
   it("keeps committed UI live but exposes a mandatory ACK transport failure", async () => {
