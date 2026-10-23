@@ -19,6 +19,7 @@ type streamTurnGateway struct {
 	cancel           context.CancelFunc
 	gate             chan struct{}
 	runner           *StreamRunner
+	descriptor       loopdriver.Descriptor
 	input            loopdriver.PersistedInput
 	baseHistory      []providers.ChatMessage
 	activeHistory    []providers.ChatMessage
@@ -177,10 +178,6 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if err := validateTransformedRequest(request, "", false); err != nil {
 		return round, err
 	}
-	ctx = providers.WithInferenceJournal(ctx, g.runner.InferenceJournal)
-	step := &streamStep{client: g.client, onEvent: g.onEvent}
-	observed := make(map[string]providers.ToolCall)
-	var runtimes []*TurnToolRuntime
 	if batchID != "" {
 		if g.batches[batchID] {
 			return round, fmt.Errorf("tool batch %q was already submitted; resolve its effects before retrying", batchID)
@@ -188,6 +185,35 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		if g.runner.Tools == nil {
 			return round, errors.New("tool executor is unavailable")
 		}
+	}
+	ctx = providers.WithInferenceJournal(ctx, g.runner.InferenceJournal)
+	kind, profile := g.runner.InferenceOperationKind, g.runner.InferenceWorkloadProfile
+	if kind == "" {
+		kind = providers.InferenceOperationAgentRound
+	}
+	if profile == "" {
+		profile = providers.InferenceProfileInteractive
+	}
+	request, err = providers.EnsureInferenceExecutionContext(ctx, request, kind, profile)
+	if err != nil {
+		return round, err
+	}
+	if g.runner.ModelInputReceiptStore != nil {
+		_, sections := g.runner.systemPromptSnapshot()
+		receipt := modelInputReceipt(request, loopdriver.ExecutionContextFromContext(g.ctx), g.descriptor, sections, g.historyRewritten)
+		if err := g.runner.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {
+			return round, fmt.Errorf("persist model input receipt: %w", err)
+		}
+	}
+	// A canceled durable write can still have committed. Keep its receipt, but
+	// never start model or tool work after cancellation crossed the barrier.
+	if err := ctx.Err(); err != nil {
+		return round, err
+	}
+	step := &streamStep{client: g.client, onEvent: g.onEvent}
+	observed := make(map[string]providers.ToolCall)
+	var runtimes []*TurnToolRuntime
+	if batchID != "" {
 		g.batches[batchID] = true
 		round.ToolBatchID = batchID
 		step.tools, step.toolLedger, step.enableStreamingToolExec = g.runner.Tools, g.runner.ToolLedger, true

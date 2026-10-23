@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -265,6 +266,86 @@ func TestDriverTurnCancellationAndClosureRejectEffects(t *testing.T) {
 	if _, err := gateway.ReadTurn(context.Background()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("closed turn accepted a late callback: %v", err)
 	}
+}
+
+// A request receipt is a dispatch barrier, including when streaming tools are
+// enabled. Failed writes and cancellation must leave the request unsubmitted;
+// successful writes identify the exact request and the selected driver.
+func TestDriverTurnModelReceiptBarrier(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		for _, cancelWrite := range []bool{false, true} {
+			t.Run(fmt.Sprintf("streaming-%t/cancel-%t", streaming, cancelWrite), func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "receipt-session", ExecutionID: "receipt-execution"})
+				client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventDone, FinishReason: providers.FinishReasonStop}}}
+				writeErr := errors.New("receipt storage unavailable")
+				var receipts []ModelInputReceipt
+				runner := &StreamRunner{Client: client, ProviderName: "bound", Model: "controlled", Tools: &driverEvidenceTools{},
+					ModelInputReceiptStore: driverReceiptStoreFunc(func(_ context.Context, receipt ModelInputReceipt) error {
+						if len(client.requests) != 0 {
+							t.Fatal("model started before its receipt was committed")
+						}
+						receipts = append(receipts, receipt)
+						if cancelWrite {
+							cancel()
+							return nil
+						}
+						return writeErr
+					}),
+				}
+				gateway := newStreamTurnGateway(ctx, runner, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "original", ClientID: "input", Seq: 7}}}, nil)
+				gateway.descriptor = loopdriver.Descriptor{ID: "independent-loop", Version: "1.2.0"}
+				defer gateway.close()
+				request, err := gateway.ReadTurn(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Messages = append(request.Messages, providers.ChatMessage{Role: "user", Content: "request-only context"})
+				request.Temperature, request.Effort = 0.25, "high"
+				request.CacheHint = &providers.CacheHint{PromptCacheKey: "bound-cache"}
+				call := func() error {
+					var err error
+					if streaming {
+						_, err = gateway.CallModelWithTools(ctx, request, "receipt-batch")
+					} else {
+						_, err = gateway.CallModel(ctx, request)
+					}
+					return err
+				}
+				err = call()
+				if err == nil || len(client.requests) != 0 || len(receipts) != 1 {
+					t.Fatalf("dispatch crossed failed receipt barrier: requests=%d receipts=%d err=%v", len(client.requests), len(receipts), err)
+				}
+				if cancelWrite {
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("lost cancellation after durable write: %v", err)
+					}
+					return
+				}
+				if !errors.Is(err, writeErr) {
+					t.Fatalf("lost receipt error: %v", err)
+				}
+				writeErr = nil
+				if err := call(); err != nil || len(client.requests) != 1 || len(receipts) != 2 {
+					t.Fatalf("retry after failed write did not submit once: requests=%d receipts=%d err=%v", len(client.requests), len(receipts), err)
+				}
+				receipt, sent := receipts[1], client.requests[0]
+				if receipt.OperationID == "" || receipt.OperationID != sent.Operation.ID || receipt.ExecutionID != "receipt-execution" || receipt.SessionID != "receipt-session" || receipt.DriverID != "independent-loop" || receipt.DriverVersion != "1.2.0" || receipt.StepIndex != 0 {
+					t.Fatalf("receipt lost bound dispatch identity: %+v request=%+v", receipt, sent)
+				}
+				if !reflect.DeepEqual(receipt.Messages, sent.Messages) || !reflect.DeepEqual(receipt.InputFactSeqs, []int{7}) || receipt.Provider != "bound" || receipt.Temperature != 0.25 || receipt.Effort != "high" || receipt.PromptCacheKey != "bound-cache" || receipt.ToolSurfaceHash == "" || receipt.CreatedAt.IsZero() {
+					t.Fatalf("receipt differs from submitted request: %+v request=%+v", receipt, sent)
+				}
+			})
+		}
+	}
+}
+
+type driverReceiptStoreFunc func(context.Context, ModelInputReceipt) error
+
+func (f driverReceiptStoreFunc) SaveModelInputReceipt(ctx context.Context, receipt ModelInputReceipt) error {
+	return f(ctx, receipt)
 }
 
 // Input admission, request context, and transforms are separate effects. A

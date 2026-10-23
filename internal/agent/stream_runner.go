@@ -345,6 +345,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 		results:           make(map[string]LoopResult),
 		streamTurnGateway: newStreamTurnGateway(ctx, r, input, onEvent),
 	}
+	gateway.streamTurnGateway.descriptor = descriptor
 	defer gateway.close()
 	done := make(chan struct{})
 	go func() {

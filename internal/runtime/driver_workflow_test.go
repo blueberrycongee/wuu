@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -71,8 +72,9 @@ func TestStreamingDriverProcess(t *testing.T) {
 	tools := &workflowEvidenceTools{path: path, started: started}
 	model := &workflowEvidenceModel{waitForTool: started}
 	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger,
-		LoopDriver:            resolveLoopDriver("default", host, kernel.driverGateways),
-		DriverCheckpointStore: sessionDriverCheckpointStore{sessDir: dir, sessionID: "streaming-session"}}
+		LoopDriver:             resolveLoopDriver("default", host, kernel.driverGateways),
+		DriverCheckpointStore:  sessionDriverCheckpointStore{sessDir: dir, sessionID: "streaming-session"},
+		ModelInputReceiptStore: sessionModelInputReceiptStore{sessDir: dir, sessionID: "streaming-session"}}
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "streaming-session", ExecutionID: "streaming-first"})
 	result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}, nil)
 	if err != nil || result.Content != "42" || tools.calls != 1 || len(model.requests) != 1 || len(result.NewMessages) != 2 || result.NewMessages[1].ToolInvocationID == "" {
@@ -83,7 +85,8 @@ func TestStreamingDriverProcess(t *testing.T) {
 			t.Fatal("host default driver remained loaded")
 		}
 	}
-	t.Log("independent SDK driver: real file read began before model completion; joined one durable tool receipt; default loop absent")
+	assertDriverModelReceipts(t, dir, "streaming-session", result.DriverID, model.requests)
+	t.Log("independent SDK driver: committed model input before dispatch; real file read began before model completion; joined one durable tool receipt; default loop absent")
 }
 
 func testWorkflowDriverProcess(t *testing.T, profile string) {
@@ -195,6 +198,7 @@ func testWorkflowDriverProcess(t *testing.T, profile string) {
 	if result.Content != "The measured value is 42." || result.DriverID != "example.evidence-workflow" || tools.calls != 1 {
 		t.Fatalf("workflow failed to resume independently: %+v effects=%d", result, tools.calls)
 	}
+	assertDriverModelReceipts(t, sessDir, "workflow-session", result.DriverID, append(model.requests, resumedModel.requests...))
 	if len(resumedModel.requests) != 1 || len(resumedModel.requests[0].Tools) != 0 {
 		t.Fatal("resume repeated planning or allowed synthesis to run tools")
 	}
@@ -285,6 +289,7 @@ func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id str
 		}
 		return records
 	}
+	runner.ModelInputReceiptStore = sessionModelInputReceiptStore{sessDir: dir, sessionID: id}
 	start, _, err := session.AppendHistoryRecordsReturningRange(dir, id, toRecords(initial))
 	if err != nil {
 		t.Fatal(err)
@@ -316,6 +321,32 @@ func attachWorkflowHistory(t *testing.T, runner *agent.StreamRunner, dir, id str
 			return nil, head, err
 		}
 		return workflowRecordsToMessages(t, checkpoint.Replacement), checkpoint.ThroughSeq, nil
+	}
+}
+
+func assertDriverModelReceipts(t *testing.T, dir, id, driverID string, requests []providers.ChatRequest) {
+	t.Helper()
+	records, err := session.LoadModelInputReceipts(dir, id)
+	if err != nil || len(records) != len(requests) {
+		t.Fatalf("model dispatches lack durable receipts: requests=%d receipts=%d err=%v", len(requests), len(records), err)
+	}
+	byOperation := make(map[string]providers.ChatRequest, len(requests))
+	for _, request := range requests {
+		byOperation[request.Operation.ID] = request
+	}
+	for _, record := range records {
+		var receipt agent.ModelInputReceipt
+		if err := json.Unmarshal(record.Payload, &receipt); err != nil {
+			t.Fatal(err)
+		}
+		request, ok := byOperation[receipt.OperationID]
+		if !ok || receipt.OperationID == "" || receipt.ExecutionID == "" || receipt.SessionID != id || receipt.DriverID != driverID || receipt.DriverVersion == "" || receipt.StepIndex != request.StepIndex || receipt.Model != request.Model || !reflect.DeepEqual(receipt.Messages, request.Messages) {
+			t.Fatalf("stored model receipt lost identity or exact input: receipt=%+v request=%+v found=%v", receipt, request, ok)
+		}
+		delete(byOperation, receipt.OperationID)
+	}
+	if len(byOperation) != 0 {
+		t.Fatal("receipts duplicated one operation while omitting another")
 	}
 }
 

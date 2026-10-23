@@ -55,7 +55,10 @@ type InputAdmission struct {
 }
 
 // ModelRound includes the assistant response. Model calls do not admit queued
-// input, assemble request context, or run request transforms.
+// input, assemble request context, or run request transforms. When configured,
+// the execution's receipt store commits the final input before dispatch; a write
+// failure prevents model and streaming-tool execution. A committed receipt does
+// not prove submission, since cancellation may occur immediately afterward.
 type ModelRound struct {
 	Messages []providers.ChatMessage
 	Usage    *providers.TokenUsage

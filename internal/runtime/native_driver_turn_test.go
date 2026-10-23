@@ -191,6 +191,7 @@ func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 	if inputCalls != 1 || contextCalls != 1 || transformCalls != 1 || model.requests[0].Temperature != 0.25 || len(model.requests[0].Messages) != 3 || model.requests[0].Messages[1].ClientID != "native-followup" {
 		t.Fatalf("native model repeated request effects or lost transformed input: input=%d context=%d transform=%d requests=%+v", inputCalls, contextCalls, transformCalls, model.requests)
 	}
+	assertDriverModelReceipts(t, dir, "native-session", result.DriverID, model.requests)
 	runner.BeforeStep, runner.BeforeRequestContext, runner.BeforeRequest = nil, nil, nil
 	// A provider-owned loop must receive classified failure evidence and the
 	// accepted partial response, then decide whether another round is allowed.

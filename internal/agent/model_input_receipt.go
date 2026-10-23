@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -53,6 +54,34 @@ type ModelInputReceiptStore interface {
 	SaveModelInputReceipt(context.Context, ModelInputReceipt) error
 }
 
+func modelInputReceipt(request providers.ChatRequest, execution loopdriver.ExecutionContext, driver loopdriver.Descriptor, sections []SystemPromptSectionInfo, rewritten bool) ModelInputReceipt {
+	receipt := ModelInputReceipt{
+		ContractVersion:  ModelInputReceiptContractVersion,
+		OperationID:      request.Operation.ID,
+		SessionID:        execution.SessionID,
+		ExecutionID:      execution.ExecutionID,
+		DriverID:         driver.ID,
+		DriverVersion:    driver.Version,
+		Provider:         request.Provider,
+		Model:            request.Model,
+		StepIndex:        request.StepIndex,
+		InputFactSeqs:    durableInputFactSeqs(request.Messages),
+		Messages:         providers.CloneChatMessages(request.Messages),
+		Tools:            modelInputTools(request.Tools),
+		ToolSurfaceHash:  hashToolsForRequestShape(request.Tools),
+		SystemSections:   modelInputSystemSections(sections),
+		ForceToolName:    request.ForceToolName,
+		Temperature:      request.Temperature,
+		Effort:           request.Effort,
+		HistoryRewritten: rewritten,
+		CreatedAt:        time.Now().UTC(),
+	}
+	if request.CacheHint != nil {
+		receipt.PromptCacheKey = request.CacheHint.PromptCacheKey
+	}
+	return receipt
+}
+
 func durableInputFactSeqs(messages []providers.ChatMessage) []int {
 	seen := make(map[int]struct{})
 	seqs := make([]int, 0)
@@ -75,7 +104,7 @@ func modelInputTools(definitions []providers.ToolDefinition) []ModelInputToolDef
 		tools = append(tools, ModelInputToolDefinition{
 			Name:         definition.Name,
 			Description:  definition.Description,
-			InputSchema:  definition.InputSchema,
+			InputSchema:  providers.CloneRequestObject(definition.InputSchema),
 			DeferLoading: definition.DeferLoading,
 			CacheStable:  definition.CacheStable,
 		})
