@@ -153,10 +153,6 @@ type Env struct {
 	SessionDir string // absolute session artifact path for result budgeting
 	// CodeModeStateOwner can bind attached side-chat state to its parent lifetime.
 	CodeModeStateOwner string
-	// SessionsDir overrides the user-level SQLite session store location for
-	// tools that read conversations by ID. Empty keeps the canonical WUU_HOME
-	// lookup used by ordinary runtimes.
-	SessionsDir string
 	// WorkingNotesHome binds working memory to the runtime's resolved Wuu home.
 	WorkingNotesHome string
 	// ToolResultProjectionMode selects stable tool-result projection behavior

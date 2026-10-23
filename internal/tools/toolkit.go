@@ -610,15 +610,6 @@ func (t *Toolkit) SetSessionDir(dir string) {
 	t.env.SessionDir = dir
 }
 
-// SetSessionsDir retains the legacy path setting until runtime call sites are
-// migrated to SetSessionStore. It does not bind or open a session store.
-func (t *Toolkit) SetSessionsDir(dir string) {
-	if t == nil || t.env == nil {
-		return
-	}
-	t.env.SessionsDir = strings.TrimSpace(dir)
-}
-
 // SetSessionStore binds tools to the owning runtime's captured provider. Call
 // before admitting execution; existing clones retain their original binding.
 func (t *Toolkit) SetSessionStore(store *session.Store) {
