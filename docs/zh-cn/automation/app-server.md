@@ -233,6 +233,17 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 无法展示元数据时，回退到完整的消息 `text` 或队列 `prompt`。模型所需的上下文
 不能只保存在元数据中。
 
+## 选择引擎
+
+`thread/start` 未指定 `engine` 时使用 `engines.default_engine`，空默认值选择
+`wuu`。所选引擎被禁用、移除或不可用时，在持久化会话之前拒绝创建，不会改用
+另一实现。通过 `engine/update` 禁用引擎会保留配置中的默认选择；重新启用它，
+或显式将 `default_engine` 设为可用引擎（例如 `wuu`）后，才能继续创建对话。
+已有对话保留其引擎绑定与历史，修改默认值不会迁移这些对话。
+
+此行为替代了原先自动回退 Wuu 的逻辑。客户端应处理默认引擎不可用的情况，
+提供显式选择，而不是自动改写默认值。
+
 ## 刷新外部引擎
 
 `engine/list` 接受 `{ "cwd": "/absolute/session/directory", "refresh_models": true }`。

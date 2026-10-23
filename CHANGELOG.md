@@ -123,6 +123,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve the selected default engine when it is disabled or unavailable. New conversations now report the unavailable selection instead of silently falling back to Wuu; explicitly choose another engine or restore the selected one. Removed native engine registrations also stop admission and execution.
+
 - Limit ambient loading rings in project rows, conversation rows, and session tabs to 30 angle updates per second while preserving their existing rotation speed.
 
 - Give the regular conversation input the full card inset above its first line, matching the welcome input and keeping placeholders, typed text, and the caret clear of rounded corners.

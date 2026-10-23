@@ -876,10 +876,6 @@ func (c Config) Validate() error {
 	return nil
 }
 
-func engineExplicitlyDisabled(engine *EngineBinaryConfig) bool {
-	return engine != nil && engine.Enabled != nil && !*engine.Enabled
-}
-
 func validateModelRolesConfig(c Config) error {
 	roles := map[string]ModelRoleConfig{
 		"review":       c.Agent.ModelRoles.Review,

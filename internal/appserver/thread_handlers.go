@@ -98,7 +98,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		engineID = agentengine.NormalizeEngineID(string(s.rt.DefaultEngine()))
 	}
 	if !s.rt.EngineAvailable(engineID) {
-		return s.writeResponse(req.ID, nil, agentengine.CheckEngine(engineID))
+		return s.writeResponse(req.ID, nil, fmt.Errorf("%w: %q is unavailable; enable it or explicitly select another engine", agentengine.ErrUnknownEngine, engineID))
 	}
 	selection := s.currentSessionRuntimeSelection()
 	selection.Speed = strings.TrimSpace(params.Speed)

@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -82,7 +84,16 @@ func TestEngineSessionForThreadUnavailable(t *testing.T) {
 	}
 	sess := s.EngineSessionForThread(context.Background(), rt, agentengine.ThreadBinding{})
 	if sess == nil {
-		t.Fatal("wuu thread must resolve to an engine session")
+		t.Fatal("unavailable engine must still resolve to an error session")
+	}
+	if _, err := sess.RunTurn(context.Background(), agentengine.TurnInput{}, nil); !errors.Is(err, agentengine.ErrUnknownEngine) {
+		t.Fatalf("unregistered wuu engine did not fail closed: %v", err)
+	}
+	if s.WuuEngine() != nil {
+		t.Fatal("unregistered wuu engine was reconstructed")
+	}
+	if (&Session{}).EngineAvailable(agentengine.EngineWuu) {
+		t.Fatal("absent registry reported a running engine")
 	}
 	rt.EngineID = agentengine.EngineID("claude")
 	sess = s.EngineSessionForThread(context.Background(), rt, agentengine.ThreadBinding{})
@@ -106,22 +117,66 @@ func TestEngineSessionForThreadUnavailable(t *testing.T) {
 	}
 }
 
-func TestEngineSessionForThreadUsesRegisteredExternalFactory(t *testing.T) {
-	registry := agentengine.NewRegistry()
-	factory := &testThreadBoundEngine{id: agentengine.EngineID("claude")}
-	if err := registry.Register(factory); err != nil {
-		t.Fatalf("register external engine: %v", err)
+func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
+	t.Setenv("WUU_HOME", t.TempDir())
+	disabled := false
+	off := &config.EngineBinaryConfig{Enabled: &disabled}
+	cfg := config.Config{
+		DefaultProvider: "fixture",
+		Providers:       map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", Model: "fixture", BaseURL: "https://example.invalid/v1", APIKey: "fixture"}},
+		Engines:         &config.EnginesConfig{DefaultEngine: "codex", Codex: off, Claude: off, Cursor: off, Devin: off, DSH: off, Grok: off, Hermes: off, Pi: off, OpenCode: off, Antigravity: off},
 	}
-	s := &Session{engines: registry}
-	rt := &ThreadRuntime{EngineID: factory.id}
-	binding := agentengine.ThreadBinding{ThreadID: "thread-1", RootDir: "/workspace"}
+	modules := []string{}
+	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
+	root, home := t.TempDir(), t.TempDir()
+	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := s.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	if s.DefaultEngine() != "codex" || s.EngineAvailable("codex") {
+		t.Fatalf("startup changed unavailable selection: default=%q available=%v", s.DefaultEngine(), s.EngineAvailable("codex"))
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.ConfigPath, s.ConfigLoadMode = filepath.Join(root, "settings.json"), ConfigLoadFile
+	if err := os.WriteFile(s.ConfigPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RefreshEngineSettings(); err != nil {
+		t.Fatal(err)
+	}
+	if s.DefaultEngine() != "codex" || s.EngineAvailable("codex") {
+		t.Fatalf("refresh changed unavailable selection: default=%q available=%v", s.DefaultEngine(), s.EngineAvailable("codex"))
+	}
+}
 
-	sess := s.EngineSessionForThread(context.Background(), rt, binding)
-	if sess != factory.session {
-		t.Fatalf("resolved session = %T, want registered external session", sess)
-	}
-	if factory.binding.ThreadID != binding.ThreadID || factory.binding.RootDir != binding.RootDir {
-		t.Fatalf("binding = %+v, want %+v", factory.binding, binding)
+func TestEngineSessionForThreadUsesRegisteredExternalFactory(t *testing.T) {
+	for _, id := range []agentengine.EngineID{"claude", agentengine.EngineWuu} {
+		t.Run(string(id), func(t *testing.T) {
+			registry := agentengine.NewRegistry()
+			factory := &testThreadBoundEngine{id: id}
+			if err := registry.Register(factory); err != nil {
+				t.Fatalf("register external engine: %v", err)
+			}
+			s := &Session{engines: registry}
+			rt := &ThreadRuntime{EngineID: factory.id}
+			binding := agentengine.ThreadBinding{ThreadID: "thread-1", RootDir: "/workspace"}
+
+			sess := s.EngineSessionForThread(context.Background(), rt, binding)
+			if sess != factory.session {
+				t.Fatalf("resolved session = %T, want registered external session", sess)
+			}
+			if factory.binding.ThreadID != binding.ThreadID || factory.binding.RootDir != binding.RootDir {
+				t.Fatalf("binding = %+v, want %+v", factory.binding, binding)
+			}
+		})
 	}
 }
 

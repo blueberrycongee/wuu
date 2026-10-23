@@ -54,6 +54,7 @@ func TestServerInterruptSettlesPartialStreamItems(t *testing.T) {
 					Client: client, Model: "test-model", SystemPrompt: "system", Tools: fastToolExecutor{},
 				},
 			}
+			registerTestWuuEngine(t, rt)
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
@@ -205,6 +206,7 @@ func TestRepro_InterruptAfterToolCompletes_PersistsMessages(t *testing.T) {
 		},
 	}
 	rt.StreamRunner.Tools = fastToolExecutor{}
+	registerTestWuuEngine(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 

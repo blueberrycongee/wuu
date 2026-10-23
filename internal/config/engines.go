@@ -17,6 +17,8 @@ import (
 type EnginesConfig struct {
 	// DefaultEngine is the engine id used for new threads when the caller
 	// does not request one explicitly. Empty means the built-in wuu engine.
+	// Unavailability or disable preserves this choice and rejects new threads;
+	// only an explicit default selection changes it.
 	DefaultEngine string              `json:"default_engine,omitempty"`
 	Codex         *EngineBinaryConfig `json:"codex,omitempty"`
 	Claude        *EngineBinaryConfig `json:"claude,omitempty"`
@@ -71,9 +73,6 @@ func (c *EnginesConfig) validate() error {
 	}
 	if _, ok := enginecatalog.Lookup(id); !ok {
 		return fmt.Errorf("engines.default_engine %q is not supported", id)
-	}
-	if engineExplicitlyDisabled(c.Binary(id)) {
-		return fmt.Errorf("engines.default_engine cannot be %s while engines.%s is disabled", id, id)
 	}
 	return nil
 }
@@ -141,9 +140,6 @@ func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) erro
 			engines["default_engine"] = defaultEngine
 		}
 	}
-	for id, binaryUpdate := range updates {
-		resetDisabledDefaultEngine(engines, id, binaryUpdate)
-	}
 	if len(engines) == 0 {
 		delete(raw, "engines")
 	}
@@ -188,15 +184,6 @@ func applyEngineBinaryUpdate(engines map[string]any, name string, update *Engine
 	}
 	if len(entry) == 0 {
 		delete(engines, name)
-	}
-}
-
-func resetDisabledDefaultEngine(engines map[string]any, name string, update *EngineBinaryUpdate) {
-	if update == nil || update.Enabled == nil || *update.Enabled {
-		return
-	}
-	if current, _ := engines["default_engine"].(string); strings.TrimSpace(current) == name {
-		delete(engines, "default_engine")
 	}
 }
 

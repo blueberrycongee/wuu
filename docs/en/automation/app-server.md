@@ -192,6 +192,19 @@ service. A remote or hosted deployment must provide its own transport security a
 isolation around it. The [protocol reference](../integrations/app-server-protocol.md)
 covers message shapes, capabilities, selection rules, and cloud process identity.
 
+## Select an engine
+
+`thread/start` uses `engines.default_engine` when `engine` is omitted. An empty
+default selects `wuu`. A disabled, removed or unavailable engine rejects creation
+before a session is persisted; it never substitutes another implementation.
+`engine/update` retains the configured default when disabling that engine. Restore
+it or explicitly set `default_engine` to an available engine, such as `wuu`, to
+resume creating conversations. Existing conversations retain their saved engine
+and history; changing the default does not migrate them.
+
+This replaces the former automatic Wuu fallback. Clients must handle an
+unavailable default and offer an explicit selection instead of rewriting it.
+
 ## Answer native engine questions
 
 Codex questions use the existing `user-question/requested` and

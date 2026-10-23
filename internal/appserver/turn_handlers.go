@@ -2552,10 +2552,7 @@ func (s *Server) runTurnWithRequestContext(ctx context.Context, th *threadState,
 		})
 	}
 	if engine == nil {
-		engine = s.rt.WuuEngine().SessionForRunner(s.rt.StreamRunner)
-	}
-	if engine == nil {
-		engine = runtime.EngineUnavailableSession(agentengine.NormalizeEngineID(string(threadRuntime.EngineID)))
+		engine = runtime.EngineUnavailableSession(agentengine.NormalizeEngineID(th.EngineID))
 	}
 	// Bindings are acquired for this turn, including external-engine process
 	// ownership. Release before publishing its terminal outcome or admitting

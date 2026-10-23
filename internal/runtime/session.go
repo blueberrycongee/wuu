@@ -838,7 +838,7 @@ func NewSession(opts Options) (*Session, error) {
 	// here makes the seam explicit: thread runtimes are always created by an
 	// engine factory, starting with this one.
 	runtimeSession.engines = agentengine.NewRegistry()
-	if err := runtimeSession.engines.Register(&WuuEngine{session: runtimeSession}); err != nil {
+	if err := runtimeSession.engines.Register(NewWuuEngine(runtimeSession)); err != nil {
 		journalOwned = false
 		_ = journalRuntime.Close()
 		return nil, fmt.Errorf("register built-in agent engine: %w", err)
@@ -890,9 +890,6 @@ func NewSession(opts Options) (*Session, error) {
 		runtimeSession.engines.Register(claudeengine.NewEngine(claudeBinary, rootDir))
 	}
 	runtimeSession.RebuildProtocolEngines(cfg.Engines)
-	if runtimeSession.defaultEngine != "" && !runtimeSession.EngineAvailable(runtimeSession.defaultEngine) {
-		runtimeSession.defaultEngine = agentengine.EngineWuu
-	}
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
 	generationID := newPluginGenerationID(wuuHome)

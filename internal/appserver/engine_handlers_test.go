@@ -14,7 +14,65 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+// Disabling a selected implementation must reject admission before it creates
+// a durable thread or dispatches inference, including the native engine.
+func TestUnavailableSelectedEngineRejectsNewThreads(t *testing.T) {
+	for _, id := range []string{"wuu", "codex", "claude"} {
+		t.Run(id, func(t *testing.T) {
+			client := &fakeClient{}
+			rt := newTestRuntime(t, client)
+			settings := map[string]any{"default_engine": id}
+			for _, engine := range []string{"codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"} {
+				settings[engine] = map[string]bool{"enabled": false}
+			}
+			data, err := json.Marshal(map[string]any{
+				"default_provider": "fake-provider",
+				"providers":        map[string]any{"fake-provider": map[string]string{"type": "openai-compatible", "model": "fake-model", "base_url": "https://example.invalid/v1"}},
+				"engines":          settings,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(rt.ConfigPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if id == "wuu" {
+				rt.SetEnginesForTest(agentengine.NewRegistry())
+			}
+			if err := rt.RefreshEngineSettings(); err != nil {
+				t.Fatal(err)
+			}
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			for _, engine := range srv.engineInventory() {
+				if engine.ID == id && engine.Enabled {
+					t.Fatalf("unavailable engine advertised as enabled: %+v", engine)
+				}
+			}
+			if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start","params":{}}`)); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "start")
+			if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), id) {
+				t.Fatalf("unavailable selection did not produce its diagnostic: %+v", response)
+			}
+			threads, err := session.List(rt.SessionDir, 100)
+			if err != nil || len(threads) != 0 {
+				t.Fatalf("rejected selection created threads: %+v, %v", threads, err)
+			}
+			client.mu.Lock()
+			calls := len(client.requests)
+			client.mu.Unlock()
+			if calls != 0 {
+				t.Fatalf("unavailable engine dispatched %d model requests", calls)
+			}
+		})
+	}
+}
 
 func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "fakeclaude")

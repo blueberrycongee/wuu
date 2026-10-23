@@ -123,19 +123,20 @@ func (s *Server) engineInventoryWithRefresh(refreshModels bool) []EngineInfo {
 
 func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo {
 	var out []EngineInfo
-	// Built-in engine is always present.
-	out = append(out, EngineInfo{
-		ID:       string(agentengine.EngineWuu),
-		Version:  "1",
-		Enabled:  true,
-		BinaryOK: true,
-	})
 	descriptors := make(map[agentengine.EngineID]agentengine.Descriptor)
 	if s.rt.Engines() != nil {
 		for _, desc := range s.rt.Engines().Descriptors() {
 			descriptors[desc.ID] = desc
 		}
 	}
+	native := descriptors[agentengine.EngineWuu]
+	out = append(out, EngineInfo{
+		ID:           string(agentengine.EngineWuu),
+		Version:      native.Version,
+		Capabilities: append([]string(nil), native.Capabilities...),
+		Enabled:      s.rt.EngineAvailable(agentengine.EngineWuu),
+		BinaryOK:     true,
+	})
 	settings := s.engineSettingsFromConfig()
 	type acpProbe struct {
 		index int

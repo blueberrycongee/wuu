@@ -20,6 +20,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/compact"
@@ -4741,6 +4742,7 @@ func TestServerCodexWebSocketReplayAcrossThreadTurns(t *testing.T) {
 			MaxSteps: 1,
 		},
 	}
+	registerTestWuuEngine(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -6040,6 +6042,7 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 		},
 		TitleClient: titleClient,
 	}
+	registerTestWuuEngine(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -9919,7 +9922,7 @@ func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
 	t.Setenv("HOME", retryingTempDir(t))
 	environmentSection := "# Environment\n\n- Current working directory: " + root + "\n- Current date: 2026-01-01"
 	systemPrompt := "system prompt\n\n" + environmentSection
-	return &runtime.Session{
+	rt := &runtime.Session{
 		ProviderName:   "fake-provider",
 		Model:          "fake-model",
 		RootDir:        root,
@@ -9939,6 +9942,17 @@ func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
 			},
 		},
 	}
+	registerTestWuuEngine(t, rt)
+	return rt
+}
+
+func registerTestWuuEngine(t *testing.T, rt *runtime.Session) {
+	t.Helper()
+	registry := agentengine.NewRegistry()
+	if err := registry.Register(runtime.NewWuuEngine(rt)); err != nil {
+		t.Fatal(err)
+	}
+	rt.SetEnginesForTest(registry)
 }
 
 func retryingTempDir(t *testing.T) string {

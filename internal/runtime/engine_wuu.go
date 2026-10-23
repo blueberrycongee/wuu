@@ -24,6 +24,11 @@ type WuuEngine struct {
 	session *Session
 }
 
+// NewWuuEngine constructs the native engine provider for explicit registration.
+func NewWuuEngine(session *Session) *WuuEngine {
+	return &WuuEngine{session: session}
+}
+
 // Descriptor describes the built-in engine.
 func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 	return agentengine.Descriptor{
@@ -79,21 +84,12 @@ func (e *WuuEngine) SessionForThread(rt *ThreadRuntime) agentengine.Session {
 	return &wuuEngineSession{runner: rt.StreamRunner}
 }
 
-// SessionForRunner binds the built-in engine to a workspace-level runner
-// (the fallback used when a turn has no thread runtime).
-func (e *WuuEngine) SessionForRunner(runner *agent.StreamRunner) agentengine.Session {
-	if runner == nil {
-		return nil
-	}
-	return &wuuEngineSession{runner: runner}
-}
-
 // EngineAvailable reports whether an engine id resolves in the registry.
 // thread creation validates its engine binding against this; the static
 // agentengine.CheckEngine only knows the built-in wuu engine.
 func (s *Session) EngineAvailable(id agentengine.EngineID) bool {
 	if s == nil || s.engines == nil {
-		return id == agentengine.EngineWuu
+		return false
 	}
 	_, ok := s.engines.Lookup(id)
 	return ok
@@ -186,9 +182,6 @@ func (s *Session) refreshEngineSettings() error {
 	s.RebuildCodexEngine(codexEnabled, codexBinary)
 	s.RebuildClaudeEngine(claudeEnabled, claudeBinary)
 	s.RebuildProtocolEngines(cfg.Engines)
-	if !s.EngineAvailable(defaultEngine) {
-		defaultEngine = agentengine.EngineWuu
-	}
 	s.defaultEngineMu.Lock()
 	s.defaultEngine = defaultEngine
 	s.defaultEngineMu.Unlock()
@@ -267,9 +260,8 @@ func (s *Session) CodexHost() *codexengine.Host {
 	return engine.Host()
 }
 
-// WuuEngine returns the built-in engine factory. The built-in engine only
-// needs the native runner, so when the registry is absent (directly
-// constructed runtimes, e.g. in tests) a stateless adapter still works.
+// WuuEngine returns the registered native engine provider, or nil when it is
+// absent or replaced. Lookup never constructs a substitute implementation.
 func (s *Session) WuuEngine() *WuuEngine {
 	if s != nil && s.engines != nil {
 		if f, ok := s.engines.Lookup(agentengine.EngineWuu); ok {
@@ -278,7 +270,7 @@ func (s *Session) WuuEngine() *WuuEngine {
 			}
 		}
 	}
-	return &WuuEngine{session: s}
+	return nil
 }
 
 // EngineSessionForThread returns the engine session bound to an existing
@@ -290,21 +282,15 @@ func (s *Session) EngineSessionForThread(ctx context.Context, rt *ThreadRuntime,
 		return nil
 	}
 	id := agentengine.NormalizeEngineID(string(rt.EngineID))
-	if id == agentengine.EngineWuu {
-		if rt.StreamRunner == nil {
-			return nil
-		}
-		if w := s.WuuEngine(); w != nil {
-			return w.SessionForThread(rt)
-		}
-		return &unavailableEngineSession{id: id}
-	}
 	if s == nil || s.engines == nil {
 		return &unavailableEngineSession{id: id}
 	}
 	f, ok := s.engines.Lookup(id)
 	if !ok {
 		return &unavailableEngineSession{id: id}
+	}
+	if native, ok := f.(*WuuEngine); ok {
+		return native.SessionForThread(rt)
 	}
 	tbf, ok := f.(agentengine.ThreadBoundFactory)
 	if !ok {
