@@ -60,7 +60,8 @@ func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runti
 	provider := newGatedProvider(16)
 	rt.StreamRunner.Client = providers.AdaptStreamClient(provider)
 	out := &lockedBuffer{}
-	srv := New(rt, out)
+	srv := newProjectProviderTestServer(t, rt, out)
+	rt = srv.rt
 	t.Cleanup(srv.Close)
 	return srv, &rpcClient{server: srv, out: out}, &projectCalls{provider: provider}, rt
 }
@@ -238,7 +239,7 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 			worker := created.(projectSessionView)
 			calls.next(t, "Initial worker brief").response <- providersResponse("Initial work complete")
 			completed := waitForThread(t, srv, worker.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
-			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, worker.SessionID)
+			lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, worker.SessionID)
 			if err != nil || !acquired {
 				t.Fatalf("lease = %v, %v", acquired, err)
 			}
@@ -256,11 +257,11 @@ func TestProjectDispatchRecoversOrIsFencedByStop(t *testing.T) {
 			if err := lease.Release(); err != nil {
 				t.Fatal(err)
 			}
-			reopened := New(rt, &lockedBuffer{})
+			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
 			reopened.recoverProjectInbox()
 			if stop {
-				pending, err := session.PendingInbox(rt.SessionDir, worker.SessionID)
+				pending, err := rt.Sessions.PendingInbox(worker.SessionID)
 				if err != nil || len(pending) != 0 {
 					t.Fatalf("stopped dispatch pending = %+v, %v", pending, err)
 				}
@@ -375,7 +376,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	if err != nil || !active {
 		t.Fatalf("owner execution lease = %v, %v", active, err)
 	}
-	observer := New(rt, &lockedBuffer{})
+	observer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
 	handler := hostProjectWait(observer, lead.ID)
 	request := tools.ProjectSessionRequest{Action: "wait", SessionID: side.SessionID, TimeoutMS: 1}
@@ -394,7 +395,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 	waitForThread(t, owner, side.SessionID, func(th Thread) bool {
 		return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID == side.TurnID
 	})
-	records, err := session.LoadActiveHistoryRecords(rt.SessionDir, side.SessionID, true)
+	records, err := rt.Sessions.LoadActiveHistoryRecords(side.SessionID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +407,7 @@ func TestProjectWaitObservesRemoteTurnCompletion(t *testing.T) {
 			checkpoint = append(checkpoint, record)
 		}
 	}
-	if err := session.RewriteHistoryRecordsAtBaseline(rt.SessionDir, side.SessionID, checkpoint, records[len(records)-1].Seq); err != nil {
+	if err := rt.Sessions.RewriteHistoryRecordsAtBaseline(side.SessionID, checkpoint, records[len(records)-1].Seq); err != nil {
 		t.Fatal(err)
 	}
 	request.TimeoutMS = 1000
@@ -456,11 +457,11 @@ func TestProjectRecoveryDoesNotReportRemoteActiveTurn(t *testing.T) {
 		t.Fatalf("remote execution lease = %v, %v", active, err)
 	}
 
-	observer := New(rt, &lockedBuffer{})
+	observer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
 	observer.recoverProjectInbox()
 	resultID := projectResultClientID(worker.SessionID, worker.TurnID)
-	if found, err := session.InboxHas(rt.SessionDir, resultID); err != nil || found {
+	if found, err := rt.Sessions.InboxHas(resultID); err != nil || found {
 		t.Fatalf("unfinished remote turn was reported as a project result: found=%v, err=%v", found, err)
 	}
 }
@@ -478,10 +479,10 @@ func TestProjectWaitRequiresTerminalEvidenceWithoutExecutor(t *testing.T) {
 	}
 	// A process can exit after admitting the user input and before persisting
 	// a terminal record. An absent lease does not make that turn successful.
-	if _, err := session.ChangeControl(rt.SessionDir, member.ID, lead.ID, session.ControlActive, 0); err != nil {
+	if _, err := rt.Sessions.ChangeControl(member.ID, lead.ID, session.ControlActive, 0); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, member.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(member.ID, session.HistoryRecord{
 		Role: "user", Content: "Admitted but not settled", At: time.Now().UTC(),
 	}); err != nil {
 		t.Fatal(err)
@@ -529,16 +530,16 @@ func TestProjectCreationPersistsInitialDispatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	control, found, err := session.ReadControl(rt.SessionDir, th.ID)
+	control, found, err := rt.Sessions.ReadControl(th.ID)
 	if err != nil || !found || control.State != session.ControlActive {
 		t.Fatalf("initial control = %+v, %v", control, err)
 	}
-	pending, err := session.PendingInbox(rt.SessionDir, th.ID)
+	pending, err := rt.Sessions.PendingInbox(th.ID)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("initial dispatch = %+v, %v", pending, err)
 	}
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
 	calls.next(t, "Recover initial dispatch").response <- providersResponse("Initial dispatch recovered")
 	waitForThread(t, reopened, th.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
@@ -570,12 +571,12 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		child, found, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+		child, found, err := rt.Sessions.Find(result.(projectSessionView).SessionID)
 		if err != nil || !found || child.Provider != "fake-provider" || child.Model != tc.model {
 			t.Fatalf("child = %+v, %v", child, err)
 		}
 	}
-	current, _, err := session.Find(rt.SessionDir, lead.ID)
+	current, _, err := rt.Sessions.Find(lead.ID)
 	if err != nil || current.Model != "fake-model" {
 		t.Fatalf("lead changed = %+v, %v", current, err)
 	}
@@ -586,7 +587,7 @@ func TestProjectRoleModelsPersistAndRespectOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	child, _, err := session.Find(rt.SessionDir, result.(projectSessionView).SessionID)
+	child, _, err := rt.Sessions.Find(result.(projectSessionView).SessionID)
 	if err != nil || child.Model != "side-model" {
 		t.Fatalf("persistent side switched = %+v, %v", child, err)
 	}
@@ -642,7 +643,7 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	}
 
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
 	reopened.recoverProjectInbox()
 	if ids := deliveredClientIDs(t, rt, coordinator.ID, "project-result:"+worker.ID); len(ids) != 1 {
@@ -737,7 +738,7 @@ func TestProjectReportsUserTurns(t *testing.T) {
 		projectResultClientID(worker.ID, userTurn.Turn.ID))
 
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
 	reopened.recoverProjectInbox()
 	if ids := deliveredClientIDs(t, rt, coordinator.ID, projectResultClientID(worker.ID, userTurn.Turn.ID)); len(ids) != 1 {
@@ -763,7 +764,7 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "Also mention the migration"}, &userTurn)
 	held := calls.next(t, "mention the migration")
 	srv.drainSessionInbox(coordinator.ID)
-	pending, err := session.PendingInbox(srv.rt.SessionDir, coordinator.ID)
+	pending, err := srv.rt.Sessions.PendingInbox(coordinator.ID)
 	if err != nil || len(pending) != 1 || pending[0].Wake || pending[0].Cause != "project_user_message" || !strings.Contains(pending[0].Content, "Also mention the migration") {
 		t.Fatalf("direct user notice must persist without waking: %+v, %v", pending, err)
 	}
@@ -831,7 +832,7 @@ func TestProjectStopKeepsMembershipWithoutWakingOrRevivingOldInput(t *testing.T)
 	if ids := deliveredClientIDs(t, srv.rt, worker.ID, "project-message:"+coordinator.ID+":old-advice"); len(ids) != 0 {
 		t.Fatalf("stopped work consumed stale input: %v", ids)
 	}
-	pending, err := session.PendingInbox(srv.rt.SessionDir, coordinator.ID)
+	pending, err := srv.rt.Sessions.PendingInbox(coordinator.ID)
 	if err != nil || len(pending) < 2 {
 		t.Fatalf("intervention/result not retained: %+v, %v", pending, err)
 	}
@@ -866,7 +867,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	}
 	var other ThreadStartResult
 	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &other)
-	if _, err := session.SetWorkspaceID(rt.SessionDir, other.Thread.ID, "workspace-two"); err != nil {
+	if _, err := rt.Sessions.SetWorkspaceID(other.Thread.ID, "workspace-two"); err != nil {
 		t.Fatal(err)
 	}
 	if failure := adopt(other.Thread.ID); failure == nil {
@@ -874,7 +875,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	}
 	var managed ThreadStartResult
 	client.rpc(t, MethodThreadStart, ThreadStartParams{}, &managed)
-	if _, err := session.ChangeControl(rt.SessionDir, managed.Thread.ID, "plugin:reviewer", session.ControlActive, 0); err != nil {
+	if _, err := rt.Sessions.ChangeControl(managed.Thread.ID, "plugin:reviewer", session.ControlActive, 0); err != nil {
 		t.Fatal(err)
 	}
 	if failure := adopt(managed.Thread.ID); failure == nil {
@@ -1012,13 +1013,13 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			}
 
 			srv.Close()
-			reopened := New(rt, &lockedBuffer{})
+			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
 			reused, err = reopened.projectSessionHandler(lead.ID)(context.Background(), "reuse-after-restart", tools.ProjectSessionRequest{Action: "create", Role: "side", Prompt: "Continue"})
 			if err != nil || reused.(projectSessionView).SessionID != side.ID {
 				t.Fatalf("reloaded side = %+v, %v", reused, err)
 			}
-			metadata, found, err := session.Find(rt.SessionDir, side.ID)
+			metadata, found, err := rt.Sessions.Find(side.ID)
 			if err != nil || !found || metadata.ProjectRole != "side" {
 				t.Fatalf("persisted side = %+v, %v", metadata, err)
 			}
@@ -1100,16 +1101,16 @@ func TestProjectPeerInboxRecoversWithoutDuplicateDelivery(t *testing.T) {
 	if ids := deliveredClientIDs(t, rt, lead.ID, "project-message:"+member.ID+":information"); len(ids) != 0 {
 		t.Fatal("information woke idle lead")
 	}
-	control, _, err := session.ReadControl(rt.SessionDir, member.ID)
+	control, _, err := rt.Sessions.ReadControl(member.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	clientID := "project-message:" + member.ID + ":persisted-question"
-	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{ClientID: clientID, SessionID: lead.ID, RelatedSessionID: member.ID, Cause: "project_message", Content: "Recovered peer question", Wake: true, Controls: []session.Control{control}}); err != nil {
+	if err := rt.Sessions.EnqueueInbox(session.InboxMessage{ClientID: clientID, SessionID: lead.ID, RelatedSessionID: member.ID, Cause: "project_message", Content: "Recovered peer question", Wake: true, Controls: []session.Control{control}}); err != nil {
 		t.Fatal(err)
 	}
 	srv.Close()
-	reopened := New(rt, &lockedBuffer{})
+	reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(reopened.Close)
 	reopened.recoverProjectInbox()
 	settleCoordinator(t, reopened, calls, lead.ID, "Ready.", "Recovered.", clientID, "project-message:"+member.ID+":information")
@@ -1144,7 +1145,7 @@ func TestProjectInterruptedSideWorkDoesNotWakeRecipients(t *testing.T) {
 	srv.recoverProjectInbox()
 	calls.assertIdle(t)
 	for _, target := range []string{lead.ID, sideID} {
-		pending, err := session.PendingInbox(rt.SessionDir, target)
+		pending, err := rt.Sessions.PendingInbox(target)
 		if err != nil || len(pending) == 0 {
 			t.Fatalf("missing stopped report for %s: %v", target, err)
 		}
@@ -1163,7 +1164,7 @@ func TestProjectNonWakingNoticeConsumptionIsIdempotent(t *testing.T) {
 	var started TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: lead.ID, Prompt: "Hold current work"}, &started)
 	held := calls.next(t, "Hold current work")
-	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{ClientID: "notice-retry", SessionID: lead.ID, Cause: projectCauseUserMessage, Content: "User intervention", Wake: false}); err != nil {
+	if err := rt.Sessions.EnqueueInbox(session.InboxMessage{ClientID: "notice-retry", SessionID: lead.ID, Cause: projectCauseUserMessage, Content: "User intervention", Wake: false}); err != nil {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(lead.ID)
@@ -1210,18 +1211,18 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			}
 			memberID := view.(projectSessionView).SessionID
 			held := calls.next(t, "Prepare legacy work")
-			active, _, err := session.ReadControl(rt.SessionDir, memberID)
+			active, _, err := rt.Sessions.ReadControl(memberID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			control, err := session.ChangeControl(rt.SessionDir, memberID, lead.ID, state, active.Revision)
+			control, err := rt.Sessions.ChangeControl(memberID, lead.ID, state, active.Revision)
 			if err != nil {
 				t.Fatal(err)
 			}
 			held.response <- providersResponse("Ready.")
 			member := waitForThread(t, srv, memberID, func(th Thread) bool { return th.LatestCompletedTurnID != "" })
 			calls.assertIdle(t)
-			plugin, err := session.ChangeControl(rt.SessionDir, "plugin-member", "plugin:example", state, 0)
+			plugin, err := rt.Sessions.ChangeControl("plugin-member", "plugin:example", state, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1239,26 +1240,26 @@ func TestProjectRecoversLegacyControlWithoutWaking(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(otherRuntime.WuuHome, "projects.json"), registry, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			otherHost := New(otherRuntime, &lockedBuffer{})
+			otherHost := newProjectProviderTestServer(t, otherRuntime, &lockedBuffer{})
 			otherHost.Close()
-			foreign, _, err := session.ReadControl(rt.SessionDir, memberID)
+			foreign, _, err := rt.Sessions.ReadControl(memberID)
 			if err != nil || foreign != control {
 				t.Fatalf("foreign host migrated member: %+v, %v", foreign, err)
 			}
-			reopened := New(rt, &lockedBuffer{})
+			reopened := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 			t.Cleanup(reopened.Close)
 			reopened.recoverProjectInbox()
 			for _, resultID := range []string{projectResultClientID(memberID, member.LatestCompletedTurnID), projectResultClientID(memberID, member.LatestCompletedTurnID) + ":" + sideID} {
-				settled, err := session.InboxHas(rt.SessionDir, resultID)
+				settled, err := rt.Sessions.InboxHas(resultID)
 				if err != nil || !settled {
 					t.Fatalf("legacy result not settled: %s, %v", resultID, err)
 				}
 			}
-			restored, ok, err := session.ReadControl(rt.SessionDir, memberID)
+			restored, ok, err := rt.Sessions.ReadControl(memberID)
 			if err != nil || !ok || restored.State != session.ControlActive || restored.Revision <= control.Revision {
 				t.Fatalf("legacy member stranded: %+v, %v", restored, err)
 			}
-			unchanged, _, err := session.ReadControl(rt.SessionDir, plugin.SessionID)
+			unchanged, _, err := rt.Sessions.ReadControl(plugin.SessionID)
 			if err != nil || unchanged != plugin {
 				t.Fatalf("plugin control changed: %+v, %v", unchanged, err)
 			}

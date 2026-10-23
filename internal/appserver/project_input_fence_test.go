@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -91,7 +90,7 @@ func TestProjectPeerAdmissionRechecksControlsAfterPromptHook(t *testing.T) {
 					stopped = target
 				}
 				client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: stopped.ID}, nil)
-				control, ok, err := session.ReadControl(rt.SessionDir, stopped.ID)
+				control, ok, err := rt.Sessions.ReadControl(stopped.ID)
 				if err != nil || !ok || control.Revision <= stopped.SessionControl.Revision {
 					t.Fatalf("stop did not commit its fence: %+v, %v", control, err)
 				}

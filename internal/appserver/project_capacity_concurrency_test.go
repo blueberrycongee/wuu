@@ -21,7 +21,7 @@ import (
 func TestProjectCapacityRemoteReleaseResumesInbox(t *testing.T) {
 	srv, client, calls, rt := newProjectFixture(t)
 	lead := startProject(t, client, "Independent remote capacity")
-	var leases []*session.ThreadExecutionLease
+	var leases []*session.DocumentThreadExecutionLease
 	defer func() {
 		for _, l := range leases {
 			l.Release()
@@ -29,11 +29,11 @@ func TestProjectCapacityRemoteReleaseResumesInbox(t *testing.T) {
 	}()
 	for i := 0; i < config.DefaultAgentMaxParallel; i++ {
 		id := fmt.Sprintf("independent-held-%d", i)
-		_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
+		_, err := rt.Sessions.CreateInitialized(session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		l, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, id)
+		l, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, id)
 		if err != nil || !ok {
 			t.Fatalf("hold: %v %v", ok, err)
 		}
@@ -74,17 +74,17 @@ func TestProjectCapacityUsesDurableMembership(t *testing.T) {
 	}
 	for i := 0; i < config.DefaultAgentMaxParallel; i++ {
 		id := fmt.Sprintf("membership-held-%d", i)
-		_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker"}, nil)
+		_, err := rt.Sessions.CreateInitialized(session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		l, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, id)
+		l, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, id)
 		if err != nil || !ok {
 			t.Fatalf("hold: %v %v", ok, err)
 		}
 		defer l.Release()
 	}
-	if _, err := session.SetProjectMembership(rt.SessionDir, th.ID, projectSessionSource, lead.ID, ""); err != nil {
+	if _, err := rt.Sessions.SetProjectMembership(th.ID, projectSessionSource, lead.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	failure := client.call(t, MethodTurnStart, TurnStartParams{ThreadID: th.ID, Prompt: "Must wait for durable capacity"}, nil)
@@ -111,18 +111,18 @@ func TestProjectCapacityCrossServerLastSlot(t *testing.T) {
 	lead := startProject(t, client, "Independent cross-server atomicity")
 	for i := 0; i < config.DefaultAgentMaxParallel-1; i++ {
 		id := fmt.Sprintf("cross-server-held-%d", i)
-		_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker"}, nil)
+		_, err := rt.Sessions.CreateInitialized(session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker"}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		l, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, id)
+		l, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, id)
 		if err != nil || !ok {
 			t.Fatalf("hold: %v %v", ok, err)
 		}
 		defer l.Release()
 	}
 	peerOut := &lockedBuffer{}
-	peer := New(rt, peerOut)
+	peer := newProjectProviderTestServer(t, rt, peerOut)
 	t.Cleanup(peer.Close)
 	peerClient := &rpcClient{server: peer, out: peerOut}
 	ids := []string{}
@@ -130,7 +130,7 @@ func TestProjectCapacityCrossServerLastSlot(t *testing.T) {
 		var result ThreadStartResult
 		c.rpc(t, MethodThreadStart, ThreadStartParams{}, &result)
 		ids = append(ids, result.Thread.ID)
-		if _, err := session.SetProjectMembership(rt.SessionDir, result.Thread.ID, projectSessionSource, lead.ID, ""); err != nil {
+		if _, err := rt.Sessions.SetProjectMembership(result.Thread.ID, projectSessionSource, lead.ID, ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -178,22 +178,22 @@ func TestProjectCapacityCrossServerLastSlot(t *testing.T) {
 func TestProjectInboxForeignWorkspaceDoesNotPoll(t *testing.T) {
 	srv, _, calls, rt := newProjectFixture(t)
 	foreign := "independent-foreign-project"
-	_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: foreign, Source: projectSource, CWD: t.TempDir()}, nil)
+	_, err := rt.Sessions.CreateInitialized(session.Session{ID: foreign, Source: projectSource, CWD: t.TempDir()}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{SessionID: foreign, ClientID: "foreign-pending", Content: "foreign work", Wake: true}); err != nil {
+	if err := rt.Sessions.EnqueueInbox(session.InboxMessage{SessionID: foreign, ClientID: "foreign-pending", Content: "foreign work", Wake: true}); err != nil {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(foreign)
 	calls.assertIdle(t)
-	srv.projectInboxMu.Lock()
-	n := len(srv.projectInboxDrains)
-	srv.projectInboxMu.Unlock()
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Lock()
+	n := len(projectFixtureProvider(srv).lifetime.projectInboxDrains)
+	projectFixtureProvider(srv).lifetime.projectInboxMu.Unlock()
 	if n != 0 {
 		t.Fatalf("ineligible foreign workspace retained %d project retry loops", n)
 	}
-	pending, err := session.PendingInbox(rt.SessionDir, foreign)
+	pending, err := rt.Sessions.PendingInbox(foreign)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("foreign work must remain pending for its owner: %v %v", pending, err)
 	}
@@ -205,7 +205,7 @@ func TestProjectCapacityPrelaunchRollback(t *testing.T) {
 	var threads []*threadState
 	for i := 0; i < config.DefaultAgentMaxParallel+1; i++ {
 		id := fmt.Sprintf("prelaunch-%d", i)
-		_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
+		_, err := rt.Sessions.CreateInitialized(session.Session{ID: id, Source: projectSessionSource, ParentID: lead.ID, ProjectRole: "worker", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -215,7 +215,7 @@ func TestProjectCapacityPrelaunchRollback(t *testing.T) {
 		}
 		threads = append(threads, th)
 		if i < config.DefaultAgentMaxParallel-1 {
-			l, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, id)
+			l, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, id)
 			if err != nil || !ok {
 				t.Fatalf("hold: %v %v", ok, err)
 			}
@@ -255,13 +255,13 @@ func TestProjectInboxCloseDuringTimerLaunch(t *testing.T) {
 	lead := startProject(t, client, "Independent timer shutdown")
 	holder := capacityWorker(t, srv, lead.ID, "close-race-holder", "worker")
 	pending := capacityWorker(t, srv, lead.ID, "close-race-pending", "worker")
-	lease, ok, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
+	lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
 	if err != nil || !ok {
 		t.Fatalf("holder: %v %v", ok, err)
 	}
 	defer lease.Release()
 	var fire func()
-	srv.projectInboxAfterFunc = func(_ time.Duration, callback func()) func() { fire = callback; return func() {} }
+	projectFixtureProvider(srv).lifetime.projectInboxAfterFunc = func(_ time.Duration, callback func()) func() { fire = callback; return func() {} }
 	queueCapacityInput(t, srv, pending.ID, "close-race-input")
 	if fire == nil {
 		t.Fatal("missing capacity timer")
@@ -295,9 +295,9 @@ func TestProjectInboxCloseDuringTimerLaunch(t *testing.T) {
 	}
 	var passDone <-chan struct{}
 	waitFor(func() bool {
-		srv.projectInboxMu.Lock()
-		defer srv.projectInboxMu.Unlock()
-		state := srv.projectInboxDrains[lead.ID]
+		projectFixtureProvider(srv).lifetime.projectInboxMu.Lock()
+		defer projectFixtureProvider(srv).lifetime.projectInboxMu.Unlock()
+		state := projectFixtureProvider(srv).lifetime.projectInboxDrains[lead.ID]
 		if state != nil && state.running {
 			passDone = state.done
 			return true

@@ -44,8 +44,8 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: 1, Brief: "Implement compatible pagination; preserve existing interfaces"})
 	executorCall := calls.next(t, "Implement compatible pagination")
 	executorID := w.ExecutorID
-	lead, _, _ := session.Find(rt.SessionDir, w.LeadID)
-	executor, _, _ := session.Find(rt.SessionDir, executorID)
+	lead, _, _ := rt.Sessions.Find(w.LeadID)
+	executor, _, _ := rt.Sessions.Find(executorID)
 	if lead.CWD != executor.CWD || lead.CWD == rt.RootDir {
 		t.Fatalf("workstream is not isolated and shared: %s %s", lead.CWD, executor.CWD)
 	}
@@ -57,7 +57,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	}
 	executorCall.response <- providersResponse("Ready for technical review.")
 	reviewCall := calls.next(t, "Ready for technical review")
-	if pending, err := session.PendingInbox(rt.SessionDir, root.ID); err != nil || len(pending) != 0 {
+	if pending, err := rt.Sessions.PendingInbox(root.ID); err != nil || len(pending) != 0 {
 		t.Fatalf("executor leaked to coordinator: %+v %v", pending, err)
 	}
 	w = act(w.LeadID, "accept", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Summary: "Compatibility inspected", Evidence: "Reviewed API call sites and test.log", CodeRef: "working-tree:pagination-v1"})
@@ -81,7 +81,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 	}
 	w = act(root.ID, "stop-work", tools.ProjectWorkRequest{Operation: "stop", WorkID: w.ID, Revision: 2})
 	srv.recoverProjectInbox()
-	reopened, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	reopened, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || reopened.Phase != "stopped" {
 		t.Fatalf("stopped work revived: %+v %v", reopened, err)
 	}
@@ -99,7 +99,7 @@ func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 	}
 	w := value.(projectWorkView)
 	held := calls.next(t, "Review stop behavior")
-	member, _, _ := session.Find(rt.SessionDir, w.LeadID)
+	member, _, _ := rt.Sessions.Find(w.LeadID)
 	release, err := srv.acquireProjectWorkTool(member, providers.ToolCall{Name: "write_file"}, rt.Toolkit)
 	if err != nil {
 		t.Fatal(err)
@@ -110,11 +110,11 @@ func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 	}
 	var result OKResult
 	client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: w.LeadID}, &result)
-	current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	current, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Phase != "stopped" {
 		t.Fatalf("member stop did not stop work: %+v %v", current, err)
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-write:"+w.ID)
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-write:"+w.ID)
 	if lease != nil {
 		defer lease.Release()
 	}
@@ -123,7 +123,7 @@ func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 	}
 	held.response <- providersResponse("Late completion")
 	srv.recoverProjectInbox()
-	current, err = session.ReadProjectWork(rt.SessionDir, w.ID)
+	current, err = rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Phase != "stopped" {
 		t.Fatalf("late result revived work: %+v %v", current, err)
 	}
@@ -133,24 +133,24 @@ func TestProjectWorkRecoveryDoesNotInventSuccess(t *testing.T) {
 	srv, client, _, rt := newProjectFixture(t)
 	root := startProject(t, client, "Interrupted work")
 	leadID := session.NewID()
-	_, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: leadID, Source: projectSessionSource, ParentID: root.ID, ProjectRole: "technical_lead", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
+	_, err := rt.Sessions.CreateInitialized(session.Session{ID: leadID, Source: projectSessionSource, ParentID: root.ID, ProjectRole: "technical_lead", CWD: rt.RootDir, WorkspaceID: rt.WorkspaceID}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = session.ChangeControl(rt.SessionDir, leadID, root.ID, session.ControlActive, 0); err != nil {
+	if _, err = rt.Sessions.ChangeControl(leadID, root.ID, session.ControlActive, 0); err != nil {
 		t.Fatal(err)
 	}
-	_, err = session.SaveProjectWork(rt.SessionDir, session.ProjectWork{ID: "interrupted", ProjectID: root.ID, LeadID: leadID, Revision: 1, Phase: "planning", LeadInput: &session.ProjectWorkInput{ClientID: "crash-input", Revision: 1}}, 0, "prepare-crash")
+	_, err = rt.Sessions.SaveProjectWork(session.ProjectWork{ID: "interrupted", ProjectID: root.ID, LeadID: leadID, Revision: 1, Phase: "planning", LeadInput: &session.ProjectWorkInput{ClientID: "crash-input", Revision: 1}}, 0, "prepare-crash")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = session.AppendHistoryRecord(rt.SessionDir, leadID, session.HistoryRecord{Role: "user", ClientID: "crash-input", Content: "Accepted before crash"}); err != nil {
+	if err = rt.Sessions.AppendHistoryRecord(leadID, session.HistoryRecord{Role: "user", ClientID: "crash-input", Content: "Accepted before crash"}); err != nil {
 		t.Fatal(err)
 	}
 	if err = srv.recoverProjectWork(root.ID); err != nil {
 		t.Fatal(err)
 	}
-	w, err := session.ReadProjectWork(rt.SessionDir, "interrupted")
+	w, err := rt.Sessions.ReadProjectWork("interrupted")
 	if err != nil || w.Phase != "blocked" || w.Review != "" || w.Delivery != "" {
 		t.Fatalf("recovered unfinished work: %+v %v", w, err)
 	}
@@ -175,18 +175,18 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 	} {
 		srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
 	}
-	unchanged, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	unchanged, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || unchanged.Version != w.Version || unchanged.Brief != w.Brief {
 		t.Fatalf("generated evidence changed the user contract: %+v %v", unchanged, err)
 	}
 	message := providers.ChatMessage{Role: "user", Origin: "user", ClientID: "direct-correction", Content: "Leave the database index alone"}
 	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
 	srv.noticeProjectUserMessage(srv.thread(w.LeadID), message)
-	current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+	current, err := rt.Sessions.ReadProjectWork(w.ID)
 	if err != nil || current.Revision != 2 || current.Review != "" || current.LeadInput == nil {
 		t.Fatalf("direct intervention: %+v %v", current, err)
 	}
-	member, _, _ := session.Find(rt.SessionDir, w.LeadID)
+	member, _, _ := rt.Sessions.Find(w.LeadID)
 	if _, err := srv.acquireProjectWorkTool(member, providers.ToolCall{Name: "write_file"}, rt.Toolkit); err == nil {
 		t.Fatal("old turn can write before consuming the correction")
 	}
@@ -198,7 +198,7 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 		if _, err := srv.recordWorkTurn(srv.thread(w.LeadID), Turn{ID: oldTurn, Status: status}); err != nil {
 			t.Fatal(err)
 		}
-		after, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+		after, err := rt.Sessions.ReadProjectWork(w.ID)
 		if err != nil || after.Version != current.Version || after.Phase != "planning" {
 			t.Fatalf("late %s changed the new assignment: %+v %v", status, after, err)
 		}
@@ -248,7 +248,7 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 			if _, err := srv.recordWorkTurn(th, idle.Turns[len(idle.Turns)-1]); err != nil {
 				t.Fatal(err)
 			}
-			waiting, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+			waiting, err := rt.Sessions.ReadProjectWork(w.ID)
 			if err != nil || waiting.Phase != phase || waiting.Revision != w.Revision {
 				t.Fatalf("waiting process lost its assignment: %+v %v", waiting, err)
 			}
@@ -256,11 +256,11 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 				t.Fatal(err)
 			}
 			continued := calls.next(t, "verification-complete")
-			current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+			current, err := rt.Sessions.ReadProjectWork(w.ID)
 			if err != nil || current.Version != waiting.Version || current.Brief != w.Brief {
 				t.Fatalf("completion rewrote the contract: %+v %v", current, err)
 			}
-			member, _, err := session.Find(rt.SessionDir, memberID)
+			member, _, err := rt.Sessions.Find(memberID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -328,17 +328,17 @@ func TestProjectWorkConcurrentRecoveryKeepsOneDispatch(t *testing.T) {
 	w := session.ProjectWork{ID: session.NewID(), ProjectID: root.ID, LeadID: session.NewID(), Revision: 1, Phase: "planning", Workspace: "worktree", Title: "Recovered work", Brief: "Replay-safe work", Acceptance: "One dispatch", Authority: "Local only", LeadModel: runtimeSelectionFromSession(project)}
 	w.LeadInput = srv.workInput(w, "recoverable-input", root.ID, workContract(w))
 	var err error
-	w, err = session.SaveProjectWork(rt.SessionDir, w, 0, "saved-before-creation")
+	w, err = rt.Sessions.SaveProjectWork(w, 0, "saved-before-creation")
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-reconcile:"+w.ID)
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, "project-work-reconcile:"+w.ID)
 	if err != nil || !acquired {
 		t.Fatalf("hold reconciliation: %v %v", acquired, err)
 	}
 	defer lease.Release()
 
-	observer := New(rt, &lockedBuffer{})
+	observer := newProjectProviderTestServer(t, rt, &lockedBuffer{})
 	t.Cleanup(observer.Close)
 	results := make(chan error, 2)
 	for _, host := range []*Server{srv, observer} {
@@ -379,22 +379,22 @@ func TestProjectWorkOutboxStaysWithOwningWorkspace(t *testing.T) {
 	srv, client, _, rt := newProjectFixture(t)
 	root := startProject(t, client, "Owned workspace")
 	w := session.ProjectWork{ID: "owned-work", ProjectID: root.ID, LeadID: session.NewID(), Revision: 1, Phase: "planning", Workspace: "shared"}
-	if _, err := session.SaveProjectWork(rt.SessionDir, w, 0, "owned-create"); err != nil {
+	if _, err := rt.Sessions.SaveProjectWork(w, 0, "owned-create"); err != nil {
 		t.Fatal(err)
 	}
 	otherRuntime := *rt
 	otherRuntime.RootDir = t.TempDir()
 	otherRuntime.WorkspaceID = "other-workspace"
-	other := New(&otherRuntime, &lockedBuffer{})
+	other := newProjectProviderTestServer(t, &otherRuntime, &lockedBuffer{})
 	t.Cleanup(other.Close)
 	if other.drainProjectInboxPass(root.ID) {
 		t.Fatal("another workspace scheduled retries for this work")
 	}
-	pending, err := session.PendingProjectWork(rt.SessionDir, root.ID)
+	pending, err := rt.Sessions.PendingProjectWork(root.ID)
 	if err != nil || len(pending) != 1 {
 		t.Fatalf("another workspace settled the outbox: %+v %v", pending, err)
 	}
-	if _, found, err := session.Find(rt.SessionDir, w.LeadID); err != nil || found {
+	if _, found, err := rt.Sessions.Find(w.LeadID); err != nil || found {
 		t.Fatalf("another workspace created the member: %v %v", found, err)
 	}
 	_ = srv
@@ -434,7 +434,7 @@ func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
 		if err == nil {
 			t.Fatalf("failed submission accepted (recovery=%v)", recover)
 		}
-		current, err := session.ReadProjectWork(rt.SessionDir, w.ID)
+		current, err := rt.Sessions.ReadProjectWork(w.ID)
 		if err != nil || current.Phase != "reviewing" || current.Review != "" {
 			t.Fatalf("failed review changed acceptance: %+v %v", current, err)
 		}

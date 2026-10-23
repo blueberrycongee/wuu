@@ -14,13 +14,13 @@ func TestProjectAgentDisabled(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WorkspaceID = "workspace-one"
 	for _, source := range []string{"project", "project-session"} {
-		if _, err := session.CreateWithMetadata(rt.SessionDir, source, rt.RootDir); err != nil {
+		if _, err := rt.Sessions.CreateWithMetadata(source, rt.RootDir); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := session.SetSource(rt.SessionDir, source, source); err != nil {
+		if _, err := rt.Sessions.SetSource(source, source); err != nil {
 			t.Fatal(err)
 		}
-		if err := session.EnqueueInbox(rt.SessionDir, session.InboxMessage{ClientID: source, SessionID: source, Content: "pending work", Wake: true}); err != nil {
+		if err := rt.Sessions.EnqueueInbox(session.InboxMessage{ClientID: source, SessionID: source, Content: "pending work", Wake: true}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -38,8 +38,8 @@ func TestProjectAgentDisabled(t *testing.T) {
 		if failure := client.call(t, MethodTurnStart, TurnStartParams{ThreadID: id, Prompt: "run"}, nil); failure == nil {
 			t.Fatalf("release build executed %s", id)
 		}
-		srv.drainSessionInbox(id)
-		pending, err := session.PendingInbox(rt.SessionDir, id)
+		srv.drainSessionInboxForHost(id, rt.PluginHost)
+		pending, err := rt.Sessions.PendingInbox(id)
 		if err != nil || len(pending) != 1 {
 			t.Fatalf("pending work changed for %s: %v, %v", id, pending, err)
 		}
