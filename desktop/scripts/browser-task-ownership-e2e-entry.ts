@@ -36,7 +36,7 @@ symlinkSync(actualWorkdir, workdir, process.platform === "win32" ? "junction" : 
 app.setPath("userData", join(fixture, "profile"));
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = resolve(process.env.WUU_BROWSER_OWNERSHIP_CORE ?? join(desktop, "build", "bin", "wuu-core"));
-process.env.WUU_SAFE_MODE = "1";
+process.env.WUU_SAFE_MODE = "0";
 process.env.WUU_ENABLE_BROWSER = "1";
 
 function deferred() {
@@ -342,6 +342,7 @@ app.whenReady().then(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   writeFileSync(join(home, "config.json"), JSON.stringify({
+    composition: { version: 1, modules: ["kernel", "wuu.default-loop", "wuu.session-execution", "wuu.tool-execution"] },
     default_provider: "fixture",
     ptc: { enabled: false },
     agent: { tool_loading: "flat", max_steps: 20 },
