@@ -10,8 +10,8 @@ import { startFocusModality } from "../../src/renderer/FocusModality";
 import { initialState } from "../../src/renderer/AppState";
 import { ConversationTitleActions, ConversationTitleContent } from "../../src/renderer/ConversationShellRenderers";
 import { usePrimaryPluginViewCover } from "../../src/renderer/PrimaryPluginViewCover";
-import source from "../../../internal/plugin/bundled/automation/desktop.js?raw";
-import manifest from "../../../internal/plugin/bundled/automation/plugin.json";
+import source from "../../../internal/plugin/bundled/automation-client/desktop.js?raw";
+import manifest from "../../../internal/plugin/bundled/automation-client/plugin.json";
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
 import "../../src/renderer/styles.css";
 
@@ -35,8 +35,10 @@ const runs = params.has("empty") ? [] : [
 const host = new PluginHost({ react: React,
   listWorkspaces: async () => ({ activeWorkspaceId: "wuu", workspaces: [workspace] }),
   listThreads: async () => ["检查自动化插件的执行与恢复流程", "统一侧栏与编辑面板的交互", "整理本周项目进展", "检查长标题在不同窗口宽度下的显示与截断", "排查会话恢复", "更新开发文档", "核验任务运行记录", "改进菜单的键盘操作", "检查桌面与移动端布局", "整理下一周的工作计划", "检查插件生命周期", "回顾最近一次发布"].map((title, index) => ({ id: `chat-${index}`, title, pinned: index === 0, updatedAt: "2026-09-15T12:00:00Z" })),
-  invokeRuntime: async ({ method, input }) => {
-    const value = input as Record<string, any>;
+  invokeRuntime: async ({ service, method: serviceMethod, input }) => {
+    if (service !== "automation.scheduler" || serviceMethod !== "request") throw new Error("Unsupported preview service");
+    const { method, input: params } = input as { method: string; input?: unknown };
+    const value = params as Record<string, any>;
     if (method === "automation.list") return { tasks, workspace };
     if (method === "automation.run.list") return { runs };
     if (method === "automation.remove") { tasks = tasks.filter(task => task.id !== value.id); return { ok: true }; }
@@ -46,11 +48,11 @@ const host = new PluginHost({ react: React,
   },
 });
 // The manifest's navigation entry is what makes Automations a sidebar destination.
-await host.activateGeneration({ pluginId: "automation", generation: "preview", contributions: { navigation: manifest.contributes.navigation.map(({ id, title, view, order }) => ({ id, title, view, order })) }, register: activate });
+await host.activateGeneration({ pluginId: "automation-client", generation: "preview", graphGeneration: "preview", contributions: { navigation: manifest.contributes.navigation.map(({ id, title, view, order }) => ({ id, title, view, order })) }, register: activate });
 const controller = new WorkbenchController(host, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
 const region = params.get("region") || "workspace";
 const portalRegion = region === "primary" || region === "overlay" || region === "auxiliary";
-if (portalRegion) await controller.openPluginView("automation", "automation.catalog", { region });
+if (portalRegion) await controller.openPluginView("automation-client", "automation.catalog", { region });
 const style = document.createElement("style");
 style.textContent = "html,body,#root { width:100%; height:100%; margin:0; } .plugin-view-content {height:100%;} body {background:var(--paper);} ";
 document.head.append(style);
@@ -71,7 +73,7 @@ function Titlebar() {
 function Preview() {
   const [value, setValue] = React.useState("daily");
   const pluginPageVisible = usePrimaryPluginViewCover(controller);
-  const content = <PluginViewContent controller={controller} pluginId="automation" viewTypeId="automation.catalog" />;
+  const content = <PluginViewContent controller={controller} pluginId="automation-client" viewTypeId="automation.catalog" />;
   return <><AppBackground />{params.has("reference") ? <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--hairline)" }}>
     <SettingsRow title="Wuu 原生设置行"><SelectMenu ariaLabel="原生计划" value={value} onChange={setValue} options={[{ value: "daily", label: "每天" }, { value: "weekdays", label: "工作日" }]} /></SettingsRow>
   </div> : null}{portalRegion ? <>
