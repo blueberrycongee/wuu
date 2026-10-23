@@ -25,12 +25,14 @@ type fixtureSession struct {
 }
 
 type request struct {
-	Home     string           `json:"home"`
-	Workdir  string           `json:"workdir"`
-	Op       string           `json:"op"`
-	Sessions []fixtureSession `json:"sessions,omitempty"`
-	IDs      []string         `json:"ids,omitempty"`
-	Domains  []string         `json:"domains,omitempty"`
+	Home     string                  `json:"home"`
+	Workdir  string                  `json:"workdir"`
+	Op       string                  `json:"op"`
+	Sessions []fixtureSession        `json:"sessions,omitempty"`
+	IDs      []string                `json:"ids,omitempty"`
+	Domains  []string                `json:"domains,omitempty"`
+	ID       string                  `json:"id,omitempty"`
+	History  []session.HistoryRecord `json:"history,omitempty"`
 }
 
 func main() {
@@ -51,8 +53,18 @@ func run(ctx context.Context, input io.Reader, output io.Writer) error {
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		return errors.New("expected one JSON request")
 	}
-	if req.Op != "seed" && req.Op != "read" && req.Op != "inspect" {
+	if req.Op != "seed" && req.Op != "read" && req.Op != "inspect" && req.Op != "append" {
 		return fmt.Errorf("unsupported operation %q", req.Op)
+	}
+	if req.Op == "append" {
+		if strings.TrimSpace(req.ID) == "" || req.ID != strings.TrimSpace(req.ID) || len(req.History) == 0 {
+			return errors.New("append requires an existing session ID and nonempty history")
+		}
+		for _, record := range req.History {
+			if record.Seq != 0 {
+				return errors.New("append assigns sequence numbers; omit history seq")
+			}
+		}
 	}
 	if req.Op == "seed" {
 		seen := make(map[string]bool)
@@ -104,10 +116,26 @@ func execute(ctx context.Context, req request, opts runtime.StateOptions) (resul
 	if req.Op == "inspect" {
 		return inspectDocuments(ctx, state.Documents, req.Domains)
 	}
+	if req.Op == "append" {
+		first, last, err := state.Sessions.AppendHistoryRecordsReturningRange(req.ID, req.History)
+		if err != nil {
+			return nil, fmt.Errorf("append %q: %w", req.ID, err)
+		}
+		return struct {
+			ID       string `json:"id"`
+			FirstSeq int    `json:"first_seq"`
+			LastSeq  int    `json:"last_seq"`
+			Entries  int    `json:"entries"`
+		}{req.ID, first, last, last}, nil
+	}
 	if req.Op == "seed" {
 		ids := make([]string, 0, len(req.Sessions))
 		for _, fixture := range req.Sessions {
-			fixture.Session.Entries = len(fixture.History)
+			// Batched fixtures may declare their final sidebar count before
+			// appending history, preserving their supplied UpdatedAt timestamp.
+			if fixture.Session.Entries == 0 {
+				fixture.Session.Entries = len(fixture.History)
+			}
 			created, err := state.Sessions.CreateInitialized(fixture.Session, fixture.History)
 			if err != nil {
 				return nil, fmt.Errorf("seed %q: %w", fixture.Session.ID, err)
