@@ -23,7 +23,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
-	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -100,7 +99,7 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			t.Cleanup(unblock)
 			configPath := filepath.Join(root, "config.json")
-			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
+			config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"unconfined"},"skills":{"enabled":false}}`, server.URL)
 			if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -136,12 +135,14 @@ text(await tools.bash({command:"mkdir shell; printf created > shell/new.txt"}));
 			// Hold the provider response so the database sidecars are still live.
 			state := filepath.Join(root, "state")
 			documentsDir := filepath.Join(statepath.SessionsDir(state), "documents")
-			inspection, _, err := persistence.Inspect(context.Background(), documentsDir)
-			if err != nil {
-				t.Fatal(err)
+			// Inspect file modes without opening another SQLite connection: its
+			// close can checkpoint/remove the sidecars we are measuring.
+			databases, err := filepath.Glob(filepath.Join(documentsDir, "*", "state.sqlite3"))
+			if err != nil || len(databases) != 1 {
+				t.Fatalf("selected database files: %v, %v", databases, err)
 			}
 			for _, suffix := range []string{"", "-wal", "-shm"} {
-				path := filepath.Join(documentsDir, inspection.Generation, "state.sqlite3") + suffix
+				path := databases[0] + suffix
 				info, err := os.Stat(path)
 				if err != nil || info.Mode().Perm() != 0o600 {
 					t.Errorf("private database %s: %v, %v", path, info, err)
@@ -252,7 +253,7 @@ func stalledExecProvider(t *testing.T, root string, delta string) (string, <-cha
 	}))
 	t.Cleanup(func() { close(release); server.Close() })
 	configPath := filepath.Join(root, "config.json")
-	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
+	config := fmt.Sprintf(`{"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local"]},"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-test"}},"agent":{"permission_mode":"read_only"}}`, server.URL)
 	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
