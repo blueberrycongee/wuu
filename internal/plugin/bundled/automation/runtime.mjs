@@ -154,6 +154,58 @@ async function startBackground(host, input) {
   return await host.call("host.service.call", { service: BACKGROUND_SERVICE, method: "start", params: input });
 }
 
+// packages/plugin-sdk/src/providers.ts
+var CREDENTIAL_STORE_SERVICE = "state.credentials";
+var CONFIG_SOURCE_SERVICE = "state.config";
+var PLUGIN_SETTINGS_STORE_SERVICE = "state.plugin-settings";
+var ARTIFACT_STORE_SERVICE = "state.artifacts";
+function descriptor(name, methods, preparation = []) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`,
+    ...preparation.includes(method) ? { preparation: true } : {}
+  })) };
+}
+var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
+var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var ARTIFACT_STORE_DESCRIPTOR = descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "fork"]);
+
+// packages/plugin-sdk/src/coordination.ts
+var PROJECT_COORDINATION_SERVICE = "project.coordination";
+var MANAGED_SESSION_SERVICE = "host.managed-session";
+function descriptor2(name, methods) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`
+  })) };
+}
+var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
+  "scheduler",
+  "session",
+  "work",
+  "membership",
+  "create",
+  "turn",
+  "user-input",
+  "inbox",
+  "schedule",
+  "recover",
+  "instructions",
+  "member-work",
+  "coordinator",
+  "enqueue",
+  "capacity",
+  "work-list",
+  "tool-policy",
+  "tool-validate",
+  "tool-config",
+  "admission"
+]);
+var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
@@ -234,7 +286,11 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: null };
     }
   } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...code ? { code } : {},
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)
+    } };
   }
 }
 function scopedRuntimeHost(host, execution) {
@@ -664,23 +720,6 @@ function restoreRun(raw) {
   for (const key of ["triggered_at", "completed_at"]) if (fields[key] !== void 0 && !Number.isFinite(Date.parse(fields[key]))) throw new Error(`invalid timestamp ${key}`);
   return { id: "", task_id: "", request_id: "", status: "", triggered_at: zeroTime, ...fields, task: restoreTask(value.task) };
 }
-var cronSchema = {
-  type: "object",
-  properties: {
-    action: { type: "string", enum: ["list", "add", "remove"] },
-    cron: { type: "string" },
-    prompt: { type: "string" },
-    title: { type: "string" },
-    timezone: { type: "string" },
-    mode: { type: "string", enum: ["new_thread", "thread_heartbeat"] },
-    heartbeat_thread_id: { type: "string" },
-    workspace: { type: "string", enum: ["shared", "worktree"] },
-    recurring: { type: "boolean" },
-    durable: { type: "boolean" },
-    id: { type: "string" }
-  },
-  required: ["action"]
-};
 function createAutomationPlugin() {
   let host;
   let pluginID = "", workspaceID = "", workspaceRoot = "";
@@ -958,9 +997,8 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
       stopped = false;
       schedulingStopped = false;
       return {
-        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root"] }],
         provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }, { name: "run", input_schema: "automation.scheduler.run.input.v1", output_schema: "automation.scheduler.run.output.v1" }] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }, { id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
+        capabilities: [{ id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
         required_services: [requireBackgroundService(), ...["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)]
       };
     },
@@ -1019,32 +1057,7 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
       const request = call.params;
       return clientRequest(scoped, request.method, request.input);
     },
-    async executeTool(call, host2) {
-      if (stopped) throw new Error("automation provider is stopped");
-      const input = mutationInput(call.arguments);
-      let value;
-      switch (input.action?.trim()) {
-        case "list":
-          value = await locked(snapshotTasks);
-          break;
-        case "add":
-          input.heartbeat_thread_id ||= call.session_id || call.thread_id;
-          value = { action: "cron", task: await add(host2, input) };
-          break;
-        case "remove":
-          await remove(host2, input.id);
-          value = { action: "cron", removed: input.id?.trim() };
-          break;
-        default:
-          throw new Error("cron requires action=list, add, or remove");
-      }
-      return { result: { content: [{ type: "text", text: JSON.stringify(value) }] } };
-    },
     async invokeCapability(call, host2) {
-      if (call.capability === "plugin.client.request") {
-        const request = call.input;
-        return { output: { result: await clientRequest(host2, request.method, request.input) } };
-      }
       if (call.capability === "agent.turn.lifecycle") {
         await settle(host2, call.input);
         return { output: {} };

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { normalize, parse, sep } from "node:path";
-import { requireBackgroundService, startBackground, requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type ToolExecuteParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
+import { requireBackgroundService, startBackground, requireKernelService, type RuntimeHost, type RuntimePlugin, type RuntimeInitializeParams, type TurnLifecycleInput } from "@wuu/plugin-sdk";
 import { localTimezone, parseCronExpression, validateTimezone } from "./schedule.js";
 
 const storageKey = "automation.state";
@@ -71,14 +71,6 @@ function restoreRun(raw: unknown): Run {
   return { id: "", task_id: "", request_id: "", status: "", triggered_at: zeroTime, ...fields, task: restoreTask(value.task) };
 }
 
-const cronSchema = {
-  type: "object" as const,
-  properties: {
-    action: { type: "string", enum: ["list", "add", "remove"] }, cron: { type: "string" }, prompt: { type: "string" }, title: { type: "string" }, timezone: { type: "string" },
-    mode: { type: "string", enum: ["new_thread", "thread_heartbeat"] }, heartbeat_thread_id: { type: "string" }, workspace: { type: "string", enum: ["shared", "worktree"] },
-    recurring: { type: "boolean" }, durable: { type: "boolean" }, id: { type: "string" },
-  }, required: ["action"],
-};
 
 export function createAutomationPlugin(): RuntimePlugin {
   let host: RuntimeHost;
@@ -294,9 +286,9 @@ export function createAutomationPlugin(): RuntimePlugin {
       host = runtimeHost; pluginID = params.plugin_id; workspaceID = params.workspace_id?.trim() || ""; workspaceRoot = params.project_root.trim();
       tasks = new Map(); runs = []; stopped = false; schedulingStopped = false;
       return {
-        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root" as const] }],
+
         provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }, { name: "run", input_schema: "automation.scheduler.run.input.v1", output_schema: "automation.scheduler.run.output.v1" }] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision" as const, version: 1 }, { id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
+        capabilities: [{ id: "agent.turn.lifecycle", kind: "observe" as const, version: 1, error_policy: "isolate" as const }],
         required_services: [requireBackgroundService(), ...(["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"] as const).map(requireKernelService)],
       };
     },
@@ -339,23 +331,7 @@ export function createAutomationPlugin(): RuntimePlugin {
       const request = call.params as { method: string; input?: Mutation };
       return clientRequest(scoped, request.method, request.input);
     },
-    async executeTool(call: ToolExecuteParams, host: RuntimeHost) {
-      if (stopped) throw new Error("automation provider is stopped");
-      const input = mutationInput(call.arguments);
-      let value: unknown;
-      switch (input.action?.trim()) {
-        case "list": value = await locked(snapshotTasks); break;
-        case "add": input.heartbeat_thread_id ||= call.session_id || call.thread_id; value = { action: "cron", task: await add(host, input) }; break;
-        case "remove": await remove(host, input.id); value = { action: "cron", removed: input.id?.trim() }; break;
-        default: throw new Error("cron requires action=list, add, or remove");
-      }
-      return { result: { content: [{ type: "text" as const, text: JSON.stringify(value) }] } };
-    },
     async invokeCapability(call, host) {
-      if (call.capability === "plugin.client.request") {
-        const request = call.input as { method: string; input?: Mutation };
-        return { output: { result: await clientRequest(host, request.method, request.input) } };
-      }
       if (call.capability === "agent.turn.lifecycle") { await settle(host, call.input as TurnLifecycleInput); return { output: {} }; }
       throw new Error(`unknown capability ${JSON.stringify(call.capability)}`);
     },
