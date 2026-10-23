@@ -44,6 +44,10 @@ export function AppBackground(): JSX.Element | null {
       if (variant?.active) variables["--shell-active"] = variant.active;
       else if (!skin) variables["--shell-active"] = mode === "light" ? "#ffffffcc" : "#181819cc";
       if (url) variables["--shell-image"] = `url(${JSON.stringify(url)})`;
+      variables["--shell-image-ratio"] = "1";
+      const position = variant?.position ?? "center";
+      variables["--shell-image-align-x"] = position === "left" ? "0" : position === "right" ? "1" : "0.5";
+      variables["--shell-image-align-y"] = position === "top" ? "0" : position === "bottom" ? "1" : "0.5";
     }
     for (const [name, value] of Object.entries(variables)) root.style.setProperty(name, value);
     root.toggleAttribute("data-shell-skin", enabled);
@@ -51,23 +55,11 @@ export function AppBackground(): JSX.Element | null {
     if (url) root.dataset.shellImage = url;
     else delete root.dataset.shellImage;
     const image = new Image();
-    const resize = () => {
-      const width = window.innerWidth, height = window.innerHeight;
-      const scale = image.naturalWidth ? Math.max(width / image.naturalWidth, height / image.naturalHeight) : 1;
-      const w = image.naturalWidth * scale || width, h = image.naturalHeight * scale || height;
-      const position = variant?.position ?? "center";
-      root.style.setProperty("--shell-image-size", `${w}px ${h}px`);
-      root.style.setProperty("--shell-image-x", `${position === "left" ? 0 : position === "right" ? width - w : (width - w) / 2}px`);
-      root.style.setProperty("--shell-image-y", `${position === "top" ? 0 : position === "bottom" ? height - h : (height - h) / 2}px`);
-    };
-    resize();
-    image.onload = resize;
+    image.onload = () => root.style.setProperty("--shell-image-ratio", String(image.naturalWidth / image.naturalHeight));
     if (url) image.src = url;
-    window.addEventListener("resize", resize);
     return () => {
       image.onload = null;
-      window.removeEventListener("resize", resize);
-      for (const name of [...Object.keys(variables), "--shell-image-size", "--shell-image-x", "--shell-image-y"]) root.style.removeProperty(name);
+      for (const name of Object.keys(variables)) root.style.removeProperty(name);
       root.removeAttribute("data-shell-skin");
       delete root.dataset.shellImage;
     };

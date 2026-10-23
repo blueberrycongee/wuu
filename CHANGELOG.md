@@ -121,6 +121,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Resolve wallpaper cover sizing in CSS during window resizing, avoiding inherited style updates across the conversation while retaining wallpaper alignment in the native navigation ribbon.
+
 - Keep conversation titles synchronized across lists, tabs, resumes, and delayed notifications using a persisted title revision. Retry automatic naming for untitled conversations after later successful turns while preserving saved manual titles.
 
 - Recover automatically when a Responses WebSocket reaches its connection lifetime limit during a reply, reconnecting with the full request while preserving tool replay safeguards and retry limits.
