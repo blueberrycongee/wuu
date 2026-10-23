@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { runJSONLRuntime, RuntimeHostServiceError, type RuntimePlugin, type StateQuery, type StateTransaction } from "@wuu/plugin-sdk";
+import { documentStoreDescriptor, runJSONLRuntime, RuntimeHostServiceError, type RuntimePlugin, type StateQuery, type StateTransaction } from "@wuu/plugin-sdk";
 
 // A deliberately small external fixture, not a production backend. One SDK
 // runtime serializes calls; the atomic file preserves receipts across restart.
@@ -12,11 +12,9 @@ function reject(code: string, message: string): never {
 }
 const plugin: RuntimePlugin = {
   initialize() {
-    return { protocol_version: 3, lifecycle_version: 2, provided_services: [{ name: "state.documents", version: "1.0.0", methods: [
-      { name: "read", input_schema: "state.documents.read.input.v1", output_schema: "state.documents.read.output.v1", cleanup: true },
-      { name: "commit", input_schema: "state.documents.commit.input.v1", output_schema: "state.documents.commit.output.v1", cleanup: true },
-      { name: "export", input_schema: "state.documents.export.input.v1", output_schema: "state.documents.export.output.v1" },
-    ] }] };
+    // Preparation may inspect existing data, but must never create storage.
+    if (existsSync(file)) state = JSON.parse(readFileSync(file, "utf8"));
+    return { protocol_version: 3, lifecycle_version: 2, provided_services: [documentStoreDescriptor()] };
   },
   activate() { if (existsSync(file)) state = JSON.parse(readFileSync(file, "utf8")); },
   invokeService({ method, params }) {
