@@ -1049,7 +1049,8 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 .composer textarea {
-  --placeholder-ink: var(--ink-soft);
+  /* Keep hints at the same quiet level as aggregated tool-call summaries. */
+  --placeholder-ink: var(--ink-quiet);
   display: block;
   width: 100%;
   height: 72px;
