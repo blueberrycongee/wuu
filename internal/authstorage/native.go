@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
@@ -15,6 +16,9 @@ import (
 type nativeStore struct {
 	credentialstore.Store
 	codexPath, grokPath string
+	legacyPath          string
+	migrationMu         sync.Mutex
+	migrated            bool
 }
 
 // NewNativeStore is called only when the explicitly selected native credential
@@ -24,22 +28,43 @@ func NewNativeStore(base credentialstore.Store, resolvedWuuHome, userHome string
 	if base == nil || !filepath.IsAbs(resolvedWuuHome) || !filepath.IsAbs(userHome) {
 		return nil, errors.New("native credentials require a selected backend and resolved Wuu/user homes")
 	}
-	ctx := context.Background()
-	raw, err := base.Get(ctx, ModelCredentialNamespace, ModelCredentialKey)
+	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	if codexHome == "" {
+		codexHome = filepath.Join(userHome, ".codex")
+	}
+	grokHome := strings.TrimSpace(os.Getenv("GROK_HOME"))
+	if grokHome == "" {
+		grokHome = filepath.Join(userHome, ".grok")
+	}
+	return &nativeStore{Store: base, legacyPath: filepath.Join(resolvedWuuHome, "auth.json"), codexPath: filepath.Join(codexHome, "auth.json"), grokPath: filepath.Join(grokHome, "auth.json")}, nil
+}
+
+// Only the model document needs the legacy import. Unrelated capabilities and
+// explicit model credentials must not open or mutate saved model accounts.
+func (s *nativeStore) migrate(ctx context.Context, namespace, key string) error {
+	if namespace != ModelCredentialNamespace || key != ModelCredentialKey {
+		return nil
+	}
+	s.migrationMu.Lock()
+	defer s.migrationMu.Unlock()
+	if s.migrated {
+		return nil
+	}
+	raw, err := s.Store.Get(ctx, ModelCredentialNamespace, ModelCredentialKey)
 	defer clear(raw)
 	if err != nil && !errors.Is(err, credentialstore.ErrNotFound) {
-		return nil, ErrUnavailable
+		return ErrUnavailable
 	}
 	current, err := decodeBoundFile(raw)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !current.LegacyImported {
-		previous, err := New(filepath.Join(resolvedWuuHome, "auth.json")).Load()
+		previous, err := New(s.legacyPath).Load()
 		if err != nil && !errors.Is(err, ErrNotFound) {
-			return nil, errors.New("legacy credential source is invalid or unavailable")
+			return errors.New("legacy credential source is invalid or unavailable")
 		}
-		if err = base.Update(ctx, ModelCredentialNamespace, ModelCredentialKey, func(raw []byte) ([]byte, error) {
+		if err = s.Store.Update(ctx, ModelCredentialNamespace, ModelCredentialKey, func(raw []byte) ([]byte, error) {
 			file, err := decodeBoundFile(raw)
 			if err != nil {
 				return nil, err
@@ -55,22 +80,18 @@ func NewNativeStore(base credentialstore.Store, resolvedWuuHome, userHome string
 			file.LegacyImported = true
 			return json.Marshal(file)
 		}); err != nil {
-			return nil, errors.New("legacy credential migration failed; selected state may already be committed")
+			return errors.New("legacy credential migration failed; selected state may already be committed")
 		}
 	}
-	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	if codexHome == "" {
-		codexHome = filepath.Join(userHome, ".codex")
-	}
-	grokHome := strings.TrimSpace(os.Getenv("GROK_HOME"))
-	if grokHome == "" {
-		grokHome = filepath.Join(userHome, ".grok")
-	}
-	return &nativeStore{Store: base, codexPath: filepath.Join(codexHome, "auth.json"), grokPath: filepath.Join(grokHome, "auth.json")}, nil
+	s.migrated = true
+	return nil
 }
 
 func (s *nativeStore) Get(ctx context.Context, namespace, key string) ([]byte, error) {
 	if namespace != CLIRecordNamespace {
+		if err := s.migrate(ctx, namespace, key); err != nil {
+			return nil, err
+		}
 		return s.Store.Get(ctx, namespace, key)
 	}
 	if err := ctx.Err(); err != nil {
@@ -95,17 +116,26 @@ func (s *nativeStore) Set(ctx context.Context, namespace, key string, value []by
 	if namespace == CLIRecordNamespace {
 		return errors.New("CLI credential records are read-only")
 	}
+	if err := s.migrate(ctx, namespace, key); err != nil {
+		return err
+	}
 	return s.Store.Set(ctx, namespace, key, value)
 }
 func (s *nativeStore) Delete(ctx context.Context, namespace, key string) error {
 	if namespace == CLIRecordNamespace {
 		return errors.New("CLI credential records are read-only")
 	}
+	if err := s.migrate(ctx, namespace, key); err != nil {
+		return err
+	}
 	return s.Store.Delete(ctx, namespace, key)
 }
 func (s *nativeStore) Update(ctx context.Context, namespace, key string, update func([]byte) ([]byte, error)) error {
 	if namespace == CLIRecordNamespace {
 		return errors.New("CLI credential records are read-only")
+	}
+	if err := s.migrate(ctx, namespace, key); err != nil {
+		return err
 	}
 	return s.Store.Update(ctx, namespace, key, update)
 }

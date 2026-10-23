@@ -152,3 +152,23 @@ func TestNativeCLIRecordsAreReadOnlyAndPathsAreCaptured(t *testing.T) {
 		t.Fatal("selected external CLI record opened native source")
 	}
 }
+
+func TestNativeMigrationDefersSavedCredentialAccess(t *testing.T) {
+	ctx := context.Background()
+	calls := 0
+	unavailable := credentialstore.NewClient(func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+		calls++
+		return nil, errors.New("private backend failure")
+	})
+	home := t.TempDir()
+	native, err := NewNativeStore(unavailable, filepath.Join(home, ".wuu"), home)
+	if err != nil || calls != 0 {
+		t.Fatalf("construction touched saved credentials: calls=%d err=%v", calls, err)
+	}
+	if _, err := native.Get(ctx, "other-namespace", "key"); err == nil || calls != 1 {
+		t.Fatalf("unrelated namespace triggered migration: calls=%d err=%v", calls, err)
+	}
+	if _, err := NewBound(ctx, native).Get("model"); !errors.Is(err, ErrUnavailable) || calls != 2 {
+		t.Fatalf("saved read failed to expose selected failure: calls=%d err=%v", calls, err)
+	}
+}
