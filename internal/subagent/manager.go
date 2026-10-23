@@ -86,6 +86,8 @@ type ManagerOptions struct {
 	// construction. UpdateDefaults intentionally does not replace it.
 	InferenceJournal  providers.InferenceJournal
 	ToolLedgerFactory func(ownerID string) (*toolledger.Ledger, error)
+	// AcquireLoopDriver is required for execution. Missing configuration
+	// rejects the turn before lifecycle hooks, inference, or tool calls.
 	AcquireLoopDriver loopdriver.AcquireFunc
 	OnSubagentStart   func(context.Context, string) error
 	OnSubagentStop    func(context.Context, string) error
@@ -115,8 +117,8 @@ type toolContextBlockProvider interface {
 
 // NewManager constructs a Manager backed by the given streaming LLM
 // client. defaultModel is used when SpawnOptions.Model is empty.
-func NewManager(client providers.StreamClient, defaultModel string) *Manager {
-	return NewManagerWithOptions(client, defaultModel, ManagerOptions{})
+func NewManager(client providers.StreamClient, defaultModel string, driver loopdriver.Driver) *Manager {
+	return NewManagerWithOptions(client, defaultModel, ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(driver)})
 }
 
 // NewManagerWithOptions constructs a Manager with default request options for
@@ -600,7 +602,9 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	var res agent.LoopResult
 	var err error
 	executionID := rand.Text()
-	if m.acquireLoopDriver != nil {
+	if m.acquireLoopDriver == nil {
+		err = errors.New("worker loop driver is not configured")
+	} else {
 		sa.mu.Lock()
 		expected := sa.driverBinding
 		sa.mu.Unlock()

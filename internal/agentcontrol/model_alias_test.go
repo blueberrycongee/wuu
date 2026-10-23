@@ -10,6 +10,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -53,6 +54,8 @@ func testAgentControl(t *testing.T) *AgentControl {
 	t.Helper()
 	dir := t.TempDir()
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel:  "default-model",
 		ProviderName:  "default-provider",
@@ -263,6 +266,8 @@ func TestQueuedModelAliasResolvesAgainAtLaunch(t *testing.T) {
 	dir := t.TempDir()
 	blocker := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        blocker,
 		ProviderName:  "default-provider",
 		DefaultModel:  "default-model",
@@ -351,6 +356,8 @@ func TestModelAliasRuntimeSurvivesRestartResume(t *testing.T) {
 	harnessDir := filepath.Join(dir, "state", "harness")
 	newControl := func(client providers.StreamClient) *AgentControl {
 		c, err := New(Config{
+			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 			Client:        client,
 			ProviderName:  "changed-default-provider",
 			DefaultModel:  "changed-default-model",

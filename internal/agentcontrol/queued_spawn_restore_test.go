@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -72,6 +73,8 @@ func pinAgentControl(t *testing.T, dir string, defaultClient providers.StreamCli
 	threadDir := filepath.Join(dir, "threads")
 	historyDir := filepath.Join(dir, "history")
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       defaultClient,
 		DefaultModel: "default-worker-model",
 		ParentRepo:   dir,

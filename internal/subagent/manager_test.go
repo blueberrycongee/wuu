@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -46,7 +47,7 @@ func (j *managerTestJournal) CompleteWorkflow(record providers.InferenceWorkflow
 
 func TestManagerUpdateDefaultsPreservesInferenceJournal(t *testing.T) {
 	journal := &managerTestJournal{}
-	manager := NewManagerWithOptions(&fakeClient{}, "model", ManagerOptions{InferenceJournal: journal})
+	manager := NewManagerWithOptions(&fakeClient{}, "model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), InferenceJournal: journal})
 
 	manager.UpdateDefaults(nil, "updated-model", ManagerOptions{})
 
@@ -240,9 +241,35 @@ func (fakeToolkit) Execute(_ context.Context, _ providers.ToolCall) (string, err
 	return "", nil
 }
 
+func TestWorkerRequiresExplicitDriver(t *testing.T) {
+	client := &fakeClient{response: providers.ChatResponse{Content: "unexpected"}}
+	var hooks atomic.Int32
+	manager := NewManagerWithOptions(client, "controlled", ManagerOptions{
+		AcquireLoopDriver: nil,
+		OnSubagentStart:   func(context.Context, string) error { hooks.Add(1); return nil },
+		OnSubagentStop:    func(context.Context, string) error { hooks.Add(1); return nil },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	worker, err := manager.Spawn(ctx, SpawnOptions{Prompt: "run", Toolkit: fakeToolkit{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.Wait(ctx, worker.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Status != StatusFailed || snapshot.Error == nil || !strings.Contains(snapshot.Error.Error(), "loop driver") {
+		t.Fatalf("missing driver result = %+v", snapshot)
+	}
+	if client.calls.Load() != 0 || hooks.Load() != 0 {
+		t.Fatalf("missing driver dispatched work: model=%d hooks=%d", client.calls.Load(), hooks.Load())
+	}
+}
+
 func TestSpawn_HappyPath(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "all done"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "explorer",
@@ -280,6 +307,8 @@ func TestRunTurnDispatchesSubagentLifecycleOnce(t *testing.T) {
 	var mu sync.Mutex
 	var events []string
 	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		OnSubagentStart: func(_ context.Context, id string) error {
 			mu.Lock()
 			events = append(events, "start:"+id)
@@ -311,7 +340,7 @@ func TestRunTurnDispatchesSubagentLifecycleOnce(t *testing.T) {
 func TestSpawnStartsWorkflowIndependentFromParentAgent(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "all done"}}
 	journal := &managerTestJournal{}
-	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{InferenceJournal: journal})
+	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), InferenceJournal: journal})
 	parent := providers.NewInferenceWorkflow(providers.InferenceProfileInteractive)
 	ctx := providers.WithInferenceWorkflow(context.Background(), parent)
 
@@ -347,6 +376,8 @@ func TestSpawnStartsWorkflowIndependentFromParentAgent(t *testing.T) {
 func TestSpawn_UsesManagerDefaultRequestOptions(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "all done"}}
 	mgr := NewManagerWithOptions(client, "worker-api-model", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		DefaultEffort: "high",
 		DefaultProviderOptions: map[string]any{
 			"reasoningEffort": "high",
@@ -384,7 +415,7 @@ func TestSpawn_StampsDefaultProviderOnNativeState(t *testing.T) {
 		response:       providers.ChatResponse{Content: "all done"},
 		providerItemID: "resp-alpha-1",
 	}
-	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{DefaultProviderName: "alpha"})
+	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), DefaultProviderName: "alpha"})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{Type: "worker", Prompt: "do thing", Toolkit: fakeToolkit{}})
 	if err != nil {
@@ -424,7 +455,7 @@ func TestSpawn_PinnedClientStampsPinnedProvider(t *testing.T) {
 		response:       providers.ChatResponse{Content: "pinned done"},
 		providerItemID: "resp-gamma-1",
 	}
-	mgr := NewManagerWithOptions(defaultClient, "worker-model", ManagerOptions{DefaultProviderName: "beta"})
+	mgr := NewManagerWithOptions(defaultClient, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), DefaultProviderName: "beta"})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -462,7 +493,7 @@ func TestRestore_DefaultProviderDropsForeignItemIDs(t *testing.T) {
 		response:       providers.ChatResponse{Content: "resumed"},
 		providerItemID: "resp-beta-9",
 	}
-	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{DefaultProviderName: "beta"})
+	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), DefaultProviderName: "beta"})
 
 	sa, err := mgr.Restore(RestoreOptions{
 		Run: PersistedRun{
@@ -619,7 +650,7 @@ func TestRunTurn_EmptyOutputNudgeRecoversFinalSummary(t *testing.T) {
 		{Content: "", StopReason: "end_turn"},
 		{Content: "final summary after nudge", StopReason: "end_turn"},
 	}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{Type: "worker", Prompt: "do thing", Toolkit: fakeToolkit{}})
 	if err != nil {
 		t.Fatal(err)
@@ -647,7 +678,7 @@ func TestRunTurn_EmptyOutputFallsBackToPlaceholder(t *testing.T) {
 		{Content: "", StopReason: "end_turn"},
 		{Content: "", StopReason: "end_turn"},
 	}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{Type: "worker", Prompt: "do thing", Toolkit: fakeToolkit{}})
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +700,7 @@ func TestRunTurn_EmptyOutputFallsBackToPlaceholder(t *testing.T) {
 
 func TestSpawn_LLMError(t *testing.T) {
 	client := &fakeClient{err: errors.New("boom")}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:    "worker",
@@ -693,7 +724,7 @@ func TestSpawn_Cancel(t *testing.T) {
 		response: providers.ChatResponse{Content: "ok"},
 		delay:    2 * time.Second,
 	}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:    "worker",
@@ -721,7 +752,7 @@ func TestStopAll(t *testing.T) {
 		response: providers.ChatResponse{Content: "ok"},
 		delay:    2 * time.Second,
 	}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	for i := 0; i < 3; i++ {
 		_, err := mgr.Spawn(context.Background(), SpawnOptions{
@@ -778,7 +809,7 @@ func TestStopAllConcurrentCancelReplacement(t *testing.T) {
 
 func TestNotifications(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "ok"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	ch := make(chan Notification, 16)
 	mgr.Subscribe(ch)
@@ -811,7 +842,7 @@ loop:
 }
 
 func TestBroadcastSnapshotPublishesRunningUsage(t *testing.T) {
-	mgr := NewManager(&fakeClient{}, "fake-model")
+	mgr := NewManager(&fakeClient{}, "fake-model", loopdriver.DefaultDriver{})
 	ch := make(chan Notification, 1)
 	mgr.Subscribe(ch)
 
@@ -835,7 +866,7 @@ func TestTerminalPrepareRunsBeforeFinalSnapshotPersistence(t *testing.T) {
 	dir := t.TempDir()
 	historyPath := filepath.Join(dir, "workers", "worker.json")
 	client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	prepareEntered := make(chan Notification, 1)
 	releasePrepare := make(chan struct{})
@@ -887,7 +918,7 @@ func TestPersistHistoryFailureMarksWorkerFailed(t *testing.T) {
 	// with elevated filesystem permissions.
 	historyPath := t.TempDir()
 	client := &fakeClient{response: providers.ChatResponse{Content: "completed work"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 	notifications := make(chan Notification, 4)
 	mgr.Subscribe(notifications)
 
@@ -944,7 +975,7 @@ func TestPersistHistoryRecordsResumeFields(t *testing.T) {
 	dir := t.TempDir()
 	historyPath := filepath.Join(dir, "workers", "worker.json")
 	client := &fakeClient{response: providers.ChatResponse{Content: "ok"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		ID:            "worker-resume",
@@ -1025,7 +1056,7 @@ func TestLoadPersistedRunToleratesPreVersionSnapshot(t *testing.T) {
 }
 
 func TestSpawn_RequiresToolkitAndPrompt(t *testing.T) {
-	mgr := NewManager(&fakeClient{}, "m")
+	mgr := NewManager(&fakeClient{}, "m", loopdriver.DefaultDriver{})
 
 	_, err := mgr.Spawn(context.Background(), SpawnOptions{Prompt: "x"})
 	if err == nil {
@@ -1044,7 +1075,7 @@ func TestSpawn_RequiresToolkitAndPrompt(t *testing.T) {
 // caller's Prompt as the final user message.
 func TestSpawn_WithInitialHistory_PrefixIsParentHistory(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "fork done"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	parentHistory := []providers.ChatMessage{
 		{Role: "system", Content: "you are the parent agent"},
@@ -1102,7 +1133,7 @@ func TestSpawn_WithInitialHistory_PrefixIsParentHistory(t *testing.T) {
 
 func TestFollowup_CompletedAgentStartsNewTurnWithHistory(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "turn done"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -1169,7 +1200,7 @@ func TestFollowup_CompletedAgentStartsNewTurnWithHistory(t *testing.T) {
 // messages must be replayed ahead of the new instruction.
 func TestFollowup_FailedAgentResumesWithHistory(t *testing.T) {
 	client := newResumeClient("fail", providers.ChatResponse{Content: "resumed done"})
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -1239,7 +1270,7 @@ func TestFollowup_FailedAgentResumesWithHistory(t *testing.T) {
 // as an explicit revive request, not a hard rejection.
 func TestFollowup_CancelledAgentResumesWithHistory(t *testing.T) {
 	client := newResumeClient("block", providers.ChatResponse{Content: "resumed done"})
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -1298,7 +1329,7 @@ func TestFollowup_CancelledAgentResumesWithHistory(t *testing.T) {
 
 func TestQueueMessageBroadcastsPendingMessageSnapshot(t *testing.T) {
 	client := &fakeClient{delay: time.Hour}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:    "explorer",
@@ -1363,7 +1394,7 @@ func TestFollowupAtTerminalBoundaryContinuesInsteadOfStrandingMessage(t *testing
 		releaseFirst: make(chan struct{}),
 		secondSeen:   make(chan providers.ChatRequest, 1),
 	}
-	manager := NewManager(client, "boundary-model")
+	manager := NewManager(client, "boundary-model", loopdriver.DefaultDriver{})
 	agent, err := manager.Spawn(context.Background(), SpawnOptions{
 		ID:       "terminal-boundary-worker",
 		Type:     "worker",
@@ -1425,7 +1456,7 @@ func contains(s, sub string) bool {
 // the force is one-shot: a later plain follow-up runs unforced.
 func TestFollowupForcingTool_PinsFirstRequest(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:        "worker",
@@ -1463,7 +1494,7 @@ func TestFollowupForcingTool_PinsFirstRequest(t *testing.T) {
 // worker got alongside the error and the resume hint.
 func TestFailedRunSalvagesPartialResult(t *testing.T) {
 	client := newResumeClient("", providers.ChatResponse{Content: "found the bug in parser.go"})
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:        "worker",

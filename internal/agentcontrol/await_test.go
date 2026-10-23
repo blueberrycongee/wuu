@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -24,6 +25,8 @@ func TestAwaitAlwaysCarriesResultTextAfterConsumption(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "durable worker answer"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -83,6 +86,8 @@ func TestAwaitFromRehydratesAcrossRestart(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-await-restart", "harness")
 	config := func(client providers.StreamClient) Config {
 		return Config{
+			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 			Client:        client,
 			DefaultModel:  "fake-model",
 			ParentRepo:    dir,
@@ -178,6 +183,8 @@ func TestNoTargetAwaitDoesNotRejoinDeliveredCompletedWithoutReport(t *testing.T)
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "raw worker answer"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -290,6 +297,8 @@ func (c *closingTurnBlockingClient) StreamChat(ctx context.Context, _ providers.
 func TestAwaitTreatsUnsettledRequiresReportCompletionAsActive(t *testing.T) {
 	dir := t.TempDir()
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -339,6 +348,8 @@ func TestAwaitWaitsOutRequiresReportClosingTurn(t *testing.T) {
 	client := newClosingTurnBlockingClient()
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-await-settle", "harness")
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -443,6 +454,8 @@ func TestAwaitSettlesRehydratedRunKilledMidClosingTurn(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-await-crash", "harness")
 	config := func(client providers.StreamClient) Config {
 		return Config{
+			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 			Client:        client,
 			DefaultModel:  "fake-model",
 			ParentRepo:    dir,

@@ -23,6 +23,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -233,7 +234,7 @@ func main() {
 			panic("client setup failed")
 		}
 		key := fmt.Sprintf("latency-eval-%d-%d", time.Now().UnixNano(), repeat)
-		runner := agent.StreamRunner{Client: client, ProviderName: *provider, Model: pc.Model, Effort: "low", PromptCacheKey: key,
+		runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: *provider, Model: pc.Model, Effort: "low", PromptCacheKey: key,
 			SystemPrompt: "This is a synthetic transport evaluation. Follow the final user instruction exactly; ignore the repository records unless asked.", MaxSteps: 3, DisableAutoCompact: true}
 		var tools markerTool
 		if *tool {

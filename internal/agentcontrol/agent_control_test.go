@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -184,6 +185,8 @@ func initRepo(t *testing.T, dir string) {
 func TestNew_NonGitRepoSucceeds(t *testing.T) {
 	dir := t.TempDir() // not a git repo
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -211,6 +214,8 @@ func TestPrepareWorkspaceRebindMovesSubsequentInplaceSpawnAndFork(t *testing.T) 
 
 	spawnRoots := make(chan string, 2)
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel: "fake-model",
 		ParentRepo:   parent,
@@ -271,6 +276,8 @@ func TestSpawn_SyncHappyPath(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "task done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -316,6 +323,8 @@ func TestSpawn_RegistersThreadMetadata(t *testing.T) {
 
 	threadDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-threads", "threads")
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "task done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -384,6 +393,8 @@ func TestForkAgentProfileOverridesInheritedSystemPrompt(t *testing.T) {
 	client := &recordingClient{resp: providers.ChatResponse{Content: "task done"}}
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -439,6 +450,8 @@ func TestForkWithoutAgentProfileReplacesInheritedSystemPrompt(t *testing.T) {
 	client := &recordingClient{resp: providers.ChatResponse{Content: "task done"}}
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -487,6 +500,8 @@ func TestSpawn_RecordsHarnessCompletedWhenWorkerSkipsReport(t *testing.T) {
 
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-harness", "harness")
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "task done\n\nEvidence: go test ./internal/harness"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -611,6 +626,8 @@ func TestRecordAgentReportPersistsStructuredHandoff(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "reportable result"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -716,6 +733,8 @@ func TestRecordAgentReportRejectsMissingArtifact(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -754,6 +773,8 @@ func TestRecordAgentReportSyncsReportSinkWithoutGoalBinding(t *testing.T) {
 	reportSink := &captureReportSink{}
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "reportable result"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -827,6 +848,8 @@ func TestRecordAgentReportSyncsFailureSinkForBlockers(t *testing.T) {
 	sink := &captureFailureSink{}
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "reportable result"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -885,6 +908,8 @@ func TestRecordHarnessTaskFailureSyncsFailureSink(t *testing.T) {
 	sink := &captureFailureSink{}
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -915,6 +940,8 @@ func TestAwaitFromReportsMissingAndSubmittedReports(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "plain final text"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -979,6 +1006,8 @@ func TestAwaitFromWarnsOnOverlappingChangedFiles(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1024,6 +1053,8 @@ func TestAwaitFromTimesOutWithRunningStatus(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1063,6 +1094,8 @@ func TestActiveTaskReminderListsIncompleteChildren(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1097,6 +1130,8 @@ func TestWorktreeCompletionRecordsPatchArtifact(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       &fakeClient{resp: providers.ChatResponse{Content: "changed readme"}},
 		DefaultModel: "fake-model",
 		ParentRepo:   dir,
@@ -1225,6 +1260,8 @@ func TestSpawn_RegistersNestedThreadPath(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1276,6 +1313,8 @@ func TestNestedResultRoutesToParentAgent(t *testing.T) {
 	initRepo(t, dir)
 	client := newBlockingClient()
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1332,6 +1371,8 @@ func TestStopClosesAgentSubtree(t *testing.T) {
 			dir := t.TempDir()
 			initRepo(t, dir)
 			c, err := New(Config{
+				AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 				Client:        &slowClient{},
 				DefaultModel:  "fake-model",
 				ParentRepo:    dir,
@@ -1411,6 +1452,8 @@ func TestWaitForAgentNotificationFromRootReportsChildFinalStatus(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1466,6 +1509,8 @@ func TestWaitForAgentNotificationFromAgentReturnsQueuedMessageSignal(t *testing.
 	initRepo(t, dir)
 	client := newBlockingClient()
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1527,6 +1572,8 @@ func TestSpawn_InplaceSkipsWorktree(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "looked at line 42"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1568,6 +1615,8 @@ func TestSpawn_IsolationOverride(t *testing.T) {
 	initRepo(t, dir)
 
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -1624,6 +1673,8 @@ func TestSpawn_PreservesCleanWorktreeForFollowup(t *testing.T) {
 	// opts in via Isolation: "worktree" — that's the supported way to
 	// get an isolated child task now.
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -1667,6 +1718,8 @@ func TestSpawn_KeepDirtyWorktree(t *testing.T) {
 	}
 
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -1698,6 +1751,8 @@ func TestSpawn_RequiresPrompt(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -1720,6 +1775,8 @@ func TestSpawn_ConcurrencyCap(t *testing.T) {
 	slow := &slowClient{}
 
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        slow,
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -1862,6 +1919,8 @@ func TestNewRestoresQueuedSpawnPayload(t *testing.T) {
 	}
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -1993,6 +2052,8 @@ func TestSendMessage_QueuesWhileRunning(t *testing.T) {
 	// before this test observes it.
 	slow := newBlockingClient()
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        slow,
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2026,6 +2087,8 @@ func TestSendMessage_ResolvesThreadPathAndTaskName(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2067,6 +2130,8 @@ func TestSpawn_AsyncDetachedFromParentContext(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2106,6 +2171,8 @@ func TestSpawn_SynchronousWaitInterruptBackgroundsWorker(t *testing.T) {
 	initRepo(t, dir)
 	client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2169,6 +2236,8 @@ func TestFork_AsyncDetachedFromParentContext(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2216,6 +2285,8 @@ func TestFork_WorktreeIsolation(t *testing.T) {
 	client := &recordingClient{resp: providers.ChatResponse{Content: "done"}}
 	var capturedRoot string
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       client,
 		DefaultModel: "fake",
 		ParentRepo:   dir,
@@ -2282,6 +2353,8 @@ func TestSendMessageDoesNotRejectCancelledAgent(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &slowClient{},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2324,6 +2397,8 @@ func TestSendMessage_RevivesCompletedWorker(t *testing.T) {
 
 	client := &recordingClient{resp: providers.ChatResponse{Content: "revived result"}}
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2416,6 +2491,8 @@ func TestFollowupTaskRehydratesAcrossRestart(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-restart", "harness")
 
 	first, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "first done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -2450,6 +2527,8 @@ func TestFollowupTaskRehydratesAcrossRestart(t *testing.T) {
 	// Fresh AgentControl over the same history dir stands in for a restart.
 	client := &recordingClient{resp: providers.ChatResponse{Content: "resumed done"}}
 	second, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -2511,6 +2590,8 @@ func TestFollowupTaskRehydrateMissingWorktreeFails(t *testing.T) {
 
 	historyDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-gone", "workers")
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -2544,6 +2625,8 @@ func TestFollowupTaskRehydratePreVersionSnapshotFails(t *testing.T) {
 
 	historyDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-old", "workers")
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -2618,6 +2701,8 @@ func TestSendMessage_RejectsEmptyFields(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "ok"}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2637,6 +2722,8 @@ func TestAgentMailboxChatMessage(t *testing.T) {
 	initRepo(t, dir)
 
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "found bug at line 42"}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2688,6 +2775,8 @@ func TestAgentCompletionChatMessageTriggersRootTurn(t *testing.T) {
 	initRepo(t, dir)
 
 	c, _ := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "found bug at line 42"}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2731,6 +2820,8 @@ func TestAgentCompletionPersistsLongResultAndReturnsPreview(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-long-result", "harness")
 	longResult := "BEGIN\n" + strings.Repeat("middle payload\n", 500) + "END"
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: longResult}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2869,6 +2960,8 @@ func TestAgentControlRecordsRootCompletionMessageEvent(t *testing.T) {
 	initRepo(t, dir)
 	threadDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-events", "threads")
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "done"}},
 		DefaultModel:  "fake",
 		ParentRepo:    dir,
@@ -2961,6 +3054,8 @@ func TestSpawn_CreatesEphemeralParticipant(t *testing.T) {
 
 	store := &recordingParticipantStore{}
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:           &fakeClient{resp: providers.ChatResponse{Content: "task done"}},
 		DefaultModel:     "fake-model",
 		ParentRepo:       dir,
@@ -3018,6 +3113,8 @@ func TestSpawn_WithoutParticipantStoreStillAssignsParticipantID(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "task done"}},
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,
@@ -3098,6 +3195,8 @@ func TestRequiresReportWorkerGetsOneClosingNudge(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-nudge", "harness")
 	client := &nudgeCountingClient{resp: providers.ChatResponse{Content: "looked at the diff, all good"}}
 	c, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        client,
 		DefaultModel:  "fake-model",
 		ParentRepo:    dir,

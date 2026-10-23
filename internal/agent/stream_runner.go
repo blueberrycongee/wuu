@@ -176,8 +176,8 @@ type StreamRunner struct {
 	// round and nested compaction owned by this runner.
 	InferenceJournal providers.InferenceJournal
 	// LoopDriver owns turn policy while the runner remains the kernel gateway
-	// for provider, tool-ledger, history, and streaming invariants. Nil selects
-	// the behavior-compatible default driver.
+	// for provider, tool-ledger, history, and streaming invariants. Callers
+	// must select a driver explicitly; a missing driver rejects execution.
 	LoopDriver             loopdriver.Driver
 	DriverCheckpointStore  loopdriver.CheckpointStore
 	ModelInputReceiptStore ModelInputReceiptStore
@@ -250,7 +250,7 @@ func (r *StreamRunner) systemPromptSnapshot() (string, []SystemPromptSectionInfo
 func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.ChatMessage, onEvent StreamCallback) (LoopResult, error) {
 	driver := r.LoopDriver
 	if driver == nil {
-		driver = loopdriver.DefaultDriver{}
+		return LoopResult{}, errors.New("loop driver is not configured")
 	}
 	descriptor, err := driver.Descriptor(ctx)
 	if err != nil {

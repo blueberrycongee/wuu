@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -66,7 +67,7 @@ func TestStreamRunner_CancelBetweenContinuations(t *testing.T) {
 		{Type: providers.EventDone, FinishReason: providers.FinishReasonContinue},
 	}}}}
 	steps := 0
-	runner := &StreamRunner{Model: "test", Client: client, BeforeStep: func() []providers.ChatMessage {
+	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "test", Client: client, BeforeStep: func() []providers.ChatMessage {
 		steps++
 		if steps == 2 {
 			cancel()

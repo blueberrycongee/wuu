@@ -22,6 +22,7 @@ import (
 	"github.com/blueberrycongee/wuu/clients/native/testsupport"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
@@ -76,7 +77,7 @@ func main() {
 		WuuHome: root, StateDir: filepath.Join(root, "workspaces", "fixture"),
 		ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, HomeDir: root, SessionDir: filepath.Join(root, "sessions"),
 		HookDispatcher: hooks.NewDispatcher(nil), Toolkit: kit, UserQuestions: pluginhost.NewUserQuestionBroker(),
-		StreamRunner: &agent.StreamRunner{Client: providers.AdaptStreamClient(gate), Model: "native-test", SystemPrompt: "test"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: providers.AdaptStreamClient(gate), Model: "native-test", SystemPrompt: "test"},
 	}
 	ready := make(chan struct{}, 1)
 	// Persisted history uses the same reconstruction and paging as an old conversation.

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -126,7 +127,7 @@ func TestMarkPersistedRunInterrupted_LeavesTerminalAndMissingAlone(t *testing.T)
 // permanently occupies a max-parallel slot.
 func TestRestore_NormalizesNonTerminalStatus(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "revived"}}
-	mgr := NewManager(client, "fake-model")
+	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
 
 	sa, err := mgr.Restore(RestoreOptions{
 		Run: PersistedRun{

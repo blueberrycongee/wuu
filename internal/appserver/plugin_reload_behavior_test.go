@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -384,6 +385,8 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 	unblock := func() { once.Do(func() { close(worker.release) }) }
 	t.Cleanup(unblock)
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client: worker, DefaultModel: "fake-model", ParentRepo: rt.RootDir,
 		WorktreeRoot: filepath.Join(rt.RootDir, ".wuu", "worktrees"), SessionID: "reload-background",
 		WorkerFactory: func(string, agentcontrol.WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) {

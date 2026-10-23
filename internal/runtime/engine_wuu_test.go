@@ -12,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 )
 
 func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
@@ -76,7 +77,7 @@ func TestWuuEngineSessionInterrupt(t *testing.T) {
 func TestEngineSessionForThreadUnavailable(t *testing.T) {
 	s := &Session{engines: agentengine.NewRegistry()}
 	rt := &ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{},
+		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}},
 		EngineID:     agentengine.EngineWuu,
 	}
 	sess := s.EngineSessionForThread(context.Background(), rt, agentengine.ThreadBinding{})

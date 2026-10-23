@@ -95,6 +95,9 @@ func (s *Session) workerDriverResolver(parent *PluginGeneration) loopdriver.Acqu
 		if err != nil {
 			return nil, binding, release, fmt.Errorf("resolve worker loop driver: %w", err)
 		}
+		if generation == nil || generation.driverGateways == nil {
+			providerID = descriptor.ID
+		}
 		binding = loopdriver.Binding{Profile: profile, ProviderID: providerID, ContractVersion: loopdriver.ContractVersion, DriverID: descriptor.ID, DriverVersion: descriptor.Version}
 		if expected != nil && *expected != binding {
 			return nil, binding, release, fmt.Errorf("worker loop driver binding requires %+v; selected binding is %+v", *expected, binding)

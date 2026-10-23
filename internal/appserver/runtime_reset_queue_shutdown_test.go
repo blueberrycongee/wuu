@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -20,6 +21,8 @@ func TestGeneralSettingsResetKeepsActiveRuntimeUntilWorkerFinalization(t *testin
 	rt := newTestRuntime(t, &fakeClient{})
 	workerClient := newBlockingStreamClient("worker finished")
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,

@@ -28,6 +28,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
@@ -2092,6 +2093,8 @@ func TestRunningTurnUsesModelSnapshotAfterConfigUpdate(t *testing.T) {
 	}
 	threadRuntime := &runtime.ThreadRuntime{
 		StreamRunner: &agent.StreamRunner{
+			LoopDriver: loopdriver.DefaultDriver{},
+
 			Client:   streamClient,
 			Model:    "fake-model",
 			APIModel: "fake-model",
@@ -2238,7 +2241,7 @@ func TestServerConfigGeneralUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	}
 	oldPrompt := rt.StreamRunner.SystemPrompt
 	th := newThreadState("thread-1", []providers.ChatMessage{{Role: "system", Content: oldPrompt}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{SystemPrompt: oldPrompt}}
+	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: oldPrompt}}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	srv.threads[th.ID] = th
@@ -2459,7 +2462,7 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 		t.Fatalf("write thread history: %v", err)
 	}
 	thread.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{Model: "fake-model", APIModel: "fake-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "fake-model", APIModel: "fake-model"},
 		Toolkit:      threadKit,
 	}
 	srv.threads[thread.ID] = thread
@@ -2677,7 +2680,7 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	idle := newThreadState("idle-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{Model: rt.Model}}
+	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: rt.Model}}
 	srv.threads[idle.ID] = idle
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"fake-provider","model":"new-model","base_url":"https://custom.example.test/v1","api_key":"new-key"}}`
@@ -3677,7 +3680,7 @@ func TestServerConfigProviderRemoveRejectsProviderUsedByRunningTurn(t *testing.T
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	running.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{Model: "drop-model", APIModel: "drop-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "drop-model", APIModel: "drop-model"},
 	}
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
@@ -3796,7 +3799,7 @@ func TestServerConfigProviderRemoveAllowsUnusedProviderWithRunningThread(t *test
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	running.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{Model: "keep-model", APIModel: "keep-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "keep-model", APIModel: "keep-model"},
 	}
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
@@ -4724,6 +4727,8 @@ func TestServerCodexWebSocketReplayAcrossThreadTurns(t *testing.T) {
 		ConfigPath:   filepath.Join(root, ".wuu.json"),
 		SessionDir:   filepath.Join(root, ".wuu-home", "sessions"),
 		StreamRunner: &agent.StreamRunner{
+			LoopDriver: loopdriver.DefaultDriver{},
+
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "gpt-5.5",
 			SystemPrompt: "stable system prompt",
@@ -5962,6 +5967,8 @@ func TestServerGeneratesThreadTitleInheritsPinnedThreadModel(t *testing.T) {
 	threadClient := &fakeClient{response: providers.ChatResponse{Content: "Thread title"}}
 	threadRuntime := &runtime.ThreadRuntime{
 		StreamRunner: &agent.StreamRunner{
+			LoopDriver: loopdriver.DefaultDriver{},
+
 			Client:   providers.AdaptStreamClient(threadClient),
 			Model:    "session-pinned-model",
 			APIModel: "session-pinned-model",
@@ -6025,6 +6032,8 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 		ConfigPath:   "/tmp/.wuu.json",
 		SessionDir:   t.TempDir() + "/.wuu-state/sessions",
 		StreamRunner: &agent.StreamRunner{
+			LoopDriver: loopdriver.DefaultDriver{},
+
 			Client:       providers.AdaptStreamClient(mainClient),
 			Model:        "kimi-k2.6",
 			SystemPrompt: "system prompt",
@@ -7802,6 +7811,8 @@ func TestServerChildAgentSessionIsLiveWhileRunning(t *testing.T) {
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	workerClient := newBlockingStreamClient("child live result")
 	coord, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -9557,6 +9568,8 @@ func TestServerForwardsAgentNotifications(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -9602,6 +9615,8 @@ func TestServerAutoResumesRootAgentOnAgentCompletion(t *testing.T) {
 	rt := newTestRuntime(t, mainClient)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -9694,6 +9709,8 @@ func TestServerQueuesAgentCompletionWhileRootTurnIsRunning(t *testing.T) {
 	rt.StreamRunner.Client = mainClient
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -9765,6 +9782,8 @@ func TestServerSkipsDuplicateAgentCompletionNotificationsAfterAutoResume(t *test
 	rt := newTestRuntime(t, mainClient)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -9825,6 +9844,8 @@ func TestServerSkipsAutoResumeWhenAwaitAgentsAlreadyReturnedResult(t *testing.T)
 	rt.StreamRunner.Client = mainClient
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -9907,6 +9928,8 @@ func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
 		SessionDir:     root + "/.wuu-state/sessions",
 		HookDispatcher: hooks.NewDispatcher(nil),
 		StreamRunner: &agent.StreamRunner{
+			LoopDriver: loopdriver.DefaultDriver{},
+
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "fake-model",
 			SystemPrompt: systemPrompt,

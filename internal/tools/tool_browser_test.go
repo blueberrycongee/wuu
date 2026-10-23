@@ -15,6 +15,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
 )
@@ -728,7 +729,7 @@ func TestBrowserDiscoverySurvivesRuntimeRebuild(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			runner := agent.StreamRunner{Client: client, Tools: resumed, Model: "kimi-k3", NativeDeferredToolDiscovery: true, MaxSteps: 3}
+			runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Tools: resumed, Model: "kimi-k3", NativeDeferredToolDiscovery: true, MaxSteps: 3}
 			run, err := runner.RunWithCallback(context.Background(), history, nil)
 			if err != nil {
 				t.Fatal(err)

@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -85,6 +86,8 @@ func TestNativeToolReviewUsesLiveConversationAndThreadModel(t *testing.T) {
 		"max_output_tokens": 4096, "reasoningEffort": "low", "topP": 0.8, "omitStore": true,
 	}
 	runner := &agent.StreamRunner{
+		LoopDriver: loopdriver.DefaultDriver{},
+
 		Client: providers.AdaptStreamClient(threadClient), ProviderName: "thread-provider", Model: "thread-model",
 		Temperature: 0.2, Effort: "low", ProviderOptions: options,
 	}
@@ -223,7 +226,7 @@ func TestTurnScopedReviewerUsesHostIntentAndAcceptedSteers(t *testing.T) {
 
 func TestNativeToolReviewCancellationAndInputBudget(t *testing.T) {
 	client := &fakeClient{}
-	reviewer := nativeToolReviewer{runner: &agent.StreamRunner{Client: providers.AdaptStreamClient(client)}}
+	reviewer := nativeToolReviewer{runner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: providers.AdaptStreamClient(client)}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	decision, err := reviewer.Review(ctx, reviewTestRequest())

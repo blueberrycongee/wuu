@@ -10,7 +10,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
-- Resolve session and background worker drivers through `driver.default`, provided by the removable `wuu.default-loop` module or a selected external implementation. Native drivers use the same service lifecycle and protocol as process drivers; failed and canceled calls retain observed history. Workers retain their driver binding across follow-up and restart, preserve pending checkpoints separately from committed terminal results, and hold providers until execution cleanup completes.
+- Resolve session and background worker drivers through `driver.default`, provided by the removable `wuu.default-loop` module or a selected external implementation. Native drivers use the same service lifecycle and protocol as process drivers; failed and canceled calls retain observed history. Workers retain their driver binding across follow-up and restart, preserve pending checkpoints separately from committed terminal results, and hold providers until execution cleanup completes. Embedded runners and worker managers require an explicit driver instead of silently selecting the native loop.
 
 - Expose independent model, tool-batch, context replacement, completion and checkpoint operations for external loop drivers. Context replacement preserves original durable history and survives cancellation after commit. The public SDK includes a workflow example with evidence collection and synthesis, plus isolated verification of cancellation, durable recovery and provider removal.
 

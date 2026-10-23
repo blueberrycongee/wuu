@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
@@ -46,7 +47,7 @@ func TestDefaultContextWindowsSurviveExtensionTeardown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &agent.StreamRunner{CompactionRegistry: registry}
+	runner := &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, CompactionRegistry: registry}
 	if !runner.ContextWindowsAvailable() {
 		t.Fatal("context windows require an extension")
 	}

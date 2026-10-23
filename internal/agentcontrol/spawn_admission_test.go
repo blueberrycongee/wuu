@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/harness"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
@@ -21,6 +22,8 @@ import (
 func TestSpawnAdmissionPrepareFailureHasNoSpawnSideEffects(t *testing.T) {
 	dir := t.TempDir()
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "unused"}},
 		DefaultModel:  "spawn-admission-test",
 		ParentRepo:    dir,
@@ -73,6 +76,8 @@ func TestSpawnAdmissionRollsBackWhenDirectLaunchFails(t *testing.T) {
 	marker := filepath.Join(dir, "prepared")
 	var rollbackAttempts atomic.Int32
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       &fakeClient{resp: providers.ChatResponse{Content: "unused"}},
 		DefaultModel: "spawn-admission-test",
 		ParentRepo:   dir,
@@ -122,6 +127,8 @@ func TestQueuedSpawnAdmissionRollsBackWhenDeferredLaunchFails(t *testing.T) {
 	marker := filepath.Join(dir, "queued-prepared")
 	var rollbackAttempts atomic.Int32
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       client,
 		DefaultModel: "spawn-admission-test",
 		ParentRepo:   dir,
@@ -218,6 +225,8 @@ func TestStopAllCancelsRunningWorkersBeforeQueuedAdmissionCompensation(t *testin
 	dir := t.TempDir()
 	client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       client,
 		DefaultModel: "stop-all-ordering-test",
 		ParentRepo:   dir,
@@ -308,6 +317,8 @@ func TestShutdownRacingSpawnPreparationCannotPublishQueuedWorker(t *testing.T) {
 	dir := t.TempDir()
 	client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       client,
 		DefaultModel: "spawn-admission-test",
 		ParentRepo:   dir,
@@ -394,6 +405,8 @@ func TestShutdownRacingDirectSpawnPreparationHasNoSideEffects(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "direct-spawn-shutdown", "harness")
 	worktreeRoot := filepath.Join(dir, ".wuu-state", "worktrees")
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       &fakeClient{resp: providers.ChatResponse{Content: "unused"}},
 		DefaultModel: "spawn-admission-test",
 		ParentRepo:   dir,
@@ -487,6 +500,8 @@ func TestDirectForkAdmissionCoversPreparationThroughManagerCommit(t *testing.T) 
 	factoryEntered := make(chan struct{})
 	allowFactory := make(chan struct{})
 	control, err := New(Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       client,
 		DefaultModel: "spawn-admission-test",
 		ParentRepo:   dir,
@@ -575,6 +590,8 @@ func TestQueuedPublicationFailureSettlesThreadLifecycle(t *testing.T) {
 			harnessDir := filepath.Join(dir, "harness")
 			client := &blockingStreamClient{started: make(chan struct{}), release: make(chan struct{})}
 			control, err := New(Config{
+				AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 				Client:       client,
 				DefaultModel: "spawn-admission-test",
 				ParentRepo:   dir,
@@ -709,6 +726,8 @@ func TestQueuedSpawnCancellationRollsBackAdmission(t *testing.T) {
 			var tombstoneObserved atomic.Bool
 			var queuedLaunches atomic.Int32
 			control, err := New(Config{
+				AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 				Client:       client,
 				DefaultModel: "spawn-admission-test",
 				ParentRepo:   dir,

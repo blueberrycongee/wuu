@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -41,6 +42,8 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	workerClient := newBlockingStreamClient("worker done")
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	control, err := agentcontrol.New(agentcontrol.Config{
+		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 		Client:       workerClient,
 		DefaultModel: "fake-model",
 		ParentRepo:   rt.RootDir,
@@ -282,6 +285,8 @@ func TestServerTerminalFinalizationFailureYieldsDurablyAndRecoversOnce(t *testin
 	newControl := func(client *blockingStreamClient) *agentcontrol.AgentControl {
 		t.Helper()
 		control, err := agentcontrol.New(agentcontrol.Config{
+			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+
 			Client:       client,
 			DefaultModel: "fake-model",
 			ParentRepo:   rt.RootDir,
