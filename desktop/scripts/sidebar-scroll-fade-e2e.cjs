@@ -354,7 +354,7 @@ app.whenReady().then(async () => {
         const label = `${theme}-${size}`;
         win.setContentSize(size === 14 ? 1100 : 940, 820);
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
-        await waitFor(() => Boolean(document.querySelector('[data-functional-group-id="projects"] .thread-list-more'))
+        await waitFor(() => Boolean(document.querySelector('[data-functional-group-id="workspace"] .thread-list-more'))
           && Boolean(document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle')));
         // Recent presents the same 48 sessions independently of the paged
         // workspace. Fold it through its control to establish a fitting list.
@@ -366,8 +366,8 @@ app.whenReady().then(async () => {
         const fitting = await sample(`${label}-initial-fitting-list`);
         assert.ok(fitting.scrollHeight === fitting.clientHeight && fitting.top === 0 && fitting.bottom === 0, "an initially fitting list has no faded edges");
         await evaluate(async () => {
-          while (document.querySelector('[data-functional-group-id="projects"] .thread-list-more')) {
-            document.querySelector('[data-functional-group-id="projects"] .thread-list-more').click();
+          while (document.querySelector('[data-functional-group-id="workspace"] .thread-list-more')) {
+            document.querySelector('[data-functional-group-id="workspace"] .thread-list-more').click();
             await new Promise(requestAnimationFrame);
           }
         });
