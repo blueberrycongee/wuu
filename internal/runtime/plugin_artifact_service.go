@@ -212,7 +212,12 @@ func (k *kernelHostServices) materializeToolResult(ctx context.Context, scope pl
 	if result == nil {
 		return nil
 	}
-	client := k.artifactClient("")
+	k.mu.RLock()
+	var client *ArtifactClient
+	if k.selectedServices != nil {
+		client = k.selectedServices.artifacts
+	}
+	k.mu.RUnlock()
 	for index := range result.Content {
 		part := &result.Content[index]
 		switch part.Type {
