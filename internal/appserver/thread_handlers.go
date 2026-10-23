@@ -178,7 +178,7 @@ func (s *Server) handleThreadStart(req Request) error {
 		return nil
 	}
 	if params.Handoff != nil {
-		th, err := s.startHandoffThread(selection, params)
+		th, err := s.startHandoffThread(binding, selection, params)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -291,7 +291,7 @@ func (s *Server) handleThreadStart(req Request) error {
 	return nil
 }
 
-func (s *Server) startHandoffThread(selection session.RuntimeSelection, params ThreadStartParams) (*threadState, error) {
+func (s *Server) startHandoffThread(binding *runtime.State, selection session.RuntimeSelection, params ThreadStartParams) (*threadState, error) {
 	if params.Handoff == nil {
 		return nil, errors.New("handoff params are required")
 	}
@@ -333,7 +333,7 @@ func (s *Server) startHandoffThread(selection session.RuntimeSelection, params T
 			Prompt:   strings.TrimSpace(params.Handoff.Intent),
 		},
 	}
-	result, err := s.createPluginSession(context.Background(), "handoff", createParams)
+	result, err := s.createPluginSession(runtime.WithInvocationState(context.Background(), binding), "handoff", createParams)
 	if err != nil {
 		return nil, err
 	}
