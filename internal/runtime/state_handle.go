@@ -20,6 +20,7 @@ import (
 // Close releases its generation after all consumers and leases finish cleanup.
 // Documents and Sessions never resolve a later published generation.
 type State struct {
+	models                  *StateModels
 	Documents               persistence.Documents
 	Sessions                *session.Store
 	Generation              *PluginGeneration
@@ -65,7 +66,7 @@ func (s *Session) RetainState() (*State, error) {
 	if documents == nil || sessions == nil {
 		return nil, errors.New("selected composition has no session state")
 	}
-	result := &State{Documents: documents, Sessions: sessions, Host: s.PluginHost, Generation: generation, InferenceJournalRuntime: s.InferenceJournalRuntime}
+	result := &State{Documents: documents, Sessions: sessions, Host: s.PluginHost, Generation: generation, InferenceJournalRuntime: s.InferenceJournalRuntime, models: captureSessionStateModels(s)}
 	if generation != nil {
 		generation.retain()
 		result.Host = generation.host
@@ -191,7 +192,7 @@ func (s *State) Retain() *State {
 		return nil
 	}
 	s.Generation.retain()
-	return &State{Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, close: s.close}
+	return &State{Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, models: s.models, close: s.close}
 }
 
 var ErrStateGenerationChanged = errors.New("state generation changed before runtime admission")

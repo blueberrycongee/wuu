@@ -964,6 +964,7 @@ func NewSession(opts Options) (*Session, error) {
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
 	initialGeneration.revokedMu.Lock()
+	initialGeneration.models = captureGenerationModelBindings(runtimeSession)
 	initialGeneration.settings = cfg
 	initialGeneration.active = append([]pluginpkg.Plugin(nil), activePlugins...)
 	initialGeneration.revokedMu.Unlock()

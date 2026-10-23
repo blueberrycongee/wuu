@@ -785,6 +785,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	hookSnapshot.Replace(s.HookDispatcher)
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
+		models:      captureGenerationModelBindings(s),
 		id:          generationID,
 		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient, mcpOAuth: s.mcpOAuth,
 		state:             &runtimeState{documents: s.Documents, sessions: s.Sessions, journal: s.InferenceJournalRuntime},

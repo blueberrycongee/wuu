@@ -77,7 +77,7 @@ func (k *kernelHostServices) retainState() (*State, error) {
 		_ = close()
 		return nil, serviceError("service_unavailable", "selected generation has no session state")
 	}
-	return &State{Documents: documents, Sessions: sessions, Generation: generation, Host: generation.host, InferenceJournalRuntime: journal, close: close}, nil
+	return &State{Documents: documents, Sessions: sessions, Generation: generation, Host: generation.host, InferenceJournalRuntime: journal, models: captureGenerationStateModels(generation), close: close}, nil
 }
 
 // Keep the invocation's own reference outside the service callback lock. A
