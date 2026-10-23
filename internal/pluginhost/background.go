@@ -259,12 +259,12 @@ func (r *ServiceRegistry) backgroundTarget(caller, service, method string) (serv
 	return serviceKey{}, serviceProvider{}, &HostServiceError{Code: "method_not_found", Message: "background target does not declare this method"}
 }
 
-func (r *ServiceRegistry) invokeBackground(ctx context.Context, caller string, key serviceKey, provider serviceProvider, method string, params json.RawMessage, executionID string) (json.RawMessage, *HostServiceError) {
+func (r *ServiceRegistry) invokeBackground(ctx context.Context, caller string, key serviceKey, provider serviceProvider, method string, params json.RawMessage, executionID string) (result json.RawMessage, callErr *HostServiceError) {
 	execCtx, executionID, release, admissionErr := r.acquireExecution(ctx, executionID, caller, key, provider.pluginID, true)
 	if admissionErr != nil {
 		return nil, admissionErr
 	}
-	defer release()
+	defer func() { callErr = serviceCompletionError(callErr, release()) }()
 	result, err := provider.invoker.InvokeService(execCtx, ServiceInvokeParams{Service: key.name, Method: method, Caller: caller, Params: params, ExecutionID: executionID})
 	if err != nil {
 		var hostErr *HostServiceError

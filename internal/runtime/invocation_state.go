@@ -83,10 +83,9 @@ func (k *kernelHostServices) retainState() (*State, error) {
 	return &State{SystemPrompt: prompt, Documents: documents, Sessions: sessions, Generation: generation, Host: generation.host, InferenceJournalRuntime: journal, models: captureGenerationStateModels(generation), close: close}, nil
 }
 
-// Keep the invocation's own reference outside the service callback lock. A
-// callback may release its last client handle while publication drops the graph
-// owner; shutting down the kernel inside that callback would lock against itself.
-func (k *kernelHostServices) captureInvocationState(ctx context.Context) (context.Context, func()) {
+// Keep the invocation's own reference through the callback and its service
+// chain. The last release must not close a registry that is still dispatching it.
+func (k *kernelHostServices) captureInvocationState(ctx context.Context) (context.Context, func() error) {
 	var mu sync.Mutex
 	var binding *State
 	var captureErr error
@@ -106,13 +105,21 @@ func (k *kernelHostServices) captureInvocationState(ctx context.Context) (contex
 		}
 		return binding.Retain(), nil
 	}))
-	return ctx, func() {
+	return ctx, func() error {
 		mu.Lock()
 		closed = true
 		held := binding
 		mu.Unlock()
 		if held != nil {
-			_ = held.Close()
+			return completeInvocationState(ctx, held)
 		}
+		return nil
 	}
+}
+
+func completeInvocationState(ctx context.Context, binding *State) error {
+	if pluginhost.DeferServiceCompletion(ctx, binding.Close) {
+		return nil
+	}
+	return binding.Close()
 }

@@ -53,7 +53,7 @@ type modelInvokeInvoker struct {
 func (k *modelInvokeInvoker) ID() string                { return k.parent.ID() }
 func (k *modelInvokeInvoker) Status() pluginhost.Status { return k.parent.Status() }
 
-func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params pluginhost.ServiceInvokeParams) (result json.RawMessage, callErr error) {
 	if err := callCtx.Err(); err != nil {
 		return nil, err
 	}
@@ -80,9 +80,18 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	if err := decodeServiceParams(params.Params, &input); err != nil {
 		return nil, err
 	}
+	binding, err := k.parent.retainState()
+	if err != nil {
+		return nil, err
+	}
+	streamOwnsState := false
+	defer func() {
+		if !streamOwnsState {
+			callErr = errors.Join(callErr, completeInvocationState(callCtx, binding))
+		}
+	}()
 	var client providers.StreamClient
 	var request providers.ChatRequest
-	var err error
 	direct := input.ContinuationID != ""
 	reserved := false
 	if params.Method == "start" {
@@ -132,7 +141,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		origin = parent
 	}
 	if providers.InferenceJournalFromContext(ctx) == nil && !direct {
-		journal := k.parent.inferenceJournalForOwner("plugin:" + scope.PluginID)
+		journal := binding.InferenceJournalRuntime.ForOwner("plugin:" + scope.PluginID)
 		if journal == nil {
 			cancel()
 			return nil, serviceError("service_unavailable", "inference accounting is unavailable")
@@ -176,7 +185,17 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	k.store.live[id] = job
 	k.store.mu.Unlock()
 	job.stopScope = context.AfterFunc(scope.Context, func() { cancel(); k.store.mu.Lock(); delete(k.store.live, id); k.store.mu.Unlock() })
-	go k.runStream(ctx, job, client, request, origin, direct)
+	// The handle and caller execution can disappear before the stream drains.
+	// Release the selected authority only after its terminal writes finish.
+	streamOwnsState = true
+	go func() {
+		defer func() {
+			if err := binding.Close(); err != nil {
+				providers.DebugLogf("model stream generation cleanup: %v", err)
+			}
+		}()
+		k.runStream(ctx, job, client, request, origin, direct)
+	}()
 	return marshalServiceResult(pluginhost.ModelInvocationHandle{InvocationID: id})
 }
 

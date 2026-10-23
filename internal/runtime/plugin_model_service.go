@@ -43,7 +43,7 @@ type modelRequestInvoker struct {
 func (k *modelRequestInvoker) ID() string                { return k.parent.ID() }
 func (k *modelRequestInvoker) Status() pluginhost.Status { return k.parent.Status() }
 
-func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params pluginhost.ServiceInvokeParams) (result json.RawMessage, callErr error) {
 	if err := callCtx.Err(); err != nil {
 		return nil, err
 	}
@@ -120,6 +120,13 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	if err := ctx.Err(); err != nil {
 		return nil, modelRequestError(err)
 	}
+	// Transport cancellation can precede terminal accounting. Keep this
+	// generation's authority until Execute has persisted the complete outcome.
+	binding, err := k.parent.retainState()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { callErr = errors.Join(callErr, completeInvocationState(callCtx, binding)) }()
 
 	// Load one coherent host configuration instead of reading the mutable
 	// foreground runner while another client changes its selected model.
@@ -184,7 +191,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// capabilities have no parent inference journal, so attribute them to the
 	// validated plugin instead of creating a hidden conversation.
 	if providers.InferenceJournalFromContext(ctx) == nil {
-		journal := k.parent.inferenceJournalForOwner("plugin:" + params.Caller)
+		journal := binding.InferenceJournalRuntime.ForOwner("plugin:" + params.Caller)
 		if journal == nil {
 			return nil, serviceError("service_unavailable", "inference accounting is unavailable")
 		}
@@ -210,18 +217,18 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	if finishReason == "" {
 		finishReason = providers.FinishReasonUnknown
 	}
-	result := pluginhost.ModelRequestResult{
+	modelResult := pluginhost.ModelRequestResult{
 		Text: response.Content, Provider: request.Provider, Model: request.Model,
 		FinishReason: string(finishReason), Truncated: response.Truncated || finishReason == providers.FinishReasonLength,
 	}
 	if response.Usage != nil {
-		result.Usage = &pluginhost.ModelRequestUsage{
+		modelResult.Usage = &pluginhost.ModelRequestUsage{
 			InputTokens: response.Usage.InputTokens, OutputTokens: response.Usage.OutputTokens,
 			CacheCreationTokens: response.Usage.CacheCreationTokens, CacheReadTokens: response.Usage.CacheReadTokens,
 			CacheCreationUnknown: response.Usage.CacheCreationUnknown,
 		}
 	}
-	return marshalServiceResult(result)
+	return marshalServiceResult(modelResult)
 }
 
 func modelRequestError(err error) error {
@@ -235,20 +242,4 @@ func modelRequestError(err error) error {
 	// Keep the typed category, not the provider's raw error, on the plugin wire.
 	failure := providers.NormalizeFailure(err)
 	return serviceError("inference_failed", "model request failed: "+string(failure.Category))
-}
-
-func (k *kernelHostServices) inferenceJournalForOwner(owner string) providers.InferenceJournal {
-	if k.state != nil {
-		k.state.mu.Lock()
-		journal := k.state.journal
-		k.state.mu.Unlock()
-		if journal == nil {
-			return nil
-		}
-		return journal.ForOwner(owner)
-	}
-	k.mu.RLock()
-	captured := k.modelSession
-	k.mu.RUnlock()
-	return captured.InferenceJournalForOwner(owner)
 }

@@ -622,7 +622,7 @@ type kernelServiceInvoker struct {
 
 func (k *kernelServiceInvoker) ID() string                { return k.parent.ID() }
 func (k *kernelServiceInvoker) Status() pluginhost.Status { return k.parent.Status() }
-func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (result json.RawMessage, callErr error) {
 	k.parent.mu.RLock()
 	services := k.parent.services[params.Caller]
 	k.parent.mu.RUnlock()
@@ -634,7 +634,7 @@ func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginh
 	}
 	ctx = context.WithValue(ctx, kernelServiceExecutionKey{}, params.ExecutionID)
 	ctx, releaseState := k.parent.captureInvocationState(ctx)
-	defer releaseState()
+	defer func() { callErr = errors.Join(callErr, releaseState()) }()
 	return services.invoke(ctx, k.method, params.Params)
 }
 
