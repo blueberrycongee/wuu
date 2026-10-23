@@ -1221,12 +1221,15 @@ async function runWebsiteAcceptance(h, fixture) {
       const selections = [
         { target: tabButton(siteIDs.get('Fixture Beta')), id: siteIDs.get('Fixture Beta'), label: 'beta' },
         { target: conversations, id: 'conversations', label: 'conversations' },
-        { target: '.sidebar-ribbon-footer button[aria-label="Settings"]', label: 'settings' },
+        { target: 'button[role="menuitem"][data-settings-page="providers"]', label: 'settings' },
         { target: tabButton(alphaID), id: alphaID, label: 'alpha' },
       ];
       for (const { target, id, label } of selections) {
+        if (label === 'settings') await click('.sidebar-account-trigger', 'retained-hover-account-menu', true, true);
         await click(target, `retained-hover-${label}`, true, true);
-        await until(() => evaluateRibbon(({ target, id }) => document.querySelector(id ? `[data-ribbon-id="${id}"]` : target)?.getAttribute('aria-current') === 'page', { target, id }), `Selected ${label}`);
+        await until(() => label === 'settings'
+          ? evaluate(() => Boolean(document.querySelector('.app-shell[data-settings-open] .settings-embedded')))
+          : evaluateRibbon(id => document.querySelector(`[data-ribbon-id="${id}"]`)?.getAttribute('aria-current') === 'page', id), `Selected ${label}`);
         assert.equal(chromeView('ribbon'), retainedRibbon, 'Navigation reuses the current native ribbon');
         assert.equal(retainedRibbon.getVisible(), true, 'Selecting a destination does not dismiss the hovered ribbon');
         assert.equal(retainedRibbon.getBounds().width, width, 'Selection does not start a collapse or reopen animation');

@@ -169,7 +169,7 @@ const activePane = '.cached-conversation-pane[data-active="true"]';
 const composer = '.conversation-pane .composer textarea';
 const scroller = '.conversation-pane > .scroll-region';
 const conversations = '[data-wuu-component="conversations-section"]';
-const settings = '.sidebar-ribbon button[aria-label="Settings"]';
+const settings = 'button[role="menuitem"][data-settings-page="providers"]';
 const plugins = '.sidebar-ribbon button[aria-label="Extensions"]';
 const leftToggle = '.section-sidebar-toggle';
 const rightToggle = '.shell-right-sidebar-toggle';
@@ -340,6 +340,7 @@ async function goConversations() {
   await waitFor(() => !document.querySelector('.settings-workbench-layer') && !document.querySelector('.catalog-section-pane:not([hidden])'));
 }
 async function goSettings(pageLabel) {
+  await click('.sidebar-account-trigger', 'account-menu');
   await click(settings, 'settings');
   await waitFor(() => document.querySelector('.settings-embedded'));
   if (pageLabel) await click(pick('.settings-nav-item', pageLabel), `settings-${pageLabel}`);

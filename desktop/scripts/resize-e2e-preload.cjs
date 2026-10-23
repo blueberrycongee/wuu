@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
@@ -383,4 +384,4 @@ if (process.env.WUU_TITLEBAR_FIXTURE_PLATFORM) {
 const extend = process.env.WUU_RENDERER_E2E_EXTENSION
   ? require(process.env.WUU_RENDERER_E2E_EXTENSION)
   : (api) => api;
-contextBridge.exposeInMainWorld("wuu", extend(desktopAPI));
+contextBridge.exposeInMainWorld("wuu", extend(withDefaultShell(desktopAPI)));

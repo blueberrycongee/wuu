@@ -7,7 +7,7 @@ const { app, BrowserWindow } = require("electron");
 const desktopRoot = path.resolve(__dirname, "..");
 const repoRoot = path.resolve(desktopRoot, "..");
 const rendererHtml = path.resolve(process.env.WUU_TITLEBAR_RENDERER_HTML || path.join(desktopRoot, "out", "renderer", "index.html"));
-const preload = path.join(__dirname, "resize-e2e-preload.cjs");
+let preload = path.join(__dirname, "resize-e2e-preload.cjs");
 const evidenceDir = path.resolve(process.env.WUU_TITLEBAR_OUTPUT || path.join(desktopRoot, "out", "e2e", "settings-titlebar"));
 const userData = path.join(evidenceDir, "settings-sidebar-hit-user-data");
 const fixturePlatform = process.env.WUU_TITLEBAR_FIXTURE_PLATFORM || process.platform;
@@ -22,6 +22,12 @@ process.env.WUU_RESIZE_E2E_CWD = repoRoot;
 fs.rmSync(userData, { recursive: true, force: true });
 fs.mkdirSync(userData, { recursive: true });
 app.setPath("userData", userData);
+if (focusedControls) {
+  const source = fs.readFileSync(preload, "utf8").replace('const withDefaultShell = require("./default-shell-e2e.cjs");',
+    `const withDefaultShell = ${require("./default-shell-e2e.cjs")};`);
+  preload = path.join(evidenceDir, "preload.cjs");
+  fs.writeFileSync(preload, source);
+}
 
 let activeWindow;
 const results = [];

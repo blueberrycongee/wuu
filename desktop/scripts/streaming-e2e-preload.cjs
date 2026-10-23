@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
@@ -85,7 +86,8 @@ function workspaceDemoPath(path) {
   return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
 }
 
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
+  initialLanguagePreference: process.env.WUU_STREAM_E2E_LOCALE,
   projectWork: async (params) => {
     const work = projectWorks.get(params.project_id);
     if (params.operation === "list") return { project_id: params.project_id, works: work ? [work] : [], usage: [] };
@@ -271,4 +273,4 @@ contextBridge.exposeInMainWorld("wuu", {
     return () => ipcRenderer.removeListener("test:server-event", listener);
   },
   onWindowResizeState: () => () => undefined
-});
+}));

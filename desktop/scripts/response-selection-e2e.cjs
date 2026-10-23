@@ -603,7 +603,8 @@ else app.whenReady().then(run).catch(async error => {
 function servePreview() {
   const http = require("node:http");
   const root = path.join(desktop, "out/renderer");
-  const preload = fs.readFileSync(path.join(__dirname, "response-selection-e2e-preload.cjs"), "utf8").replace('const { contextBridge, ipcRenderer } = require("electron");', "");
+  const preload = fs.readFileSync(path.join(__dirname, "response-selection-e2e-preload.cjs"), "utf8").replace('const { contextBridge, ipcRenderer } = require("electron");', "")
+    .replace('const withDefaultShell = require("./default-shell-e2e.cjs");', `const withDefaultShell = ${require('./default-shell-e2e.cjs')};`);
   const shim = `const process={env:{WUU_SELECTION_E2E_CWD:${JSON.stringify(path.dirname(desktop))}}};
     window.selectionCalls=[];
     const contextBridge={exposeInMainWorld:(name,api)=>window[name]=api};

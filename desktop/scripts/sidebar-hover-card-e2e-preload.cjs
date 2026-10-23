@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 // Synthetic desktop bridge for sidebar-hover-card-e2e.cjs: two workspaces and
 // sessions in every state a hover card describes. No user data, no core.
 const { contextBridge } = require("electron");
@@ -69,7 +70,7 @@ const threads = [
 const projectList = () => ({ projects: [workspace, missing], active_context: runtimeContext });
 const threadsIn = (path) => threads.filter((item) => item.cwd === path);
 
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   listProjects: async () => projectList(),
   selectProject: async () => projectList(),
   selectNoProject: async () => projectList(),
@@ -94,4 +95,4 @@ contextBridge.exposeInMainWorld("wuu", {
   rejectServerRequest: async () => undefined,
   onServerEvent: () => () => undefined,
   onWindowResizeState: () => () => undefined,
-});
+}));

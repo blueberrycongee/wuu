@@ -300,7 +300,12 @@ async function run() {
     step = `${cycle + 1}:${target}`;
     const startedAt = performance.now();
     const start = report.events.length;
-    await click(target === 'chat' ? '[data-wuu-component="conversations-section"]' : target === 'settings' ? 'button[aria-label="Settings"]' : `[data-ribbon-id="${pages[target].tab}"]`);
+    if (target === 'settings') {
+      await click('.sidebar-account-trigger');
+      await click('button[role="menuitem"][data-settings-page="providers"]');
+    } else {
+      await click(target === 'chat' ? '[data-wuu-component="conversations-section"]' : `[data-ribbon-id="${pages[target].tab}"]`);
+    }
     await until(() => Object.entries(pages).every(([name, page]) => page.view.getVisible() === (name === target)), `expected guest visibility at ${step}`);
     if (target === 'settings') await until(() => evaluate(() => Boolean(document.querySelector('.settings-embedded'))), 'settings displayed');
     if (target === 'chat') await until(() => evaluate(() => !document.querySelector('.settings-workbench-layer')), 'chat displayed');

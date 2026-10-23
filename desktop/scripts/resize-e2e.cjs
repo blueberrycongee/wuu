@@ -72,13 +72,13 @@ async function run() {
   const debugSettingVisible = await evaluate(win, () => Boolean(document.querySelector(".settings-switch")));
   assert.equal(debugSettingVisible, false, "Production desktop builds must not expose the debug controls setting.");
   await evaluate(win, () => {
-    const button = document.querySelector(".settings-back-button");
+    const button = document.querySelector('[data-wuu-component="conversations-section"]');
     if (!(button instanceof HTMLButtonElement)) {
-      throw new Error("Settings back button not found.");
+      throw new Error("Conversations navigation button not found.");
     }
     button.click();
   });
-  await waitFor(win, () => Boolean(document.querySelector(".conversation-pane")), 3000);
+  await waitFor(win, () => !document.querySelector('.app-shell[data-settings-open]') && Boolean(document.querySelector(".conversation-pane")), 3000);
 
   const primaryScroll = await evaluate(win, () => {
     const node = document.querySelector(".scroll-region");
