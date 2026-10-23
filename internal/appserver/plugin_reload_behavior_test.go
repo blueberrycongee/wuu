@@ -887,11 +887,44 @@ func TestPluginReloadAdmitsQueuedTurnOnCurrentGeneration(t *testing.T) {
 			t.Cleanup(func() { unblock(); srv.Close() })
 			dispatchPayload(t, srv, "create", MethodThreadStart, ThreadStartParams{Ephemeral: ephemeral})
 			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
-			dispatchPayload(t, srv, "start", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first question"})
+			startDeadline := time.NewTimer(5 * time.Second)
+			defer startDeadline.Stop()
+			for attempt := 0; ; attempt++ {
+				id := fmt.Sprintf("start-%d", attempt)
+				dispatchPayload(t, srv, id, MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first question"})
+				response := responseByID(t, parseOutput(t, out.String()), id)
+				if response["error"] == nil {
+					break
+				}
+				rejection := remarshal[ResponseError](t, response["error"])
+				if rejection.Message != threadExecutionBusyError(threadID).Error() {
+					t.Fatalf("first turn rejected: %+v; output:\n%s", response, out.String())
+				}
+				client.mu.Lock()
+				calls := len(client.requests)
+				client.mu.Unlock()
+				if calls != 0 {
+					t.Fatalf("rejected admission already made %d provider requests", calls)
+				}
+				t.Logf("turn start rejected before admission: %s", rejection.Message)
+				// New starts its initial watcher concurrently. Wait for that
+				// refresh boundary before retrying a definitely rejected input.
+				refreshed := make(chan struct{})
+				go func() {
+					srv.pluginGenerationRefreshMu.Lock()
+					srv.pluginGenerationRefreshMu.Unlock()
+					close(refreshed)
+				}()
+				select {
+				case <-refreshed:
+				case <-startDeadline.C:
+					t.Fatalf("initial generation refresh did not settle; output:\n%s", out.String())
+				}
+			}
 			select {
 			case <-entered:
-			case <-time.After(5 * time.Second):
-				t.Fatal("first provider request missing")
+			case <-startDeadline.C:
+				t.Fatalf("first provider request missing; output:\n%s", out.String())
 			}
 			old := srv.thread(threadID)
 			oldState := old.state
