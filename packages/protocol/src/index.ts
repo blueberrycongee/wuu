@@ -611,6 +611,7 @@ export type ExtensionInventoryRecord = {
   state: ExtensionState;
   executable?: boolean;
   fingerprint?: string;
+  graph_generation?: string;
   package_source?: "bundled" | "user" | "project" | "dev";
   grant_scope?: "action" | "session" | "project" | "user";
   requested_permissions?: string[];
@@ -713,6 +714,16 @@ export type PluginPackageRemoveResult = {
   extension_inventory: ExtensionInventoryRecord[];
   skills: SkillSummary[];
 };
+
+export interface PluginDesktopActivationParams {
+  id: string;
+  fingerprint: string;
+  graph_generation: string;
+  activation: number;
+  phase: "registration" | "render" | "cleanup";
+  status: "active" | "failed" | "disposed";
+  message?: string;
+}
 
 export interface PluginDesktopModuleReadParams {
   id: string;
@@ -3179,6 +3190,7 @@ export type WuuDesktopApi = {
   loadPluginDesktopModule: (
     params: PluginDesktopModuleReadParams,
   ) => Promise<PluginDesktopModuleLoadResult>;
+  reportPluginDesktopActivation: (params: PluginDesktopActivationParams) => Promise<void>;
   loadPluginIcon: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
   loadPluginSkinImage?: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
   cacheShellImage?: (data: ArrayBuffer) => Promise<string>;

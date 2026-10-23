@@ -137,6 +137,8 @@ import type {
   PluginPackageRemoveResult,
   PluginDesktopModuleLoadResult,
   PluginDesktopModuleReadParams,
+  PluginDesktopActivationParams,
+  ExtensionInventoryRecord,
   PluginDesktopModuleReadResult,
   PluginIconLoadResult,
   PluginIconReadParams,
@@ -203,6 +205,7 @@ import {
 } from "./desktopSettings";
 import { GitService } from "./gitService";
 import { requestRemoteWorkspace } from "./remoteWorkspace";
+import { PluginDesktopActivations } from "./pluginDesktopActivations";
 import { PluginRuntimeRequests } from "./pluginRuntimeRequests";
 import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
 import { ProjectManager, wuuHomePath } from "./projects";
@@ -585,6 +588,35 @@ async function showProjectDirectoryDialog(
   return result.filePaths[0];
 }
 
+const desktopActivationOwners = new Map<number, PluginDesktopActivations>();
+const observedActivationWindows = new WeakSet<WebContents>();
+
+function desktopActivationOwner(event: IpcMainInvokeEvent): PluginDesktopActivations {
+  if (event.senderFrame !== event.sender.mainFrame || !windowRegistry.allWindows().some(window => window.webContents === event.sender)) {
+    throw new Error("Desktop activation reports are available from Wuu window main frames only");
+  }
+  const contents = event.sender;
+  if (!observedActivationWindows.has(contents)) {
+    observedActivationWindows.add(contents);
+    const disconnect = (): void => {
+      const owner = desktopActivationOwners.get(contents.id);
+      desktopActivationOwners.delete(contents.id);
+      void owner?.disconnect().catch((error: unknown) => console.error("Desktop activation disconnect failed", error));
+    };
+    contents.on("did-start-navigation", (details) => {
+      if (details.isMainFrame && !details.isSameDocument) disconnect();
+    });
+    contents.on("render-process-gone", disconnect);
+    contents.once("destroyed", disconnect);
+  }
+  let owner = desktopActivationOwners.get(contents.id);
+  if (!owner) {
+    owner = new PluginDesktopActivations(contents.id);
+    desktopActivationOwners.set(contents.id, owner);
+  }
+  return owner;
+}
+
 function runtimeContextForEvent(event: IpcMainInvokeEvent): RuntimeContext {
   return (
     windowRegistry.runtimeContextForWindow(event.sender.id) ??
@@ -743,6 +775,12 @@ function emitServerEvent(event: ServerEvent): void {
   if (event.kind === "server-exit") {
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
+  }
+  if (event.kind === "notification" && event.message.method === "plugin/inventory/changed") {
+    const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
+    if (params?.extension_inventory) {
+      for (const owner of desktopActivationOwners.values()) owner.observeInventory(event.workdir, params.extension_inventory);
+    }
   }
   browserHostCoordinator.handleServerEvent(event);
   const browserActivity = observationActivityFromServerEvent(event);
@@ -1803,7 +1841,9 @@ app.whenReady().then(async () => {
     },
   );
   ipcMain.handle("wuu:initialize", async (event) => {
-    const result = await appServerRequest<InitializeResult>(event, "initialize", desktopInitializeParams());
+    const owner = desktopActivationOwner(event);
+    const context = runtimeContextForEvent(event);
+    const result = await owner.initialize(context.cwd, appServerClientPool.bindContextRequest(context), desktopInitializeParams());
     if (result.core) {
       cachedCoreBuildInfo = result.core;
     }
@@ -2102,6 +2142,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-package-remove", (event, id: string) =>
     appServerRequest<PluginPackageRemoveResult>(event, "plugin/package/remove", { id }),
   );
+  ipcMain.handle("wuu:plugin-desktop-activation", (event, params: PluginDesktopActivationParams) =>
+    desktopActivationOwner(event).report(params));
   ipcMain.handle(
     "wuu:plugin-desktop-module-load",
     async (event, params: PluginDesktopModuleReadParams): Promise<PluginDesktopModuleLoadResult> => {
