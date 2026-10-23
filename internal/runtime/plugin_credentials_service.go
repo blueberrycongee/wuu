@@ -97,8 +97,8 @@ func (s *State) Services() (*StateServices, error) {
 }
 
 func stateServicesForGeneration(generation *PluginGeneration) *StateServices {
-	snapshot := ExtensionSnapshot{GenerationID: generation.id, Plugins: append([]pluginpkg.Plugin(nil), generation.plugins...), ExtensionSettings: generation.settings.Extensions, PluginHost: generation.host}
 	generation.revokedMu.Lock()
+	snapshot := ExtensionSnapshot{GenerationID: generation.id, Plugins: append([]pluginpkg.Plugin(nil), generation.plugins...), ExtensionSettings: generation.settings.Extensions, PluginHost: generation.host}
 	for _, item := range generation.active {
 		if !generation.revokedPlugins[item.ID] {
 			snapshot.ActivePlugins = append(snapshot.ActivePlugins, item)
