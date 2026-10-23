@@ -935,6 +935,39 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	var fields map[string]json.RawMessage
+	if err := decodeParams(req.Params, &fields); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	_, batch := fields["updates"]
+	updates := params.Updates
+	if batch {
+		for _, field := range []string{"id", "fingerprint", "action"} {
+			if _, present := fields[field]; present {
+				return s.writeResponse(req.ID, nil, errors.New("updates cannot be combined with single-package fields"))
+			}
+		}
+		if len(updates) == 0 {
+			return s.writeResponse(req.ID, nil, errors.New("updates must be a non-empty array"))
+		}
+		seen := make(map[string]bool, len(updates))
+		for index := range updates {
+			update := &updates[index]
+			update.ID = strings.TrimSpace(update.ID)
+			if update.ID == "" {
+				return s.writeResponse(req.ID, nil, errors.New("each update requires an extension package id"))
+			}
+			if seen[update.ID] {
+				return s.writeResponse(req.ID, nil, fmt.Errorf("duplicate extension package %q in updates", update.ID))
+			}
+			seen[update.ID] = true
+			if update.Action != ExtensionPackageEnable && update.Action != ExtensionPackageDisable {
+				return s.writeResponse(req.ID, nil, errors.New("updates only supports enable and disable actions"))
+			}
+		}
+	} else {
+		updates = []ExtensionPackageEnablementUpdate{{ID: strings.TrimSpace(params.ID), Fingerprint: params.Fingerprint, Action: params.Action}}
+	}
 	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
 	}
@@ -951,28 +984,32 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	// Package management targets the installed catalog; captured services still
 	// own configuration writes and never replace retained execution inventory.
 	snapshot := s.rt.ExtensionSnapshot()
-	var selected *pluginpkg.Plugin
-	for index := range snapshot.Plugins {
-		if snapshot.Plugins[index].SubjectID == strings.TrimSpace(params.ID) {
-			selected = &snapshot.Plugins[index]
-			break
+	selected := make([]pluginpkg.Plugin, len(updates))
+	for index, update := range updates {
+		found := false
+		for _, item := range snapshot.Plugins {
+			if item.SubjectID == update.ID {
+				selected[index], found = item, true
+				break
+			}
 		}
-	}
-	if selected == nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", params.ID))
-	}
-	if params.Action == ExtensionPackagePromoteUpdate || params.Action == ExtensionPackageRejectUpdate {
-		return s.handlePendingPluginUpdate(req, params, *selected, services, releaseMutation)
-	}
-	providedFingerprint := strings.TrimSpace(params.Fingerprint)
-	if providedFingerprint != "" && providedFingerprint != selected.Fingerprint {
-		return s.writeResponse(req.ID, nil, errors.New("extension package changed; refresh inventory before updating policy"))
-	}
-	if (params.Action == ExtensionPackageGrant || params.Action == ExtensionPackageReject) && providedFingerprint == "" {
-		return s.writeResponse(req.ID, nil, errors.New("fingerprint is required for grant and reject actions"))
-	}
-	if selected.Official && (params.Action == ExtensionPackageGrant || params.Action == ExtensionPackageReject) {
-		return s.writeResponse(req.ID, nil, errors.New("official bundled packages cannot be granted or rejected"))
+		if !found {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", update.ID))
+		}
+		item := selected[index]
+		if update.Action == ExtensionPackagePromoteUpdate || update.Action == ExtensionPackageRejectUpdate {
+			return s.handlePendingPluginUpdate(req, params, item, services, releaseMutation)
+		}
+		providedFingerprint := strings.TrimSpace(update.Fingerprint)
+		if providedFingerprint != "" && providedFingerprint != item.Fingerprint {
+			return s.writeResponse(req.ID, nil, errors.New("extension package changed; refresh inventory before updating policy"))
+		}
+		if (update.Action == ExtensionPackageGrant || update.Action == ExtensionPackageReject) && providedFingerprint == "" {
+			return s.writeResponse(req.ID, nil, errors.New("fingerprint is required for grant and reject actions"))
+		}
+		if item.Official && (update.Action == ExtensionPackageGrant || update.Action == ExtensionPackageReject) {
+			return s.writeResponse(req.ID, nil, errors.New("official bundled packages cannot be granted or rejected"))
+		}
 	}
 
 	view, err := services.Config.Read(context.Background())
@@ -985,14 +1022,25 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	}
 	approvedAt := time.Now().UTC()
 	next, preparedSettings, err := config.UpdateExtensionSettingsSource(source, func(settings *extensions.Settings) error {
-		return applyExtensionPackageAction(settings, params.Action, *selected, approvedAt)
+		for index, update := range updates {
+			if err := applyExtensionPackageAction(settings, update.Action, selected[index], approvedAt); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	cfg := view.Config
 	cfg.Extensions = &preparedSettings
-	candidate, err := s.rt.PreflightExtensionPolicy(cfg)
+	var requiredIDs []string
+	for index, update := range updates {
+		if update.Action == ExtensionPackageEnable {
+			requiredIDs = append(requiredIDs, selected[index].ID)
+		}
+	}
+	candidate, err := s.rt.PreflightExtensionPolicy(cfg, requiredIDs...)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

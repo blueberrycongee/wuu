@@ -919,6 +919,16 @@ const (
 )
 
 type ExtensionPackageUpdateParams struct {
+	ID          string                             `json:"id,omitempty"`
+	Fingerprint string                             `json:"fingerprint,omitempty"`
+	Action      ExtensionPackageAction             `json:"action,omitempty"`
+	Updates     []ExtensionPackageEnablementUpdate `json:"updates,omitempty"`
+}
+
+// ExtensionPackageEnablementUpdate changes one package's enabled override in
+// an atomic selection. Action accepts only enable or disable, never trust or
+// pending-package updates. A supplied fingerprint must match the catalog.
+type ExtensionPackageEnablementUpdate struct {
 	ID          string                 `json:"id"`
 	Fingerprint string                 `json:"fingerprint,omitempty"`
 	Action      ExtensionPackageAction `json:"action"`

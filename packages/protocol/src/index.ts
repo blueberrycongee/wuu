@@ -643,11 +643,25 @@ export type ExtensionPackageAction =
   | "promote_update"
   | "reject_update";
 
-export type ExtensionPackageUpdateParams = {
+export type ExtensionPackageEnablementUpdate = {
   id: string;
   fingerprint?: string;
-  action: ExtensionPackageAction;
+  action: "enable" | "disable";
 };
+
+export type ExtensionPackageUpdateParams =
+  | {
+      id: string;
+      fingerprint?: string;
+      action: ExtensionPackageAction;
+      updates?: never;
+    }
+  | {
+      updates: ExtensionPackageEnablementUpdate[];
+      id?: never;
+      fingerprint?: never;
+      action?: never;
+    };
 
 export type ExtensionPackageUpdateResult = {
   extension_inventory: ExtensionInventoryRecord[];

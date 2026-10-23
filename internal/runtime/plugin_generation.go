@@ -259,12 +259,17 @@ func (s *Session) RevokeFailedPluginDependencies() bool {
 }
 
 // PreflightExtensionPolicy builds a replacement from the current package set
-// without persisting the proposed grant/enable decisions.
-func (s *Session) PreflightExtensionPolicy(cfg config.Config) (*PluginGeneration, error) {
+// without persisting the proposed grant/enable decisions. Enabled, trusted
+// candidates named in requiredIDs must prepare successfully.
+func (s *Session) PreflightExtensionPolicy(cfg config.Config, requiredIDs ...string) (*PluginGeneration, error) {
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	return s.buildPluginGeneration(cfg, s.Plugins, nil, nil, startPluginClient)
+	required := make(map[string]bool, len(requiredIDs))
+	for _, id := range requiredIDs {
+		required[id] = true
+	}
+	return s.buildPluginGeneration(cfg, s.Plugins, required, nil, startPluginClient)
 }
 
 // PreflightPluginRemoval builds the generation that will remain after one
@@ -374,6 +379,16 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
 		if err != nil {
 			return nil, err
+		}
+		for _, item := range discovered {
+			if !required[item.ID] {
+				continue
+			}
+			for _, issue := range activationPlan.Issues[item.ID] {
+				if issue.Kind == pluginpkg.ActivationIssueMissingRequirement || issue.Kind == pluginpkg.ActivationIssueVersionMismatch {
+					return nil, fmt.Errorf("plugin %q cannot activate: required plugin %q (%s)", item.ID, issue.RelatedPluginID, issue.Kind)
+				}
+			}
 		}
 		active = activationPlan.Plugins
 	}
