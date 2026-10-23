@@ -478,7 +478,7 @@ func NewSession(opts Options) (*Session, error) {
 	safeMode := opts.SafeMode || strings.TrimSpace(os.Getenv("WUU_SAFE_MODE")) == "1"
 	var activePlugins []pluginpkg.Plugin
 	if !safeMode {
-		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins)
+		activationPlan, activationErr := ResolvePluginActivationPlan(cfg, discoveredPlugins, opts.NativeProviders...)
 		if activationErr != nil {
 			return nil, activationErr
 		}
@@ -2344,8 +2344,12 @@ func activatedPlugins(cfg config.Config, discovered []pluginpkg.Plugin) []plugin
 
 // ResolvePluginActivationPlan applies package relationships after trust,
 // explicit disablement, and host compatibility have selected candidates.
-func ResolvePluginActivationPlan(cfg config.Config, discovered []pluginpkg.Plugin) (pluginpkg.ActivationPlan, error) {
-	selected, _, err := selectCompositionPlugins(cfg.Composition, activatedPlugins(cfg, discovered))
+func ResolvePluginActivationPlan(cfg config.Config, discovered []pluginpkg.Plugin, factories ...NativeProviderFactory) (pluginpkg.ActivationPlan, error) {
+	ids := make([]string, 0, len(factories))
+	for _, factory := range factories {
+		ids = append(ids, factory.ID)
+	}
+	selected, _, err := selectCompositionPlugins(cfg.Composition, activatedPlugins(cfg, discovered), ids...)
 	if err != nil {
 		return pluginpkg.ActivationPlan{}, err
 	}

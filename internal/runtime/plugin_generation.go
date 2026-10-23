@@ -284,7 +284,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
 	var active []pluginpkg.Plugin
 	if !s.SafeMode {
-		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered)
+		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, s.nativeProviders...)
 		if err != nil {
 			return nil, err
 		}

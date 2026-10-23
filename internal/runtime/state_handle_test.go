@@ -3,6 +3,8 @@ package runtime
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
@@ -86,5 +88,23 @@ func TestRetainedStateSurvivesGenerationPublication(t *testing.T) {
 	}
 	if err := captured.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOpenStateAdmitsConfiguredNativeFactory(t *testing.T) {
+	modules := []string{sessionStateConsumer, "example.documents"}
+	home := t.TempDir()
+	state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}, NativeProviders: []NativeProviderFactory{{ID: "example.documents", Build: func(input NativeProviderContext) (pluginhost.Client, error) {
+		return persistence.NewService("example.documents", filepath.Join(input.WuuHome, "external-documents"), "jsonl"), nil
+	}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if _, err := state.Sessions.Create("factory"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "sessions", "documents")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("implicit default backend: %v", err)
 	}
 }

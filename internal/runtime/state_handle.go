@@ -103,7 +103,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 		return nil, errors.New("plugin catalog is being published by another process")
 	}
 	defer catalog.Release()
-	plan, err := ResolvePluginActivationPlan(opts.Config, discoverPlugins(root, home))
+	plan, err := ResolvePluginActivationPlan(opts.Config, discoverPlugins(root, home), opts.NativeProviders...)
 	if err != nil {
 		return nil, err
 	}
