@@ -4,9 +4,9 @@ Wuu 通过 Go 运行时宿主和 Electron 桌面宿主加载插件。一个包�
 
 ## 宿主和插件的职责
 
-Go 宿主负责工具分派、执行身份、服务路由、会话持久化、权限和资源清理。插件负责功能逻辑、提示词、业务状态和后台策略。自动化、记忆、子 Agent 等功能通过宿主服务工作，而不是另外维护一套会话引擎。
+Go 宿主负责工具分派、执行身份、服务路由、持久化与权限边界，以及资源清理。存储实现与权限策略通过服务选择，见[可替换提供者](replaceable-providers.md)。插件负责功能逻辑、提示词、业务状态和后台策略。自动化、记忆、子 Agent 等功能通过宿主服务工作，而不是另外维护一套会话引擎。
 
-桌面宿主负责窗口、布局、会话消息流、输入提交，以及通向 Go app-server 的桥接。插件通过公开 SDK 注册视图和贡献，不会获得 Electron 主进程对象，也不能直接访问宿主 React 状态。宿主提供 React 和共享 UI 组件，让插件控件遵循相同的渲染与样式契约。
+桌面宿主负责窗口、应用状态与动作、输入提交，以及通向 Go app-server 的桥接。所选 `ui.shell` 提供者负责应用布局和展示。插件通过公开 SDK 注册视图和贡献，不会获得 Electron 主进程对象，也不能直接访问宿主 React 状态。宿主提供 React 和共享 UI 组件，让插件控件遵循相同的渲染与样式契约。
 
 内置包和外部包使用相同的运行时与桌面注册契约。内置来源影响发现和信任，不会改变工具、能力或 UI 注册的含义。复制一个包并使用内置插件的 ID，不会让它成为官方包。
 
@@ -164,17 +164,15 @@ Bundle 是可复用的静态配置。例如，多个 profile 可以共享同一�
 
 补丁中的 `modules` 将模块 ID 映射为 `true`（包含）或 `false`（排除）。`services` 替换指定绑定；`remove_services` 接受 `{ "service": "...", "major": 1 }` 条目以移除显式选择。移除绑定会恢复唯一提供者解析；若仍有多个提供者，准备仍然失败。排除模块不会悄悄删除指向它的绑定，须在同一组合中移除或替换这些绑定。同一补丁中的重复或冲突操作会失败，后续补丁可以有意覆盖之前的选择。配置保存会保留显式空数组。每次解析都会创建独立状态，一个 profile 不会修改另一个。
 
-当前原生运行时模块包括 `kernel`（原生服务集合）、`wuu.default-loop`（`driver.default` 的提供者）、`wuu.tool-execution`（工具安全服务的声明式消费者）和 `wuu.session-execution`（所选驱动的声明式消费者）。显式模块集合只在需要时包含它们。排除 `kernel` 会移除其服务和工具结果物化功能，不会自动选择替代实现。这些运行时选择尚不替换应用 shell 或完整会话持久化实现。安全模式不启动任何组合模块，即使配置指定了不可用的包；发现功能仍可用于恢复。
+原生模块包括 `kernel`（原生服务集合）、`wuu.default-loop`（`driver.default`）、`wuu.tool-execution`（工具安全服务消费者）和 `wuu.session-execution`（所选驱动消费者）。状态、权限、Project 协调和应用外壳分别有自己的[提供者协议](replaceable-providers.md)。显式模块集合需包含所需的全部依赖。排除 `kernel` 会移除其服务和工具结果物化功能，不会自动选择替代实现。安全模式不启动任何组合模块，即使配置指定了不可用的包；发现功能仍可用于恢复。
 
 `plugin/registry/introspect` 返回 `composition.profile`、按顺序应用的 `layers`、最后修改模块集合的 `module_source`，以及每个所选模块的 `source`、包版本和当前运行时状态。来源标识内联选择（`profile:<名称>` 或 `composition`）或从零计数的补丁（`bundle:<名称>:patch:<索引>`、`profile:<名称>:patch:<索引>`、`composition:patch:<索引>`）。原生模块版本标识产品构建，服务版本另行记录。没有运行时的包不带运行时状态。即使排除了原生注册表检查提供者，此诊断仍然可用。同 ID 更新保留正在执行的工作；移除模块会撤销所有保留 generation 中的对应模块，并让消费者先完成清理，再停止提供者。
 
 包依赖与所选服务依赖使用同一张 generation 生命周期图。提供者先于消费者激活，清理按相反顺序进行，期间提供者资源保持可用。必需服务缺失、主版本不兼容或提供者失败会阻止依赖链上的消费者运行。可选服务缺失不会阻止激活；存在时仍参与生命周期排序。跨越包与服务的依赖循环会在激活前导致准备失败。新版本改变依赖时，仍被保留的 generation 使用自己的解析结果。移除提供者会停止必需消费者，独立插件继续运行。
 
-按需启用的 `wuu.state.sqlite` 和 `wuu.state.jsonl` 模块均提供 `state.documents` 版本 1。可在显式组合中选择其中一个，或绑定实现相同服务的外部提供者。它们在激活时打开存储，使用普通依赖图，移除后停止。数据位于会话目录的 `documents` 子目录。当前文档服务与已有会话数据库分开；选择它尚不会迁移会话历史或执行日志。
+`wuu.state.sqlite` 和 `wuu.state.jsonl` 提供 `state.documents@1`，外部提供者可以实现同一协议。产品会话存储通过所选文档服务保存历史、执行/恢复状态、驱动绑定和 Project 状态。旧存储转换保留来源，遇到未知非空表或目标数据冲突时明确失败。仅选择后端不会完成数据迁移。
 
-消费者声明 `requireDocumentStore()`，通过 `documentStore(host).read(query)`、`.commit(transaction)` 或 `.export()` 调用；提供者声明 `documentStoreDescriptor()`。每份文档包含命名空间、键和 JSON 值。读取返回一致的存储修订号及按键排序的文档；前缀与可选键集合取交集，空键集合不返回文档。修订号使用十进制字符串，TypeScript 中也不转换为数值。提交包含唯一的 `id`、`expected_revision` 和跨任意命名空间的非空、不重复写入集合。每项写入设置 JSON 值或显式删除键。整个存储的修订号必须仍然匹配，否则返回 `state_conflict` 且不写入；这也能检测新插入的键及其他命名空间的变化。
-
-成功提交在确认前完成原子持久化。I/O 结果不确定或响应丢失后，以完全相同的操作 ID 和意图重试，持久回执会返回原修订号。同一 ID 携带不同意图时返回 `state_operation_conflict`。写入接纳前取消不会产生写入；接纳后即使调用者断开，也会完成持久化屏障。取消不会撤销已提交数据或外部效果。`read` 和 `commit` 在依赖消费者清理期间仍可调用，提供者会保留到清理完成。
+消费者声明 `requireDocumentStore()` 并使用 `documentStore(host)`；提供者声明 `documentStoreDescriptor()`。[提供者指南](replaceable-providers.md)说明有界查询、绑定 revision 的游标、完全相同事务的回执重试、可选压缩/导入和离线迁移。客户端始终使用捕获的 generation。普通方法不声明清理权限；关闭持久化需要生命周期所有者的准入。
 
 SQLite 使用完整同步的 WAL 事务。JSONL 追加带校验和的记录，并从日志重建索引；只丢弃不完整的末尾记录，完整但损坏的记录返回 `state_corrupt`。两者均通过操作系统锁串行执行操作，并验证同一个持久权威指针。迁移先准备并检查新 generation，再原子发布该指针。之后所有旧句柄，包括其他进程中的句柄，都返回 `state_binding_changed`。直接选择另一后端会返回 `state_migration_required`。应停止业务消费者、迁移，再选择并启动目标提供者。发布前中断时原存储仍是权威；发布后目标存储成为权威。旧 generation 保留用于检查，不进行双写。非空目录丢失权威指针时明确失败，不会悄悄创建空库。
 
@@ -187,17 +185,17 @@ wuu state import --dir "$NEW_STORE_DIR" --backend jsonl --file snapshot.json
 wuu state migrate --dir "$STORE_DIR" --from sqlite --to jsonl
 ```
 
-快照包含文档和完整持久回执序列。导入要求空目标目录，在发布前检查恢复数据，不覆盖已有状态。`check` 校验数据并报告数量与绑定身份，不输出文档值。文件系统屏障必须成功；不支持目录同步时返回错误，指针发布后的错误明确报告已提交的绑定。这些持久化检查已在 macOS 验证；这两个按需提供者的 Windows 持久化尚未验收。回执完整保留、不裁剪，导出会将整个存储载入内存。运行 `node scripts/document-state-e2e.mjs` 可在独立目录仅安装公开 SDK，验证[进程消费者](../../../examples/plugins/document-state/runtime.ts)、重启重试、后端迁移、撤销和 CLI 数据转移。可复查证据保存在 `.tmp/e2e/document-state/`。
+快照包含文档和完整持久回执序列。导入要求空目标目录，在发布前检查恢复数据，不覆盖已有状态。`check` 校验数据并报告数量与绑定身份，不输出文档值。文件系统屏障必须成功；不支持目录同步时返回错误，指针发布后的错误明确报告已提交的绑定。依赖替换实现前，需要在目标文件系统和平台验证持久性。回执完整保留、不裁剪，导出会将整个存储载入内存。运行 `node scripts/document-state-e2e.mjs` 可在独立目录仅安装公开 SDK，验证[进程消费者](../../../examples/plugins/document-state/runtime.ts)、重启重试、后端迁移、撤销和 CLI 数据转移。可复查证据保存在 `.tmp/e2e/document-state/`。
 
 空驱动 profile 通过服务图选择 `driver.default`。原生 `wuu.default-loop` 模块与外部提供者使用相同的驱动协议、声明式依赖、取消和清理路径。排除该模块会停止其驱动；组合可以改为包含提供 `driver.default` 的外部插件。没有提供者时，新回合会明确失败。实验性的 `driver.<profile>` 桥接将提供者和回调表固定在同一 generation。描述信息、创建和恢复调用遵循回合取消。描述信息须包含非空 ID 与语义化版本，读取失败会在创建实例前返回错误。创建、恢复及终态 checkpoint 须匹配所选驱动的 ID、版本和 checkpoint 契约。未知终态或不兼容 checkpoint 会明确失败，保留最近接受的状态。取消后迟到的实例会收到有时限的关闭请求。回合在保存 checkpoint 后失败或取消时，返回结果会保留最近接受的 checkpoint，防止应用终结流程将它覆盖为实例初始状态。即使取消导致终态回执未能送达，执行中已观察到的历史仍可用于最终持久化。`driver.<profile>` 版本 2 在失败状态、回执和 checkpoint 之外返回结构化 `failure`，保留取消、期限到期、空回答、摘要输出超限、提供者分类及已消耗的恢复预算。使用 `driverServiceDescriptor(profile)` 并返回 `DriverRunResult`；服务版本 2 与驱动身份和 checkpoint 版本独立。
 
 会话在创建或恢复驱动实例之前，持久化绑定服务 profile、提供者 ID、驱动 ID/版本及 checkpoint 契约。更改默认配置不会替换这一身份。重建运行时使用保存的 profile，在推理前拒绝不同提供者或不兼容版本。组合仍须为该服务选择已保存的提供者；改变同一服务的绑定后，旧会话保持只读，直到恢复原来的选择。绑定与 checkpoint 写入在事务中校验已保存身份。会话不存在或写入失败时，不会确认 checkpoint 已保存。Fork 创建在同一事务中继承来源绑定，并以空的执行 checkpoint 开始。明确标记为临时的会话在内存中保存绑定与 checkpoint，运行时重建会保留它们；关闭会话或进程会丢弃这些状态。
 
-新增的 `session_driver_bindings` 表将这些身份保存在原有会话数据库中。首次迁移将旧 Wuu 会话绑定到历史原生默认驱动，保留已有 checkpoint 的版本。旧外部 checkpoint 若从未保存 profile 或提供者，会保留驱动身份并返回迁移诊断；宿主无法安全推断缺失的绑定。备份时须保留数据库及其 WAL。忽略该表的旧版本不能安全恢复使用替代驱动的会话。
+所选文档存储保留驱动身份和 checkpoint。旧数据转换保留原 `session_driver_bindings` 记录，并将历史原生会话绑定到已知默认实现。没有记录 profile/提供者的旧外部 checkpoint 会返回迁移诊断；宿主不能安全推断缺失绑定。备份必须一起保留绑定、checkpoint 和历史。忽略这些身份的旧版本不能安全恢复替代驱动。
 
 Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDriver` 或 `AcquireLoopDriver`；worker manager 缺少 `AcquireLoopDriver` 时，在生命周期钩子、模型请求和工具执行之前失败。`loopdriver.AcquireLocal(driver)` 绑定由调用方持有的进程内驱动，每次获取时检查其持久化身份。
 
-后台 worker 同样使用所选驱动。在产生效果前，会保存服务 profile、提供者 ID、驱动 ID/版本及 checkpoint 契约。后续回合和重启恢复保留该绑定；提供者缺失或不兼容时明确失败。驱动选择功能引入前的记录保留原生默认驱动身份。worker 执行持有 generation 租约，直到终态持久化和清理完成，并使用与父执行不同的回调 ID。待恢复的 checkpoint 与其执行输入单独保存，不覆盖最近已提交的终态结果，避免崩溃恢复抹去尚待投递的结果；终态快照提交对应的执行 ID。worker checkpoint 文件属于恢复数据，须与历史一同保留；忽略驱动绑定的旧版本不能安全恢复使用替代驱动的 worker。
+后台 worker 同样使用所选驱动。在产生效果前，会保存服务 profile、提供者 ID、驱动 ID/版本及 checkpoint 契约。后续回合和重启恢复保留该绑定；提供者缺失或不兼容时明确失败。驱动选择功能引入前的记录保留原生默认驱动身份。worker 执行持有 generation 租约，直到终态持久化和清理完成，并使用与父执行不同的回调 ID。待恢复的 checkpoint 与其执行输入单独保存，不覆盖最近已提交的终态结果，避免崩溃恢复抹去尚待投递的结果；终态快照提交对应的执行 ID。worker checkpoint 属于恢复数据，须与历史一同保留；忽略驱动绑定的旧版本不能安全恢复使用替代驱动的 worker。
 
 所有驱动，包括默认多轮提供者，均声明 `driver.turn` 主版本 4 和 `driver.checkpoint` 主版本 1。SDK 的 `driverTurn(host, execution)` 提供以下操作：
 
