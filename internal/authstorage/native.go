@@ -17,6 +17,7 @@ type nativeStore struct {
 	credentialstore.Store
 	codexPath, grokPath string
 	legacyPath          string
+	claude              nativeClaudeSource
 	migrationMu         sync.Mutex
 	migrated            bool
 }
@@ -36,7 +37,7 @@ func NewNativeStore(base credentialstore.Store, resolvedWuuHome, userHome string
 	if grokHome == "" {
 		grokHome = filepath.Join(userHome, ".grok")
 	}
-	return &nativeStore{Store: base, legacyPath: filepath.Join(resolvedWuuHome, "auth.json"), codexPath: filepath.Join(codexHome, "auth.json"), grokPath: filepath.Join(grokHome, "auth.json")}, nil
+	return &nativeStore{Store: base, claude: newNativeClaudeSource(userHome), legacyPath: filepath.Join(resolvedWuuHome, "auth.json"), codexPath: filepath.Join(codexHome, "auth.json"), grokPath: filepath.Join(grokHome, "auth.json")}, nil
 }
 
 // Only the model document needs the legacy import. Unrelated capabilities and
@@ -104,6 +105,8 @@ func (s *nativeStore) Get(ctx context.Context, namespace, key string) ([]byte, e
 		credentials, err = readCodexCLI(s.codexPath)
 	case "grok":
 		credentials, err = readGrokCLI(s.grokPath)
+	case "claude":
+		credentials, err = s.claude.read(ctx)
 	default:
 		return nil, credentialstore.ErrNotFound
 	}

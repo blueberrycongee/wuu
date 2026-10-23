@@ -26,18 +26,19 @@ var ErrNotFound = errors.New("authstorage: not found")
 const SourceSaved = "saved"
 
 type Credentials struct {
-	Type         string    `json:"type,omitempty"`
-	APIKey       string    `json:"api_key,omitempty"`
-	AuthToken    string    `json:"auth_token,omitempty"`
-	AccessToken  string    `json:"access_token,omitempty"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
-	IDToken      string    `json:"id_token,omitempty"`
-	AccountID    string    `json:"account_id,omitempty"`
-	AuthMode     string    `json:"auth_mode,omitempty"`
-	Source       string    `json:"source,omitempty"`
-	BaseURL      string    `json:"base_url,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at,omitempty"`
-	LastRefresh  string    `json:"last_refresh,omitempty"`
+	SubscriptionType string    `json:"subscription_type,omitempty"`
+	Type             string    `json:"type,omitempty"`
+	APIKey           string    `json:"api_key,omitempty"`
+	AuthToken        string    `json:"auth_token,omitempty"`
+	AccessToken      string    `json:"access_token,omitempty"`
+	RefreshToken     string    `json:"refresh_token,omitempty"`
+	IDToken          string    `json:"id_token,omitempty"`
+	AccountID        string    `json:"account_id,omitempty"`
+	AuthMode         string    `json:"auth_mode,omitempty"`
+	Source           string    `json:"source,omitempty"`
+	BaseURL          string    `json:"base_url,omitempty"`
+	ExpiresAt        time.Time `json:"expires_at,omitempty"`
+	LastRefresh      string    `json:"last_refresh,omitempty"`
 }
 
 type File struct {

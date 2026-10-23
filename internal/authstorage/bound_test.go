@@ -172,3 +172,42 @@ func TestNativeMigrationDefersSavedCredentialAccess(t *testing.T) {
 		t.Fatalf("saved read failed to expose selected failure: calls=%d err=%v", calls, err)
 	}
 }
+
+func TestNativeClaudeCLIUsesCapturedDirectory(t *testing.T) {
+	ctx := context.Background()
+	home, original := t.TempDir(), t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", original)
+	if err := os.WriteFile(filepath.Join(original, ".credentials.json"), []byte(`{"claudeAiOauth":{"accessToken":"captured","subscriptionType":"max"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	base := credentialstore.NewFileStore(filepath.Join(t.TempDir(), "credentials.json"))
+	native, err := NewNativeStore(base, filepath.Join(home, ".wuu"), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	record, err := ReadCLI(ctx, native, "claude")
+	if err != nil || record.AccessToken != "captured" || record.SubscriptionType != "max" {
+		t.Fatalf("captured Claude credential: %v", err)
+	}
+	if err := base.Set(ctx, CLIRecordNamespace, "claude", []byte(`{"access_token":"external","subscription_type":"pro"}`)); err != nil {
+		t.Fatal(err)
+	}
+	record, err = ReadCLI(ctx, base, "claude")
+	if err != nil || record.AccessToken != "external" || record.SubscriptionType != "pro" {
+		t.Fatalf("selected external Claude credential: %v", err)
+	}
+}
+
+func TestNativeClaudeCLIMissingRecordIsNotFound(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
+	native, err := NewNativeStore(credentialstore.NewFileStore(filepath.Join(t.TempDir(), "credentials.json")), filepath.Join(home, ".wuu"), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCLI(ctx, native, "claude"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing selected CLI record: %v", err)
+	}
+}
