@@ -72,6 +72,48 @@ func TestPluginDiagnosticsExposeIsolatedCapabilityFailures(t *testing.T) {
 	}
 }
 
+func TestPluginDiagnosticsKeepAdmissionGeneration(t *testing.T) {
+	var observer *diagnosticAdmissionClient
+	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
+		observer = &diagnosticAdmissionClient{isolatedFailureClient: &isolatedFailureClient{id: id, invokeErr: errors.New("original observer failure")}}
+		return observer
+	})
+	if err := srv.notifyPluginTurnCompleted(testRuntimeState(t, srv.rt), context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
+		t.Fatal(err)
+	}
+	// Exercise dispatch deterministically without concurrent discovery watchers.
+	srv.Close()
+	srv = &Server{rt: srv.rt, out: out}
+	original := srv.rt.PluginHost
+	replacement := pluginhost.New()
+	defer replacement.Close(context.Background())
+	defer func() { srv.rt.PluginHost = original }()
+	// Publish another host after fingerprint admission has captured the original.
+	observer.onStatus = func() { srv.rt.PluginHost = replacement }
+	callPluginPackageRPC(t, srv, "diagnostics", MethodPluginDiagnosticsList, PluginDiagnosticsParams{ID: item.SubjectID, Fingerprint: item.Fingerprint})
+	response := responseByID(t, parseOutput(t, out.String()), "diagnostics")
+	if response["error"] != nil {
+		t.Fatalf("diagnostics failed: %+v", response)
+	}
+	result := remarshal[PluginDiagnosticsResult](t, response["result"])
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Message, "original observer failure") {
+		t.Fatalf("diagnostics escaped their admission generation: %+v", result)
+	}
+}
+
+type diagnosticAdmissionClient struct {
+	*isolatedFailureClient
+	onStatus func()
+}
+
+func (c *diagnosticAdmissionClient) Status() pluginhost.Status {
+	if callback := c.onStatus; callback != nil {
+		c.onStatus = nil
+		callback()
+	}
+	return c.isolatedFailureClient.Status()
+}
+
 type isolatedFailureClient struct {
 	id        string
 	invokeErr error

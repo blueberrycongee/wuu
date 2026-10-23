@@ -65,7 +65,7 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 	if trust.Skills.Count != 1 || trust.Plugins.Count != 0 {
 		t.Fatalf("stale trust summary: %+v", trust)
 	}
-	if _, err := srv.requireActiveDesktopPlugin(consumer.SubjectID, consumer.Fingerprint); err == nil {
+	if _, _, err := srv.requireActiveDesktopPluginHost(consumer.SubjectID, consumer.Fingerprint); err == nil {
 		t.Fatal("revoked desktop consumer can still call state APIs")
 	}
 	if len(rt.Skills) != 3 || len(rt.ActivePlugins) != 2 {
@@ -120,7 +120,7 @@ func TestFailedDeclarativeConsumerCannotLoadDesktopModule(t *testing.T) {
 	if !strings.Contains(string(failure), "desktop plugin runtime is no longer active") {
 		t.Fatalf("desktop load was not rejected for failed runtime: %s", failure)
 	}
-	if _, err := srv.requireActiveDesktopPlugin(item.SubjectID, item.Fingerprint); err == nil {
+	if _, _, err := srv.requireActiveDesktopPluginHost(item.SubjectID, item.Fingerprint); err == nil {
 		t.Fatal("failed declarative consumer retained state access")
 	}
 }

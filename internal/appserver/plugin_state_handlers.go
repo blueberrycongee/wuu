@@ -116,11 +116,16 @@ func (s *Server) handlePluginDiagnosticsList(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	plugin, err := s.requireActiveDesktopPlugin(params.ID, params.Fingerprint)
+	services, release, err := s.rt.RetainStateServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	diagnostics := s.rt.PluginHost.ContributionDiagnostics(plugin.ID)
+	defer release()
+	plugin, err := s.requireActiveDesktopPluginIn(services.Snapshot, params.ID, params.Fingerprint)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	diagnostics := services.Snapshot.PluginHost.ContributionDiagnostics(plugin.ID)
 	result := make([]PluginContributionDiagnostic, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		result = append(result, PluginContributionDiagnostic{
@@ -232,11 +237,6 @@ func (s *Server) activePluginSettingIn(snapshot runtime.ExtensionSnapshot, id, f
 		return pluginpkg.Plugin{}, pluginpkg.SettingDefinition{}, "", fmt.Errorf("plugin %q does not own setting %q", id, key)
 	}
 	return plugin, definition, key, nil
-}
-
-func (s *Server) requireActiveDesktopPlugin(id, fingerprint string) (pluginpkg.Plugin, error) {
-	plugin, _, err := s.requireActiveDesktopPluginHost(id, fingerprint)
-	return plugin, err
 }
 
 // Admission and dispatch must use the same generation snapshot. Reading the
