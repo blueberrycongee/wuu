@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -12,7 +12,11 @@ const evidence = join(root, ".tmp/replaceable-architecture/author");
 mkdirSync(evidence, { recursive: true });
 const output = mkdtempSync(join(evidence, "run-"));
 // Keep dependency resolution outside the repository and its node_modules tree.
-const standalone = mkdtempSync(join(tmpdir(), "wuu-replaceable-author-"));
+const temporaryRoot = resolve(process.env.WUU_REPLACEABLE_AUTHOR_TEMP ?? tmpdir());
+if (temporaryRoot === root || temporaryRoot.startsWith(root + sep)) {
+  throw new Error("Set WUU_REPLACEABLE_AUTHOR_TEMP to a temporary directory outside the repository.");
+}
+const standalone = mkdtempSync(join(temporaryRoot, "wuu-replaceable-author-"));
 const log = join(output, "verification.log");
 const digest = path => createHash("sha256").update(readFileSync(path)).digest("hex");
 const report = {
