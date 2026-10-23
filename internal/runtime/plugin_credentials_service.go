@@ -3,11 +3,13 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
+	"sync"
+
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
-	"strings"
-	"sync"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/plugincredentials"
@@ -51,11 +53,13 @@ const StateServicesConsumer = "wuu.state-consumer"
 // generation. Release its owning handle only after the complete operation,
 // including any credential refresh or cleanup, has finished.
 type StateServices struct {
-	Snapshot    ExtensionSnapshot
-	Credentials *credentialstore.Client
-	Settings    *pluginsettings.Client
-	Config      *config.Client
-	Artifacts   *ArtifactClient
+	GenerationID string
+	Snapshot     ExtensionSnapshot
+	Credentials  *credentialstore.Client
+	Settings     *pluginsettings.Client
+	Config       *config.Client
+	Artifacts    *ArtifactClient
+	ChatGPT      *siwc.Manager
 }
 
 func (s *Session) RetainStateServices() (*StateServices, func(), error) {
@@ -92,5 +96,5 @@ func (s *Session) RetainStateServices() (*StateServices, func(), error) {
 	}
 	var once sync.Once
 	release := func() { once.Do(func() { s.ReleasePluginGeneration(generation) }) }
-	return &StateServices{Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName))}, release, nil
+	return &StateServices{GenerationID: generation.id, ChatGPT: generation.chatGPTManager, Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName))}, release, nil
 }

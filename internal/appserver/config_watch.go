@@ -17,7 +17,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -308,7 +307,7 @@ func (s *Server) applyExternalConfigChange(cfg config.Config) error {
 
 	var client providers.StreamClient
 	if resolvedName != previousProvider || connectionChanged || providerClientChanged {
-		client, err = providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
+		client, err = s.buildConfiguredStreamClient(ruleProviderCfg, resolvedName)
 		if err != nil {
 			return err
 		}

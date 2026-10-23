@@ -25,27 +25,29 @@ import (
 // title generator, or compaction job.
 var sharedProviderCoordinator = providers.NewProviderCoordinator(providers.DefaultProviderCoordinatorConfig())
 
-// BuildClient constructs a single-submission protocol client. providerName is
+// BuildClient constructs a single-submission protocol client. A supplied
+// ChatGPT manager is owned by the calling generation, which closes it only
+// after every client and login consumer finishes cleanup. providerName is
 // the key under which this provider lives
 // in the config map; it's needed so resolveAPIKey can fall back to the global
 // auth store.
-func BuildClient(provider config.ProviderConfig, providerName string) (providers.Client, error) {
-	return buildClient(provider, providerName)
+func BuildClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.Client, error) {
+	return buildClient(provider, providerName, managers...)
 }
 
 // BuildStreamClient constructs a streaming-capable provider client using the
 // provider default retry policy. providerName is the config map key; see
 // BuildClient for why this matters for the global auth-store fallback.
-func BuildStreamClient(provider config.ProviderConfig, providerName string) (providers.StreamClient, error) {
-	client, err := buildClient(provider, providerName)
+func BuildStreamClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.StreamClient, error) {
+	client, err := buildClient(provider, providerName, managers...)
 	if err != nil {
 		return nil, err
 	}
 	return providers.AdaptStreamClient(client), nil
 }
 
-func BuildRuntimeStreamClient(provider config.ProviderConfig, providerName string) (providers.StreamClient, error) {
-	client, err := BuildStreamClient(provider, providerName)
+func BuildRuntimeStreamClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.StreamClient, error) {
+	client, err := BuildStreamClient(provider, providerName, managers...)
 	if err == nil {
 		return client, nil
 	}
@@ -202,7 +204,7 @@ func isFirstPartyOpenAIResponsesBaseURL(raw string) bool {
 		u == "https://chatgpt.com/backend-api/codex"
 }
 
-func buildClient(provider config.ProviderConfig, providerName string) (providers.Client, error) {
+func buildClient(provider config.ProviderConfig, providerName string, managers ...*siwc.Manager) (providers.Client, error) {
 	profile, err := resolveProviderProfile(provider)
 	if err != nil {
 		return nil, err
@@ -220,10 +222,10 @@ func buildClient(provider config.ProviderConfig, providerName string) (providers
 			if strings.TrimSpace(provider.ChatGPTAccountID) == "" {
 				return nil, fmt.Errorf("no ChatGPT account credentials; sign in with ChatGPT")
 			}
-			manager, err := siwc.DefaultManager()
-			if err != nil {
-				return nil, fmt.Errorf("no ChatGPT account credentials: %w", err)
+			if len(managers) != 1 || managers[0] == nil {
+				return nil, fmt.Errorf("no ChatGPT account credentials: selected credential manager is unavailable")
 			}
+			manager := managers[0]
 			account, err := manager.Account(context.Background(), provider.ChatGPTAccountID)
 			if err != nil {
 				return nil, fmt.Errorf("no ChatGPT account credentials: %w", err)

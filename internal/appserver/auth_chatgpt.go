@@ -7,23 +7,55 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/providerfactory"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
 	"github.com/blueberrycongee/wuu/internal/siwc"
 )
 
+type chatGPTBinding struct {
+	manager *siwc.Manager
+	release func()
+}
+
 func (s *Server) chatGPTAuth() (*siwc.Manager, error) {
 	s.chatGPTMu.Lock()
 	defer s.chatGPTMu.Unlock()
+	// An explicitly supplied test/protocol manager has its own owner.
 	if s.chatGPTManager != nil {
 		return s.chatGPTManager, nil
 	}
-	manager, err := siwc.DefaultManager()
+	services, release, err := s.rt.RetainStateServices()
 	if err != nil {
 		return nil, err
 	}
-	s.chatGPTManager = manager
+	if binding := s.chatGPTBindings[services.GenerationID]; binding != nil {
+		release()
+		return binding.manager, nil
+	}
+	manager := services.ChatGPT
+	if manager == nil {
+		release()
+		return nil, errors.New("selected ChatGPT credential manager is unavailable")
+	}
+	if s.chatGPTBindings == nil {
+		s.chatGPTBindings = make(map[string]*chatGPTBinding)
+	}
+	s.chatGPTBindings[services.GenerationID] = &chatGPTBinding{manager: manager, release: release}
 	return manager, nil
 }
+
+func (s *Server) buildConfiguredStreamClient(provider config.ProviderConfig, name string) (providers.StreamClient, error) {
+	if !strings.EqualFold(strings.TrimSpace(provider.Type), "chatgpt") {
+		return providerfactory.BuildStreamClient(provider, name)
+	}
+	manager, err := s.chatGPTAuth()
+	if err != nil {
+		return nil, err
+	}
+	return providerfactory.BuildStreamClient(provider, name, manager)
+}
+
 func (s *Server) chatGPTClient(accountID string) (*chatgpt.Client, error) {
 	manager, err := s.chatGPTAuth()
 	if err != nil {
@@ -33,13 +65,42 @@ func (s *Server) chatGPTClient(accountID string) (*chatgpt.Client, error) {
 }
 func (s *Server) closeChatGPTLogins() {
 	s.chatGPTMu.Lock()
-	defer s.chatGPTMu.Unlock()
-	if s.chatGPTManager != nil {
-		for id := range s.chatGPTAttempts {
-			_ = s.chatGPTManager.Cancel(id)
+	injected, attempts, bindings := s.chatGPTManager, s.chatGPTAttempts, s.chatGPTBindings
+	s.chatGPTBindings = nil
+	s.chatGPTAttempts = nil
+	s.chatGPTMu.Unlock()
+	if injected != nil {
+		for id := range attempts {
+			_ = injected.Cancel(id)
 		}
 	}
+	for _, binding := range bindings {
+		for id := range attempts {
+			_ = binding.manager.Cancel(id)
+		}
+		binding.release()
+	}
 }
+
+// Pending login IDs continue on the manager that created them even after the
+// selected credential provider changes for newly admitted operations.
+func (s *Server) chatGPTLoginManager(id string) (*siwc.Manager, error) {
+	s.chatGPTMu.Lock()
+	defer s.chatGPTMu.Unlock()
+	if !s.chatGPTAttempts[id] {
+		return nil, errors.New("ChatGPT login was not found; start again")
+	}
+	if s.chatGPTManager != nil {
+		return s.chatGPTManager, nil
+	}
+	for _, binding := range s.chatGPTBindings {
+		if _, err := binding.manager.Poll(id); err == nil {
+			return binding.manager, nil
+		}
+	}
+	return nil, errors.New("ChatGPT login owner is unavailable")
+}
+
 func (s *Server) handleAuthChatGPT(ctx context.Context, req Request) error {
 	var params AuthChatGPTLoginParams
 	if err := decodeParams(req.Params, &params); err != nil {
@@ -48,7 +109,13 @@ func (s *Server) handleAuthChatGPT(ctx context.Context, req Request) error {
 	if s.closed.Load() {
 		return s.writeResponse(req.ID, nil, errServerClosed)
 	}
-	manager, err := s.chatGPTAuth()
+	var manager *siwc.Manager
+	var err error
+	if req.Method == "auth/chatgpt/login/poll" || req.Method == "auth/chatgpt/login/cancel" {
+		manager, err = s.chatGPTLoginManager(params.LoginID)
+	} else {
+		manager, err = s.chatGPTAuth()
+	}
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -68,7 +135,7 @@ func (s *Server) handleAuthChatGPT(ctx context.Context, req Request) error {
 			_ = manager.Cancel(attempt.ID)
 			return s.writeResponse(req.ID, nil, errServerClosed)
 		}
-		return s.writeResponse(req.ID, s.chatGPTAttemptResult(attempt, true), nil)
+		return s.writeResponse(req.ID, s.chatGPTAttemptResult(manager, attempt, true), nil)
 	case "auth/chatgpt/login/poll", "auth/chatgpt/login/cancel":
 		s.chatGPTMu.Lock()
 		owned := s.chatGPTAttempts[params.LoginID]
@@ -84,7 +151,7 @@ func (s *Server) handleAuthChatGPT(ctx context.Context, req Request) error {
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		return s.writeResponse(req.ID, s.chatGPTAttemptResult(attempt, false), nil)
+		return s.writeResponse(req.ID, s.chatGPTAttemptResult(manager, attempt, false), nil)
 	case "auth/chatgpt/accounts":
 		accounts, err := manager.ListAccounts(ctx)
 		if err != nil {
@@ -124,7 +191,7 @@ func (s *Server) handleAuthChatGPT(ctx context.Context, req Request) error {
 	}
 	return s.writeResponse(req.ID, nil, errors.New("unsupported ChatGPT account operation"))
 }
-func (s *Server) chatGPTAttemptResult(attempt siwc.Attempt, includeURL bool) AuthChatGPTLoginResult {
+func (s *Server) chatGPTAttemptResult(manager *siwc.Manager, attempt siwc.Attempt, includeURL bool) AuthChatGPTLoginResult {
 	status := attempt.Status
 	if status == "succeeded" {
 		status = "success"
@@ -147,7 +214,7 @@ func (s *Server) chatGPTAttemptResult(attempt siwc.Attempt, includeURL bool) Aut
 			result.Error = "Signed in, but saved model choices could not be refreshed. Retry in Model connections."
 		} else {
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			models, err := s.discoverChatGPTModels(ctx, attempt.AccountID)
+			models, err := s.discoverChatGPTModelsWithManager(ctx, manager, attempt.AccountID)
 			cancel()
 			if err == nil {
 				err = s.saveChatGPTCatalog(attempt.AccountID, models)
@@ -170,7 +237,15 @@ func chatGPTAccountStatus(account siwc.Account) string {
 	return "connected"
 }
 func (s *Server) discoverChatGPTModels(ctx context.Context, accountID string) ([]chatgpt.ModelInfo, error) {
-	client, err := s.chatGPTClient(accountID)
+	manager, err := s.chatGPTAuth()
+	if err != nil {
+		return nil, err
+	}
+	return s.discoverChatGPTModelsWithManager(ctx, manager, accountID)
+}
+
+func (s *Server) discoverChatGPTModelsWithManager(ctx context.Context, manager *siwc.Manager, accountID string) ([]chatgpt.ModelInfo, error) {
+	client, err := chatgpt.New(chatgpt.ClientConfig{AccountID: accountID, AccessToken: manager.AccessToken, BindRequest: manager.BindRequest, HTTPClient: s.chatGPTHTTP})
 	if err != nil {
 		return nil, err
 	}

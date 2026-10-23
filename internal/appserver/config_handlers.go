@@ -1550,7 +1550,7 @@ func (s *Server) handleConfigModelUpdate(req Request) error {
 				client = providers.AdaptStreamClient(direct)
 			}
 		} else {
-			client, err = providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
+			client, err = s.buildConfiguredStreamClient(ruleProviderCfg, resolvedName)
 		}
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
@@ -1749,14 +1749,14 @@ func (s *Server) applyModelSelectionToRuntime(
 	if roleSelections.Title.Inherited && client != nil {
 		s.rt.TitleClient = client
 	} else if !roleSelections.Title.Inherited || connectionChanged {
-		titleClient, err := providerfactory.BuildStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
+		titleClient, err := s.buildConfiguredStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
 		if err != nil {
 			return fmt.Errorf("build title client: %w", err)
 		}
 		s.rt.TitleClient = titleClient
 	}
 	if s.rt.Toolkit != nil && (!roleSelections.Worker.Inherited || connectionChanged || providerClientChanged || resolvedName != previousRuntimeProvider) {
-		workerClient, err := providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
+		workerClient, err := s.buildConfiguredStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
 		if err != nil {
 			return fmt.Errorf("build worker client: %w", err)
 		}
@@ -1987,7 +1987,7 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		// Validate the replacement before touching the removed connection's
 		// credentials. An invalid or unauthenticated fallback must be a no-op.
 		_, ruleCfg := modelcatalog.EnrichProvider(fallbackName, fallback, fallbackModel)
-		if _, err := providerfactory.BuildStreamClient(ruleCfg, fallbackName); err != nil {
+		if _, err := s.buildConfiguredStreamClient(ruleCfg, fallbackName); err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("replacement provider is not ready: %w", err))
 		}
 		params.FallbackProvider, params.FallbackModel = fallbackName, fallbackModel

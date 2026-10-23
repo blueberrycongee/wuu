@@ -219,3 +219,61 @@ func TestChatGPTRegistrationConnectionDiscoveryInferenceSignOut(t *testing.T) {
 		t.Fatal("signed-out credentials still usable")
 	}
 }
+
+// Login polling retains its admitted generation. Closing one appserver cancels
+// only its attempts; the generation's manager remains usable by other consumers.
+func TestChatGPTGenerationLoginOwnershipAndCleanup(t *testing.T) {
+	var issuer *httptest.Server
+	issuer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/authorize", "token_endpoint": issuer.URL + "/token", "jwks_uri": issuer.URL + "/jwks", "revocation_endpoint": issuer.URL + "/revoke"})
+	}))
+	defer issuer.Close()
+	newManager := func() *siwc.Manager {
+		root := t.TempDir()
+		manager, err := siwc.New(siwc.Config{StateDir: filepath.Join(root, "accounts"), Credentials: credentialstore.NewFileStore(filepath.Join(root, "credentials.json")), Issuer: issuer.URL, HTTPClient: issuer.Client()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = manager.Close() })
+		return manager
+	}
+	old, next := newManager(), newManager()
+	start := func(manager *siwc.Manager) siwc.Attempt {
+		attempt, err := manager.Start(context.Background(), siwc.StartOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return attempt
+	}
+	oldAttempt, foreign := start(old), start(next)
+	releases := 0
+	srv := &Server{chatGPTAttempts: map[string]bool{oldAttempt.ID: true}, chatGPTBindings: map[string]*chatGPTBinding{
+		"old":  {manager: old, release: func() { releases++ }},
+		"next": {manager: next, release: func() { releases++ }},
+	}}
+	if owner, err := srv.chatGPTLoginManager(oldAttempt.ID); err != nil || owner != old {
+		t.Fatalf("old login changed owner: %v", err)
+	}
+	if _, err := srv.chatGPTLoginManager(foreign.ID); err == nil {
+		t.Fatal("foreign login admitted")
+	}
+	srv.closeChatGPTLogins()
+	for manager, id := range map[*siwc.Manager]string{old: oldAttempt.ID} {
+		attempt, err := manager.Poll(id)
+		if err != nil || attempt.Status != "cancelled" {
+			t.Fatalf("owned login still active: %v", err)
+		}
+	}
+	attempt, err := next.Poll(foreign.ID)
+	if err != nil || attempt.Status != "pending" {
+		t.Fatalf("server cleanup cancelled another consumer's login: %v", err)
+	}
+	start(old)
+	if releases != 2 {
+		t.Fatalf("generation handles released %d times", releases)
+	}
+	srv.closeChatGPTLogins()
+	if releases != 2 {
+		t.Fatal("generation handles released again")
+	}
+}
