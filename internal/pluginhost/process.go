@@ -525,30 +525,37 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	finishExecution := c.watchExecution(ctx, executionID)
 	defer finishExecution()
 
+	var response rpcResponse
 	select {
-	case response := <-responseCh:
-		if response.Error != nil {
-			message := strings.TrimSpace(response.Error.Message)
-			if message == "" {
-				message = "plugin call failed"
-			}
-			return &remoteCallError{code: strings.TrimSpace(response.Error.Code), message: message}
-		}
-		if result == nil {
-			return nil
-		}
-		if len(response.Result) == 0 {
-			return errors.New("response is missing result")
-		}
-		if err := json.Unmarshal(response.Result, result); err != nil {
-			return fmt.Errorf("decode result: %w", err)
-		}
-		return nil
+	case response = <-responseCh:
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-c.readerDone:
-		return c.readFailure()
+		// EOF can follow a complete reply before the caller resumes. Keep
+		// that reply authoritative; only an empty queue means transport loss.
+		select {
+		case response = <-responseCh:
+		default:
+			return c.readFailure()
+		}
 	}
+	if response.Error != nil {
+		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = "plugin call failed"
+		}
+		return &remoteCallError{code: strings.TrimSpace(response.Error.Code), message: message}
+	}
+	if result == nil {
+		return nil
+	}
+	if len(response.Result) == 0 {
+		return errors.New("response is missing result")
+	}
+	if err := json.Unmarshal(response.Result, result); err != nil {
+		return fmt.Errorf("decode result: %w", err)
+	}
+	return nil
 }
 
 // Serialize caller-scope admission with its terminal signal. A signal cannot

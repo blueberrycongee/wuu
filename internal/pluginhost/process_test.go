@@ -26,6 +26,21 @@ func mustRaw(value any) json.RawMessage {
 	return raw
 }
 
+// pauseUntilReaderDone forwards Close unchanged so transport retirement can
+// finish while the caller is paused after delivering its complete request.
+type pauseUntilReaderDone struct {
+	io.WriteCloser
+	done <-chan struct{}
+}
+
+func (w pauseUntilReaderDone) Write(data []byte) (int, error) {
+	n, err := w.WriteCloser.Write(data)
+	if err == nil {
+		<-w.done
+	}
+	return n, err
+}
+
 func TestProcessClientLifecycle(t *testing.T) {
 	if os.Getenv("WUU_PLUGINHOST_HELPER") == "1" {
 		runPluginHelper()
@@ -144,6 +159,14 @@ func TestProcessClientLifecycle(t *testing.T) {
 				if client.Status().State != StateFailed {
 					t.Fatalf("partially written transport remains usable: %+v", client.Status())
 				}
+			}
+			if mode == "shutdown-rejection-exit" {
+				// A caller may be descheduled after sending shutdown. Wait for
+				// real process EOF so the complete reply and readerDone are both
+				// ready when call resumes, without injecting a response or sleep.
+				client.stopMu.Lock()
+				client.stdin = pauseUntilReaderDone{WriteCloser: client.stdin, done: client.readerDone}
+				client.stopMu.Unlock()
 			}
 			var closeErr error
 			done := make(chan error, 1)
