@@ -17,9 +17,9 @@ export class PluginDesktopActivations {
 
   async initialize(workdir: string, request: ProcessRequest, params: unknown): Promise<InitializeResult> {
     if (this.disconnected) throw new Error("Renderer document is disconnected");
+    this.workdirs.set(workdir, request);
     const result = await request<InitializeResult>("initialize", params);
     if (this.disconnected) throw new Error("Renderer document is disconnected");
-    this.workdirs.set(workdir, request);
     this.observeInventory(workdir, result.extension_inventory ?? []);
     return result;
   }

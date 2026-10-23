@@ -37,6 +37,16 @@ describe("desktop activation IPC lifetime", () => {
     expect(backend.calls).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps the route for inventory committed while initialize is in flight", async () => {
+    const backend = server("before"), owner = new PluginDesktopActivations(12);
+    backend.calls.mockImplementationOnce(async () => {
+      owner.observeInventory("/a", inventory("after"));
+      return { extension_inventory: inventory("before") };
+    });
+    await owner.initialize("/a", backend.request, {});
+    await expect(owner.report(report("after"))).resolves.toBeUndefined();
+  });
+
   it("waits for accepted reports before disconnect and rejects late reports", async () => {
     const backend = server("graph"), owner = new PluginDesktopActivations(9);
     await owner.initialize("/a", backend.request, {});
