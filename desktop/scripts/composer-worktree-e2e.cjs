@@ -144,6 +144,15 @@ const click = (win, selector) => evaluate(win, target => {
   if (!element) throw new Error(`missing ${target}`);
   element.click();
 }, selector);
+async function sendDraft(win) {
+  // The controlled draft can lag behind the input event; clicking its disabled
+  // send button is a no-op. Wait for rendering and confirm submission consumed it.
+  await settle(win);
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value.trim()
+    && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
+  await click(win, '.composer-send-button');
+  await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+}
 async function waitForSkillRow(win) {
   await waitFor(win, () => {
     const row = document.querySelector('.slash-command-item[id$="-skill:compact"]');
@@ -253,7 +262,7 @@ async function run() {
   assert.deepEqual(JSON.parse(initialSkillDraft.split('\n')[0].slice('/skill '.length)), { name: 'compact', source: 'project', project: projectIdentity });
   assert.equal(worktreeCount(), 1, 'Choosing a skill must not materialize the selected checkout.');
   await capture(main, '03b-initial-skill-draft.png');
-  await click(main, '.composer-send-button');
+  await sendDraft(main);
   await waitFor(main, () => [...document.querySelectorAll('[data-thread-id] .session-flow')]
     .some(flow => flow.textContent.includes('Worktree fixture answer.')), undefined, 60000);
   const thread = await evaluate(main, async () => {
@@ -283,7 +292,7 @@ async function run() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Check manual skill admission fixture');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
-  await click(main, '.composer-send-button');
+  await sendDraft(main);
   await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"]')?.textContent.includes('Manual-only skill admission verified.'));
   assert.equal(typeof skillAdmissionResult, 'string', 'The synthetic-provider tool round trip must return a tool result.');
   assert.match(skillAdmissionResult, /skill.*compact.*not found/i, 'Model invocation must reject the manual-only skill.');
@@ -326,7 +335,7 @@ async function run() {
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, text + 'verify selected workflow');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }, selectedDraft);
-  await click(main, '.composer-send-button');
+  await sendDraft(main);
   const receivedSelectedSkill = () => requests.some(request => (request.body.messages || []).some(message =>
     message.role === 'user' && typeof message.content === 'string'
     && message.content.includes('SELECTED_SKILL_MARKER verify selected workflow')
@@ -414,7 +423,7 @@ async function run() {
   });
   await waitFor(main, () => document.querySelector('.composer textarea')?.value === 'Rebind workspace fixture'
     && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
-  await click(main, '.composer-send-button');
+  await sendDraft(main);
   await waitFor(main, () => [...document.querySelectorAll('.user-message-motion')].some(node => node.textContent.includes('Rebind workspace fixture'))
     && document.querySelector('.composer-send-button[data-wuu-state="send"]'));
   await waitFor(main, async id => {
