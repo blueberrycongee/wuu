@@ -11,9 +11,9 @@ export interface ToolActivityPresenterProps {
 }
 
 export function ToolActivityPresenter({ item, fallback }: ToolActivityPresenterProps): JSX.Element {
-  const { slots } = useConversationControls();
+  const { slots, slotOwner } = useConversationControls();
   const { threadId, turnId } = useConversationTurnIdentity();
-  return item ? <slots.Slot name="wuu.default-conversation/conversation.tool-activity"
+  return item ? <slots.Slot name={`${slotOwner}/conversation.tool-activity`}
     context={{ threadId, turnId, itemId: item.id }} fallback={fallback} /> : <>{fallback}</>;
 }
 

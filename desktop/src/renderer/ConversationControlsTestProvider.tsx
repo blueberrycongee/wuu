@@ -15,5 +15,5 @@ export function ConversationControlsTestProvider({ children, service, compositio
   children: ReactNode; service?: ApplicationServiceV1; composition?: UICompositionV1;
 }): JSX.Element {
   const application = useMemo(() => service ?? createConversationTestApplication(), [service]);
-  return <ConversationControlsProvider application={application} slots={composition}><ArtifactsProvider application={application}>{children}</ArtifactsProvider></ConversationControlsProvider>;
+  return <ConversationControlsProvider application={application} slots={composition} slotOwner="wuu.default-conversation"><ArtifactsProvider application={application}>{children}</ArtifactsProvider></ConversationControlsProvider>;
 }

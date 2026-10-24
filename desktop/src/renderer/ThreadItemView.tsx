@@ -161,7 +161,7 @@ function placeUserMessageActions(actions: HTMLDivElement | null): (() => void) |
 
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
   const { item } = props;
-  const { slots } = useConversationControls();
+  const { slots, slotOwner } = useConversationControls();
   const threadId = useContext(ArtifactThreadContext);
   if (item.remote_content_ref && item.type !== "tool_call") {
     return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
@@ -171,9 +171,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   }
   const context = Object.freeze({ threadId, turnId: props.turnID, itemId: item.id });
   return <>
-    <slots.Slot name="wuu.default-conversation/conversation.message.before" context={context} />
-    <slots.Slot name="wuu.default-conversation/conversation.message" context={context} fallback={<BuiltInThreadItemView {...props} />} />
-    <slots.Slot name="wuu.default-conversation/conversation.message.after" context={context} />
+    <slots.Slot name={`${slotOwner}/conversation.message.before`} context={context} />
+    <slots.Slot name={`${slotOwner}/conversation.message`} context={context} fallback={<BuiltInThreadItemView {...props} />} />
+    <slots.Slot name={`${slotOwner}/conversation.message.after`} context={context} />
   </>;
 });
 
@@ -208,11 +208,11 @@ function BuiltInThreadItemView({
 }: ThreadItemViewProps): JSX.Element | null {
   const { t } = useI18n();
   const owningThreadId = useContext(ArtifactThreadContext);
-  const { application, slots } = useConversationControls();
+  const { application, slots, slotOwner } = useConversationControls();
   const [emptyActions, setEmptyActions] = useState(false);
   const hasPluginActions = !editing && !emptyActions;
   const pluginActions = editing ? null : <slots.Slot
-    name="wuu.default-conversation/conversation.message.actions"
+    name={`${slotOwner}/conversation.message.actions`}
     context={{ threadId: owningThreadId, turnId: turnID, itemId: item.id }}
     fallback={<EmptyMessageActions onEmpty={setEmptyActions} />}
   />;

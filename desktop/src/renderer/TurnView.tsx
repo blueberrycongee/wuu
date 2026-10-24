@@ -69,7 +69,7 @@ export type TurnViewProps = {
 };
 
 export function TurnView(props: TurnViewProps): JSX.Element | null {
-  const { slots } = useConversationControls();
+  const { slots, slotOwner } = useConversationControls();
   const projectedTurn = workspaceTurnForPresentation(props.turn);
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
@@ -78,7 +78,7 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
     <ArtifactThreadContext.Provider value={props.threadID}>
     <ConversationTurnIdentityProvider threadId={props.threadID} turnId={projectedTurn.id}>
       <slots.Slot
-        name="wuu.default-conversation/conversation.turn"
+        name={`${slotOwner}/conversation.turn`}
         context={{ threadId: props.threadID, turnId: projectedTurn.id }}
         fallback={<TurnContent {...props} turn={projectedTurn} />}
       />

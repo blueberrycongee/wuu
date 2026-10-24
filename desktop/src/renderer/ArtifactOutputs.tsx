@@ -366,9 +366,9 @@ function ArtifactRenderer({
       onPreview={onPreview}
     />
   );
-  const { slots } = useConversationControls();
+  const { slots, slotOwner } = useConversationControls();
   const { threadId, turnId } = useConversationTurnIdentity();
-  const content = <slots.Slot name="wuu.default-conversation/conversation.artifact"
+  const content = <slots.Slot name={`${slotOwner}/conversation.artifact`}
     context={{threadId, turnId, itemId: artifact.itemId, partId: artifact.id, variant}}
     fallback={fallback} />;
   if (variant === "inline" && artifact.foldPreview && !inspectionExpanded) {

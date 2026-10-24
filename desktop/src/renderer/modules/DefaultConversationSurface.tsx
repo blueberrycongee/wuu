@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
-import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, UserQuestionRequest } from "../../shared/protocol";
+import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, Turn, UserQuestionRequest } from "../../shared/protocol";
 import { ArtifactsProvider } from "../ArtifactsContext";
+import { registerConversationSlots } from "../ConversationSlots";
+import { BrowserControlsProvider } from "../BrowserControlsContext";
+import { PreviewContentProvider } from "../PreviewContentContext";
 import { ConversationControlsProvider } from "../ConversationControlsContext";
 import { CachedConversationPanes } from "../CachedConversationPanes";
 import { ConversationSplitPane } from "../ConversationSplitPane";
@@ -42,7 +45,7 @@ export interface DefaultConversationLayout {
 const noop = () => {};
 
 export function DefaultConversationSurface({ application, slots, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
-  return <ConversationControlsProvider application={application} slots={slots}><ArtifactsProvider application={application}><ImagePreviewProvider><ConversationSurface application={application} {...layout} /></ImagePreviewProvider></ArtifactsProvider></ConversationControlsProvider>;
+  return <ConversationControlsProvider application={application} slots={slots} slotOwner="wuu.default-conversation"><ArtifactsProvider application={application}><PreviewContentProvider service={application.previewContent} slots={slots}><BrowserControlsProvider service={application.browser}><ImagePreviewProvider><ConversationSurface application={application} {...layout} /></ImagePreviewProvider></BrowserControlsProvider></PreviewContentProvider></ArtifactsProvider></ConversationControlsProvider>;
 }
 
 function ConversationSurface({ application, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1 }): JSX.Element {
@@ -127,7 +130,7 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
             onScroll={layout.onScroll} onBodyRef={node => { if (layout.splitPaneRefs) layout.splitPaneRefs.current[pane] = node; }}
             fork={fork} edit={edit} submitEdit={submitEdit} cancelEdit={cancelEdit} canEdit={canEdit} openFile={openFile} openURL={openURL} openAgent={openAgent} openDiff={openDiff}
             separator={pane === "primary" ? <div className="conversation-split-resizer" role="separator" aria-orientation="vertical" aria-label={t("shell.resizeSplit")} aria-valuemin={CONVERSATION_SPLIT_MIN_PERCENT} aria-valuemax={CONVERSATION_SPLIT_MAX_PERCENT} aria-valuenow={Math.round(layout.splitLeftPercent ?? 50)} tabIndex={0} onPointerDown={layout.onSplitResizeStart} onDoubleClick={layout.onSplitSeparatorDoubleClick} onKeyDown={layout.onSplitSeparatorKey} /> : undefined} />)}
-        </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={structuredClone(pending.turn)} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
+        </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={structuredClone(pending.turn) as Turn} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
           : empty ? <EmptyConversationHome title={activeTab?.kind === "draft" && activeTab.project ? t("projects.newProject") : title} activity={activeDraft.text.trim() || activeDraft.imageIds.length || activeDraft.fileIds.length || activeDraft.selections.length ? "compose" : "idle"}>
             <>{workspaceMenu ? <div role="menu" className="composer-context-menu">{view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => { setWorkspaceMenu(false); run(application.invoke("workspace.select", { workspaceId: workspace.id })); }}>{workspace.name}</button>)}</div> : null}
             {activeTab?.project ? null : <EmptyHomeOverview application={application} />}</>
@@ -207,11 +210,7 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
 }
 
 export function activate(api: ApplicationGenerationAPI): void {
-  for (const [id, cardinality] of [
-    ["conversation.turn", "one"], ["conversation.cards", "many"], ["conversation.message", "one"],
-    ["conversation.message.before", "many"], ["conversation.message.after", "many"],
-    ["conversation.process", "one"], ["conversation.message.actions", "many"], ["conversation.tool-activity", "one"],
-  ] as const) api.registerUISlot({ id, cardinality });
+  registerConversationSlots(api);
   api.registerUIContribution({ id: "ui.conversation", target: "wuu.default-shell/application.conversation",
     render: ({ application, slots, context }: UISlotRenderProps) => <DefaultConversationSurface application={application} slots={slots} {...context as DefaultConversationLayout} /> });
 }

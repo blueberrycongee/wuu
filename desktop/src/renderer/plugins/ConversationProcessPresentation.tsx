@@ -8,8 +8,8 @@ export interface ConversationProcessPresentationProps {
 }
 
 export function ConversationProcessPresentation({ processItems, fallback }: ConversationProcessPresentationProps): JSX.Element {
-  const { slots } = useConversationControls();
+  const { slots, slotOwner } = useConversationControls();
   const { threadId, turnId } = useConversationTurnIdentity();
-  return <slots.Slot name="wuu.default-conversation/conversation.process"
+  return <slots.Slot name={`${slotOwner}/conversation.process`}
     context={{ threadId, turnId, itemIds: processItems.map(item => item.id) }} fallback={fallback} />;
 }

@@ -538,7 +538,7 @@ const PaneTurnView = memo(function PaneTurnView({
 
 
 function ConversationCards({ threadId, onStreamFrame }: { threadId: string; onStreamFrame: () => void }): JSX.Element {
-  const { slots } = useConversationControls();
+  const { slots, slotOwner } = useConversationControls();
   const element = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const node = element.current;
@@ -547,5 +547,5 @@ function ConversationCards({ threadId, onStreamFrame }: { threadId: string; onSt
     observer.observe(node);
     return () => observer.disconnect();
   }, [onStreamFrame]);
-  return <div ref={element}><slots.Slot name="wuu.default-conversation/conversation.cards" context={{ threadId }} /></div>;
+  return <div ref={element}><slots.Slot name={`${slotOwner}/conversation.cards`} context={{ threadId }} /></div>;
 }
