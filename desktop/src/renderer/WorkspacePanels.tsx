@@ -84,6 +84,8 @@ import { immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
 import { PluginIcon } from "./PublicIcon";
 import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { PreviewContentProvider } from "./PreviewContentContext";
+import { ConversationControlsProvider } from "./ConversationControlsContext";
+import { ImagePreviewProvider } from "./ImagePreview";
 import { ArtifactsProvider } from "./ArtifactsContext";
 import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { TerminalControlsProvider } from "./TerminalControlsContext";
@@ -120,7 +122,7 @@ export function WorkspaceRightPanel(props: WorkspacePanelLayout & {
   const openURL = useCallback((url: string, modifiers?: WorkspaceBrowserOpenModifiers) => {
     void application.invoke("preview.open-url", { url, modifiers }).catch(showErrorToast);
   }, [application]);
-  return <ArtifactsProvider application={application}><FileSelectionProvider application={application} source={{ ownerTabId: source.ownerTabId }}>
+  return <ConversationControlsProvider application={application} slots={slots} slotOwner="wuu.default-preview"><ArtifactsProvider application={application}><ImagePreviewProvider><FileSelectionProvider application={application} source={{ ownerTabId: source.ownerTabId }}>
     <WorkspaceBrowserOpenContext.Provider value={openURL}>
       <PreviewContentProvider service={application.previewContent} slots={slots}>
         <BrowserControlsProvider service={application.browser}>
@@ -134,7 +136,7 @@ export function WorkspaceRightPanel(props: WorkspacePanelLayout & {
         </BrowserControlsProvider>
       </PreviewContentProvider>
     </WorkspaceBrowserOpenContext.Provider>
-  </FileSelectionProvider></ArtifactsProvider>;
+  </FileSelectionProvider></ImagePreviewProvider></ArtifactsProvider></ConversationControlsProvider>;
 }
 
 type WorkspaceTerminalPanelComponent = typeof import("./WorkspaceTerminalPanel").WorkspaceTerminalPanel;
