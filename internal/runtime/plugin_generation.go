@@ -67,6 +67,8 @@ type PluginGeneration struct {
 	// table; executions registered here route only to this generation's
 	// kernel services.
 	driverGateways *driverGatewayTable
+	// The callback retains this generation's kernel authority for each turn.
+	beginModelReceipts agent.BeginModelReceiptsFunc
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released. A negative count seals retirement;
@@ -974,6 +976,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
 		s.StreamRunner.InferenceJournal = s.InferenceJournalForOwner("workspace-runtime")
+		s.StreamRunner.BeginModelReceipts = generation.beginModelReceipts
 		// Only a managed composition owns this binding. Embedded runtimes keep
 		// the driver explicitly supplied with their runner.
 		if generation.driverGateways != nil {

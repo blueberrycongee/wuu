@@ -15,8 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -40,6 +43,182 @@ func (c modelReceiptStreamClient) Chat(context.Context, providers.ChatRequest) (
 
 func (c modelReceiptStreamClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
 	return c.stream, nil
+}
+
+type turnReceiptStreamClient struct {
+	stream   chan providers.StreamEvent
+	admitted chan providers.ChatRequest
+}
+
+func (c turnReceiptStreamClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	return providers.ChatResponse{}, errors.New("stream-only turn fixture")
+}
+
+func (c turnReceiptStreamClient) StreamChat(_ context.Context, request providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	if _, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "stream"}); err != nil {
+		return nil, err
+	}
+	c.admitted <- request
+	return c.stream, nil
+}
+
+type turnReceiptJournal struct {
+	shutdownCheckpointJournal
+	logicalDone chan struct{}
+	once        sync.Once
+}
+
+func (j *turnReceiptJournal) CompleteOperation(record providers.InferenceOperationTerminalRecord) error {
+	err := j.InferenceJournal.CompleteOperation(record)
+	j.once.Do(func() { close(j.logicalDone) })
+	return err
+}
+
+// Ordinary turns must retain their selected generation through physical receipt
+// accounting, including after logical cancellation and publication of a successor.
+func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
+	for _, timeout := range []bool{false, true} {
+		t.Run(fmt.Sprintf("timeout_%t", timeout), func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			home, workspace := testWorkspaceState(t, root)
+			owner := &Session{RootDir: root, WuuHome: home, HomeDir: home, StateDir: workspace}
+			build := func(name string) (*PluginGeneration, *modelTerminalDocuments) {
+				t.Helper()
+				provider := &modelTerminalDocuments{Service: persistence.NewService("test.turn-documents", filepath.Join(root, "turn-documents"), "jsonl"), entered: make(chan context.Context, 1), release: make(chan struct{}), closed: make(chan struct{})}
+				close(provider.release)
+				modules := testStateModules()
+				modules[1] = provider.ID()
+				host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
+					&composition.Config{Version: composition.Version, Modules: &modules}, "",
+					NativeProviderFactory{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }})
+				if err != nil {
+					t.Fatal(err)
+				}
+				generation := &PluginGeneration{id: name, host: host, state: kernel.state, hooks: hooks.NewDispatcher(nil)}
+				kernel.bindStateGeneration(generation, owner)
+				return generation, provider
+			}
+			original, documents := build("turn-original")
+			original.retain()
+			owner.pluginGeneration = original
+			if err := original.host.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			physical := turnReceiptStreamClient{stream: make(chan providers.StreamEvent, 1), admitted: make(chan providers.ChatRequest, 1)}
+			unblock := sync.OnceFunc(func() {
+				physical.stream <- providers.StreamEvent{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 71, OutputTokens: 13}}
+				close(physical.stream)
+			})
+			defer unblock()
+			owner.StreamRunner = &agent.StreamRunner{Client: physical, ProviderName: "fixture", Model: "fixture", LoopDriver: agent.DefaultDriver{}, DisableAutoCompact: true}
+			owner.applyPluginGeneration(original)
+			t.Cleanup(func() { _, _ = owner.Cleanup() })
+			captured, err := owner.RetainState()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer captured.Close()
+			runner := cloneStreamRunnerForThread(owner.StreamRunner, nil)
+			journal := &turnReceiptJournal{shutdownCheckpointJournal: shutdownCheckpointJournal{original.state.journal.ForOwner("ordinary-turn")}, logicalDone: make(chan struct{})}
+			runner.InferenceJournal = journal
+			engine := &wuuEngineSession{runner: runner}
+			returned := make(chan error, 1)
+			go func() {
+				_, turnErr := engine.RunTurn(ctx, agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "hold"}}}, nil)
+				returned <- errors.Join(turnErr, captured.Close())
+			}()
+			var request providers.ChatRequest
+			select {
+			case request = <-physical.admitted:
+			case err := <-returned:
+				t.Fatalf("turn returned before physical admission: %v", err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("turn did not enter the native stream")
+			}
+			admitted := request.Execution.Snapshot().Submissions
+			if len(admitted) != 1 {
+				t.Fatalf("admitted physical submissions = %d", len(admitted))
+			}
+			replacement, _ := build("turn-replacement")
+			if err := owner.ActivatePluginGeneration(replacement, nil); err != nil {
+				t.Fatal(err)
+			}
+			if owner.pluginGeneration != replacement || captured.Generation != original {
+				t.Fatal("publication did not preserve the turn's captured generation")
+			}
+			if err := engine.Interrupt(ctx, "cancel"); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-journal.logicalDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("logical turn accounting did not finish after cancellation")
+			}
+			if !timeout {
+				unblock()
+			}
+			select {
+			case err := <-returned:
+				if !errors.Is(err, context.Canceled) {
+					t.Errorf("ordinary turn lost cancellation: %v", err)
+				}
+				if timeout && !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("incomplete turn cleanup = %v, want cleanup deadline", err)
+				} else if !timeout && errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("completed receipt cleanup exceeded its deadline: %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("ordinary turn cleanup did not honor its bounded wait")
+			}
+			if timeout {
+				select {
+				case <-documents.closed:
+					t.Error("turn timeout released authority before the physical producer ended")
+				default:
+				}
+				if _, err := captured.Documents.Read(ctx, persistence.Query{Namespace: "wuu.inference_submissions.v1"}); err != nil {
+					t.Errorf("pending producer lost its original documents: %v", err)
+				}
+				unblock()
+			}
+			select {
+			case <-documents.closed:
+			case <-time.After(10 * time.Second):
+				t.Fatal("physical completion did not release the retired generation")
+			}
+			_, snapshot, err := persistence.Inspect(ctx, filepath.Join(root, "turn-documents"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			receiptCount := 0
+			for _, document := range snapshot.Documents {
+				if document.Namespace != "wuu.inference_submissions.v1" {
+					continue
+				}
+				receiptCount++
+				var receipt providers.InferenceSubmissionJournalRecord
+				if err := json.Unmarshal(document.Value, &receipt); err != nil {
+					t.Fatal(err)
+				}
+				if receipt.ID != admitted[0].ID || receipt.OperationID != request.Operation.ID || receipt.AttemptID != request.Attempt.ID || receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled {
+					t.Errorf("receipt lost its admitted identity or logical cancellation: %+v", receipt)
+				}
+				if !timeout && (receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 71 || receipt.ReportedUsage.OutputTokens != 13) {
+					t.Errorf("final required checkpoint lost late physical usage: %+v", receipt)
+				}
+				if timeout && receipt.ReportedUsage != nil {
+					t.Errorf("aborted cleanup invented a successful final checkpoint: %+v", receipt)
+				}
+			}
+			if receiptCount != 1 {
+				t.Errorf("physical receipts = %d", receiptCount)
+			}
+			if _, err := replacement.state.documents.Read(ctx, persistence.Query{Namespace: "wuu.inference_submissions.v1"}); err != nil {
+				t.Errorf("retiring the original generation closed replacement authority: %v", err)
+			}
+		})
+	}
 }
 
 type modelReceiptCapabilityClient struct {
@@ -811,6 +990,47 @@ func TestStateConcurrentReleaseReportsFinalClose(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) {
+	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	original, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer original.Close()
+	parentCtx, parent := providers.NewModelReceiptScope(context.Background())
+	parent.Seal()
+	ctx, complete, err := original.BeginModelReceipts(parentCtx)
+	if err != nil {
+		t.Fatalf("independent captured-state work rejected an expired parent: %v", err)
+	}
+	if providers.ModelReceiptScopeFromContext(ctx) == parent {
+		t.Fatal("independent captured-state work inherited its expired parent scope")
+	}
+	if err := original.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := original.Documents.Read(ctx, persistence.Query{Namespace: "receipt-test"}); err != nil {
+		t.Fatalf("receipt owner did not retain its captured authority: %v", err)
+	}
+	if err := complete(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := original.Documents.Read(context.Background(), persistence.Query{Namespace: "receipt-test"}); err == nil {
+		t.Fatal("completed receipt owner retained its authority")
+	}
+	if _, _, err := original.BeginModelReceipts(context.Background()); err == nil {
+		t.Fatal("closed captured State admitted another inference")
+	}
+	unboundClosed := false
+	unbound := &State{close: func() error { unboundClosed = true; return nil }}
+	if _, _, err := unbound.BeginModelReceipts(context.Background()); err == nil {
+		t.Fatal("generationless State silently admitted unowned inference")
+	}
+	if unboundClosed {
+		t.Fatal("rejected inference released the caller's generationless State")
 	}
 }
 

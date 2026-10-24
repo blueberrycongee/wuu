@@ -49,6 +49,7 @@ func (k *kernelHostServices) bindStateGeneration(generation *PluginGeneration, o
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	k.stateGeneration, k.stateOwner = generation, owner
+	generation.beginModelReceipts = k.beginModelReceipts
 }
 
 func (k *kernelHostServices) retainState() (*State, error) {
@@ -111,6 +112,54 @@ func (k *kernelHostServices) retainModelInvocation(ctx context.Context, cancel c
 	if ownsReceipts {
 		ctx, receipts = providers.NewModelReceiptScope(ctx)
 	}
+	owner, err := registerModelInvocation(binding, cancel, receipts, ownsReceipts, endParent)
+	if err != nil {
+		return ctx, nil, nil, err
+	}
+	return ctx, binding, owner, nil
+}
+
+// Agent turns and standalone forks own their execution independently of any
+// receipt ticket inherited from the context that scheduled them.
+func (k *kernelHostServices) beginModelReceipts(ctx context.Context) (context.Context, func() error, error) {
+	binding, err := k.retainState()
+	if err != nil {
+		return ctx, nil, err
+	}
+	return beginModelReceipts(ctx, binding)
+}
+
+// BeginModelReceipts owns bounded inference cleanup on this captured authority.
+// Complete after the logical call ends; a timeout retains State until producers
+// actually finish. The returned context preserves cancellation and other values.
+func (s *State) BeginModelReceipts(ctx context.Context) (context.Context, func() error, error) {
+	if s != nil && s.Generation == nil {
+		return ctx, nil, serviceError("service_unavailable", "inference requires a captured generation")
+	}
+	binding := s.Retain()
+	if binding == nil {
+		return ctx, nil, serviceError("generation_closed", "inference state is no longer available")
+	}
+	return beginModelReceipts(ctx, binding)
+}
+
+func beginModelReceipts(ctx context.Context, binding *State) (context.Context, func() error, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	ctx, receipts := providers.NewModelReceiptScope(ctx)
+	owner, err := registerModelInvocation(binding, cancel, receipts, true, func(error) {})
+	if err != nil {
+		cancel()
+		return ctx, nil, err
+	}
+	return ctx, func() error {
+		defer cancel()
+		// Turn completion includes bounded receipt cleanup even on cancellation.
+		// The runner separately preserves its logical body error.
+		return owner.complete(ctx, nil, nil)
+	}, nil
+}
+
+func registerModelInvocation(binding *State, cancel context.CancelFunc, receipts *providers.ModelReceiptScope, ownsReceipts bool, endParent func(error)) (*modelInvocationOwner, error) {
 	completionCtx, cancelCompletion := context.WithCancelCause(context.Background())
 	owner := &modelInvocationOwner{cancel: cancel, binding: binding, receipts: receipts, ownsReceipts: ownsReceipts, endParentReceipt: endParent, completionCtx: completionCtx, cancelCompletion: cancelCompletion}
 	generation := binding.Generation
@@ -123,7 +172,7 @@ func (k *kernelHostServices) retainModelInvocation(ctx context.Context, cancel c
 		endParent(nil)
 		cancelCompletion(context.Canceled)
 		_ = binding.Close()
-		return ctx, nil, nil, serviceError("generation_closed", "model invocation admission is closed")
+		return nil, serviceError("generation_closed", "model invocation admission is closed")
 	}
 	if generation.modelOwners == nil {
 		generation.modelOwners = make(map[*modelInvocationOwner]struct{})
@@ -132,7 +181,7 @@ func (k *kernelHostServices) retainModelInvocation(ctx context.Context, cancel c
 	generation.modelBodies.Add(1)
 	generation.modelInvocations.Add(1)
 	generation.modelMu.Unlock()
-	return ctx, binding, owner, nil
+	return owner, nil
 }
 
 func (o *modelInvocationOwner) abort(cause error) {
@@ -153,10 +202,7 @@ func (o *modelInvocationOwner) complete(callCtx context.Context, execution *prov
 	finish := func() error {
 		ctx, cancel := context.WithTimeout(o.completionCtx, modelShutdownTimeout)
 		defer cancel()
-		err := o.receipts.Wait(ctx)
-		if err == nil {
-			err = execution.CheckpointSubmissions(ctx)
-		}
+		err := o.receipts.CheckpointSubmissions(ctx)
 		if err != nil {
 			err = errors.Join(err, context.Cause(o.completionCtx))
 			o.abort(err)

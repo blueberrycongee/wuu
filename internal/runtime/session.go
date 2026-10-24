@@ -799,9 +799,10 @@ func NewSession(opts Options) (*Session, error) {
 				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{CWD: rootDir, AgentID: agentID})
 				return err
 			},
-			ParticipantStore: sessionParticipantStore{sessions: sessions},
-			MaxParallel:      cfg.Agent.MaxParallelValue(),
-			InferenceJournal: workspaceJournal,
+			ParticipantStore:   sessionParticipantStore{sessions: sessions},
+			MaxParallel:        cfg.Agent.MaxParallelValue(),
+			InferenceJournal:   workspaceJournal,
+			BeginModelReceipts: initialGeneration.beginModelReceipts,
 			ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
 				return toolledger.New(documents, ownerID)
 			},
@@ -847,6 +848,7 @@ func NewSession(opts Options) (*Session, error) {
 		InferenceOperationKind:      providers.InferenceOperationAgentRound,
 		InferenceWorkloadProfile:    providers.InferenceProfileInteractive,
 		InferenceJournal:            workspaceJournal,
+		BeginModelReceipts:          initialGeneration.beginModelReceipts,
 		WrapModelClient:             pluginModelClientWrapper(pluginHost, ""),
 	}
 
@@ -1397,6 +1399,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		return nil, fmt.Errorf("stream runner is required")
 	}
 	generation := s.retainPluginGeneration()
+	beginModelReceipts := s.StreamRunner.BeginModelReceipts
+	if generation != nil {
+		beginModelReceipts = generation.beginModelReceipts
+	}
 	releasedGeneration := false
 	defer func() {
 		if !releasedGeneration {
@@ -1614,9 +1620,10 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					_, err := dispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{SessionID: id, CWD: threadRoot, AgentID: agentID})
 					return err
 				},
-				ParticipantStore: sessionParticipantStore{sessions: s.Sessions},
-				MaxParallel:      s.MaxParallel(),
-				InferenceJournal: s.InferenceJournalForOwner(id),
+				ParticipantStore:   sessionParticipantStore{sessions: s.Sessions},
+				MaxParallel:        s.MaxParallel(),
+				InferenceJournal:   s.InferenceJournalForOwner(id),
+				BeginModelReceipts: beginModelReceipts,
 				ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
 					return toolledger.New(s.Documents, ownerID)
 				},
@@ -1663,6 +1670,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 	runner.PromptCacheKey = strings.TrimSpace(id)
 	runner.InferenceJournal = s.InferenceJournalForOwner(id)
+	runner.BeginModelReceipts = beginModelReceipts
 	runner.DriverCheckpointStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	runner.DriverBindingStore = sessionDriverCheckpointStore{sessions: s.Sessions, sessionID: id}
 	runner.AcquireLoopDriver = s.driverResolver(generation)
@@ -1900,6 +1908,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		InferenceOperationKind:      base.InferenceOperationKind,
 		InferenceWorkloadProfile:    base.InferenceWorkloadProfile,
 		InferenceJournal:            base.InferenceJournal,
+		BeginModelReceipts:          base.BeginModelReceipts,
 		LoopDriver:                  base.LoopDriver,
 		AcquireLoopDriver:           base.AcquireLoopDriver,
 		DriverBindingStore:          base.DriverBindingStore,

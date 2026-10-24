@@ -149,11 +149,11 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		}
 		ctx = providers.WithInferenceJournal(ctx, journal)
 	}
-	if !direct {
-		request, err = providers.EnsureInferenceExecutionContext(ctx, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
-		if err != nil {
-			return nil, modelRequestError(err)
-		}
+	// A direct continuation can be the first receipt owner for an existing
+	// execution. Register that identity before entering its physical client.
+	request, err = providers.EnsureInferenceExecutionContext(ctx, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		return nil, modelRequestError(err)
 	}
 	if params.Method == "call" {
 		var response providers.ChatResponse
