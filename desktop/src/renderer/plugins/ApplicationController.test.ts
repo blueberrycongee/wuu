@@ -1,3 +1,4 @@
+import { resetWorkspaceBrowserNavigationForTests } from "../WorkspaceBrowserNavigation";
 import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController";
@@ -16,6 +17,25 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("projects the active pane worktree and preserves focused preview tabs when opening URLs", async () => {
+    const context = { kind: "project" as const, project_id: "project", cwd: "/project" };
+    const thread = { id: "secondary", cwd: "/worktree", title: "Secondary", preview: "", created_at: "", updated_at: "version", model_provider: "fixture", model: "fixture", status: "idle" as const, turns: [] };
+    window.wuu = { openExternal: vi.fn().mockResolvedValue(undefined) } as unknown as WuuDesktopApi;
+    resetWorkspaceBrowserNavigationForTests();
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activePane: "secondary", secondaryThread: thread,
+      activeSessionTabID: "thread:secondary", sessionTabs: [{ id: "thread:secondary", kind: "thread", threadID: "secondary", context, title: "Secondary", prompt: "", images: [], files: [] }] });
+    await controller.invoke("preview.open-tool", { toolId: "terminal" });
+    await controller.invoke("preview.set-visibility", { open: true });
+    await controller.invoke("preview.open-url", { url: "https://example.test/page" });
+    const view = controller.getSnapshot().previewWorkspace;
+    expect(view).toMatchObject({ ownerTabId: "thread:secondary", threadId: "secondary", workspaceContext: { cwd: "/worktree" }, activeContext: { cwd: "/project" }, conversationTitle: "Secondary", fileRefreshKey: "version", activeTabId: "terminal", browserNavigation: { url: "https://example.test/page" } });
+    expect(view.tabs.some(tab => tab.kind === "browser")).toBe(true);
+    expect(Object.isFrozen(view.workspaceContext)).toBe(true);
+    await controller.invoke("preview.open-url", { url: "https://example.test/external", modifiers: { metaKey: true } });
+    expect(window.wuu.openExternal).toHaveBeenCalledExactlyOnceWith("https://example.test/external");
+    resetWorkspaceBrowserNavigationForTests();
+  });
+
   it("completes onboarding through canonical workspace navigation without resuming an old thread", async () => {
     const context = { kind: "project" as const, project_id: "imported", cwd: "/imported" };
     const workspace = { projects: [{ id: "imported", path: "/imported", name: "Imported", created_at: "", updated_at: "" }], active_context: context };

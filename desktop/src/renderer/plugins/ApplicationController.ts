@@ -1,3 +1,7 @@
+import { readWorkspaceBrowserNavigation, subscribeWorkspaceBrowserNavigation } from "../WorkspaceBrowserNavigation";
+import { ENABLE_EMBEDDED_BROWSER } from "../FeatureFlags";
+import { isForegroundControlled } from "../BrowserVisibility";
+import { conversationHeadingTitle } from "../ThreadTitles";
 import { ApplicationArtifacts } from "./ApplicationArtifacts";
 import { ApplicationDesktop } from "./ApplicationDesktop";
 import type { HostApplicationService } from "./HostApplicationService";
@@ -5,7 +9,7 @@ import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
 import type { WebWorkspaceApi } from "../../shared/webWorkspace";
 import { ApplicationOnboarding } from "./ApplicationOnboarding";
 import { ApplicationBrowser } from "./ApplicationBrowser";
-import { emptyActivitySessions, mergeActivityList, reduceActivitySessionEvent, clearActivitiesForWorkdir } from "../ActivitySessions";
+import { activitiesForThread, emptyActivitySessions, mergeActivityList, reduceActivitySessionEvent, clearActivitiesForWorkdir } from "../ActivitySessions";
 import type { ApplicationSideConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
 import { ApplicationSideConversation, isApplicationSideConversationAction } from "./ApplicationSideConversation";
 import { ApplicationFileSelection } from "./ApplicationFileSelection";
@@ -26,7 +30,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
-import { createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
+import { workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
@@ -100,9 +104,18 @@ export class ApplicationController implements HostApplicationService {
   private activitySourceKey?: string;
   private activityRequest = 0;
   private browserDockTarget?: ApplicationSnapshotV1["browserDockTarget"];
+  private previewVisible = false;
+  private get activeBrowserActivity() {
+    return ENABLE_EMBEDDED_BROWSER ? activitiesForThread(this.activitySessions, this.state.activeContext?.cwd, activeThreadIDForState(this.state))
+      .filter(activity => activity.kind === "browser" && activity.state !== "stopped").at(-1) : undefined;
+  }
   private browserOwner?: ApplicationBrowser;
   get browser(): ApplicationBrowser {
-    return this.browserOwner ??= new ApplicationBrowser({ api: window.wuu, onActivityChanged: activity => {
+    return this.browserOwner ??= new ApplicationBrowser({ api: window.wuu,
+      workspaceNavigation: { enabled: ENABLE_EMBEDDED_BROWSER, getFocusState: () => ({ rightPanelOpen: this.previewVisible,
+        activeTabID: this.applicationPreview.getSnapshot().activeTabId, browserForegroundOccupied: isForegroundControlled(this.activeBrowserActivity) }),
+        openBrowser: activate => { void this.applicationPreview.invoke("preview.open-tool", { toolId: "browser", activate }); } },
+      onActivityChanged: activity => {
       this.activitySessions = mergeActivityList(this.activitySessions, activity.workdir, activity.thread_id, [activity]);
       this.publish();
     } });
@@ -395,7 +408,7 @@ export class ApplicationController implements HostApplicationService {
   start(): () => void {
     if (++this.consumers === 1) {
       this.lifetime = new AbortController();
-      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
+      this.subscriptions = [subscribeWorkspaceBrowserNavigation(() => this.publish()), subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
       if (this.browser.available) {
         this.subscriptions.push(this.browser.onInvalidate(({ workdir }) => {
@@ -781,6 +794,8 @@ export class ApplicationController implements HostApplicationService {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (action === "preview.open-url") return this.browser.openURL(input as ApplicationActionMapV1["preview.open-url"]["input"], { signal });
+    if (action === "preview.set-visibility") { this.previewVisible = (input as ApplicationActionMapV1["preview.set-visibility"]["input"]).open; return; }
     if (isApplicationSideConversationAction(action)) return this.applicationSideConversation.invoke(action,
       input as ApplicationSideConversationActionMapV1[keyof ApplicationSideConversationActionMapV1]["input"]);
     if (isApplicationSearchAction(action)) return this.applicationSearch.invoke(action,
@@ -1248,7 +1263,18 @@ export class ApplicationController implements HostApplicationService {
       settings: Object.freeze({ ...this.applicationSettings.getSnapshot(), contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),
-      preview: this.preview, previewWorkspace: this.applicationPreview.getSnapshot(),
+      preview: this.preview, previewWorkspace: Object.freeze({ ...this.applicationPreview.getSnapshot(),
+        ownerTabId: this.composerDraftForPane(state.activePane).ownerTabId ?? state.activeSessionTabID,
+        activeContext: state.activeContext && Object.freeze({ ...state.activeContext }),
+        workspaceContext: workspacePanelContext(state.activeContext, thread) && Object.freeze({ ...workspacePanelContext(state.activeContext, thread)! }),
+        threadId: thread?.id, conversationTitle: conversationHeadingTitle(thread,
+          activeSessionTab(state)?.kind === "draft" ? activeSessionTab(state)?.title : undefined, translateCurrent("tabs.newConversation")),
+        fileRefreshKey: isThreadRunning(thread) ? "running" : thread?.updated_at,
+        browserActivity: this.activeBrowserActivity && Object.freeze({ ...this.activeBrowserActivity,
+          interaction: this.activeBrowserActivity.interaction && Object.freeze({ ...this.activeBrowserActivity.interaction }) }),
+        browserDockTarget: this.browserDockTarget,
+        browserNavigation: readWorkspaceBrowserNavigation() && Object.freeze({ ...readWorkspaceBrowserNavigation()! }),
+      }),
       appearance: Object.freeze({ theme: this.theme, resolvedTheme: currentAppliedTheme(), uiFontSize: Number.parseFloat(document.documentElement.style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default, codeFontSize: readAppearance().codeSize }),
       locale, status: Object.freeze({ contractVersion: 1, items: Object.freeze([Object.freeze({ id: "connection", label: state.status, kind: status === "error" ? "error" as const : "info" as const })]) }),
     });

@@ -7,6 +7,8 @@ import { closeViewTab, closeViewTabsWhere, focusViewTab, initialWorkspaceViewTab
   workspaceArtifactViewTab, workspaceDiffViewTab, workspaceFileViewTab, workspacePluginViewTab, workspaceProjectViewTab,
   workspaceToolViewTab, type WorkspaceViewTabsState } from "../WorkspaceViewTabs";
 
+type PreviewTabs = Pick<ApplicationPreviewWorkspaceV1, "tabs" | "activeTabId" | "activeFileTabId" | "conversationSelected">;
+
 const actions = new Set<keyof ApplicationPreviewActionMapV1>([
   "preview.open-file", "preview.open-diff", "preview.open-artifact", "preview.open-tool", "preview.open-plugin", "preview.open-project",
   "preview.open-side-thread", "preview.new-tab", "preview.focus-tab", "preview.close-tab", "preview.close-tabs", "preview.reorder-tab",
@@ -20,17 +22,17 @@ export function isApplicationPreviewAction(action: string): action is keyof Appl
 export class ApplicationPreview {
   private state: WorkspaceViewTabsState = initialWorkspaceViewTabsState;
   private conversationSelected = false;
-  private snapshot: ApplicationPreviewWorkspaceV1 = Object.freeze({ tabs: Object.freeze([]), conversationSelected: false });
+  private snapshot: PreviewTabs = Object.freeze({ tabs: Object.freeze([]), conversationSelected: false });
   constructor(private readonly host: { getThreads: () => readonly Thread[]; changed: () => void }) {}
 
-  getSnapshot(): ApplicationPreviewWorkspaceV1 { return this.snapshot; }
+  getSnapshot(): PreviewTabs { return this.snapshot; }
 
   private update(state: WorkspaceViewTabsState, conversationSelected = false): void {
     if (state === this.state && conversationSelected === this.conversationSelected) return;
     this.state = state;
     this.conversationSelected = conversationSelected;
     // Inputs are data-only; no origin WeakRef or render callbacks enter this owner.
-    const snapshot: ApplicationPreviewWorkspaceV1 = structuredClone({ tabs: state.tabs,
+    const snapshot: PreviewTabs = structuredClone({ tabs: state.tabs,
       activeTabId: state.activeTabID, activeFileTabId: state.activeFileTabID, conversationSelected });
     const freeze = (value: unknown): void => {
       if (!value || typeof value !== "object") return;

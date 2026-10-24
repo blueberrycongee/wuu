@@ -8,7 +8,7 @@ export type WorkspaceBrowserNavigationRequest = {
 
 let nextWorkspaceBrowserNavigationID = 1;
 const workspaceBrowserNavigationListeners = new Set<
-  (request: WorkspaceBrowserNavigationRequest) => void
+  (request: WorkspaceBrowserNavigationRequest | undefined) => void
 >();
 let latestWorkspaceBrowserNavigation:
   | WorkspaceBrowserNavigationRequest
@@ -31,8 +31,12 @@ export function requestWorkspaceBrowserNavigation(input: {
   return request;
 }
 
+export function readWorkspaceBrowserNavigation(): WorkspaceBrowserNavigationRequest | undefined {
+  return latestWorkspaceBrowserNavigation;
+}
+
 export function subscribeWorkspaceBrowserNavigation(
-  listener: (request: WorkspaceBrowserNavigationRequest) => void,
+  listener: (request: WorkspaceBrowserNavigationRequest | undefined) => void,
 ): () => void {
   workspaceBrowserNavigationListeners.add(listener);
   if (latestWorkspaceBrowserNavigation) {
@@ -52,7 +56,9 @@ export function useWorkspaceBrowserNavigationRequest():
 }
 
 export function consumeWorkspaceBrowserNavigation(requestID: number): void {
-  if (latestWorkspaceBrowserNavigation?.requestID === requestID) latestWorkspaceBrowserNavigation = undefined;
+  if (latestWorkspaceBrowserNavigation?.requestID !== requestID) return;
+  latestWorkspaceBrowserNavigation = undefined;
+  for (const listener of workspaceBrowserNavigationListeners) listener(undefined);
 }
 
 export function useWorkspaceBrowserNavigationConsumer(): (
