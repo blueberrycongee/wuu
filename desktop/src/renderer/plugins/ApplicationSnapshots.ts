@@ -1,4 +1,6 @@
-import type { ThreadItem } from "../../shared/protocol";
+import type { ApplicationConversationThreadV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
+import { streamTextKey, streamTextStore } from "../StreamText";
+import type { Thread, ThreadItem } from "../../shared/protocol";
 import type {
   AttachmentDescriptorV1, ConversationItemSnapshotV1, ConversationProcessItemV1,
   ConversationProcessKindV1, ConversationProcessSnapshotV1, ConversationProcessStatusV1,
@@ -123,4 +125,34 @@ function processKind(items: readonly ConversationProcessItemV1[]): ConversationP
   const hasTools = items.some((item) => item.kind === "tool-activity");
   if (hasReasoning && hasTools) return "mixed";
   return hasReasoning ? "reasoning" : "tool-group";
+}
+
+/** Cache display copies while their source and live field values remain unchanged. */
+export function createConversationThreadProjector() {
+  const cache = new WeakMap<Thread, { values: (string | undefined)[]; view: ApplicationConversationThreadV1 }>();
+  return (thread: Thread): ApplicationConversationThreadV1 => {
+    const values: (string | undefined)[] = [];
+    const turns = thread.turns.map(turn => ({ ...turn, items: turn.items.map(item => {
+      const live = { ...item };
+      for (const field of ["text", "arguments", "result"] as const) {
+        const key = streamTextKey(turn.id, item.id, field);
+        const value = streamTextStore.has(key) ? streamTextStore.get(key) : item[field];
+        values.push(value);
+        if (value !== item[field]) live[field] = value;
+      }
+      return live;
+    }) }));
+    const previous = cache.get(thread);
+    if (previous && values.length === previous.values.length && values.every((value, index) => value === previous.values[index])) return previous.view;
+    const copy = structuredClone({ ...thread, turns });
+    const freeze = (value: unknown): void => {
+      if (!value || typeof value !== "object") return;
+      Object.values(value).forEach(freeze);
+      Object.freeze(value);
+    };
+    freeze(copy);
+    const view: ApplicationConversationThreadV1 = copy;
+    cache.set(thread, { values, view });
+    return view;
+  };
 }

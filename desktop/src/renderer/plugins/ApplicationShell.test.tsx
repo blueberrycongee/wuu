@@ -13,6 +13,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
     settingsControls: createApplicationSettingsControls(),
+    conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
     getSnapshot: vi.fn(),
     subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     invoke: vi.fn(async () => undefined) as ApplicationServiceV1["invoke"],

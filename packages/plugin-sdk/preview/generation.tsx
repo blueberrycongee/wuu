@@ -1,4 +1,4 @@
-import { scopeApplicationSettingsControls } from '../dist/ui.js';
+import { scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
 import * as React from 'react';
 import type {
   ApplicationServiceV1, ApplicationShellDefinition, ApplicationShellRenderProps, Disposable,
@@ -59,6 +59,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
       };
       const scoped: ApplicationServiceV1 = {
         contractVersion: 1,
+        conversationText: scopeApplicationConversationText(() => application.conversationText, controller.signal, assertActive),
         settingsControls: scopeApplicationSettingsControls(() => application.settingsControls, controller.signal, assertActive),
         getSnapshot: () => { controller.signal.throwIfAborted(); return application.getSnapshot(); },
         subscribe(listener) {

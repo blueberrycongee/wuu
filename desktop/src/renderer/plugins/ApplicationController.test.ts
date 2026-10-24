@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController";
+import { streamTextKey, streamTextStore } from "../StreamText";
 import { initialState } from "../AppState";
 import type { WuuDesktopApi } from "../../shared/protocol";
 
@@ -64,6 +65,50 @@ describe("shared application state", () => {
     finish({ thread: { id: "other", cwd: context.cwd, status: "idle", turns: [] } });
     await stale;
     expect(controller.getSnapshot().tabs.secondaryThreadId).toBe("child");
+  });
+
+  it("projects complete immutable conversation content and observes host-owned live fields", async () => {
+    const item = { id: "tool", type: "tool_call", status: "in_progress", arguments: "{", result: "seed",
+      result_detail: { content: [{ type: "image", uri: "wuu-artifact://owned", artifact: { sha256: "digest" } }] } };
+    const thread = { id: "stream-thread", model_provider: "test", turns: [{ id: "stream-turn", status: "in_progress", items: [item],
+      error: { message: "failure", recovery: { attempt_count: 2 } } }], child_agents: [{ id: "child", status: "running" }], history_cursor: "older" } as never;
+    const controller = new ApplicationController({ ...initialState, thread, threads: [thread] });
+    const view = controller.getSnapshot().conversationWorkspace.threads[0];
+    expect(view.history_cursor).toBe("older");
+    expect(view.child_agents?.[0].id).toBe("child");
+    expect(view.turns[0].items[0].result_detail?.content?.[0].artifact?.sha256).toBe("digest");
+    expect(Object.isFrozen(view.turns[0].items[0].result_detail?.content?.[0])).toBe(true);
+    const target = { threadId: "stream-thread", turnId: "stream-turn", itemId: "tool", field: "result" as const };
+    const key = streamTextKey(target.turnId, target.itemId, target.field);
+    const listener = vi.fn();
+    const stop = controller.conversationText.subscribe(target, listener);
+    vi.useFakeTimers();
+    try {
+      streamTextStore.set(key, "streamed result");
+      await vi.runAllTimersAsync();
+      expect(listener).toHaveBeenCalled();
+      expect(controller.conversationText.getSnapshot(target)).toBe("streamed result");
+      expect(controller.conversationText.getSnapshot({ ...target, threadId: "unrelated" })).toBeUndefined();
+      controller.setSettings(true);
+      const updated = controller.getSnapshot().conversationWorkspace.threads[0];
+      expect(updated.turns[0].items[0].result).toBe("streamed result");
+      expect(view.turns[0].items[0].result).toBe("seed");
+      listener.mockClear();
+      streamTextStore.clearItem(target.turnId, target.itemId);
+      controller.updateState(state => ({ ...state, thread: { ...state.thread!, turns: state.thread!.turns.map(turn => ({ ...turn,
+        items: turn.items.map(item => ({ ...item, result: "settled result" })) })) } }));
+      expect(controller.conversationText.getSnapshot(target)).toBe("settled result");
+      expect(listener).toHaveBeenCalledTimes(1);
+      listener.mockClear();
+      streamTextStore.set(key, "resumed result");
+      await vi.runAllTimersAsync();
+      expect(listener).toHaveBeenCalledTimes(1);
+      stop(); stop();
+      listener.mockClear();
+      streamTextStore.set(key, "later");
+      await vi.runAllTimersAsync();
+      expect(listener).not.toHaveBeenCalled();
+    } finally { stop(); streamTextStore.clearItem(target.turnId, target.itemId); vi.useRealTimers(); }
   });
 
   it("admits files into their source draft before returning and releases closed draft resources", async () => {

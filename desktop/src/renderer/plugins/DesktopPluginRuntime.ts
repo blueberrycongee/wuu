@@ -32,6 +32,7 @@ export const desktopPluginHost = new PluginHost({
   react: React,
   application: {
     contractVersion: 1,
+    get conversationText() { return getDesktopApplication().conversationText; },
     get settingsControls() { return getDesktopApplication().settingsControls; },
     getSnapshot: () => getDesktopApplication().getSnapshot(),
     subscribe: listener => getDesktopApplication().subscribe(listener),

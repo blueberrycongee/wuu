@@ -1,3 +1,4 @@
+import type { ApplicationConversationTextV1, ApplicationConversationTextTargetV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
 import type { ApplicationNavigationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-preview";
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
@@ -30,7 +31,7 @@ import { ApplicationNavigation, isApplicationNavigationAction } from "./Applicat
 import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
-import { toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
+import { createConversationThreadProjector, toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
 
 export interface ApplicationShellSelection {
   readonly plugin_id: string;
@@ -43,6 +44,39 @@ export type ShellInitializeResult = InitializeResult & { application_shell?: App
 export class ApplicationController implements ApplicationServiceV1 {
   readonly contractVersion = 1 as const;
   readonly settingsControls = createApplicationSettingsControls();
+  readonly conversationText: ApplicationConversationTextV1 = Object.freeze({
+    getSnapshot: (target: ApplicationConversationTextTargetV1) => {
+      const item = this.knownThread(target.threadId)?.turns.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
+      if (!item) return undefined;
+      const key = streamTextKey(target.turnId, target.itemId, target.field);
+      return streamTextStore.has(key) ? streamTextStore.get(key) : item[target.field];
+    },
+    subscribe: (target: ApplicationConversationTextTargetV1, listener: () => void) => {
+      if (!this.knownThread(target.threadId)?.turns.some(turn => turn.id === target.turnId && turn.items.some(item => item.id === target.itemId))) {
+        throw new Error("Conversation text source is unavailable");
+      }
+      const key = streamTextKey(target.turnId, target.itemId, target.field);
+      let previous = this.conversationText.getSnapshot(target);
+      let stopped = false;
+      const changed = () => {
+        if (stopped) return;
+        const value = this.conversationText.getSnapshot(target);
+        if (value === previous) return;
+        previous = value;
+        listener();
+      };
+      let stopStream = streamTextStore.subscribe(key, changed);
+      const stopState = this.subscribe(() => {
+        // Settled items clear their stream entry. Rebind to the current entry
+        // so the same observer also follows a later resumed stream.
+        stopStream();
+        stopStream = streamTextStore.subscribe(key, changed);
+        changed();
+      });
+      return () => { if (stopped) return; stopped = true; stopStream(); stopState(); };
+    },
+  });
+  private readonly projectConversationThread = createConversationThreadProjector();
   readonly recoveredDrafts = readComposerDraftRecovery();
   private state: AppState;
   private readonly stateListeners = new Set<() => void>();
@@ -985,6 +1019,9 @@ export class ApplicationController implements ApplicationServiceV1 {
           project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      conversationWorkspace: Object.freeze({ primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
+        threads: Object.freeze([...new Map([...state.threads, state.secondaryThread, state.thread].filter((item): item is Thread => Boolean(item))
+          .map(item => [item.id, item])).values()].map(this.projectConversationThread)) }),
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),

@@ -15,6 +15,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     tabs: { navigationRevision: 0, activeTabId: 'thread:research-1', activePane: 'primary', primaryThreadId: 'research-1', canSubmit: true, items: [{ id: 'thread:research-1', kind: 'thread',
       title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
       threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
+    conversationWorkspace: { activePane: "primary", threads: [] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{
       id: 'turn-1', status: 'completed', items: [
         { contractVersion: 1, id: 'user-1', kind: 'user-message', text: 'Which approach has the strongest evidence?' },
@@ -41,6 +42,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   const unavailable = (): never => { throw new Error("Settings controls are unavailable in the synthetic preview"); };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
     settingsControls: {
       connectionDisplay: { subscribe: () => () => {}, getSnapshot: () => "", get: () => ({ modelOrder: [], hiddenModels: [] }),
         label: (_key, fallback) => fallback, orderModels: (_key, models) => [...models], visibleModels: (_key, models) => [...models],

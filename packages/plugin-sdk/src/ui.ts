@@ -1,3 +1,4 @@
+import type { ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
 import type { ApplicationSettingsControlsV1 } from "./ui-settings-controls.js";
 import type { ApplicationPreviewActionMapV1, ApplicationPreviewWorkspaceV1 } from "./ui-preview.js";
@@ -40,6 +41,7 @@ export interface ApplicationSnapshotV1 {
     readonly items: readonly ApplicationTabV1[];
     readonly pending?: { readonly kind: "tab" | "workspace" | "thread" | "runtime"; readonly targetId: string; readonly requestId?: number; readonly contextSwitching?: boolean; readonly contentReady?: boolean };
   };
+  readonly conversationWorkspace: ApplicationConversationWorkspaceV1;
   readonly conversation: {
     readonly threadId?: string;
     readonly title?: string;
@@ -131,6 +133,7 @@ export interface ApplicationActionMapV1 extends ApplicationNavigationActionMapV1
 export interface ApplicationServiceV1 {
   readonly contractVersion: 1;
   readonly settingsControls: ApplicationSettingsControlsV1;
+  readonly conversationText: ApplicationConversationTextV1;
   getSnapshot(): ApplicationSnapshotV1;
   /** Unsubscribe is idempotent; generation disposal also removes every listener. */
   subscribe(listener: () => void): () => void;
@@ -330,5 +333,22 @@ export function scopeApplicationSettingsControls(source: () => ApplicationSettin
     startRemotePairing: (...args: Parameters<ApplicationSettingsControlsV1["startRemotePairing"]>) => invoke(() => source().startRemotePairing(...args)),
     removeRemoteDevice: (...args: Parameters<ApplicationSettingsControlsV1["removeRemoteDevice"]>) => invoke(() => source().removeRemoteDevice(...args)),
     openExternal: (...args: Parameters<ApplicationSettingsControlsV1["openExternal"]>) => invoke(() => source().openExternal(...args)),
+  });
+}
+
+/** Bind live conversation reads to the selected UI generation. */
+export function scopeApplicationConversationText(source: () => ApplicationConversationTextV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationConversationTextV1 {
+  return Object.freeze<ApplicationConversationTextV1>({
+    getSnapshot: target => { assertActive(); signal.throwIfAborted(); return source().getSnapshot(target); },
+    subscribe: (target, listener) => {
+      assertActive(); signal.throwIfAborted();
+      const stop = source().subscribe(target, () => { if (!signal.aborted) listener(); });
+      let stopped = false;
+      const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
+      signal.addEventListener("abort", dispose, { once: true });
+      if (signal.aborted) dispose();
+      return dispose;
+    },
   });
 }
