@@ -30,7 +30,7 @@ export function DefaultComposerSurface({ application, ...layout }: DefaultCompos
   const pane = layout.pane ?? "primary";
   const ownerTabId = layout.ownerTabId ?? view.drafts[pane].ownerTabId;
   if (!ownerTabId || view.drafts[pane].ownerTabId !== ownerTabId) return null;
-  return <OwnedComposer key={`${pane}:${ownerTabId}`} application={application} {...layout} pane={pane} ownerTabId={ownerTabId} />;
+  return <OwnedComposer key={pane} application={application} {...layout} pane={pane} ownerTabId={ownerTabId} />;
 }
 
 function OwnedComposer({ application, variant = "dock", pane, ownerTabId, containerRef }: DefaultComposerLayout & { application: ApplicationServiceV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
@@ -97,7 +97,7 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
       onRemoveSelection={id => run(controls.setSelections(draft.selections.filter(row => row.id !== id)))}
       queuedMessages={queued(pending?.queued)} guideMessages={queued(pending?.guides)} running={running}
       sendDisabled={!view.tabs.canSubmit || runtime.engineSelectionPending || Boolean(stop)}
-      submitting={view.submission.operations.some(row => row.ownerTabId === ownerTabId && (row.phase === "preparing" || row.phase === "sending"))}
+      submitting={Boolean(view.conversationActions.editing?.threadId === presentation.threadId && view.conversationActions.editing?.submitting) || view.submission.operations.some(row => row.ownerTabId === ownerTabId && (row.phase === "preparing" || row.phase === "sending"))}
       stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || runtime.busy || switching)}
       telemetryTurnID={presentation.turnId} contextUsage={presentation.contextUsage} status={presentation.status}
       readOnly={presentation.readOnly || switching} initialized={configuration}
@@ -127,7 +127,7 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
       onSelectWorkspace={workspaceId => run(application.invoke("workspace.retarget-draft", { workspaceId }))} onSelectNoProject={() => run(application.invoke("workspace.retarget-draft", {}))}
       onCreateWorkspace={() => run(application.invoke("workspace.create", { kind: "blank" }))} onOpenWorkspace={() => run(application.invoke("workspace.create", { kind: "folder" }))}
       onSelectGitBranch={branch => application.environment.checkoutBranch(branch)} onCreateGitBranch={async branch => { await application.environment.createAndCheckoutBranch(branch); setMenu(null); }}
-      onStartNewThread={() => run(application.invoke("tab.new", { workspaceId: tab.workspaceId }))}
+      onStartNewThread={() => run(application.invoke("tab.new", { workspaceId: tab.workspaceId }).then(({ tabId }) => application.invoke("navigation.focus-composer", { tabId })))}
       onHandoffSession={presentation.threadId ? input => run(application.invoke("conversation.handoff", { threadId: presentation.threadId!, ...input })) : undefined}
       onOpenSideThread={presentation.threadId ? (prompt, commandId) => run(application.invoke("side.open", { parentThreadId: presentation.threadId!, prompt, commandId })) : undefined}
       onOpenWorkspaceTool={toolId => run(application.invoke("preview.open-tool", { toolId }))}
