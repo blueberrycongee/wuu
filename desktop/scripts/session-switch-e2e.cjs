@@ -14,6 +14,7 @@ const startupEntryNs = process.hrtime.bigint();
 // WUU_SWITCH_CORE_BUILD_COMMIT identifies a separately selected core in hybrid runs.
 // Exported source snapshots supply WUU_SWITCH_SOURCE_COMMIT and SOURCE_CHANGES.
 // WUU_SWITCH_SIDEBAR_THREADS=1500 adds metadata-only sidebar history.
+// WUU_SWITCH_SAME_WORKSPACE=1 isolates retained-history switching from runtime replacement.
 // WUU_SWITCH_ROUNDS controls warm repeats. Defaults live in the budget fixture.
 // WUU_SWITCH_INIT_DELAY_MS injects a readiness fault; never pool it with baseline.
 // WUU_SWITCH_CHECK_BUDGET=1 checks settled work counters, never wall-clock time.
@@ -66,6 +67,8 @@ const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0)
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
+const sameWorkspace = process.env.WUU_SWITCH_SAME_WORKSPACE === '1';
+if (sameWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sidebarThreads > 0, false, 'Same-workspace switching is a separate diagnostic workload');
 if (streamOnly) {
   assert.ok(pacedStream, 'Stream-only mode requires paced streaming');
   assert.equal(subscriptionTurns, 0, 'Stream-only mode excludes subscription diagnostics');
@@ -101,6 +104,7 @@ if (startupOnly) {
 }
 if (checkBudget) {
   assert.equal(startupOnly, false, 'Startup is a separate diagnostic workload');
+  assert.equal(sameWorkspace, false, 'Same-workspace switching has a separate workload');
   assert.equal(subscriptionTurns, 0, 'Subscription history is a separate diagnostic workload');
   assert.equal(sidebarThreads, 0, 'Large sidebar is a separate diagnostic workload');
   assert.equal(pacedStream, false, 'Paced streaming is a separate diagnostic workload');
@@ -175,6 +179,7 @@ const callFixture = request => {
 };
 const stamp = '2026-01-01T00:00:00Z';
 const seeds = projects.map((project, index) => {
+  if (sameWorkspace) project = projects[0];
   const count = index === 1 || index === 5 ? turns : 3;
   const history = [];
   for (let turn = 0; turn < count; turn++) {
@@ -911,6 +916,8 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
   console.log('FIXTURE', fixture);
+  // A fresh profile may land in a draft. Select the source before measuring switches.
+  if (!startupOnly) await switchTo(main, selectedIndex, 'setup');
   await waitFor(main, index => !!document.querySelector(`.cached-conversation-pane[data-active="true"][data-thread-id="switch-thread-${index}"]`), selectedIndex);
   if (startupProbe) {
     await waitFor(main, lastTurn => !!document.querySelector('.cached-conversation-pane[data-active="true"]')?.textContent.includes('Result ' + lastTurn), (selectedIndex === 1 || selectedIndex === 5 ? turns : 3) - 1);
@@ -945,16 +952,18 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
       for (const index of [1, 5, 0]) await switchTo(main, index, 'repeat');
     }
     for (const index of [2, 3, 4, 5, 0, 1, 5, 0]) await switchTo(main, index, 'pool-churn');
-    let releaseArchive;
-    archiveGate = new Promise(resolve => { releaseArchive = resolve; });
-    await switchTo(main, 5, 'archive-blocked');
-    const archiveDeadline = Date.now() + 30000;
-    while (!archiveBlocked) {
-      assert.ok(Date.now() < archiveDeadline, 'Archive blocking scenario never reached its gate');
-      await delay(25);
+    if (!sameWorkspace) {
+      let releaseArchive;
+      archiveGate = new Promise(resolve => { releaseArchive = resolve; });
+      await switchTo(main, 5, 'archive-blocked');
+      const archiveDeadline = Date.now() + 30000;
+      while (!archiveBlocked) {
+        assert.ok(Date.now() < archiveDeadline, 'Archive blocking scenario never reached its gate');
+        await delay(25);
+      }
+      releaseArchive();
+      archiveGate = undefined;
     }
-    releaseArchive();
-    archiveGate = undefined;
   }
   // Drain catalog work before subscribing for the separate snapshot protocol
   // check; conversation switches already wait for resume and layout readiness.
@@ -1010,9 +1019,10 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
       return null;
     })(), platform: process.platform, arch: process.arch,
     osRelease: os.release(), cpu: os.cpus()[0].model, cpuCount: os.cpus().length,
-    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns, sidebarThreads, pacedStream, streamOnly,
+    versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns, sidebarThreads, pacedStream, streamOnly, sameWorkspace,
     fixtureSeed, compositionMigration: budget.compositionMigration,
     hostLoadAverage: os.loadavg(), totalMemoryBytes: os.totalmem(), freeMemoryBytes: os.freemem(),
+    startupIncludesSourceSelection: !startupOnly,
     startupEndpoint: 'Main bundle import to restored conversation, then focused editable input, native inserted draft and enabled Send for two frames. Excludes synthetic data seeding and Electron executable startup; includes host polling and probe IPC. Cold profile with warm filesystem cache, not a physical-paint measurement.',
     fixtureHomeBytes: fs.readdirSync(home, { recursive: true }).reduce((bytes, relative) => {
       const stat = fs.statSync(path.join(home, relative), { throwIfNoEntry: false });

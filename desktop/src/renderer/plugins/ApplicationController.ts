@@ -33,7 +33,6 @@ import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
@@ -64,7 +63,7 @@ import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
-import { createConversationThreadProjector, toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
+import { createConversationThreadProjector, createConversationTurnsProjector } from "./ApplicationSnapshots";
 
 export interface ApplicationShellSelection {
   readonly plugin_id: string;
@@ -1404,6 +1403,8 @@ export class ApplicationController implements HostApplicationService {
     for (const listener of this.listeners) listener();
   }
 
+  private readonly projectConversationTurns = createConversationTurnsProjector();
+
   private project(): ApplicationSnapshotV1 {
     const state = this.state;
     const initialized = state.initialized;
@@ -1425,20 +1426,7 @@ export class ApplicationController implements HostApplicationService {
     };
     const composerPending = Object.freeze(Object.entries(this.pendingComposer.pendingComposerMessagesByThread).map(([threadId, messages]) =>
       Object.freeze({ threadId, queued: Object.freeze(messages.queued.map(projectPending)), guides: Object.freeze(messages.guides.map(projectPending)) })));
-    const turns = (thread?.turns ?? []).map(turn => {
-      const items = turn.items.map(item => {
-        const key = streamTextKey(turn.id, item.id, "text");
-        return streamTextStore.has(key) ? { ...item, text: streamTextStore.get(key) } : item;
-      });
-      const visible = items.flatMap(item => {
-        const kind: ConversationItemSnapshotV1["kind"] = item.type === "user_message" ? "user-message"
-          : item.type === "agent_message" ? "assistant-message" : item.type === "reasoning" ? "reasoning"
-          : item.type === "tool_call" ? "tool-reference" : "notice";
-        return [toConversationItemSnapshot(item, kind)];
-      });
-      return Object.freeze({ id: turn.id, status: turn.status === "in_progress" ? "running" as const : turn.status === "interrupted" ? "cancelled" as const : turn.status,
-        items: Object.freeze(visible), process: toConversationProcessSnapshot(items.filter(item => item.type === "reasoning" || item.type === "tool_call"), turn.status === "in_progress", running, locale) });
-    });
+    const turns = this.projectConversationTurns(thread ? this.projectConversationThread(thread) : undefined, running, locale);
     const conversationThreads = [...new Map([...state.threads, state.secondaryThread, state.thread].filter((item): item is Thread => Boolean(item))
       .map(item => [item.id, item])).values()].map(this.projectConversationThread);
     if (conversationThreads.length !== this.conversationThreadViews.length || conversationThreads.some((thread, index) => thread !== this.conversationThreadViews[index])) {

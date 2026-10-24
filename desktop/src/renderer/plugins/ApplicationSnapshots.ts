@@ -1,4 +1,4 @@
-import type { ApplicationConversationThreadV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
+import type { ApplicationConversationThreadV1, ApplicationConversationThreadItemV1, ApplicationConversationTurnV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
 import { streamTextKey, streamTextStore } from "../StreamText";
 import type { Thread, ThreadItem, Turn } from "../../shared/protocol";
 import type {
@@ -7,10 +7,11 @@ import type {
 } from "../../shared/workbench";
 import { toolDisplayLabel } from "../ToolActivityHelpers";
 import { createImmutableSnapshotProjector } from "./ImmutableSnapshot";
+import type { ApplicationTurnV1 } from "../../../../packages/plugin-sdk/src/ui";
 type ConversationItemKindV1 = ConversationItemSnapshotV1["kind"];
 
 export function toConversationItemSnapshot(
-  item: ThreadItem,
+  item: ApplicationConversationThreadItemV1,
   kind: ConversationItemKindV1,
   displayText = item.text,
 ): ConversationItemSnapshotV1 {
@@ -49,7 +50,7 @@ function publicStatus(status: ThreadItem["status"]): ConversationItemSnapshotV1[
   return status;
 }
 
-function attachmentDescriptors(item: ThreadItem): readonly AttachmentDescriptorV1[] | undefined {
+function attachmentDescriptors(item: ApplicationConversationThreadItemV1): readonly AttachmentDescriptorV1[] | undefined {
   const images = (item.images ?? []).map((image, index) => Object.freeze({
     id: `${item.id}:image:${index}`,
     name: `image-${index + 1}`,
@@ -64,7 +65,7 @@ function attachmentDescriptors(item: ThreadItem): readonly AttachmentDescriptorV
 }
 
 export function toConversationProcessSnapshot(
-  processItems: readonly ThreadItem[],
+  processItems: readonly ApplicationConversationThreadItemV1[],
   streaming: boolean,
   active: boolean,
   locale?: string,
@@ -115,7 +116,7 @@ export function toConversationProcessSnapshot(
   });
 }
 
-function publicProcessStatus(item: ThreadItem): ConversationProcessStatusV1 {
+function publicProcessStatus(item: ApplicationConversationThreadItemV1): ConversationProcessStatusV1 {
   if (item.status === "in_progress") return "running";
   if (item.status === "failed") return "failed";
   return "completed";
@@ -135,10 +136,16 @@ export function createConversationThreadProjector() {
   // a whole history also duplicates large tool results and inline attachments.
   const immutable = createImmutableSnapshotProjector();
   const items = new WeakMap<ThreadItem, { values: (string | undefined)[]; view: ThreadItem }>();
-  const turns = new WeakMap<Turn, Turn>();
-  const threads = new WeakMap<Thread, ApplicationConversationThreadV1>();
+  const turns = new WeakMap<Turn, { revision: number; view: Turn }>();
+  const threads = new WeakMap<Thread, { revision: number; view: ApplicationConversationThreadV1 }>();
   return (thread: Thread): ApplicationConversationThreadV1 => {
+    const revision = streamTextStore.getRevision();
+    const previous = threads.get(thread);
+    if (previous?.revision === revision) return previous.view;
     const projectedTurns = thread.turns.map(turn => {
+      const turnRevision = streamTextStore.getTurnRevision(turn.id);
+      const previous = turns.get(turn);
+      if (previous?.revision === turnRevision) return previous.view;
       const projectedItems = turn.items.map(item => {
         const values = (["text", "arguments", "result"] as const).map(field => {
           const key = streamTextKey(turn.id, item.id, field);
@@ -150,16 +157,49 @@ export function createConversationThreadProjector() {
         items.set(item, { values, view });
         return view;
       });
-      const previous = turns.get(turn);
-      if (previous && projectedItems.every((item, index) => item === previous.items[index])) return previous;
+      if (previous && projectedItems.every((item, index) => item === previous.view.items[index])) {
+        previous.revision = turnRevision;
+        return previous.view;
+      }
       const view = Object.freeze({ ...immutable(turn), items: Object.freeze(projectedItems) }) as Turn;
-      turns.set(turn, view);
+      turns.set(turn, { revision: turnRevision, view });
       return view;
     });
-    const previous = threads.get(thread);
-    if (previous && projectedTurns.every((turn, index) => turn === previous.turns[index])) return previous;
+    if (previous && projectedTurns.every((turn, index) => turn === previous.view.turns[index])) {
+      previous.revision = revision;
+      return previous.view;
+    }
     const view = Object.freeze({ ...immutable(thread), turns: Object.freeze(projectedTurns) });
-    threads.set(thread, view);
+    threads.set(thread, { revision, view });
     return view;
+  };
+}
+
+/** Project the selected conversation without rebuilding unchanged completed turns. */
+export function createConversationTurnsProjector() {
+  const cache = new WeakMap<ApplicationConversationTurnV1, { active: boolean; locale: string; view: ApplicationTurnV1 }>();
+  const threads = new WeakMap<ApplicationConversationThreadV1, { active: boolean; locale: string; turns: readonly ApplicationTurnV1[] }>();
+  const empty: readonly ApplicationTurnV1[] = Object.freeze([]);
+  return (thread: ApplicationConversationThreadV1 | undefined, active: boolean, locale: string): readonly ApplicationTurnV1[] => {
+    if (!thread) return empty;
+    const previous = threads.get(thread);
+    if (previous && previous.active === active && previous.locale === locale) return previous.turns;
+    const turns = Object.freeze(thread.turns.map(turn => {
+      const cached = cache.get(turn);
+      if (cached && cached.active === active && cached.locale === locale) return cached.view;
+      const items = turn.items.map(item => {
+        const kind: ConversationItemKindV1 = item.type === "user_message" ? "user-message"
+          : item.type === "agent_message" ? "assistant-message" : item.type === "reasoning" ? "reasoning"
+          : item.type === "tool_call" ? "tool-reference" : "notice";
+        return toConversationItemSnapshot(item, kind);
+      });
+      const view: ApplicationTurnV1 = Object.freeze({ id: turn.id,
+        status: turn.status === "in_progress" ? "running" : turn.status === "interrupted" ? "cancelled" : turn.status,
+        items: Object.freeze(items), process: toConversationProcessSnapshot(turn.items.filter(item => item.type === "reasoning" || item.type === "tool_call"), turn.status === "in_progress", active, locale) });
+      cache.set(turn, { active, locale, view });
+      return view;
+    }));
+    threads.set(thread, { active, locale, turns });
+    return turns;
   };
 }

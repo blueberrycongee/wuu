@@ -60,6 +60,26 @@ class StreamTextStore {
   private notifyScheduled = false;
   private lastNotifyAt = 0;
   private nextReplacementVersion = 1;
+  // Snapshot caches must see writes immediately, before throttled UI notifications.
+  private revision = 0;
+  private turnRevisions = new Map<string, { revision: number; entries: number }>();
+
+  getRevision(): number { return this.revision; }
+  getTurnRevision(turnID: string): number { return this.turnRevisions.get(turnID)?.revision ?? 0; }
+
+  private changed(key: string): void {
+    const turnID = key.slice(0, key.indexOf("\u0000"));
+    this.turnRevisions.get(turnID)!.revision = ++this.revision;
+  }
+
+  private insertEntry(key: string, entry: StreamEntry): void {
+    const turnID = key.slice(0, key.indexOf("\u0000"));
+    const turn = this.turnRevisions.get(turnID) ?? { revision: 0, entries: 0 };
+    turn.entries++;
+    this.turnRevisions.set(turnID, turn);
+    this.entries.set(key, entry);
+    this.changed(key);
+  }
 
   key(turnID: string, itemID: string, field: StreamTextField): string {
     return `${turnID}\u0000${itemID}\u0000${field}`;
@@ -101,6 +121,7 @@ class StreamTextStore {
       existing.seed = value;
       existing.hasValue = true;
       existing.replacementVersion = this.nextReplacementVersion++;
+      this.changed(key);
       this.notifyValue(existing, value);
       return;
     }
@@ -114,7 +135,7 @@ class StreamTextStore {
       replacementVersion: this.nextReplacementVersion++,
       valueListeners: new Set()
     };
-    this.entries.set(key, entry);
+    this.insertEntry(key, entry);
     this.notifyValue(entry, value);
   }
 
@@ -138,6 +159,7 @@ class StreamTextStore {
     }
     entry.value = value;
     entry.replacementVersion = this.nextReplacementVersion++;
+    this.changed(key);
     this.notifyValue(entry, value);
   }
 
@@ -161,6 +183,7 @@ class StreamTextStore {
     entry.value = "";
     entry.pendingChunks = undefined;
     entry.seed = "";
+    this.changed(key);
     entry.replacementVersion = this.nextReplacementVersion++;
     if (currentVisible.length === 0) {
       entry.displayValue = undefined;
@@ -182,6 +205,7 @@ class StreamTextStore {
     entry.hasValue = true;
     entry.displayValue = undefined;
     (entry.pendingChunks ??= []).push(delta);
+    this.changed(key);
     if (entry.valueListeners.size === 0) {
       return;
     }
@@ -270,7 +294,7 @@ class StreamTextStore {
     if (this.entries.has(key)) {
       return;
     }
-    this.entries.set(key, {
+    this.insertEntry(key, {
       value: "",
       pendingChunks: undefined,
       displayValue: undefined,
@@ -359,14 +383,17 @@ class StreamTextStore {
     this.dirtyEntries.delete(entry);
     entry.valueListeners.clear();
     this.entries.delete(key);
+    this.changed(key);
+    const turnID = key.slice(0, key.indexOf("\u0000"));
+    const turn = this.turnRevisions.get(turnID)!;
+    if (--turn.entries === 0) this.turnRevisions.delete(turnID);
   }
 
   private deleteEntryIfIdle(key: string, entry: StreamEntry): void {
     if (entry.hasValue || entry.valueListeners.size > 0) {
       return;
     }
-    this.dirtyEntries.delete(entry);
-    this.entries.delete(key);
+    this.deleteEntry(key);
   }
 }
 

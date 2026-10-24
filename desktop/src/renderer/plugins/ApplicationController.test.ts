@@ -445,6 +445,34 @@ describe("shared application state", () => {
     } finally { streamTextStore.clearItem("live", "answer"); }
   });
 
+  it("reuses public histories until their source or live fields change", () => {
+    const thread: Thread = { id: "cached", cwd: "/repo", preview: "", model: "test", model_provider: "test", status: "idle", created_at: "", updated_at: "",
+      turns: [{ id: "cached-turn", status: "completed", items_view: "full", items: [{ id: "cached-item", type: "agent_message", status: "completed", text: "persisted" }] }] };
+    const controller = new ApplicationController({ ...initialState, thread, threads: [thread] });
+    const first = controller.getSnapshot();
+    const key = streamTextKey("cached-turn", "cached-item", "text");
+    try {
+      controller.setSettings(true);
+      expect(controller.getSnapshot().conversation.turns).toBe(first.conversation.turns);
+      expect(controller.getSnapshot().conversationWorkspace.threads).toBe(first.conversationWorkspace.threads);
+      streamTextStore.append(key, "live");
+      controller.setSettings(false);
+      expect(controller.getSnapshot().conversation.turns[0].items[0].text).toBe("live");
+      expect(controller.getSnapshot().conversationWorkspace.threads[0].turns[0].items[0].text).toBe("live");
+      streamTextStore.clearItem("cached-turn", "cached-item");
+      controller.setSettings(true);
+      expect(controller.getSnapshot().conversation.turns[0].items[0].text).toBe("persisted");
+      streamTextStore.seed(key, "reseeded");
+      controller.setSettings(false);
+      expect(controller.getSnapshot().conversation.turns[0].items[0].text).toBe("reseeded");
+      expect(first.conversation.turns[0].items[0].text).toBe("persisted");
+      streamTextStore.clearTurn("cached-turn");
+      const updated = { ...thread, turns: [{ ...thread.turns[0], items: [{ ...thread.turns[0].items[0], text: "resumed" }] }] };
+      controller.updateState(state => ({ ...state, thread: updated, threads: [updated] }));
+      expect(controller.getSnapshot().conversation.turns[0].items[0].text).toBe("resumed");
+    } finally { streamTextStore.clearTurn("cached-turn"); }
+  });
+
   it("projects complete immutable conversation content and observes host-owned live fields", async () => {
     const item = { id: "tool", type: "tool_call", status: "in_progress", arguments: "{", result: "seed",
       result_detail: { content: [{ type: "image", uri: "wuu-artifact://owned", artifact: { sha256: "digest" } }] } };
