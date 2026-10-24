@@ -12,20 +12,20 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-// Store is the session domain bound to one selected document provider. It does
+// documentStore is the session domain bound to one selected document provider. It does
 // not open a database or choose a backend. Its owner retains the generation and
 // supplies an operation context; a retired binding cannot reopen local files.
-type Store struct {
+type documentStore struct {
 	ctx       context.Context
 	documents persistence.Documents
 }
 
-func NewStore(ctx context.Context, documents persistence.Documents) *Store {
-	return &Store{ctx: ctx, documents: documents}
+func newDocumentStore(ctx context.Context, documents persistence.Documents) *documentStore {
+	return &documentStore{ctx: ctx, documents: documents}
 }
 
-func (s *Store) WithContext(ctx context.Context) *Store {
-	return &Store{ctx: ctx, documents: s.documents}
+func (s *documentStore) WithContext(ctx context.Context) *documentStore {
+	return &documentStore{ctx: ctx, documents: s.documents}
 }
 
 func documentNamespace(table string) string { return "wuu." + table + ".v1" }
@@ -36,7 +36,7 @@ func documentPrefix(id string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(id)) + "/"
 }
 
-func (s *Store) transaction(body func(*persistence.Tx) error) error {
+func (s *documentStore) transaction(body func(*persistence.Tx) error) error {
 	return persistence.Update(s.ctx, s.documents, body)
 }
 
@@ -125,7 +125,7 @@ func putSessionDocument(tx *persistence.Tx, sess Session) error {
 	return tx.Put(documentNamespace("sessions"), sess.ID, sess)
 }
 
-func (s *Store) Find(id string) (Session, bool, error) {
+func (s *documentStore) Find(id string) (Session, bool, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return Session{}, false, nil
@@ -140,15 +140,15 @@ func (s *Store) Find(id string) (Session, bool, error) {
 	return result, found, err
 }
 
-func (s *Store) List(limit int) ([]Session, error) {
+func (s *documentStore) List(limit int) ([]Session, error) {
 	return s.listSessions(limit, func(Session) bool { return true })
 }
 
-func (s *Store) ListForCWD(cwd, workspaceID string, limit int) ([]Session, error) {
+func (s *documentStore) ListForCWD(cwd, workspaceID string, limit int) ([]Session, error) {
 	return s.listSessions(limit, sessionListMatches(cwd, workspaceID))
 }
 
-func (s *Store) listSessions(limit int, matches func(Session) bool) ([]Session, error) {
+func (s *documentStore) listSessions(limit int, matches func(Session) bool) ([]Session, error) {
 	for {
 		var result []Session
 		var cursor *SessionListCursor
@@ -173,7 +173,7 @@ func (s *Store) listSessions(limit int, matches func(Session) bool) ([]Session, 
 	}
 }
 
-func (s *Store) FindPinnedArchived(ids []string) (map[string]PinnedArchived, error) {
+func (s *documentStore) FindPinnedArchived(ids []string) (map[string]PinnedArchived, error) {
 	keys := make([]string, 0, len(ids))
 	for _, id := range ids {
 		if id = strings.TrimSpace(id); id != "" {
@@ -195,7 +195,7 @@ func (s *Store) FindPinnedArchived(ids []string) (map[string]PinnedArchived, err
 	return result, nil
 }
 
-func (s *Store) FindManagedByRequest(owner, requestID string) (Session, bool, error) {
+func (s *documentStore) FindManagedByRequest(owner, requestID string) (Session, bool, error) {
 	owner, requestID = strings.TrimSpace(owner), strings.TrimSpace(requestID)
 	if owner == "" || requestID == "" {
 		return Session{}, false, nil
@@ -207,7 +207,7 @@ func (s *Store) FindManagedByRequest(owner, requestID string) (Session, bool, er
 	return rows[0], true, nil
 }
 
-func (s *Store) updateMetadata(id string, missingOK bool, update func(*Session)) (Session, error) {
+func (s *documentStore) updateMetadata(id string, missingOK bool, update func(*Session)) (Session, error) {
 	id = strings.TrimSpace(id)
 	var result Session
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -236,7 +236,7 @@ func (s *Store) updateMetadata(id string, missingOK bool, update func(*Session))
 	return result, err
 }
 
-func (s *Store) MostRecent() (string, error) {
+func (s *documentStore) MostRecent() (string, error) {
 	rows, err := s.List(1)
 	if err != nil || len(rows) == 0 {
 		return "", err
@@ -244,7 +244,7 @@ func (s *Store) MostRecent() (string, error) {
 	return rows[0].ID, nil
 }
 
-func (s *Store) MostRecentForCWD(cwd, workspaceID string) (string, error) {
+func (s *documentStore) MostRecentForCWD(cwd, workspaceID string) (string, error) {
 	rows, err := s.ListForCWD(cwd, workspaceID, 1)
 	if err != nil || len(rows) == 0 {
 		return "", err

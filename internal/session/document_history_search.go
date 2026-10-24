@@ -45,11 +45,11 @@ func resolveHistoryDocumentSnapshot(tx *persistence.Tx, id string, snapshot int,
 	return id, snapshot, nil
 }
 
-func (s *Store) ReadHistoryPage(id string, startSeq, limit int) (HistoryPage, error) {
+func (s *documentStore) ReadHistoryPage(id string, startSeq, limit int) (HistoryPage, error) {
 	return s.ReadHistoryQuery(HistoryReadQuery{SessionID: id, StartSeq: startSeq, Limit: limit})
 }
 
-func (s *Store) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
+func (s *documentStore) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
 	if query.StartSeq < 1 && query.Cursor == nil {
 		return HistoryPage{}, errors.New("history start sequence must be positive")
 	}
@@ -109,11 +109,11 @@ func (s *Store) ReadHistoryQuery(query HistoryReadQuery) (HistoryPage, error) {
 	return page, err
 }
 
-func (s *Store) SearchHistoryPage(id, query string, beforeSeq, limit int) (HistoryPage, error) {
+func (s *documentStore) SearchHistoryPage(id, query string, beforeSeq, limit int) (HistoryPage, error) {
 	return s.SearchHistoryQuery(HistorySearchQuery{SessionID: id, Query: query, BeforeSeq: beforeSeq, Limit: limit})
 }
 
-func (s *Store) SearchHistoryQuery(query HistorySearchQuery) (HistoryPage, error) {
+func (s *documentStore) SearchHistoryQuery(query HistorySearchQuery) (HistoryPage, error) {
 	query.Query = strings.TrimSpace(query.Query)
 	if query.Query == "" {
 		return HistoryPage{}, errors.New("history search query is required")

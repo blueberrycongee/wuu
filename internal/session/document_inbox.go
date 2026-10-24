@@ -40,12 +40,12 @@ func insertInboxDocument(tx *persistence.Tx, message InboxMessage, now time.Time
 	return tx.Put(documentNamespace("session_inbox"), message.ClientID, inboxDocument{InboxMessage: message, Order: order})
 }
 
-func (s *Store) EnqueueInbox(message InboxMessage) error {
+func (s *documentStore) EnqueueInbox(message InboxMessage) error {
 	now := time.Now().UTC()
 	return s.transaction(func(tx *persistence.Tx) error { return insertInboxDocument(tx, message, now) })
 }
 
-func (s *Store) SettleInbox(clientID, sessionID string) error {
+func (s *documentStore) SettleInbox(clientID, sessionID string) error {
 	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(sessionID) == "" {
 		return errors.New("inbox message requires a client ID and target session")
 	}
@@ -63,7 +63,7 @@ func (s *Store) SettleInbox(clientID, sessionID string) error {
 	})
 }
 
-func (s *Store) PendingInbox(sessionID string) ([]InboxMessage, error) {
+func (s *documentStore) PendingInbox(sessionID string) ([]InboxMessage, error) {
 	now := time.Now().UTC()
 	var result []InboxMessage
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -104,7 +104,7 @@ func (s *Store) PendingInbox(sessionID string) ([]InboxMessage, error) {
 	return result, err
 }
 
-func (s *Store) InboxTargets() ([]string, error) {
+func (s *documentStore) InboxTargets() ([]string, error) {
 	var result []string
 	err := s.transaction(func(tx *persistence.Tx) error {
 		rows, err := readDocumentRows[inboxDocument](tx, "session_inbox", "")
@@ -127,7 +127,7 @@ func (s *Store) InboxTargets() ([]string, error) {
 	return result, err
 }
 
-func (s *Store) InboxHas(clientID string) (bool, error) {
+func (s *documentStore) InboxHas(clientID string) (bool, error) {
 	var found bool
 	err := s.transaction(func(tx *persistence.Tx) error {
 		var row inboxDocument
@@ -138,7 +138,7 @@ func (s *Store) InboxHas(clientID string) (bool, error) {
 	return found, err
 }
 
-func (s *Store) ValidateInboxControls(clientID string) error {
+func (s *documentStore) ValidateInboxControls(clientID string) error {
 	return s.transaction(func(tx *persistence.Tx) error { return validateInboxDocument(tx, clientID) })
 }
 

@@ -13,6 +13,11 @@ import (
 // reconstructs or sends a model request. A live process retains its ownership
 // even if its heartbeat was delayed by a blocked disk or a paused debugger.
 func (r *InferenceJournalRuntime) ReconcileOrphans(now time.Time) ([]InferenceCrashRecovery, error) {
+	if r != nil && r.remote != nil {
+		var out []InferenceCrashRecovery
+		err := r.remote.invoke("ReconcileOrphans", []any{now}, []any{&out})
+		return out, err
+	}
 	if r == nil {
 		return nil, nil
 	}
@@ -159,6 +164,11 @@ func (r *InferenceJournalRuntime) ReconcileOrphans(now time.Time) ([]InferenceCr
 }
 
 func (r *InferenceJournalRuntime) Prune(now time.Time) (int64, error) {
+	if r != nil && r.remote != nil {
+		var out int64
+		err := r.remote.invoke("Prune", []any{now}, []any{&out})
+		return out, err
+	}
 	if r == nil {
 		return 0, nil
 	}

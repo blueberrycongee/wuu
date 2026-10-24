@@ -18,9 +18,10 @@ import (
 // DocumentThreadExecutionLease retains a captured authority and an OS lease.
 // The descriptor, never a heartbeat timeout, determines execution ownership.
 type DocumentThreadExecutionLease struct {
+	remote          *Store
 	mu              sync.Mutex
 	file            *os.File
-	store           *Store
+	store           *documentStore
 	threadID        string
 	resetGeneration int64
 }
@@ -32,7 +33,7 @@ type threadExecutionDocument struct {
 }
 
 // Admission and reset share a local process lock independently of the selected
-// document backend. Store revision CAS also fences concurrent membership edits.
+// document backend. documentStore revision CAS also fences concurrent membership edits.
 // Lock acquisition and probes stay outside retried document callbacks.
 func acquireThreadAdmission(ctx context.Context, dir string) (*os.File, error) {
 	file, err := securefs.OpenFile(filepath.Join(dir, threadExecutionLeaseDirName, "admission.lock"), os.O_CREATE|os.O_RDWR, securefs.FileMode)
@@ -63,11 +64,11 @@ func acquireThreadAdmission(ctx context.Context, dir string) (*os.File, error) {
 	}
 }
 
-func (s *Store) TryAcquireThreadExecutionLease(sessDir, threadID string) (*DocumentThreadExecutionLease, bool, error) {
+func (s *documentStore) TryAcquireThreadExecutionLease(sessDir, threadID string) (*DocumentThreadExecutionLease, bool, error) {
 	return s.TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID, 0)
 }
 
-func (s *Store) TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID string, limit int) (*DocumentThreadExecutionLease, bool, error) {
+func (s *documentStore) TryAcquireThreadExecutionLeaseWithProjectLimit(sessDir, threadID string, limit int) (*DocumentThreadExecutionLease, bool, error) {
 	sessDir, threadID = strings.TrimSpace(sessDir), strings.TrimSpace(threadID)
 	if sessDir == "" || threadID == "" {
 		return nil, false, errors.New("session directory and thread id are required")
@@ -190,7 +191,7 @@ func checkDocumentProjectCapacity(rows []persistence.Document, dir, threadID str
 	return nil
 }
 
-func (s *Store) RequestThreadExecutionReset(sessDir, threadID string) (bool, error) {
+func (s *documentStore) RequestThreadExecutionReset(sessDir, threadID string) (bool, error) {
 	sessDir, threadID = strings.TrimSpace(sessDir), strings.TrimSpace(threadID)
 	if sessDir == "" || threadID == "" {
 		return false, errors.New("session directory and thread id are required")
@@ -226,6 +227,11 @@ func (l *DocumentThreadExecutionLease) ResetRequested() (bool, error) {
 	defer l.mu.Unlock()
 	if l.file == nil {
 		return false, nil
+	}
+	if l.remote != nil {
+		var requested bool
+		err := l.remote.invoke("ThreadExecutionResetRequested", []any{l.threadID, l.resetGeneration}, []any{&requested})
+		return requested, err
 	}
 	var record threadExecutionDocument
 	err := l.store.transaction(func(tx *persistence.Tx) error {

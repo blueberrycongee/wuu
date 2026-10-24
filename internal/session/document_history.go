@@ -96,29 +96,29 @@ func appendHistoryDocument(tx *persistence.Tx, id string, record HistoryRecord, 
 	return head, tx.Put(documentNamespace("session_history_heads"), id, head)
 }
 
-func (s *Store) AppendHistoryRecord(id string, record HistoryRecord) error {
+func (s *documentStore) AppendHistoryRecord(id string, record HistoryRecord) error {
 	_, err := s.AppendHistoryRecordReturningSeq(id, record)
 	return err
 }
 
-func (s *Store) AppendHistoryRecordReturningSeq(id string, record HistoryRecord) (int, error) {
+func (s *documentStore) AppendHistoryRecordReturningSeq(id string, record HistoryRecord) (int, error) {
 	return s.appendFencedHistoryRecord(id, record, nil, nil, nil)
 }
 
-func (s *Store) AppendControlledHistoryRecord(id string, record HistoryRecord, control *Control) (int, error) {
+func (s *documentStore) AppendControlledHistoryRecord(id string, record HistoryRecord, control *Control) (int, error) {
 	return s.appendFencedHistoryRecord(id, record, control, nil, nil)
 }
 
-func (s *Store) AppendContinuationHistoryRecord(id string, record HistoryRecord, control *Control, baseline Control) (int, error) {
+func (s *documentStore) AppendContinuationHistoryRecord(id string, record HistoryRecord, control *Control, baseline Control) (int, error) {
 	return s.appendFencedHistoryRecord(id, record, control, &baseline, nil)
 }
 
-func (s *Store) AppendAcceptedUserHistoryRecord(id string, record HistoryRecord, accepted HeldUserWork) (int, error) {
+func (s *documentStore) AppendAcceptedUserHistoryRecord(id string, record HistoryRecord, accepted HeldUserWork) (int, error) {
 	record.ExpectedHeldMessage = accepted.MessageJSON
 	return s.appendFencedHistoryRecord(id, record, nil, nil, &accepted)
 }
 
-func (s *Store) appendFencedHistoryRecord(id string, record HistoryRecord, control, baseline *Control, accepted *HeldUserWork) (int, error) {
+func (s *documentStore) appendFencedHistoryRecord(id string, record HistoryRecord, control, baseline *Control, accepted *HeldUserWork) (int, error) {
 	now := time.Now().UTC()
 	var seq int
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -166,12 +166,12 @@ func (s *Store) appendFencedHistoryRecord(id string, record HistoryRecord, contr
 	return seq, err
 }
 
-func (s *Store) AppendHistoryRecords(id string, records []HistoryRecord) error {
+func (s *documentStore) AppendHistoryRecords(id string, records []HistoryRecord) error {
 	_, _, err := s.AppendHistoryRecordsReturningRange(id, records)
 	return err
 }
 
-func (s *Store) AppendHistoryRecordsReturningRange(id string, records []HistoryRecord) (int, int, error) {
+func (s *documentStore) AppendHistoryRecordsReturningRange(id string, records []HistoryRecord) (int, int, error) {
 	if len(records) == 0 {
 		return 0, 0, nil
 	}
@@ -197,7 +197,7 @@ func (s *Store) AppendHistoryRecordsReturningRange(id string, records []HistoryR
 	return first, last, err
 }
 
-func (s *Store) RewriteHistoryRecords(id string, records []HistoryRecord) error {
+func (s *documentStore) RewriteHistoryRecords(id string, records []HistoryRecord) error {
 	now := time.Now().UTC()
 	return s.transaction(func(tx *persistence.Tx) error {
 		sess, err := requireSessionDocument(tx, id)
@@ -259,15 +259,15 @@ func loadHistoryDocuments(tx *persistence.Tx, id string, includeMeta, activeOnly
 	return result, nil
 }
 
-func (s *Store) LoadHistoryRecords(id string, includeMeta bool) ([]HistoryRecord, error) {
+func (s *documentStore) LoadHistoryRecords(id string, includeMeta bool) ([]HistoryRecord, error) {
 	return s.loadHistoryRecords(id, includeMeta, false)
 }
 
-func (s *Store) LoadActiveHistoryRecords(id string, includeMeta bool) ([]HistoryRecord, error) {
+func (s *documentStore) LoadActiveHistoryRecords(id string, includeMeta bool) ([]HistoryRecord, error) {
 	return s.loadHistoryRecords(id, includeMeta, true)
 }
 
-func (s *Store) loadHistoryRecords(id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
+func (s *documentStore) loadHistoryRecords(id string, includeMeta, activeOnly bool) ([]HistoryRecord, error) {
 	var result []HistoryRecord
 	err := s.transaction(func(tx *persistence.Tx) error {
 		if _, err := requireSessionDocument(tx, id); err != nil {
@@ -289,7 +289,7 @@ func latestCheckpointDocument(tx *persistence.Tx, id string) (HistoryCheckpoint,
 	return checkpoint, found, err
 }
 
-func (s *Store) LatestHistoryCheckpoint(id string) (HistoryCheckpoint, bool, error) {
+func (s *documentStore) LatestHistoryCheckpoint(id string) (HistoryCheckpoint, bool, error) {
 	id = strings.TrimSpace(id)
 	var result HistoryCheckpoint
 	var found bool
@@ -304,7 +304,7 @@ func (s *Store) LatestHistoryCheckpoint(id string) (HistoryCheckpoint, bool, err
 	return result, found, err
 }
 
-func (s *Store) LoadProviderHistorySnapshot(id string) (ProviderHistorySnapshot, error) {
+func (s *documentStore) LoadProviderHistorySnapshot(id string) (ProviderHistorySnapshot, error) {
 	id = strings.TrimSpace(id)
 	var result ProviderHistorySnapshot
 	err := s.transaction(func(tx *persistence.Tx) error {

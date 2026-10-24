@@ -27,7 +27,7 @@ func (d *boundedSessionDocuments) Read(ctx context.Context, q persistence.Query)
 // Historical pages must seek physical sequence ranges rather than hydrate the
 // entire thread; list ordering/index updates and revision cursors survive restarts.
 func TestDocumentBoundedPages(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		now := time.Now().UTC()
 		for i := 0; i < 30; i++ {
 			if _, err := store.CreateInitialized(Session{ID: fmt.Sprintf("s%02d", i), UpdatedAt: now.Add(time.Duration(i) * time.Minute)}, nil); err != nil {
@@ -46,7 +46,7 @@ func TestDocumentBoundedPages(t *testing.T) {
 		}
 		restartSessionStore(t, store)
 		bounded := &boundedSessionDocuments{Documents: store.documents}
-		reader := NewStore(context.Background(), bounded)
+		reader := newDocumentStore(context.Background(), bounded)
 		page, err := reader.ReadHistoryPage("s29", 300, 3)
 		if err != nil || len(page.Records) != 3 || page.Records[0].Seq != 300 || !page.HasMore {
 			t.Fatalf("history: %+v %v", page, err)
@@ -88,7 +88,7 @@ func TestDocumentBoundedPages(t *testing.T) {
 }
 
 func TestDocumentIndexUpgradeIsExplicit(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if err := store.transaction(func(tx *persistence.Tx) error {
 			return tx.Put(documentNamespace("sessions"), "before-index", Session{ID: "before-index", CreatedAt: time.Now().UTC()})
 		}); err != nil {

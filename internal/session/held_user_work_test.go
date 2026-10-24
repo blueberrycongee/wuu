@@ -6,7 +6,7 @@ import (
 )
 
 func TestHeldUserWorkRoundTripDeleteAndCascade(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sess, err := store.Create()
 		if err != nil {
 			t.Fatal(err)
@@ -60,7 +60,7 @@ func TestHeldUserWorkRoundTripDeleteAndCascade(t *testing.T) {
 }
 
 func TestReplaceHeldUserWorkRollsBackInvalidReplacement(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sess, err := store.Create()
 		if err != nil {
 			t.Fatal(err)

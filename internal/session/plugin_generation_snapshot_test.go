@@ -5,7 +5,7 @@ import (
 )
 
 func TestPluginGenerationSnapshotPersistsPerSession(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("s1", "/work"); err != nil {
 			t.Fatalf("create s1: %v", err)
 		}

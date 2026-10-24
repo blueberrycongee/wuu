@@ -13,7 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
-func (s *Store) LoadDriverBinding(sessionID string) (pluginprotocol.DriverBinding, bool, error) {
+func (s *documentStore) LoadDriverBinding(sessionID string) (pluginprotocol.DriverBinding, bool, error) {
 	var binding pluginprotocol.DriverBinding
 	var found bool
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -27,7 +27,7 @@ func (s *Store) LoadDriverBinding(sessionID string) (pluginprotocol.DriverBindin
 	return binding, found, err
 }
 
-func (s *Store) BindDriver(sessionID string, binding pluginprotocol.DriverBinding) error {
+func (s *documentStore) BindDriver(sessionID string, binding pluginprotocol.DriverBinding) error {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(binding.Profile) == "" || strings.TrimSpace(binding.ProviderID) == "" || strings.TrimSpace(binding.DriverID) == "" || strings.TrimSpace(binding.DriverVersion) == "" || binding.ContractVersion < 1 {
 		return errors.New("complete loop driver binding is required")
 	}
@@ -58,7 +58,7 @@ func (s *Store) BindDriver(sessionID string, binding pluginprotocol.DriverBindin
 	})
 }
 
-func (s *Store) LoadDriverCheckpoint(sessionID string) (DriverCheckpointRecord, bool, error) {
+func (s *documentStore) LoadDriverCheckpoint(sessionID string) (DriverCheckpointRecord, bool, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return DriverCheckpointRecord{}, false, errors.New("driver checkpoint session id is required")
@@ -76,7 +76,7 @@ func (s *Store) LoadDriverCheckpoint(sessionID string) (DriverCheckpointRecord, 
 	return result, found, err
 }
 
-func (s *Store) SaveDriverCheckpoint(sessionID string, record DriverCheckpointRecord) error {
+func (s *documentStore) SaveDriverCheckpoint(sessionID string, record DriverCheckpointRecord) error {
 	sessionID, record.DriverID, record.DriverVersion = strings.TrimSpace(sessionID), strings.TrimSpace(record.DriverID), strings.TrimSpace(record.DriverVersion)
 	if sessionID == "" || record.DriverID == "" || record.DriverVersion == "" || record.ContractVersion < 1 {
 		return errors.New("complete driver checkpoint identity is required")
@@ -103,7 +103,7 @@ func (s *Store) SaveDriverCheckpoint(sessionID string, record DriverCheckpointRe
 	})
 }
 
-func (s *Store) SetHistoryEngineTurnID(id string, seq int, ref, turnID string, pending bool) error {
+func (s *documentStore) SetHistoryEngineTurnID(id string, seq int, ref, turnID string, pending bool) error {
 	turnID = strings.TrimSpace(turnID)
 	if strings.TrimSpace(ref) == "" || seq <= 0 {
 		return errors.New("native turn boundary requires a persisted prompt and session")
@@ -140,7 +140,7 @@ type modelReceiptDocument struct {
 	CreatedAt       time.Time
 }
 
-func (s *Store) SaveModelInputReceipt(sessionID string, record ModelInputReceiptRecord) error {
+func (s *documentStore) SaveModelInputReceipt(sessionID string, record ModelInputReceiptRecord) error {
 	sessionID, record.OperationID = strings.TrimSpace(sessionID), strings.TrimSpace(record.OperationID)
 	record.DriverID, record.DriverVersion = strings.TrimSpace(record.DriverID), strings.TrimSpace(record.DriverVersion)
 	if sessionID == "" || record.OperationID == "" || record.DriverID == "" || record.DriverVersion == "" || record.ContractVersion < 1 {
@@ -196,7 +196,7 @@ func readModelReceiptDocuments(tx *persistence.Tx, sessionID string) ([]modelRec
 	return rows, err
 }
 
-func (s *Store) LoadModelInputReceipts(sessionID string) ([]ModelInputReceiptRecord, error) {
+func (s *documentStore) LoadModelInputReceipts(sessionID string) ([]ModelInputReceiptRecord, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil, errors.New("model input receipt session id is required")

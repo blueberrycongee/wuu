@@ -130,7 +130,7 @@ func TestLegacyDomainMigrationParity(t *testing.T) {
 			if !bytes.Equal(originalBytes, afterBytes) {
 				t.Fatal("migration changed legacy source bytes")
 			}
-			store := NewStore(ctx, documents)
+			store := newDocumentStore(ctx, documents)
 			equal := func(label string, got, want any, err error) {
 				t.Helper()
 				if err != nil || !reflect.DeepEqual(got, want) {

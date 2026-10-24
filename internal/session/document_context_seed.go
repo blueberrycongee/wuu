@@ -47,7 +47,7 @@ func putContextSeedDocument(tx *persistence.Tx, seed ContextSeed) (ContextSeed, 
 	return seed, tx.Put(documentNamespace("context_seeds"), seed.ID, seed)
 }
 
-func (s *Store) PutContextSeed(seed ContextSeed) (ContextSeed, error) {
+func (s *documentStore) PutContextSeed(seed ContextSeed) (ContextSeed, error) {
 	seed = prepareContextSeed(seed, time.Now().UTC())
 	var result ContextSeed
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -58,7 +58,7 @@ func (s *Store) PutContextSeed(seed ContextSeed) (ContextSeed, error) {
 	return result, err
 }
 
-func (s *Store) LoadContextSeed(id string) (ContextSeed, bool, error) {
+func (s *documentStore) LoadContextSeed(id string) (ContextSeed, bool, error) {
 	var result ContextSeed
 	var found bool
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -116,7 +116,7 @@ func putSessionLaunchDocument(tx *persistence.Tx, record SessionLaunchRecord) (S
 	return record, tx.Put(documentNamespace("session_launches"), record.RequestID, record)
 }
 
-func (s *Store) PutSessionLaunch(record SessionLaunchRecord) (SessionLaunchRecord, error) {
+func (s *documentStore) PutSessionLaunch(record SessionLaunchRecord) (SessionLaunchRecord, error) {
 	record = prepareSessionLaunch(record, time.Now().UTC())
 	var result SessionLaunchRecord
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -127,7 +127,7 @@ func (s *Store) PutSessionLaunch(record SessionLaunchRecord) (SessionLaunchRecor
 	return result, err
 }
 
-func (s *Store) LoadSessionLaunch(requestID string) (SessionLaunchRecord, bool, error) {
+func (s *documentStore) LoadSessionLaunch(requestID string) (SessionLaunchRecord, bool, error) {
 	var result SessionLaunchRecord
 	var found bool
 	err := s.transaction(func(tx *persistence.Tx) error {

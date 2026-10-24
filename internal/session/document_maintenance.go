@@ -12,7 +12,7 @@ import (
 // MaintainModelInputReceipts applies diagnostic retention to the captured
 // provider. Physical encoding/reclamation belongs to that provider; this policy
 // never prunes conversation history, checkpoints, or the legacy source archive.
-func (s *Store) MaintainModelInputReceipts(now time.Time) (ModelInputReceiptMaintenanceResult, error) {
+func (s *documentStore) MaintainModelInputReceipts(now time.Time) (ModelInputReceiptMaintenanceResult, error) {
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
@@ -76,7 +76,7 @@ func (s *Store) MaintainModelInputReceipts(now time.Time) (ModelInputReceiptMain
 // MaintainRedundantStorage removes only reproducible legacy text projections.
 // Current checkpoint replacement already keeps one authoritative document;
 // tool-ledger projection/retention is owned by the tool domain.
-func (s *Store) MaintainRedundantStorage() (RedundantStorageMaintenanceResult, error) {
+func (s *documentStore) MaintainRedundantStorage() (RedundantStorageMaintenanceResult, error) {
 	var result RedundantStorageMaintenanceResult
 	err := s.transaction(func(tx *persistence.Tx) error {
 		result = RedundantStorageMaintenanceResult{}

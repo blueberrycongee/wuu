@@ -420,7 +420,7 @@ func TestLegacySessionMigration(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer documents.Close()
-			store := NewStore(ctx, documents)
+			store := newDocumentStore(ctx, documents)
 			got, found, err := store.Find(original.ID)
 			if err != nil || !found || got.ArchivedAt == nil {
 				t.Fatalf("session: %+v %v %v", got, found, err)
@@ -515,7 +515,7 @@ func TestLegacyMigrationRejectsConflictingTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer documents.Close()
-	store := NewStore(ctx, documents)
+	store := newDocumentStore(ctx, documents)
 	if _, err := store.Create("already-owned"); err != nil {
 		t.Fatal(err)
 	}
@@ -567,7 +567,7 @@ func TestLegacyMigrationRecoversUncertainCommit(t *testing.T) {
 }
 
 func TestLegacyMigrationRecorded(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		documents := &boundedSessionDocuments{Documents: store.documents}
 		recorded, err := LegacySQLiteMigrationRecorded(context.Background(), documents)
 		if err != nil || recorded {

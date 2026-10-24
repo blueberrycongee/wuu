@@ -3,7 +3,7 @@ package session
 import "testing"
 
 func TestSetEngineRoundTrip(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sess, err := store.CreateWithMetadata("engine-binding", t.TempDir())
 		if err != nil {
 			t.Fatal(err)

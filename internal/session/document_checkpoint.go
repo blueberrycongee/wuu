@@ -9,12 +9,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (s *Store) RewriteHistoryRecordsAtBaseline(id string, records []HistoryRecord, baselineSeq int) error {
+func (s *documentStore) RewriteHistoryRecordsAtBaseline(id string, records []HistoryRecord, baselineSeq int) error {
 	_, err := s.StoreHistoryCheckpointAtBaseline(id, HistoryCheckpointKindProviderRewrite, records, baselineSeq)
 	return err
 }
 
-func (s *Store) RewriteHistoryRecordsForEdit(id string, records []HistoryRecord, fromSeq, baselineSeq int) error {
+func (s *documentStore) RewriteHistoryRecordsForEdit(id string, records []HistoryRecord, fromSeq, baselineSeq int) error {
 	if fromSeq <= 0 || fromSeq > baselineSeq {
 		return fmt.Errorf("invalid history edit range %d..%d", fromSeq, baselineSeq)
 	}
@@ -22,18 +22,18 @@ func (s *Store) RewriteHistoryRecordsForEdit(id string, records []HistoryRecord,
 	return err
 }
 
-func (s *Store) StoreHistoryCheckpointAtBaseline(id, kind string, replacement []HistoryRecord, baselineSeq int) (HistoryCheckpoint, error) {
+func (s *documentStore) StoreHistoryCheckpointAtBaseline(id, kind string, replacement []HistoryRecord, baselineSeq int) (HistoryCheckpoint, error) {
 	return s.storeHistoryCheckpointAtBaseline(id, kind, replacement, baselineSeq, nil, 0, nil)
 }
 
-func (s *Store) StoreContextWindow(id string, replacement []HistoryRecord, baselineSeq int, note CompactionNote) (HistoryCheckpoint, error) {
+func (s *documentStore) StoreContextWindow(id string, replacement []HistoryRecord, baselineSeq int, note CompactionNote) (HistoryCheckpoint, error) {
 	if strings.TrimSpace(note.ProviderKey) == "" {
 		return HistoryCheckpoint{}, errors.New("context window requires a note provider key")
 	}
 	return s.storeHistoryCheckpointAtBaseline(id, "context_window", replacement, baselineSeq, &note, 0, nil)
 }
 
-func (s *Store) RewriteHistoryRecordsForEngineEdit(id string, records []HistoryRecord, fromSeq, baselineSeq int, oldRef, newRef string) error {
+func (s *documentStore) RewriteHistoryRecordsForEngineEdit(id string, records []HistoryRecord, fromSeq, baselineSeq int, oldRef, newRef string) error {
 	if fromSeq <= 0 || fromSeq > baselineSeq || oldRef == "" || newRef == "" || oldRef == newRef {
 		return errors.New("invalid native history edit")
 	}
@@ -41,7 +41,7 @@ func (s *Store) RewriteHistoryRecordsForEngineEdit(id string, records []HistoryR
 	return err
 }
 
-func (s *Store) storeHistoryCheckpointAtBaseline(id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote, retractFromSeq int, engineRefs *[2]string) (HistoryCheckpoint, error) {
+func (s *documentStore) storeHistoryCheckpointAtBaseline(id, kind string, replacement []HistoryRecord, baselineSeq int, note *CompactionNote, retractFromSeq int, engineRefs *[2]string) (HistoryCheckpoint, error) {
 	id, kind = strings.TrimSpace(id), strings.TrimSpace(kind)
 	if baselineSeq < 0 {
 		return HistoryCheckpoint{}, fmt.Errorf("history checkpoint baseline must be non-negative: %d", baselineSeq)
@@ -150,7 +150,7 @@ func (s *Store) storeHistoryCheckpointAtBaseline(id, kind string, replacement []
 	return result, err
 }
 
-func (s *Store) LoadCompactionNote(sessionID, providerKey string) (CompactionNote, bool, error) {
+func (s *documentStore) LoadCompactionNote(sessionID, providerKey string) (CompactionNote, bool, error) {
 	sessionID, providerKey = strings.TrimSpace(sessionID), strings.TrimSpace(providerKey)
 	if sessionID == "" || providerKey == "" {
 		return CompactionNote{}, false, errors.New("session id and compaction provider key are required")
@@ -180,7 +180,7 @@ func prepareCompactionNote(note CompactionNote) (CompactionNote, error) {
 	return note, nil
 }
 
-func (s *Store) StoreCompactionNote(note CompactionNote) error {
+func (s *documentStore) StoreCompactionNote(note CompactionNote) error {
 	note, err := prepareCompactionNote(note)
 	if err != nil {
 		return err
@@ -193,7 +193,7 @@ func (s *Store) StoreCompactionNote(note CompactionNote) error {
 	})
 }
 
-func (s *Store) CompareAndSwapCompactionNote(expected CompactionNote, expectedExists bool, replacement CompactionNote) (bool, error) {
+func (s *documentStore) CompareAndSwapCompactionNote(expected CompactionNote, expectedExists bool, replacement CompactionNote) (bool, error) {
 	replacement, err := prepareCompactionNote(replacement)
 	if err != nil {
 		return false, err

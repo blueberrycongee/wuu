@@ -7,10 +7,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (s *Store) Delete(id string) (Session, error)         { return s.deleteSession(id, false) }
-func (s *Store) DeleteArchived(id string) (Session, error) { return s.deleteSession(id, true) }
+func (s *documentStore) Delete(id string) (Session, error)         { return s.deleteSession(id, false) }
+func (s *documentStore) DeleteArchived(id string) (Session, error) { return s.deleteSession(id, true) }
 
-func (s *Store) deleteSession(id string, onlyIfArchived bool) (Session, error) {
+func (s *documentStore) deleteSession(id string, onlyIfArchived bool) (Session, error) {
 	id = strings.TrimSpace(id)
 	var deleted Session
 	err := s.transaction(func(tx *persistence.Tx) error {

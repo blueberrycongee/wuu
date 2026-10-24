@@ -15,7 +15,7 @@ import (
 )
 
 func TestThreadExecutionLeaseExcludesContendersAndKeepsSidecar(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sessDir := t.TempDir()
 		threadID := "thread/with unsafe path characters"
 
@@ -74,7 +74,7 @@ func TestThreadExecutionLeaseExcludesContendersAndKeepsSidecar(t *testing.T) {
 }
 
 func TestThreadExecutionResetTargetsOnlyCurrentLease(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sessDir := t.TempDir()
 		threadID := "resettable-thread"
 
@@ -129,7 +129,7 @@ func TestThreadExecutionResetTargetsOnlyCurrentLease(t *testing.T) {
 }
 
 func TestThreadExecutionLeaseReleasedWhenHolderProcessExits(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sessDir := t.TempDir()
 		threadID := "process-owned-thread"
 		cmd := exec.Command(os.Args[0], "-test.run=^TestThreadExecutionLeaseProcessHelper$")
@@ -219,7 +219,7 @@ func TestThreadExecutionLeaseProcessHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer documents.Close()
-	store := NewStore(context.Background(), documents)
+	store := newDocumentStore(context.Background(), documents)
 	lease, acquired, err := store.TryAcquireThreadExecutionLease(
 		os.Getenv("WUU_THREAD_EXECUTION_LEASE_DIR"),
 		os.Getenv("WUU_THREAD_EXECUTION_LEASE_ID"),

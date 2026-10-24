@@ -12,7 +12,7 @@ import (
 // Admission is durable and immutable, races select one writer, checkpoints
 // cannot cross identities, and forks inherit identity without execution state.
 func TestDriverBindingAdmission(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.Create("session"); err != nil {
 			t.Fatal(err)
 		}

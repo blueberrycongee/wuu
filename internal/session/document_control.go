@@ -7,7 +7,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (s *Store) ReadControl(id string) (Control, bool, error) {
+func (s *documentStore) ReadControl(id string) (Control, bool, error) {
 	var control Control
 	var found bool
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -18,7 +18,7 @@ func (s *Store) ReadControl(id string) (Control, bool, error) {
 	return control, found, err
 }
 
-func (s *Store) ListControls() (map[string]Control, error) {
+func (s *documentStore) ListControls() (map[string]Control, error) {
 	var result map[string]Control
 	err := s.transaction(func(tx *persistence.Tx) error {
 		rows, err := readDocumentRows[Control](tx, "session_controls", "")
@@ -34,7 +34,7 @@ func (s *Store) ListControls() (map[string]Control, error) {
 	return result, err
 }
 
-func (s *Store) ChangeControl(id, manager, state string, expected int64) (Control, error) {
+func (s *documentStore) ChangeControl(id, manager, state string, expected int64) (Control, error) {
 	if id == "" || manager == "" {
 		return Control{}, errors.New("session and manager are required")
 	}
@@ -72,7 +72,7 @@ func validateControlDocument(tx *persistence.Tx, expected Control) error {
 	return nil
 }
 
-func (s *Store) ValidateControl(expected Control) error {
+func (s *documentStore) ValidateControl(expected Control) error {
 	return s.transaction(func(tx *persistence.Tx) error { return validateControlDocument(tx, expected) })
 }
 
@@ -84,6 +84,6 @@ func validateContinuationDocument(tx *persistence.Tx, baseline Control) error {
 	return validateContinuationBaseline(current, baseline)
 }
 
-func (s *Store) ValidateContinuationControl(baseline Control) error {
+func (s *documentStore) ValidateContinuationControl(baseline Control) error {
 	return s.transaction(func(tx *persistence.Tx) error { return validateContinuationDocument(tx, baseline) })
 }

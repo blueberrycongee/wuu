@@ -16,7 +16,8 @@ import (
 // InferenceJournalRuntime holds one generation's authority for its lifetime.
 // Its owner releases the provider only after Close drains admitted journal work.
 type InferenceJournalRuntime struct {
-	store                             *Store
+	remote                            *remoteJournalRuntime
+	store                             *documentStore
 	workspaceScope, runtimeID         string
 	stop, heartbeatDone, progressDone chan struct{}
 	closeOnce                         sync.Once
@@ -51,7 +52,7 @@ type documentInferenceJournal struct {
 	ownerID string
 }
 
-func (s *Store) NewInferenceJournalRuntime(workspaceScope string) (*InferenceJournalRuntime, error) {
+func (s *documentStore) NewInferenceJournalRuntime(workspaceScope string) (*InferenceJournalRuntime, error) {
 	workspaceScope = journalText(workspaceScope, 512)
 	if workspaceScope == "" {
 		return nil, errors.New("inference journal workspace scope is required")
@@ -135,6 +136,10 @@ func (r *InferenceJournalRuntime) heartbeat(tx *persistence.Tx, stamp int64, clo
 }
 
 func (r *InferenceJournalRuntime) Close() error {
+	if r != nil && r.remote != nil {
+		r.closeOnce.Do(func() { r.closeErr = r.remote.invoke("Close", nil, []any{}) })
+		return r.closeErr
+	}
 	if r == nil {
 		return nil
 	}
@@ -153,6 +158,9 @@ func (r *InferenceJournalRuntime) Close() error {
 }
 
 func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJournal {
+	if r != nil && r.remote != nil {
+		return &remoteInferenceJournal{r.remote, ownerID}
+	}
 	if r == nil {
 		return nil
 	}

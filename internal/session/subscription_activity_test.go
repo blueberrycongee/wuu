@@ -7,7 +7,7 @@ import (
 )
 
 func TestLatestSubscriptionActivityUsesRequestTimeAndIgnoresNewEmptySessions(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		older, err := store.CreateWithMetadata("older-codex", "/tmp/project")
 		if err != nil {
 			t.Fatal(err)
@@ -105,7 +105,7 @@ func TestLatestSubscriptionActivityUsesRequestTimeAndIgnoresNewEmptySessions(t *
 }
 
 func TestLatestSubscriptionActivityMissingStore(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		got, err := store.LatestSubscriptionActivity([]SubscriptionActivityKey{{EngineID: "codex"}})
 		if err != nil {
 			t.Fatal(err)
@@ -117,7 +117,7 @@ func TestLatestSubscriptionActivityMissingStore(t *testing.T) {
 }
 
 func TestSubscriptionUsageTracksRecordedProviderAcrossSelectionChanges(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sess, err := store.CreateWithMetadata("usage", t.TempDir())
 		if err != nil {
 			t.Fatal(err)
@@ -175,7 +175,7 @@ func TestSubscriptionUsageTracksRecordedProviderAcrossSelectionChanges(t *testin
 }
 
 func TestSubscriptionLatestRequestDoesNotMixTurnsOrProviders(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		sess, err := store.CreateWithMetadata("switching", t.TempDir())
 		if err != nil {
 			t.Fatal(err)

@@ -10,7 +10,7 @@ import (
 // Admission contracts:
 // competing admissions share one bound, mutation ownership is conservative,
 // membership is durable, and coordination sessions remain outside the pool.
-func createProjectCapacityMember(t *testing.T, store *Store, id, project, role string) {
+func createProjectCapacityMember(t *testing.T, store *documentStore, id, project, role string) {
 	t.Helper()
 	_, err := store.CreateInitialized(Session{ID: id, Source: "project-session", ParentID: project, ProjectRole: role}, nil)
 	if err != nil {
@@ -21,7 +21,7 @@ func createProjectCapacityMember(t *testing.T, store *Store, id, project, role s
 func TestProjectExecutionCapacityAtomicContenders(t *testing.T) {
 	for _, limit := range []int{1, 2} {
 		t.Run(fmt.Sprint(limit), func(t *testing.T) {
-			forEachSessionStore(t, func(t *testing.T, store *Store) {
+			forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 				dir := t.TempDir()
 				for i := 0; i < limit+2; i++ {
 					createProjectCapacityMember(t, store, fmt.Sprint(i), "project", "worker")
@@ -71,7 +71,7 @@ func TestProjectExecutionCapacityAtomicContenders(t *testing.T) {
 }
 
 func TestProjectExecutionCapacityMembershipAndMutation(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		dir := t.TempDir()
 		createProjectCapacityMember(t, store, "held", "p", "worker")
 		createProjectCapacityMember(t, store, "target", "p", "")
@@ -155,7 +155,7 @@ func TestProjectExecutionCapacityMembershipAndMutation(t *testing.T) {
 }
 
 func TestProjectExecutionAdmissionMutationAndRelease(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		dir := t.TempDir()
 		for _, id := range []string{"a", "b"} {
 			if _, err := store.CreateInitialized(Session{ID: id, Source: "project-session", ParentID: "p"}, nil); err != nil {
