@@ -23,7 +23,7 @@ function draftTarget(snapshot: ApplicationSnapshotV1): DraftTarget | undefined {
     drafts.primary.ownerTabId, drafts.secondary.ownerTabId]), tabId: owner, pane };
 }
 
-export function AppContextCaptureHost({ application }: { application: ApplicationServiceV1 }): JSX.Element | null {
+export function AppContextCaptureHost({ application }: { application: Pick<ApplicationServiceV1, "getSnapshot" | "subscribe" | "invoke" | "settingsControls"> }): JSX.Element | null {
   const { t } = useI18n();
   const [error, setError] = useState("");
   const refreshGeneration = useRef(0);

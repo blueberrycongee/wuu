@@ -49,7 +49,7 @@ function draftStructure(drafts: ApplicationDraftsSnapshotV1): string {
 }
 
 /** UI drafts mirror application-owned resources; only input-critical rendering is delayed. */
-export function useComposerDraftState(application: ApplicationServiceV1): ComposerDraftStateController {
+export function useComposerDraftState(application: Pick<ApplicationServiceV1, "getSnapshot" | "subscribe" | "invoke">): ComposerDraftStateController {
   const syncRef = useRef<(force?: boolean) => void>(() => {});
   const [attachments] = useState(() => createApplicationComposerAttachments(application, () => syncRef.current(true)));
   const read = (draft: ApplicationComposerDraftV1): ComposerDraftState => {

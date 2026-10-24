@@ -14,7 +14,7 @@ export function useWorkspaceToolState({
   rightPanelGlobalized,
   setRightPanelOpenWithMotion
 }: {
-  application: ApplicationServiceV1;
+  application: Pick<ApplicationServiceV1, "getSnapshot" | "subscribe" | "invoke">;
   rightPanelOpen: boolean;
   rightPanelGlobalized: boolean;
   setRightPanelOpenWithMotion: (open: boolean) => void;

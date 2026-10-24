@@ -6,7 +6,7 @@ type Attachment = ComposerImage | ComposerFile;
 
 /** Remove this adapter when the attachment tray and send helpers consume SDK resources directly. */
 export function createApplicationComposerAttachments(
-  application: ApplicationServiceV1,
+  application: Pick<ApplicationServiceV1, "invoke">,
   changed: (kind: ApplicationAttachmentV1["kind"], value: Attachment) => void,
 ): { read: (descriptor: ApplicationAttachmentV1) => Attachment; dispose: () => void; resume: () => void; nameFor: (id: string) => string | undefined; retainVisible: (ids: readonly string[]) => void } {
   const values = new Map<string, Attachment>();

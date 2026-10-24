@@ -7,7 +7,7 @@ import { createApplicationComposerAttachments } from "./ApplicationComposerAttac
 
 const pending: ApplicationAttachmentV1 = { id: "file", kind: "file", name: "notes.txt", mediaType: "text/plain", status: "pending" };
 const ready: ApplicationAttachmentV1 = { ...pending, status: "ready", data: "aGVsbG8=" };
-function service(invoke: ReturnType<typeof vi.fn>): ApplicationServiceV1 {
+function service(invoke: ReturnType<typeof vi.fn>): Pick<ApplicationServiceV1, "invoke"> {
   const application = new ApplicationController();
   application.invoke = invoke as ApplicationServiceV1["invoke"];
   return application;

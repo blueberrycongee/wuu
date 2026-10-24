@@ -1,7 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApplicationController } from "./plugins/ApplicationController";
 import type { ComposerDraftState } from "./AppState";
 import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, createThreadSessionTab, initialState, sessionTabDraftForThread, threadSessionTabID, type AppState } from "./AppState";
@@ -17,6 +16,9 @@ import {
 import { clearToasts, ToastViewport } from "./Toast";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
+const originalBridge = window.wuu;
+beforeEach(() => { Object.defineProperty(window, "wuu", { configurable: true, writable: true, value: {} }); });
+
 let mountedRoots: Root[] = [];
 let cleanupCallbacks: Array<() => void> = [];
 
@@ -30,6 +32,7 @@ afterEach(() => {
   clearToasts();
   vi.useRealTimers();
   vi.restoreAllMocks();
+  Object.defineProperty(window, "wuu", { configurable: true, writable: true, value: originalBridge });
 });
 
 async function flushEffects(): Promise<void> {
@@ -37,7 +40,7 @@ async function flushEffects(): Promise<void> {
   await Promise.resolve();
 }
 
-async function renderComposerDraftState(application?: ApplicationServiceV1): Promise<{
+async function renderComposerDraftState(application?: Parameters<typeof useComposerDraftState>[0]): Promise<{
   unmount: () => void;
   get: () => ComposerDraftStateController;
 }> {

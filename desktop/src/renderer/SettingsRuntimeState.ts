@@ -15,7 +15,7 @@ export type SettingsRuntimeState = {
 };
 
 export function useSettingsRuntimeState({ settingsOpen, application }: {
-  settingsOpen: boolean; application: ApplicationServiceV1;
+  settingsOpen: boolean; application: Pick<ApplicationServiceV1, "invoke">;
 }): SettingsRuntimeState {
   const [settingsUsage, setSettingsUsage] = useState<SettingsUsageResponse>();
   const [settingsUsageLoading, setSettingsUsageLoading] = useState(false);
