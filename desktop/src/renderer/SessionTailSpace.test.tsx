@@ -6,7 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { submittedMessageScrollTop, useConversationScrollState } from "./ConversationScrollState";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { ApplicationComposerPresentation } from "./plugins/ApplicationComposerPresentation";
-import { initialState } from "./AppState";
+import { initialState, type AppState } from "./AppState";
 import type { Thread } from "../shared/protocol";
 import { PluginHost } from "./plugins/PluginHost";
 import type { ThreadItem, Turn } from "../shared/protocol";
@@ -66,10 +66,11 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
   api = useConversationScrollState({ activeThreadID: id ?? undefined, activePane: "primary", splitConversation: split, primaryTurns, emptyConversation: !messageID, initialized: true, running, nativeScrollBounce: false });
   const statusThread: Thread = { id: id ?? "a", preview: "", cwd: "/preview", model_provider: "fixture", model: "fixture", status: "idle", created_at: "", updated_at: "",
     turns: [{ id: "status-turn", status: "in_progress", items_view: "full", items: [{ id: "todo", type: "tool_call", display: { capability: "todo" }, arguments: JSON.stringify({ todos: [{ content: "Keep history controls accessible", status: todoComplete ? "completed" : "in_progress" }] }) }] }] };
-  const statusState = React.useRef({ ...initialState, thread: statusThread, threads: [statusThread] });
+  const statusState = React.useRef<AppState>({ ...initialState, thread: statusThread, threads: [statusThread] });
   statusState.current = { ...initialState, thread: statusThread, threads: [statusThread] };
   const presentation = React.useMemo(() => pluginHost ? new ApplicationComposerPresentation({
     getState: () => statusState.current, subscribeState: () => () => {}, getPluginHost: () => pluginHost,
+    updateState: update => { statusState.current = update(statusState.current); },
   }) : undefined, [pluginHost]);
   const composerPresentation = React.useMemo(() => presentation?.createScope(new AbortController().signal), [presentation]);
   React.useEffect(() => () => presentation?.dispose(), [presentation]);
