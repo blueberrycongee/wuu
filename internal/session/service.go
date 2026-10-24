@@ -21,14 +21,19 @@ type Service struct {
 	state     pluginhost.State
 	store     *documentStore
 	resources map[string]domainResource
+	active    sync.WaitGroup
+	pending   map[uint64]context.CancelFunc
+	nextCall  uint64
+	closed    chan struct{}
+	closeErr  error
 }
 type domainResource struct {
 	caller string
-	value  any
+	value  *InferenceJournalRuntime
 }
 
 func NewService(id string, documents persistence.Documents) *Service {
-	return &Service{id: id, state: pluginhost.StatePrepared, store: newDocumentStore(context.Background(), documents), resources: make(map[string]domainResource)}
+	return &Service{id: id, state: pluginhost.StatePrepared, store: newDocumentStore(context.Background(), documents), resources: make(map[string]domainResource), pending: make(map[uint64]context.CancelFunc)}
 }
 func (s *Service) ID() string { return s.id }
 func (s *Service) Status() pluginhost.Status {
@@ -59,21 +64,41 @@ func (s *Service) Activate(ctx context.Context) error {
 	s.state = pluginhost.StateActive
 	return nil
 }
-func (s *Service) Close(context.Context) error {
+
+// Close stops admission and cancels active invocations without holding the state
+// mutex across a dependency call. A deadline reports incomplete cleanup; a later
+// Close can await the same drain. Dependencies must remain retained until it ends.
+func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.state = pluginhost.StateStopped
-	var errs []error
-	for id, r := range s.resources {
-		switch v := r.value.(type) {
-		case *InferenceJournalRuntime:
-			errs = append(errs, v.Close())
-		case *DocumentThreadExecutionLease:
-			errs = append(errs, v.Release())
+	if s.closed == nil {
+		s.state = pluginhost.StateStopped
+		s.closed = make(chan struct{})
+		for _, cancel := range s.pending {
+			cancel()
 		}
-		delete(s.resources, id)
+		go s.drain()
 	}
-	return errors.Join(errs...)
+	closed := s.closed
+	s.mu.Unlock()
+	select {
+	case <-closed:
+		return s.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (s *Service) drain() {
+	s.active.Wait()
+	s.mu.Lock()
+	resources := s.resources
+	s.resources = make(map[string]domainResource)
+	s.mu.Unlock()
+	var errs []error
+	for _, r := range resources {
+		errs = append(errs, r.value.Close())
+	}
+	s.closeErr = errors.Join(errs...)
+	close(s.closed)
 }
 
 var resourceMethods = []string{"Journal.Close", "Journal.ReconcileOrphans", "Journal.Prune", "Journal.PrepareOperation", "Journal.PrepareAttempt", "Journal.UpsertSubmission", "Journal.MarkAttemptFirstEvent", "Journal.PrepareRecoveryAttempt", "Journal.CompleteAttempt", "Journal.CompleteOperation", "Journal.CompleteWorkflow"}
@@ -88,10 +113,17 @@ func containsMethod(methods []string, method string) bool {
 }
 func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.state != pluginhost.StateActive {
+		s.mu.Unlock()
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "session provider is not active"}
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	s.nextCall++
+	callID := s.nextCall
+	s.pending[callID] = cancel
+	s.active.Add(1)
+	s.mu.Unlock()
+	defer func() { cancel(); s.mu.Lock(); delete(s.pending, callID); s.mu.Unlock(); s.active.Done() }()
 	if err := ctx.Err(); err != nil {
 		return nil, encodeDomainError(err)
 	}
@@ -113,38 +145,32 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		if err := json.Unmarshal(request.Args[0], &id); err != nil {
 			return nil, encodeDomainError(err)
 		}
+		s.mu.Lock()
 		r, found := s.resources[id]
+		s.mu.Unlock()
 		if !found || r.caller != p.Caller {
 			return nil, &pluginhost.HostServiceError{Code: "resource_unavailable", Message: "session resource is absent or belongs to another caller"}
 		}
 		request.Args = request.Args[1:]
 		method = strings.SplitN(method, ".", 2)[1]
-		switch value := r.value.(type) {
-		case *InferenceJournalRuntime:
-			if !strings.HasPrefix(p.Method, "Journal.") {
-				return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "wrong resource kind"}
+		receiver = r.value
+		if method != "Close" && method != "ReconcileOrphans" && method != "Prune" {
+			if len(request.Args) < 1 {
+				return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "journal owner is required"}
 			}
-			receiver = value
-			if method != "Close" && method != "ReconcileOrphans" && method != "Prune" {
-				if len(request.Args) < 1 {
-					return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "journal owner is required"}
-				}
-				var owner string
-				if err := json.Unmarshal(request.Args[0], &owner); err != nil {
-					return nil, encodeDomainError(err)
-				}
-				request.Args = request.Args[1:]
-				receiver = value.ForOwner(owner)
+			var owner string
+			if err := json.Unmarshal(request.Args[0], &owner); err != nil {
+				return nil, encodeDomainError(err)
 			}
-		case *DocumentThreadExecutionLease:
-			if !strings.HasPrefix(p.Method, "Lease.") {
-				return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "wrong resource kind"}
-			}
-			receiver = value
+			request.Args = request.Args[1:]
+			journal := r.value.ForOwner(owner).(*documentInferenceJournal)
+			journal.ctx = ctx
+			receiver = journal
 		}
-		if method == "Close" || method == "Release" {
+		if method == "Close" {
 			releaseHandle = id
 		}
+
 	} else if !containsMethod(domainMethods, method) {
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown session domain method"}
 	}
@@ -153,24 +179,20 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		return nil, encodeDomainError(err)
 	}
 	if releaseHandle != "" {
+		s.mu.Lock()
 		delete(s.resources, releaseHandle)
+		s.mu.Unlock()
 	}
 	result := invocationResult{Values: make([]json.RawMessage, len(values))}
 	for i, value := range values {
-		switch v := value.(type) {
-		case *InferenceJournalRuntime:
+		if runtime, ok := value.(*InferenceJournalRuntime); ok {
 			id := NewID()
-			s.resources[id] = domainResource{p.Caller, v}
-			value = resourceHandle{Handle: id, RuntimeID: v.RuntimeID()}
-		case *DocumentThreadExecutionLease:
-			if v == nil {
-				value = nil
-			} else {
-				id := NewID()
-				s.resources[id] = domainResource{p.Caller, v}
-				value = resourceHandle{Handle: id}
-			}
+			s.mu.Lock()
+			s.resources[id] = domainResource{p.Caller, runtime}
+			s.mu.Unlock()
+			value = resourceHandle{Handle: id, RuntimeID: runtime.RuntimeID()}
 		}
+
 		raw, err := marshalDomainValue(value)
 		if err != nil {
 			return nil, encodeDomainError(err)

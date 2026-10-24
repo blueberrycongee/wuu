@@ -48,6 +48,7 @@ type documentSubmissionProgress struct {
 }
 
 type documentInferenceJournal struct {
+	ctx     context.Context
 	runtime *InferenceJournalRuntime
 	ownerID string
 }
@@ -172,7 +173,11 @@ func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJo
 }
 
 func (j *documentInferenceJournal) write(action string, body func(*persistence.Tx) error) error {
-	return j.writeContext(context.Background(), action, body)
+	ctx := j.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return j.writeContext(ctx, action, body)
 }
 
 func (j *documentInferenceJournal) writeContext(ctx context.Context, action string, body func(*persistence.Tx) error) error {

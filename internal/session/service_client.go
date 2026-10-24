@@ -13,6 +13,10 @@ import (
 const ServiceName = "session.domain"
 const DefaultModule = "wuu.session.default"
 
+// ErrOutcomeUnknown means a mutation may have committed. Inspect durable domain
+// state before retrying; a backing storage transaction is not a client contract.
+var ErrOutcomeUnknown = errors.New("session operation outcome is unknown")
+
 // Call invokes a method through one captured service binding. The composition
 // owner retains that binding until all Store resources have been closed.
 type Call func(context.Context, string, json.RawMessage) (json.RawMessage, error)
@@ -86,7 +90,7 @@ var domainErrors = []struct {
 	code string
 	err  error
 }{
-	{"session_admission_changed", errAdmissionChanged}, {"session_not_found", ErrSessionNotFound}, {"session_not_archived", ErrSessionNotArchived},
+	{"session_outcome_unknown", ErrOutcomeUnknown}, {"session_admission_changed", errAdmissionChanged}, {"session_not_found", ErrSessionNotFound}, {"session_not_archived", ErrSessionNotArchived},
 	{"history_unavailable", ErrHistoryUnavailable}, {"history_snapshot_gone", ErrHistorySnapshotGone},
 	{"control_changed", ErrControlChanged}, {"held_work_settled", ErrHeldUserWorkSettled}, {"held_work_unconfirmed", ErrHeldUserWorkUnconfirmed},
 	{"context_seed_invalid", ErrContextSeedInvalid}, {"session_launch_conflict", ErrSessionLaunchConflict}, {"session_launch_not_found", ErrSessionLaunchNotFound},
@@ -98,6 +102,10 @@ var domainErrors = []struct {
 func encodeDomainError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var uncertain *persistence.CommitError
+	if errors.As(err, &uncertain) {
+		return &pluginhost.HostServiceError{Code: "session_outcome_unknown", Message: err.Error()}
 	}
 	var serviceErr *pluginhost.HostServiceError
 	if errors.As(err, &serviceErr) {

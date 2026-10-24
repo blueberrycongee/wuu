@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
@@ -135,12 +136,83 @@ func TestSessionServiceJournalOwnershipAndShutdown(t *testing.T) {
 		if _, err := service.InvokeService(context.Background(), pluginhost.ServiceInvokeParams{Caller: "foreign", Method: "Journal.Close", Params: params}); err == nil {
 			t.Fatal("foreign caller released journal")
 		}
-		resource := service.resources[handle.Handle].value.(*InferenceJournalRuntime)
+		resource := service.resources[handle.Handle].value
 		if err := service.Close(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := resource.beginUse(); err == nil {
 			t.Fatal("provider shutdown left journal active")
+		}
+	})
+}
+
+type blockedDomainDocuments struct {
+	persistence.Documents
+	entered chan struct{}
+	resume  chan struct{}
+}
+
+func (d *blockedDomainDocuments) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	close(d.entered)
+	<-d.resume
+	return d.Documents.Read(ctx, q)
+}
+
+func TestSessionServiceCloseDeadlineDoesNotWaitUnderStateLock(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		documents := &blockedDomainDocuments{Documents: native.documents, entered: make(chan struct{}), resume: make(chan struct{})}
+		service := NewService("blocking", documents)
+		if err := service.Activate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		result := make(chan error, 1)
+		go func() {
+			_, err := service.InvokeService(context.Background(), pluginhost.ServiceInvokeParams{Caller: "test", Method: "Find", Params: json.RawMessage(`{"args":["missing"]}`)})
+			result <- err
+		}()
+		<-documents.entered
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := service.Close(ctx); !errors.Is(err, context.Canceled) {
+			t.Fatalf("close did not honor caller deadline: %v", err)
+		}
+		if service.Status().State != pluginhost.StateStopped {
+			t.Fatal("close did not stop admission")
+		}
+		close(documents.resume)
+		<-result
+		if err := service.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+type lostDomainCommit struct {
+	persistence.Documents
+	lose bool
+}
+
+func (d *lostDomainCommit) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	receipt, err := d.Documents.Commit(ctx, tx)
+	if err == nil && d.lose {
+		return persistence.Receipt{}, errors.New("synthetic lost reply")
+	}
+	return receipt, err
+}
+func TestSessionServiceReportsUnknownDeletionOutcome(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		documents := &lostDomainCommit{Documents: native.documents}
+		client := NewStore(context.Background(), documents)
+		if _, err := client.Create("delete"); err != nil {
+			t.Fatal(err)
+		}
+		documents.lose = true
+		if _, err := client.Delete("delete"); !errors.Is(err, ErrOutcomeUnknown) {
+			t.Fatalf("uncertain deletion lost its recovery category: %v", err)
+		}
+		documents.lose = false
+		if _, found, err := native.Find("delete"); err != nil || found {
+			t.Fatalf("expected committed deletion: %v %v", found, err)
 		}
 	})
 }
