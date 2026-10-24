@@ -44,19 +44,37 @@ func (e *StreamEmitter) Aborted() bool {
 	return e.ctx.Err() != nil
 }
 
-// drainStream discards any events still buffered (or in flight) on an
-// abandoned attempt channel so a producer mid-send can finish, run its defers,
-// and release its lease. It returns immediately; the goroutine ends when the
-// producer closes the channel. A producer that honors the emitter contract
-// closes promptly after cancellation; one that never closes parks this
-// goroutine but cannot leak admission capacity, which is released on the
-// producer side.
-func drainStream(ch <-chan StreamEvent) {
+// drainStream discards the abandoned channel without accounting events again.
+// Register the observer before its runner ends; ordinary model cancellation does
+// not end observation, but the owner's shared observation window can abort it.
+func drainStream(ctx context.Context, ch <-chan StreamEvent) error {
 	if ch == nil {
-		return
+		return nil
+	}
+	ctx, endReceipt, err := BeginModelReceipt(ctx)
+	if err != nil {
+		return err
+	}
+	var observationCtx context.Context
+	var observationDone <-chan struct{}
+	if scope := ModelReceiptScopeFromContext(ctx); scope != nil {
+		observationCtx = scope.ObservationContext()
+		observationDone = observationCtx.Done()
 	}
 	go func() {
-		for range ch {
+		var completionErr error
+		defer func() { endReceipt(completionErr) }()
+		for {
+			select {
+			case _, open := <-ch:
+				if !open {
+					return
+				}
+			case <-observationDone:
+				completionErr = context.Cause(observationCtx)
+				return
+			}
 		}
 	}()
+	return nil
 }

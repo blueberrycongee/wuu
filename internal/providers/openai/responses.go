@@ -99,13 +99,21 @@ func (c *Client) responsesStreamChatSSE(ctx context.Context, payload responsesRe
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	resp, lease, err := c.doSingleResponsesRequest(ctx, c.streamHTTPClient, body, true, payload.ExtraHeaders, payload.Attempt, payload.SubmissionReason)
 	if err != nil {
+		endReceipt(nil)
 		return nil, err
 	}
 
 	ch := make(chan providers.StreamEvent, 64)
-	go c.readResponsesSSE(ctx, resp, lease, ch, state)
+	go func() {
+		defer endReceipt(nil)
+		c.readResponsesSSE(ctx, resp, lease, ch, state)
+	}()
 	return ch, nil
 }
 

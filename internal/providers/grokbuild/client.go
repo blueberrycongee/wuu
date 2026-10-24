@@ -71,6 +71,16 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 }
 
 func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			endReceipt(nil)
+		}
+	}()
 	client, err := c.openAIClient(ctx, req.Model)
 	if err != nil {
 		return nil, err
@@ -80,7 +90,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return nil, credentialError(err)
 	}
 	out := make(chan providers.StreamEvent)
+	started = true
 	go func() {
+		defer endReceipt(nil)
 		defer close(out)
 		for event := range events {
 			if event.Error != nil {

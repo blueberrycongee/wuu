@@ -352,14 +352,22 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		_ = os.WriteFile(dumpPath, body, securefs.FileMode)
 		providers.DebugLogf("StreamChat: dumped request body to %s", dumpPath)
 	}
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	resp, lease, err := c.doSingleMessagesRequest(ctx, sseClient, body, payload.UseDefaultBetas, payload.Betas, req.Attempt, "stream")
 	if err != nil {
+		endReceipt(nil)
 		providers.DebugLogf("StreamChat: error: %v", err)
 		return nil, err
 	}
 
 	ch := make(chan providers.StreamEvent, 64)
-	go c.readSSEStream(ctx, resp, lease, ch)
+	go func() {
+		defer endReceipt(nil)
+		c.readSSEStream(ctx, resp, lease, ch)
+	}()
 	return ch, nil
 }
 
@@ -1331,6 +1339,8 @@ func (c *Client) handleSSEEvent(
 				c.normalizeInclusiveInput(usage)
 			}
 			if usageUpdated {
+				// Keep the physical receipt even when canceled delivery stops the reader.
+				lease.ObserveUsage(usage)
 				if !emit.Send(providers.StreamEvent{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationTokens: usage.CacheCreationTokens, CacheReadTokens: usage.CacheReadTokens, CacheCreationUnknown: usage.CacheCreationUnknown}}) {
 					return true
 				}

@@ -89,21 +89,26 @@ func (c *Client) PrepareInferenceRequest(ctx context.Context, req providers.Chat
 }
 
 func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	cleanup := func() {}
-	if c.bindRequest != nil {
-		var err error
-		ctx, cleanup, err = c.bindRequest(ctx, c.accountID)
-		if err != nil {
-			return nil, err
-		}
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
 	}
+	cleanup := func() {}
 	started := false
 	defer func() {
 		if !started {
 			cleanup()
+			endReceipt(nil)
 		}
 	}()
-	req, err := c.PrepareInferenceRequest(ctx, req)
+	if c.bindRequest != nil {
+		boundCtx, boundCleanup, err := c.bindRequest(ctx, c.accountID)
+		if err != nil {
+			return nil, err
+		}
+		ctx, cleanup = boundCtx, boundCleanup
+	}
+	req, err = c.PrepareInferenceRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -136,6 +141,7 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	out := make(chan providers.StreamEvent, 64)
 	started = true
 	go func() {
+		defer endReceipt(nil)
 		defer cleanup()
 		defer close(out)
 		for event := range events {
@@ -152,6 +158,11 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 // Chat collects the mandatory SSE response, preserving the same completion and
 // failure semantics as StreamChat rather than issuing an unsupported unary call.
 func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	defer endReceipt(nil)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events, err := c.StreamChat(ctx, req)

@@ -117,8 +117,15 @@ func (r *ReliableStreamClient) StreamChat(ctx context.Context, req ChatRequest) 
 	if r == nil || r.inner == nil {
 		return nil, errors.New("stream client is required")
 	}
+	ctx, endReceipt, err := BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make(chan StreamEvent)
-	go r.run(ctx, req, out)
+	go func() {
+		defer endReceipt(nil)
+		r.run(ctx, req, out)
+	}()
 	return out, nil
 }
 
@@ -186,7 +193,9 @@ func (r *ReliableStreamClient) run(ctx context.Context, req ChatRequest, out cha
 			// either the drain or its own ctx select, finishes, and releases
 			// its lease through its defers.
 			cancelAttempt()
-			drainStream(ch)
+			if drainErr := drainStream(ctx, ch); drainErr != nil {
+				err = errors.Join(err, drainErr)
+			}
 			if ctx.Err() != nil {
 				failure := NormalizeFailure(ctx.Err())
 				_ = attempt.Complete(InferenceOutcomeCanceled, failure)

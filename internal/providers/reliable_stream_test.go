@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -163,6 +164,74 @@ func lifecycleEvents(events []StreamEvent) []*StreamLifecycle {
 		}
 	}
 	return out
+}
+
+type heldReceiptStreamClient struct {
+	events <-chan StreamEvent
+}
+
+func (heldReceiptStreamClient) Chat(context.Context, ChatRequest) (ChatResponse, error) {
+	return ChatResponse{}, nil
+}
+
+func (c heldReceiptStreamClient) StreamChat(context.Context, ChatRequest) (<-chan StreamEvent, error) {
+	return c.events, nil
+}
+
+func TestReliableStreamReceiptScopeJoinsAbandonedTail(t *testing.T) {
+	for _, abort := range []bool{false, true} {
+		t.Run(fmt.Sprintf("abort=%v", abort), func(t *testing.T) {
+			source := make(chan StreamEvent, 1)
+			source <- StreamEvent{Type: EventDone}
+			closed := false
+			defer func() {
+				if !closed {
+					close(source)
+				}
+			}()
+			ctx, scope := NewModelReceiptScope(context.Background())
+			client := newReliableTestClient(heldReceiptStreamClient{events: source}, nil)
+			events, err := client.StreamChat(ctx, reliableTestRequest())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Seal immediately: asynchronous launch must already be admitted.
+			scope.Seal()
+			sawDone := false
+			for event := range events {
+				sawDone = sawDone || event.Type == EventDone
+			}
+			if !sawDone {
+				t.Fatal("logical stream did not complete")
+			}
+			select {
+			case <-scope.Done():
+				t.Fatal("logical completion lost the still-open receipt tail")
+			default:
+			}
+			if abort {
+				scope.Abort(context.DeadlineExceeded)
+				if err := scope.Wait(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("owner abort lost incomplete observation: %v", err)
+				}
+				select {
+				case <-scope.Done():
+				case <-time.After(5 * time.Second):
+					t.Fatal("aborted discard observer did not exit")
+				}
+			} else {
+				// The producer closes only after the logical consumer has left.
+				source <- StreamEvent{Type: EventUsage, Usage: &TokenUsage{InputTokens: 3}}
+				close(source)
+				closed = true
+				waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := scope.Wait(waitCtx); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
 }
 
 func TestReliableStreamClientSingleSuccess(t *testing.T) {

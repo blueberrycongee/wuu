@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,16 +11,244 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelrequest"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
+
+type receiptGateBody struct {
+	io.ReadCloser
+	reader       *bufio.Reader
+	pending      string
+	usageReady   chan struct{}
+	releaseUsage chan struct{}
+	closeReady   chan struct{}
+	releaseClose chan struct{}
+	usageOnce    sync.Once
+	closeOnce    sync.Once
+}
+
+func (b *receiptGateBody) Read(p []byte) (int, error) {
+	if b.pending == "" {
+		var frame strings.Builder
+		for {
+			line, err := b.reader.ReadString('\n')
+			frame.WriteString(line)
+			if err != nil && frame.Len() == 0 {
+				return 0, err
+			}
+			if err != nil || line == "\n" {
+				break
+			}
+		}
+		b.pending = frame.String()
+		if strings.Contains(b.pending, `"usage"`) {
+			b.usageOnce.Do(func() {
+				// Bytes have already arrived from the real HTTP body. Hold
+				// decoding, not the network, across logical cancellation.
+				close(b.usageReady)
+				<-b.releaseUsage
+			})
+		}
+	}
+	n := copy(p, b.pending)
+	b.pending = b.pending[n:]
+	return n, nil
+}
+
+func (b *receiptGateBody) Close() error {
+	b.closeOnce.Do(func() {
+		close(b.closeReady)
+		<-b.releaseClose
+	})
+	return b.ReadCloser.Close()
+}
+
+type receiptGateTransport struct {
+	http.RoundTripper
+	body *receiptGateBody
+}
+
+func (tr receiptGateTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	response, err := tr.RoundTripper.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	tr.body.ReadCloser = response.Body
+	tr.body.reader = bufio.NewReader(response.Body)
+	response.Body = tr.body
+	return response, nil
+}
+
+type receiptStreamingClient struct{ *Client }
+
+func (receiptStreamingClient) RequiresStreamingChat() bool { return true }
+
+type receiptProgressJournal struct{ providers.InferenceJournal }
+
+func (receiptProgressJournal) RecordSubmissionProgress(providers.InferenceSubmissionJournalRecord) {}
+
+func TestNativeReceiptScopeWaitsForUsageAndBodyCleanup(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n"+
+			"data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":13,\"output_tokens\":5}}}\n\n")
+	}))
+	defer server.Close()
+	body := &receiptGateBody{usageReady: make(chan struct{}), releaseUsage: make(chan struct{}), closeReady: make(chan struct{}), releaseClose: make(chan struct{})}
+	var releaseUsage, releaseClose sync.Once
+	defer releaseUsage.Do(func() { close(body.releaseUsage) })
+	defer releaseClose.Do(func() { close(body.releaseClose) })
+	httpClient := server.Client()
+	httpClient.Transport = receiptGateTransport{httpClient.Transport, body}
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "fixture", WireAPI: "responses", HTTPClient: httpClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents, err := persistence.Open(context.Background(), t.TempDir(), "jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer documents.Close()
+	journalRuntime, err := session.NewStore(context.Background(), documents).NewInferenceJournalRuntime("native-receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journalRuntime.Close()
+	ctx, cancel := context.WithCancel(providers.WithInferenceJournal(context.Background(), receiptProgressJournal{journalRuntime.ForOwner("owner")}))
+	defer cancel()
+	ctx, scope := providers.NewModelReceiptScope(ctx)
+	request, err := providers.EnsureInferenceExecutionContext(ctx, coordinatedChatRequest(), providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	returned := make(chan error, 1)
+	go func() {
+		_, err := modelrequest.Execute(ctx, receiptStreamingClient{client}, request, modelrequest.Options{})
+		returned <- err
+	}()
+	select {
+	case <-body.usageReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("native reader did not receive the gated usage frame")
+	}
+	initial := request.Execution.Snapshot().Submissions[0]
+	cancel()
+	select {
+	case err := <-returned:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("logical cancellation = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("logical caller waited for the blocked native producer")
+	}
+	scope.Seal()
+	select {
+	case <-scope.Done():
+		t.Error("logical return falsely completed the native receipt producer")
+	default:
+	}
+	expired, stopWait := context.WithTimeout(context.Background(), 0)
+	defer stopWait()
+	if err := scope.Wait(expired); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("held producer did not expose incomplete drain: %v", err)
+	}
+	releaseUsage.Do(func() { close(body.releaseUsage) })
+	select {
+	case <-body.closeReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("native reader did not reach body cleanup")
+	}
+	select {
+	case <-scope.Done():
+		t.Error("lease completion falsely completed blocked body cleanup")
+	default:
+	}
+	releaseClose.Do(func() { close(body.releaseClose) })
+	finishCtx, finishCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer finishCancel()
+	if err := scope.Wait(finishCtx); err != nil {
+		t.Fatal(err)
+	}
+	if err := request.Execution.CheckpointSubmissions(finishCtx); err != nil {
+		t.Fatal(err)
+	}
+	view, err := documents.Read(finishCtx, persistence.Query{Namespace: "wuu.inference_submissions.v1", Keys: []string{initial.ID}})
+	if err != nil || len(view.Documents) != 1 {
+		t.Fatalf("receipt read = %+v, %v", view, err)
+	}
+	var receipt providers.InferenceSubmissionJournalRecord
+	if err := json.Unmarshal(view.Documents[0].Value, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ID != initial.ID || receipt.Outcome != providers.InferenceSubmissionSucceeded || receipt.CostState != providers.InferenceCostKnown || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 13 || receipt.ReportedUsage.OutputTokens != 5 || requests.Load() != 1 {
+		t.Fatalf("late physical receipt lost or replayed: requests=%d receipt=%+v", requests.Load(), receipt)
+	}
+	t.Logf("original submission %s retained actual usage 13/5 after logical cancellation and physical cleanup", receipt.ID)
+}
+
+func TestCanceledChatUsageDeliveryRetainsDecodedReceipt(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for range 64 {
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n")
+		}
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":17,\"completion_tokens\":9}}\n\n")
+	}))
+	defer server.Close()
+	body := &receiptGateBody{usageReady: make(chan struct{}), releaseUsage: make(chan struct{}), closeReady: make(chan struct{}), releaseClose: make(chan struct{})}
+	close(body.releaseClose)
+	var release sync.Once
+	defer release.Do(func() { close(body.releaseUsage) })
+	httpClient := server.Client()
+	httpClient.Transport = receiptGateTransport{httpClient.Transport, body}
+	client, err := New(ClientConfig{BaseURL: server.URL, APIKey: "fixture", HTTPClient: httpClient})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request, err := providers.EnsureInferenceAttemptContext(ctx, coordinatedChatRequest(), providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := client.StreamChat(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-body.usageReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reader did not fill the output buffer before receiving usage")
+	}
+	cancel()
+	release.Do(func() { close(body.releaseUsage) })
+	// Leave the output buffer full until the reader finishes: usage delivery
+	// must fail on cancellation, while the decoded physical receipt survives.
+	select {
+	case <-body.closeReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled full-buffer producer did not release its body")
+	}
+	for range events {
+	}
+	receipt := request.Execution.Snapshot().Submissions[0]
+	if receipt.Outcome != providers.InferenceSubmissionAbandoned || receipt.CostState != providers.InferenceCostKnown || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 17 || receipt.ReportedUsage.OutputTokens != 9 {
+		t.Fatalf("decoded usage was lost when delivery canceled: %+v", receipt)
+	}
+}
 
 func TestChat_SendsRequestAndParsesToolCall(t *testing.T) {
 	t.Helper()

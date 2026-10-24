@@ -18,6 +18,29 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+func TestCanceledUsageDeliveryRetainsAnthropicReceipt(t *testing.T) {
+	execution := providers.NewInferenceExecution(providers.NewInferenceOperation(providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive))
+	lease := &providers.ProviderLease{}
+	if _, err := lease.RecordSubmission(execution.BeginAttempt(), providers.InferenceSubmissionMeta{Transport: "http"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	emit := providers.NewStreamEmitter(ctx, make(chan providers.StreamEvent))
+	client := &Client{}
+	usage := providers.TokenUsage{}
+	stopReason := ""
+	stopped, failed := false, false
+	if !client.handleSSEEvent(providers.SSEEvent{Event: "message_delta", Data: `{"usage":{"input_tokens":17,"output_tokens":9}}`}, &usage, &stopReason, nil, lease, emit, &stopped, &failed) {
+		t.Fatal("canceled delivery did not stop the producer")
+	}
+	lease.Release()
+	receipt := execution.Snapshot().Submissions[0]
+	if receipt.Outcome != providers.InferenceSubmissionAbandoned || receipt.CostState != providers.InferenceCostKnown || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 17 || receipt.ReportedUsage.OutputTokens != 9 {
+		t.Fatalf("decoded usage was lost when delivery canceled: %+v", receipt)
+	}
+}
+
 func TestAnthropicMessagesURL(t *testing.T) {
 	tests := map[string]string{
 		"https://api.anthropic.com":           "https://api.anthropic.com/v1/messages",

@@ -120,7 +120,16 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 
 // StreamChat opens a streaming Responses API call.
 func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	var err error
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			endReceipt(nil)
+		}
+	}()
 	req, err = c.PrepareInferenceRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -141,7 +150,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return ch, err
 	}
 	out := make(chan providers.StreamEvent, 64)
+	started = true
 	go func() {
+		defer endReceipt(nil)
 		defer close(out)
 		for event := range ch {
 			if event.Type == providers.EventError && providers.IsAuthError(event.Error) {
