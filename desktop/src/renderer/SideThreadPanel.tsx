@@ -1,3 +1,5 @@
+import type { ApplicationSideConversationViewV1 } from "../../../packages/plugin-sdk/src/ui-side-conversation";
+import type { Turn } from "../shared/protocol";
 import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
 import {
   forwardRef,
@@ -21,6 +23,7 @@ export type SideThreadPanelHandle = {
 
 type SideThreadPanelProps = {
   entry: SideThreadEntryState;
+  turns?: Turn[];
   mainThreadId: string;
   active: boolean;
   title: string;
@@ -33,6 +36,7 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
   function SideThreadPanel(
     {
       entry,
+      turns: publicTurns,
       mainThreadId,
       active,
       title,
@@ -47,8 +51,8 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
     const footerRef = useRef<HTMLDivElement | null>(null);
     const bodyScroll = useAutoFollowScrollContainer({ open: active });
     const turns = useMemo(
-      () => sideThreadMessagesToTurns(entry.messages),
-      [entry.messages],
+      () => publicTurns ?? sideThreadMessagesToTurns(entry.messages),
+      [entry.messages, publicTurns],
     );
     const latestTurn = turns.at(-1);
     const latestMessageID = useMemo(
@@ -144,3 +148,14 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
     );
   },
 );
+
+
+/** Public data is detached before passing it to the existing mutable renderer. */
+export const ApplicationSideThreadPanel = forwardRef<SideThreadPanelHandle,
+  Omit<SideThreadPanelProps, "entry" | "mainThreadId" | "turns"> & { snapshot: ApplicationSideConversationViewV1 }
+>(function ApplicationSideThreadPanel({ snapshot, ...presentation }, ref) {
+  const entry = useMemo(() => snapshot.entry ? structuredClone(snapshot.entry) as SideThreadEntryState : undefined, [snapshot.entry]);
+  const turns = useMemo(() => structuredClone(snapshot.turns) as Turn[], [snapshot.turns]);
+  if (!entry || !snapshot.parentThreadId) return null;
+  return <SideThreadPanel {...presentation} ref={ref} entry={entry} turns={turns} mainThreadId={snapshot.parentThreadId} />;
+});

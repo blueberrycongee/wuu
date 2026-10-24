@@ -2,6 +2,7 @@ import { act, createElement, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ApplicationSideThreadPanel,
   SideThreadPanel,
   type SideThreadPanelHandle,
 } from "./SideThreadPanel";
@@ -125,4 +126,10 @@ describe("SideThreadPanel", () => {
     act(() => ref.current?.focusComposer());
     expect(document.activeElement).toBe(container.querySelector("textarea"));
   });
+});
+
+
+it("renders public canonical side turns without rebuilding a private transcript", () => {
+  const container = mount(<ApplicationSideThreadPanel active title="Side" composer={null} snapshot={{ parentThreadId: "main", commands: [], contextChatPending: [], entry: { open: true, summary: null, messages: [], draft: "", streaming: false }, turns: [{ id: "public-turn", status: "completed", items_view: "full", items: [{ id: "public-message", type: "agent_message", text: "Canonical public reply" }] }] }} />);
+  expect(container.textContent).toContain("Canonical public reply");
 });
