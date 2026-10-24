@@ -9,11 +9,13 @@ import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate } from "./DefaultConversationSurface";
 import { activate as activatePreview } from "./DefaultPreviewSurface";
 import type { ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
+import { mockAnimationFrames } from "../AnimationFrameTestHarness";
 
 let root: Root | undefined, container: HTMLDivElement | undefined, host: PluginHost | undefined;
 afterEach(() => {
   act(() => root?.unmount()); container?.remove(); root = undefined;
   host?.unload("wuu.default-preview"); host?.unload("side-extension"); host?.unload("alternate-conversation"); host?.unload("wuu.default-conversation"); host?.unload("wuu.default-shell"); host = undefined;
+  vi.restoreAllMocks();
 });
 
 async function mountConversation(items: ThreadItem[]) {
@@ -58,6 +60,7 @@ it("resolves Markdown images through the selected generation's public file servi
 });
 
 it("keeps preview-owned side turns and artifacts when an alternate conversation is selected", async () => {
+  const frames = mockAnimationFrames();
   const base = createConversationTestApplication();
   const side = { ...base.getSnapshot().sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "", streaming: false }, turns: [{ id: "side-turn", status: "completed" as const, items_view: "full" as const, items: [user, { id: "side-artifact", type: "tool_call" as const, name: "present_artifact", status: "completed" as const, result_detail: { content: [{ type: "image" as const, mime_type: "image/png", name: "side.png", data: "c2lkZQ==", artifact: { placement: "inline" as const, ref: "side-image" } }] } }, { id: "side-answer", type: "agent_message" as const, text: "Independent side answer", status: "completed" as const, terminal: true }] }] };
   const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), sideConversation: side,
@@ -79,6 +82,10 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   expect(host.getUISlot("wuu.default-conversation/conversation.turn")).toBeUndefined();
   expect(container.textContent).toContain("Alternate conversation");
   expect(container.textContent).toContain("Independent side answer");
+  await frames.flush();
+  const sideComposer = container.querySelector(".side-thread-panel textarea");
+  expect(sideComposer).not.toBeNull();
+  expect(document.activeElement).toBe(sideComposer);
   expect(setPreviewVisibility).toHaveBeenLastCalledWith(true, expect.any(AbortSignal));
   expect(container.querySelector('img')?.getAttribute("src")).toBe("data:image/png;base64,c2lkZQ==");
   expect(presented.mock.calls.at(-1)?.[0].context).toMatchObject({ threadId: "side:parent", turnId: "side-turn", itemId: "side-answer" });

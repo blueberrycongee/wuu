@@ -90,8 +90,9 @@ import { ArtifactsProvider } from "./ArtifactsContext";
 import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { TerminalControlsProvider } from "./TerminalControlsContext";
 import { ProjectActionsProvider } from "./ProjectActions";
-import { ApplicationSideThreadPanel } from "./SideThreadPanel";
+import { ApplicationSideThreadPanel, type SideThreadPanelHandle } from "./SideThreadPanel";
 import { ApplicationSideThreadComposer } from "./SideThreadComposer";
+import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from "./WorkspaceBrowserOpen";
 import { showErrorToast } from "./Toast";
@@ -274,9 +275,18 @@ function WorkspacePanelContent({
     onSelect: () => { void application.invoke("preview.show-conversation", {}).catch(showErrorToast); },
   } : undefined;
   const sideThreadRunning = snapshot.sideConversation.entry?.streaming ?? false;
+  const sideThreadActive = open && !preview.conversationSelected && tabs.find(tab => tab.id === activeTabID)?.kind === "side-thread";
+  const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
+  const sideRevealRequest = snapshot.navigationWorkspace.regionVisibilityRequest?.region === "auxiliary"
+    ? snapshot.navigationWorkspace.regionVisibilityRequest.id : undefined;
+  useEffect(() => {
+    if (!sideThreadActive || isTouchWebShell()) return;
+    const frame = window.requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
+    return () => window.cancelAnimationFrame(frame);
+  }, [sideThreadActive, snapshot.sideConversation.parentThreadId, sideRevealRequest]);
   const focusedComposer = documentComposer ? <slots.Slot name="wuu.default-preview/application.composer" context={{ variant: "document", pane }} /> : null;
   const sideThreadContent = <ApplicationSideThreadPanel snapshot={snapshot.sideConversation}
-    active={open && !preview.conversationSelected && tabs.find(tab => tab.id === activeTabID)?.kind === "side-thread"}
+    ref={sideThreadPanelRef} active={sideThreadActive}
     title={t("sideThread.title")} cwd={workspaceContext?.cwd} onOpenFile={onOpenFile}
     composer={<ApplicationSideThreadComposer snapshot={snapshot.sideConversation} invoke={application.invoke} onOpenFile={onOpenFile} />} />;
   const conversationActive = Boolean(conversationTab?.active);
