@@ -12,7 +12,8 @@ import {
 } from "./PluginHost";
 import { settleOnAbort } from "./activation";
 import { getDesktopApplication } from "./ApplicationController";
-import { WorkbenchController } from "./Workbench";
+import type { LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
+import { DesktopWorkbench, type WorkbenchServices, WorkbenchController } from "./Workbench";
 import { PluginHostService, WorkbenchService, createDesktopCompositionRoot } from "./composition";
 
 interface DesktopPluginModule {
@@ -28,6 +29,7 @@ export interface DesktopPluginFailure {
 }
 
 export const desktopPluginHost = new PluginHost({
+  renderLegacyWorkbench: input => React.createElement(LegacyWorkbenchLayers, input),
   createLegacyViewHost: identity => desktopWorkbenchController.createViewHostAPI({
     id: identity.tabId ?? `renderer:${identity.pluginId}`,
     pluginId: identity.pluginId, generation: identity.generation, viewTypeId: identity.viewTypeId ?? "renderer",
@@ -120,7 +122,7 @@ export const desktopPluginHost = new PluginHost({
 });
 export const desktopCompositionRoot = createDesktopCompositionRoot();
 void desktopCompositionRoot.plugin(PluginHostService, desktopPluginHost);
-export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost, {
+const desktopWorkbenchServices: WorkbenchServices = {
   getSetting: async (pluginId, generation, key) => {
     if (!window.wuu?.getPluginSetting) throw new Error("Plugin settings service is unavailable");
     return (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value;
@@ -133,8 +135,23 @@ export const desktopWorkbenchController = new WorkbenchController(desktopPluginH
     if (!window.wuu?.setPluginStorage) throw new Error("Plugin storage service is unavailable");
     await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope });
   },
-});
+};
+export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost, desktopWorkbenchServices);
 void desktopCompositionRoot.plugin(WorkbenchService, desktopWorkbenchController);
+
+function LegacyWorkbenchLayers({ application, context }: LegacyWorkbenchRenderInput): React.ReactNode {
+  React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
+  const inventory = application.catalog.getSnapshot().inventory;
+  const services = React.useMemo<WorkbenchServices>(() => ({
+    ...desktopWorkbenchServices,
+    openSettings: () => { void application.invoke("settings.open", { pageId: "providers" }).catch(error => console.error("Plugin settings navigation failed", error)); },
+    disablePlugin: pluginId => application.catalog.update({ id: pluginId, action: "disable" }),
+    requestRegionVisible: region => { void application.invoke("navigation.reveal-region", { region }).catch(error => console.error("Plugin region reveal failed", error)); },
+  }), [application]);
+  React.useEffect(() => () => desktopWorkbenchController.updateServices(desktopWorkbenchServices), []);
+  return React.createElement(DesktopWorkbench, { host: desktopPluginHost, controller: desktopWorkbenchController,
+    inventory, services, settingsOnly: context.settingsOnly === true });
+}
 
 export class DesktopPluginRuntime {
   private readonly activeGenerations = new Map<string, string>();

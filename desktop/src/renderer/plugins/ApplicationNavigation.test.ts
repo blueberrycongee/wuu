@@ -1,5 +1,5 @@
 import * as RuntimeLoader from "../RuntimeLoadState";
-import { desktopPluginHost } from "./DesktopPluginRuntime";
+import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
 import type { ApplicationWebWorkspaceV1, WebWorkspaceInitializationStateV1, WebWorkspaceStateV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
@@ -25,6 +25,25 @@ function fixture(controls = webControls()) {
 }
 
 describe("public navigation domain", () => {
+  it("closes only the addressed active plugin view and exposes region reveal requests", async () => {
+    window.wuu = {} as typeof window.wuu;
+    window.wuu.reportPluginDesktopActivation = vi.fn().mockResolvedValue(undefined);
+    const { navigation } = fixture();
+    await desktopPluginHost.activateGeneration({ pluginId: "close-test", generation: "one", graphGeneration: "graph", register(api) {
+      api.registerViewType({ id: "page", title: "Page", render: () => null });
+    } });
+    try {
+      const first = await desktopWorkbenchController.openPluginView("close-test", "page", { region: "primary" });
+      expect(navigation.getSnapshot().activePluginView).toMatchObject({ id: first, closable: true });
+      await expect(navigation.invoke("navigation.close-plugin", { viewId: "stale" })).rejects.toThrow();
+      expect(navigation.getSnapshot().activePluginView?.id).toBe(first);
+      await navigation.invoke("navigation.close-plugin", { viewId: first });
+      expect(navigation.getSnapshot().activePluginView).toBeUndefined();
+      await navigation.invoke("navigation.reveal-region", { region: "auxiliary" });
+      expect(navigation.getSnapshot().regionVisibilityRequest).toEqual({ id: 1, region: "auxiliary" });
+    } finally { await desktopPluginHost.unload("close-test"); }
+  });
+
   it("repairs a missed foreground start from raw executor state and ignores a moved source", async () => {
     vi.useFakeTimers();
     const h = fixture(webControls({ capabilities: { available: false, windowInsets: false, nativeOverlays: false } }));

@@ -951,6 +951,11 @@ export class ApplicationController implements HostApplicationService {
       input as ApplicationComposerRuntimeActionMapV1[keyof ApplicationComposerRuntimeActionMapV1]["input"], signal);
     if (isApplicationConversationDetailsAction(action)) return this.conversationDetails.invoke(action,
       input as ApplicationConversationDetailsActionMapV1[keyof ApplicationConversationDetailsActionMapV1]["input"], signal);
+    if (action === "navigation.reveal-region") {
+      const { region } = input as ApplicationActionMapV1["navigation.reveal-region"]["input"];
+      if (region === "settings") this.setSettings(true);
+      else if (region === "primary") this.setSettings(false);
+    }
     if (isApplicationNavigationAction(action)) return this.applicationNavigation.invoke(action,
       input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
     if (isApplicationPreviewAction(action)) return this.applicationPreview.invoke(action,

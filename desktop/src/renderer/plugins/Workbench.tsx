@@ -480,11 +480,13 @@ export class WorkbenchController {
   }
 }
 
+type WorkbenchInventoryEntry = Pick<ExtensionInventoryRecord, "id" | "kind" | "enabled" | "state" | "approval_state">;
+
 export interface DesktopWorkbenchProps {
   settingsOnly?: boolean;
   host: PluginHost;
   controller?: WorkbenchController;
-  inventory?: readonly ExtensionInventoryRecord[];
+  inventory?: readonly WorkbenchInventoryEntry[];
   services?: WorkbenchServices;
 }
 
@@ -942,7 +944,7 @@ function rendererMatches(renderer: RegisteredRenderer, contentType: string): boo
   return renderer.match.test(contentType);
 }
 
-function isAvailablePlugin(plugin: ExtensionInventoryRecord): boolean {
+function isAvailablePlugin(plugin: WorkbenchInventoryEntry): boolean {
   return plugin.kind === "plugin"
     && plugin.enabled !== false
     && (plugin.state === "active" || plugin.state === "granted")

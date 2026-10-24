@@ -1,3 +1,4 @@
+import type { ViewPlacementRegion } from "./index";
 /** Navigation data remains available when no application shell is mounted. */
 export type NavigationReadonly<T> = T extends readonly (infer U)[] ? readonly NavigationReadonly<U>[] : T extends object ? { readonly [K in keyof T]: NavigationReadonly<T[K]> } : T;
 export type NavigationIconV1 = { name: string; path?: never; light?: never; dark?: never } | { path: string; name?: never; light?: never; dark?: never } | { light: string; dark: string; name?: never; path?: never };
@@ -62,7 +63,8 @@ export interface ApplicationNavigationViewV1 {
   readonly folders: readonly { readonly id: string; readonly name: string }[];
   readonly plugins: readonly { readonly id: string; readonly name: string; readonly pluginId: string; readonly fingerprint: string; readonly icon?: NavigationIconV1; readonly enabled: boolean; readonly kind: "plugin" | "skill" }[];
   readonly destinations: readonly NavigationPluginDestinationV1[];
-  readonly activePluginView?: { readonly id: string; readonly pluginId: string; readonly title: string; readonly webPage: boolean };
+  readonly activePluginView?: { readonly id: string; readonly pluginId: string; readonly title: string; readonly webPage: boolean; readonly closable: boolean };
+  readonly regionVisibilityRequest?: { readonly id: number; readonly region: ViewPlacementRegion };
   readonly canRevealThread: boolean;
   readonly canCreateWorkspace: boolean;
   readonly canChooseWorkspace: boolean;
@@ -89,6 +91,8 @@ export interface ApplicationNavigationActionMapV1 {
   "navigation.delete-folder": { input: { readonly folderId: string }; result: void };
   "navigation.reorder-folders": { input: { readonly folderIds: readonly string[] }; result: void };
   "navigation.move-to-folder": { input: { readonly threadId: string; readonly folderId?: string }; result: void };
+  "navigation.close-plugin": { input: { readonly viewId: string }; result: void };
+  "navigation.reveal-region": { input: { readonly region: ViewPlacementRegion }; result: void };
   "navigation.open-plugin": { input: { readonly pluginId: string; readonly viewTypeId: string; readonly instanceId?: string }; result: void };
   "navigation.show-native": { input: Record<string, never>; result: void };
   "navigation.show-search": { input: { readonly open: boolean }; result: void };

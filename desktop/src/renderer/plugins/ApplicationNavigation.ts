@@ -18,7 +18,7 @@ import type { ThreadMutationActions } from "../ThreadMutationActions";
 const actions = new Set<keyof Actions>([
   "navigation.refresh", "navigation.load-workspace", "navigation.mark-viewed", "navigation.pin-thread", "navigation.archive-thread", "navigation.delete-thread", "navigation.adopt-thread",
   "navigation.create-folder", "navigation.rename-folder", "navigation.delete-folder", "navigation.reorder-folders", "navigation.move-to-folder",
-  "navigation.open-plugin", "navigation.show-native", "navigation.show-search", "navigation.show-account", "navigation.focus-workspace", "navigation.focus-composer",
+  "navigation.close-plugin", "navigation.reveal-region", "navigation.open-plugin", "navigation.show-native", "navigation.show-search", "navigation.show-account", "navigation.focus-workspace", "navigation.focus-composer",
   "navigation.reveal-thread", "navigation.open-external", "navigation.load-icon", "navigation.account-status", "navigation.account-logout", "navigation.install-update",
   "navigation.reopen-browser-tab", "navigation.reveal-browser", "navigation.create-browser-tab", "navigation.select-browser-tab", "navigation.close-browser-tab", "navigation.pin-browser-tab", "navigation.mute-browser-tab", "navigation.reorder-browser-tabs",
 ]);
@@ -35,6 +35,7 @@ export class ApplicationNavigation {
   private readonly browser: ReturnType<typeof createRibbonBrowserState>;
   private update: ApplicationNavigationViewV1["update"] = { kind: "unsupported" };
   private activeWebsiteId?: string;
+  private regionVisibilityRequest?: ApplicationNavigationViewV1["regionVisibilityRequest"];
   private searchOpen = false;
   private accountOpen = false;
   private focusedWorkspaceId?: string;
@@ -95,7 +96,9 @@ export class ApplicationNavigation {
         id: row.id, name: row.name, pluginId: row.provenance.plugin_id ?? row.id, fingerprint: row.fingerprint ?? "", icon: row.icon, enabled: pluginToggle(row).on, kind: row.kind as "plugin" | "skill",
       })),
       destinations: primaryViewNavigation(desktopPluginHost.getNavigationEntries(), workbench),
-      activePluginView: active && { id: active.view.id, pluginId: active.view.pluginId, title: active.definition.title, webPage: workbench.webPageViewIds.includes(active.view.id) },
+      regionVisibilityRequest: this.regionVisibilityRequest,
+      activePluginView: active && { closable: !desktopPluginHost.getNavigationEntries().some(entry => entry.pluginId === active.view.pluginId && entry.view === active.view.viewTypeId)
+        || workbench.views.filter(view => view.region === "primary" && view.pluginId === active.view.pluginId && view.viewTypeId === active.view.viewTypeId).length > 1, id: active.view.id, pluginId: active.view.pluginId, title: active.definition.title, webPage: workbench.webPageViewIds.includes(active.view.id) },
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
       projectAgentEnabled: Boolean(state.initialized?.features?.project_agent), accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
@@ -276,6 +279,18 @@ export class ApplicationNavigation {
       case "navigation.move-to-folder": {
         const { threadId, folderId } = input as Actions["navigation.move-to-folder"]["input"];
         await window.wuu.updateThreadOrganization(threadId, folderId ?? ""); this.assignFolder(threadId, folderId); break;
+      }
+      case "navigation.close-plugin": {
+        const { viewId } = input as Actions["navigation.close-plugin"]["input"];
+        const active = this.getSnapshot().activePluginView;
+        if (!active || active.id !== viewId || !active.closable) throw new Error("Plugin view is no longer closable");
+        await desktopWorkbenchController.closeView(viewId); break;
+      }
+      case "navigation.reveal-region": {
+        const { region } = input as Actions["navigation.reveal-region"]["input"];
+        this.regionVisibilityRequest = { id: (this.regionVisibilityRequest?.id ?? 0) + 1, region };
+        if (region === "primary") { this.activeWebsiteId = undefined; this.accountOpen = false; }
+        break;
       }
       case "navigation.open-plugin": {
         const { pluginId, viewTypeId, instanceId } = input as Actions["navigation.open-plugin"]["input"];
