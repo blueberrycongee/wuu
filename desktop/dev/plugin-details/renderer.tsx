@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../../src/shared/protocol";
 import { SkillsCatalog } from "../../src/renderer/SkillsCatalog";
+import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
+import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
+import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
@@ -54,12 +57,23 @@ startFocusModality();
 
 function Fixture(): JSX.Element {
   const [record, setRecord] = useState(plugin);
+  const application = useMemo(() => {
+    const snapshot = { contextKey: "plugin-details-preview", inventory: [record],
+      capabilities: { install: false, update: true, remove: false } };
+    const catalog: ApplicationCatalogV1 = {
+      getSnapshot: () => snapshot, listSkills: async () => skills,
+      readSkill: input => window.wuu.readSkillContent(input),
+      update: async ({ action }) => setRecord(current => ({ ...current, enabled: action !== "disable", approval_state: "granted", state: "granted" })),
+      refresh: async () => { setRecord(current => ({ ...current, runtime_state: "active", last_error: undefined })); return skills; },
+      install: async () => undefined, remove: async () => undefined,
+      loadIcon: async () => { throw new Error("File icons are not available in this preview"); },
+    };
+    return { ...createPreviewApplication(), catalog, settingsControls: createApplicationSettingsControls() };
+  }, [record]);
   return <main className="skills-scroll-region" style={{ height: "100vh", overflow: "auto" }}>
     <SkillsCatalog
-      extensionInventory={[record]}
+      application={application}
       openPluginRequest={{ id: record.id, request: 1 }}
-      onUpdateExtensionPackage={async ({ action }) => setRecord(current => ({ ...current, enabled: action !== "disable", approval_state: "granted", state: "granted" }))}
-      onRefreshCatalog={async () => { setRecord(current => ({ ...current, runtime_state: "active", last_error: undefined })); return skills; }}
     />
   </main>;
 }

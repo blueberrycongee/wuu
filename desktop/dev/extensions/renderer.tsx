@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import type {
   ExtensionInventoryRecord,
@@ -7,6 +7,9 @@ import type {
   WuuDesktopApi,
 } from "../../src/shared/protocol";
 import { SkillsCatalog } from "../../src/renderer/SkillsCatalog";
+import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
+import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
+import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
 import { I18nProvider } from "../../src/renderer/i18n";
@@ -160,6 +163,7 @@ function Fixture(): JSX.Element {
     document.documentElement.dataset.platform = "darwin";
     applyMessageFlowFontSize(Number(params.get("size")) || 14.5);
   }, []);
+  const application = useMemo(() => {
   const update = async ({ id, action }: ExtensionPackageUpdateParams) => {
     setPlugins((current) => current.map((item) => {
       if (item.id !== id) return item;
@@ -170,15 +174,23 @@ function Fixture(): JSX.Element {
       return item;
     }));
   };
+  const snapshot = { contextKey: "extensions-preview", inventory: plugins,
+    capabilities: { install: true, update: true, remove: true } };
+  const catalog: ApplicationCatalogV1 = {
+    getSnapshot: () => snapshot,
+    listSkills: async () => (await window.wuu.listSkills()).skills,
+    readSkill: input => window.wuu.readSkillContent(input),
+    refresh: async () => structuredClone(skills), update,
+    install: async () => undefined, remove: async () => undefined,
+    loadIcon: async () => { throw new Error("File icons are not available in this preview"); },
+  };
+  return { ...createPreviewApplication(), catalog, settingsControls: createApplicationSettingsControls() };
+  }, [plugins]);
   return (
     <div className="scroll-region skills-scroll-region" style={{ height: "100vh" }}>
       <div className="scroll-region-content">
         <SkillsCatalog
-          extensionInventory={plugins}
-          onRefreshCatalog={async () => structuredClone(skills)}
-          onUpdateExtensionPackage={update}
-          onInstallPluginPackage={async () => undefined}
-          onRemovePluginPackage={async () => undefined}
+          application={application}
         />
       </div>
     </div>
