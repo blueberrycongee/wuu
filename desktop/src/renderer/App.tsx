@@ -88,6 +88,7 @@ import { ImagePreviewProvider } from "./ImagePreview";
 import { JumpToLatestPill } from "./JumpToLatestPill";
 import { useApplicationNavigationState } from "./modules/ApplicationNavigationState";
 import { motionDurationMs } from "./motion";
+import { useNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { ProjectActionsProvider } from "./ProjectActions";
 import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
 import { ProjectStatusCapsule } from "./ProjectViews";
@@ -249,6 +250,8 @@ export function App({ application, slots, shellPluginId }: {
     void application.invoke(open ? "settings.open" : "settings.close", {}).catch(showErrorToast);
   }, [application]);
   const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
+  const savedRibbonWidth = useNavigationRibbonPreferences().width ?? SIDEBAR_RIBBON_WIDTH;
+  const ribbonWidth = nativeRibbonPresent ? savedRibbonWidth : SIDEBAR_RIBBON_WIDTH;
   const embeddedSettings = !poppedOutMode && nativeRibbonPresent;
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
     useState<MainComposerFocusRequest | null>(null);
@@ -284,6 +287,7 @@ export function App({ application, slots, shellPluginId }: {
     layoutRootRef: appShellRef,
     settingsLayoutRootRef: settingsShellRef,
     collapsedSidebarWidth: SIDEBAR_RIBBON_WIDTH,
+    additionalNavigationWidth: ribbonWidth - SIDEBAR_RIBBON_WIDTH,
     // The selected navigation surface owns its menus.
     onCloseWorkspaceMenu: () => {},
   });
@@ -439,7 +443,7 @@ export function App({ application, slots, shellPluginId }: {
     useState(false);
   // Everything the window gives to other columns before the conversation.
   const environmentPanelPaneOffset =
-    effectiveSidebarWidth +
+    effectiveSidebarWidth + ribbonWidth - SIDEBAR_RIBBON_WIDTH +
     (rightPanelOpen && !rightPanelGlobalized ? clampedWorkspaceRightPanelWidth : 0);
   const [environmentPanelHasRoom, setEnvironmentPanelHasRoom] = useState(() =>
     typeof window === "undefined"
@@ -1341,7 +1345,8 @@ export function App({ application, slots, shellPluginId }: {
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${workspaceConversationActive ? " workspace-conversation-active" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
     "--sidebar-width": `${effectiveSidebarWidth}px`,
-    "--sidebar-ribbon-width": `${SIDEBAR_RIBBON_WIDTH}px`,
+    "--sidebar-ribbon-width": `${ribbonWidth}px`,
+    "--sidebar-ribbon-extra": `${ribbonWidth - SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-ribbon-compact-width": `${SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
     "--workspace-sheet-left": `${effectiveSidebarWidth}px`,

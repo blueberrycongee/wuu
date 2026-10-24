@@ -130,9 +130,7 @@ The shortcut starts disabled, and no background history or audio is recorded. Ad
 
 In the experimental workbench, website tabs in the left ribbon retain their page while you switch destinations. Downloads, history, bookmarks, and address suggestions open above the live page. Hiding or minimizing Wuu keeps the selected page ready for restore.
 
-The left ribbon stays at a fixed icon width. Hover an icon to see its name. Drag icons to reorder them, or use Alt+Up/Down when an icon has focus. Browser tabs provide pin, mute and close actions in their context menu; middle-click or Delete closes a tab.
-
-Hover over the compact tab ribbon to expand it temporarily. Switching between website tabs and app pages keeps the ribbon open while the pointer stays inside, so you can select several destinations without reopening it. Move the pointer away to collapse it, or press Escape to dismiss the focused ribbon.
+The left ribbon starts at a compact icon width. Drag its right edge to widen it and show names; the width is remembered across restarts. Hovering or focusing an item does not change the width. Double-click the edge to switch between compact and expanded widths, or focus the edge and use Left/Right, Home or End. Hover an icon to see its name. Drag icons to reorder them, or use Alt+Up/Down when an icon has focus. Browser tabs provide pin, mute and close actions in their context menu; middle-click or Delete closes a tab.
 
 Use **Up/Down**, **Home/End** to move keyboard focus through the tab list without changing the selected page; press Enter to select it. **Alt + Up/Down** reorders a tab. Pinned tabs omit the hover close button. A playing or muted tab shows an audio control, and its context menu can mute it independently of other tabs. Closing a background tab keeps focus in the page you are editing.
 

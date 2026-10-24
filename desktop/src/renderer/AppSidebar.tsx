@@ -2625,7 +2625,7 @@ export function AppSidebar({
       ]}
       fallback={organizedSidebar}
       onPointerEnter={(event) => {
-        if (!(event.target instanceof Element) || !event.target.closest(".sidebar-ribbon")) {
+        if (!(event.target instanceof Element) || !event.target.closest(".sidebar-ribbon, .ribbon-resizer")) {
           onPointerEnter?.();
         }
       }}

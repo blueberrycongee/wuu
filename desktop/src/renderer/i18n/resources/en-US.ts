@@ -560,6 +560,7 @@ export const enUS = {
   "ribbon.reorderHint": "Press Alt and the Up or Down arrow to reorder. Press Enter to open.",
   "ribbon.github": "View Wuu on GitHub",
   "ribbon.saveFailed": "Could not save navigation changes.",
+  "ribbon.resize": "Resize navigation ribbon",
   "ribbon.removed": "{name} shortcut removed. Website data is kept.",
   "ribbon.undo": "Undo",
   "ribbon.suggestions": "Website suggestions",

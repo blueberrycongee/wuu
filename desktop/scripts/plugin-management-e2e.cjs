@@ -71,7 +71,7 @@ async function openAutomations(origin) {
 async function checkCompactRibbon(name) {
   await evaluate(() => {
     const saved = JSON.parse(localStorage.getItem("wuu.navigation-ribbon.v1"));
-    localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({ ...saved, width: 360 }));
+    localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({ ...saved, width: 52 }));
     window.dispatchEvent(new Event("wuu-navigation-ribbon-change"));
     document.querySelector('[data-ribbon-id="conversations"]').focus();
   });
@@ -84,7 +84,7 @@ async function checkCompactRibbon(name) {
     focused: document.activeElement?.getAttribute('data-ribbon-id'),
     toggleReachable: !document.querySelector('.section-sidebar-toggle').hidden,
   }));
-  assert.equal(geometry.ribbon, 52, "Saved width and keyboard traversal must preserve the compact icon rail");
+  assert.equal(geometry.ribbon, 52, "Keyboard traversal must preserve the explicitly saved compact width");
   assert.equal(geometry.focused, "catalog");
   assert.equal(geometry.toggleReachable, true);
 }

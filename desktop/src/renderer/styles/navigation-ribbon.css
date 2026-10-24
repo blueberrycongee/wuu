@@ -91,8 +91,8 @@
   -webkit-app-region: drag;
 }
 
-/* The saved sidebar width includes the fixed icon rail. Hovering expands only
-   its overlay, so neither the secondary pane nor the page changes geometry. */
+/* The saved sidebar width includes the compact rail. Manual ribbon resizing
+   adds layout space while preserving the secondary pane's preferred width. */
 .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar {
   grid-column: 1;
   border: 0;
@@ -179,7 +179,7 @@
 
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)
   .workspace-right-panel:is([data-sheet="arming"], [data-sheet="open"], [data-sheet="parked"]) {
-  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--workspace-sheet-left);
+  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) calc(var(--workspace-sheet-left) + var(--sidebar-ribbon-extra, 0px));
   margin: 0;
 }
 
@@ -226,6 +226,27 @@
 .section-sidebar-toggle * {
   -webkit-app-region: no-drag;
 }
+
+/* Manual width changes reserve space for the rail in every destination. */
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
+  grid-template-columns: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px)) minmax(0, 1fr) var(--workspace-right-panel-reserved-width, 0px);
+}
+
+.ribbon-resizer {
+  position: absolute;
+  top: var(--window-titlebar-height, 44px);
+  bottom: 0;
+  /* Keep the full hit target in the shell, beside native website views. */
+  left: calc(var(--sidebar-ribbon-width, 52px) - 8px);
+  width: 8px;
+  container-type: size;
+  z-index: 154;
+  cursor: col-resize;
+  touch-action: none;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+[data-ribbon-resizing], [data-ribbon-resizing] * { cursor: col-resize !important; user-select: none; }
 
 .sidebar-ribbon {
   --ribbon-brand-size: calc(var(--sidebar-ribbon-compact-width, 52px) - var(--ribbon-inline-inset) * 2);
@@ -358,13 +379,13 @@
   white-space: nowrap;
 }
 
-.sidebar-ribbon :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
+.sidebar-ribbon:not([data-expanded="true"]) :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
   display: none;
 }
 
-:where(.sidebar-ribbon:not(:has([data-dragging="true"]))) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button,
-:where(.sidebar-ribbon:not(:has([data-dragging="true"]))) .sidebar-ribbon-button:hover,
-:where(.sidebar-ribbon:not(:has([data-dragging="true"]))) .sidebar-account-trigger:hover {
+:where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button,
+:where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-ribbon-button:hover,
+:where(.sidebar-ribbon:not(:has([data-dragging="true"])):not([data-ribbon-resizing] *)) .sidebar-account-trigger:hover {
   background: var(--wuu-nav-item-hover-background, var(--ink-overlay-6));
   color: var(--ink);
 }
@@ -497,6 +518,8 @@
 
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed .sidebar,
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-drawer-docking .sidebar {
+  width: calc(var(--sidebar-open-width) + var(--sidebar-ribbon-extra, 0px));
+  min-width: calc(var(--sidebar-open-width) + var(--sidebar-ribbon-extra, 0px));
   transform: none;
   overflow: visible;
   background: transparent;
@@ -749,7 +772,7 @@
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) {
   --app-history-width: calc(var(--workbench-control-size) * 2 + var(--control-toolbar-gap));
-  --app-history-origin: var(--sidebar-width);
+  --app-history-origin: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px));
   --app-history-inset: var(--control-toolbar-inset);
   --app-history-end: calc(var(--app-history-origin) + var(--app-history-inset) + var(--app-history-width) + var(--control-toolbar-gap));
 }
@@ -764,8 +787,8 @@
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar,
 :root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) .settings-embedded .settings-titlebar {
-  padding-left: calc(var(--app-history-end) - var(--sidebar-width));
+  padding-left: calc(var(--app-history-end) - var(--sidebar-width) - var(--sidebar-ribbon-extra, 0px));
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).right-panel-globalized .workspace-panel-tabbar {
-  padding-left: calc(var(--app-history-end) - var(--workspace-sheet-left));
+  padding-left: calc(var(--app-history-end) - var(--workspace-sheet-left) - var(--sidebar-ribbon-extra, 0px));
 }

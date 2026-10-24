@@ -12,6 +12,8 @@ import {
   type RibbonWebsite,
 } from "./NavigationRibbonPreferences";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
+import { RIBBON_COMPACT_WIDTH } from "../shared/navigationRibbon";
+import { RibbonResizeHandle } from "./RibbonResizeHandle";
 import { focusAfterRibbonClose, RibbonDestination } from "./NavigationRibbonDestination";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { showActionErrorToast } from "./Toast";
@@ -62,6 +64,24 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
   const { t } = useI18n();
   const preferences = useNavigationRibbonPreferences();
   const navRef = useRef<HTMLElement | null>(null);
+  const [draftWidth, setDraftWidth] = useState<number | null>(null);
+  const width = draftWidth ?? preferences.width ?? RIBBON_COMPACT_WIDTH;
+  const resizing = draftWidth !== null;
+  useLayoutEffect(() => {
+    const nav = navRef.current!;
+    const shell = nav.closest<HTMLElement>(".app-shell") ?? nav.parentElement!;
+    shell.style.setProperty("--sidebar-ribbon-width", `${width}px`);
+    shell.style.setProperty("--sidebar-ribbon-extra", `${width - RIBBON_COMPACT_WIDTH}px`);
+    shell.toggleAttribute("data-ribbon-resizing", resizing);
+    return () => { shell.removeAttribute("data-ribbon-resizing"); };
+  }, [width, resizing]);
+
+  function resizeRibbon(next: number, finished: boolean): void {
+    if (!finished) { setDraftWidth(next); return; }
+    try { saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), width: next }); }
+    catch (error) { showActionErrorToast(error, t("ribbon.saveFailed")); }
+    setDraftWidth(null);
+  }
   const [announcement, setAnnouncement] = useState("");
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -147,8 +167,8 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
   return <>
-    <HoverRevealScopeContext.Provider value={{ disabled: dragging, retain: () => () => {} }}>
-    <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" aria-label={t("sidebar.mainNavigation")}>
+    <HoverRevealScopeContext.Provider value={{ disabled: dragging || resizing, retain: () => () => {} }}>
+    <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" data-expanded={width > RIBBON_COMPACT_WIDTH || undefined} aria-label={t("sidebar.mainNavigation")}>
       <HoverRevealScopeContext.Provider value={null}>
         <Tooltip content={t("ribbon.github")} side="bottom" native={Boolean(activeWebsiteId)}>
           <a className="sidebar-ribbon-brand"
@@ -184,6 +204,7 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
       {footer ? <div className="sidebar-ribbon-footer">{footer}</div> : null}
       <span className="sr-only" role="status" aria-live="polite">{announcement}</span>
     </nav>
+    <RibbonResizeHandle width={width} label={t("ribbon.resize")} onResize={resizeRibbon} />
     </HoverRevealScopeContext.Provider>
     {menu && menuWebsite ? <ThreadContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[
       { label: t(menuWebsite.pinned ? "webWorkspace.unpinTab" : "webWorkspace.pinTab"), icon: menuWebsite.pinned ? <PinOff /> : <Pin />, onSelect: () => { focusRibbonItem(menuWebsite.id); onPinTab?.(menuWebsite.id, !menuWebsite.pinned); } },

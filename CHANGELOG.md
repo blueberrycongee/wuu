@@ -145,6 +145,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Restore manual navigation ribbon resizing and remembered width while keeping the default compact and disabling automatic expansion on hover or focus.
+
 - Match sidebar group headings, including Workspaces and Recent, to the list text size and follow the saved UI font preference.
 
 - Hide the conversation composer on plugin and skill management pages while preserving unsent drafts and pending message recovery when returning to chat.
