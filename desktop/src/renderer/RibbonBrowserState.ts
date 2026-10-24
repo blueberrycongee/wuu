@@ -1,66 +1,80 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { WEB_WORKSPACE_RIBBON_ID, type WebWorkspaceApi, type WebWorkspaceState } from "../shared/webWorkspace";
 import { readNavigationRibbonPreferences, saveNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { showActionErrorToast } from "./Toast";
 
-/** User browser tabs share native lifecycle, while the ribbon owns mixed app order. */
-export function useRibbonBrowserTabs(enabled = true) {
-  const api = (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace;
-  const [state, setState] = useState<WebWorkspaceState>();
-  const stateRef = useRef(state);
-  stateRef.current = state;
-  useEffect(() => {
-    if (!enabled || !api?.initializeTabs) return;
-    let disposed = false;
-    let initializing = true;
-    let latest: WebWorkspaceState | undefined;
-    const off = api.onState((next) => {
-      if (next.id !== WEB_WORKSPACE_RIBBON_ID) return;
-      if (initializing) latest = next;
-      else setState(next);
-    });
-    const preferences = readNavigationRibbonPreferences();
-    const positions = new Map(preferences.order.map((id, index) => [id, index]));
-    const websites = [...preferences.websites].sort((a, b) => (positions.get(a.id) ?? Infinity) - (positions.get(b.id) ?? Infinity));
-    // The host migrates saved child tabs once. Keeping the old shortcut input
-    // intact makes a failed migration retryable without risking session data.
-    void api.initializeTabs(websites).then((next) => {
-      if (disposed) return;
-      const current = readNavigationRibbonPreferences();
-      if (!current.browserTabsMigrated) {
-        const groups = next.migratedTabGroups ?? {};
-        const childIDs = new Set(Object.values(groups).flat());
-        // Expand each old website slot in place, retaining child order and all
-        // fixed destinations between groups. Save the marker atomically so a
-        // retry cannot regroup tabs after the user has reordered them.
-        const order = current.order.flatMap((id) => groups[id] ?? (childIDs.has(id) ? [] : [id]));
-        const missing = (next.tabs ?? []).map((tab) => tab.id).filter((id) => !order.includes(id));
-        saveNavigationRibbonPreferences({ ...current, order: [...new Set([...order, ...missing])], browserTabsMigrated: true });
-      }
-      initializing = false;
-      setState(latest ?? next);
-    }).catch((error: unknown) => { if (!disposed) showActionErrorToast(error); });
-    return () => { disposed = true; off(); };
-  }, [api, enabled]);
+/** One owner supports both a mounted ribbon and an application-owned navigation service. */
+export function createRibbonBrowserState() {
+  let state: WebWorkspaceState | undefined;
+  const listeners = new Set<() => void>();
+  const api = () => (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace;
+  const publish = (next: WebWorkspaceState) => { state = next; for (const listener of listeners) listener(); return next; };
+  async function update(operation: (browser: WebWorkspaceApi) => Promise<WebWorkspaceState>) {
+    const browser = api();
+    if (!browser) throw new Error("Browser tabs are unavailable");
+    return publish(await operation(browser));
+  }
+  return {
+    getSnapshot: () => state,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    start(onError: (error: unknown) => void) {
+      const browser = api();
+      if (!browser?.initializeTabs) return () => {};
+      let disposed = false;
+      let initializing = true;
+      let latest: WebWorkspaceState | undefined;
+      const off = browser.onState(next => {
+        if (next.id !== WEB_WORKSPACE_RIBBON_ID) return;
+        if (initializing) latest = next;
+        else if (!disposed) publish(next);
+      });
+      const preferences = readNavigationRibbonPreferences();
+      const positions = new Map(preferences.order.map((id, index) => [id, index]));
+      const websites = [...preferences.websites].sort((a, b) => (positions.get(a.id) ?? Infinity) - (positions.get(b.id) ?? Infinity));
+      void browser.initializeTabs(websites).then(next => {
+        if (disposed) return;
+        const current = readNavigationRibbonPreferences();
+        if (!current.browserTabsMigrated) {
+          const groups = next.migratedTabGroups ?? {};
+          const childIDs = new Set(Object.values(groups).flat());
+          const order = current.order.flatMap(id => groups[id] ?? (childIDs.has(id) ? [] : [id]));
+          const missing = (next.tabs ?? []).map(tab => tab.id).filter(id => !order.includes(id));
+          saveNavigationRibbonPreferences({ ...current, order: [...new Set([...order, ...missing])], browserTabsMigrated: true });
+        }
+        initializing = false;
+        publish(latest ?? next);
+      }).catch(error => { if (!disposed) onError(error); });
+      return () => { disposed = true; off(); };
+    },
+    createTab: () => update(browser => browser.createTab(WEB_WORKSPACE_RIBBON_ID)),
+    reopenTab: () => update(browser => browser.reopenTab(WEB_WORKSPACE_RIBBON_ID)),
+    selectTab: (id: string) => update(browser => browser.selectTab(WEB_WORKSPACE_RIBBON_ID, id)),
+    closeTab: (id: string) => update(browser => browser.closeTab(WEB_WORKSPACE_RIBBON_ID, id)),
+    pinTab: (id: string, pinned: boolean) => update(browser => browser.setTabPinned(WEB_WORKSPACE_RIBBON_ID, id, pinned)),
+    muteTab: (id: string, muted: boolean) => update(browser => browser.setTabMuted(WEB_WORKSPACE_RIBBON_ID, id, muted)),
+    reorderTabs: (ids: string[]) => update(browser => browser.reorderTabs(WEB_WORKSPACE_RIBBON_ID, ids)),
+  };
+}
 
-  const update = useCallback(async (operation: (browser: WebWorkspaceApi) => Promise<WebWorkspaceState>): Promise<WebWorkspaceState | undefined> => {
-    if (!enabled || !api) return;
-    try {
-      const next = await operation(api);
-      setState(next);
-      return next;
-    } catch (error) { showActionErrorToast(error); }
-  }, [api, enabled]);
-  const createTab = useCallback(() => update((browser) => browser.createTab(WEB_WORKSPACE_RIBBON_ID)), [update]);
-  const reopenTab = useCallback(() => update((browser) => browser.reopenTab(WEB_WORKSPACE_RIBBON_ID)), [update]);
-  const selectTab = useCallback((id: string) => update((browser) => browser.selectTab(WEB_WORKSPACE_RIBBON_ID, id)), [update]);
-  const closeTab = useCallback((id: string) => { void update((browser) => browser.closeTab(WEB_WORKSPACE_RIBBON_ID, id)); }, [update]);
-  const pinTab = useCallback((id: string, pinned: boolean) => { void update((browser) => browser.setTabPinned(WEB_WORKSPACE_RIBBON_ID, id, pinned)); }, [update]);
-  const muteTab = useCallback((id: string, muted: boolean) => { void update((browser) => browser.setTabMuted(WEB_WORKSPACE_RIBBON_ID, id, muted)); }, [update]);
-  const reorderTabs = useCallback((ids: string[]) => {
-    const tabs = stateRef.current?.tabs ?? [];
-    if (ids.length !== tabs.length || tabs.every((tab, index) => tab.id === ids[index])) return;
-    void update((browser) => browser.reorderTabs(WEB_WORKSPACE_RIBBON_ID, ids));
-  }, [update]);
-  return { state, createTab, reopenTab, selectTab, closeTab, pinTab, muteTab, reorderTabs };
+export function useRibbonBrowserTabs(enabled = true) {
+  const [owner] = useState(createRibbonBrowserState);
+  const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot);
+  useEffect(() => enabled ? owner.start(showActionErrorToast) : undefined, [enabled, owner]);
+  const operations = useMemo(() => {
+    const perform = async (operation: () => Promise<WebWorkspaceState>) => {
+      if (!enabled) return;
+      try { return await operation(); } catch (error) { showActionErrorToast(error); }
+    };
+    return { createTab: () => perform(owner.createTab), reopenTab: () => perform(owner.reopenTab),
+      selectTab: (id: string) => perform(() => owner.selectTab(id)),
+      closeTab: (id: string) => { void perform(() => owner.closeTab(id)); },
+      pinTab: (id: string, pinned: boolean) => { void perform(() => owner.pinTab(id, pinned)); },
+      muteTab: (id: string, muted: boolean) => { void perform(() => owner.muteTab(id, muted)); },
+      reorderTabs: (ids: string[]) => {
+        const tabs = owner.getSnapshot()?.tabs;
+        if (ids.length === tabs?.length && !tabs.every((tab, index) => tab.id === ids[index])) void perform(() => owner.reorderTabs(ids));
+      },
+    };
+  }, [enabled, owner]);
+  return { state, ...operations };
 }

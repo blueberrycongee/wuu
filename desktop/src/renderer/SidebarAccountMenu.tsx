@@ -1,3 +1,5 @@
+import type { SidebarNavigationService } from "./AppSidebar";
+import { useMemo } from "react";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { SidebarAccountPanel, SidebarAccountTrigger } from "./SidebarAccountParts";
@@ -11,7 +13,8 @@ import { useI18n } from "./i18n";
 import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
 import "./SidebarAccountMenu.css";
 
-export function SidebarAccountMenu({ disabled, localOnly = false, matchTriggerWidth = true, onOpenSettings, onOpenAccount }: {
+export function SidebarAccountMenu({ navigation, disabled, localOnly = false, matchTriggerWidth = true, onOpenSettings, onOpenAccount }: {
+  navigation?: SidebarNavigationService;
   disabled: boolean;
   localOnly?: boolean;
   matchTriggerWidth?: boolean;
@@ -35,8 +38,9 @@ export function SidebarAccountMenu({ disabled, localOnly = false, matchTriggerWi
   const [error, setError] = useState("");
   const [notice, setNotice] = useState(false);
   const accountEnabled = ENABLE_ACCOUNT && !localOnly;
-  const driver = accountEnabled && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot")
-    ? window.wuu?.remoteAccount : undefined;
+  const driver = useMemo(() => navigation
+    ? (accountEnabled && navigation.view.accountAvailable ? async (action: "status" | "logout") => navigation.invoke(action === "status" ? "navigation.account-status" : "navigation.account-logout", {}) : undefined)
+    : (accountEnabled && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot") ? window.wuu?.remoteAccount : undefined), [accountEnabled, navigation?.view.accountAvailable, navigation?.invoke]);
 
   useEffect(() => {
     if (!driver || disabled) return;

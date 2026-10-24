@@ -59,7 +59,8 @@ function restoreReopenedOrder(order: readonly string[], tabs: readonly Pick<Ribb
   return order.map(id => replacements.get(id) ?? id);
 }
 
-export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef, onExpandedChange }: {
+export function NavigationRibbon({ onOpenExternal, items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef, onExpandedChange }: {
+  onOpenExternal?: (url: string) => Promise<void>;
   items: NavigationRibbonItem[];
   activeWebsiteId?: string | null;
   onSelectWebsite?: (website: RibbonWebsite) => void;
@@ -320,7 +321,7 @@ export function NavigationRibbon({ items, websites = [], activeWebsiteId, onSele
             aria-label={t("ribbon.github")}
             onClick={event => {
               event.preventDefault();
-              void window.wuu.openExternal(event.currentTarget.href).catch(error => showActionErrorToast(error));
+              void (onOpenExternal ?? window.wuu.openExternal)(event.currentTarget.href).catch(error => showActionErrorToast(error));
             }}>
             <img src={mascotIcon} alt="" draggable={false} />
           </a>

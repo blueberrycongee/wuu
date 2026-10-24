@@ -1,3 +1,7 @@
+import { showErrorToast } from "./Toast";
+import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { SessionOrganizationController } from "./SessionOrganization";
 import { hostSupports } from "./HostCapabilities";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { DesktopUpdateButton } from "./DesktopUpdateButton";
@@ -422,7 +426,15 @@ export function reconcileSidebarSectionOrder(
 // single import without a circular type dependency. SidebarSection
 // also exports the hook SidebarSection uses to read the handle.
 
+export interface SidebarNavigationService {
+  view: ApplicationNavigationViewV1;
+  invoke<A extends keyof ApplicationNavigationActionMapV1>(action: A, input: ApplicationNavigationActionMapV1[A]["input"], options?: { readonly signal?: AbortSignal }): Promise<ApplicationNavigationActionMapV1[A]["result"]>;
+  slots: UICompositionV1;
+  organization: SessionOrganizationController;
+}
+
 export function AppSidebar({
+  navigation,
   initialized,
   activeContextKind,
   activeSessionTabID,
@@ -499,6 +511,8 @@ export function AppSidebar({
   onMuteTab,
   onReorderTabs,
 }: {
+  // Remove legacy host access when the remaining direct AppSidebar callers use the selected surface.
+  navigation?: SidebarNavigationService;
   initialized: boolean;
   activeContextKind?: "project" | "no_project";
   activeSessionTabID: string;
@@ -612,7 +626,7 @@ export function AppSidebar({
     for (const thread of pinnedThreads) byID.set(thread.id, thread);
     return [...byID.values()];
   }, [pinnedThreads, workspaceThreadsByWorkspaceID]);
-  const organization = useSessionOrganization(organizationSourceThreads);
+  const organization = useSessionOrganization(organizationSourceThreads, navigation?.organization);
   const [pinnedItems, setPinnedItems] = useState<SidebarPinnedItem[]>(
     loadSidebarPinnedItems,
   );
@@ -654,25 +668,31 @@ export function AppSidebar({
   // it has no DesktopProject entry in the workspace registry.
   const sidebarScratchPseudoActive = activeContextKind === "no_project";
   const declaredPluginNavigationEntries = useSyncExternalStore(
-    (listener) => pluginHost.subscribe(listener),
-    () => pluginHost.getNavigationEntries(),
-    () => pluginHost.getNavigationEntries(),
+    (listener) => navigation ? () => {} : pluginHost.subscribe(listener),
+    () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
+    () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
   );
   const workbenchSnapshot = useSyncExternalStore(
-    workbenchController.subscribe,
-    workbenchController.getSnapshot,
-    workbenchController.getSnapshot,
+    navigation ? () => () => {} : workbenchController.subscribe,
+    () => navigation ? null : workbenchController.getSnapshot(),
+    () => navigation ? null : workbenchController.getSnapshot(),
   );
-  const activePluginMain = visibleWorkbenchView(workbenchSnapshot, "primary");
+  const publicActive = navigation?.view.activePluginView;
+  const activePluginMain = navigation ? (publicActive && { view: { id: publicActive.id, pluginId: publicActive.pluginId }, definition: { title: publicActive.title } }) : visibleWorkbenchView(workbenchSnapshot!, "primary");
   const activePluginMainView = activePluginMain?.view;
   const pluginCatalogActive = !settingsActive && !activeWebsiteId && !activePluginMainView && catalogActive;
   const conversationsActive = !settingsActive && !activeWebsiteId && !activePluginMainView && !pluginCatalogActive;
   const activeThreadID = conversationsActive ? nativeActiveThreadID : undefined;
   const pluginNavigationEntries = useMemo(
-    () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
-    [declaredPluginNavigationEntries, workbenchSnapshot],
+    () => navigation ? navigation.view.destinations : primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot!),
+    [declaredPluginNavigationEntries, workbenchSnapshot, navigation],
   );
   const extensionCatalog = useMemo(() => {
+    if (navigation) return {
+      pluginCount: navigation.view.plugins.filter(row => row.kind === "plugin").length,
+      skillCount: navigation.view.plugins.filter(row => row.kind === "skill").length,
+      enabledPlugins: navigation.view.plugins.filter(row => row.kind === "plugin" && row.enabled).map(row => ({ ...row, provenance: { plugin_id: row.pluginId } })).sort((left, right) => left.name.localeCompare(right.name, locale)),
+    };
     const records = extensionInventory ?? [];
     const plugins = records.filter((record) => record.kind === "plugin");
     return {
@@ -682,11 +702,11 @@ export function AppSidebar({
         .filter((record) => pluginToggle(record).on)
         .sort((left, right) => left.name.localeCompare(right.name, locale)),
     };
-  }, [locale, extensionInventory]);
+  }, [locale, extensionInventory, navigation]);
   const activateNative = useCallback((action: () => void): void => {
-    workbenchController.deactivateRegion("primary");
-    action();
-  }, [workbenchController]);
+    if (navigation) void navigation.invoke("navigation.show-native", {}).then(action).catch(showErrorToast);
+    else { workbenchController.deactivateRegion("primary"); action(); }
+  }, [workbenchController, navigation]);
   const onSelectThread = useCallback((id: string) => {
     activateNative(() => selectNativeThread(id));
   }, [activateNative, selectNativeThread]);
@@ -695,6 +715,7 @@ export function AppSidebar({
   }, [activateNative, selectNativeWorkspaceThread]);
   const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string, instanceId?: string): void => {
     onLeaveSettings?.();
+    if (navigation) { void navigation.invoke("navigation.open-plugin", { pluginId, viewTypeId, instanceId }).catch(showErrorToast); return; }
     if (instanceId) {
       workbenchController.activateView(instanceId);
       return;
@@ -704,7 +725,7 @@ export function AppSidebar({
       persistence: "durable",
       reveal: true,
     }).catch(() => workbenchController.deactivateRegion("primary"));
-  }, [workbenchController, onLeaveSettings]);
+  }, [workbenchController, onLeaveSettings, navigation]);
 
   // Drag-and-drop reorder wiring for the reorderable sections. The 6px
   // activation distance lets plain clicks on the header (collapse toggle)
@@ -1863,17 +1884,18 @@ export function AppSidebar({
       if (!source.icon || "name" in source.icon) return [source.id, { kind: "public", name: source.icon?.name }] as const;
       const paths = "path" in source.icon && source.icon.path ? [source.icon.path] : [source.icon.light!, source.icon.dark!];
       try {
-        const urls = await Promise.all(paths.map(path => loadPluginIconURL(source.id, source.fingerprint, path)));
+        const urls = await Promise.all(paths.map(path => navigation ? navigation.invoke("navigation.load-icon", { pluginId: source.id, fingerprint: source.fingerprint, path }) : loadPluginIconURL(source.id, source.fingerprint, path)));
         return [source.id, { kind: "image", light: urls[0], dark: urls[1] }] as const;
       } catch { return [source.id, { kind: "public" }] as const; }
     })).then(entries => { if (active) setRibbonPluginIcons(Object.fromEntries(entries)); });
     return () => { active = false; };
-  }, [ribbonIconSources]);
+  }, [ribbonIconSources, navigation?.invoke]);
 
   const nativeSidebar = (
     <>
       <HoverRevealScopeContext.Provider value={null}>
       <NavigationRibbon
+        onOpenExternal={navigation ? url => navigation.invoke("navigation.open-external", { url }) : undefined}
         ribbonRef={ribbonRef}
         onExpandedChange={onRibbonExpandedChange}
         websites={websites}
@@ -1906,7 +1928,7 @@ export function AppSidebar({
           ...pluginNavigationEntries.map((entry) => ({
             id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
             title: entry.title,
-            icon: <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
+            icon: <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
             nativeIcon: ribbonPluginIcons[entry.pluginId] ?? { kind: "public" as const },
             active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
             component: "plugin-navigation-item",
@@ -1915,8 +1937,9 @@ export function AppSidebar({
           })),
         ]}
         footer={<>
-          <DesktopUpdateButton />
+          <DesktopUpdateButton navigation={navigation} />
           <SidebarAccountMenu
+            navigation={navigation}
             key={sidebarCollapsed ? "collapsed" : "docked"}
             matchTriggerWidth={false}
             disabled={!initialized}
@@ -1967,6 +1990,7 @@ export function AppSidebar({
                       onClick={() => onOpenCatalogPlugin(record.id)}
                     >
                       <PluginIcon
+                        loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined}
                         icon={record.icon}
                         pluginId={record.provenance.plugin_id ?? record.id}
                         fingerprint={record.fingerprint ?? ""}
@@ -1982,7 +2006,7 @@ export function AppSidebar({
               </div>
             ) : null}
           </nav>
-        ) : activePluginMain && !settingsActive && !workbenchSnapshot.webPageViewIds.includes(activePluginMain.view.id) ? (
+        ) : activePluginMain && !settingsActive && !(navigation ? publicActive?.webPage : workbenchSnapshot!.webPageViewIds.includes(activePluginMain.view.id)) ? (
           <nav className="sidebar-section-navigation" aria-label={activePluginMain.definition.title}>
             <h2 className="sidebar-section-title">{extensionInventory?.find((record) =>
               record.provenance.plugin_id === activePluginMain.view.pluginId)?.name ?? activePluginMain.definition.title}</h2>
@@ -1995,7 +2019,7 @@ export function AppSidebar({
                 aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
                 onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
               >
-                <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
+                <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
                 <span className="sidebar-section-label">{entry.title}</span>
               </button>
             ))}
@@ -2391,11 +2415,11 @@ export function AppSidebar({
                           flip
                         >
                           <div className="project-add-menu" role="menu" ref={addWorkspaceMenuRef}>
-                            <button role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
+                            <button role="menuitem" disabled={!(navigation ? navigation.view.canCreateWorkspace : hostSupports("createBlankProject"))} onClick={onCreateWorkspace}>
                               <FolderPlus className="icon-xl" />
                               <span>{t("sidebar.newBlankWorkspace")}</span>
                             </button>
-                            <button role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspaceFolder}>
+                            <button role="menuitem" disabled={!(navigation ? navigation.view.canChooseWorkspace : hostSupports("chooseProjectFolder"))} onClick={onOpenWorkspaceFolder}>
                               <FolderOpen className="icon-xl" />
                               <span>{t("sidebar.useExistingFolder")}</span>
                             </button>
@@ -2521,7 +2545,7 @@ export function AppSidebar({
             </DragOverlay>
           </DndContext>
         </div>
-        <PluginSlot
+        {navigation ? <navigation.slots.Slot name="wuu.default-navigation/sidebar.primary" /> : <PluginSlot
           host={pluginHost}
           id="sidebar.primary"
           context={Object.freeze({
@@ -2529,15 +2553,15 @@ export function AppSidebar({
             hasActiveThread: activeThreadID !== undefined,
             workspaceCount: sidebarWorkspaces.length,
           })}
-        />
+        />}
           </>
         )}
         <div className="sidebar-settings">
-          <PluginSlot
+          {navigation ? <navigation.slots.Slot name="wuu.default-navigation/sidebar.footer" /> : <PluginSlot
             host={pluginHost}
             id="sidebar.footer"
             context={Object.freeze({ initialized: Boolean(initialized) })}
-          />
+          />}
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu
@@ -2600,12 +2624,13 @@ export function AppSidebar({
     </>
   );
   const organizedSidebar = (
-    <SessionOrganizationProvider value={organizationActions}>
+    <SessionOrganizationProvider value={{ ...organizationActions, revealThread: navigation?.view.canRevealThread ? threadId => navigation.invoke("navigation.reveal-thread", { threadId }) : undefined }}>
       <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
     </SessionOrganizationProvider>
   );
   return (
     <NavigationPresentation
+      publicSurface={Boolean(navigation)}
       nodes={[
         ...primaryNavigationNodes,
         ...navigationNodes,
