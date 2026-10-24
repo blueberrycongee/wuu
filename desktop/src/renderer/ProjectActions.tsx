@@ -1,6 +1,5 @@
 import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
-import type { ApplicationProjectsV1 } from "../../../packages/plugin-sdk/src/ui-projects";
 import type { NavigationThreadV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
 import { baseThreadTitle } from "./ThreadTitles";
 import { showErrorToast } from "./Toast";
@@ -10,7 +9,7 @@ export type ProjectThread = Pick<NavigationThreadV1,
   "archived" | "created_at" | "status" | "child_agents"> & {
     readonly turns: readonly Pick<NavigationThreadV1["turns"][number], "status">[];
   };
-type ProjectApplication = ApplicationServiceV1 & { readonly projects: ApplicationProjectsV1 };
+type ProjectApplication = ApplicationServiceV1;
 export type ProjectActions = {
   threads: readonly ProjectThread[];
   openThread: (threadID: string) => void;
