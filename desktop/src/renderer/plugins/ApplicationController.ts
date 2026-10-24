@@ -1,3 +1,4 @@
+import type { ApplicationNavigationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-preview";
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
@@ -25,6 +26,7 @@ import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
+import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
 import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
@@ -54,6 +56,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private readonly sidebarCache: ReturnType<typeof createSidebarThreadCache>;
   private readonly pendingComposer: ReturnType<typeof createComposerPendingState>;
   private readonly applicationPreview: ApplicationPreview;
+  private readonly applicationNavigation: ApplicationNavigation;
   private settings = { open: false, pageId: "providers" };
   private preview: ApplicationSnapshotV1["preview"] = null;
   private theme = window.wuu?.initialThemePreference ?? "system";
@@ -92,6 +95,10 @@ export class ApplicationController implements ApplicationServiceV1 {
         ...createOptimisticTurn(message, Date.now()), status: "failed", error: { message: translateCurrent("composer.sendFailed") },
       }))),
       setStatus: status => this.updateState(state => ({ ...state, status })),
+    });
+    this.applicationNavigation = new ApplicationNavigation({ getState: () => this.state, updateState: this.updateState,
+      changed: () => this.publish(), sidebarCache: this.sidebarCache, mutationActions: () => this.mutationActions(),
+      getPendingDraftTabIds: () => [...this.pendingDraftAdmissions],
     });
     this.applicationPreview = new ApplicationPreview({ getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
       .filter((thread): thread is Thread => Boolean(thread)), changed: () => this.publish() });
@@ -144,7 +151,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   start(): () => void {
     if (++this.consumers === 1) {
       this.lifetime = new AbortController();
-      this.subscriptions = [subscribeServerEvents(event => this.receive(event)),
+      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
       const restore = window.wuu?.onRuntimeRestore?.(async () => {
         const signal = this.lifetime!.signal;
@@ -476,6 +483,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationNavigationAction(action)) return this.applicationNavigation.invoke(action,
+      input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
     if (isApplicationPreviewAction(action)) return this.applicationPreview.invoke(action,
       input as ApplicationPreviewActionMapV1[keyof ApplicationPreviewActionMapV1]["input"], signal);
     if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
@@ -732,7 +741,9 @@ export class ApplicationController implements ApplicationServiceV1 {
         if (!archived) { await this.mutationActions().unarchiveThread({ id: threadId }); return; }
         const thread = this.knownThread(threadId);
         if (!thread) throw new Error("Thread is unavailable");
-        await this.mutationActions().archiveThread(summarizeThreadsForSidebar([thread])[0], { force }); return;
+        const result = await this.mutationActions().archiveThread(summarizeThreadsForSidebar([thread])[0], { force });
+        if (!result.ok) throw new Error(result.error);
+        return;
       }
       case "composer.set-draft": {
         const { text, ownerTabId = this.state.activeSessionTabID } = input as ApplicationActionMapV1["composer.set-draft"]["input"];
@@ -762,7 +773,10 @@ export class ApplicationController implements ApplicationServiceV1 {
         if (sourceTab?.kind === "thread" && !thread) throw new Error("Thread must be loaded before submitting");
         if (thread?.read_only) throw new Error("The selected thread is read-only");
         const context = thread ? resolveThreadRuntimeContext(thread, this.state.projects) : sourceTab?.context ?? this.state.activeContext;
-        if (!thread && sourceTabId) this.pendingDraftAdmissions.add(sourceTabId);
+        if (!thread && sourceTabId) {
+          this.pendingDraftAdmissions.add(sourceTabId);
+          this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === sourceTabId && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
+        }
         const submissionOwners = new Set([sourceTabId]);
         this.submitting.add(sourceTabId); this.publish();
         try {
@@ -914,6 +928,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         ...state.projects.map(project => Object.freeze({ id: project.id, kind: "project" as const, label: project.name, active: state.activeProjectId === project.id })),
         ...state.threads.filter(thread => !thread.archived && !thread.ephemeral).map(item => Object.freeze({ id: item.id, kind: "thread" as const, label: item.title || item.preview || item.id, active: item.id === thread?.id, pinned: item.pinned, running: isThreadRunning(item) })),
       ]) }),
+      navigationWorkspace: this.applicationNavigation.getSnapshot(),
       tabs: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane,
         primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id,
         canSubmit: !this.submitting.has(state.activeSessionTabID) && (!this.pendingNavigation || this.pendingNavigation.contentReady === true) && !thread?.read_only,

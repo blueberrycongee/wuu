@@ -1,3 +1,4 @@
+import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
 import type { ApplicationSettingsControlsV1 } from "./ui-settings-controls.js";
 import type { ApplicationPreviewActionMapV1, ApplicationPreviewWorkspaceV1 } from "./ui-preview.js";
 import type { ApplicationSettingsActionMapV1, ApplicationSettingsViewV1 } from "./application-settings.js";
@@ -28,6 +29,7 @@ export interface ApplicationSnapshotV1 {
     readonly catalogSection: "plugins" | "skills";
     readonly catalogPluginId: string;
   };
+  readonly navigationWorkspace: ApplicationNavigationViewV1;
   readonly tabs: {
     readonly activeTabId: string;
     readonly activePane: "primary" | "secondary";
@@ -82,7 +84,7 @@ export interface ApplicationAppearanceV1 {
 }
 
 /** Commands are scoped to the generation that captured this application handle. */
-export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
+export interface ApplicationActionMapV1 extends ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
   "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };

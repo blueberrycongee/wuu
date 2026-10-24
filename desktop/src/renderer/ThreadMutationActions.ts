@@ -42,6 +42,7 @@ function withThreadTitle(
 
 export type ThreadMutationActionsDeps = {
   getAppState: () => AppState;
+  /** Void actions reject through this hook; archive retains its typed retry outcome. */
   onError?: (error: Error) => never;
   setAppState: SetAppState;
   nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => SessionTab;
@@ -249,13 +250,13 @@ export function createThreadMutationActions(
     const currentState = deps.getAppState();
     if (!currentState.activeContext) {
       const error = translateCurrent("thread.archive.noWorkspace");
-      setStatus(error);
+      if (!deps.onError) setStatus(error);
       return { ok: false, error };
     }
     const force = options?.force === true;
     if (!force && isThreadRunning(thread)) {
       const error = translateCurrent("thread.archive.running");
-      setStatus(error);
+      if (!deps.onError) setStatus(error);
       return { ok: false, error, forceRetryable: true };
     }
     // Reflect the archive in the visible lists on the click: the sidebar row
@@ -310,7 +311,7 @@ export function createThreadMutationActions(
         ),
       }));
       const failure = archiveThreadFailure(error);
-      setStatus(failure.message);
+      if (!deps.onError) setStatus(failure.message);
       return { ok: false, error: failure.message, forceRetryable: failure.forceRetryable };
     }
   }

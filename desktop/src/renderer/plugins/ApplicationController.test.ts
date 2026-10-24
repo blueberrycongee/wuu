@@ -42,6 +42,30 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachments[0].id })).rejects.toThrow("Unknown composer attachment");
   });
 
+  it("routes navigation through the shared cache and removes deleted sidebar rows", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = { id: "a", cwd: context.cwd, preview: "cached", status: "idle", model_provider: "", model: "", created_at: "", updated_at: "", turns: [] } as never;
+    window.wuu = { listAllThreads: vi.fn().mockResolvedValue({ threads: [thread] }), getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [] } }),
+      deleteThread: vi.fn().mockResolvedValue({}) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context });
+    await controller.invoke("navigation.refresh", {});
+    expect(controller.getSnapshot().navigationWorkspace.threads.map(thread => thread.id)).toEqual(["a"]);
+    await controller.invoke("settings.delete-archived", { threadId: "a" });
+    expect(controller.getSnapshot().navigationWorkspace.threads).toEqual([]);
+  });
+
+  it("returns force-retry metadata from navigation archive without dropping the active thread", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = { id: "a", cwd: context.cwd, preview: "running", status: "in_progress", model_provider: "", turns: [{ id: "turn", status: "in_progress", items: [] }] } as never;
+    window.wuu = { archiveThread: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, threads: [thread], activeSessionTabID: "thread:a", sessionTabs: [
+      { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "", images: [], files: [] },
+    ] });
+    await expect(controller.invoke("navigation.archive-thread", { threadId: "a" })).resolves.toMatchObject({ ok: false, forceRetryable: true });
+    expect(window.wuu.archiveThread).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().tabs.activeTabId).toBe("thread:a");
+  });
+
   it("submits independent split draft owners while blocking duplicate admission to one owner", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const thread = (id: string) => ({ id, cwd: context.cwd, preview: "", status: "idle", model_provider: "", turns: [] }) as never;
@@ -281,7 +305,9 @@ describe("shared application state", () => {
     const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
       { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "first", images: [], files: [] },
     ] });
+    await controller.invoke("composer.set-draft", { text: "edited before admission" });
     const sending = controller.invoke("composer.submit", {});
+    expect(controller.getSnapshot().navigationWorkspace.pendingConversations).toMatchObject([{ id: "draft:a", title: "edited before admission" }]);
     const next = await controller.invoke("tab.new", {});
     expect(next.tabId).not.toBe("draft:a");
     await controller.invoke("composer.set-draft", { text: "next" });
