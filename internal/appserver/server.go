@@ -499,7 +499,7 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 	if s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
 		return
 	}
-	redundant, err := binding.Sessions.MaintainRedundantStorage()
+	redundant, err := binding.Sessions.WithContext(ctx).MaintainRedundantStorage()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -516,7 +516,7 @@ func (s *Server) maintainSessionStoragePass(ctx context.Context) {
 			redundant.CheckpointBytesAfter,
 		)
 	}
-	result, err := binding.Sessions.MaintainModelInputReceipts(time.Now().UTC())
+	result, err := binding.Sessions.WithContext(ctx).MaintainModelInputReceipts(time.Now().UTC())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return

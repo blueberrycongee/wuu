@@ -78,15 +78,26 @@ func (s *documentStore) MaintainModelInputReceipts(now time.Time) (ModelInputRec
 // tool-ledger projection/retention is owned by the tool domain.
 func (s *documentStore) MaintainRedundantStorage() (RedundantStorageMaintenanceResult, error) {
 	var result RedundantStorageMaintenanceResult
-	err := s.transaction(func(tx *persistence.Tx) error {
-		result = RedundantStorageMaintenanceResult{}
-		query := persistence.Query{Namespace: documentNamespace("session_messages"), Limit: 256}
-		type replacement struct {
-			key    string
-			record HistoryRecord
-		}
-		var changes []replacement
-		for {
+	for {
+		var done bool
+		var compacted int64
+		err := s.transaction(func(tx *persistence.Tx) error {
+			compacted = 0
+			var progress struct {
+				After string `json:"after"`
+				Done  bool   `json:"done"`
+			}
+			if _, err := tx.Get(documentNamespace("session_maintenance"), "legacy-projections-v1", &progress); err != nil {
+				return err
+			}
+			done = progress.Done
+			if done {
+				return nil
+			}
+			query := persistence.Query{Namespace: documentNamespace("session_messages"), Limit: 128}
+			if progress.After != "" {
+				query.Start = progress.After + "\x00"
+			}
 			view, err := tx.ReadView(query)
 			if err != nil {
 				return err
@@ -94,26 +105,32 @@ func (s *documentStore) MaintainRedundantStorage() (RedundantStorageMaintenanceR
 			for _, document := range view.Documents {
 				var record HistoryRecord
 				if err := json.Unmarshal(document.Value, &record); err != nil {
-					return err
+					// Legacy cleanup is best-effort; preserve unreadable originals.
+					continue
 				}
-				compacted := compactHistoryRecordForStorage(record)
-				if compacted.Content != record.Content {
-					changes = append(changes, replacement{document.Key, compacted})
+				updated := compactHistoryRecordForStorage(record)
+				if updated.Content != record.Content {
+					if err := tx.Put(query.Namespace, document.Key, updated); err != nil {
+						return err
+					}
+					compacted++
 				}
 			}
-			if view.NextCursor == "" {
-				break
+			if len(view.Documents) > 0 {
+				progress.After = view.Documents[len(view.Documents)-1].Key
 			}
-			query.Cursor = view.NextCursor
-			query.AtRevision = &view.Revision
+			progress.Done = view.NextCursor == ""
+			done = progress.Done
+			// Publish progress with this batch. A heartbeat retries only the batch,
+			// and a restart resumes after it instead of scanning all history again.
+			return tx.Put(documentNamespace("session_maintenance"), "legacy-projections-v1", progress)
+		})
+		if err != nil {
+			return result, err
 		}
-		for _, change := range changes {
-			if err := tx.Put(query.Namespace, change.key, change.record); err != nil {
-				return err
-			}
-			result.ToolMessageContentsCompacted++
+		result.ToolMessageContentsCompacted += compacted
+		if done {
+			return result, nil
 		}
-		return nil
-	})
-	return result, err
+	}
 }

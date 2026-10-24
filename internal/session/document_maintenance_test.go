@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -10,6 +11,60 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
+
+// Heartbeats may invalidate one batch, but must not restart the entire sweep.
+// A completed sweep stays complete because ordinary writes already compact.
+func TestRedundantStorageMakesProgressAcrossConcurrentWrites(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
+		payload, _ := json.Marshal(toolresult.FromText("projection"))
+		if err := store.transaction(func(tx *persistence.Tx) error {
+			for i := 0; i < 600; i++ {
+				if err := tx.Put(documentNamespace("session_messages"), fmt.Sprintf("row-%04d", i), HistoryRecord{Role: "tool", Content: "projection", ToolResult: payload}); err != nil {
+					return err
+				}
+			}
+			return tx.Put(documentNamespace("session_messages"), "row-broken", "unrecoverable legacy record")
+		}); err != nil {
+			t.Fatal(err)
+		}
+		probe := &maintenanceHeartbeat{Documents: store.documents, starts: make(map[string]bool)}
+		store.documents = probe
+		result, err := store.MaintainRedundantStorage()
+		if err != nil || result.ToolMessageContentsCompacted != 600 {
+			t.Fatalf("maintenance: %+v %v", result, err)
+		}
+		if probe.reads > 20 {
+			t.Fatalf("sweep restarted: %d history reads", probe.reads)
+		}
+		probe.reads = 0
+		if _, err := store.MaintainRedundantStorage(); err != nil || probe.reads != 0 {
+			t.Fatalf("completed sweep repeated: reads=%d err=%v", probe.reads, err)
+		}
+		view, err := probe.Documents.Read(context.Background(), persistence.Query{Namespace: documentNamespace("session_messages"), Keys: []string{"row-broken"}})
+		if err != nil || len(view.Documents) != 1 {
+			t.Fatalf("legacy record was removed: %+v %v", view, err)
+		}
+	})
+}
+
+type maintenanceHeartbeat struct {
+	persistence.Documents
+	starts map[string]bool
+	reads  int
+}
+
+func (p *maintenanceHeartbeat) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	view, err := p.Documents.Read(ctx, q)
+	if err != nil || q.Namespace != documentNamespace("session_messages") {
+		return view, err
+	}
+	p.reads++
+	if !p.starts[q.Start] {
+		p.starts[q.Start] = true
+		_, err = p.Documents.Commit(ctx, persistence.Transaction{ID: fmt.Sprintf("heartbeat-%d", len(p.starts)), ExpectedRevision: view.Revision, Writes: []persistence.Write{{Namespace: "heartbeat", Key: "live", Value: json.RawMessage(`true`)}}})
+	}
+	return view, err
+}
 
 // Diagnostic retention must not delete conversation, recovery checkpoints, or
 // recent exact receipt bytes; imported over-budget diagnostics are bounded too.
