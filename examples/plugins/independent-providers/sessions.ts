@@ -3,6 +3,7 @@ import {
   type SessionDomainHandlers, type SessionDomainSession as Session,
   type SessionDomainHistoryRecord as HistoryRecord,
   type SessionDomainPluginGenerationSnapshot as GenerationSnapshot,
+  type SessionDomainHistoryCheckpoint as HistoryCheckpoint,
 } from '@wuu/plugin-sdk';
 
 import {createTurnState} from './turn-state.js';
@@ -14,10 +15,11 @@ function checkedHistory(value: readonly HistoryRecord[]): HistoryRecord[] {
   return structuredClone(value);
 }
 
-/** Volatile author probe. Inference, compaction and recovery are deliberately unsupported. */
+/** Volatile author probe; unsupported operations fail explicitly without native fallback. */
 export function createSessionProvider(owner = 'independent-sessions'): RuntimePlugin {
   const sessions = new Map<string, Session>();
   const generations = new Map<string, GenerationSnapshot>();
+  const checkpoints = new Map<string, HistoryCheckpoint>();
   const histories = new Map<string, readonly HistoryRecord[]>();
   let active = false;
   const journal = createJournal();
@@ -79,7 +81,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
     },
     Delete: ([id]) => {
       const current = requireSession(id);
-      sessions.delete(id); generations.delete(id); histories.delete(id); turnState.delete(id);
+      sessions.delete(id); generations.delete(id); histories.delete(id); checkpoints.delete(id); turnState.delete(id);
       return [structuredClone(current)];
     },
     SetEngine: ([id, engine]) => [update(id, {engine_id: engine})],
@@ -97,8 +99,30 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
     AppendHistoryRecordsReturningRange: ([id, records]) => append(id, records ?? []),
     LoadHistoryRecords: ([id, includeMeta]) => [readHistory(id, includeMeta)],
     LoadActiveHistoryRecords: ([id, includeMeta]) => [readHistory(id, includeMeta)],
-    LoadProviderHistorySnapshot: ([id]) => {const records = readHistory(id, true); return [{HeadSeq: records.length, Checkpoint: null, Records: records}];},
-    LatestHistoryCheckpoint: ([id]) => {requireSession(id); return [{version: 1, session_id: id, through_seq: 0, kind: '', created_at: '0001-01-01T00:00:00Z', replacement: []}, false];},
+    RewriteHistoryRecordsAtBaseline: ([id, replacement, baseline]) => {
+      requireSession(id);
+      const physical = histories.get(id)!;
+      if (!Number.isInteger(baseline) || baseline < 0 || baseline > physical.length) throw new Error('invalid history checkpoint baseline');
+      const records = checkedHistory(replacement ?? []);
+      if (records.some(record => !Number.isInteger(record.seq ?? 0) || (record.seq ?? 0) < 0 || (record.seq ?? 0) > physical.length)) throw new Error('invalid history checkpoint sequence');
+      const seen = new Set(records.map(record => record.seq).filter(Boolean));
+      const tail = physical.filter(record => record.seq! > baseline && !seen.has(record.seq));
+      const inserted: HistoryRecord[] = [];
+      const assigned = records.map(record => {
+        if (record.seq) return record;
+        const next = {...record, seq:physical.length + inserted.length + 1}; inserted.push(next); return next;
+      });
+      const checkpoint: HistoryCheckpoint = {session_id:id,version:(checkpoints.get(id)?.version ?? 0)+1,kind:'provider_rewrite',through_seq:physical.length+inserted.length,replacement:[...assigned,...tail],created_at:new Date().toISOString()};
+      histories.set(id,[...physical,...inserted]); checkpoints.set(id,checkpoint);
+      return [];
+    },
+    LoadProviderHistorySnapshot: ([id]) => {
+      const physical = readHistory(id, true);
+      const checkpoint = checkpoints.get(id);
+      const records = checkpoint ? [...checkpoint.replacement ?? [], ...physical.filter(record => record.seq! > checkpoint.through_seq)] : physical;
+      return [{HeadSeq:physical.length,Checkpoint:structuredClone(checkpoint ?? null),Records:structuredClone(records)}];
+    },
+    LatestHistoryCheckpoint: ([id]) => {requireSession(id); return [structuredClone(checkpoints.get(id) ?? {version: 1, session_id: id, through_seq: 0, kind: '', created_at: '0001-01-01T00:00:00Z', replacement: []}), checkpoints.has(id)];},
   };
   const domain = sessionDomainProvider(handlers);
   return {
@@ -108,7 +132,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
       if (!active) throw new RuntimeHostServiceError({code: 'service_unavailable', message: 'session provider is not active'});
       return domain.invoke(request);
     },
-    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear(); journal.close(); turnState.close();},
+    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear(); checkpoints.clear(); journal.close(); turnState.close();},
   };
 }
 export default createSessionProvider();

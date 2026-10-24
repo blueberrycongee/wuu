@@ -102,3 +102,21 @@ test('independent turn state fences controls, driver identity and held message b
   await assert.rejects(call('AppendAcceptedUserHistoryRecord', 'thread', {role: 'user', content: 'duplicate', client_id: held.ID}, held), error => error.code === 'held_work_settled');
   provider.shutdown();
 });
+
+test('independent provider checkpoints retain physical history and concurrent tail atomically', {skip: !entry}, async () => {
+  const {createSessionProvider} = await import(pathToFileURL(entry));
+  const provider = createSessionProvider(); provider.initialize(); provider.activate();
+  const call = async (method, ...args) => (await provider.invokeService({service:'session.domain',method,params:{args},caller:'owner'})).values;
+  await call('CreateInitialized', {id:'checkpoint',cwd:'/synthetic'}, [{role:'user',content:'original'}, {role:'assistant',content:'concurrent tail'}]);
+  await assert.rejects(call('RewriteHistoryRecordsAtBaseline','checkpoint',[],3), /baseline/);
+  await assert.rejects(call('RewriteHistoryRecordsAtBaseline','checkpoint',[{role:'user',content:42}],1), /history record/);
+  assert.equal((await call('LatestHistoryCheckpoint','checkpoint'))[1], false);
+  await call('RewriteHistoryRecordsAtBaseline','checkpoint',[{role:'user',content:'replacement'}],1);
+  assert.deepEqual((await call('LoadHistoryRecords','checkpoint',true))[0].map(record => record.content), ['original','concurrent tail','replacement']);
+  const [snapshot] = await call('LoadProviderHistorySnapshot','checkpoint');
+  assert.equal(snapshot.HeadSeq,3);
+  assert.deepEqual(snapshot.Records.map(record => record.seq),[3,2]);
+  await call('AppendHistoryRecord','checkpoint',{role:'assistant',content:'after checkpoint'});
+  assert.deepEqual((await call('LoadProviderHistorySnapshot','checkpoint'))[0].Records.map(record => record.content), ['replacement','concurrent tail','after checkpoint']);
+  provider.shutdown();
+});
