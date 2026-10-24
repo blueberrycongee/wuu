@@ -10,6 +10,7 @@ Use [product composition](plugin-system.md#services-and-executions) to select mo
 | --- | --- | --- |
 | `session.domain@1` | `wuu.session.default` | `sessionDomain`, `sessionDomainProvider`, `sessionDomainDescriptor` |
 | `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
+| `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
 | `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
 | `agent.compaction@1` | `wuu.compaction.default` | `compactionService`, `COMPACTION_SERVICE_DESCRIPTOR` |
 | `state.documents@1` | `wuu.state.sqlite`, `wuu.state.jsonl` | `documentStore`, `documentStoreDescriptor`, `StateQuery` |
@@ -39,11 +40,27 @@ Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispa
 
 `agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
 
-`agent.prompt@1` owns complete main/worker system-prompt content and section metadata. `promptService(host).assemble(request)` supplies environment, instructions, skills, selected tool-surface facts and explicit contributions. Worker requests also carry role, isolation and identity facts in `worker`. The provider chooses wording and order; consumers must not prepend a native base, append worker policy, or replace an empty result with inherited instructions. Errors stop the request. Background title generation and plugin-command side-conversation prompts are separate product behaviors, not additional roles in this contract; replacing `agent.prompt` alone does not replace them.
+`agent.prompt@1` owns complete main/worker system-prompt content and section metadata. `promptService(host).assemble(request)` supplies environment, instructions, skills, selected tool-surface facts and explicit contributions. Worker requests also carry role, isolation and identity facts in `worker`. The provider chooses wording and order; consumers must not prepend a native base, append worker policy, or replace an empty result with inherited instructions. Errors stop the request. Conversation titles use the independently selected `session.title` service below. Plugin-command side-conversation prompts remain separate from the main/worker contract; replacing `agent.prompt` alone does not replace either behavior.
 
 `agent.compaction@1` owns context policy through `describe`, `compact`, `window`, `handoff`, `note-plan`, `compact-note`, `recover` and `note-attempt`. Use `compactionService(host)` and `COMPACTION_SERVICE_DESCRIPTOR`. Carry the captured policy key when required. Note preparation, cadence, retries and complete inference messages belong to the selected policy; host code validates history, commits checkpoints, accounts usage and supplies admitted model transport. Recovery calls the same selected service, never an implicit native alternative. A handoff byte limit of zero means no policy byte cap; model and transport limits still apply. Legacy compaction capabilities are an explicit behavior of the native provider, not a second selection path for external providers.
 
 These contracts keep the Go host and public SDK. Authors implement a process plugin through the ordinary service declarations and callback-bound `RuntimeHost`; they do not need a replacement kernel, private source imports or privileged native APIs.
+
+## Conversation title policy
+
+`session.title@1` is an optional dependency of the session execution consumer. The shipped `wuu.title.default` module supplies native title policy. Omitting the service disables automatic title generation and explicit regeneration; failure of a selected provider is reported without selecting a native fallback. Title selection is independent of `agent.prompt`.
+
+Use `TITLE_SERVICE_DESCRIPTOR` to implement `plan` and `resolve`, and `titleService(host)` from `@wuu/plugin-sdk` to call the captured binding. `plan` receives `TitlePlanRequest`: model metadata, host-projected `human_messages`, current title and summary, read-only/ephemeral/parent facts, and `force`/`persist`. These facts do not grant authority. Its `TitlePlan` result chooses one action:
+
+| Action | Result and behavior |
+| --- | --- |
+| `skip` | Optional `reason`; no inference or title write. |
+| `complete` | A nonempty `title`; no model runtime is required and no native title cleanup or length policy is applied. |
+| `infer` | Complete `messages` using public `ModelMessageV1`, plus optional `temperature`; the host invokes the selected model transport. |
+
+Message fields use the public model wire (`role`, `content`, `reasoning_content`, and other declared fields), not serialized Go record names. An explicit zero temperature is preserved and overrides the configured sampling default; model capability restrictions still take precedence. After successful inference, `resolve({ text })` returns `{ title }`. The SDK helper `titleService(host).resolve(text)` returns that string. An empty resolved title skips persistence. Providers own eligibility, source selection, prompt wording, sampling policy and output cleanup; replacing the native provider replaces that business policy.
+
+The host retains authenticated inputs, duplicate-job suppression, the captured generation, model receipt accounting, atomic generated-title updates and notifications. A receipt failure prevents saving or delivering the generated title. Generated-title updates do not overwrite a title already present, including a concurrent manual rename. A successful SDK call is not evidence that automatic triggering, cancellation and retained-generation cleanup have all passed product acceptance; verify those paths separately.
 
 ## Product profiles and renderer bindings
 

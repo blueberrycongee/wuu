@@ -10,6 +10,7 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 | --- | --- | --- |
 | `session.domain@1` | `wuu.session.default` | `sessionDomain`, `sessionDomainProvider`, `sessionDomainDescriptor` |
 | `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
+| `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
 | `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
 | `agent.compaction@1` | `wuu.compaction.default` | `compactionService`, `COMPACTION_SERVICE_DESCRIPTOR` |
 | `state.documents@1` | `wuu.state.sqlite`、`wuu.state.jsonl` | `documentStore`、`documentStoreDescriptor`、`StateQuery` |
@@ -39,11 +40,27 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 
 `agent.tools@1` 替换工具注册表和执行流程。`list` 提供定义、发现目录和工具面事实，`resolve` 提供可用性与元数据，`execute` 执行所选实现；`freeze`、`unfreeze`、`prepare` 和 `finalize` 保持回合内的工具面与结果行为。贡献工具是另一种操作：贡献内容进入所选注册表的策略。原生提供者仅在被选中时初始化 Toolkit；外部选择不能隐式初始化原生 Toolkit 或合并其目录。通过 `toolService(host)`、`TOOL_SERVICE_DESCRIPTOR` 及认证宿主网关实现工具与 OS 操作。
 
-`agent.prompt@1` 拥有主会话和 worker 的完整系统提示词及分段元数据。`promptService(host).assemble(request)` 接收环境、指令、技能、所选工具面事实和显式贡献；worker 请求还在 `worker` 中携带角色、隔离方式与身份事实。提供者决定措辞和顺序，消费者不能添加原生基础提示词、追加 worker 策略，或把空结果替换为继承指令。错误应阻止请求。后台标题生成和插件命令的侧边对话提示词属于独立产品行为，不是本契约的额外角色；只替换 `agent.prompt` 不会替换它们。
+`agent.prompt@1` 拥有主会话和 worker 的完整系统提示词及分段元数据。`promptService(host).assemble(request)` 接收环境、指令、技能、所选工具面事实和显式贡献；worker 请求还在 `worker` 中携带角色、隔离方式与身份事实。提供者决定措辞和顺序，消费者不能添加原生基础提示词、追加 worker 策略，或把空结果替换为继承指令。错误应阻止请求。会话标题使用下述独立选择的 `session.title` 服务。插件命令的侧边对话提示词仍独立于主会话/worker 契约；只替换 `agent.prompt` 不会替换这两种行为。
 
 `agent.compaction@1` 通过 `describe`、`compact`、`window`、`handoff`、`note-plan`、`compact-note`、`recover` 和 `note-attempt` 拥有上下文策略。使用 `compactionService(host)` 与 `COMPACTION_SERVICE_DESCRIPTOR`，在要求时携带捕获的策略 key。笔记准备、触发间隔、重试和完整推理消息由所选策略负责；宿主负责历史校验、checkpoint 提交、用量记账及已获准入的模型传输。恢复调用同一个所选服务，不隐式切换到原生替代品。handoff 的字节上限为零表示策略不设字节上限，模型和传输限制仍然有效。旧压缩 capability 是原生提供者的显式兼容行为，不是外部提供者的第二条选择路径。
 
 这些契约保留 Go 宿主和公共 SDK。作者通过普通服务声明及回调绑定的 `RuntimeHost` 实现进程插件，无须替换内核、导入私有源码或使用特权原生 API。
+
+## 会话标题策略
+
+`session.title@1` 是会话执行消费者的可选依赖，随产品提供的 `wuu.title.default` 模块实现原生标题策略。不选择该服务会禁用自动标题生成和显式重新生成；所选提供者失败时报告错误，不选择原生 fallback。标题服务独立于 `agent.prompt` 选择。
+
+使用 `TITLE_SERVICE_DESCRIPTOR` 实现 `plan` 和 `resolve`，通过 `@wuu/plugin-sdk` 的 `titleService(host)` 调用捕获的绑定。`plan` 接收 `TitlePlanRequest`：模型元数据、宿主投影的 `human_messages`、现有标题与摘要、只读/临时/父会话事实，以及 `force`/`persist`。这些事实不授予权限。返回的 `TitlePlan` 选择以下一种动作：
+
+| 动作 | 结果与行为 |
+| --- | --- |
+| `skip` | 可选 `reason`；不执行推理或写入标题。 |
+| `complete` | 返回非空 `title`；不要求模型运行时，不应用原生标题清理或长度策略。 |
+| `infer` | 返回使用公共 `ModelMessageV1` 的完整 `messages` 和可选 `temperature`；宿主调用所选模型传输。 |
+
+消息字段使用公共模型 wire（`role`、`content`、`reasoning_content` 等已声明字段），不使用 Go 记录序列化名称。显式零温度会被保留并覆盖配置的采样默认值，模型能力限制仍优先。推理成功后，`resolve({ text })` 返回 `{ title }`；SDK helper `titleService(host).resolve(text)` 直接返回字符串。解析后的标题为空时跳过持久化。提供者拥有触发条件、来源选择、提示词措辞、采样策略和输出清理；替换原生提供者即替换这些业务策略。
+
+宿主保留认证输入、重复任务抑制、捕获的 generation、模型回执记账、原子生成标题更新及通知。回执失败会阻止保存或交付生成的标题。生成标题更新不会覆盖已有标题，包括并发的手动重命名。SDK 调用成功不能证明自动触发、取消和保留 generation 的清理均已通过产品验收，应分别验证这些路径。
 
 ## 产品 profile 与渲染器绑定
 
