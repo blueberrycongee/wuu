@@ -1,11 +1,10 @@
 import type { ApplicationGenerationAPI, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
-import { WorkspaceRightPanel, type PreviewSurfaceApplication, type WorkspacePanelLayout } from "../WorkspacePanels";
+import { WorkspaceRightPanel, type WorkspacePanelLayout } from "../WorkspacePanels";
 
 /** The selected preview owns its views and services; the shell supplies geometry only. */
 export function DefaultPreviewSurface({ application, slots, context }: UISlotRenderProps): JSX.Element {
-  // Remove the local service type when the facade publishes the preview source fields.
   return <WorkspaceRightPanel {...context.layout as WorkspacePanelLayout}
-    application={application as PreviewSurfaceApplication} slots={slots} />;
+    application={application} slots={slots} />;
 }
 
 export function activate(api: ApplicationGenerationAPI): void {

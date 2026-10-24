@@ -23,6 +23,8 @@ import {
 } from "./WorkspaceViewTabs";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { confirmAction } from "./ConfirmDialog";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import type { HeaderSnapshotV1 } from "../shared/workbench";
 import type { UICompositionV1, UISlotProps } from "../../../packages/plugin-sdk/src/ui";
 
@@ -220,6 +222,15 @@ type PanelFixtureProps = {
   fileRefreshKey?: string;
 } & { slots?: UICompositionV1 };
 function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
+  const previewContent = React.useMemo(() => new ApplicationPreviewContent(window.wuu, {
+    openFile: ({ root, path }) => {
+      const tab = props.tabs.find(tab => tab.kind === "file" && tab.context.cwd === root);
+      const context = tab?.kind === "file" ? tab.context : props.workspaceContext;
+      props.onOpenFile(path, context);
+    },
+  }), [props.onOpenFile, props.tabs, props.workspaceContext]);
+  const artifacts = React.useMemo(() => new ApplicationArtifacts(window.wuu, previewContent), [previewContent]);
+  React.useEffect(() => () => previewContent.dispose(), [previewContent]);
   const snapshot = {
     connection: { status: "connected" },
     previewWorkspace: { ownerTabId: "draft:one", tabs: props.tabs, activeTabId: props.activeTabID, activeFileTabId: props.activeFileTabID,
@@ -242,11 +253,7 @@ function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
       if (action === "preview.open-file") props.onOpenFile(input.path, input.context);
       if (action === "preview.show-conversation") props.conversationTab?.onSelect();
     },
-    previewContent: {
-      capabilities: { nativeItemMenu: false, revealItem: true, exportFile: false },
-      listDirectory: (target: {path: string; root: string}) => window.wuu.listWorkspaceDirectory(target.path, target.root),
-      readFile: (target: {path: string; root: string}) => window.wuu.readWorkspaceFile(target.path, target.root),
-    },
+    previewContent, artifacts,
     fileSelection: { getSnapshot: () => selection, subscribe: () => () => {} },
     catalog: { loadIcon: vi.fn() }, settingsControls: {}, environment: {}, terminals: {}, browser: {}, projects: {},
   } as unknown as Parameters<typeof PublicWorkspaceRightPanel>[0]["application"];

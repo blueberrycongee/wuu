@@ -82,52 +82,17 @@ import { Tooltip } from "./Tooltip";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
 import { PluginIcon } from "./PublicIcon";
-import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
-import type { ApplicationPreviewWorkspaceV1, ApplicationPreviewContextV1 } from "../../../packages/plugin-sdk/src/ui-preview";
-import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
-import type { ApplicationBrowserV1, BrowserActivityV1, BrowserDockTargetV1, BrowserNavigationRequestV1 } from "../../../packages/plugin-sdk/src/ui-browser";
-import type { ApplicationTerminalsV1 } from "../../../packages/plugin-sdk/src/ui-terminals";
-import type { ApplicationProjectsV1 } from "../../../packages/plugin-sdk/src/ui-projects";
-import type { ApplicationSideConversationViewV1, ApplicationSideConversationActionMapV1 } from "../../../packages/plugin-sdk/src/ui-side-conversation";
+import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { PreviewContentProvider } from "./PreviewContentContext";
+import { ArtifactsProvider } from "./ArtifactsContext";
 import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { TerminalControlsProvider } from "./TerminalControlsContext";
 import { ProjectActionsProvider } from "./ProjectActions";
 import { ApplicationSideThreadPanel } from "./SideThreadPanel";
 import { ApplicationSideThreadComposer } from "./SideThreadComposer";
-import type { ApplicationFileSelectionServiceV1 } from "../../../packages/plugin-sdk/src/ui-file-selection";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from "./WorkspaceBrowserOpen";
 import { showErrorToast } from "./Toast";
-
-type PreviewSurfaceActions = ApplicationActionMapV1 & ApplicationSideConversationActionMapV1 & {
-  "preview.open-url": { input: { readonly url: string; readonly modifiers?: WorkspaceBrowserOpenModifiers }; result: void };
-};
-// Remove this transitional type when the application facade publishes these owner fields.
-export interface PreviewSurfaceApplication extends Omit<ApplicationServiceV1, "getSnapshot" | "invoke"> {
-  readonly fileSelection: ApplicationFileSelectionServiceV1;
-  readonly environment: ApplicationEnvironmentV1;
-  readonly browser: ApplicationBrowserV1;
-  readonly terminals: ApplicationTerminalsV1;
-  readonly projects: ApplicationProjectsV1;
-  getSnapshot(): ApplicationSnapshotV1 & {
-    readonly previewWorkspace: ApplicationPreviewWorkspaceV1 & {
-      readonly ownerTabId: string;
-      readonly activeContext?: ApplicationPreviewContextV1;
-      readonly workspaceContext?: ApplicationPreviewContextV1;
-      readonly threadId?: string;
-      readonly conversationTitle: string;
-      readonly fileRefreshKey?: string;
-      readonly browserActivity?: BrowserActivityV1;
-      readonly browserDockTarget?: BrowserDockTargetV1;
-      readonly browserNavigation?: BrowserNavigationRequestV1;
-    };
-    readonly sideConversation: ApplicationSideConversationViewV1;
-  };
-  invoke<A extends keyof PreviewSurfaceActions>(action: A,
-    input: PreviewSurfaceActions[A]["input"],
-    options?: { readonly signal?: AbortSignal }): Promise<PreviewSurfaceActions[A]["result"]>;
-}
 
 export interface WorkspacePanelLayout {
   open: boolean;
@@ -144,10 +109,10 @@ export interface WorkspacePanelLayout {
   documentComposer?: boolean;
   pane: "primary" | "secondary";
 }
-const PreviewIconLoader = createContext<PreviewSurfaceApplication["catalog"]["loadIcon"] | undefined>(undefined);
+const PreviewIconLoader = createContext<ApplicationServiceV1["catalog"]["loadIcon"] | undefined>(undefined);
 
 export function WorkspaceRightPanel(props: WorkspacePanelLayout & {
-  application: PreviewSurfaceApplication;
+  application: ApplicationServiceV1;
   slots: UICompositionV1;
 }): JSX.Element {
   const { application, slots } = props;
@@ -155,7 +120,7 @@ export function WorkspaceRightPanel(props: WorkspacePanelLayout & {
   const openURL = useCallback((url: string, modifiers?: WorkspaceBrowserOpenModifiers) => {
     void application.invoke("preview.open-url", { url, modifiers }).catch(showErrorToast);
   }, [application]);
-  return <FileSelectionProvider application={application} source={{ ownerTabId: source.ownerTabId }}>
+  return <ArtifactsProvider application={application}><FileSelectionProvider application={application} source={{ ownerTabId: source.ownerTabId }}>
     <WorkspaceBrowserOpenContext.Provider value={openURL}>
       <PreviewContentProvider service={application.previewContent} slots={slots}>
         <BrowserControlsProvider service={application.browser}>
@@ -169,7 +134,7 @@ export function WorkspaceRightPanel(props: WorkspacePanelLayout & {
         </BrowserControlsProvider>
       </PreviewContentProvider>
     </WorkspaceBrowserOpenContext.Provider>
-  </FileSelectionProvider>;
+  </FileSelectionProvider></ArtifactsProvider>;
 }
 
 type WorkspaceTerminalPanelComponent = typeof import("./WorkspaceTerminalPanel").WorkspaceTerminalPanel;
@@ -280,7 +245,7 @@ function WorkspacePanelContent({
   globalized, sheetPhase = "docked", onToggleGlobalize, canExitGlobalized = true,
   browserOverlaySuppressed = false, onDirtyFileTabsChange, conversationTabVisible = false,
   documentComposer = false, pane,
-}: WorkspacePanelLayout & { application: PreviewSurfaceApplication; slots: UICompositionV1 }): JSX.Element {
+}: WorkspacePanelLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const { t } = useI18n();
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const preview = snapshot.previewWorkspace;
