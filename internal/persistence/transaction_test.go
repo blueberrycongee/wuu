@@ -1,12 +1,47 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 )
+
+func TestDomainTransactionPutSnapshotsMutableInput(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir(), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	raw := json.RawMessage(` { "large":9007199254740993, "html":"<>&", "number":1e+00 } `)
+	want, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := map[string]int{"before": 1}
+	if err := Update(ctx, store, func(tx *Tx) error {
+		if err := tx.Put("snapshot", "raw", raw); err != nil {
+			return err
+		}
+		if err := tx.Put("snapshot", "map", value); err != nil {
+			return err
+		}
+		for i := range raw {
+			raw[i] = ' '
+		}
+		value["before"] = 2
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.Read(ctx, Query{Namespace: "snapshot"})
+	if err != nil || len(view.Documents) != 2 || string(view.Documents[0].Value) != `{"before":1}` || !bytes.Equal(view.Documents[1].Value, want) {
+		t.Fatalf("Put did not snapshot its input: %+v, %v", view, err)
+	}
+}
 
 // A domain transaction must not combine namespaces from different revisions,
 // lose concurrent updates, leak its buffered writes, or retry an uncertain

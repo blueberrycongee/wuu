@@ -19,6 +19,7 @@ import (
 // LegacyTableConverter converts an entire owned legacy table to documents.
 // Values use SQLite types: nil, int64, float64, string, or []byte. Converters
 // return claimed=false for tables outside their domain and perform no effects.
+// Accepted values are snapshotted so later calls cannot alter an earlier write.
 // After every table, converters receive table="" and nil rows once to finalize
 // cross-table indexes. Supply fresh converter instances for each migration call.
 // The composition supplies converters explicitly; no global registry is used.
@@ -60,7 +61,8 @@ func MigrateLegacySQLite(ctx context.Context, sessDir string, documents persiste
 		return LegacyMigrationResult{}, err
 	}
 	result := LegacyMigrationResult{Fingerprint: snapshot.Fingerprint, Rows: make(map[string]int)}
-	writes := make(map[string]persistence.Write)
+	writes := make(map[string]persistence.PreparedWrite)
+	namespaces := make(map[string]bool)
 	add := func(write persistence.Write) error {
 		key := write.Namespace + "\x00" + write.Key
 		if write.Delete || write.Namespace == "" || write.Key == "" || !json.Valid(write.Value) {
@@ -69,7 +71,12 @@ func MigrateLegacySQLite(ctx context.Context, sessDir string, documents persiste
 		if _, found := writes[key]; found {
 			return fmt.Errorf("%w: duplicate legacy conversion for %s/%s", persistence.ErrConflict, write.Namespace, write.Key)
 		}
-		writes[key] = write
+		prepared, err := persistence.PrepareWrite(write.Namespace, write.Key, write.Value)
+		if err != nil {
+			return err
+		}
+		writes[key] = prepared
+		namespaces[write.Namespace] = true
 		return nil
 	}
 	put := func(table, key string, value any) error {
@@ -151,10 +158,6 @@ func MigrateLegacySQLite(ctx context.Context, sessDir string, documents persiste
 			return nil
 		}
 		result.AlreadyMigrated = false
-		namespaces := make(map[string]bool)
-		for _, write := range writes {
-			namespaces[write.Namespace] = true
-		}
 		for namespace := range namespaces {
 			existing, err := tx.Read(persistence.Query{Namespace: namespace, Limit: 1})
 			if err != nil {
@@ -165,7 +168,7 @@ func MigrateLegacySQLite(ctx context.Context, sessDir string, documents persiste
 			}
 		}
 		for _, write := range writes {
-			if err := tx.Put(write.Namespace, write.Key, write.Value); err != nil {
+			if err := tx.PutPrepared(write); err != nil {
 				return err
 			}
 		}

@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -17,8 +18,30 @@ type Tx struct {
 	ctx      context.Context
 	store    Documents
 	revision *Revision
-	writes   map[documentKey]Write
+	writes   map[documentKey]bufferedWrite
 	err      error
+}
+
+type bufferedWrite struct {
+	Write
+	prepared bool
+}
+
+// PreparedWrite owns a normalized JSON snapshot for reuse across Update attempts.
+// Its value is shared with commit intents, which must remain unchanged until an
+// uncertain result is resolved, just like any other Transaction.
+type PreparedWrite struct {
+	write Write
+}
+
+// PrepareWrite copies and normalizes value exactly as Tx.Put does. Later changes
+// to the caller's value cannot alter the prepared write.
+func PrepareWrite(namespace, key string, value any) (PreparedWrite, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return PreparedWrite{}, err
+	}
+	return PreparedWrite{write: Write{Namespace: namespace, Key: key, Value: raw}}, nil
 }
 
 // CommitError retains the exact attempted transaction when commit fails. The
@@ -44,7 +67,7 @@ func Update(ctx context.Context, store Documents, body func(*Tx) error) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		tx := &Tx{ctx: ctx, store: store, writes: make(map[documentKey]Write)}
+		tx := &Tx{ctx: ctx, store: store, writes: make(map[documentKey]bufferedWrite)}
 		err := body(tx)
 		if err == nil {
 			err = tx.err
@@ -81,7 +104,7 @@ func Update(ctx context.Context, store Documents, body func(*Tx) error) error {
 		}
 		sortDocuments(keys)
 		for _, key := range keys {
-			request.Writes = append(request.Writes, tx.writes[documentKey{key.Namespace, key.Key}])
+			request.Writes = append(request.Writes, tx.writes[documentKey{key.Namespace, key.Key}].Write)
 		}
 		_, err = store.Commit(ctx, request)
 		if errors.Is(err, ErrConflict) {
@@ -152,6 +175,11 @@ func (tx *Tx) ReadView(query Query) (View, error) {
 	for key, write := range tx.writes {
 		d := Document{Namespace: write.Namespace, Key: write.Key, Value: write.Value}
 		if !write.Delete && matchesQuery(d, query) {
+			// A read result must not expose the immutable value reused by another
+			// attempt or transaction. Ordinary Put retains its existing behavior.
+			if write.prepared {
+				d.Value = bytes.Clone(write.Value)
+			}
 			documents[key] = d
 		}
 	}
@@ -197,7 +225,18 @@ func (tx *Tx) Put(namespace, key string, value any) error {
 		tx.err = err
 		return err
 	}
-	tx.writes[documentKey{namespace, key}] = Write{Namespace: namespace, Key: key, Value: raw}
+	tx.writes[documentKey{namespace, key}] = bufferedWrite{Write: Write{Namespace: namespace, Key: key, Value: raw}}
+	return nil
+}
+
+// PutPrepared borrows a prepared value without normalizing or copying it again.
+// It participates in the same read-your-writes and atomic commit as Put.
+func (tx *Tx) PutPrepared(prepared PreparedWrite) error {
+	if tx.err != nil {
+		return tx.err
+	}
+	write := prepared.write
+	tx.writes[documentKey{write.Namespace, write.Key}] = bufferedWrite{Write: write, prepared: true}
 	return nil
 }
 
@@ -205,6 +244,6 @@ func (tx *Tx) Delete(namespace, key string) error {
 	if tx.err != nil {
 		return tx.err
 	}
-	tx.writes[documentKey{namespace, key}] = Write{Namespace: namespace, Key: key, Delete: true}
+	tx.writes[documentKey{namespace, key}] = bufferedWrite{Write: Write{Namespace: namespace, Key: key, Delete: true}}
 	return nil
 }

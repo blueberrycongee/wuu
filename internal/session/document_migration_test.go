@@ -5,11 +5,158 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
+
+type migrationRetryDocuments struct {
+	*persistence.Store
+	attempts int
+}
+
+func (d *migrationRetryDocuments) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	d.attempts++
+	if d.attempts == 1 {
+		_, err := d.Store.Commit(ctx, persistence.Transaction{ID: "concurrent-writer", ExpectedRevision: tx.ExpectedRevision, Writes: []persistence.Write{{Namespace: "unrelated", Key: "advance", Value: json.RawMessage(`true`)}}})
+		if err != nil {
+			return persistence.Receipt{}, err
+		}
+		return persistence.Receipt{}, persistence.ErrConflict
+	}
+	receipt, err := d.Store.Commit(ctx, tx)
+	if err == nil && d.attempts == 2 {
+		return persistence.Receipt{}, errors.New("migration reply lost")
+	}
+	return receipt, err
+}
+
+func TestLegacyMigrationNormalizedIntentSurvivesRetries(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			legacy := t.TempDir()
+			if _, err := Create(legacy, "original"); err != nil {
+				t.Fatal(err)
+			}
+			db, err := openStore(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(`CREATE TABLE custom_json (value TEXT); INSERT INTO custom_json VALUES ('source')`); err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			provider, err := persistence.Open(ctx, t.TempDir(), kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer provider.Close()
+			documents := &migrationRetryDocuments{Store: provider}
+			raw := json.RawMessage(" { \"large\":9007199254740993, \"html\":\"<>&\", \"unicode\":\"\\u4f60\", \"fraction\":1e+00, \"nested\": [ true, null ] } ")
+			want, err := json.Marshal(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			converter := func(table string, _ []map[string]any) ([]persistence.Write, bool, error) {
+				if table == "custom_json" {
+					return []persistence.Write{{Namespace: "custom.converted", Key: "one", Value: raw}}, true, nil
+				}
+				return nil, false, nil
+			}
+			result, err := MigrateLegacySQLite(ctx, legacy, documents, converter)
+			var uncertain *persistence.CommitError
+			if !errors.As(err, &uncertain) || documents.attempts != 2 {
+				t.Fatalf("CAS/uncertain boundary: attempts=%d, err=%v", documents.attempts, err)
+			}
+			seen := make(map[string]bool)
+			for _, write := range uncertain.Transaction.Writes {
+				seen[write.Namespace] = true
+				if write.Namespace == "custom.converted" && !bytes.Equal(write.Value, want) {
+					t.Fatalf("converter normalization changed: %s", write.Value)
+				}
+			}
+			for _, namespace := range []string{"custom.converted", documentNamespace("sessions"), documentNamespace("legacy_sqlite_rows"), documentNamespace("legacy_sqlite_schema"), documentNamespace("legacy_sqlite_migrations")} {
+				if !seen[namespace] {
+					t.Fatalf("atomic intent omitted %s", namespace)
+				}
+			}
+			for i := 0; i < 2; i++ {
+				receipt, err := provider.Commit(ctx, uncertain.Transaction)
+				if err != nil || receipt.Revision != 2 {
+					t.Fatalf("exact retry: %+v, %v", receipt, err)
+				}
+			}
+			snapshot, err := provider.Export(ctx)
+			if err != nil || len(snapshot.Receipts) != 2 {
+				t.Fatalf("migration split or replayed: receipts=%d, err=%v", len(snapshot.Receipts), err)
+			}
+			again, err := MigrateLegacySQLite(ctx, legacy, documents, converter)
+			if err != nil || !again.AlreadyMigrated || again.Fingerprint != result.Fingerprint || documents.attempts != 2 {
+				t.Fatalf("completed marker replayed: %+v, %v", again, err)
+			}
+		})
+	}
+}
+
+type migrationAllocationDocuments struct {
+	batch, ready, encoded runtime.MemStats
+}
+
+func (d *migrationAllocationDocuments) Read(_ context.Context, query persistence.Query) (persistence.View, error) {
+	if query.Namespace == documentNamespace("legacy_sqlite_migrations") {
+		runtime.ReadMemStats(&d.batch)
+	}
+	return persistence.View{Documents: []persistence.Document{}}, nil
+}
+
+func (d *migrationAllocationDocuments) Commit(_ context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	runtime.ReadMemStats(&d.ready)
+	raw, err := json.Marshal(tx)
+	runtime.ReadMemStats(&d.encoded)
+	runtime.KeepAlive(raw)
+	return persistence.Receipt{ID: tx.ID, Revision: 1}, err
+}
+
+// This probe isolates allocations after the converted batch exists; durable
+// behavior is exercised separately by the real SQLite/JSONL migration tests.
+func BenchmarkLegacyMigrationValueCopies(b *testing.B) {
+	legacy := b.TempDir()
+	if _, err := Create(legacy, "original"); err != nil {
+		b.Fatal(err)
+	}
+	converter := func(table string, _ []map[string]any) ([]persistence.Write, bool, error) {
+		if table != "" {
+			return nil, false, nil
+		}
+		writes := make([]persistence.Write, 128)
+		for i := range writes {
+			raw, err := json.Marshal(strings.Repeat("<result>&\n", 4096))
+			if err != nil {
+				return nil, false, err
+			}
+			writes[i] = persistence.Write{Namespace: "custom.converted", Key: fmt.Sprint(i), Value: raw}
+		}
+		return writes, false, nil
+	}
+	var readyBytes, encodedBytes uint64
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		probe := &migrationAllocationDocuments{}
+		if _, err := MigrateLegacySQLite(context.Background(), legacy, probe, converter); err != nil {
+			b.Fatal(err)
+		}
+		readyBytes += probe.ready.TotalAlloc - probe.batch.TotalAlloc
+		encodedBytes += probe.encoded.TotalAlloc - probe.ready.TotalAlloc
+	}
+	b.ReportMetric(float64(readyBytes)/float64(b.N), "tx-ready-B/op")
+	b.ReportMetric(float64(encodedBytes)/float64(b.N), "tx-encode-B/op")
+}
 
 // Migration must preserve exact receipts and attachments, retain physical
 // history across edits, reject partial/conflicting imports, and be restartable.
