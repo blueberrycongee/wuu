@@ -56,8 +56,8 @@ import {
   ConversationTitleActions,
 } from "./ConversationShellRenderers";
 import { translateCurrent as t } from "./i18n";
-import { PluginHost } from "./plugins/PluginHost";
-import { WorkbenchController } from "./plugins/Workbench";
+import { createConversationTestApplication } from "./ConversationControlsTestProvider";
+import type { ApplicationSnapshotV1 } from "../../../packages/plugin-sdk/src/ui";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -151,20 +151,7 @@ describe("ConversationSplitPaneRenderer file routing", () => {
 
 describe("ConversationTitleContent presentation boundary", () => {
   it("keeps the new-conversation control before the title", () => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    act(() => root?.render(
-      <ConversationTitleContent
-        state={{
-          ...initialState,
-          activeContext: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
-        }}
-        activeTitle="A very long conversation title that should not push the new-conversation control away"
-        onStartNewThread={() => {}}
-      />,
-    ));
+    renderTitle(undefined, "A very long conversation title that should not push the new-conversation control away");
 
     const heading = container.querySelector(".conversation-title-heading");
     const button = heading?.querySelector<HTMLButtonElement>("button.session-tab-new");
@@ -175,108 +162,23 @@ describe("ConversationTitleContent presentation boundary", () => {
     expect(button!.disabled).toBe(false);
   });
 
-  it("replaces its native title root with the conversation header presenter", async () => {
-    const pluginHost = new PluginHost({ react: React });
-    const workbenchController = new WorkbenchController(pluginHost);
-    let snapshot: HeaderSnapshotV1 | undefined;
-    await pluginHost.activateGeneration({ pluginId: "conversation-header", generation: "one", register(api) {
-      api.registerPresenter({ id: "conversation", target: "header.conversation", render: (props) => {
-        snapshot = props.snapshot as HeaderSnapshotV1;
-        return <div data-conversation-header>{snapshot.title}</div>;
-      } });
-    } });
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    act(() => root?.render(
-      <ConversationTitleContent
-        state={initialState}
-        activeTitle="Conversation"
-        onStartNewThread={() => {}}
-        pluginHost={pluginHost}
-        workbenchController={workbenchController}
-      />,
-    ));
-
-    expect(container.firstElementChild?.hasAttribute("data-conversation-header")).toBe(true);
-    expect(container.querySelector("h1")).toBeNull();
-    expect(snapshot).toEqual({ contractVersion: 1, scope: "conversation", title: "Conversation" });
-  });
-
-  it("stops presenting the conversation as busy when its terminal answer is ready", async () => {
-    const pluginHost = new PluginHost({ react: React });
-    const workbenchController = new WorkbenchController(pluginHost);
-    let snapshot: HeaderSnapshotV1 | undefined;
-    await pluginHost.activateGeneration({ pluginId: "conversation-header", generation: "one", register(api) {
-      api.registerPresenter({ id: "conversation", target: "header.conversation", render: (props) => {
-        snapshot = props.snapshot as HeaderSnapshotV1;
-        return <div data-conversation-header />;
-      } });
-    } });
-    const context = {
-      kind: "project" as const,
-      project_id: "project-1",
-      cwd: "/repo/project",
-    };
-    const answerReadyThread: Thread = {
-      ...thread("answer-ready", context.cwd),
-      status: "in_progress",
-      turns: [{
-        id: "turn-ready",
-        status: "in_progress",
-        items_view: "full",
-        answer_ready_at: "2026-08-31T12:00:00Z",
-        items: [{
-          id: "terminal-answer",
-          type: "agent_message",
-          status: "completed",
-          terminal: true,
-          text: "done",
-        }],
-      }],
-    };
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-
-    act(() => root?.render(
-      <ConversationTitleContent
-        state={{
-          ...initialState,
-          activeContext: context,
-          thread: answerReadyThread,
-          threads: [answerReadyThread],
-          sessionTabs: [createThreadSessionTab(answerReadyThread, context)],
-          activeSessionTabID: threadSessionTabID(answerReadyThread.id),
-        }}
-        runningThreadIDs={new Set([answerReadyThread.id])}
-        activeTitle="Answer ready"
-        onStartNewThread={() => {}}
-        pluginHost={pluginHost}
-        workbenchController={workbenchController}
-      />,
-    ));
-
-    expect(snapshot?.busy).toBeUndefined();
+  it("stops presenting the conversation as busy when its terminal answer is ready", () => {
+    const props = renderTitle();
+    const ready = { ...thread("answer-ready", "/repo"), status: "in_progress" as const, turns: [{ id: "turn", status: "in_progress" as const, items_view: "full" as const, answer_ready_at: "2026-08-31T12:00:00Z", items: [{ id: "answer", type: "agent_message" as const, status: "completed" as const, terminal: true, text: "done" }] }] };
+    props.update({ ...props.application.getSnapshot(), conversationWorkspace: { ...props.application.getSnapshot().conversationWorkspace, primaryThreadId: ready.id, threads: [ready] }, navigationWorkspace: { ...props.application.getSnapshot().navigationWorkspace, threads: [{ ...ready, turn_count: 1 }] } });
+    expect(props.header()?.busy).toBeUndefined();
   });
 
   function renderTitle(onRenameTitle?: (title: string) => void, title = "新建对话", editKey = "draft") {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    const props = {
-      state: {
-        ...initialState,
-        activeContext: { kind: "project" as const, project_id: "project-1", cwd: "/repo/project" },
-      },
-      activeTitle: title,
-      onStartNewThread: () => {},
-      onRenameTitle,
-      titleEditKey: editKey,
-    };
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    const base = createConversationTestApplication();
+    let snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), tabs: { ...base.getSnapshot().tabs, activeTabId: editKey, items: [{ id: editKey, kind: "draft", title, workspaceRoot: "/repo", project: false, draftText: "", hasAttachments: false }] }, conversationWorkspace: { ...base.getSnapshot().conversationWorkspace, threads: [], primaryThreadId: undefined }, navigationWorkspace: { ...base.getSnapshot().navigationWorkspace, activeContextKind: "project" } };
+    const invoke = vi.fn().mockImplementation(async (action, input) => { if (action === "draft.rename") onRenameTitle?.(input.title); });
+    const application = { ...base, getSnapshot: () => snapshot, invoke };
+    let header: HeaderSnapshotV1 | undefined;
+    const props = { application, slotOwner: "shell", slots: { Slot: ({ context, fallback }: import("../../../packages/plugin-sdk/src/ui").UISlotProps) => { header = context?.snapshot as HeaderSnapshotV1; return fallback ?? null; } } };
     act(() => root?.render(<ConversationTitleContent {...props} />));
-    return props;
+    return { ...props, header: () => header, update: (next: ApplicationSnapshotV1) => { snapshot = next; act(() => root?.render(<ConversationTitleContent {...props} />)); } };
   }
 
   function setInputValue(input: HTMLInputElement, value: string): void {
@@ -363,9 +265,8 @@ describe("ConversationTitleContent presentation boundary", () => {
     act(() => {
       setInputValue(container.querySelector<HTMLInputElement>(".conversation-title-edit")!, "未保存");
     });
-    act(() => root?.render(
-      <ConversationTitleContent {...props} activeTitle="第二会话题" titleEditKey="two" />,
-    ));
+    const current = props.application.getSnapshot();
+    props.update({ ...current, tabs: { ...current.tabs, activeTabId: "two", items: [{ ...current.tabs.items[0], id: "two", title: "第二会话题" }] } });
     expect(onRenameTitle).not.toHaveBeenCalled();
     expect(container.querySelector(".conversation-title-edit")).toBeNull();
     expect(container.querySelector(".conversation-title-rename")?.textContent).toBe("第二会话题");

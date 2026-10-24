@@ -31,6 +31,7 @@ import type {
   UserQuestionRequest,
 } from "../shared/protocol";
 import {
+  activeTurnForThread,
   emptyComposerDraft,
   isThreadPresentationRunning,
   queryTextsForThread,
@@ -61,11 +62,9 @@ import { ViewSwitchLoading } from "./LoadingViews";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { useI18n } from "./i18n";
 import { useProjectActions } from "./ProjectActions";
-import { HeaderPresentation, immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
-import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
-import type { PluginHost } from "./plugins/PluginHost";
-import { PluginSlot } from "./plugins/PluginSlot";
-import type { WorkbenchController } from "./plugins/Workbench";
+import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import { conversationHeadingTitle } from "./ThreadTitles";
+import { showErrorToast } from "./Toast";
 
 const SettingsView = lazy(() => import("./SettingsView").then((module) => ({
   default: module.SettingsView,
@@ -288,15 +287,9 @@ export function ConversationSplitLayoutRenderer({
 }
 
 export type ConversationTitleContentProps = {
-  state: AppState;
-  runningThreadIDs?: ReadonlySet<string>;
-  pendingSwitchThreadID?: string;
-  activeTitle: string;
-  onStartNewThread: () => void;
-  onRenameTitle?: (title: string) => void;
-  titleEditKey?: string;
-  pluginHost?: PluginHost;
-  workbenchController?: WorkbenchController;
+  application: ApplicationServiceV1;
+  slots: UICompositionV1;
+  slotOwner: string;
 };
 
 function ConversationTitleText({
@@ -397,44 +390,18 @@ function ConversationTitleText({
   );
 }
 
-export function ConversationTitleContent({
-  state,
-  runningThreadIDs,
-  pendingSwitchThreadID,
-  activeTitle,
-  onStartNewThread,
-  onRenameTitle,
-  titleEditKey,
-  pluginHost,
-  workbenchController,
-}: ConversationTitleContentProps): JSX.Element {
+export function ConversationTitleContent({ application, slots, slotOwner }: ConversationTitleContentProps): JSX.Element {
   const { t } = useI18n();
-  const host = pluginHost ?? desktopPluginHost;
-  const controller = workbenchController ?? desktopWorkbenchController;
-  const workbenchSnapshot = useSyncExternalStore(
-    controller.subscribe,
-    controller.getSnapshot,
-    controller.getSnapshot,
-  );
-  const navigationEntries = useSyncExternalStore(
-    (listener) => host.subscribe(listener),
-    () => host.getNavigationEntries(),
-    () => host.getNavigationEntries(),
-  );
-  const activePrimaryView = workbenchSnapshot.views.find(
-    (view) => view.region === "primary" && view.id === workbenchSnapshot.activeViewByRegion.primary,
-  );
-  // A declared destination keeps its sidebar row after it closes, so closing
-  // its only page would just repeat Back. Close is offered only where it
-  // removes a row: API-opened pages and extra instances.
-  const closable = activePrimaryView !== undefined && (
-    !navigationEntries.some((entry) =>
-      entry.pluginId === activePrimaryView.pluginId && entry.view === activePrimaryView.viewTypeId)
-    || workbenchSnapshot.views.filter((view) =>
-      view.region === "primary"
-      && view.pluginId === activePrimaryView.pluginId
-      && view.viewTypeId === activePrimaryView.viewTypeId).length > 1
-  );
+  const view = useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
+  const activePrimaryView = view.navigationWorkspace.activePluginView;
+  const tab = view.tabs.items.find(tab => tab.id === view.tabs.activeTabId);
+  const workspace = view.conversationWorkspace;
+  const threadId = workspace.activePane === "secondary" ? workspace.secondaryThreadId : workspace.primaryThreadId;
+  const thread = workspace.threads.find(thread => thread.id === threadId);
+  const catalog = tab?.kind === "skills";
+  const nativeTitle = catalog ? t("skills.title") : conversationHeadingTitle(thread, tab?.kind === "draft" ? tab.title : undefined, t("tabs.newConversation"));
+  const title = activePrimaryView?.title ?? nativeTitle;
+  const editable = !activePrimaryView && !catalog && Boolean(thread ? !thread.read_only && !thread.ephemeral : tab?.kind === "draft");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const restoreFocus = useRef(false);
   useLayoutEffect(() => {
@@ -442,92 +409,38 @@ export function ConversationTitleContent({
     restoreFocus.current = false;
     headingRef.current?.focus();
   }, [activePrimaryView?.id]);
-  const title = activePrimaryView
-    ? workbenchSnapshot.viewTypes.find((definition) =>
-      definition.pluginId === activePrimaryView.pluginId
-      && definition.id === activePrimaryView.viewTypeId)?.title ?? activePrimaryView.viewTypeId
-    : activeTitle;
+  const runNavigation = (request: Promise<unknown>) => {
+    void request.catch(error => { restoreFocus.current = false; showErrorToast(error); });
+  };
   const navigateBack = activePrimaryView ? () => {
     restoreFocus.current = true;
-    controller.deactivateRegion("primary");
+    runNavigation(application.invoke("navigation.show-native", {}));
   } : undefined;
-  const fallback = (
-    <div className="conversation-title-heading">
-      {navigateBack ? <button
-        className="icon-button"
-        data-wuu-component="primary-view-back"
-        type="button"
-        aria-label={t("common.back")}
-        title={t("common.back")}
-        onClick={navigateBack}
-      >
-        <ArrowLeft aria-hidden="true" />
-      </button> : (
-      <Tooltip content={t("tabs.newConversation")} side="bottom">
-        <button
-          className="icon-button session-tab-new"
-          type="button"
-          aria-label={t("tabs.newConversation")}
-          disabled={!state.activeContext}
-          onClick={onStartNewThread}
-        >
-          <SquarePen aria-hidden="true" />
-        </button>
-      </Tooltip>)}
-      <ConversationTitleText
-        title={title}
-        editable={Boolean(onRenameTitle) && !navigateBack}
-        editKey={titleEditKey}
-        headingRef={headingRef}
-        onRenameTitle={onRenameTitle}
-      />
-    </div>
-  );
-  const showingPrimaryWorkbench = activePrimaryView !== undefined;
-  // Session records still own drafts and recovery; they are not visible navigation.
-  const snapshot = immutableHeaderSnapshot({
-    scope: showingPrimaryWorkbench ? "workspace" : "conversation",
-    title,
-    canNavigateBack: navigateBack ? true : undefined,
-    busy: !showingPrimaryWorkbench && (
-      isThreadPresentationRunning(state.thread, state.thread ? runningThreadIDs?.has(state.thread.id) : false)
-      || pendingSwitchThreadID !== undefined
-    ) || undefined,
-  });
-  return (
-    <>
-      <PluginSlot
-        host={host}
-        id={showingPrimaryWorkbench ? "workspace.header" : "conversation.header"}
-        context={Object.freeze({
-          scope: showingPrimaryWorkbench ? "workspace" : "conversation",
-          hasSessionTabs: false,
-          tabCount: 0,
-          busy: snapshot.busy ?? false,
-        })}
-      />
-      <HeaderPresentation
-        snapshot={snapshot}
-        fallback={fallback}
-        onNavigateBack={navigateBack}
-        host={pluginHost}
-        controller={controller}
-      />
-      {activePrimaryView && closable ? <button
-        className="icon-button"
-        data-wuu-component="primary-view-close"
-        type="button"
-        aria-label={t("workspace.closeTab", { label: title })}
-        title={t("workspace.closeTab", { label: title })}
-        onClick={() => {
-          restoreFocus.current = true;
-          void controller.closeView(activePrimaryView.id);
-        }}
-      >
-        <X aria-hidden="true" />
-      </button> : null}
-    </>
-  );
+  const rename = (title: string) => {
+    if (thread) void application.invoke("thread.rename", { threadId: thread.id, title }).catch(showErrorToast);
+    else if (tab?.kind === "draft") void application.invoke("draft.rename", { tabId: tab.id, title }).catch(showErrorToast);
+  };
+  const scope = activePrimaryView ? "workspace" : "conversation";
+  const activeTurn = activeTurnForThread(thread);
+  const presentation = thread && { status: thread.status, child_agents: thread.child_agents,
+    turns: activeTurn ? [{ status: activeTurn.status, answer_ready_at: activeTurn.answer_ready_at,
+      items: activeTurn.items.map(({ id, type, status, terminal }) => ({ id, type, status, terminal })) }] : [] };
+  const busy = !activePrimaryView && (Boolean(view.tabs.pending) || isThreadPresentationRunning(presentation, view.navigationWorkspace.threads.some(row => row.id === threadId && row.status === "in_progress")));
+  const snapshot = Object.freeze({ contractVersion: 1 as const, scope, title, canNavigateBack: navigateBack ? true : undefined, busy: busy || undefined });
+  const context = Object.freeze({ snapshot, scope, threadId, ownerTabId: tab?.id, viewId: activePrimaryView?.id, hasSessionTabs: false, tabCount: 0, busy });
+  const fallback = <div className="conversation-title-heading">
+    {navigateBack ? <button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} title={t("common.back")} onClick={navigateBack}>
+      <ArrowLeft aria-hidden="true" />
+    </button> : <Tooltip content={t("tabs.newConversation")} side="bottom"><button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!view.navigationWorkspace.activeContextKind}
+      onClick={() => { void application.invoke("workspace.start-draft", { workspaceId: view.navigationWorkspace.selectedWorkspaceId }).catch(showErrorToast); }}><SquarePen aria-hidden="true" /></button></Tooltip>}
+    <ConversationTitleText title={title} editable={editable} editKey={activePrimaryView?.id ?? thread?.id ?? tab?.id} headingRef={headingRef} onRenameTitle={rename} />
+  </div>;
+  return <>
+    <slots.Slot name={`${slotOwner}/${scope}.header`} context={context} />
+    <slots.Slot name={`${slotOwner}/header.${scope}`} context={context} fallback={fallback} />
+    {activePrimaryView?.closable ? <button className="icon-button" data-wuu-component="primary-view-close" type="button" aria-label={t("workspace.closeTab", { label: title })} title={t("workspace.closeTab", { label: title })}
+      onClick={() => { restoreFocus.current = true; runNavigation(application.invoke("navigation.close-plugin", { viewId: activePrimaryView.id })); }}><X aria-hidden="true" /></button> : null}
+  </>;
 }
 
 export type ConversationTitleActionsProps = {
