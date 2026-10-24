@@ -594,11 +594,10 @@ func (r *ServiceRegistry) releaseExecution(id string) func() error {
 	}
 }
 
-// invokeProvider gives each plugin callback its own generic execution scope.
-// The caller's scope supplies cancellation and attribution, never tool authority
-// or an execution ID owned by a different plugin. Native and process providers
-// receive the same caller metadata and independently owned callback scope.
-func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (result json.RawMessage, invokeErr error) {
+// invokeProvider gives each callback its own identity. Caller metadata never
+// confers tool authority: only a native tool dispatch can explicitly delegate
+// it to this callback. Nested ordinary service calls remain generic callbacks.
+func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams, toolScope *ToolExecuteInput) (result json.RawMessage, invokeErr error) {
 	r.mu.RLock()
 	tracker := r.scopeTracker
 	r.mu.RUnlock()
@@ -617,7 +616,11 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 		return provider.invoker.InvokeService(ctx, params)
 	}
 	callbackParent, cancel := context.WithCancel(retainServiceCompletion(ctx))
-	executionID, callbackCtx := tracker.begin(provider.pluginID, callbackParent, ToolExecuteInput{}, false)
+	input := ToolExecuteInput{}
+	if toolScope != nil {
+		input = *toolScope
+	}
+	executionID, callbackCtx := tracker.begin(provider.pluginID, callbackParent, input, toolScope != nil)
 	r.mu.Lock()
 	r.executions[executionID] = &serviceExecution{
 		ctx: callbackCtx, cancel: cancel, refs: 1,
@@ -737,6 +740,11 @@ func (r *ServiceRegistry) CheckSatisfaction(requirements []ServiceRequirement) e
 // initialize; the not-authorized check runs before existence checks so an
 // undeclared consumer cannot probe which services exist.
 func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, params ServiceCallParams) (result json.RawMessage, callErr *HostServiceError) {
+	return r.call(ctx, consumerPluginID, params, nil)
+}
+
+// toolScope is a host-only delegation; no wire field can grant it.
+func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, params ServiceCallParams, toolScope *ToolExecuteInput) (result json.RawMessage, callErr *HostServiceError) {
 	service := strings.TrimSpace(params.Service)
 	method := strings.TrimSpace(params.Method)
 	if service == "" || method == "" {
@@ -828,7 +836,7 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 		Caller:      consumerPluginID,
 		Params:      params.Params,
 		ExecutionID: executionID,
-	})
+	}, toolScope)
 	if err != nil {
 		var hostErr *HostServiceError
 		if errors.As(err, &hostErr) && hostErr.Code != "" {

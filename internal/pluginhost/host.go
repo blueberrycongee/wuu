@@ -654,6 +654,18 @@ func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (
 // bounded by ctx and retirement of the consumer. Domain IDs belong in params;
 // they never confer execution authority.
 func (h *Host) CallService(ctx context.Context, consumer, service, method string, params json.RawMessage) (json.RawMessage, *HostServiceError) {
+	return h.callService(ctx, consumer, service, method, params, nil)
+}
+
+// CallToolService delegates one native tool dispatch to its selected service.
+// Input must come from the host's admitted execution, not provider request data.
+// The selected callback receives its own tool identity; ordinary downstream
+// service calls do not inherit that authority.
+func (h *Host) CallToolService(ctx context.Context, consumer, service, method string, params json.RawMessage, input ToolExecuteInput) (json.RawMessage, *HostServiceError) {
+	return h.callService(ctx, consumer, service, method, params, &input)
+}
+
+func (h *Host) callService(ctx context.Context, consumer, service, method string, params json.RawMessage, toolScope *ToolExecuteInput) (json.RawMessage, *HostServiceError) {
 	if h == nil {
 		return nil, &HostServiceError{Code: "service_unavailable", Message: "service host is unavailable"}
 	}
@@ -670,12 +682,16 @@ func (h *Host) CallService(ctx context.Context, consumer, service, method string
 		h.mu.RUnlock()
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service consumer %q is not active", consumer)}
 	}
-	executionID, executionCtx := h.executions.begin(consumer, ctx, ToolExecuteInput{}, false)
+	input := ToolExecuteInput{}
+	if toolScope != nil {
+		input = *toolScope
+	}
+	executionID, executionCtx := h.executions.begin(consumer, ctx, input, toolScope != nil)
 	h.mu.RUnlock()
 	defer h.executions.End(executionID)
-	return registry.Call(executionCtx, consumer, ServiceCallParams{
+	return registry.call(executionCtx, consumer, ServiceCallParams{
 		Service: service, Method: method, Params: params, ExecutionID: executionID,
-	})
+	}, toolScope)
 }
 
 // ExecutionSnapshots returns the host's live execution table for diagnostics.
