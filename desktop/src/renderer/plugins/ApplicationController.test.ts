@@ -6,6 +6,46 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("moves between draft tabs without dropping attachments or newer text", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const image = { id: "image", media_type: "image/png", data: "abc" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "a", images: [image], files: [] },
+      { id: "draft:b", kind: "draft", context, title: "B", createdAt: 2, prompt: "b", images: [], files: [] },
+    ] });
+    await controller.invoke("composer.set-draft", { text: "new a" });
+    await controller.invoke("tab.select", { tabId: "draft:b" });
+    expect(controller.getSnapshot().composer.draftText).toBe("b");
+    await controller.invoke("tab.select", { tabId: "draft:a" });
+    expect(controller.getSnapshot().composer.draftText).toBe("new a");
+    expect(controller.getSnapshot().tabs.items[0].hasAttachments).toBe(true);
+    expect(controller.getState().sessionTabs[0]).toMatchObject({ images: [image] });
+  });
+
+  it("keeps the active tab when loading its close destination fails", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    window.wuu = { resumeThread: vi.fn().mockRejectedValue(new Error("resume failed")) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "retain", images: [], files: [] },
+      { id: "thread:b", kind: "thread", context, title: "B", threadID: "b", prompt: "", images: [], files: [] },
+    ] });
+    await expect(controller.invoke("tab.close", { tabId: "draft:a" })).rejects.toThrow("resume failed");
+    expect(controller.getSnapshot().tabs.activeTabId).toBe("draft:a");
+    expect(controller.getSnapshot().tabs.items).toHaveLength(2);
+    expect(controller.getSnapshot().tabs.pending).toBeUndefined();
+  });
+
+  it("retains catalog detail across section changes until explicitly closed", async () => {
+    const controller = new ApplicationController();
+    await controller.invoke("catalog.select-plugin", { pluginId: "sample" });
+    await controller.invoke("catalog.select-section", { section: "skills" });
+    await controller.invoke("navigation.show-section", { section: "catalog" });
+    expect(controller.getSnapshot().navigation).toMatchObject({ section: "catalog", catalogSection: "skills", catalogPluginId: "sample" });
+    await controller.invoke("navigation.show-section", { section: "conversations" });
+    expect(controller.getSnapshot().navigation.catalogPluginId).toBe("sample");
+    await controller.invoke("catalog.select-plugin", { pluginId: "" });
+    expect(controller.getSnapshot().navigation.catalogPluginId).toBe("");
+  });
   it("rejects unknown commands and protects nested public snapshot values", async () => {
     const controller = new ApplicationController();
     const snapshot = controller.getSnapshot();

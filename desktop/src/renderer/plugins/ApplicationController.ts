@@ -4,13 +4,13 @@ import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { activeSessionTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
 import { subscribeServerEvents } from "../ServerEvents";
 import { streamTextKey, streamTextStore } from "../StreamText";
-import { getActiveLocale } from "../i18n";
+import { getActiveLocale, translateCurrent } from "../i18n";
 import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
@@ -45,6 +45,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private consumers = 0;
   private lifetime?: AbortController;
   private navigationRequest = 0;
+  private pendingNavigation?: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>;
   private submitting = false;
   private streamPublication?: number;
 
@@ -178,7 +179,9 @@ export class ApplicationController implements ApplicationServiceV1 {
     if (text === this.draft) return;
     this.draft = text;
     this.draftRevision++;
-    this.publish({ ...this.snapshot, composer: Object.freeze({ ...this.snapshot.composer, draftText: text }) });
+    this.publish({ ...this.snapshot, composer: Object.freeze({ ...this.snapshot.composer, draftText: text }),
+      tabs: Object.freeze({ ...this.snapshot.tabs, items: Object.freeze(this.snapshot.tabs.items.map(tab =>
+        tab.id === this.state.activeSessionTabID ? Object.freeze({ ...tab, draftText: text }) : tab)) }) });
   }
 
   setSettings(open: boolean, pageId = this.settings.pageId): void {
@@ -196,6 +199,53 @@ export class ApplicationController implements ApplicationServiceV1 {
       : updateThreadByID(state, thread.id, () => thread));
   }
 
+  private async selectTab(tab: SessionTab, signal?: AbortSignal): Promise<void> {
+    const request = ++this.navigationRequest;
+    const sourceContext = this.state.activeContext;
+    this.pendingNavigation = Object.freeze({ kind: "tab", targetId: tab.id });
+    this.publish();
+    let switchedContext = false;
+    try {
+      let loaded: Partial<AppState> = {};
+      if (!sameRuntimeContext(sourceContext, tab.context)) {
+        switchedContext = true;
+        const workspace = await selectRuntimeContext(tab.context);
+        signal?.throwIfAborted();
+        if (request !== this.navigationRequest) return;
+        loaded = await loadRuntimeConfiguration(workspace);
+        signal?.throwIfAborted();
+        if (request !== this.navigationRequest) return;
+      }
+      const resumed = tab.kind === "thread" ? await window.wuu.resumeThread(tab.threadID) : undefined;
+      signal?.throwIfAborted();
+      if (request !== this.navigationRequest) return;
+      if (tab.kind === "thread" && !resumed?.thread) throw new Error("Thread resume returned no thread");
+      this.updateState(state => {
+        const target = state.sessionTabs.find(item => item.id === tab.id) ?? tab;
+        const thread = resumed?.thread && reconcileResumedThreadTurns(resumed.thread,
+          [state.thread, state.secondaryThread, ...state.threads].find(item => item?.id === resumed.thread!.id));
+        return { ...state, ...loaded, thread, secondaryThread: undefined, activePane: "primary",
+          activeContext: tab.context, activeProjectId: tab.context.kind === "project" ? tab.context.project_id : undefined,
+          activeSessionTabID: target.id, sessionTabs: ensureSessionTab(state.sessionTabs, target),
+          threads: thread ? upsertThread(loaded.threads ?? state.threads, thread) : loaded.threads ?? state.threads,
+          allowThreadAutoActivation: target.kind === "thread", running: isThreadRunning(thread), status: "ready" };
+      });
+    } catch (error) {
+      // Restore transport selection as well as the visible source after a failed
+      // cross-workspace load. A newer navigation owns transport recovery instead.
+      if (switchedContext && sourceContext && request === this.navigationRequest) {
+        try { await selectRuntimeContext(sourceContext); }
+        catch (restoreError) {
+          if (request === this.navigationRequest) this.updateState(state => ({ ...state,
+            initialized: undefined, activeContext: undefined, activeProjectId: undefined, status: String(restoreError) }));
+        }
+      }
+      throw error;
+    } finally {
+      if (request === this.navigationRequest) { this.pendingNavigation = undefined; this.publish(); }
+    }
+  }
+
   async invoke<Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal }): Promise<ApplicationActionMapV1[Action]["result"]> {
     const signal = options?.signal;
     signal?.throwIfAborted();
@@ -206,6 +256,79 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
     switch (action) {
+      case "tab.select": {
+        const { tabId } = input as ApplicationActionMapV1["tab.select"]["input"];
+        const tab = this.state.sessionTabs.find(item => item.id === tabId);
+        if (!tab) throw new Error(`Unknown tab: ${tabId}`);
+        await this.selectTab(tab, signal); return;
+      }
+      case "tab.close": {
+        const { tabId } = input as ApplicationActionMapV1["tab.close"]["input"];
+        const index = this.state.sessionTabs.findIndex(item => item.id === tabId);
+        if (index < 0) return;
+        if (this.state.activeSessionTabID === tabId) {
+          const tab = this.state.sessionTabs[index];
+          const remaining = this.state.sessionTabs.filter(item => item.id !== tabId);
+          const fallback = remaining[Math.min(index, remaining.length - 1)]
+            ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, tab.context);
+          await this.selectTab(fallback, signal);
+          signal?.throwIfAborted();
+          if (this.state.activeSessionTabID !== fallback.id) return;
+        }
+        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.filter(item => item.id !== tabId) }));
+        return;
+      }
+      case "tab.reorder": {
+        const { tabId, beforeTabId } = input as ApplicationActionMapV1["tab.reorder"]["input"];
+        if (tabId === beforeTabId) return;
+        const tab = this.state.sessionTabs.find(item => item.id === tabId);
+        if (!tab || !this.state.sessionTabs.some(item => item.id === beforeTabId)) throw new Error("Unknown tab reorder destination");
+        this.updateState(state => {
+          const tabs = state.sessionTabs.filter(item => item.id !== tabId);
+          tabs.splice(tabs.findIndex(item => item.id === beforeTabId), 0, state.sessionTabs.find(item => item.id === tabId)!);
+          return { ...state, sessionTabs: tabs };
+        }); return;
+      }
+      case "tab.new": {
+        const { workspaceId, project } = input as ApplicationActionMapV1["tab.new"]["input"];
+        const workspace = workspaceId ? this.state.projects.find(item => item.id === workspaceId) : undefined;
+        if (workspaceId && (!workspace || workspace.missing)) throw new Error(`Workspace unavailable: ${workspaceId}`);
+        const context = workspace ? { kind: "project" as const, project_id: workspace.id, cwd: workspace.path } : this.state.activeContext;
+        if (!context) throw new Error("No workspace is selected");
+        if (project && context.kind !== "project") throw new Error("Project drafts require a workspace");
+        const existing = this.state.sessionTabs.find(item => item.kind === "draft" && sameRuntimeContext(item.context, context));
+        const tab = existing ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, context);
+        await this.selectTab(tab, signal);
+        if (this.state.activeSessionTabID !== tab.id) throw new Error("Draft navigation was superseded");
+        if (project !== undefined) await this.invoke("draft.set-project-mode", { project }, { signal });
+        return { tabId: tab.id };
+      }
+      case "draft.rename": {
+        const { tabId, title } = input as ApplicationActionMapV1["draft.rename"]["input"];
+        if (!title.trim() || !this.state.sessionTabs.some(item => item.id === tabId && item.kind === "draft")) return;
+        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tabId ? { ...item, title: title.trim() } : item) })); return;
+      }
+      case "draft.set-project-mode": {
+        const { project } = input as ApplicationActionMapV1["draft.set-project-mode"]["input"];
+        const tabId = this.state.activeSessionTabID;
+        const tab = this.state.sessionTabs.find(item => item.id === tabId);
+        if (tab?.kind !== "draft") return;
+        if (project && tab.context.kind !== "project") throw new Error("Project drafts require a workspace");
+        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tabId ? { ...item, project: project ? true as const : undefined, title: project ? translateCurrent("projects.newProject")
+          : item.title === translateCurrent("projects.newProject") ? translateCurrent("tabs.newConversation") : item.title } : item) })); return;
+      }
+      case "navigation.show-section": {
+        const { section } = input as ApplicationActionMapV1["navigation.show-section"]["input"];
+        this.updateState(state => ({ ...state, nativeSection: section })); return;
+      }
+      case "catalog.select-section": {
+        const { section } = input as ApplicationActionMapV1["catalog.select-section"]["input"];
+        this.updateState(state => ({ ...state, catalogSection: section })); return;
+      }
+      case "catalog.select-plugin": {
+        const { pluginId } = input as ApplicationActionMapV1["catalog.select-plugin"]["input"];
+        this.updateState(state => ({ ...state, catalogPluginID: pluginId })); return;
+      }
       case "workspace.select": {
         const request = ++this.navigationRequest;
         const { workspaceId } = input as ApplicationActionMapV1["workspace.select"]["input"];
@@ -376,10 +499,17 @@ export class ApplicationController implements ApplicationServiceV1 {
     return Object.freeze({ contractVersion: 1, revision: this.revision, phase: initialized ? "ready" : status === "connecting" ? "starting" : "error",
       connection: Object.freeze({ status, message: state.status }),
       workspaces: Object.freeze({ workspaces: Object.freeze(state.projects.map(project => Object.freeze({ id: project.id, name: project.name, root: project.path, available: !project.missing }))), activeWorkspaceId: state.activeProjectId, activeRoot: state.activeContext?.cwd }),
-      navigation: Object.freeze({ contractVersion: 1, activeNodeId: thread?.id, nodes: Object.freeze([
+      navigation: Object.freeze({ contractVersion: 1, section: state.nativeSection ?? "conversations", catalogSection: state.catalogSection ?? "plugins", catalogPluginId: state.catalogPluginID ?? "", activeNodeId: thread?.id, nodes: Object.freeze([
         ...state.projects.map(project => Object.freeze({ id: project.id, kind: "project" as const, label: project.name, active: state.activeProjectId === project.id })),
         ...state.threads.filter(thread => !thread.archived && !thread.ephemeral).map(item => Object.freeze({ id: item.id, kind: "thread" as const, label: item.title || item.preview || item.id, active: item.id === thread?.id, pinned: item.pinned, running: isThreadRunning(item) })),
       ]) }),
+      tabs: Object.freeze({ activeTabId: state.activeSessionTabID, pending: this.pendingNavigation,
+        items: Object.freeze(state.sessionTabs.map(tab => Object.freeze({ id: tab.id, kind: tab.kind,
+          title: sessionTabLabel(tab, state), workspaceId: tab.context.kind === "project" ? tab.context.project_id : undefined,
+          workspaceRoot: tab.context.cwd, threadId: tab.kind === "thread" ? tab.threadID : undefined,
+          project: tab.kind === "draft" && tab.project === true,
+          draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
+          hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),

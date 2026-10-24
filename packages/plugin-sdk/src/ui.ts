@@ -19,7 +19,16 @@ export interface ApplicationSnapshotV1 {
   readonly phase: "starting" | "ready" | "error";
   readonly connection: { readonly status: "connecting" | "connected" | "disconnected" | "error"; readonly message?: string };
   readonly workspaces: PluginWorkspaceSnapshot;
-  readonly navigation: NavigationSnapshotV1;
+  readonly navigation: NavigationSnapshotV1 & {
+    readonly section: "conversations" | "catalog";
+    readonly catalogSection: "plugins" | "skills";
+    readonly catalogPluginId: string;
+  };
+  readonly tabs: {
+    readonly activeTabId: string;
+    readonly items: readonly ApplicationTabV1[];
+    readonly pending?: { readonly kind: "tab" | "workspace" | "thread"; readonly targetId: string };
+  };
   readonly conversation: {
     readonly threadId?: string;
     readonly title?: string;
@@ -33,6 +42,18 @@ export interface ApplicationSnapshotV1 {
   readonly appearance: ApplicationAppearanceV1;
   readonly locale: string;
   readonly status: StatusSnapshotV1;
+}
+
+export interface ApplicationTabV1 {
+  readonly id: string;
+  readonly kind: "draft" | "thread" | "skills";
+  readonly title: string;
+  readonly workspaceId?: string;
+  readonly workspaceRoot: string;
+  readonly threadId?: string;
+  readonly project: boolean;
+  readonly draftText: string;
+  readonly hasAttachments: boolean;
 }
 
 export interface ApplicationTurnV1 {
@@ -51,6 +72,15 @@ export interface ApplicationAppearanceV1 {
 
 /** Commands are scoped to the generation that captured this application handle. */
 export interface ApplicationActionMapV1 {
+  "tab.select": { input: { readonly tabId: string }; result: void };
+  "tab.close": { input: { readonly tabId: string }; result: void };
+  "tab.reorder": { input: { readonly tabId: string; readonly beforeTabId: string }; result: void };
+  "tab.new": { input: { readonly workspaceId?: string; readonly project?: boolean }; result: { readonly tabId: string } };
+  "draft.rename": { input: { readonly tabId: string; readonly title: string }; result: void };
+  "draft.set-project-mode": { input: { readonly project: boolean }; result: void };
+  "navigation.show-section": { input: { readonly section: "conversations" | "catalog" }; result: void };
+  "catalog.select-section": { input: { readonly section: "plugins" | "skills" }; result: void };
+  "catalog.select-plugin": { input: { readonly pluginId: string }; result: void };
   "workspace.select": { input: { readonly workspaceId: string }; result: void };
   "thread.select": { input: { readonly threadId: string }; result: void };
   "thread.create": { input: { readonly workspaceId?: string }; result: { readonly threadId: string } };
