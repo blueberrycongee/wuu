@@ -99,12 +99,12 @@ jobs:
       - name: Check
         run: make check-go check-plugins
 
-      - name: Test
-        run: make test-go test-plugins
-
       - name: Guard generation admission under race detector
         timeout-minutes: 10
         run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery)' ./internal/appserver
+
+      - name: Test
+        run: make test-go test-plugins
 
       - name: Build plugin model acceptance prerequisites
         run: |
