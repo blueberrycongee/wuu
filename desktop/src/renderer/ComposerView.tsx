@@ -410,7 +410,7 @@ export function Composer({
   // interval where two gestures can still read the same rendered draft, while
   // allowing a real input change (even to the same eventual text) to re-arm it.
   const submittedDraftSignatureRef = useRef<string | null>(null);
-  useEffect(() => () => { submittedDraftSignatureRef.current = null; }, []);
+  useEffect(() => () => { submittedDraftSignatureRef.current = null; }, [queryHistorySessionID]);
   const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
     setLastPromptRevision(promptRevision);
