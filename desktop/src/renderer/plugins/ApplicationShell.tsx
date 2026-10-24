@@ -23,6 +23,7 @@ const SlotAncestors = React.createContext<readonly string[]>([]);
 
 function compositionFor(host: PluginHost): UICompositionV1 {
   const createViewHost = host.createLegacyViewHost.bind(host);
+  const renderLegacyWorkbench = host.renderLegacyWorkbench.bind(host);
   function Slot({ name, context = {}, fallback }: UISlotProps): React.ReactNode {
     const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
     const ancestors = React.useContext(SlotAncestors);
@@ -46,8 +47,8 @@ function compositionFor(host: PluginHost): UICompositionV1 {
         </ShellBoundary>;
       });
     return <SlotAncestors.Provider value={[...ancestors, name]}>
-      {slot.service ? content : <LegacyUIContributions key={activationKey(slot)} host={host} semanticSlot={slot.id}
-        application={slot.application} context={context} fallback={content} createViewHost={createViewHost} />}
+      {slot.service || slot.id === "workbench.layers" && contributions.length > 0 ? content : <LegacyUIContributions key={activationKey(slot)} host={host} semanticSlot={slot.id}
+        application={slot.application} context={context} fallback={content} createViewHost={createViewHost} renderLegacyWorkbench={renderLegacyWorkbench} />}
     </SlotAncestors.Provider>;
   }
   const composition: UICompositionV1 = Object.freeze({ Slot });

@@ -1,3 +1,4 @@
+import type { LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
 import type { HostApplicationService } from "./HostApplicationService";
 import { scopeApplicationWebWorkspace } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
 import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
@@ -428,6 +429,7 @@ export interface LegacyViewHostIdentity {
 }
 
 export interface PluginHostOptions {
+  renderLegacyWorkbench?: (input: LegacyWorkbenchRenderInput) => React.ReactNode;
   createLegacyViewHost?: (identity: LegacyViewHostIdentity) => ViewHostAPI;
   reportActivation?: (report: PluginDesktopActivationParams) => Promise<void>;
   application?: HostApplicationService;
@@ -641,6 +643,7 @@ export class PluginHost {
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
   private readonly application?: HostApplicationService;
+  private readonly legacyWorkbenchRenderer?: PluginHostOptions["renderLegacyWorkbench"];
   private readonly legacyViewHostFactory?: PluginHostOptions["createLegacyViewHost"];
   private applicationShells: readonly RegisteredApplicationShell[] = Object.freeze([]);
   private uiSlotSnapshot: readonly RegisteredUISlot[] = Object.freeze([]);
@@ -700,6 +703,7 @@ export class PluginHost {
     this.reportActivation = options.reportActivation;
     this.application = options.application;
     this.legacyViewHostFactory = options.createLegacyViewHost;
+    this.legacyWorkbenchRenderer = options.renderLegacyWorkbench;
     this.react = options.react;
     this.ui = createPluginUIKit(options.react);
     this.styleContainer = options.styleContainer;
@@ -838,6 +842,11 @@ export class PluginHost {
   }
 
   getApplicationShells = (): readonly RegisteredApplicationShell[] => this.applicationShells;
+
+  renderLegacyWorkbench(input: LegacyWorkbenchRenderInput): React.ReactNode {
+    if (!this.legacyWorkbenchRenderer) throw new Error("Legacy workbench host is unavailable");
+    return this.legacyWorkbenchRenderer(input);
+  }
 
   createLegacyViewHost(identity: LegacyViewHostIdentity): ViewHostAPI {
     const activation = this.getGenerationActivation(identity.pluginId, identity.generation);
