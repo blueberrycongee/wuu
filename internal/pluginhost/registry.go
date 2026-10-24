@@ -485,6 +485,12 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	}
 	id := strings.TrimSpace(requestedID)
 	execution := r.executions[id]
+	if marker, ok := ctx.Value(inheritedInvocationKey{}).(*nativeInvocation); ok && marker != nil {
+		if marker.registry != r || marker.owner != caller || marker.executionID != id || !marker.live || execution == nil {
+			r.mu.Unlock()
+			return nil, "", nil, &HostServiceError{Code: "execution_not_found", Message: "native callback execution is no longer live"}
+		}
+	}
 	cleanup := InShutdownCleanup(ctx) || r.cleanupOwners[caller] > 0
 	if execution != nil {
 		if _, allowed := execution.participants[caller]; !allowed {
@@ -594,6 +600,24 @@ func (r *ServiceRegistry) releaseExecution(id string) func() error {
 	}
 }
 
+type nativeInvocationKey struct{}
+type inheritedInvocationKey struct{}
+
+// The marker is private to one callback, registry and authenticated owner.
+// Its lifetime is guarded by the registry mutex, including admission checks.
+type nativeInvocation struct {
+	registry           *ServiceRegistry
+	owner, executionID string
+	live               bool
+}
+
+func (r *ServiceRegistry) invokeNativeContext(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
+	marker := &nativeInvocation{registry: r, owner: provider.pluginID, executionID: params.ExecutionID, live: true}
+	defer func() { r.mu.Lock(); marker.live = false; r.mu.Unlock() }()
+	ctx = context.WithValue(ctx, inheritedInvocationKey{}, (*nativeInvocation)(nil))
+	return provider.invoker.InvokeService(context.WithValue(ctx, nativeInvocationKey{}, marker), params)
+}
+
 // invokeProvider gives each callback its own identity. Caller metadata never
 // confers tool authority: only a native tool dispatch can explicitly delegate
 // it to this callback. Nested ordinary service calls remain generic callbacks.
@@ -613,7 +637,7 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 		params.CallerScope = &scope
 	}
 	if tracker == nil || cleanup {
-		return provider.invoker.InvokeService(ctx, params)
+		return r.invokeNativeContext(ctx, provider, params)
 	}
 	callbackParent, cancel := context.WithCancel(retainServiceCompletion(ctx))
 	input := ToolExecuteInput{}
@@ -634,7 +658,7 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 		invokeErr = errors.Join(invokeErr, release())
 	}()
 	params.ExecutionID = executionID
-	return provider.invoker.InvokeService(callbackCtx, params)
+	return r.invokeNativeContext(callbackCtx, provider, params)
 }
 
 // Caller resources are effects owned by the provider lifecycle, bounded also
@@ -745,6 +769,15 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 
 // toolScope is a host-only delegation; no wire field can grant it.
 func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, params ServiceCallParams, toolScope *ToolExecuteInput) (result json.RawMessage, callErr *HostServiceError) {
+	if params.ExecutionID == "" {
+		if marker, ok := ctx.Value(nativeInvocationKey{}).(*nativeInvocation); ok {
+			if marker.registry != r || marker.owner != consumerPluginID {
+				return nil, &HostServiceError{Code: "service_not_authorized", Message: "native callback identity does not match service caller"}
+			}
+			params.ExecutionID = marker.executionID
+			ctx = context.WithValue(ctx, inheritedInvocationKey{}, marker)
+		}
+	}
 	service := strings.TrimSpace(params.Service)
 	method := strings.TrimSpace(params.Method)
 	if service == "" || method == "" {
