@@ -15,6 +15,7 @@ type modelInvocationOwner struct {
 	cancel           context.CancelFunc
 	binding          *State
 	receipts         *providers.ModelReceiptScope
+	settlement       *providers.ModelReceiptScope
 	ownsReceipts     bool
 	endParentReceipt func(error)
 	completionCtx    context.Context
@@ -165,7 +166,10 @@ func registerModelInvocation(ctx context.Context, binding *State, cancel context
 	// Terminal receipts retain admitted authority independently of logical cancellation.
 	// finish revokes this context only after the actual receipt producers drain.
 	completionCtx, cancelCompletion := context.WithCancelCause(context.WithoutCancel(ctx))
-	owner := &modelInvocationOwner{cancel: cancel, binding: binding, receipts: receipts, ownsReceipts: ownsReceipts, endParentReceipt: endParent, completionCtx: completionCtx, cancelCompletion: cancelCompletion}
+	// Settlement RPCs start after logical admission is sealed. Give them their own
+	// tickets while preserving the admitted identity and generation context.
+	completionCtx, settlement := providers.NewModelReceiptScope(completionCtx)
+	owner := &modelInvocationOwner{settlement: settlement, cancel: cancel, binding: binding, receipts: receipts, ownsReceipts: ownsReceipts, endParentReceipt: endParent, completionCtx: completionCtx, cancelCompletion: cancelCompletion}
 	generation := binding.Generation
 	generation.modelMu.Lock()
 	if generation.modelStopped {
@@ -174,6 +178,7 @@ func registerModelInvocation(ctx context.Context, binding *State, cancel context
 			receipts.Seal()
 		}
 		endParent(nil)
+		settlement.Seal()
 		cancelCompletion(context.Canceled)
 		_ = binding.Close()
 		return nil, serviceError("generation_closed", "model invocation admission is closed")
@@ -190,6 +195,7 @@ func registerModelInvocation(ctx context.Context, binding *State, cancel context
 
 func (o *modelInvocationOwner) abort(cause error) {
 	o.cancelCompletion(cause)
+	o.settlement.Abort(cause)
 	if o.ownsReceipts {
 		o.receipts.Abort(cause)
 	}
@@ -207,6 +213,8 @@ func (o *modelInvocationOwner) complete(callCtx context.Context, execution *prov
 		ctx, cancel := context.WithTimeout(o.completionCtx, modelShutdownTimeout)
 		defer cancel()
 		err := o.receipts.CheckpointSubmissions(ctx)
+		o.settlement.Seal()
+		err = errors.Join(err, o.settlement.Wait(ctx))
 		if err != nil {
 			err = errors.Join(err, context.Cause(o.completionCtx))
 			o.abort(err)
@@ -227,6 +235,7 @@ func (o *modelInvocationOwner) complete(callCtx context.Context, execution *prov
 }
 
 func (o *modelInvocationOwner) finish(callCtx context.Context, completionErr error) error {
+	o.settlement.Seal()
 	generation := o.binding.Generation
 	generation.recordModelCompletionError(completionErr)
 	generation.modelMu.Lock()
@@ -249,16 +258,21 @@ func (o *modelInvocationOwner) finish(callCtx context.Context, completionErr err
 	}
 	select {
 	case <-o.receipts.Done():
-		return errors.Join(completionErr, release())
+		select {
+		case <-o.settlement.Done():
+			return errors.Join(completionErr, release())
+		default:
+		}
 	default:
-		// A deadline ends the caller's wait, not the native producer. Keep State
-		// alive until real tickets finish, even if an uncooperative source lingers.
-		go func() {
-			<-o.receipts.Done()
-			_ = release()
-		}()
-		return completionErr
 	}
+	// A deadline ends the caller's wait, not the native producer. Keep State
+	// alive until real tickets finish, even if an uncooperative source lingers.
+	go func() {
+		<-o.receipts.Done()
+		<-o.settlement.Done()
+		_ = release()
+	}()
+	return completionErr
 }
 
 // Keep the invocation's own reference through the callback and its service
