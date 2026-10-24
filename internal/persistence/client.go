@@ -47,8 +47,20 @@ func (c *Client) Read(ctx context.Context, query Query) (View, error) {
 }
 
 func (c *Client) Commit(ctx context.Context, tx Transaction) (Receipt, error) {
+	raw, err := marshalTransaction(tx)
+	if err != nil {
+		return Receipt{}, err
+	}
+	return c.CommitEncoded(ctx, raw)
+}
+
+// CommitEncoded forwards an already encoded transaction through the same binding
+// and error mapping as Commit. The provider validates it; raw must remain
+// immutable until the call returns. This preserves an authority-validated wire
+// request without encoding a second full copy at the provider boundary.
+func (c *Client) CommitEncoded(ctx context.Context, raw json.RawMessage) (Receipt, error) {
 	var receipt Receipt
-	err := c.invoke(ctx, "commit", tx, &receipt)
+	err := c.invokeEncoded(ctx, "commit", raw, &receipt)
 	return receipt, err
 }
 
@@ -75,7 +87,11 @@ func (c *Client) invoke(ctx context.Context, method string, request, response an
 	if err != nil {
 		return err
 	}
-	raw, err = c.call(ctx, method, raw)
+	return c.invokeEncoded(ctx, method, raw, response)
+}
+
+func (c *Client) invokeEncoded(ctx context.Context, method string, raw json.RawMessage, response any) error {
+	raw, err := c.call(ctx, method, raw)
 	if err != nil {
 		var serviceErr *pluginhost.HostServiceError
 		if !errors.As(err, &serviceErr) {

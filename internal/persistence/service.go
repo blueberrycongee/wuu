@@ -168,6 +168,13 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 }
 
 func decode(raw json.RawMessage, target any) error {
+	if target, ok := target.(*Transaction); ok {
+		decoded, err := DecodeTransaction(raw)
+		if err == nil {
+			*target = decoded
+		}
+		return err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {

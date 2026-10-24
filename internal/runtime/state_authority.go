@@ -313,11 +313,11 @@ func (a *StateAuthority) dispatch(ctx context.Context, client *persistence.Clien
 	case "read", "export":
 		return readAuthority(ctx, client, head, params)
 	case "commit":
-		var tx persistence.Transaction
-		if err := decodeAuthorityRequest(params.Params, &tx); err != nil {
+		tx, err := persistence.DecodeTransaction(params.Params)
+		if err != nil {
 			return nil, err
 		}
-		receipt, err := a.commit(ctx, client, locked.record, tx)
+		receipt, err := a.commit(ctx, client, locked.record, tx, params.Params)
 		if err != nil {
 			return nil, err
 		}
@@ -387,14 +387,20 @@ func authorityRevision(ctx context.Context, documents persistence.Documents, rev
 	}
 	return nil
 }
-func (a *StateAuthority) commit(ctx context.Context, client *persistence.Client, record *authorityRecord, tx persistence.Transaction) (persistence.Receipt, error) {
+func (a *StateAuthority) commit(ctx context.Context, client *persistence.Client, record *authorityRecord, tx persistence.Transaction, encoded json.RawMessage) (persistence.Receipt, error) {
+	commit := func() (persistence.Receipt, error) {
+		if encoded != nil {
+			return client.CommitEncoded(ctx, encoded)
+		}
+		return client.Commit(ctx, tx)
+	}
 	if err := authorityRevision(ctx, client, record.Checkpoint.Revision); err != nil {
 		return persistence.Receipt{}, err
 	}
 	if tx.ExpectedRevision != record.Checkpoint.Revision {
 		// CAS cannot apply new intent at an old revision. Only an original durable
 		// receipt can succeed, and that success does not advance the host head.
-		receipt, err := client.Commit(ctx, tx)
+		receipt, err := commit()
 		if err != nil {
 			return receipt, err
 		}
@@ -411,7 +417,7 @@ func (a *StateAuthority) commit(ctx context.Context, client *persistence.Client,
 	if err := a.writeRecord(record); err != nil {
 		return persistence.Receipt{}, err
 	}
-	receipt, err := client.Commit(ctx, tx)
+	receipt, err := commit()
 	if err != nil {
 		if errors.Is(err, persistence.ErrConflict) || errors.Is(err, persistence.ErrOperationConflict) || errors.Is(err, persistence.ErrInvalid) {
 			record.Pending = nil
@@ -647,7 +653,7 @@ func (a *StateAuthority) activate(ctx context.Context, client *persistence.Clien
 		// The initial anchor makes a lost first business commit distinguishable
 		// from a different empty backend. No candidate data is written in Prepare.
 		raw, _ := json.Marshal(a.id)
-		_, err = a.commit(ctx, client, record, persistence.Transaction{ID: "state-authority-anchor:" + a.id, ExpectedRevision: checkpoint.Revision, Writes: []persistence.Write{{Namespace: "wuu.state.authority.v1", Key: "anchor", Value: raw}}})
+		_, err = a.commit(ctx, client, record, persistence.Transaction{ID: "state-authority-anchor:" + a.id, ExpectedRevision: checkpoint.Revision, Writes: []persistence.Write{{Namespace: "wuu.state.authority.v1", Key: "anchor", Value: raw}}}, nil)
 		if err != nil {
 			return 0, err
 		}
