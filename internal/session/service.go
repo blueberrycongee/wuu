@@ -76,7 +76,7 @@ func (s *Service) Close(ctx context.Context) error {
 		for _, cancel := range s.pending {
 			cancel()
 		}
-		go s.drain()
+		go s.drain(context.WithoutCancel(ctx))
 	}
 	closed := s.closed
 	s.mu.Unlock()
@@ -87,7 +87,7 @@ func (s *Service) Close(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-func (s *Service) drain() {
+func (s *Service) drain(ctx context.Context) {
 	s.active.Wait()
 	s.mu.Lock()
 	resources := s.resources
@@ -95,7 +95,7 @@ func (s *Service) drain() {
 	s.mu.Unlock()
 	var errs []error
 	for _, r := range resources {
-		errs = append(errs, r.value.Close())
+		errs = append(errs, r.value.closeContext(ctx))
 	}
 	s.closeErr = errors.Join(errs...)
 	close(s.closed)
@@ -174,7 +174,16 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	} else if !containsMethod(domainMethods, method) {
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown session domain method"}
 	}
-	values, err := invokeDomainMethod(ctx, receiver, method, request.Args)
+	var values []any
+	var err error
+	if releaseHandle != "" {
+		if len(request.Args) != 0 {
+			return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "journal Close takes no additional arguments"}
+		}
+		err = receiver.(*InferenceJournalRuntime).closeContext(ctx)
+	} else {
+		values, err = invokeDomainMethod(ctx, receiver, method, request.Args)
+	}
 	if err != nil {
 		return nil, encodeDomainError(err)
 	}

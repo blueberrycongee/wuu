@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -293,6 +296,75 @@ func TestSessionServiceHeldMessageFenceCrossesWireButNotHistory(t *testing.T) {
 		pending, err := client.LoadHeldUserWork("held")
 		if err != nil || len(pending) != 0 {
 			t.Fatalf("admitted input remained pending: %+v %v", pending, err)
+		}
+	})
+}
+
+type journalCleanupContextKey struct{}
+type cleanupContextDocuments struct {
+	persistence.Documents
+	require       atomic.Bool
+	cleanupWrites atomic.Int32
+}
+
+func (d *cleanupContextDocuments) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	if d.require.Load() && ctx.Value(journalCleanupContextKey{}) != true {
+		return persistence.View{}, errors.New("synthetic provider is retiring: cleanup context missing")
+	}
+	return d.Documents.Read(ctx, q)
+}
+func (d *cleanupContextDocuments) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	if d.require.Load() {
+		if ctx.Value(journalCleanupContextKey{}) != true {
+			return persistence.Receipt{}, errors.New("cleanup context missing")
+		}
+		d.cleanupWrites.Add(1)
+	}
+	return d.Documents.Commit(ctx, tx)
+}
+func TestSessionJournalClosePropagatesCleanupContextToFinalFlush(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		documents := &cleanupContextDocuments{Documents: native.documents}
+		service := NewService("cleanup-context", documents)
+		if err := service.Activate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := service.InvokeService(context.Background(), pluginhost.ServiceInvokeParams{Caller: "test", Method: "NewInferenceJournalRuntime", Params: json.RawMessage(`{"args":["cleanup"]}`)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var response invocationResult
+		_ = json.Unmarshal(raw, &response)
+		var handle resourceHandle
+		_ = json.Unmarshal(response.Values[0], &handle)
+		runtime := service.resources[handle.Handle].value
+		journal := runtime.ForOwner("owner")
+		now := time.Now().UTC()
+		op := providers.NewInferenceOperation(providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive)
+		if err := journal.PrepareOperation(providers.InferenceOperationJournalRecord{Operation: op, RequestHash: testInferenceHash("cleanup"), At: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := journal.PrepareAttempt(providers.InferenceAttemptJournalRecord{OperationID: op.ID, AttemptID: op.AttemptID(1), Ordinal: 1, RequestHash: testInferenceHash("cleanup"), At: now}); err != nil {
+			t.Fatal(err)
+		}
+		// Enqueue directly before shutdown so no timer is needed to schedule the flush.
+		runtime.progressMu.Lock()
+		runtime.progress = map[string]documentSubmissionProgress{"submission": {journal: journal.(*documentInferenceJournal), record: providers.InferenceSubmissionJournalRecord{ID: "submission", OperationID: op.ID, AttemptID: op.AttemptID(1), Ordinal: 1, AttemptOrdinal: 1, StartedAt: now, Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable}}}
+		runtime.progressMu.Unlock()
+		documents.require.Store(true)
+		ctx := context.WithValue(context.Background(), journalCleanupContextKey{}, true)
+		params, _ := json.Marshal(map[string]any{"args": []any{handle.Handle}})
+		if _, err := service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: "test", Method: "Journal.Close", Params: params}); err != nil {
+			t.Fatal(err)
+		}
+		if err := runtime.pendingProgressErr(); err != nil {
+			t.Fatal(err)
+		}
+		if documents.cleanupWrites.Load() != 2 {
+			t.Fatalf("expected progress and closed-runtime commits, got %d", documents.cleanupWrites.Load())
+		}
+		if err := service.Close(ctx); err != nil {
+			t.Fatal(err)
 		}
 	})
 }

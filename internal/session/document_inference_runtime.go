@@ -23,6 +23,7 @@ type InferenceJournalRuntime struct {
 	closeOnce                         sync.Once
 	lifecycleMu                       sync.Mutex
 	closing                           bool
+	cleanupContext                    context.Context
 	activeWG                          sync.WaitGroup
 	closeErr                          error
 	progressMu                        sync.Mutex
@@ -136,7 +137,9 @@ func (r *InferenceJournalRuntime) heartbeat(tx *persistence.Tx, stamp int64, clo
 	return tx.Put(documentNamespace("inference_journal_runtimes"), r.runtimeID, record)
 }
 
-func (r *InferenceJournalRuntime) Close() error {
+func (r *InferenceJournalRuntime) Close() error { return r.closeContext(context.Background()) }
+
+func (r *InferenceJournalRuntime) closeContext(ctx context.Context) error {
 	if r != nil && r.remote != nil {
 		r.closeOnce.Do(func() { r.closeErr = r.remote.invoke("Close", nil, []any{}) })
 		return r.closeErr
@@ -147,13 +150,14 @@ func (r *InferenceJournalRuntime) Close() error {
 	r.closeOnce.Do(func() {
 		r.lifecycleMu.Lock()
 		r.closing = true
+		r.cleanupContext = context.WithoutCancel(ctx)
 		r.lifecycleMu.Unlock()
 		r.activeWG.Wait()
 		close(r.stop)
 		<-r.heartbeatDone
 		<-r.progressDone
 		stamp := time.Now().UTC().UnixMilli()
-		r.closeErr = r.store.transaction(func(tx *persistence.Tx) error { return r.heartbeat(tx, stamp, true) })
+		r.closeErr = r.store.WithContext(r.cleanupContext).transaction(func(tx *persistence.Tx) error { return r.heartbeat(tx, stamp, true) })
 	})
 	return r.closeErr
 }
@@ -260,7 +264,13 @@ func (r *InferenceJournalRuntime) flushSubmissionProgress(allowClosing bool) {
 		return
 	}
 	stamp := time.Now().UTC().UnixMilli()
-	err := r.store.transaction(func(tx *persistence.Tx) error {
+	ctx := context.Background()
+	if allowClosing {
+		r.lifecycleMu.Lock()
+		ctx = r.cleanupContext
+		r.lifecycleMu.Unlock()
+	}
+	err := r.store.WithContext(ctx).transaction(func(tx *persistence.Tx) error {
 		if err := r.heartbeat(tx, stamp, false); err != nil {
 			return err
 		}
