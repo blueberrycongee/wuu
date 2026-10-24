@@ -162,6 +162,9 @@ function paintExtensionTheme(theme: AvailableExtensionTheme): void {
     document.documentElement.style.setProperty(token, value);
     appliedExtensionTokens.add(token);
   }
+  // Public defaults remain available to shells; only declared tokens override
+  // the built-in UI roles, including canonicalized legacy aliases.
+  document.documentElement.dataset.themeTokens = [...appliedExtensionTokens].join(" ");
 }
 
 export function clearExtensionTheme(): void {
@@ -210,6 +213,7 @@ function clearExtensionThemeTokens(): void {
     document.documentElement.style.removeProperty(token);
   }
   appliedExtensionTokens.clear();
+  delete document.documentElement.dataset.themeTokens;
 }
 
 /**

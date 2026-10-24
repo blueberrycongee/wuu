@@ -57,7 +57,7 @@
   --hljs-tag: var(--wuu-syntax-tag, #9a4f55);
   --hljs-literal: var(--wuu-syntax-literal, #6f5ca7);
   --hljs-meta: var(--wuu-syntax-meta, #5f6870);
-  --codex-runtime-trigger-icon: var(--wuu-color-text-muted, #707579);
+  --codex-runtime-trigger-icon: var(--theme-override-color-text-muted, #707579);
   /* Location uses the same filled selection as navigation and menus. */
   --workspace-tab-active-bg: var(--selection-surface);
 }
@@ -1817,7 +1817,7 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   border: 0;
   border-radius: var(--radius-xs);
   background: var(--wuu-inline-code-background, var(--surface-chip));
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   font-family: var(--wuu-font-family-mono, var(--font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace));
   padding: 0.1em 0.36em;
 }

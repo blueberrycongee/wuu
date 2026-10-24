@@ -35,7 +35,7 @@
   --user-message-edit-drop-ring: var(--wuu-message-user-color, var(--user-message-fg-color));
   --message-copy-bg: rgba(255, 255, 255, 0.72);
   --message-file-bg: rgba(255, 255, 255, 0.82);
-  --message-file-fg: var(--wuu-color-text, var(--gray-800));
+  --message-file-fg: var(--theme-override-color-text, var(--gray-800));
   --message-image-overflow-bg: rgba(20, 24, 28, 0.62);
   --message-image-overflow-bg-hover: rgba(20, 24, 28, 0.72);
   --message-image-overflow-fg: #fff;
@@ -49,8 +49,8 @@
   --process-summary-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--gray-650);
-  --activity-toggle-hover-color-alt: var(--wuu-color-text-muted, var(--gray-600));
-  --activity-detail-color: var(--wuu-color-text-muted, var(--gray-550));
+  --activity-toggle-hover-color-alt: var(--theme-override-color-text-muted, var(--gray-600));
+  --activity-detail-color: var(--theme-override-color-text-muted, var(--gray-550));
   /* A tool row's target (file, query, command) sits between the row's
    * tertiary verb and prose ink, so a run of rows scans by what was touched
    * without competing with the answer. */
@@ -78,17 +78,17 @@
   --message-flow-card-radius: var(--radius-md);
   --surface-chip: var(--surface-2);
   --fork-worktree-focus-ring: var(--focus-ring);
-  --rich-blockquote-color: var(--wuu-color-text-muted, var(--gray-650));
+  --rich-blockquote-color: var(--theme-override-color-text-muted, var(--gray-650));
   --rich-rule-color: var(--wuu-border-subtle, var(--gray-250));
-  --pre-text-color: var(--wuu-color-text, var(--gray-700));
-  --system-line-marker-color: var(--wuu-color-text-muted, var(--gray-400));
+  --pre-text-color: var(--theme-override-color-text, var(--gray-700));
+  --system-line-marker-color: var(--theme-override-color-text-muted, var(--gray-400));
   --empty-home-action-border: var(--wuu-border-subtle, var(--hairline));
   --empty-home-action-border-hover: var(--wuu-border-strong, var(--hairline-strong));
-  --empty-home-action-icon-color: var(--wuu-color-text-muted, var(--gray-500));
+  --empty-home-action-icon-color: var(--theme-override-color-text-muted, var(--gray-500));
   /* The greeting belongs to the same readable UI family as the workbench. */
   --empty-home-mascot-display: block;
   --empty-home-title-font: var(--appearance-ui-font, system-ui, sans-serif);
-  --project-empty-content-color: var(--wuu-color-text-muted, var(--gray-600));
+  --project-empty-content-color: var(--theme-override-color-text-muted, var(--gray-600));
   --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
   --project-empty-actions-hover-bg: var(--gray-50);
   --diff-insert-bg: color-mix(in srgb, var(--success) 8%, transparent);
@@ -3553,7 +3553,7 @@
   border: 0;
   border-radius: var(--radius-xs);
   background: var(--wuu-inline-code-background, var(--surface-chip));
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   font-family: var(--wuu-font-family-mono, "SFMono-Regular", Consolas, monospace);
   font-size: 0.92em;
   /*

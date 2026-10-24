@@ -61,9 +61,9 @@
   --gray-800: #252525;
   --gray-900: #151515;
 
-  /* Public semantic colors are also readable defaults for independent UI
-     providers. The gray ramp follows the active theme; inline theme overrides
-     retain precedence over these defaults. */
+  /* Public defaults keep independent UI providers readable. Built-in roles
+     consume explicit theme overrides below, so these defaults do not replace
+     their distinct surface, text and border fallbacks. */
   --wuu-color-canvas: var(--gray-0);
   --wuu-color-surface: var(--gray-50);
   --wuu-color-surface-muted: var(--gray-100);
@@ -73,9 +73,9 @@
   --wuu-color-border-subtle: var(--gray-250);
   --wuu-color-border-strong: var(--gray-350);
 
-  --ink-strong: var(--wuu-color-text, var(--gray-900));
-  --ink: var(--wuu-color-text, var(--gray-800));
-  --ink-soft: var(--wuu-color-text-muted, var(--gray-650));
+  --ink-strong: var(--theme-override-color-text, var(--gray-900));
+  --ink: var(--theme-override-color-text, var(--gray-800));
+  --ink-soft: var(--theme-override-color-text-muted, var(--gray-650));
   --wuu-color-live-highlight: rgba(255, 255, 255, 0.95);
   /* Extension themes expose one muted-text endpoint. Derive the quieter host
      roles from that endpoint and the themed canvas instead of mapping every
@@ -86,11 +86,11 @@
   --ink-faint: color-mix(in srgb, var(--ink-soft) 45%, var(--paper));
   --ink-quiet: color-mix(in srgb, var(--ink-soft) 39%, var(--paper));
 
-  --paper: var(--wuu-color-canvas, var(--gray-0));
-  --surface-1: var(--wuu-color-surface, var(--gray-50));
-  --surface-2: var(--wuu-color-surface-muted, var(--gray-100));
-  --surface-3: var(--wuu-color-surface-elevated, var(--gray-150));
-  --surface-4: var(--wuu-color-surface-elevated, var(--gray-200));
+  --paper: var(--theme-override-color-canvas, var(--gray-0));
+  --surface-1: var(--theme-override-color-surface, var(--gray-50));
+  --surface-2: var(--theme-override-color-surface-muted, var(--gray-100));
+  --surface-3: var(--theme-override-color-surface-elevated, var(--gray-150));
+  --surface-4: var(--theme-override-color-surface-elevated, var(--gray-200));
 
   /* ------------------------------------------------------------------
    * Line-tier governance: the product's three gray line strengths.
@@ -107,8 +107,8 @@
    * Exceptions kept outside the ladder: focus-ring, control-boundary
    * and semantic colors are state colors; ink/paper rings are contrast keylines.
    * ------------------------------------------------------------------ */
-  --hairline: var(--wuu-color-border-subtle, var(--gray-250));
-  --hairline-strong: var(--wuu-color-border-strong, var(--gray-350));
+  --hairline: var(--theme-override-color-border-subtle, var(--gray-250));
+  --hairline-strong: var(--theme-override-color-border-strong, var(--gray-350));
   --hairline-soft: var(--wuu-border-subtle, var(--ink-overlay-6));
   /* Ink-overlay alpha steps. Pre-tokenised so future opacity tweaks
      happen here, not scattered across CSS files. */
@@ -170,17 +170,17 @@
      provide the explicit public on-accent pair; otherwise its canvas color is
      the safest adaptive opposite for the host's dark-on-bright / light-on-dark
      defaults. Info badges derive locally so the public API stays small. */
-  --ink-on-accent: var(--wuu-color-on-accent, var(--wuu-color-canvas, var(--gray-0)));
-  --ink-on-info: var(--wuu-color-canvas, var(--gray-0));
+  --ink-on-accent: var(--wuu-color-on-accent, var(--theme-override-color-canvas, var(--gray-0)));
+  --ink-on-info: var(--theme-override-color-canvas, var(--gray-0));
   /* Focus and functional control boundaries are semantic interaction tokens,
      not decorative ink overlays. Plugin themes can replace them through the
      existing public focus and strong-border contract. */
   --focus-ring: var(--wuu-color-focus, var(--info));
-  --control-boundary: var(--wuu-color-border-strong, var(--gray-500));
+  --control-boundary: var(--theme-override-color-border-strong, var(--gray-500));
   --interaction-accent: var(--wuu-accent);
   /* Selection is opaque so sidebar material cannot tint or darken it. */
-  --selection-surface: var(--wuu-color-surface-elevated, #d9dce1);
-  --slider-thumb-bg: var(--wuu-color-surface-elevated, var(--paper));
+  --selection-surface: var(--theme-override-color-surface-elevated, #d9dce1);
+  --slider-thumb-bg: var(--theme-override-color-surface-elevated, var(--paper));
   /* Placeholder text must read as an example, never as a filled value, and still
      clear 4.5:1. Distinct from entered text (--ink) and from --ink-soft labels. */
   --placeholder-ink: var(--gray-650);
@@ -271,9 +271,9 @@
   --line-ui: 1.45;
   --line-body: var(--wuu-line-height-body, 1.55);
   --line-meta: 1.6;
-  --menu-bg: var(--wuu-color-surface-elevated, var(--surface-floating));
+  --menu-bg: var(--theme-override-color-surface-elevated, var(--surface-floating));
   --menu-border: var(--hairline);
-  --menu-hover: var(--wuu-color-surface-muted, var(--surface-2));
+  --menu-hover: var(--theme-override-color-surface-muted, var(--surface-2));
   --menu-shadow: var(--shadow-pop);
   /* --- Motion: primitives ------------------------------------------------
    * Transitions, entrances, and exits read a rung of this ladder or an alias
@@ -407,6 +407,40 @@
   /* Native smoothing preserves the stroke weight of regular text on macOS. */
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
+}
+
+/* Only tokens declared by the selected theme override built-in roles.
+   Keep the public values readable for independent shells even with no theme. */
+:root[data-theme-tokens~="--wuu-color-canvas"] {
+  --theme-override-color-canvas: var(--wuu-color-canvas);
+}
+
+:root[data-theme-tokens~="--wuu-color-surface"] {
+  --theme-override-color-surface: var(--wuu-color-surface);
+}
+
+:root[data-theme-tokens~="--wuu-color-surface-muted"] {
+  --theme-override-color-surface-muted: var(--wuu-color-surface-muted);
+}
+
+:root[data-theme-tokens~="--wuu-color-surface-elevated"] {
+  --theme-override-color-surface-elevated: var(--wuu-color-surface-elevated);
+}
+
+:root[data-theme-tokens~="--wuu-color-text"] {
+  --theme-override-color-text: var(--wuu-color-text);
+}
+
+:root[data-theme-tokens~="--wuu-color-text-muted"] {
+  --theme-override-color-text-muted: var(--wuu-color-text-muted);
+}
+
+:root[data-theme-tokens~="--wuu-color-border-subtle"] {
+  --theme-override-color-border-subtle: var(--wuu-color-border-subtle);
+}
+
+:root[data-theme-tokens~="--wuu-color-border-strong"] {
+  --theme-override-color-border-strong: var(--wuu-color-border-strong);
 }
 
 :root[data-font-smoothing="grayscale"] {

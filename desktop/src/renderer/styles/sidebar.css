@@ -266,7 +266,7 @@
   flex-direction: column;
   border-right: var(--wuu-border-subtle, 1px solid var(--sidebar-material-edge));
   background: var(--sidebar-material-fill);
-  background: var(--wuu-color-surface-muted, var(--sidebar-material-fill));
+  background: var(--theme-override-color-surface-muted, var(--sidebar-material-fill));
   box-shadow:
     inset -1px 0 0 var(--sidebar-material-inner-edge),
     var(--sidebar-edge-shadow);
@@ -525,7 +525,7 @@
 .sidebar-drawer-docking :is(.sidebar, .settings-sidebar) {
   border-right-color: var(--sidebar-material-edge);
   background: var(--sidebar-material-fill);
-  background: var(--wuu-color-surface-muted, var(--sidebar-material-fill));
+  background: var(--theme-override-color-surface-muted, var(--sidebar-material-fill));
   box-shadow:
     inset -1px 0 0 var(--sidebar-material-inner-edge),
     var(--sidebar-edge-shadow);

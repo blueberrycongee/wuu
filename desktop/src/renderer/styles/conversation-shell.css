@@ -18,18 +18,18 @@
      their material from these public-token-backed values. The fill is opaque
      so scrolling conversation content does not sample through the control.
      Dark-mode values live in theme.css. */
-  --conversation-floating-surface-bg: var(--wuu-color-surface-elevated, var(--paper));
-  --conversation-floating-surface-border: var(--wuu-color-border-subtle, var(--hairline));
-  --conversation-floating-surface-hover-bg: var(--wuu-color-surface, var(--surface-1));
-  --conversation-floating-surface-hover-border: var(--wuu-color-border-strong, var(--hairline-strong));
+  --conversation-floating-surface-bg: var(--theme-override-color-surface-elevated, var(--paper));
+  --conversation-floating-surface-border: var(--theme-override-color-border-subtle, var(--hairline));
+  --conversation-floating-surface-hover-bg: var(--theme-override-color-surface, var(--surface-1));
+  --conversation-floating-surface-hover-border: var(--theme-override-color-border-strong, var(--hairline-strong));
   --conversation-floating-surface-focus: var(--focus-ring);
   --shell-jump-pill-bg: var(--conversation-floating-surface-bg);
   --shell-jump-pill-border: var(--conversation-floating-surface-border);
   --shell-jump-pill-hover-bg: var(--conversation-floating-surface-hover-bg);
   --shell-jump-pill-hover-border: var(--conversation-floating-surface-hover-border);
   --shell-jump-pill-focus-shadow-1: var(--conversation-floating-surface-focus);
-  --shell-jump-progress-step-bg: color-mix(in srgb, var(--wuu-color-text, #131314) 6%, transparent);
-  --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--wuu-color-text, #131314) 20%, transparent);
+  --shell-jump-progress-step-bg: color-mix(in srgb, var(--theme-override-color-text, #131314) 6%, transparent);
+  --shell-jump-progress-step-in-progress-bg: color-mix(in srgb, var(--theme-override-color-text, #131314) 20%, transparent);
   /* Message-flow body typography. Owned at :root (not on .conversation-pane)
      so a user setting written to <html style="..."> cascades globally
      without being shadowed by a more specific selector. Default 15px

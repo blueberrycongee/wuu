@@ -1,6 +1,6 @@
 :root {
-  --plugin-ui-panel-bg: var(--wuu-color-canvas, var(--paper));
-  --plugin-ui-card-bg: var(--wuu-color-canvas, var(--paper));
+  --plugin-ui-panel-bg: var(--theme-override-color-canvas, var(--paper));
+  --plugin-ui-card-bg: var(--theme-override-color-canvas, var(--paper));
 }
 
 .plugin-workbench-view {
@@ -12,7 +12,7 @@
   min-height: 0;
   flex-direction: column;
   color: var(--ink);
-  background: var(--wuu-color-canvas, var(--paper));
+  background: var(--theme-override-color-canvas, var(--paper));
 }
 
 .plugin-workbench-view-overlay {
@@ -102,8 +102,8 @@
   min-height: 0;
   height: 100%;
   overflow: auto;
-  color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-color-canvas, var(--paper));
+  color: var(--theme-override-color-text, var(--ink));
+  background: var(--theme-override-color-canvas, var(--paper));
 }
 
 /* Public Plugin UI Kit. The host owns layout rhythm and interaction states;
@@ -121,7 +121,7 @@
   margin: 0 auto;
   padding: var(--page-padding);
   overflow-wrap: anywhere;
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   font-family: var(--wuu-font-family-ui, inherit);
   font-size: var(--wuu-font-size-body, var(--font-body));
   line-height: var(--wuu-line-height-body, var(--line-body));
@@ -190,7 +190,7 @@
 .plugin-ui-panel,
 .plugin-ui-card {
   min-width: 0;
-  border: var(--wuu-border-subtle, 1px solid var(--wuu-color-border-subtle, var(--hairline-soft)));
+  border: var(--wuu-border-subtle, 1px solid var(--theme-override-color-border-subtle, var(--hairline-soft)));
   border-radius: var(--wuu-radius-panel, var(--radius-md));
 }
 
@@ -230,7 +230,7 @@
 
 /* Section headings share the host's reading hierarchy. */
 .plugin-ui-section-header h2 {
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   font-size: var(--font-title);
   font-weight: var(--weight-medium);
   line-height: 1.4;
@@ -281,7 +281,7 @@
   border: 0;
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: var(--control-padding-block) var(--control-padding-inline);
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   background: var(--control-secondary-bg);
   box-shadow: var(--shadow-soft);
   cursor: pointer;
@@ -296,13 +296,13 @@
 }
 
 .plugin-ui-button[data-wuu-variant="primary"] {
-  color: var(--wuu-color-canvas, var(--paper));
-  background: var(--wuu-color-text, var(--gray-900));
+  color: var(--theme-override-color-canvas, var(--paper));
+  background: var(--theme-override-color-text, var(--gray-900));
 }
 
 .plugin-ui-button[data-wuu-variant="ghost"] {
   box-shadow: none;
-  color: var(--wuu-color-text-muted, var(--ink-soft));
+  color: var(--theme-override-color-text-muted, var(--ink-soft));
   background: transparent;
 }
 
@@ -317,11 +317,11 @@
 }
 
 .plugin-ui-button[data-wuu-variant="primary"]:not(:disabled):hover {
-  background: color-mix(in srgb, var(--wuu-color-text, var(--gray-900)) 88%, var(--wuu-color-canvas, var(--paper)));
+  background: color-mix(in srgb, var(--theme-override-color-text, var(--gray-900)) 88%, var(--theme-override-color-canvas, var(--paper)));
 }
 
 .plugin-ui-button[data-wuu-variant="ghost"]:not(:disabled):hover {
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
 }
 
 .plugin-ui-button[data-wuu-variant="danger"]:not(:disabled):hover {
@@ -357,13 +357,13 @@
 }
 
 .plugin-ui-toolbar-toggle:not(:disabled):hover {
-  color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-color-surface-muted, var(--surface-2));
+  color: var(--theme-override-color-text, var(--ink));
+  background: var(--theme-override-color-surface-muted, var(--surface-2));
 }
 
 .plugin-ui-toolbar-toggle[aria-pressed="true"] {
-  color: var(--wuu-color-text, var(--ink));
-  background: var(--wuu-color-surface-elevated, var(--surface-3));
+  color: var(--theme-override-color-text, var(--ink));
+  background: var(--theme-override-color-surface-elevated, var(--surface-3));
 }
 
 .plugin-ui-toolbar-toggle:not(:disabled):active {
@@ -389,7 +389,7 @@
 }
 
 .plugin-ui-field-label {
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   line-height: 1.4;
@@ -409,7 +409,7 @@
   border: 1px solid var(--field-border);
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: var(--control-padding-block) var(--control-padding-inline);
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   background: var(--field-bg);
   font: inherit;
   font-size: var(--font-ui);
@@ -434,7 +434,7 @@
   border: 1px solid var(--field-border);
   border-radius: var(--wuu-radius-control, var(--radius-sm));
   padding: var(--compact-padding-block) var(--control-padding-inline);
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   background: var(--field-bg);
   font: inherit;
   font-size: var(--font-ui);
@@ -453,7 +453,7 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-6);
-  color: var(--wuu-color-text, var(--ink));
+  color: var(--theme-override-color-text, var(--ink));
   cursor: pointer;
 }
 
@@ -479,8 +479,8 @@
 .plugin-ui-state-spinner {
   width: 22px;
   height: 22px;
-  border: 2px solid var(--wuu-color-border-subtle, var(--hairline));
-  border-top-color: var(--wuu-color-text, var(--ink-strong));
+  border: 2px solid var(--theme-override-color-border-subtle, var(--hairline));
+  border-top-color: var(--theme-override-color-text, var(--ink-strong));
   border-radius: var(--radius-circle);
   animation: wuu-spin var(--motion-spin) linear infinite;
 }

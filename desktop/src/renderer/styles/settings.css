@@ -3,7 +3,7 @@
 
 :root {
   --settings-canvas: var(--surface-1);
-  --settings-card: var(--wuu-color-surface, var(--gray-0));
+  --settings-card: var(--theme-override-color-surface, var(--gray-0));
   /* A group is a sheet lifted off the canvas: a large corner, a faint edge
    * and a soft shadow, so grouping reads without a gray frame. */
   --settings-group-radius: var(--radius-md);
