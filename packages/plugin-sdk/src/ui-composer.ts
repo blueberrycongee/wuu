@@ -72,7 +72,7 @@ export interface ApplicationComposerActionMapV1 {
   "composer.toggle-pending-mode": { input: { readonly messageId: string }; result: void };
   "composer.import-attachments": { input: { readonly attachments: readonly ApplicationAttachmentV1[] }; result: void };
   /** Discard unbound imports or failed admitted reads that will not be restored. */
-  "composer.release-attachments": { input: { readonly attachmentIds: readonly string[] }; result: void };
+  "composer.release-attachments": { input: { readonly attachmentIds: readonly string[]; readonly ifUnreferenced?: boolean }; result: void };
   /** The host owns encoding, retries and previews from this point onward. */
   "composer.attach": { input: { readonly files: readonly File[]; readonly ownerTabId?: string }; result: { readonly attachments: readonly ApplicationAttachmentV1[] } };
   "composer.resolve-attachment": { input: { readonly attachmentId: string }; result: ApplicationAttachmentV1 };

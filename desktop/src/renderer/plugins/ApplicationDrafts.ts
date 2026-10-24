@@ -11,12 +11,18 @@ export class ApplicationDraftResources {
   constructor(private readonly changed: () => void) {}
 
   attach(files: readonly File[]): readonly ApplicationAttachmentV1[] {
-    const resources = files.map(file => {
-      const kind = isComposerImageFile(file) ? "image" : "file";
-      const value = kind === "image" ? composerImagePlaceholder(file) : composerFilePlaceholder(file);
-      this.remember(kind, value);
-      return this.describe(value.id);
-    });
+    const resources: ApplicationAttachmentV1[] = [];
+    try {
+      for (const file of files) {
+        const kind = isComposerImageFile(file) ? "image" : "file";
+        const value = kind === "image" ? composerImagePlaceholder(file) : composerFilePlaceholder(file);
+        this.remember(kind, value);
+        resources.push(this.describe(value.id));
+      }
+    } catch (error) {
+      this.release(resources.map(resource => resource.id));
+      throw error;
+    }
     this.changed();
     return Object.freeze(resources);
   }

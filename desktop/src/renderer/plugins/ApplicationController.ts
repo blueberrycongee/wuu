@@ -557,13 +557,13 @@ export class ApplicationController implements ApplicationServiceV1 {
         this.draftResources.import(attachments); return;
       }
       case "composer.release-attachments": {
-        const { attachmentIds } = input as ApplicationActionMapV1["composer.release-attachments"]["input"];
+        const { attachmentIds, ifUnreferenced } = input as ApplicationActionMapV1["composer.release-attachments"]["input"];
         const referenced = new Set(this.state.sessionTabs.flatMap(tab => tab.kind === "skills" ? [] : [...tab.images, ...tab.files].map(item => item.id)));
         for (const pending of Object.values(this.pendingComposer.pendingComposerMessagesByThread)) {
           for (const message of [...pending.queued, ...pending.guides]) [...message.images, ...message.files].forEach(item => referenced.add(item.id));
         }
-        if (attachmentIds.some(id => referenced.has(id))) throw new Error("Cannot release an attachment owned by a draft or pending message");
-        this.draftResources.release(attachmentIds); return;
+        if (!ifUnreferenced && attachmentIds.some(id => referenced.has(id))) throw new Error("Cannot release an attachment owned by a draft or pending message");
+        this.draftResources.release(attachmentIds.filter(id => !referenced.has(id))); return;
       }
       case "composer.remove-pending": {
         const { messageId, kind } = input as ApplicationActionMapV1["composer.remove-pending"]["input"];

@@ -101,6 +101,8 @@ describe("shared application state", () => {
       ] });
       await controller.invoke("composer.submit", { mode: "queue" });
       await expect(controller.invoke("composer.release-attachments", { attachmentIds: ["image"] })).rejects.toThrow("pending message");
+      await controller.invoke("composer.release-attachments", { attachmentIds: ["image"], ifUnreferenced: true });
+      expect(controller.getSnapshot().drafts.attachments[0].id).toBe("image");
       await controller.invoke("composer.edit-pending", { messageId: controller.getSnapshot().composerPending[0].queued[0].id, kind: "queue" });
       expect(revoke).not.toHaveBeenCalled();
       expect(controller.getSnapshot().drafts.attachments[0].previewUrl).toBe("blob:owned");
@@ -246,6 +248,25 @@ describe("shared application state", () => {
     await expect(reading).resolves.toMatchObject({ id: attachmentId, status: "ready", data: "QQ==" });
     await expect(controller.invoke("composer.resolve-attachment", { attachmentId })).rejects.toThrow("Unknown composer attachment");
     expect(controller.getSnapshot().drafts.attachments).toEqual([]);
+  });
+
+  it("rolls back earlier attachment resources when a later batch file is rejected", async () => {
+    const originalCreate = URL.createObjectURL, originalRevoke = URL.revokeObjectURL;
+    const revoke = vi.fn();
+    URL.createObjectURL = vi.fn(() => "blob:batch"); URL.revokeObjectURL = revoke;
+    try {
+      const context = { kind: "no_project" as const, cwd: "/workspace" };
+      const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+        { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "", images: [], files: [] },
+      ] });
+      const image = new File(["a"], "image.png", { type: "image/png" });
+      Object.defineProperty(image, "arrayBuffer", { value: () => new Promise(() => {}) });
+      const oversized = new File([], "large.txt", { type: "text/plain" });
+      Object.defineProperty(oversized, "size", { value: 100 * 1024 * 1024 });
+      await expect(controller.invoke("composer.attach", { files: [image, oversized] })).rejects.toThrow();
+      expect(controller.getSnapshot().drafts.primary.imageIds).toEqual([]);
+      expect(revoke).toHaveBeenCalledWith("blob:batch");
+    } finally { URL.createObjectURL = originalCreate; URL.revokeObjectURL = originalRevoke; }
   });
 
   it("imports only ready attachment values and rejects conflicting resource identities", async () => {
