@@ -1,18 +1,39 @@
-import { act, useSyncExternalStore, type ComponentProps, type Dispatch, type SetStateAction } from "react";
+import { act, useEffect, useMemo, useSyncExternalStore, type ComponentProps, type Dispatch, type SetStateAction } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserCookieImportResult, EngineListResult, ExtensionInventoryRecord, RecentWorkspacesResult, WuuDesktopApi } from "../shared/protocol";
 import {
-  FirstRunOnboarding,
+  FirstRunOnboarding as FirstRunOnboardingView,
   bundledOnboardingPlugins,
   discoveredLocalProviders,
   hasOnboardingProvider,
 } from "./FirstRunOnboarding";
-import { ServiceConnector } from "./ModelServicesPage";
+import { ServiceConnector as ServiceConnectorView } from "./ModelServicesPage";
 import { I18nProvider } from "./i18n";
 import { ONBOARDING_PLUGIN_ORDER } from "./onboardingCatalog";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationFirstRunOnboarding } from "./ApplicationFirstRunOnboarding";
+import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
 import { initialState, type AppState } from "./AppState";
+
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
+import { ApplicationOnboarding } from "./plugins/ApplicationOnboarding";
+
+function FirstRunOnboarding(props: Omit<ComponentProps<typeof FirstRunOnboardingView>, "onboarding" | "onImportBrowser">) {
+  const controls = useMemo(() => createApplicationSettingsControls(), []);
+  const onboarding = useMemo(() => {
+    const unavailable = async (): Promise<never> => { throw new Error("This presentation fixture supplies explicit effect callbacks"); };
+    return new ApplicationOnboarding({ getState: () => initialState, updateState: () => {}, selectImportedWorkspace: unavailable,
+      operations: { plugins: unavailable, runtime: unavailable, provider: unavailable, browser: unavailable } });
+  }, []);
+  useEffect(() => () => onboarding.dispose(), [onboarding]);
+  return <SettingsControlsProvider controls={controls}><FirstRunOnboardingView {...props}
+    onboarding={onboarding} onImportBrowser={path => controls.importBrowserCookies(path)} /></SettingsControlsProvider>;
+}
+function ServiceConnector(props: ComponentProps<typeof ServiceConnectorView>) {
+  const controls = useMemo(() => createApplicationSettingsControls(), []);
+  return <SettingsControlsProvider controls={controls}><ServiceConnectorView {...props} /></SettingsControlsProvider>;
+}
 
 function plugin(
   id: string,
@@ -62,23 +83,34 @@ describe("FirstRunOnboarding", () => {
   });
 
   async function sharedFlow(overrides: Partial<ComponentProps<typeof FirstRunOnboarding>>) {
-    const application = new ApplicationController(initialState);
+    let state: AppState = { ...initialState, onboardingComplete: false };
     let generation = 0;
-    const onStateChange: Dispatch<SetStateAction<AppState["onboarding"]>> = update => {
-      application.updateState(current => ({ ...current, onboarding: typeof update === "function" ? update(current.onboarding) : update }));
-    };
-    function Shell() {
-      const state = useSyncExternalStore(application.subscribeState, application.getState);
-      const shared = { state: state.onboarding, onStateChange };
-      return <I18nProvider><FirstRunOnboarding
-        inventory={[{ ...plugin("todo", true), enabled_override: true }]}
-        providers={[{ name: "fixture", type: "openai-compatible", model: "fixture", api_key_configured: true }]}
-        onUpdateExtensionPackage={vi.fn(async () => undefined)}
-        onSaveProvider={vi.fn(async () => undefined)}
-        onComplete={vi.fn(async () => undefined)}
-        {...overrides} {...shared}
-      /></I18nProvider>;
-    }
+    const base = createPreviewApplication();
+    const controls = createApplicationSettingsControls();
+    const owner = new ApplicationOnboarding({ getState: () => state,
+      updateState: update => { state = typeof update === "function" ? update(state) : update; },
+      selectImportedWorkspace: async () => {},
+      operations: {
+        plugins: async update => { await overrides.onUpdateExtensionPackage?.(update.updates ? { updates: update.updates.map(item => ({ ...item })) } : update); },
+        runtime: async engine => { await overrides.onUpdateEngines?.({ default_engine: engine }); },
+        provider: async input => { await overrides.onSaveProvider?.(input.provider, input.model, input.connection ?? {}); },
+        browser: path => controls.importBrowserCookies(path),
+      },
+    });
+    window.wuu.importWorkspaces = vi.fn(async (paths: string[]) => {
+      await overrides.onComplete?.(paths);
+      return { projects: paths.map((path, index) => ({ id: `workspace-${index}`, path, name: path, created_at: "", updated_at: "" })) };
+    });
+    window.wuu.completeOnboarding = vi.fn(async () => ({ ok: true as const }));
+    const view = { ...base.getSnapshot(), settings: { ...base.getSnapshot().settings,
+      configuration: { protocol_version: "fixture", provider: "fixture", model: "fixture", workspace_root: "/fixture",
+        extension_inventory: overrides.inventory ?? [{ ...plugin("todo", true), enabled_override: true }],
+        providers: overrides.providers ?? [{ name: "fixture", type: "openai-compatible", model: "fixture", api_key_configured: true }],
+        catalog_providers: overrides.catalogProviders },
+      engineInventory: overrides.engines,
+    } };
+    const application = { ...base, settingsControls: controls, onboarding: owner, getSnapshot: () => view };
+    function Shell() { return <I18nProvider><ApplicationFirstRunOnboarding application={application} /></I18nProvider>; }
     await act(async () => root.render(<Shell key={generation} />));
     return { remount: () => act(async () => root.render(<Shell key={++generation} />)) };
   }

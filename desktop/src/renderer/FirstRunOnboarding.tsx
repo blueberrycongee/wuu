@@ -22,6 +22,8 @@ import { EngineIcon } from "./EngineIcons";
 import { ServiceConnector, ServiceMark, serviceIdentity, useCatalogProviders } from "./ModelServicesPage";
 import { ONBOARDING_PLUGIN_MANIFESTS, ONBOARDING_PLUGIN_ORDER, PLUGIN_DESCRIPTION_KEYS, RECOMMENDED_PLUGIN_IDS } from "./onboardingCatalog";
 import { OnboardingMascotStage } from "./OnboardingMascotStage";
+import type { ApplicationOnboardingV1 } from "../../../packages/plugin-sdk/src/ui-onboarding";
+import { useSettingsControls } from "./SettingsControlsContext";
 import { OnboardingBrowserImport } from "./OnboardingBrowserImport";
 import { SystemPermissionsPanel } from "./SystemPermissions";
 import { PREVIEW_PLUGINS, PREVIEW_WORKSPACES } from "./onboardingPreview";
@@ -117,6 +119,8 @@ const STEP_TITLES: Readonly<Record<OnboardingStep, TranslationKey>> = {
 };
 
 export function FirstRunOnboarding({
+  onboarding,
+  onImportBrowser,
   state: sharedState,
   onStateChange,
   inventory: liveInventory,
@@ -131,6 +135,8 @@ export function FirstRunOnboarding({
   onUpdateEngines,
   onComplete,
 }: {
+  onboarding: Pick<ApplicationOnboardingV1, "getSnapshot" | "discoverWorkspaces" | "chooseWorkspace">;
+  onImportBrowser: (profilePath: string) => Promise<BrowserCookieImportResult>;
   state?: FirstRunOnboardingState;
   onStateChange?: Dispatch<SetStateAction<FirstRunOnboardingState | undefined>>;
   inventory?: readonly ExtensionInventoryRecord[];
@@ -150,6 +156,7 @@ export function FirstRunOnboarding({
   onComplete: (paths?: string[]) => Promise<void>;
 }): JSX.Element {
   const { t, locale } = useI18n();
+  const controls = useSettingsControls();
   const titleID = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
   const pluginBodyRef = useRef<HTMLDivElement>(null);
@@ -190,8 +197,8 @@ export function FirstRunOnboarding({
   const localProviders = discoveredLocalProviders(providers);
   const providerReady = hasOnboardingProvider(providers);
   const preset = selectedPreset(selectedPluginIDs, bundledPlugins);
-  const showPermissions = preview || (window.wuu?.platform === "darwin" && Boolean(window.wuu.getSystemPermissions));
-  const showBrowser = preview || (window.wuu?.platform === "darwin" && Boolean(window.wuu.listBrowserProfiles && window.wuu.importBrowserCookies));
+  const showPermissions = preview || controls.capabilities.systemPermissions;
+  const showBrowser = preview || onboarding.getSnapshot().capabilities.browserImport;
   const steps = STEP_ORDER.filter(item => (item !== "permissions" || showPermissions) && (item !== "browser" || showBrowser));
   const afterPermissions: OnboardingStep = showBrowser ? "browser" : "ready";
   const afterProvider: OnboardingStep = showPermissions ? "permissions" : afterPermissions;
@@ -220,7 +227,7 @@ export function FirstRunOnboarding({
     const root = document.documentElement;
     root.dataset.theme = "light";
     return () => {
-      applyThemePreference(window.wuu?.initialThemePreference ?? "system");
+      applyThemePreference(controls.initialThemePreference);
     };
   }, []);
 
@@ -265,7 +272,7 @@ export function FirstRunOnboarding({
     setField("error", null);
     const scan = preview
       ? Promise.resolve({ candidates: PREVIEW_WORKSPACES, incomplete: false })
-      : window.wuu?.discoverRecentWorkspaces?.() ?? Promise.resolve({ candidates: [], incomplete: false });
+      : onboarding.getSnapshot().capabilities.discoverWorkspaces ? onboarding.discoverWorkspaces().then(result => structuredClone(result) as RecentWorkspacesResult) : Promise.resolve({ candidates: [], incomplete: false });
     void scan.then((result) => {
       if (!current) return;
       const firstScan = scannedRevision < 0;
@@ -297,7 +304,7 @@ export function FirstRunOnboarding({
     setField("choosingWorkspace", true);
     setField("error", null);
     try {
-      const path = preview ? "/Users/example/Projects/new-workspace" : await window.wuu.chooseWorkspaceDirectory?.();
+      const path = preview ? "/Users/example/Projects/new-workspace" : await onboarding.chooseWorkspace();
       if (!path) return;
       const candidate: RecentWorkspace = {
         path, name: path.split(/[\\/]/).filter(Boolean).pop() ?? path,
@@ -438,7 +445,7 @@ export function FirstRunOnboarding({
       // Preview never reads a local profile or invokes the production importer.
       const result: BrowserCookieImportResult = preview
         ? { ...profile, discovered: 24, imported: 22, skippedExpired: 2, skippedInvalid: 0, failed: 0 }
-        : await window.wuu.importBrowserCookies!(profile.profilePath);
+        : await onImportBrowser(profile.profilePath);
       setFlow(current => ({
         ...current,
         browserImportResults: { ...current.browserImportResults, [profile.profilePath]: result },
@@ -690,7 +697,7 @@ export function FirstRunOnboarding({
                   {t(selectedPaths.size === workspaceScan!.candidates.length ? "onboarding.selectNone" : "onboarding.selectAll")}
                 </button> : null}
                 <div className="onboarding-workspace-tools">
-                  <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !window.wuu?.chooseWorkspaceDirectory)} onClick={() => void chooseWorkspace()}>
+                  <button className="settings-button settings-button-ghost" type="button" disabled={busy || scanningWorkspaces || (!preview && !onboarding.getSnapshot().capabilities.chooseWorkspace)} onClick={() => void chooseWorkspace()}>
                     <FolderOpen className="icon" aria-hidden="true" />{t("onboarding.chooseWorkspace")}
                   </button>
                   <button className="settings-button settings-button-ghost settings-icon-button" type="button" aria-label={t("onboarding.scanAgain")} title={t("onboarding.scanAgain")} disabled={busy || scanningWorkspaces} onClick={() => setField("scanAttempt", (attempt) => attempt + 1)}>

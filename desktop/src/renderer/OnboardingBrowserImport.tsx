@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BrowserCookieImportResult, BrowserProfile } from "../shared/protocol";
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useI18n } from "./i18n";
 import { PREVIEW_BROWSER_PROFILES } from "./onboardingPreview";
 import { SettingsGroup } from "./SettingsSection";
@@ -14,6 +15,7 @@ export function OnboardingBrowserImport({ preview, busy, importError, results, o
   onImport: (profile: BrowserProfile) => Promise<void>;
 }): JSX.Element {
   const { t, locale } = useI18n();
+  const controls = useSettingsControls();
   const [profiles, setProfiles] = useState<BrowserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -26,7 +28,7 @@ export function OnboardingBrowserImport({ preview, busy, importError, results, o
     setDiscoveryError("");
     void (async () => {
       try {
-        const found = preview ? PREVIEW_BROWSER_PROFILES : await window.wuu.listBrowserProfiles!();
+        const found = preview ? PREVIEW_BROWSER_PROFILES : await controls.listBrowserProfiles();
         if (!cancelled) setProfiles(found);
       } catch (reason) {
         if (!cancelled) setDiscoveryError(reason instanceof Error ? reason.message : String(reason));
@@ -35,7 +37,7 @@ export function OnboardingBrowserImport({ preview, busy, importError, results, o
       }
     })();
     return () => { cancelled = true; };
-  }, [preview, attempt]);
+  }, [preview, attempt, controls]);
 
   const mostRecent = profiles.find((profile) => profile.hasCookies && profile.lastUsedAt);
   return (
