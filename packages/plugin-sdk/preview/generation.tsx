@@ -105,7 +105,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
         return { dispose() { style.remove(); const index = styles.indexOf(style); if (index !== -1) styles.splice(index, 1); } };
       };
       const implemented = {
-        react: React, ui: createPreviewUIKit(), pluginId, generation: revision, signal: controller.signal, application: scoped,
+        react: React, ui: createPreviewUIKit(), pluginId, manifestId: pluginId, generation: revision, signal: controller.signal, application: scoped,
         registerCleanup(callback: () => void) {
           cleanup.push(callback);
           return { dispose() { const index = cleanup.indexOf(callback); if (index !== -1) { cleanup.splice(index, 1); callback(); } } };

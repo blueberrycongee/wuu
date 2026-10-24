@@ -1332,6 +1332,7 @@ export class PluginHost {
         }, application.webWorkspace),
       }),
       pluginId: state.pluginId,
+      manifestId: state.manifestId,
       generation: state.generation,
       signal: state.lifetime.signal,
       invokeRuntime: (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions) => invokeRequest(method, input, options),

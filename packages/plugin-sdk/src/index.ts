@@ -497,6 +497,7 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   readonly react: HostReact;
   /** Host-owned primitives that inherit the active Wuu theme and spacing rhythm. */
   readonly ui: PluginUIKit;
+  /** Installation identity used for authenticated host calls; UI slots use manifestId. */
   readonly pluginId: string;
   readonly generation: string;
   /** Aborted when staging fails, is superseded, or this generation is disposed. */

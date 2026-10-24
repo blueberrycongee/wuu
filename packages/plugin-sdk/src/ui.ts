@@ -232,6 +232,8 @@ export interface ApplicationShellDefinition {
   readonly render: ComponentType<ApplicationShellRenderProps>;
 }
 export interface ApplicationGenerationAPI {
+  /** Canonical owner prefix for declared UI slots, independent of installation identity. */
+  readonly manifestId: string;
   readonly application: ApplicationServiceV1;
   registerApplicationShell(definition: ApplicationShellDefinition): Disposable;
   registerUISlot(definition: UISlotDefinition): Disposable;

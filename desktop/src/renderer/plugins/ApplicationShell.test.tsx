@@ -52,6 +52,25 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("renders owner-local slots using the manifest namespace of an installed shell", async () => {
+    const { host } = fixture();
+    await host.activateGeneration({ pluginId: "user:custom-shell", manifestId: "custom-shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "body", cardinality: "one" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name={`${api.manifestId}/body`} /> });
+    } });
+    await host.activateGeneration({ pluginId: "body", generation: "one", register: api => {
+      api.registerUIContribution({ id: "content", target: "custom-shell/body", render: () => <span>Installed shell body</span> });
+    } });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "user:custom-shell", generation: "one", id: "shell" }} />));
+      expect(container.textContent).toBe("Installed shell body");
+      await act(async () => host.unload("user:custom-shell"));
+      expect(container.textContent).toContain("Selected application shell is unavailable");
+    } finally { act(() => root.unmount()); host.unload("body"); host.unload("user:custom-shell"); }
+  });
+
   it("automatically composes legacy registrations only within declared non-service slots", async () => {
     window.wuu = {} as never;
     const { host } = fixture();
