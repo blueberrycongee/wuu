@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
@@ -61,10 +62,11 @@ type Manager struct {
 	// admission: the owner uses this hook to reapply the authority in force
 	// now instead of the one captured at spawn. Running workers are never
 	// touched — a live turn keeps its admitted snapshot until it settles.
-	wakeAuthority     func(agent.ToolExecutor)
-	acquireLoopDriver loopdriver.AcquireFunc
-	onSubagentStart   func(context.Context, string) error
-	onSubagentStop    func(context.Context, string) error
+	wakeAuthority      func(agent.ToolExecutor)
+	selectedCompaction *compactionservice.Client
+	acquireLoopDriver  loopdriver.AcquireFunc
+	onSubagentStart    func(context.Context, string) error
+	onSubagentStop     func(context.Context, string) error
 }
 
 type ManagerOptions struct {
@@ -90,9 +92,10 @@ type ManagerOptions struct {
 	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
 	// AcquireLoopDriver is required for execution. Missing configuration
 	// rejects the turn before lifecycle hooks, inference, or tool calls.
-	AcquireLoopDriver loopdriver.AcquireFunc
-	OnSubagentStart   func(context.Context, string) error
-	OnSubagentStop    func(context.Context, string) error
+	SelectedCompaction *compactionservice.Client
+	AcquireLoopDriver  loopdriver.AcquireFunc
+	OnSubagentStart    func(context.Context, string) error
+	OnSubagentStop     func(context.Context, string) error
 }
 
 type managerDefaults struct {
@@ -145,6 +148,7 @@ func NewManagerWithOptions(client providers.StreamClient, defaultModel string, o
 		BeginModelReceipts:     opts.BeginModelReceipts,
 		toolLedgerFactory:      opts.ToolLedgerFactory,
 		acquireLoopDriver:      opts.AcquireLoopDriver,
+		selectedCompaction:     opts.SelectedCompaction,
 		onSubagentStart:        opts.OnSubagentStart,
 		onSubagentStop:         opts.OnSubagentStop,
 		agents:                 make(map[string]*SubAgent),
@@ -565,6 +569,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	}
 
 	runner := &agent.StreamRunner{
+		SelectedCompaction:       m.selectedCompaction,
 		Client:                   sa.client,
 		DriverCheckpointStore:    workerCheckpointStore{worker: sa},
 		ProviderName:             sa.providerName,

@@ -10,7 +10,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -112,7 +111,7 @@ func ProjectCoordinationDescriptor() pluginhost.ServiceDescriptor {
 	return pluginhost.ServiceDescriptor{Name: ProjectCoordinationService, Version: "1.0.0", Methods: methods}
 }
 func (p *ProjectCoordinationProvider) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}, {Name: config.ServiceName, MajorVersion: 1, Required: true}, {Name: ManagedSessionService, MajorVersion: 1, Required: true}, {Name: pluginhost.KernelBackgroundService, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: session.ServiceName, MajorVersion: 1, Required: true}, {Name: config.ServiceName, MajorVersion: 1, Required: true}, {Name: ManagedSessionService, MajorVersion: 1, Required: true}, {Name: pluginhost.KernelBackgroundService, MajorVersion: 1, Required: true}}
 }
 func (p *ProjectCoordinationProvider) Activate(ctx context.Context) error {
 	if !projectAgentEnabled {
@@ -355,7 +354,7 @@ func (c *projectCoordinationConsumer) Status() pluginhost.Status {
 }
 func (*projectCoordinationConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
 func (*projectCoordinationConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: ProjectCoordinationService, MajorVersion: 1}, {Name: persistence.ServiceName, MajorVersion: 1}}
+	return []pluginhost.ServiceRequirement{{Name: ProjectCoordinationService, MajorVersion: 1}, {Name: session.ServiceName, MajorVersion: 1}}
 }
 func (c *projectCoordinationConsumer) Activate(context.Context) error {
 	if c.closed.Load() {

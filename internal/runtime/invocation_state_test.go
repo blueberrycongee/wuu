@@ -999,7 +999,7 @@ func TestStateConcurrentReleaseReportsFinalClose(t *testing.T) {
 }
 
 func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) {
-	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
 	original, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err != nil {
 		t.Fatal(err)
@@ -1040,7 +1040,7 @@ func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) 
 }
 
 func TestInvocationStateRetainsOriginalAuthority(t *testing.T) {
-	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
 	original, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err != nil {
 		t.Fatal(err)
@@ -1172,7 +1172,7 @@ func TestKernelInvocationReleasesStateAfterCallbackUnlock(t *testing.T) {
 
 func TestOpenStateBindsNativeInvocationState(t *testing.T) {
 	var retain func() (*State, error)
-	modules := []string{sessionStateConsumer, persistence.JSONLModule, "example.consumer"}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "example.consumer", "wuu.session.default"}
 	state, err := OpenState(context.Background(), StateOptions{
 		RootDir: t.TempDir(), HomeDir: t.TempDir(),
 		Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}},

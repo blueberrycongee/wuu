@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/toolerrors"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
 type pluginToolExecutor struct {
@@ -47,11 +48,44 @@ func newPluginToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, thre
 }
 
 func newPluginAwareToolExecutor(inner agent.ToolExecutor, host *pluginhost.Host, dispatcher *hooks.Dispatcher, pluginThreadID, hookSessionID, cwd string) agent.ToolExecutor {
-	executor := newPluginToolExecutor(inner, host, pluginThreadID, cwd)
+	var executor agent.ToolExecutor
+	if host == nil {
+		executor = newPluginToolExecutor(inner, host, pluginThreadID, cwd)
+	} else {
+		executor = newNativeToolScopeExecutor(inner, host, dispatcher, pluginThreadID, cwd, false)
+	}
 	if dispatcher != nil {
 		executor = hooks.NewHookedExecutor(executor, dispatcher, hookSessionID, cwd)
 	}
 	return executor
+}
+
+func newNativeToolScopeExecutor(inner agent.ToolExecutor, host *pluginhost.Host, dispatcher *hooks.Dispatcher, threadID, cwd string, clone bool) *selectedToolExecutor {
+	scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+		backend := inner
+		kit, _ := inner.(*tools.Toolkit)
+		if clone && kit != nil {
+			var err error
+			kit, err = kit.CloneForRoot(cwd)
+			if err != nil {
+				return toolservice.Backend{}, err
+			}
+			kit.SetSessionID(threadID)
+			configureToolkitSecurityExtensions(kit, host)
+			bindToolkitHooks(kit, dispatcher)
+			backend = kit
+		}
+		return toolservice.Backend{Executor: newPluginToolExecutor(backend, host, threadID, cwd), Toolkit: kit}, nil
+	})
+	actorID := threadID
+	if provider, ok := inner.(interface{ ExecutionActor() (string, string) }); ok {
+		actorID, _ = provider.ExecutionActor()
+	}
+	selected := newSelectedToolExecutor(host, scope, selectedToolIdentity{threadID: threadID, cwd: cwd, actorID: actorID})
+	selected.rebind = func(nextHost *pluginhost.Host, nextHooks *hooks.Dispatcher, nextThread, nextCWD string) *selectedToolExecutor {
+		return newNativeToolScopeExecutor(inner, nextHost, nextHooks, nextThread, nextCWD, true)
+	}
+	return selected
 }
 
 func replacePluginToolBindings(executor agent.ToolExecutor, host *pluginhost.Host, dispatcher *hooks.Dispatcher, threadID, cwd string) agent.ToolExecutor {
@@ -60,6 +94,22 @@ func replacePluginToolBindings(executor agent.ToolExecutor, host *pluginhost.Hos
 	}
 	if hooked, ok := executor.(*hooks.HookedExecutor); ok {
 		executor = hooked.Inner()
+	}
+	if previous, ok := executor.(*selectedToolExecutor); ok {
+		if previous.rebind != nil {
+			executor = previous.rebind(host, dispatcher, threadID, cwd)
+		} else {
+			// Root generation factories capture service bindings. Reconstruct
+			// them via candidateToolScope, never replay an old-host closure.
+			scope := toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+				return toolservice.Backend{}, errors.New("native tool rebinding requires a fresh generation-owned scope")
+			})
+			executor = newSelectedToolExecutor(host, scope, selectedToolIdentity{threadID: threadID, cwd: cwd, actorID: previous.identity.actorID})
+		}
+		if dispatcher != nil {
+			executor = hooks.NewHookedExecutor(executor, dispatcher, threadID, cwd)
+		}
+		return executor
 	}
 	if previous, ok := executor.(*pluginToolExecutor); ok {
 		executor = previous.inner

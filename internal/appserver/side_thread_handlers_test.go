@@ -584,7 +584,7 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	}
 
 	// Disabling the owning extension interrupts a running answer without erasing it.
-	modules := []string{persistence.SQLiteModule, "wuu.session-state", "side", "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", credentialstore.FileModule, config.Module, pluginsettings.Module, runtime.ArtifactModule}
+	modules := []string{persistence.SQLiteModule, "wuu.session-state", "side", "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", credentialstore.FileModule, config.Module, pluginsettings.Module, runtime.ArtifactModule, "wuu.session.default", "wuu.prompt.default", "wuu.compaction.default"}
 	policy := config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}
 	candidate, err := rt.PreflightExtensionPolicy(policy)
 	if err != nil {

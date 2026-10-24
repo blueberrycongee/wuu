@@ -104,7 +104,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 	deleted, err := s.deleteThreadSession(binding, id, params.OnlyIfArchived)
 	if err != nil && !errors.Is(err, session.ErrSessionNotFound) {
 		var uncertain *persistence.CommitError
-		if errors.As(err, &uncertain) {
+		if errors.As(err, &uncertain) || errors.Is(err, session.ErrOutcomeUnknown) {
 			// The main row may already be gone. Keep the readable deletion
 			// stage until an explicit retry can finish either storage outcome.
 			releaseThreadLifecycleWriteLease(id, lifecycleLease)

@@ -18,7 +18,7 @@ import (
 func TestOpenStateSelectedProviderWithoutModel(t *testing.T) {
 	for _, module := range []string{persistence.SQLiteModule, persistence.JSONLModule} {
 		t.Run(module, func(t *testing.T) {
-			modules := []string{sessionStateConsumer, module}
+			modules := []string{sessionStateConsumer, module, "wuu.session.default"}
 			cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}
 			state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: cfg})
 			if err != nil {
@@ -42,7 +42,7 @@ func TestOpenStateSelectedProviderWithoutModel(t *testing.T) {
 }
 
 func TestOpenStateMissingSelectedProvider(t *testing.T) {
-	modules := []string{sessionStateConsumer}
+	modules := []string{sessionStateConsumer, "wuu.session.default"}
 	_, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err == nil {
 		t.Fatal("missing provider used a default")
@@ -57,7 +57,9 @@ func TestRetainedStateSurvivesGenerationPublication(t *testing.T) {
 	host := pluginhost.New()
 	host.Add(provider)
 	host.Add(owner)
-	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner))
+	domain := newNativeSessionDomain(registry, t.TempDir())
+	host.Add(domain)
+	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner, domain))
 	owner.host = host
 	if err := host.Prepare(ctx); err != nil {
 		t.Fatal(err)
@@ -92,7 +94,7 @@ func TestRetainedStateSurvivesGenerationPublication(t *testing.T) {
 }
 
 func TestOpenStateAdmitsConfiguredNativeFactory(t *testing.T) {
-	modules := []string{sessionStateConsumer, "example.documents"}
+	modules := []string{sessionStateConsumer, "example.documents", "wuu.session.default"}
 	home := t.TempDir()
 	state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}, NativeProviders: []NativeProviderFactory{{ID: "example.documents", Build: func(input NativeProviderContext) (pluginhost.Client, error) {
 		return persistence.NewService("example.documents", filepath.Join(input.WuuHome, "external-documents"), "jsonl"), nil
@@ -110,7 +112,7 @@ func TestOpenStateAdmitsConfiguredNativeFactory(t *testing.T) {
 }
 
 func TestStateTransferKeepsExactAuthority(t *testing.T) {
-	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
 	state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err != nil {
 		t.Fatal(err)

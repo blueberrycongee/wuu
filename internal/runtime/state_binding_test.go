@@ -25,7 +25,9 @@ func TestRuntimeStateBindingLifecycle(t *testing.T) {
 			host := pluginhost.New()
 			host.Add(state)
 			host.Add(provider)
-			host.AttachServiceRegistry(registry, registry.RegisterClients(state, provider))
+			domain := newNativeSessionDomain(registry, t.TempDir())
+			host.Add(domain)
+			host.AttachServiceRegistry(registry, registry.RegisterClients(state, provider, domain))
 			t.Cleanup(func() { _ = host.Close(ctx) })
 			if err := host.Prepare(ctx); err != nil {
 				t.Fatal(err)
@@ -85,8 +87,9 @@ func TestDocumentMethodsDoNotAdmitRetiredAutonomousWork(t *testing.T) {
 	registry := pluginhost.NewServiceRegistry()
 	owner := newRuntimeState(registry, "test")
 	provider := persistence.NewService("example.state", t.TempDir(), "jsonl")
-	host := pluginhost.New(provider, owner)
-	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner))
+	domain := newNativeSessionDomain(registry, t.TempDir())
+	host := pluginhost.New(provider, owner, domain)
+	host.AttachServiceRegistry(registry, registry.RegisterClients(provider, owner, domain))
 	if err := host.Prepare(ctx); err != nil {
 		t.Fatal(err)
 	}

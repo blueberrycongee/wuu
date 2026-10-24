@@ -30,6 +30,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -278,6 +279,7 @@ type Config struct {
 	InferenceJournal   providers.InferenceJournal
 	BeginModelReceipts agent.BeginModelReceiptsFunc
 	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
+	SelectedCompaction *compactionservice.Client
 	AcquireLoopDriver  loopdriver.AcquireFunc
 	OnSubagentStart    func(context.Context, string) error
 	OnSubagentStop     func(context.Context, string) error
@@ -322,6 +324,7 @@ func New(cfg Config) (*AgentControl, error) {
 		BeginModelReceipts:      cfg.BeginModelReceipts,
 		ToolLedgerFactory:       cfg.ToolLedgerFactory,
 		AcquireLoopDriver:       cfg.AcquireLoopDriver,
+		SelectedCompaction:      cfg.SelectedCompaction,
 		OnSubagentStart:         cfg.OnSubagentStart,
 		OnSubagentStop:          cfg.OnSubagentStop,
 	})

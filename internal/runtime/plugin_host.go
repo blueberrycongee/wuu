@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
@@ -19,9 +20,11 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
 type pluginClientStarter func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error)
@@ -56,6 +59,7 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 }
 
 func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (*pluginhost.Host, *kernelHostServices, error) {
+	factories = append(append([]NativeProviderFactory(nil), factories...), compactionProviderFactory())
 	factoryIDs := make([]string, 0, len(factories))
 	for _, factory := range factories {
 		factoryIDs = append(factoryIDs, factory.ID)
@@ -138,6 +142,18 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			}
 		}
 	}
+	if resolved.Includes(promptservice.NativeModule) {
+		nativeModules = append(nativeModules, promptservice.NewService())
+		required[promptservice.NativeModule] = true
+	}
+	if resolved.Includes(toolservice.DefaultModule) {
+		nativeModules = append(nativeModules, toolservice.NewService())
+		required[toolservice.DefaultModule] = true
+	}
+	if resolved.Includes(session.DefaultModule) {
+		nativeModules = append(nativeModules, newNativeSessionDomain(registry, statepath.SessionsDir(wuuHome)))
+		required[session.DefaultModule] = true
+	}
 	stateModules, err := nativeStateProviders(wuuHome, projectRoot, workspaceStateDir, factoryIDs)
 	if err != nil {
 		return nil, nil, err
@@ -177,7 +193,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	for _, item := range plugins {
 		packageRequirements[item.ID] = item.RequiredPluginIDs()
 	}
-	for _, id := range []string{kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer} {
+	for _, id := range []string{kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, toolservice.DefaultModule} {
 		if resolved.Includes(id) {
 			packageRequirements[id] = append(packageRequirements[id], sessionStateConsumer)
 			if resolved.Includes(StateServicesConsumer) {
@@ -203,7 +219,15 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		err := host.Close(ctx)
-		registry.Close(ctx)
+		select {
+		case <-host.ShutdownDone():
+			registry.Close(context.Background())
+		default:
+			go func() {
+				<-host.ShutdownDone()
+				registry.Close(context.Background())
+			}()
+		}
 		return err
 	}
 	for _, item := range plugins {
@@ -335,6 +359,28 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	return host, kernel, nil
 }
 
+// Inferred products are rebuilt from the admitted catalog on each generation.
+// They are never written into the user's configuration.
+func productComposition(selection *composition.Config, desktop bool, candidates []pluginpkg.Plugin, factories []NativeProviderFactory) *composition.Config {
+	if selection != nil {
+		return selection
+	}
+	profile := "headless"
+	if desktop {
+		profile = "desktop"
+	}
+	ids := make([]string, 0, len(candidates)+len(factories))
+	for _, item := range candidates {
+		ids = append(ids, item.ID)
+	}
+	for _, factory := range factories {
+		if factory.DefaultEnabled {
+			ids = append(ids, factory.ID)
+		}
+	}
+	return composition.DefaultConfig(profile, ids...)
+}
+
 // Recovery admits no module or service binding, including unavailable choices
 // in the user's composition. Discovery remains available for diagnostics.
 func runtimeComposition(selection *composition.Config, safeMode bool) *composition.Config {
@@ -352,7 +398,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{sessionStateConsumer, defaultShellModule, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, defaultShellModule, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	available = append(available, stateServiceModules()...)
 	for _, id := range nativeProviderIDs {
 		if !slices.Contains(available, id) {

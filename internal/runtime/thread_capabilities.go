@@ -69,12 +69,15 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			s.releasePluginGeneration(generation)
 		}
 	}()
-	result := &ThreadRuntime{
+	result := &ThreadRuntime{SessionID: id,
 		Toolkit: kit, ActivityRegistry: s.ActivityRegistry,
 		Selection: selection, PluginGeneration: generation,
 		Documents: documents, Sessions: sessions, PluginHost: host,
 	}
 	if kit == nil {
+		if host != nil {
+			result.CapabilityTools = newPluginAwareToolExecutor(nil, host, dispatcher, id, id, root)
+		}
 		retained = true
 		return result, nil
 	}
@@ -113,9 +116,8 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			return err
 		})
 	}
-	// Only Toolkit owns the exported implementations. Generation-owned hooks
-	// remain active, but runtime plugin tools cannot intercept a capability name.
-	result.CapabilityTools = newPluginAwareToolExecutor(kit, nil, dispatcher, id, id, kit.RootDir())
+	// The selected registry owns the capability surface for external engines too.
+	result.CapabilityTools = newPluginAwareToolExecutor(kit, host, dispatcher, id, id, kit.RootDir())
 	retained = true
 	return result, nil
 }

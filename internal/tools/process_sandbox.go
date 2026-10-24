@@ -19,19 +19,33 @@ func (e *Env) processSandboxPolicy(ctx context.Context) (*processsandbox.Policy,
 	return e.processSandboxPolicyWithBuiltIn(ctx, processsandbox.Supported())
 }
 
+type processSandboxScope struct {
+	root, stateDir, sessionDir, sessionID, execRoot string
+	roots                                           []string
+	unconfined, allowMutations, boundaryConfigured  bool
+	provider                                        processsandbox.Provider
+}
+
 func (e *Env) processSandboxPolicyWithBuiltIn(ctx context.Context, builtInAvailable bool) (*processsandbox.Policy, string, error) {
 	if e == nil || e.Unconfined {
 		return nil, "", nil
 	}
-	if e.ProcessSandboxProvider == nil && !builtInAvailable {
+	execRoot, _ := e.ExecRootDir(ctx)
+	return (processSandboxScope{root: e.RootDir, stateDir: e.StateDir, sessionDir: e.SessionDir, sessionID: e.SessionID, execRoot: execRoot, roots: e.FileScopeRoots, unconfined: e.Unconfined, allowMutations: e.AllowMutations, boundaryConfigured: e.boundaryConfigured, provider: e.ProcessSandboxProvider}).policy(builtInAvailable)
+}
+func (p processSandboxScope) policy(builtInAvailable bool) (*processsandbox.Policy, string, error) {
+	if p.unconfined {
+		return nil, "", nil
+	}
+	if p.provider == nil && !builtInAvailable {
 		return nil, "", fmt.Errorf("%w: no built-in backend is available; configure sandbox.process@1 or explicitly use unconfined mode", processsandbox.ErrUnavailable)
 	}
-	if e.boundaryConfigured && !e.AllowMutations {
+	if p.boundaryConfigured && !p.allowMutations {
 		return &processsandbox.Policy{Mode: processsandbox.ModeReadOnly}, "", nil
 	}
 
-	roots := make([]string, 0, len(e.FileScopeRoots)+2)
-	for _, root := range e.FileScopeRoots {
+	roots := make([]string, 0, len(p.roots)+2)
+	for _, root := range p.roots {
 		// File tools may use the system temp directory as a convenience scope,
 		// but granting it to a process would let every command write anywhere
 		// under the shared host temp tree. Commands get a private temp below.
@@ -41,12 +55,12 @@ func (e *Env) processSandboxPolicyWithBuiltIn(ctx context.Context, builtInAvaila
 		roots = append(roots, root)
 	}
 	if len(roots) == 0 {
-		roots = []string{e.RootDir}
+		roots = []string{p.root}
 	}
-	if execRoot, err := e.ExecRootDir(ctx); err == nil && strings.TrimSpace(execRoot) != "" {
+	if execRoot := p.execRoot; strings.TrimSpace(execRoot) != "" {
 		replaced := false
 		for i, root := range roots {
-			if sameRuntimeFileScopePath(root, e.RootDir) {
+			if sameRuntimeFileScopePath(root, p.root) {
 				roots[i] = execRoot
 				replaced = true
 				break
@@ -56,7 +70,7 @@ func (e *Env) processSandboxPolicyWithBuiltIn(ctx context.Context, builtInAvaila
 			roots = append(roots, execRoot)
 		}
 	}
-	tempDir, err := e.ensureProcessSandboxTempDir()
+	tempDir, err := p.tempDir()
 	if err != nil {
 		return nil, "", err
 	}
@@ -68,15 +82,18 @@ func (e *Env) processSandboxPolicyWithBuiltIn(ctx context.Context, builtInAvaila
 }
 
 func (e *Env) ensureProcessSandboxTempDir() (string, error) {
-	base := strings.TrimSpace(e.SessionDir)
+	return (processSandboxScope{root: e.RootDir, stateDir: e.StateDir, sessionDir: e.SessionDir, sessionID: e.SessionID}).tempDir()
+}
+func (p processSandboxScope) tempDir() (string, error) {
+	base := strings.TrimSpace(p.sessionDir)
 	if base == "" {
-		base = strings.TrimSpace(e.StateDir)
+		base = strings.TrimSpace(p.stateDir)
 	}
 	var tempDir string
 	if base != "" {
 		tempDir = filepath.Join(base, "process-tmp")
 	} else {
-		identity := strings.TrimSpace(e.RootDir) + "\x00" + strings.TrimSpace(e.SessionID)
+		identity := strings.TrimSpace(p.root) + "\x00" + strings.TrimSpace(p.sessionID)
 		sum := sha256.Sum256([]byte(identity))
 		tempDir = filepath.Join(os.TempDir(), "wuu-process-sandbox", fmt.Sprintf("%x", sum[:8]))
 	}

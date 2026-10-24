@@ -157,7 +157,10 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 		return nil, errors.New("plugin catalog is being published by another process")
 	}
 	defer catalog.Release()
-	plan, err := ResolvePluginActivationPlan(opts.Config, discoverPlugins(root, home), opts.NativeProviders...)
+	discovered := discoverPlugins(root, home)
+	effectiveConfig := opts.Config
+	effectiveConfig.Composition = productComposition(opts.Config.Composition, false, activatedPlugins(opts.Config, discovered), opts.NativeProviders)
+	plan, err := ResolvePluginActivationPlan(effectiveConfig, discovered, opts.NativeProviders...)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +183,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	host, kernel, err := buildPluginHost(plugins, root, "", home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, opts.Config.Composition, "", opts.NativeProviders...)
+	host, kernel, err := buildPluginHost(plugins, root, "", home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, effectiveConfig.Composition, "", opts.NativeProviders...)
 	if err != nil {
 		return nil, err
 	}

@@ -235,7 +235,7 @@ func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
 		Providers:       map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", Model: "fixture", BaseURL: "https://example.invalid/v1", APIKey: "fixture"}},
 		Engines:         &config.EnginesConfig{DefaultEngine: "codex", Codex: off, Claude: off, Cursor: off, Devin: off, DSH: off, Grok: off, Hermes: off, Pi: off, OpenCode: off, Antigravity: off},
 	}
-	modules := testStateModules()
+	modules := append(testStateModules(), kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, "wuu.default-loop", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default")
 	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 	root, home := t.TempDir(), t.TempDir()
 	configPath := filepath.Join(root, "settings.json")

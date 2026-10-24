@@ -90,7 +90,7 @@ func newNonturnReceiptRuntime(t *testing.T, client providers.StreamClient) (*run
 	root, home, documentsDir := t.TempDir(), t.TempDir(), t.TempDir()
 	const documentsID = "fixture.nonturn-documents"
 	documents := &nonturnReceiptDocuments{Service: persistence.NewService(documentsID, documentsDir, "jsonl"), closed: make(chan struct{})}
-	modules := []string{"wuu.session-state", documentsID, "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule, runtime.DataQueryModule}
+	modules := []string{"wuu.session-state", documentsID, "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule, runtime.DataQueryModule, "wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default"}
 	cfg := config.Default()
 	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 	cfg.DefaultProvider = "fixture"

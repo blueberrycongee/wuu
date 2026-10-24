@@ -16,12 +16,15 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/prompt"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/siwc"
@@ -39,6 +42,10 @@ import (
 // a structured revocation report.
 type PluginGeneration struct {
 	systemPrompt      string
+	promptSections    []prompt.SectionInfo
+	tools             agent.ToolExecutor
+	toolkit           *tools.Toolkit
+	codeMode          *codemode.Service
 	models            *generationModelBindings
 	id                string
 	state             *runtimeState
@@ -47,6 +54,7 @@ type PluginGeneration struct {
 	chatGPTManager    *siwc.Manager
 	artifactClient    *ArtifactClient
 	mcpOAuth          *mcp.OAuthManager
+	requiredPlugins   map[string]bool
 	settings          config.Config
 	plugins           []pluginpkg.Plugin
 	active            []pluginpkg.Plugin
@@ -414,9 +422,11 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
 	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
+	effectiveConfig := cfg
+	effectiveConfig.Composition = productComposition(cfg.Composition, s.DesktopExecutionDefaults, activatedPlugins(cfg, discovered), factories)
 	var active []pluginpkg.Plugin
 	if !s.SafeMode {
-		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
+		activationPlan, err := ResolvePluginActivationPlan(effectiveConfig, discovered, factories...)
 		if err != nil {
 			return nil, err
 		}
@@ -454,7 +464,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile, factories...)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(effectiveConfig.Composition, s.SafeMode), s.DriverProfile, factories...)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
@@ -492,6 +502,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		id:                generationID,
 		state:             kernel.state,
 		settings:          cfg,
+		requiredPlugins:   requiredRuntimes,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
 		active:            append([]pluginpkg.Plugin(nil), active...),
 		host:              host,
@@ -505,12 +516,6 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
-	// Activation callbacks belong to this candidate before it is published.
-	// Materialize its prompt from prepared contributions, never the live runner.
-	s.pluginGenerationMu.Lock()
-	basePrompt := buildBaseSystemPromptContent(s.RootDir, s.SessionDate, config.DefaultSystemPrompt(), "", s.ProviderName, s.Model, activeSurfaceWithDeferredToolCatalog(s.Toolkit, s.DeferredToolCatalogPrompt), s.InstructionFiles, "", "", generation.skills)
-	generation.systemPrompt, _ = assemblePluginSystemPrompt(basePrompt, generation.systemPrompts)
-	s.pluginGenerationMu.Unlock()
 	kernel.bindStateGeneration(generation, s)
 	if kernel.selectedServices != nil {
 		generation.credentials = kernel.selectedServices.credentials
@@ -519,16 +524,40 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		generation.artifactClient = kernel.selectedServices.artifacts
 		generation.mcpOAuth = kernel.selectedServices.oauth
 	}
-	generation.mcp, err = startMCPManager(cfg, active, required, generation.mcpOAuth)
-	if err != nil {
-		_ = generation.close()
-		s.persistRevocationReport(generation)
-		return nil, err
-	}
 	// Activation acquires the Session reference. A prepared candidate has no
 	// live owners and must not keep an extra reference after publication.
 	generation.bindActivityOwnership(s.ActivityRegistry)
 	return generation, nil
+}
+
+// Tool listing can initialize provider-owned resources and belongs to activation.
+func (s *Session) hydratePluginGeneration(generation *PluginGeneration) error {
+	host := generation.host
+	selected := make(map[string]bool)
+	for _, status := range host.Statuses() {
+		selected[status.ID] = true
+	}
+	surface := activeSurface(nil)
+	if selected[toolExecutionConsumer] {
+		executor := newSelectedToolExecutor(host, s.candidateToolScope(generation, generation.requiredPlugins), selectedToolIdentity{cwd: s.RootDir})
+		generation.tools = executor
+		if generation.hooks != nil {
+			generation.tools = hooks.NewHookedExecutor(executor, generation.hooks, "", s.RootDir)
+		}
+		var err error
+		surface, err = executor.surface(context.Background())
+		if err != nil {
+			return err
+		}
+	}
+	if selected[sessionExecutionConsumer] {
+		result, err := assembleSelectedPrompt(context.Background(), host, promptservice.Request{Role: "main", CWD: s.RootDir, Date: s.SessionDate, Provider: s.ProviderName, Model: s.Model, Surface: surface, Instructions: s.InstructionFiles, Skills: generation.skills}, generation.systemPrompts)
+		if err != nil {
+			return err
+		}
+		generation.systemPrompt, generation.promptSections = result.Content, result.Sections
+	}
+	return nil
 }
 
 // PluginGenerationWasCommitted distinguishes post-commit activation failure
@@ -616,6 +645,7 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 			candidate.requestTransforms.RemoveByPlugin(status.ID)
 		}
 	}
+	activationErr = errors.Join(activationErr, s.hydratePluginGeneration(candidate))
 	s.pluginGenerationMu.Lock()
 	s.applyPluginGeneration(candidate)
 	s.pluginGeneration = candidate
@@ -969,12 +999,23 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	}
 	s.systemPrompts = generation.systemPrompts
 	if s.StreamRunner != nil {
-		s.StreamRunner.Tools = replacePluginToolBindings(s.StreamRunner.Tools, generation.host, generation.hooks, "", s.RootDir)
+		if generation.tools != nil {
+			s.StreamRunner.Tools = generation.tools
+			s.Toolkit, s.CodeMode = generation.toolkit, generation.codeMode
+		} else if generation.driverGateways != nil {
+			s.StreamRunner.Tools = nil
+			s.Toolkit, s.CodeMode = nil, nil
+		} else {
+			s.StreamRunner.Tools = replacePluginToolBindings(s.StreamRunner.Tools, generation.host, generation.hooks, "", s.RootDir)
+		}
 		bindPluginCompactionHooks(s.StreamRunner, generation.hooks, "", s.RootDir)
 		s.StreamRunner.BeforeModelStep = pluginPreStepInjector(generation.host, s.ProviderName, s.Model, "", s.RootDir)
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
+		if generation.driverGateways != nil {
+			s.StreamRunner.SelectedCompaction = newSelectedCompactionClient(generation.host)
+		}
 		s.StreamRunner.InferenceJournal = s.InferenceJournalForOwner("workspace-runtime")
 		s.StreamRunner.BeginModelReceipts = generation.beginModelReceipts
 		// Only a managed composition owns this binding. Embedded runtimes keep
@@ -994,10 +1035,11 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.Toolkit.SetMCPManager(generation.mcp)
 		configureToolkitSecurityExtensions(s.Toolkit, generation.host)
 	}
-	prompt := s.refreshSystemPromptWithSkills(s.ProviderName, s.Model, generation.filterSkills(generation.skills))
-	generation.revokedMu.Lock()
-	generation.systemPrompt = prompt
-	generation.revokedMu.Unlock()
+	s.BaseSystemPrompt, s.BaseSystemPromptSections = generation.systemPrompt, generation.promptSections
+	if s.StreamRunner != nil {
+		s.StreamRunner.UpdateSystemPromptWithSections(generation.systemPrompt, agentPromptSections(generation.promptSections))
+	}
+
 }
 
 // close retires every generation-owned resource in reverse ownership order
@@ -1011,6 +1053,7 @@ func (g *PluginGeneration) close() error {
 	g.revocationMu.Lock()
 	defer g.revocationMu.Unlock()
 	if g.revocation != nil {
+		g.finalizeShutdownLocked()
 		return g.closeErr
 	}
 	g.refs.Store(-1)
@@ -1027,7 +1070,7 @@ func (g *PluginGeneration) close() error {
 		report.record(owner, "activity-control", RevocationPhaseCancelExecutions, nil)
 	}
 	var err error
-	if g.mcp != nil {
+	if g.mcp != nil && g.tools == nil {
 		mcpErr := g.mcp.Close()
 		report.record("", "mcp-manager", RevocationPhaseShutdown, mcpErr)
 		err = errors.Join(err, mcpErr)
@@ -1053,27 +1096,45 @@ func (g *PluginGeneration) close() error {
 				err = errors.Join(err, fmt.Errorf("close plugin %q: %w", outcome.PluginID, outcome.Err))
 			}
 		}
-		// Shutdown hooks need host storage and session cancellation to release
-		// plugin-owned background work before service routing is revoked.
-		if registry := g.host.ServiceRegistry(); registry != nil {
-			registry.Close(ctx)
-			report.record("", "service-registry", RevocationPhaseRevokeServices, nil)
-		}
-
 		cancel()
+	}
+	g.requestTransforms = nil
+	g.revocation, g.closeErr = report, err
+	if !g.finalizeShutdownLocked() {
+		host := g.host
+		go func() {
+			<-host.ShutdownDone()
+			g.revocationMu.Lock()
+			defer g.revocationMu.Unlock()
+			g.finalizeShutdownLocked()
+		}()
+	}
+	return g.closeErr
+}
+
+// The revocation lock serializes immediate, repeated and deferred finalization.
+func (g *PluginGeneration) finalizeShutdownLocked() bool {
+	if g.host != nil {
+		select {
+		case <-g.host.ShutdownDone():
+		default:
+			return false
+		}
+		if registry := g.host.ServiceRegistry(); registry != nil {
+			registry.Close(context.Background())
+			g.revocation.record("", "service-registry", RevocationPhaseRevokeServices, nil)
+		}
 		g.revokedMu.Lock()
 		g.host = nil
 		g.revokedMu.Unlock()
 	}
-	g.requestTransforms = nil
 	for index := len(g.ownedRoots) - 1; index >= 0; index-- {
 		rootErr := os.RemoveAll(g.ownedRoots[index])
-		report.recordDetail("", "package-snapshot", RevocationPhaseCleanup, g.ownedRoots[index], rootErr)
-		err = errors.Join(err, rootErr)
+		g.revocation.recordDetail("", "package-snapshot", RevocationPhaseCleanup, g.ownedRoots[index], rootErr)
+		g.closeErr = errors.Join(g.closeErr, rootErr)
 	}
 	g.ownedRoots = nil
-	g.revocation, g.closeErr = report, err
-	return err
+	return true
 }
 
 // revocationReport returns the structured retirement record after close.

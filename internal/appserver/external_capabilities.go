@@ -47,7 +47,7 @@ type externalCapabilities struct {
 }
 
 func startExternalCapabilities(ctx context.Context, binding *runtime.State, thread *runtime.ThreadRuntime) (*externalCapabilities, error) {
-	if thread == nil || thread.CapabilityTools == nil || thread.Toolkit == nil {
+	if thread == nil || thread.CapabilityTools == nil {
 		return nil, nil
 	}
 	if binding == nil || binding.InferenceJournalRuntime == nil {
@@ -55,30 +55,52 @@ func startExternalCapabilities(ctx context.Context, binding *runtime.State, thre
 	}
 	// Pin the actual MCP connection objects as well as their definitions. A
 	// helper reconnect cannot let delayed work borrow the replacement's control.
-	thread.Toolkit.FreezeToolSurface()
-	definitions := thread.CapabilityTools.Definitions()
+	freezer, _ := thread.CapabilityTools.(agent.ToolSurfaceFreezer)
+	if freezer != nil {
+		freezer.FreezeToolSurface()
+	}
+	unfreeze := func() {
+		if freezer != nil {
+			freezer.UnfreezeToolSurface()
+		}
+	}
+	var definitions []providers.ToolDefinition
+	if selected, ok := thread.CapabilityTools.(agent.ContextualToolDefinitions); ok {
+		var err error
+		definitions, err = selected.DefinitionsContext(ctx)
+		if err != nil {
+			unfreeze()
+			return nil, err
+		}
+	} else {
+		definitions = thread.CapabilityTools.Definitions()
+	}
 	if len(definitions) == 0 {
-		thread.Toolkit.UnfreezeToolSurface()
+		unfreeze()
 		return nil, nil
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		thread.Toolkit.UnfreezeToolSurface()
+		unfreeze()
 		return nil, fmt.Errorf("start host capability endpoint: %w", err)
 	}
 	ctx, cancel := context.WithCancel(ctx)
+	ownerID := thread.SessionID
+	if ownerID == "" && thread.Toolkit != nil {
+		ownerID = thread.Toolkit.SessionID()
+	}
 	bridge := &externalCapabilities{
 		ctx: ctx, cancel: cancel, host: listener.Addr().String(), path: "/mcp/" + rand.Text(),
 		executor: thread.CapabilityTools, allowed: make(map[string]bool, len(definitions)),
 		serial: make(chan struct{}, 1), requests: make(map[string]context.CancelFunc),
-		binding: binding, journal: binding.InferenceJournalRuntime.ForOwner(thread.Toolkit.SessionID()),
+		binding: binding, journal: binding.InferenceJournalRuntime.ForOwner(ownerID),
 	}
 	for _, definition := range definitions {
 		schema, err := json.Marshal(definition.InputSchema)
 		if err != nil {
 			cancel()
 			_ = listener.Close()
-			thread.Toolkit.UnfreezeToolSurface()
+			unfreeze()
 			return nil, fmt.Errorf("encode host tool %s: %w", definition.Name, err)
 		}
 		bridge.tools = append(bridge.tools, mcp.Tool{Name: definition.Name, Description: definition.Description, InputSchema: schema})
@@ -94,7 +116,7 @@ func startExternalCapabilities(ctx context.Context, binding *runtime.State, thre
 		// The cached toolkit cannot be rebound for the next turn while any old
 		// request is still unwinding through hooks, permissions or UI cleanup.
 		bridge.active.Wait()
-		thread.Toolkit.UnfreezeToolSurface()
+		unfreeze()
 	})
 	go func() { _ = bridge.server.Serve(listener) }()
 	context.AfterFunc(ctx, bridge.Close)

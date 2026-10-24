@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
@@ -20,11 +21,14 @@ func (s *Session) HandoffBriefForState(binding *State) (agent.HandoffBriefProvid
 		return nil, "", nil, err
 	}
 	runner := shadow.StreamRunner
-	if runner == nil || runner.CompactionRegistry == nil || models.Main == nil {
+	if runner == nil || models.Main == nil {
 		return nil, "", nil, errors.New("handoff brief generation requires a model runtime")
 	}
-	provider, ok := runner.CompactionRegistry.Resolve(nil).(agent.HandoffBriefProvider)
-	if !ok || provider == nil {
+	provider, err := runner.HandoffProvider(context.Background())
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if provider == nil {
 		return nil, "", nil, errors.New("handoff brief generator is unavailable")
 	}
 	selection := models.Roles.Main

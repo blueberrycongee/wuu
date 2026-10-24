@@ -34,29 +34,30 @@ type runtimeState struct {
 
 func newRuntimeState(registry *pluginhost.ServiceRegistry, workspaceScope string) *runtimeState {
 	var state *runtimeState
-	documents := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
-		if state != nil && state.host != nil {
-			state.mu.Lock()
-			active := state.status == pluginhost.StateActive
-			state.mu.Unlock()
-			if active {
-				result, err := state.host.CallService(ctx, sessionStateConsumer, persistence.ServiceName, method, params)
-				if err != nil {
-					return nil, err
+	call := func(service string) func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+		return func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+			if state != nil && state.host != nil {
+				state.mu.Lock()
+				active := state.status == pluginhost.StateActive
+				state.mu.Unlock()
+				if active {
+					result, err := state.host.CallService(ctx, sessionStateConsumer, service, method, params)
+					if err != nil {
+						return nil, err
+					}
+					return result, nil
 				}
-				return result, nil
 			}
+			result, err := registry.Call(ctx, sessionStateConsumer, pluginhost.ServiceCallParams{Service: service, Method: method, Params: params})
+			if err != nil {
+				return nil, err
+			}
+			return result, nil
 		}
-		result, err := registry.Call(ctx, sessionStateConsumer, pluginhost.ServiceCallParams{
-			Service: persistence.ServiceName, Method: method, Params: params,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return result, nil
-	})
+	}
 	state = &runtimeState{status: pluginhost.StatePrepared, scope: workspaceScope,
-		documents: documents, sessions: session.NewStore(context.Background(), documents)}
+		documents: persistence.NewClient(call(persistence.ServiceName)), sessions: session.NewClient(context.Background(), call(session.ServiceName))}
+
 	return state
 }
 
@@ -71,7 +72,7 @@ func (s *runtimeState) Status() pluginhost.Status {
 func (s *runtimeState) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
 
 func (s *runtimeState) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}, {Name: session.ServiceName, MajorVersion: 1, Required: true}}
 }
 
 func (s *runtimeState) Activate(ctx context.Context) error {
@@ -80,14 +81,6 @@ func (s *runtimeState) Activate(ctx context.Context) error {
 	s.mu.Unlock()
 	if !prepared {
 		return errors.New("session state consumer is not prepared")
-	}
-	if s.sessDir != "" {
-		if err := initializeSessionState(ctx, s.sessDir, s.documents, s.sessions); err != nil {
-			s.mu.Lock()
-			s.status = pluginhost.StateFailed
-			s.mu.Unlock()
-			return err
-		}
 	}
 	journal, err := s.sessions.WithContext(ctx).NewInferenceJournalRuntime(s.scope)
 	s.mu.Lock()

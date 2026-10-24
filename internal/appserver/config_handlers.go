@@ -1291,7 +1291,10 @@ func (s *Server) handleConfigGeneralUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	cfg := view.Config
-	systemPrompt := s.rt.ApplyGeneralConfig(cfg, os.Getenv("HOME"))
+	systemPrompt, err := s.rt.ApplyGeneralConfig(cfg, os.Getenv("HOME"))
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	s.resetThreadRuntimesForGeneralSettings(systemPrompt)
 	return s.writeResponse(req.ID, ConfigGeneralUpdateResult{
 		GeneralSettings: s.currentGeneralSettingsSummary(),
@@ -1844,7 +1847,9 @@ func (s *Server) applyModelSelectionToRuntime(
 		s.rt.StreamRunner.UpdateProviderConnection(client, agent.BuildProviderObservationKey(resolvedName, ruleProviderCfg.BaseURL, ruleProviderCfg.Type, ruleProviderCfg.API, ruleProviderCfg.WireAPI, ruleProviderCfg.StreamTransport, agent.ProviderUsageNormalizationKey(ruleProviderCfg.CacheCreationInputTokensOmitted, ruleProviderCfg.InputTokensIncludeCacheRead)))
 	}
 	if explicitSelection {
-		s.rt.RefreshSystemPrompt(resolvedName, apiModel)
+		if _, err := s.rt.RefreshSystemPrompt(resolvedName, apiModel); err != nil {
+			return err
+		}
 		modelBudget := runtime.ResolveModelBudget(model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
 		s.rt.ModelBudget = modelBudget
 		s.rt.WorkerModelBudget = runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
