@@ -2,14 +2,24 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 type invocationStateKey struct{}
 type invocationStateRetainer func() (*State, error)
-type modelInvocationOwner struct{ cancel context.CancelFunc }
+type modelInvocationOwner struct {
+	cancel           context.CancelFunc
+	binding          *State
+	receipts         *providers.ModelReceiptScope
+	ownsReceipts     bool
+	endParentReceipt func(error)
+	completionCtx    context.Context
+	cancelCompletion context.CancelCauseFunc
+}
 
 // WithInvocationState borrows a live capture for host dispatch. Asynchronous
 // callers must retain the handle before launching work and close it afterward.
@@ -86,19 +96,35 @@ func (k *kernelHostServices) retainState() (*State, error) {
 
 // The generation lease protects storage; this finite task also lets root
 // shutdown join terminal accounting without waiting on unrelated State handles.
-func (k *kernelHostServices) retainModelInvocation(cancel context.CancelFunc) (*State, func(context.Context) error, error) {
+func (k *kernelHostServices) retainModelInvocation(ctx context.Context, cancel context.CancelFunc, continuation bool) (context.Context, *State, *modelInvocationOwner, error) {
 	binding, err := k.retainState()
 	if err != nil {
-		return nil, nil, err
+		return ctx, nil, nil, err
 	}
+	ctx, endParent, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		_ = binding.Close()
+		return ctx, nil, nil, err
+	}
+	receipts := providers.ModelReceiptScopeFromContext(ctx)
+	ownsReceipts := !continuation || receipts == nil
+	if ownsReceipts {
+		ctx, receipts = providers.NewModelReceiptScope(ctx)
+	}
+	completionCtx, cancelCompletion := context.WithCancelCause(context.Background())
+	owner := &modelInvocationOwner{cancel: cancel, binding: binding, receipts: receipts, ownsReceipts: ownsReceipts, endParentReceipt: endParent, completionCtx: completionCtx, cancelCompletion: cancelCompletion}
 	generation := binding.Generation
 	generation.modelMu.Lock()
 	if generation.modelStopped {
 		generation.modelMu.Unlock()
+		if ownsReceipts {
+			receipts.Seal()
+		}
+		endParent(nil)
+		cancelCompletion(context.Canceled)
 		_ = binding.Close()
-		return nil, nil, serviceError("generation_closed", "model invocation admission is closed")
+		return ctx, nil, nil, serviceError("generation_closed", "model invocation admission is closed")
 	}
-	owner := &modelInvocationOwner{cancel: cancel}
 	if generation.modelOwners == nil {
 		generation.modelOwners = make(map[*modelInvocationOwner]struct{})
 	}
@@ -106,24 +132,83 @@ func (k *kernelHostServices) retainModelInvocation(cancel context.CancelFunc) (*
 	generation.modelBodies.Add(1)
 	generation.modelInvocations.Add(1)
 	generation.modelMu.Unlock()
-	return binding, func(ctx context.Context) error {
-		// Required accounting is complete before the parent service chain exits.
-		// Root can now cancel that parent without interrupting model durability.
-		generation.modelMu.Lock()
-		delete(generation.modelOwners, owner)
-		generation.modelMu.Unlock()
-		generation.modelBodies.Done()
-		release := func() error {
+	return ctx, binding, owner, nil
+}
+
+func (o *modelInvocationOwner) abort(cause error) {
+	o.cancelCompletion(cause)
+	if o.ownsReceipts {
+		o.receipts.Abort(cause)
+	}
+}
+
+func (o *modelInvocationOwner) complete(callCtx context.Context, execution *providers.InferenceExecution, bodyErr error) error {
+	if !o.ownsReceipts {
+		// A continuation cannot seal or join its still-running parent. Its
+		// authority release nevertheless remains behind actual receipt quiescence.
+		o.endParentReceipt(nil)
+		return o.finish(callCtx, execution.JournalError())
+	}
+	o.receipts.Seal()
+	finish := func() error {
+		ctx, cancel := context.WithTimeout(o.completionCtx, modelShutdownTimeout)
+		defer cancel()
+		err := o.receipts.Wait(ctx)
+		if err == nil {
+			err = execution.CheckpointSubmissions(ctx)
+		}
+		if err != nil {
+			err = errors.Join(err, context.Cause(o.completionCtx))
+			o.abort(err)
+		}
+		return o.finish(callCtx, err)
+	}
+	if bodyErr != nil {
+		select {
+		case <-o.receipts.Done():
+		default:
+			// The caller receives logical cancellation/error immediately. This
+			// counted owner continues bounded accounting on its captured authority.
+			go func() { _ = finish() }()
+			return nil
+		}
+	}
+	return finish()
+}
+
+func (o *modelInvocationOwner) finish(callCtx context.Context, completionErr error) error {
+	generation := o.binding.Generation
+	generation.recordModelCompletionError(completionErr)
+	generation.modelMu.Lock()
+	delete(generation.modelOwners, o)
+	generation.modelMu.Unlock()
+	generation.modelBodies.Done()
+	release := func() error {
+		o.endParentReceipt(completionErr)
+		o.cancelCompletion(context.Canceled)
+		closeState := func() error {
 			defer generation.modelInvocations.Done()
-			err := binding.Close()
+			err := o.binding.Close()
 			generation.recordModelCompletionError(err)
 			return err
 		}
-		if pluginhost.DeferServiceCompletion(ctx, release) {
+		if pluginhost.DeferServiceCompletion(callCtx, closeState) {
 			return nil
 		}
-		return release()
-	}, nil
+		return closeState()
+	}
+	select {
+	case <-o.receipts.Done():
+		return errors.Join(completionErr, release())
+	default:
+		// A deadline ends the caller's wait, not the native producer. Keep State
+		// alive until real tickets finish, even if an uncooperative source lingers.
+		go func() {
+			<-o.receipts.Done()
+			_ = release()
+		}()
+		return completionErr
+	}
 }
 
 // Keep the invocation's own reference through the callback and its service

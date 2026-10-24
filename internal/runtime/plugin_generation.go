@@ -98,6 +98,8 @@ func (g *PluginGeneration) recordModelCompletionError(err error) {
 	g.modelMu.Unlock()
 }
 
+const modelShutdownTimeout = 3 * time.Second
+
 // Root shutdown drains model effects separately from passive State references.
 // A retained document reader must not prevent exit or lose its provider early.
 func (s *Session) stopPluginModelInvocations() (err error) {
@@ -125,22 +127,23 @@ func (s *Session) stopPluginModelInvocations() (err error) {
 			err = errors.Join(err, s.releasePluginGeneration(generation))
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), modelShutdownTimeout)
 	defer cancel()
-	var cancelModels []context.CancelFunc
+	var modelOwners []*modelInvocationOwner
 	for _, generation := range generations {
 		generation.modelMu.Lock()
 		generation.modelStopped = true
 		for owner := range generation.modelOwners {
-			cancelModels = append(cancelModels, owner.cancel)
+			modelOwners = append(modelOwners, owner)
 		}
 		generation.modelMu.Unlock()
 	}
 	for _, generation := range generations {
 		generation.host.StopBackground()
 	}
-	for _, cancelModel := range cancelModels {
-		cancelModel()
+	for _, owner := range modelOwners {
+		context.AfterFunc(ctx, func() { owner.abort(context.Cause(ctx)) })
+		owner.cancel()
 	}
 	bodiesDone := make(chan struct{})
 	go func() {

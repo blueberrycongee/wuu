@@ -83,21 +83,21 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	// Register the stable base cancellation before admission. A later timeout
 	// wraps this context without changing root's ownership of the model body.
 	ctx, cancel := context.WithCancel(scope.Context)
-	binding, complete, err := k.parent.retainModelInvocation(cancel)
+	direct := input.ContinuationID != ""
+	ctx, binding, owner, err := k.parent.retainModelInvocation(ctx, cancel, direct)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 	streamOwnsState := false
+	var request providers.ChatRequest
 	defer func() {
 		if !streamOwnsState {
 			cancel()
-			callErr = errors.Join(callErr, complete(callCtx))
+			callErr = errors.Join(callErr, owner.complete(callCtx, request.Execution, callErr))
 		}
 	}()
 	var client providers.StreamClient
-	var request providers.ChatRequest
-	direct := input.ContinuationID != ""
 	reserved := false
 	if params.Method == "start" {
 		k.store.mu.Lock()
@@ -189,12 +189,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	// Release the selected authority only after its terminal writes finish.
 	streamOwnsState = true
 	go func() {
-		defer func() {
-			if err := complete(context.Background()); err != nil {
-				providers.DebugLogf("model stream generation cleanup: %v", err)
-			}
-		}()
-		binding.Generation.recordModelCompletionError(k.runStream(ctx, job, client, request, origin, direct))
+		binding.Generation.recordModelCompletionError(k.runStream(ctx, job, client, request, origin, direct, owner))
 	}()
 	return marshalServiceResult(pluginhost.ModelInvocationHandle{InvocationID: id})
 }
@@ -307,7 +302,7 @@ func independentModelOrigin(scope pluginhost.ExecutionScope, request providers.C
 	return origin
 }
 
-func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation, client providers.StreamClient, request providers.ChatRequest, origin pluginhost.ModelInvocationOriginV1, direct bool) (completionErr error) {
+func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation, client providers.StreamClient, request providers.ChatRequest, origin pluginhost.ModelInvocationOriginV1, direct bool, owner *modelInvocationOwner) (completionErr error) {
 	defer job.cancel()
 	var err error
 	if !direct {
@@ -374,6 +369,8 @@ func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation
 	if err != nil {
 		job.cancel()
 		if stream != nil {
+			// The logical runner closes only after its required attempt accounting.
+			// Physical receipt tails remain separately owned by the receipt scope.
 			for range stream {
 			}
 		}
@@ -394,6 +391,9 @@ func (k *modelInvokeInvoker) runStream(ctx context.Context, job *modelInvocation
 	if direct && err != nil {
 		recordModelContinuationError(ctx, err)
 	}
+	receiptErr := owner.complete(context.Background(), request.Execution, err)
+	completionErr = errors.Join(completionErr, receiptErr)
+	err = errors.Join(err, receiptErr)
 	job.mu.Lock()
 	job.done = true
 	job.err = modelErrorView(err)

@@ -122,11 +122,12 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	}
 	// Transport cancellation can precede terminal accounting. Keep this
 	// generation's authority until Execute has persisted the complete outcome.
-	binding, complete, err := k.parent.retainModelInvocation(cancel)
+	ctx, binding, owner, err := k.parent.retainModelInvocation(ctx, cancel, false)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { callErr = errors.Join(callErr, complete(callCtx)) }()
+	var execution *providers.InferenceExecution
+	defer func() { callErr = errors.Join(callErr, owner.complete(callCtx, execution, callErr)) }()
 
 	// Load one coherent host configuration instead of reading the mutable
 	// foreground runner while another client changes its selected model.
@@ -201,6 +202,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	if err != nil {
 		return nil, modelRequestError(err)
 	}
+	execution = request.Execution
 	// This auxiliary request intentionally has no agent-loop callbacks, injected
 	// history or tools. Provider preparation, credentials, capacity, retry and
 	// durable accounting use the ordinary host inference path.

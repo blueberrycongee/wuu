@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,184 @@ func (c modelReceiptContinuationClient) StreamChat(context.Context, providers.Ch
 	return nil, errors.New("synchronous continuation fixture")
 }
 
+type modelReceiptHeldClient struct {
+	started chan struct{}
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (c modelReceiptHeldClient) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	_, end, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "chat"})
+	if err != nil {
+		end(nil)
+		return providers.ChatResponse{}, err
+	}
+	go func() {
+		defer end(nil)
+		defer close(c.done)
+		<-c.release
+		submission.ObserveUsage(&providers.TokenUsage{InputTokens: 71, OutputTokens: 13})
+		submission.CompleteFailure(providers.NormalizeFailure(context.Canceled))
+	}()
+	close(c.started)
+	<-ctx.Done()
+	return providers.ChatResponse{}, ctx.Err()
+}
+
+func (c modelReceiptHeldClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	return nil, errors.New("synchronous held receipt fixture")
+}
+
+func TestModelReceiptOwnerRetainsAuthorityAfterTimeout(t *testing.T) {
+	for _, timeout := range []bool{false, true} {
+		t.Run(fmt.Sprintf("timeout_%t", timeout), func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			home, workspace := testWorkspaceState(t, root)
+			provider := &modelTerminalDocuments{Service: persistence.NewService("test.receipt-documents", filepath.Join(root, "documents"), "jsonl"), entered: make(chan context.Context, 1), release: make(chan struct{}), closed: make(chan struct{})}
+			close(provider.release)
+			caller := &modelReceiptCapabilityClient{
+				fakeServicePluginClient: fakeServicePluginClient{id: "receipt-middleware", required: []pluginhost.ServiceRequirement{{Name: pluginhost.KernelModelInvokeService, MajorVersion: 1, Required: true}}},
+				capability:              pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityModelMiddleware, Kind: "transform", Version: 1, ErrorPolicy: pluginhost.ErrorPolicyPropagate},
+			}
+			modules := testStateModules()
+			modules[1] = provider.ID()
+			modules = append(modules, kernelHostModule, caller.ID())
+			host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
+				&composition.Config{Version: composition.Version, Modules: &modules}, "",
+				NativeProviderFactory{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }},
+				NativeProviderFactory{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation := &PluginGeneration{id: "held-receipt", host: host, state: kernel.state}
+			generation.retain()
+			owner := &Session{RootDir: root, HomeDir: home, PluginHost: host, pluginGeneration: generation}
+			kernel.bindStateGeneration(generation, owner)
+			if err := host.Activate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			kernel.bindModelSession(owner, host)
+			t.Cleanup(func() { _, _ = owner.Cleanup() })
+			physical := modelReceiptHeldClient{started: make(chan struct{}), release: make(chan struct{}), done: make(chan struct{})}
+			var once sync.Once
+			unblock := func() { once.Do(func() { close(physical.release) }) }
+			defer unblock()
+			caller.invoke = func(callCtx context.Context, params pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+				var input pluginhost.ModelMiddlewareInput
+				if err := json.Unmarshal(params.Input, &input); err != nil {
+					return pluginhost.CapabilityInvokeResult{}, err
+				}
+				raw, err := json.Marshal(pluginhost.ModelInvokeParams{ContinuationID: input.ContinuationID, Request: input.Request})
+				if err != nil {
+					return pluginhost.CapabilityInvokeResult{}, err
+				}
+				_, callErr := host.ServiceRegistry().Call(callCtx, caller.ID(), pluginhost.ServiceCallParams{Service: pluginhost.KernelModelInvokeService, Method: "call", Params: raw, ExecutionID: params.ExecutionID})
+				return pluginhost.CapabilityInvokeResult{}, callErr
+			}
+			capability, ok := host.Capability(caller.ID(), pluginhost.CapabilityModelMiddleware)
+			if !ok {
+				t.Fatal("middleware capability unavailable")
+			}
+			ctx = providers.WithInferenceJournal(ctx, shutdownCheckpointJournal{kernel.state.journal.ForOwner("receipt-fixture")})
+			request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Provider: "fixture", Model: "fixture"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := &modelMiddlewareClient{host: host, capability: capability, next: physical}
+			returned := make(chan error, 1)
+			go func() { _, err := client.Chat(ctx, request); returned <- err }()
+			select {
+			case <-physical.started:
+			case err := <-returned:
+				t.Fatalf("model returned before physical admission: %v", err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("model did not enter the physical client")
+			}
+			admitted := request.Execution.Snapshot().Submissions
+			if len(admitted) != 1 {
+				t.Fatalf("admitted physical submissions = %d", len(admitted))
+			}
+			cleaned := make(chan error, 1)
+			go func() { _, err := owner.Cleanup(); cleaned <- err }()
+			select {
+			case err := <-returned:
+				if err == nil {
+					t.Error("canceled model succeeded")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("logical cancellation waited for the physical receipt")
+			}
+			if !timeout {
+				unblock()
+			}
+			select {
+			case err := <-cleaned:
+				if timeout && !errors.Is(err, context.DeadlineExceeded) {
+					t.Errorf("incomplete producer cleanup = %v, want shared shutdown deadline", err)
+				} else if !timeout && err != nil {
+					t.Errorf("completed producer cleanup = %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("cleanup did not honor its bounded wait")
+			}
+			if timeout {
+				select {
+				case <-provider.closed:
+					t.Error("timeout released the authority while the producer could still write")
+				default:
+				}
+				if _, err := kernel.state.documents.Read(ctx, persistence.Query{Namespace: "wuu.inference_submissions.v1"}); err != nil {
+					t.Errorf("retained producer lost its selected documents: %v", err)
+				}
+				unblock()
+			}
+			select {
+			case <-physical.done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("physical producer did not finish after release")
+			}
+			select {
+			case <-provider.closed:
+			case <-time.After(10 * time.Second):
+				t.Fatal("actual producer completion did not release its authority")
+			}
+			_, snapshot, err := persistence.Inspect(context.Background(), filepath.Join(root, "documents"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			receiptCount := 0
+			for _, document := range snapshot.Documents {
+				if document.Namespace != "wuu.inference_submissions.v1" {
+					continue
+				}
+				receiptCount++
+				var receipt providers.InferenceSubmissionJournalRecord
+				if err := json.Unmarshal(document.Value, &receipt); err != nil {
+					t.Fatal(err)
+				}
+				if receipt.ID != admitted[0].ID || receipt.OperationID != request.Operation.ID || receipt.AttemptID != request.Attempt.ID {
+					t.Errorf("final checkpoint changed the admitted submission identity: %+v", receipt)
+				}
+				if timeout {
+					if receipt.Outcome != providers.InferenceSubmissionInFlight || receipt.ReportedUsage != nil {
+						t.Errorf("aborted checkpoint claimed completed evidence: %+v", receipt)
+					}
+				} else if receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 71 || receipt.ReportedUsage.OutputTokens != 13 {
+					t.Errorf("final required checkpoint lost physical evidence: %+v", receipt)
+				}
+			}
+			if receiptCount != 1 {
+				t.Errorf("physical receipts = %d", receiptCount)
+			}
+		})
+	}
+}
+
 func TestDirectModelContinuationDoesNotJoinOrSealParentReceiptScope(t *testing.T) {
 	ctx, receipts := providers.NewModelReceiptScope(context.Background())
 	parentCtx, endParent, err := providers.BeginModelReceipt(ctx)
@@ -101,12 +280,17 @@ func TestDirectModelContinuationDoesNotJoinOrSealParentReceiptScope(t *testing.T
 	}
 	generation := &PluginGeneration{id: "receipt-continuation", host: host, state: kernel.state}
 	generation.retain()
-	kernel.bindStateGeneration(generation, nil)
-	t.Cleanup(func() { generation.Release() })
+	owner := &Session{RootDir: root, HomeDir: home, PluginHost: host, pluginGeneration: generation}
+	kernel.bindStateGeneration(generation, owner)
+	t.Cleanup(func() {
+		if _, err := owner.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
 	if err := host.Activate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	kernel.bindModelSession(&Session{RootDir: root, HomeDir: home}, host)
+	kernel.bindModelSession(owner, host)
 	caller.invoke = func(callCtx context.Context, params pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
 		var input pluginhost.ModelMiddlewareInput
 		if err := json.Unmarshal(params.Input, &input); err != nil {
