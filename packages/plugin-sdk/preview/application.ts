@@ -95,6 +95,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       onThemePreferenceChange: () => () => {},
       onActivityPreviewAutoShowChange: () => () => {},
       onAppContextChanged: () => () => {},
+      discardAppContextSnapshot: unavailable,
       loadPluginIconURL: unavailable,
       capabilities: Object.freeze({ systemPermissions: false, permissionGuide: false, permissionGuideUpdate: false, permissionGuideClose: false, themeChanges: false, activityPreview: false, activityPreviewChanges: false, appContext: false, appContextChanges: false, appContextRecording: false, chatGPTLogin: false, engineLogin: false, browser: false, browserReload: false, browserOptions: false, remote: false, build: false, catalog: false, engines: false, pets: false, diagnostics: false }),
       subscribe: () => () => {}, subscribeRemote: () => () => {}, getPages: () => [], getConflicts: () => [], getDiagnostics: () => [],

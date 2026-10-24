@@ -274,6 +274,7 @@ export function scopeApplicationSettingsControls(source: () => ApplicationSettin
     updateBackground: (update: Parameters<ApplicationSettingsControlsV1["updateBackground"]>[0]) => invoke(() => source().updateBackground(current => read(() => update(current)))),
     processBackground: (image: Blob, purpose: "import" | "light" | "dark", requestSignal?: AbortSignal) => invoke(() => source().processBackground(image, purpose,
       requestSignal ? AbortSignal.any([signal, requestSignal]) : signal)),
+    discardAppContextSnapshot: (...args: Parameters<ApplicationSettingsControlsV1["discardAppContextSnapshot"]>) => invoke(() => source().discardAppContextSnapshot(...args)),
     loadPluginIconURL: (...args: Parameters<ApplicationSettingsControlsV1["loadPluginIconURL"]>) => invoke(() => source().loadPluginIconURL(...args)),
     get capabilities() { return read(() => source().capabilities); },
     subscribe: (listener: () => void) => subscribe(callback => source().subscribe(callback), listener),
