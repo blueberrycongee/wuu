@@ -20,7 +20,7 @@ const actions = new Set<keyof Actions>([
   "navigation.create-folder", "navigation.rename-folder", "navigation.delete-folder", "navigation.reorder-folders", "navigation.move-to-folder",
   "navigation.open-plugin", "navigation.show-native", "navigation.show-search", "navigation.show-account", "navigation.focus-workspace", "navigation.focus-composer",
   "navigation.reveal-thread", "navigation.open-external", "navigation.load-icon", "navigation.account-status", "navigation.account-logout", "navigation.install-update",
-  "navigation.create-browser-tab", "navigation.select-browser-tab", "navigation.close-browser-tab", "navigation.pin-browser-tab", "navigation.mute-browser-tab", "navigation.reorder-browser-tabs",
+  "navigation.reopen-browser-tab", "navigation.reveal-browser", "navigation.create-browser-tab", "navigation.select-browser-tab", "navigation.close-browser-tab", "navigation.pin-browser-tab", "navigation.mute-browser-tab", "navigation.reorder-browser-tabs",
 ]);
 export function isApplicationNavigationAction(action: string): action is keyof Actions { return actions.has(action as keyof Actions); }
 function immutable<T>(value: T): NavigationReadonly<T> {
@@ -97,7 +97,7 @@ export class ApplicationNavigation {
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
       projectAgentEnabled: Boolean(state.initialized?.features?.project_agent), accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
-      update: this.update, browser: browser && { tabs: browser.tabs ?? [], activeTabId: browser.activeTabId, canCreate: (browser.tabs?.length ?? 0) < WEB_WORKSPACE_TAB_LIMIT },
+      update: this.update, browser: browser && { tabs: browser.tabs ?? [], activeTabId: browser.activeTabId, canCreate: (browser.tabs?.length ?? 0) < WEB_WORKSPACE_TAB_LIMIT, canReopenTab: Boolean(browser.canReopenTab) },
       activeWebsiteId: this.activeWebsiteId && browser?.tabs?.some(row => row.id === this.activeWebsiteId) ? this.activeWebsiteId : undefined,
       searchOpen: this.searchOpen, accountOpen: this.accountOpen, focusedWorkspaceId: this.focusedWorkspaceId, composerFocusRequest: this.composerFocusRequest,
     };
@@ -217,7 +217,12 @@ export class ApplicationNavigation {
       }
       case "navigation.show-native": desktopWorkbenchController.deactivateRegion("primary"); this.activeWebsiteId = undefined; this.accountOpen = false; break;
       case "navigation.show-search": this.searchOpen = (input as Actions["navigation.show-search"]["input"]).open; break;
-      case "navigation.show-account": this.accountOpen = (input as Actions["navigation.show-account"]["input"]).open; break;
+      case "navigation.show-account": {
+        const { open } = input as Actions["navigation.show-account"]["input"];
+        if (open && window.wuu.openAccountWindow) await window.wuu.openAccountWindow();
+        else this.accountOpen = open;
+        break;
+      }
       case "navigation.focus-composer": {
         const { tabId } = input as Actions["navigation.focus-composer"]["input"];
         if (this.host.getState().activeSessionTabID === tabId) this.composerFocusRequest = { id: (this.composerFocusRequest?.id ?? 0) + 1, tabId };
@@ -230,6 +235,8 @@ export class ApplicationNavigation {
       case "navigation.account-status": { const account = await window.wuu.remoteAccount!("status"); result = { username: account.username, display_name: account.display_name, server: account.server }; break; }
       case "navigation.account-logout": { const account = await window.wuu.remoteAccount!("logout"); result = { localLogoutOnly: (account as { localLogoutOnly?: boolean }).localLogoutOnly }; window.dispatchEvent(new Event("wuu:account-changed")); break; }
       case "navigation.install-update": if (this.update.kind === "ready") await window.wuu.restartDesktopUpdate!(); else await window.wuu.downloadDesktopUpdate!(); break;
+      case "navigation.reopen-browser-tab": this.activeWebsiteId = (await this.browser.reopenTab()).activeTabId; break;
+      case "navigation.reveal-browser": this.activeWebsiteId = this.browser.getSnapshot()?.activeTabId; break;
       case "navigation.create-browser-tab": this.activeWebsiteId = (await this.browser.createTab()).activeTabId; break;
       case "navigation.select-browser-tab": { const { tabId } = input as Actions["navigation.select-browser-tab"]["input"]; await this.browser.selectTab(tabId); this.activeWebsiteId = tabId; break; }
       case "navigation.close-browser-tab": { const { tabId } = input as Actions["navigation.close-browser-tab"]["input"]; const next = await this.browser.closeTab(tabId); if (this.activeWebsiteId === tabId) this.activeWebsiteId = next.activeTabId; break; }

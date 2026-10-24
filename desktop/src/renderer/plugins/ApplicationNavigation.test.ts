@@ -60,3 +60,55 @@ describe("public navigation domain", () => {
   });
 
 });
+
+describe("public native navigation", () => {
+  it("reopens through native history and reveals the authoritative current tab without selecting twice", async () => {
+    const selectTab = vi.fn();
+    const reopenTab = vi.fn().mockResolvedValue({ tabs: [{ id: "restored", title: "Restored", url: "https://example.com" }], activeTabId: "restored", canReopenTab: false });
+    window.wuu = { webWorkspace: {
+      createTab: vi.fn().mockResolvedValue({ tabs: [{ id: "first", title: "First", url: "about:blank" }], activeTabId: "first", canReopenTab: true }),
+      selectTab, reopenTab,
+    } } as unknown as typeof window.wuu;
+    const { navigation } = fixture();
+    await navigation.invoke("navigation.create-browser-tab", {});
+    expect(navigation.getSnapshot().browser?.canReopenTab).toBe(true);
+    await navigation.invoke("navigation.reopen-browser-tab", {});
+    expect(reopenTab).toHaveBeenCalledTimes(1);
+    expect(navigation.getSnapshot().activeWebsiteId).toBe("restored");
+    expect(navigation.getSnapshot().browser?.canReopenTab).toBe(false);
+    await navigation.invoke("navigation.show-native", {});
+    expect(navigation.getSnapshot().activeWebsiteId).toBeUndefined();
+    await navigation.invoke("navigation.reveal-browser", {});
+    expect(navigation.getSnapshot().activeWebsiteId).toBe("restored");
+    expect(selectTab).not.toHaveBeenCalled();
+    expect(reopenTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves failed native reopen errors and does not reveal a missing browser", async () => {
+    window.wuu = { webWorkspace: { reopenTab: vi.fn().mockRejectedValue(new Error("native failure")) } } as unknown as typeof window.wuu;
+    const { navigation } = fixture();
+    await navigation.invoke("navigation.reveal-browser", {});
+    expect(navigation.getSnapshot().activeWebsiteId).toBeUndefined();
+    await expect(navigation.invoke("navigation.reopen-browser-tab", {})).rejects.toThrow("native failure");
+    expect(navigation.getSnapshot().activeWebsiteId).toBeUndefined();
+  });
+
+  it("prefers the native account window, preserves its error and closes inline state without reopening", async () => {
+    const openAccountWindow = vi.fn().mockResolvedValue(undefined);
+    window.wuu = { openAccountWindow } as unknown as typeof window.wuu;
+    const { navigation } = fixture();
+    await navigation.invoke("navigation.show-account", { open: true });
+    expect(openAccountWindow).toHaveBeenCalledTimes(1);
+    expect(navigation.getSnapshot().accountOpen).toBe(false);
+    await navigation.invoke("navigation.show-account", { open: false });
+    expect(openAccountWindow).toHaveBeenCalledTimes(1);
+    openAccountWindow.mockRejectedValueOnce(new Error("window unavailable"));
+    await expect(navigation.invoke("navigation.show-account", { open: true })).rejects.toThrow("window unavailable");
+    expect(navigation.getSnapshot().accountOpen).toBe(false);
+    delete window.wuu.openAccountWindow;
+    await navigation.invoke("navigation.show-account", { open: true });
+    expect(navigation.getSnapshot().accountOpen).toBe(true);
+    await navigation.invoke("navigation.show-account", { open: false });
+    expect(navigation.getSnapshot().accountOpen).toBe(false);
+  });
+});

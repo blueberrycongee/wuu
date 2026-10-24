@@ -69,7 +69,7 @@ export interface ApplicationNavigationViewV1 {
   readonly projectAgentEnabled: boolean;
   readonly accountAvailable: boolean;
   readonly update: NavigationUpdateV1;
-  readonly browser?: { readonly tabs: readonly NavigationWebsiteV1[]; readonly activeTabId?: string; readonly canCreate: boolean };
+  readonly browser?: { readonly tabs: readonly NavigationWebsiteV1[]; readonly activeTabId?: string; readonly canCreate: boolean; readonly canReopenTab: boolean };
   readonly activeWebsiteId?: string;
   readonly searchOpen: boolean;
   readonly accountOpen: boolean;
@@ -101,6 +101,9 @@ export interface ApplicationNavigationActionMapV1 {
   "navigation.account-status": { input: Record<string, never>; result: { readonly username?: string; readonly display_name?: string; readonly server?: string; readonly localLogoutOnly?: boolean } };
   "navigation.account-logout": { input: Record<string, never>; result: { readonly localLogoutOnly?: boolean } };
   "navigation.install-update": { input: Record<string, never>; result: void };
+  "navigation.reopen-browser-tab": { input: Record<string, never>; result: void };
+  /** Reveal the current native tab without selecting or changing native history. */
+  "navigation.reveal-browser": { input: Record<string, never>; result: void };
   "navigation.create-browser-tab": { input: Record<string, never>; result: void };
   "navigation.select-browser-tab": { input: { readonly tabId: string }; result: void };
   "navigation.close-browser-tab": { input: { readonly tabId: string }; result: void };
