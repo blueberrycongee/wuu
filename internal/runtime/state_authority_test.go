@@ -50,6 +50,35 @@ func (p *authorityProviderFixture) InvokeService(ctx context.Context, params plu
 	return result, err
 }
 
+// Reopening a verified provider and admitting another live process must use
+// bounded checkpoints, while the shared-store probe still rejects copies.
+func TestAuthorityWarmAdmissionDoesNotExportHistory(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl"} {
+		t.Run(kind, func(t *testing.T) {
+			home, dir := t.TempDir(), t.TempDir()
+			first := newAuthorityFixture(t, home, dir, kind)
+			admitAuthority(t, first)
+			view := authorityHead(t, first.documents)
+			if _, err := first.documents.Commit(context.Background(), authorityWrite("history", view.Revision, "keep")); err != nil {
+				t.Fatal(err)
+			}
+			first.close(t)
+			second := newAuthorityFixture(t, home, dir, kind)
+			admitAuthority(t, second)
+			third := newAuthorityFixture(t, home, dir, kind)
+			admitAuthority(t, third)
+			for _, f := range []*authorityFixture{second, third} {
+				f.provider.mu.Lock()
+				exports := f.provider.exports
+				f.provider.mu.Unlock()
+				if exports != 0 {
+					t.Fatalf("warm admission exported history %d times", exports)
+				}
+			}
+		})
+	}
+}
+
 type authorityConsumerFixture struct {
 	id                string
 	mu                sync.Mutex

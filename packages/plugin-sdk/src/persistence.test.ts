@@ -166,3 +166,13 @@ try {
   await provider?.dispose();
   await rm(dir, { recursive: true, force: true });
 }
+
+// The optional checkpoint travels through the same public service binding.
+const checkpointCalls: unknown[] = [];
+const committedCheckpoint = { version: 1, revision: "1", documents_digest: "a".repeat(64), receipts_digest: "b".repeat(64) };
+const checkpointStore = documentStore({ call: async (method: string, params: unknown) => { checkpointCalls.push({ method, params }); return committedCheckpoint; } } as unknown as RuntimeHost);
+assert.deepEqual(documentStoreDescriptor({ checkpoint: true }).methods?.find(method => method.name === "checkpoint"), {
+  name: "checkpoint", input_schema: "state.documents.checkpoint.input.v1", output_schema: "state.documents.checkpoint.output.v1", preparation: true,
+});
+assert.equal(await checkpointStore.checkpoint(), committedCheckpoint);
+assert.deepEqual(checkpointCalls, [{ method: "host.service.call", params: { service: "state.documents", method: "checkpoint", params: {} } }]);

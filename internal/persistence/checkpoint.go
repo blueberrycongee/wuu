@@ -139,7 +139,9 @@ func VerifyCheckpoint(ctx context.Context, source CheckpointReader, expected Che
 // must hold the shared writer gate and durably record the exact transaction and
 // before/after checkpoints before committing. This function is not a writer lock
 // or an admission check. Idempotent receipt retries do not advance a checkpoint.
-func NextCheckpoint(ctx context.Context, current Documents, before Checkpoint, tx Transaction) (Checkpoint, error) {
+func NextCheckpoint(ctx context.Context, current interface {
+	Read(context.Context, Query) (View, error)
+}, before Checkpoint, tx Transaction) (Checkpoint, error) {
 	documents, receipts, err := decodeCheckpoint(before)
 	if err != nil {
 		return Checkpoint{}, err

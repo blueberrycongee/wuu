@@ -33,6 +33,7 @@ type StateAuthority struct {
 	preflightMu                         sync.Mutex
 	provider                            pluginhost.ServiceInvoker
 	exportCapabilityErr                 error
+	checkpointCapability                bool
 	documents                           persistence.Documents
 	prepared, admitted, closing, closed bool
 	preparedCheckpoint                  persistence.Checkpoint
@@ -105,6 +106,9 @@ func (a *StateAuthority) Wrap(provider pluginhost.ServiceInvoker) pluginhost.Ser
 				continue
 			}
 			for _, method := range service.Methods {
+				if method.Name == "checkpoint" && method.InputSchema == persistence.CheckpointInputSchema && method.OutputSchema == persistence.CheckpointOutputSchema && method.Preparation {
+					a.checkpointCapability = true
+				}
 				if method.Name == "export" && method.InputSchema == persistence.ExportInputSchema && method.OutputSchema == persistence.ExportOutputSchema && method.Preparation {
 					a.exportCapabilityErr = nil
 				}
@@ -228,7 +232,7 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 		if _, err := persistence.DecodeExportRequest(params.Params); err != nil {
 			return nil, err
 		}
-	} else if params.Method == "compact" {
+	} else if params.Method == "compact" || params.Method == "checkpoint" {
 		if err := decodeAuthorityRequest(params.Params, new(struct{})); err != nil {
 			return nil, err
 		}
@@ -237,7 +241,7 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 	a.mu.Lock()
 	allowed := a.admitted && !a.closed && (!a.closing || locked != nil)
 	lazyAdmission := !a.admitted && !a.closed && !a.closing && a.prepared && a.documents != nil && !pluginhost.IsServicePreparation(ctx)
-	readOnly := !a.admitted && !a.closed && !a.closing && (params.Method == "read" || params.Method == "export")
+	readOnly := !a.admitted && !a.closed && !a.closing && (params.Method == "read" || params.Method == "export" || params.Method == "checkpoint")
 	a.mu.Unlock()
 	if lazyAdmission {
 		// Provider activation precedes every active consumer callback, but peer
@@ -325,7 +329,7 @@ func (a *StateAuthority) readPrepared(ctx context.Context, client *persistence.C
 	}
 	var checkpoint persistence.Checkpoint
 	if query == nil {
-		checkpoint, err = preparedAuthorityCheckpoint(ctx, client, record)
+		checkpoint, err = a.preparedAuthorityCheckpoint(ctx, client, record)
 		if err != nil {
 			return nil, err
 		}
@@ -360,7 +364,7 @@ func (a *StateAuthority) dispatch(ctx context.Context, client *persistence.Clien
 	}
 	head := locked.record.Checkpoint
 	switch params.Method {
-	case "read", "export":
+	case "read", "export", "checkpoint":
 		return readAuthority(ctx, client, head, params)
 	case "commit":
 		tx, err := persistence.DecodeTransaction(params.Params)
@@ -395,6 +399,12 @@ func (a *StateAuthority) dispatch(ctx context.Context, client *persistence.Clien
 }
 
 func readAuthority(ctx context.Context, client *persistence.Client, checkpoint persistence.Checkpoint, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if params.Method == "checkpoint" {
+		if err := authorityRevision(ctx, client, checkpoint.Revision); err != nil {
+			return nil, err
+		}
+		return json.Marshal(checkpoint)
+	}
 	if params.Method == "read" {
 		var query persistence.Query
 		if err := decodeAuthorityRequest(params.Params, &query); err != nil {
@@ -513,7 +523,7 @@ func (a *StateAuthority) recoverPending(ctx context.Context, client *persistence
 	if pending == nil {
 		return nil
 	}
-	actual, err := persistence.CaptureCheckpoint(ctx, client)
+	actual, err := a.captureCheckpoint(ctx, client)
 	if err != nil {
 		return err
 	}
@@ -532,7 +542,7 @@ func (a *StateAuthority) recoverPending(ctx context.Context, client *persistence
 		if receipt.ID != pending.Transaction.ID || receipt.Revision != pending.After.Revision {
 			return persistence.ErrCorrupt
 		}
-		actual, err = persistence.CaptureCheckpoint(ctx, client)
+		actual, err = a.captureCheckpoint(ctx, client)
 		if err != nil {
 			return err
 		}
@@ -572,8 +582,8 @@ func (a *StateAuthority) writeRecord(record *authorityRecord) error {
 }
 
 // A pending outcome is inspected, never replayed, during candidate preparation.
-func preparedAuthorityCheckpoint(ctx context.Context, client *persistence.Client, record *authorityRecord) (persistence.Checkpoint, error) {
-	actual, err := persistence.CaptureCheckpoint(ctx, client)
+func (a *StateAuthority) preparedAuthorityCheckpoint(ctx context.Context, client *persistence.Client, record *authorityRecord) (persistence.Checkpoint, error) {
+	actual, err := a.captureCheckpoint(ctx, client)
 	if err != nil {
 		return persistence.Checkpoint{}, err
 	}
@@ -611,7 +621,7 @@ func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client
 		return 0, err
 	}
 	if len(members) == 0 {
-		checkpoint, err := preparedAuthorityCheckpoint(ctx, client, record)
+		checkpoint, err := a.preparedAuthorityCheckpoint(ctx, client, record)
 		if err != nil {
 			lock.Release()
 			return 0, err
@@ -648,7 +658,7 @@ func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client
 	if record.Epoch != proofEpoch {
 		return 0, fmt.Errorf("%w: authority changed during candidate probe", persistence.ErrBindingChanged)
 	}
-	checkpoint, err := preparedAuthorityCheckpoint(ctx, client, record)
+	checkpoint, err := a.preparedAuthorityCheckpoint(ctx, client, record)
 	if err != nil {
 		return 0, err
 	}
@@ -676,7 +686,7 @@ func (a *StateAuthority) activate(ctx context.Context, client *persistence.Clien
 		if len(members) != 0 {
 			return 0, persistence.ErrCorrupt
 		}
-		checkpoint, err := persistence.CaptureCheckpoint(ctx, client)
+		checkpoint, err := a.captureCheckpoint(ctx, client)
 		if err != nil {
 			return 0, err
 		}
@@ -728,7 +738,7 @@ func (a *StateAuthority) activate(ctx context.Context, client *persistence.Clien
 		if err := a.recoverPending(ctx, client, record); err != nil {
 			return 0, err
 		}
-		if err := persistence.VerifyCheckpoint(ctx, client, record.Checkpoint); err != nil {
+		if err := a.verifyCheckpoint(ctx, client, record.Checkpoint); err != nil {
 			return 0, err
 		}
 		if len(members) == 0 {
@@ -882,7 +892,7 @@ func (a *StateAuthority) requestProbe(ctx context.Context, client *persistence.C
 				return response.Epoch, nil
 			}
 			if !acknowledged {
-				verificationErr = persistence.VerifyCheckpoint(ctx, client, response.Checkpoint)
+				verificationErr = a.verifyCheckpoint(ctx, client, response.Checkpoint)
 				if err := authorityJSON(a.requestPath("ack", requestID), struct {
 					Accepted bool `json:"accepted"`
 				}{verificationErr == nil}); err != nil {
@@ -1079,4 +1089,25 @@ func authorityServiceError(err error) error {
 		code = "request_cancelled"
 	}
 	return &pluginhost.HostServiceError{Code: code, Message: err.Error()}
+}
+
+// Providers may maintain their committed checkpoint incrementally. This public
+// capability is shared by native and external providers; full export remains
+// available for explicit migration/audit and providers without the capability.
+func (a *StateAuthority) captureCheckpoint(ctx context.Context, client *persistence.Client) (persistence.Checkpoint, error) {
+	if a.checkpointCapability {
+		return client.Checkpoint(ctx)
+	}
+	return persistence.CaptureCheckpoint(ctx, client)
+}
+
+func (a *StateAuthority) verifyCheckpoint(ctx context.Context, client *persistence.Client, expected persistence.Checkpoint) error {
+	actual, err := a.captureCheckpoint(ctx, client)
+	if err != nil {
+		return err
+	}
+	if actual != expected {
+		return fmt.Errorf("%w: candidate checkpoint differs from the durable authority", persistence.ErrMigrationRequired)
+	}
+	return nil
 }

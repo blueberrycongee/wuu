@@ -5,10 +5,77 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+// Admission checkpoints survive reopen, follow writes from another handle, and
+// recover a missing/stale cache without changing durable transaction receipts.
+func TestDurableCheckpointFollowsCommitsAndReopen(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx, dir := context.Background(), t.TempDir()
+			store, err := Open(ctx, dir, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			initial, err := store.Checkpoint(ctx)
+			if err != nil || initial.Revision != 0 {
+				t.Fatalf("empty: %+v %v", initial, err)
+			}
+			writer, err := Open(ctx, dir, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer writer.Close()
+			tx := Transaction{ID: "write", Writes: []Write{{Namespace: "n", Key: "k", Value: json.RawMessage(`{"value":"preserve <bytes>"}`)}}}
+			if _, err := writer.Commit(ctx, tx); err != nil {
+				t.Fatal(err)
+			}
+			want, err := CaptureCheckpoint(ctx, writer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := store.Checkpoint(ctx); err != nil || got != want {
+				t.Fatalf("shared commit: %+v %v", got, err)
+			}
+			if _, err := writer.Commit(ctx, tx); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := store.Checkpoint(ctx); err != nil || got != want {
+				t.Fatalf("receipt retry: %+v %v", got, err)
+			}
+			cache := filepath.Join(dir, store.binding.Generation, "checkpoint.json")
+			if err := os.Remove(cache); err != nil {
+				t.Fatal(err)
+			}
+			store.Close()
+			store, err = Open(ctx, dir, kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			if got, err := store.Checkpoint(ctx); err != nil || got != want {
+				t.Fatalf("missing cache: %+v %v", got, err)
+			}
+			// Simulate an older writer/crash that advanced storage before publishing its cache.
+			if _, err := store.backend.commit(ctx, Transaction{ID: "old-writer", ExpectedRevision: 1, Writes: []Write{{Namespace: "n", Key: "k", Value: json.RawMessage(`null`)}}}, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"); err != nil {
+				t.Fatal(err)
+			}
+			want, err = CaptureCheckpoint(ctx, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := store.Checkpoint(ctx); err != nil || got != want {
+				t.Fatalf("stale cache: %+v %v", got, err)
+			}
+		})
+	}
+}
 
 // Admission must compare both durable documents and operation receipts. An
 // equal revision or a copy of the dataset's identity is not sufficient.

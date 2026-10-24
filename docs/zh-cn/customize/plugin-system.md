@@ -176,6 +176,8 @@ Bundle 是可复用的静态配置。例如，多个 profile 可以共享同一�
 
 消费者声明 `requireDocumentStore()` 并使用 `documentStore(host)`；提供者声明 `documentStoreDescriptor()`。[提供者指南](replaceable-providers.md)说明有界查询、绑定 revision 的游标、完全相同事务的回执重试、可选压缩/导入和离线迁移。客户端始终使用捕获的 generation。普通方法不声明清理权限；关闭持久化需要生命周期所有者的准入。
 
+提供者可通过 `documentStoreDescriptor({ checkpoint: true })` 声明 `checkpoint {}`，使用 `state.documents.checkpoint.input.v1` / `output.v1`，并允许准备阶段调用。返回 `{ version: 1, revision, documents_digest, receipts_digest }`，摘要算法与完整导出一致。宿主在启动时使用已提交的 checkpoint，仍会验证存活进程是否共享同一存储。两个原生后端按 generation/revision 保存摘要，并根据变更键和新回执增量更新；元数据缺失或过期时重建。旧存储的准备阶段只计算首次摘要，不写文件，激活时仅在绑定和 revision 未变化时保存。普通启动不进行全库物理完整性审计；显式 `check`、导出和迁移仍检查完整数据。未提供该能力的实现继续使用分页校验。摘要不匹配会拒绝接入，能力调用失败也不会切换到其他提供者。
+
 SQLite 使用完整同步的 WAL 事务。JSONL 追加带校验和的记录，并从日志重建索引；只丢弃不完整的末尾记录，完整但损坏的记录返回 `state_corrupt`。两者均通过操作系统锁串行执行操作，并验证同一个持久权威指针。迁移先准备并检查新 generation，再原子发布该指针。之后所有旧句柄，包括其他进程中的句柄，都返回 `state_binding_changed`。直接选择另一后端会返回 `state_migration_required`。应停止业务消费者、迁移，再选择并启动目标提供者。发布前中断时原存储仍是权威；发布后目标存储成为权威。旧 generation 保留用于检查，不进行双写。非空目录丢失权威指针时明确失败，不会悄悄创建空库。
 
 管理命令显式指定文档存储目录：

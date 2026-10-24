@@ -58,6 +58,15 @@ export interface StateCompaction {
 export interface StateImportResult {
   readonly revision: StateRevision;
 }
+/** Committed content digest, maintained incrementally by the provider.
+ * This is not a full physical integrity audit; explicit export still reads all records.
+ */
+export interface StateCheckpoint {
+  readonly version: 1;
+  readonly revision: StateRevision;
+  readonly documents_digest: string;
+  readonly receipts_digest: string;
+}
 export interface StateSnapshot<Value = unknown> {
   readonly version: 1;
   readonly revision: StateRevision;
@@ -99,10 +108,11 @@ export function requireDocumentStore(): ServiceRequirement {
 }
 
 /** Advertise optional maintenance only when the provider actually implements it. */
-export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean; paged_export?: boolean } = {}): ServiceDescriptor {
+export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean; paged_export?: boolean; checkpoint?: boolean } = {}): ServiceDescriptor {
   const methods = ["read", "commit", "export"];
   if (options.compact) methods.push("compact");
   if (options.import) methods.push("import");
+  if (options.checkpoint) methods.push("checkpoint");
   return {
     name: DOCUMENT_STORE_SERVICE,
     version: "1.0.0",
@@ -112,7 +122,7 @@ export function documentStoreDescriptor(options: { compact?: boolean; import?: b
         name,
         input_schema: `state.documents.${name}.input.v${schemaVersion}`,
         output_schema: `state.documents.${name}.output.v${schemaVersion}`,
-        ...(name === "read" || name === "export" ? { preparation: true } : {}),
+        ...(name === "read" || name === "export" || name === "checkpoint" ? { preparation: true } : {}),
       };
     }),
   };
@@ -133,6 +143,7 @@ export function documentStore(host: RuntimeHost) {
   return {
     read: <Value = unknown>(query: StateQuery) => call<StateView<Value>>("read", query),
     commit: <Value = unknown>(transaction: StateTransaction<Value>) => call<StateReceipt>("commit", transaction),
+    checkpoint: () => call<StateCheckpoint>("checkpoint", {}),
     compact: () => call<StateCompaction>("compact", {}),
     import: <Value = unknown>(snapshot: StateSnapshot<Value>) => call<StateImportResult>("import", snapshot),
     export: <Value = unknown>() => call<StateSnapshot<Value>>("export", {}),

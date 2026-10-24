@@ -124,7 +124,34 @@ func (s *Store) Commit(ctx context.Context, tx Transaction) (Receipt, error) {
 		return Receipt{}, err
 	}
 	defer lock.Release()
-	return s.backend.commit(ctx, tx, digest)
+	view, err := s.backend.read(ctx, Query{Namespace: ServiceName, Keys: []string{}})
+	if err != nil {
+		return Receipt{}, err
+	}
+	var after *Checkpoint
+	if view.Revision == tx.ExpectedRevision {
+		cached, err := readCachedCheckpoint(s.dir, s.binding.Generation, view.Revision)
+		if err != nil {
+			return Receipt{}, err
+		}
+		if cached != nil {
+			next, err := NextCheckpoint(ctx, backendCheckpointReader{s.backend, s.binding.Generation}, cached.Checkpoint, tx)
+			if err != nil {
+				return Receipt{}, err
+			}
+			after = &next
+		}
+	}
+	receipt, err := s.backend.commit(ctx, tx, digest)
+	if err != nil {
+		return receipt, err
+	}
+	if after != nil && receipt.Revision == after.Revision {
+		// The durable receipt wins if cache publication fails; an exact retry
+		// remains safe and a stale cache is rebuilt at the next checkpoint read.
+		err = writeCachedCheckpoint(s.dir, cachedCheckpoint{s.binding.Generation, *after})
+	}
+	return receipt, err
 }
 
 func (s *Store) Export(ctx context.Context) (Snapshot, error) {

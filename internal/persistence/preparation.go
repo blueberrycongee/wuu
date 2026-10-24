@@ -33,6 +33,7 @@ func lockPreparedStore(ctx context.Context, dir string) (*storelock.Lock, error)
 // a journal, creates a generation, or silently follows a replacement generation.
 type preparedStore struct {
 	observed bool
+	verified *cachedCheckpoint
 	binding  binding
 	source   backend
 }

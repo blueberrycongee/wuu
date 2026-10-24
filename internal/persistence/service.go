@@ -39,6 +39,7 @@ func (s *Service) Status() pluginhost.Status {
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
+		{Name: "checkpoint", InputSchema: CheckpointInputSchema, OutputSchema: CheckpointOutputSchema, Preparation: true},
 		{Name: "read", InputSchema: "state.documents.read.input.v1", OutputSchema: "state.documents.read.output.v1", Preparation: true},
 		{Name: "commit", InputSchema: "state.documents.commit.input.v1", OutputSchema: "state.documents.commit.output.v1"},
 		{Name: "import", InputSchema: "state.documents.import.input.v1", OutputSchema: "state.documents.import.output.v1"},
@@ -68,6 +69,11 @@ func (s *Service) Activate(ctx context.Context) error {
 		s.state = pluginhost.StateFailed
 		return err
 	}
+	if err := store.retainPreparedCheckpoint(ctx, s.prepared.verified); err != nil {
+		store.Close()
+		s.state = pluginhost.StateFailed
+		return err
+	}
 	s.store = store
 	s.state = pluginhost.StateActive
 	return nil
@@ -88,12 +94,21 @@ func (s *Service) Close(context.Context) error {
 func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && (params.Method == "read" || params.Method == "export")) {
+	if s.state != pluginhost.StateActive && !(s.state == pluginhost.StatePrepared && (params.Method == "read" || params.Method == "export" || params.Method == "checkpoint")) {
 		return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "state provider is not active"}
 	}
 	var result any
 	var err error
 	switch params.Method {
+	case "checkpoint":
+		var request struct{}
+		if err = decode(params.Params, &request); err == nil {
+			if s.state == pluginhost.StatePrepared {
+				result, err = s.prepared.checkpoint(ctx, s.dir, s.kind)
+			} else {
+				result, err = s.store.Checkpoint(ctx)
+			}
+		}
 	case "read":
 		var query Query
 		if err = decode(params.Params, &query); err == nil {
