@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -71,7 +72,7 @@ function Probe({ id = "a", running = false, split = false, messageID, pluginHost
       });
     }} onScroll={() => api.handleConversationScroll()}>
       <div ref={api.scrollContentRef} className="scroll-region-content" data-content>
-        {messageID ? item ? <ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider>
+        {messageID ? item ? <ConversationControlsTestProvider><ImagePreviewProvider><TurnView key={mountKey ?? messageID} turn={primaryTurns[0]} onStreamFrame={api.scheduleStreamScroll} /></ImagePreviewProvider></ConversationControlsTestProvider>
           : <>
             <div key={mountKey ?? messageID} data-user-message-id={messageID}><div data-message-arrival /></div>
             {processRow ? <div className="assistant-turn-shell" data-process-row /> : null}

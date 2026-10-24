@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ArtifactsProvider } from "./ArtifactsContext";
 import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act } from "react";
 import { createRoot as createReactRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -52,9 +53,9 @@ function renderWithProbe(): { getAPI: () => ImagePreviewContextValue | null } {
   act(() => {
     root = createRoot(container);
     root.render(
-      <ImagePreviewProvider>
+      <ConversationControlsTestProvider><ImagePreviewProvider>
         <Probe />
-      </ImagePreviewProvider>
+      </ImagePreviewProvider></ConversationControlsTestProvider>
     );
   });
 
@@ -188,12 +189,12 @@ const toolTurn: Turn = {
 function renderConversations(turns: Turn[]): void {
   act(() => {
     root ??= createRoot(container);
-    root.render(<ImagePreviewProvider>
+    root.render(<ConversationControlsTestProvider><ImagePreviewProvider>
       <ConversationTurnList threadID="current" turns={turns}
         renderTurn={turn => <TurnView turn={turn} threadID="current" onStreamFrame={() => {}} />} />
       <div hidden><ConversationTurnList threadID="cached" turns={[uploadTurn]}
         renderTurn={turn => <TurnView turn={turn} threadID="cached" onStreamFrame={() => {}} />} /></div>
-    </ImagePreviewProvider>);
+    </ImagePreviewProvider></ConversationControlsTestProvider>);
   });
 }
 

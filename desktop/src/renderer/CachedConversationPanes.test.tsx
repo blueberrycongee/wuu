@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -88,11 +89,11 @@ function renderPane(
   };
   act(() => {
     root.render(
-      createElement(
-        ImagePreviewProvider,
+      <ConversationControlsTestProvider>{createElement(
+        ConversationControlsTestProvider,
         null,
         createElement(CachedConversationPanes, props),
-      ),
+      )}</ConversationControlsTestProvider>,
     );
   });
   return { container };
@@ -146,9 +147,9 @@ describe("CachedConversationPanes session switching", () => {
 
     act(() => {
       root.render(
-        <ImagePreviewProvider>
+        <ConversationControlsTestProvider><ImagePreviewProvider>
           <CachedConversationPanes {...stableProps} activeThreadID="thread-a" />
-        </ImagePreviewProvider>,
+        </ImagePreviewProvider></ConversationControlsTestProvider>,
       );
     });
 
@@ -158,9 +159,9 @@ describe("CachedConversationPanes session switching", () => {
 
     act(() => {
       root.render(
-        <ImagePreviewProvider>
+        <ConversationControlsTestProvider><ImagePreviewProvider>
           <CachedConversationPanes {...stableProps} activeThreadID="thread-b" />
-        </ImagePreviewProvider>,
+        </ImagePreviewProvider></ConversationControlsTestProvider>,
       );
     });
 
@@ -203,13 +204,13 @@ describe("CachedConversationPanes session switching", () => {
     const renderActiveThread = (activeThreadID: string): void => {
       act(() => {
         root.render(
-          <ImagePreviewProvider>
+          <ConversationControlsTestProvider><ImagePreviewProvider>
             <CachedConversationPanes
               {...stableProps}
               activeThreadID={activeThreadID}
               threadsByID={threadsByID}
             />
-          </ImagePreviewProvider>,
+          </ImagePreviewProvider></ConversationControlsTestProvider>,
         );
       });
     };

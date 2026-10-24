@@ -39,8 +39,7 @@ import {
   turnLeftPartialWork,
 } from "./TurnViewHelpers";
 import { translateCurrent as t } from "./i18n";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { PluginSurface } from "./plugins";
+import { useConversationControls } from "./ConversationControlsContext";
 
 export { latestAgentMessageItemID };
 
@@ -73,32 +72,18 @@ export type TurnViewProps = {
 };
 
 export function TurnView(props: TurnViewProps): JSX.Element | null {
+  const { slots } = useConversationControls();
   const projectedTurn = workspaceTurnForPresentation(props.turn);
   if (props.turn.items.length > 0 && projectedTurn.items.length === 0) {
     return null;
   }
-  const threadId = props.threadID ?? desktopPluginHost.getActiveConversationThreadId();
   return (
-    <ArtifactThreadContext.Provider value={threadId}>
-    <PluginSurface
-      host={desktopPluginHost}
-      id="conversation.timeline"
-      context={{
-        version: 1,
-        turns: [projectedTurn],
-        awaiting: false,
-        interrupted: projectedTurn.status === "interrupted",
-        ...(threadId === undefined ? {} : { threadId }),
-        cwd: props.cwd,
-        actions: {
-          openFile: props.onOpenFile,
-          openAgent: props.onOpenAgent,
-          forkMessage: props.onForkMessage,
-          editMessage: props.onEditMessage,
-        },
-      }}
-      fallback={<TurnContent {...props} threadID={threadId} turn={projectedTurn} />}
-    />
+    <ArtifactThreadContext.Provider value={props.threadID}>
+      <slots.Slot
+        name="wuu.default-conversation/conversation.turn"
+        context={{ threadId: props.threadID, turnId: projectedTurn.id }}
+        fallback={<TurnContent {...props} turn={projectedTurn} />}
+      />
     </ArtifactThreadContext.Provider>
   );
 }

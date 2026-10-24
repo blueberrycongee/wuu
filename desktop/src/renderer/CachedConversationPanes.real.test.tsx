@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act, useLayoutEffect, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -160,14 +161,14 @@ describe("CachedConversationPanes real message tree", () => {
     const renderActive = (activeThreadID: string): void => {
       act(() => {
         root.render(
-          <ImagePreviewProvider>
+          <ConversationControlsTestProvider><ImagePreviewProvider>
             <CachedConversationPanes
               {...stableProps}
               activeThreadID={activeThreadID}
               threadIDs={[target.id, source.id]}
               threadsByID={paneThreads}
             />
-          </ImagePreviewProvider>,
+          </ImagePreviewProvider></ConversationControlsTestProvider>,
         );
       });
     };
@@ -271,14 +272,14 @@ describe("CachedConversationPanes real message tree", () => {
     const renderActive = (activeThreadID: string, threadsByID = paneThreads): void => {
       act(() => {
         root.render(
-          <ImagePreviewProvider>
+          <ConversationControlsTestProvider><ImagePreviewProvider>
             <CachedConversationPanes
               {...stableProps}
               activeThreadID={activeThreadID}
               threadIDs={[running.id, idle.id]}
               threadsByID={threadsByID}
             />
-          </ImagePreviewProvider>,
+          </ImagePreviewProvider></ConversationControlsTestProvider>,
         );
       });
     };

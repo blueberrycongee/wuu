@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act, createElement, createRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +20,7 @@ function mount(element: React.ReactElement): HTMLElement {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  act(() => root.render(<ImagePreviewProvider>{element}</ImagePreviewProvider>));
+  act(() => root.render(<ConversationControlsTestProvider><ImagePreviewProvider>{element}</ImagePreviewProvider></ConversationControlsTestProvider>));
   mountedRoots.push(root);
   mountedContainers.push(container);
   return container;

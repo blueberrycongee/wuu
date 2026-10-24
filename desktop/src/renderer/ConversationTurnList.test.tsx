@@ -1,6 +1,7 @@
+import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Turn } from "../shared/protocol";
 import {
   ConversationTurnList,
@@ -15,10 +16,12 @@ import {
 } from "./TurnViewHelpers";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 
+let application = createConversationTestApplication();
 let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  application = createConversationTestApplication();
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -36,7 +39,7 @@ function render(element: JSX.Element): void {
     if (!root) {
       root = createRoot(container);
     }
-    root.render(element);
+    root.render(<ConversationControlsTestProvider service={application}>{element}</ConversationControlsTestProvider>);
   });
 }
 
@@ -208,7 +211,7 @@ describe("ConversationTurnList", () => {
       if (!root) {
         root = createRoot(scrollNode);
       }
-      root.render(turnList(turns, undefined, false));
+      root.render(<ConversationControlsTestProvider service={application}>{turnList(turns, undefined, false)}</ConversationControlsTestProvider>);
     });
     act(() => {
       scrollNode
@@ -232,7 +235,7 @@ describe("ConversationTurnList", () => {
       if (!root) {
         root = createRoot(scrollNode);
       }
-      root.render(turnList(turns));
+      root.render(<ConversationControlsTestProvider service={application}>{turnList(turns)}</ConversationControlsTestProvider>);
     });
 
     expect(scrollNode.querySelectorAll(".turn")).toHaveLength(
@@ -248,7 +251,7 @@ describe("ConversationTurnList", () => {
   });
 
   it.each([0, 200, 500])("anchors a prepend during a gesture and tail growth (native adjustment: %s)", async (nativeAdjustment) => {
-    const prior = window.wuu;
+    const prior = application.invoke;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -276,16 +279,13 @@ describe("ConversationTurnList", () => {
         }}>{turn.id}</div>}
       />
     );
-    window.wuu = {
-      ...prior,
-      loadEarlierThreadHistory: async () => {
+    application.invoke = vi.fn(async () => {
         calls += 1;
         await gate;
         turns.unshift(makeTurn(39));
         tailGrowth = 900;
-        root!.render(view());
-      },
-    };
+        root!.render(<ConversationControlsTestProvider service={application}>{view()}</ConversationControlsTestProvider>);
+    }) as typeof application.invoke;
     container.className = "scroll-region";
     Object.defineProperty(container, "scrollHeight", {
       configurable: true,
@@ -309,14 +309,14 @@ describe("ConversationTurnList", () => {
       expect(container.scrollTop).toBe(820);
       expect(container.querySelector('[data-turn-id="turn-40"]')!.getBoundingClientRect().top).toBe(-320);
     } finally {
-      window.wuu = prior;
+      application.invoke = prior;
     }
   });
 
   it("does not move the shared viewport when a hidden pane receives history", () => {
     container.className = "scroll-region";
-    const prior = window.wuu;
-    window.wuu = { ...prior, loadEarlierThreadHistory: async () => {} };
+    const prior = application.invoke;
+    application.invoke = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(container, "scrollHeight", {
       configurable: true,
       get: () => container.querySelectorAll('[data-turn-id]').length * 500,
@@ -332,7 +332,7 @@ describe("ConversationTurnList", () => {
       render(view([makeTurn(39), makeTurn(40)], false));
       expect(container.scrollTop).toBe(120);
     } finally {
-      window.wuu = prior;
+      application.invoke = prior;
     }
   });
 
@@ -377,7 +377,7 @@ describe("ConversationTurnList", () => {
 });
 
 it("retries failed remote history on a later scroll without overlapping requests", async () => {
-  const prior = window.wuu;
+  const prior = application.invoke;
   let calls = 0;
   let rejectPage!: (error: Error) => void;
   const pendingPage = new Promise<void>((_resolve, reject) => { rejectPage = reject; });
@@ -390,15 +390,12 @@ it("retries failed remote history on a later scroll without overlapping requests
       renderTurn={turn => <div data-turn-id={turn.id}>{turn.id}</div>}
     />
   );
-  window.wuu = {
-    ...prior,
-    loadEarlierThreadHistory: async () => {
+  application.invoke = vi.fn(async () => {
       calls++;
       if (calls === 1) return pendingPage;
       turns.unshift(makeTurn(39));
-      root!.render(view());
-    },
-  };
+      root!.render(<ConversationControlsTestProvider service={application}>{view()}</ConversationControlsTestProvider>);
+  }) as typeof application.invoke;
   container.className = "scroll-region";
   try {
     render(view("cursor"));
@@ -421,14 +418,14 @@ it("retries failed remote history on a later scroll without overlapping requests
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelector('.conversation-turn-history-loader')).toBeNull();
   } finally {
-    window.wuu = prior;
+    application.invoke = prior;
   }
 });
 
 it("requests older remote history on demand and keeps a failed page retryable", async () => {
-  const prior = window.wuu;
+  const prior = application.invoke;
   let calls = 0;
-  window.wuu = { ...prior, loadEarlierThreadHistory: async () => { calls++; if (calls === 1) throw new Error("offline"); } };
+  application.invoke = vi.fn(async () => { calls++; if (calls === 1) throw new Error("offline"); }) as typeof application.invoke;
   try {
     render(<ConversationTurnList threadID="remote" historyCursor="cursor" turns={[makeTurn(40)]} renderTurn={turn => <div>{turn.id}</div>} />);
     expect(calls).toBe(0);
@@ -436,5 +433,21 @@ it("requests older remote history on demand and keeps a failed page retryable", 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe("offline");
     await act(async () => container.querySelector<HTMLButtonElement>(".conversation-turn-history-loader")!.click());
     expect(calls).toBe(2);
-  } finally { window.wuu = prior; }
+  } finally { application.invoke = prior; }
+});
+
+
+it("addresses history explicitly and ignores a late error after switching parents", async () => {
+  let reject!: (error: Error) => void;
+  const pending = new Promise<void>((_resolve, no) => { reject = no; });
+  application.invoke = vi.fn().mockReturnValueOnce(pending).mockResolvedValue(undefined);
+  const view = (threadID: string) => <ConversationTurnList threadID={threadID} historyCursor="page" turns={[makeTurn(1)]} renderTurn={turn => <div>{turn.id}</div>} />;
+  render(view("first"));
+  act(() => container.querySelector<HTMLButtonElement>("button")!.click());
+  expect(application.invoke).toHaveBeenCalledWith("conversation.load-earlier", { threadId: "first", cursor: "page" }, { signal: expect.any(AbortSignal) });
+  render(view("second"));
+  await act(async () => reject(new Error("old source failure")));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>("button")!.click());
+  expect(application.invoke).toHaveBeenLastCalledWith("conversation.load-earlier", { threadId: "second", cursor: "page" }, { signal: expect.any(AbortSignal) });
 });
