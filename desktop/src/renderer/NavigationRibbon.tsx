@@ -167,11 +167,15 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
   const tabStop = (ordered.find(item => item.active && !item.disabled) ?? ordered.find(item => !item.disabled))?.id;
   const websiteIDs = new Set(websites.map((website) => website.id));
   const browserOrder = JSON.stringify(orderedIDs.filter((id) => websiteIDs.has(id)));
+  const nativeBrowserOrder = JSON.stringify(websites.map(website => website.id));
   useEffect(() => {
     // Native Ctrl+Tab and number shortcuts follow the same order as the ribbon.
+    // A native state reply rerenders the shell with fresh callbacks. Once its
+    // order agrees, another reorder would create an IPC/render feedback loop.
+    if (browserOrder === nativeBrowserOrder) return;
     const ids = JSON.parse(browserOrder) as string[];
     if (ids.length) onReorderTabs?.(ids);
-  }, [browserOrder, onReorderTabs]);
+  }, [browserOrder, nativeBrowserOrder, onReorderTabs]);
   useLayoutEffect(() => {
     if (!activeWebsiteId) return;
     [...document.querySelectorAll<HTMLButtonElement>(".sidebar-ribbon-button[data-ribbon-id]")]

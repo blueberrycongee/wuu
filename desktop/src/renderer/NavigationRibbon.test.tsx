@@ -5,6 +5,7 @@ import type { ChromeOverlayApi, ChromeOverlayCommand, ChromeOverlayEvent, Chrome
 import { DesktopControlsProvider } from "./DesktopControlsContext";
 import type { ApplicationDesktopControlsV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { NavigationRibbon } from "./NavigationRibbon";
+import { readNavigationRibbonPreferences, saveNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 
 // A website selection can replace the shell's pointer target with native chrome.
 // Navigating back to an app page must not end that reveal session. Only an actual
@@ -83,6 +84,22 @@ function open() {
 }
 
 describe("NavigationRibbon reveal navigation", () => {
+  it("settles restored tab order without feeding native state back into repeated reorder commands", () => {
+    const reorder = vi.fn();
+    const websites = [{ id: "alpha", url: "https://example.com/a", title: "Alpha" }, { id: "beta", url: "https://example.com/b", title: "Beta" }];
+    const render = (tabs = websites) => renderWithDesktop(<NavigationRibbon items={[]} websites={tabs} onReorderTabs={ids => reorder(ids)} />);
+    saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), order: ["alpha", "beta"] });
+    act(() => render());
+    expect(reorder).not.toHaveBeenCalled();
+    act(() => saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), order: ["beta", "alpha"] }));
+    expect(reorder).toHaveBeenCalledExactlyOnceWith(["beta", "alpha"]);
+    // The native reply causes the application to render again with fresh
+    // callbacks, and later browser title updates must not restart that cycle.
+    act(() => render([websites[1], websites[0]]));
+    act(() => render([{ ...websites[1], title: "New title" }, websites[0]]));
+    expect(reorder).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the same open ribbon through website and app selections until pointer leave", () => {
     open();
     const opening = request.token;
@@ -255,8 +272,7 @@ describe("NavigationRibbon reopened positions", () => {
     act(() => render({ id: "beta-restored", reopenedFrom: "beta" }));
     const order = () => [...container.querySelectorAll<HTMLElement>("[data-ribbon-id]")].map(element => element.dataset.ribbonId);
     expect(order()).toEqual(["conversations", "alpha", "beta-restored", "files", "gamma"]);
-    expect(reorder.mock.calls.length).toBeGreaterThan(0);
-    expect(reorder.mock.calls.every(([ids]) => JSON.stringify(ids) === JSON.stringify(["alpha", "beta-restored", "gamma"]))).toBe(true);
+    expect(reorder).not.toHaveBeenCalled();
     expect(JSON.parse(localStorage.getItem("wuu.navigation-ribbon.v1")!).order).toEqual(order());
     act(() => {
       localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({ websites: [], order: ["conversations", "beta-restored", "alpha", "files", "gamma"] }));
@@ -264,6 +280,7 @@ describe("NavigationRibbon reopened positions", () => {
     });
     act(() => render({ id: "beta-restored", reopenedFrom: "beta" }));
     expect(order()).toEqual(["conversations", "beta-restored", "alpha", "files", "gamma"]);
+    expect(reorder).toHaveBeenLastCalledWith(["beta-restored", "alpha", "gamma"]);
   });
 });
 
