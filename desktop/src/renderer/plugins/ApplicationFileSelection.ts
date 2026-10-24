@@ -24,7 +24,7 @@ export interface ApplicationFileSelectionOptions {
 
 /** Canonical file references are composer content, not selection-menu state. */
 export class ApplicationFileSelection implements ApplicationFileSelectionServiceV1 {
-  private readonly snapshots = new Map<string, { key: string; view: ApplicationFileSelectionSnapshotV1, FileSelectionCallOptionsV1 }>();
+  private readonly snapshots = new Map<string, { key: string; view: ApplicationFileSelectionSnapshotV1 }>();
   private readonly interactionOwners = new Map<string, string>();
   constructor(private readonly options: ApplicationFileSelectionOptions) {}
 
