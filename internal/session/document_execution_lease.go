@@ -59,17 +59,6 @@ func acquireThreadAdmission(ctx context.Context, dir string) (*os.File, error) {
 	}
 }
 
-// Native-domain tests use the same host admission mechanism as selected clients.
-func (s *documentStore) TryAcquireThreadExecutionLease(dir, id string) (*DocumentThreadExecutionLease, bool, error) {
-	return NewStore(s.ctx, s.documents).TryAcquireThreadExecutionLease(dir, id)
-}
-func (s *documentStore) TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id string, limit int) (*DocumentThreadExecutionLease, bool, error) {
-	return NewStore(s.ctx, s.documents).TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id, limit)
-}
-func (s *documentStore) RequestThreadExecutionReset(dir, id string) (bool, error) {
-	return NewStore(s.ctx, s.documents).RequestThreadExecutionReset(dir, id)
-}
-
 func (l *DocumentThreadExecutionLease) ResetRequested() (bool, error) {
 	if l == nil {
 		return false, nil

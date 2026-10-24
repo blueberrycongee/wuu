@@ -263,3 +263,36 @@ func TestSessionClientTransportLossPreservesUncertainty(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionServiceHeldMessageFenceCrossesWireButNotHistory(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		client := NewStore(context.Background(), native.documents)
+		if _, err := client.Create("held"); err != nil {
+			t.Fatal(err)
+		}
+		held := HeldUserWork{ID: "steer", Origin: HeldUserWorkOriginSteer, MessageJSON: []byte("{ \"Content\": \"keep\" }"), RuntimeJSON: []byte(`{}`)}
+		if accepted, err := client.AcceptHeldUserWork("held", held); err != nil || !accepted {
+			t.Fatalf("accept: %v %v", accepted, err)
+		}
+		record := HistoryRecord{Role: "user", Content: "keep", ClientID: "steer", ExpectedHeldMessage: json.RawMessage(`{"Content":"stale"}`)}
+		if err := client.AppendHistoryRecord("held", record); err == nil {
+			t.Fatal("stale fence accepted")
+		}
+		rows, err := client.LoadHistoryRecords("held", true)
+		if err != nil || len(rows) != 0 {
+			t.Fatalf("failed admission wrote history: %+v %v", rows, err)
+		}
+		record.ExpectedHeldMessage = held.MessageJSON
+		if err := client.AppendHistoryRecord("held", record); err != nil {
+			t.Fatal(err)
+		}
+		rows, err = client.LoadHistoryRecords("held", true)
+		if err != nil || len(rows) != 1 || len(rows[0].ExpectedHeldMessage) != 0 {
+			t.Fatalf("fence leaked into durable history: %+v %v", rows, err)
+		}
+		pending, err := client.LoadHeldUserWork("held")
+		if err != nil || len(pending) != 0 {
+			t.Fatalf("admitted input remained pending: %+v %v", pending, err)
+		}
+	})
+}

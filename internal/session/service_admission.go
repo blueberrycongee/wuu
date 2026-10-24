@@ -71,6 +71,7 @@ func executionCapacityMember(member Session) bool {
 	return false
 }
 func (s *documentStore) RequestThreadExecutionResetRecord(id string) error {
+	stamp := time.Now().UTC().UnixMilli()
 	return s.transaction(func(tx *persistence.Tx) error {
 		var record threadExecutionDocument
 		if _, err := tx.Get(documentNamespace("thread_execution_resets"), id, &record); err != nil {
@@ -78,7 +79,7 @@ func (s *documentStore) RequestThreadExecutionResetRecord(id string) error {
 		}
 		record.ThreadID = id
 		record.Generation++
-		record.RequestedAt = time.Now().UTC().UnixMilli()
+		record.RequestedAt = stamp
 		return tx.Put(documentNamespace("thread_execution_resets"), id, record)
 	})
 }
