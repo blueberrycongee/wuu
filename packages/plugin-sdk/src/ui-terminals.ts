@@ -45,7 +45,11 @@ export function scopeApplicationTerminals(source: () => ApplicationTerminalsV1, 
     const existing = stopping.get(id); if (existing) return existing;
     const provider = owned.get(id);
     if (!provider) { check(); throw new Error("Terminal is not owned by this scope"); }
-    const result = Promise.resolve().then(() => provider.stop(id)); stopping.set(id, result); return result;
+    const result = Promise.resolve().then(() => provider.stop(id)).catch(error => {
+      stopping.delete(id);
+      throw error;
+    });
+    stopping.set(id, result); return result;
   };
   signal.addEventListener("abort", () => {
     for (const unsubscribe of subscriptions) unsubscribe();

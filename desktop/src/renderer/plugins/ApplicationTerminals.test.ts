@@ -77,4 +77,42 @@ describe("application terminal resource ownership", () => {
     expect(api.stopTerminalSession).toHaveBeenCalledTimes(1); expect(api.stopManagedProcess).not.toHaveBeenCalled(); expect(unsubscribe).toHaveBeenCalledTimes(1); expect(listener).not.toHaveBeenCalled();
     await expect(scoped.writeManaged("thread","agent-process","late")).rejects.toThrow(); expect(api.writeManagedProcess).not.toHaveBeenCalled();
   });
+  it("retries a failed host stop while deduplicating concurrent and successful cleanup", async () => {
+    const { controls, api } = fixture();
+    await controls.start({ cwd: "/worktree" });
+    const first = deferred<{ ok: boolean }>();
+    api.stopTerminalSession.mockReturnValueOnce(first.promise);
+    const stopping = controls.stop(started.id);
+    const concurrent = controls.stop(started.id);
+    first.resolve({ ok: true });
+    await Promise.all([stopping, concurrent]);
+    await controls.stop(started.id);
+    expect(api.stopTerminalSession).toHaveBeenCalledTimes(1);
+
+    const retry = fixture();
+    await retry.controls.start({ cwd: "/worktree" });
+    retry.api.stopTerminalSession.mockRejectedValueOnce(new Error("temporary failure"));
+    await expect(retry.controls.stop(started.id)).rejects.toThrow("temporary failure");
+    await retry.controls.dispose();
+    await retry.controls.stop(started.id);
+    expect(retry.api.stopTerminalSession).toHaveBeenCalledTimes(2);
+    expect(retry.api.startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(retry.api.writeTerminalSession).not.toHaveBeenCalled();
+  });
+  it("retries a failed scoped stop on expiry and keeps successful cleanup deduplicated", async () => {
+    const { controls, api } = fixture();
+    const lifetime = new AbortController();
+    const scoped = scopeApplicationTerminals(() => controls, lifetime.signal, () => {});
+    await scoped.start({ cwd: "/worktree" });
+    api.stopTerminalSession.mockRejectedValueOnce(new Error("temporary failure"));
+    await expect(scoped.stop(started.id)).rejects.toThrow("temporary failure");
+    lifetime.abort();
+    await scoped.stop(started.id);
+    await scoped.stop(started.id);
+    await controls.dispose();
+    expect(api.stopTerminalSession).toHaveBeenCalledTimes(2);
+    expect(api.startTerminalSession).toHaveBeenCalledTimes(1);
+    expect(api.writeTerminalSession).not.toHaveBeenCalled();
+  });
+
 });

@@ -36,7 +36,14 @@ export class ApplicationTerminals implements ApplicationTerminalsV1 {
   async stop(id: string): Promise<void> {
     if (!this.resources.has(id)) throw new Error("Terminal is not owned by this controller");
     let pending = this.resources.get(id);
-    if (!pending) { pending = Promise.resolve().then(async () => { await this.api.stopTerminalSession(id); }); this.resources.set(id,pending); }
+    if (!pending) {
+      pending = Promise.resolve().then(async () => { await this.api.stopTerminalSession(id); }).catch(error => {
+        // Retain ownership so a later explicit cleanup can retry a failed stop.
+        this.resources.set(id, undefined);
+        throw error;
+      });
+      this.resources.set(id, pending);
+    }
     return pending;
   }
   async dispose(): Promise<void> {
