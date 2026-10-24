@@ -422,6 +422,7 @@ async function importDesktopPluginModule(url: string): Promise<unknown> {
   if (url === "wuu-builtin:default-settings") return import("../modules/DefaultSettingsSurface");
   if (url === "wuu-builtin:default-navigation") return import("../modules/DefaultNavigationSurface");
   if (url === "wuu-builtin:default-conversation") return import("../modules/DefaultConversationSurface");
+  if (url === "wuu-builtin:default-composer") return import("../modules/DefaultComposerSurface");
   if (url === "wuu-builtin:default-preview") return import("../modules/DefaultPreviewSurface");
   return import(/* @vite-ignore */ url);
 }

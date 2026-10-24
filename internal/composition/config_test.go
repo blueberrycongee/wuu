@@ -198,7 +198,7 @@ func TestDesktopSettingsCanBeRemovedWithoutShellRemoval(t *testing.T) {
 }
 
 func TestDesktopContentRenderersCanBeReplacedIndependently(t *testing.T) {
-	for _, surface := range []string{"conversation", "preview"} {
+	for _, surface := range []string{"conversation", "preview", "composer"} {
 		t.Run(surface, func(t *testing.T) {
 			module := "wuu.default-" + surface
 			desktop, err := DefaultConfig("desktop").Resolve()

@@ -16,6 +16,7 @@ const defaultSettingsModule = "wuu.default-settings"
 const defaultNavigationModule = "wuu.default-navigation"
 const defaultConversationModule = "wuu.default-conversation"
 const defaultPreviewModule = "wuu.default-preview"
+const defaultComposerModule = "wuu.default-composer"
 
 // ApplicationShellBinding identifies the renderer contribution selected by the
 // same service registry as native and process implementations. Nil disables it.
@@ -49,6 +50,9 @@ func nativeRendererModules() []RendererModule {
 		{ID: defaultConversationModule, SubjectID: defaultConversationModule,
 			Fingerprint: "ui-conversation-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-conversation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.conversation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.conversation.describe.input.v1", OutputSchema: "ui.conversation.describe.output.v1"}}}}},
+		{ID: defaultComposerModule, SubjectID: defaultComposerModule,
+			Fingerprint: "ui-composer-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-composer", Services: []pluginhost.ServiceDescriptor{{Name: "ui.composer", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.composer.describe.input.v1", OutputSchema: "ui.composer.describe.output.v1"}}}}},
 		{ID: defaultPreviewModule, SubjectID: defaultPreviewModule,
 			Fingerprint: "ui-preview-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-preview", Services: []pluginhost.ServiceDescriptor{{Name: "ui.preview", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.preview.describe.input.v1", OutputSchema: "ui.preview.describe.output.v1"}}}}}}

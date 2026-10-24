@@ -26,6 +26,10 @@ func TestPreviewRendererSelectedIndependently(t *testing.T) {
 	testRendererSelection(t, "wuu.default-preview", "ui.preview")
 }
 
+func TestComposerRendererSelectedIndependently(t *testing.T) {
+	testRendererSelection(t, "wuu.default-composer", "ui.composer")
+}
+
 func testRendererSelection(t *testing.T, moduleID, serviceName string) {
 	t.Helper()
 	for _, replacement := range []bool{false, true} {
