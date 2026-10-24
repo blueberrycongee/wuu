@@ -29,6 +29,10 @@ export interface ApplicationSnapshotV1 {
   };
   readonly tabs: {
     readonly activeTabId: string;
+    readonly activePane: "primary" | "secondary";
+    readonly primaryThreadId?: string;
+    readonly secondaryThreadId?: string;
+    readonly canSubmit: boolean;
     readonly items: readonly ApplicationTabV1[];
     readonly pending?: { readonly kind: "tab" | "workspace" | "thread" | "runtime"; readonly targetId: string; readonly requestId?: number; readonly contextSwitching?: boolean; readonly contentReady?: boolean };
   };
@@ -84,6 +88,8 @@ export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1, 
   /** Remove a workspace after the caller has confirmed the user's intent. */
   "workspace.remove": { input: { readonly workspaceId: string }; result: void };
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
+  "conversation.activate-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
+  "conversation.close-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
   "thread.activate": { input: { readonly threadId: string; readonly workspaceId?: string }; result: void };
   "draft.start": { input: Record<string, never>; result: { readonly tabId: string } };
   "tab.pop-out": { input: { readonly tabId: string }; result: void };
@@ -103,7 +109,7 @@ export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1, 
   "thread.rename": { input: { readonly threadId: string; readonly title: string }; result: void };
   "thread.archive": { input: { readonly threadId: string; readonly archived: boolean }; result: void };
   "composer.set-draft": { input: { readonly text: string; readonly ownerTabId?: string }; result: void };
-  "composer.submit": { input: { readonly mode?: ComposerSubmissionModeV1 }; result: void };
+  "composer.submit": { input: { readonly mode?: ComposerSubmissionModeV1; readonly ownerTabId?: string }; result: void };
   "composer.stop": { input: Record<string, never>; result: void };
   "composer.configure": { input: { readonly modelId?: string; readonly runtimeId?: string; readonly permissionId?: string }; result: void };
   "settings.open": { input: { readonly pageId?: string }; result: void };

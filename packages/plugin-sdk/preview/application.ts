@@ -9,7 +9,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       { id: 'research', kind: 'project', label: 'Research' },
       { id: 'research-1', kind: 'thread', label: 'Compare the evidence', parentId: 'research', active: true },
     ] },
-    tabs: { activeTabId: 'thread:research-1', items: [{ id: 'thread:research-1', kind: 'thread',
+    tabs: { activeTabId: 'thread:research-1', activePane: 'primary', primaryThreadId: 'research-1', canSubmit: true, items: [{ id: 'thread:research-1', kind: 'thread',
       title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
       threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{

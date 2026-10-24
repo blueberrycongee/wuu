@@ -42,6 +42,28 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachments[0].id })).rejects.toThrow("Unknown composer attachment");
   });
 
+  it("submits independent split draft owners while blocking duplicate admission to one owner", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = (id: string) => ({ id, cwd: context.cwd, preview: "", status: "idle", model_provider: "", turns: [] }) as never;
+    const finish = new Map<string, (value: unknown) => void>();
+    const send = vi.fn((id: string) => new Promise(resolve => { finish.set(id, resolve); }));
+    window.wuu = { startTurn: send } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: thread("a"), secondaryThread: thread("b"), activePane: "primary", activeSessionTabID: "thread:a", sessionTabs: ["a", "b"].map(id => ({
+      id: `thread:${id}`, kind: "thread", threadID: id, context, title: id, prompt: `draft ${id}`, images: [], files: [],
+    })) });
+    const primary = controller.invoke("composer.submit", { ownerTabId: "thread:a" });
+    await expect(controller.invoke("composer.submit", { ownerTabId: "thread:a" })).rejects.toThrow("already pending");
+    const secondary = controller.invoke("composer.submit", { ownerTabId: "thread:b" });
+    expect(send.mock.calls.map(args => args[0])).toEqual(["a", "b"]);
+    finish.get("b")!({ turn: { id: "turn-b", status: "completed", items: [] } });
+    await secondary;
+    expect(controller.getSnapshot().drafts.primary.text).toBe("draft a");
+    expect(controller.getSnapshot().drafts.secondary.text).toBe("");
+    finish.get("a")!({ turn: { id: "turn-a", status: "completed", items: [] } });
+    await primary;
+    expect(controller.getSnapshot().drafts.primary.text).toBe("");
+  });
+
   it("keeps the image preview alive while editing a queued message back into its draft", async () => {
     const originalRevoke = URL.revokeObjectURL;
     const revoke = vi.fn();
@@ -122,6 +144,10 @@ describe("shared application state", () => {
     await controller.invoke("composer.set-draft", { ownerTabId: controller.getSnapshot().drafts.primary.ownerTabId, text: "primary" });
     expect(controller.getSnapshot().drafts.primary.text).toBe("primary");
     expect(controller.getSnapshot().drafts.secondary.text).toBe("");
+    await controller.invoke("conversation.activate-pane", { pane: "primary" });
+    expect(controller.getSnapshot().tabs).toMatchObject({ activePane: "primary", primaryThreadId: "a", secondaryThreadId: "b" });
+    await controller.invoke("conversation.close-pane", { pane: "secondary" });
+    expect(controller.getSnapshot().drafts).toMatchObject({ split: false, primary: { text: "primary", ownerTabId: "thread:a" } });
   });
 
   it.each([false, true])("settles failed admitted attachment recovery (discard=%s)", async discard => {
