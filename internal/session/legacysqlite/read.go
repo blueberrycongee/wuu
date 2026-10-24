@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -122,11 +123,54 @@ func Read(ctx context.Context, path string) (Snapshot, bool, error) {
 			return snapshot, false, err
 		}
 	}
-	raw, err := json.Marshal(snapshot)
+	snapshot.Fingerprint, err = fingerprintSnapshot(snapshot)
 	if err != nil {
 		return snapshot, false, err
 	}
-	digest := sha256.Sum256(raw)
-	snapshot.Fingerprint = hex.EncodeToString(digest[:])
 	return snapshot, true, nil
+}
+
+// Match json.Marshal(Snapshot) byte for byte: persisted migration markers depend
+// on field order, nil slices and default JSON escaping. Marshal only one row at a
+// time so hashing does not allocate another complete encoded database snapshot.
+func fingerprintSnapshot(snapshot Snapshot) (string, error) {
+	digest := sha256.New()
+	io.WriteString(digest, `{"tables":`)
+	if snapshot.Tables == nil {
+		io.WriteString(digest, `null`)
+	} else {
+		io.WriteString(digest, `[`)
+		for i, table := range snapshot.Tables {
+			if i > 0 {
+				io.WriteString(digest, `,`)
+			}
+			name, _ := json.Marshal(table.Name)
+			schema, _ := json.Marshal(table.Schema)
+			io.WriteString(digest, `{"name":`)
+			digest.Write(name)
+			io.WriteString(digest, `,"schema":`)
+			digest.Write(schema)
+			io.WriteString(digest, `,"rows":`)
+			if table.Rows == nil {
+				io.WriteString(digest, `null`)
+			} else {
+				io.WriteString(digest, `[`)
+				for j, row := range table.Rows {
+					if j > 0 {
+						io.WriteString(digest, `,`)
+					}
+					raw, err := json.Marshal(row)
+					if err != nil {
+						return "", err
+					}
+					digest.Write(raw)
+				}
+				io.WriteString(digest, `]`)
+			}
+			io.WriteString(digest, `}`)
+		}
+		io.WriteString(digest, `]`)
+	}
+	io.WriteString(digest, `}`)
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
