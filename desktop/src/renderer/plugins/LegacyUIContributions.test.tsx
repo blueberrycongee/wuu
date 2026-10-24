@@ -2,30 +2,28 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { ViewHostAPI, PresentationHost } from "../../shared/workbench";
 import { ApplicationController } from "./ApplicationController";
+import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { ApplicationShellOutlet } from "./ApplicationShell";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
-import { LegacyUIContributions } from "./LegacyUIContributions";
 
 let root: Root | undefined;
 let element: HTMLDivElement;
-afterEach(() => { act(() => root?.unmount()); root = undefined; element?.remove(); });
+afterEach(() => { act(() => root?.unmount()); root = undefined; element?.remove(); vi.restoreAllMocks(); });
 async function fixture(semanticSlot: string, context: Readonly<Record<string, unknown>> = {}) {
-  const controller = new ApplicationController();
   const invoke = vi.fn(async () => undefined);
-  const application = { getSnapshot: controller.getSnapshot, subscribe: () => () => {}, invoke } as unknown as ApplicationServiceV1;
-  const host = new PluginHost({ react: React, application: application as never });
+  const application = Object.assign(new ApplicationController(), {
+    subscribe: () => () => {}, invoke: invoke as ApplicationServiceV1["invoke"],
+  });
   const createViewHost = vi.fn((): ViewHostAPI => ({ getStorage: async () => null, setStorage: async () => {},
     getSetting: async () => undefined, executeCommand: async () => undefined, openView: async () => {}, closeView: async () => {} }));
-  // Exercise the real host and outlet while assembly wiring is owned separately.
+  const host = new PluginHost({ react: React, application, createLegacyViewHost: createViewHost });
+  // Only the semantic slot is declared; no adapter contribution is registered.
   await host.activateGeneration({ pluginId: "custom-shell", generation: "one", register(api) {
     api.registerUISlot({ id: semanticSlot, cardinality: "one" });
-    api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name={`custom-shell/${semanticSlot}`} /> });
-    api.registerUIContribution({ id: "legacy-assembly", target: `custom-shell/${semanticSlot}`, render: () =>
-      <LegacyUIContributions host={host} semanticSlot={semanticSlot} application={application} context={context}
-        createViewHost={createViewHost} fallback={<span>Native content</span>} /> });
+    api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name={`custom-shell/${semanticSlot}`} context={context} fallback={<span>Native content</span>} /> });
   } });
   const mount = () => { element = document.createElement("div"); document.body.append(element); root = createRoot(element);
     act(() => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "custom-shell", generation: "one", id: "shell" }} />)); };
@@ -61,7 +59,7 @@ describe("legacy contributions in declared public slots", () => {
     });
     mount(); expect(element.textContent).toBe("Wrapper:Replacement");
     await captured.invoke("header.select-tab", { tabId: "original" });
-    expect(invoke).toHaveBeenCalledWith("preview.focus-tab", { tabId: "original" });
+    expect(invoke).toHaveBeenCalledWith("preview.focus-tab", { tabId: "original" }, { signal: expect.any(AbortSignal) });
     const old = captured;
     await register(api => { api.registerPresenter({ id: "replacement", target: "header.workspace", render: () => <span>New</span> }); });
     expect(element.textContent).toBe("New");
@@ -77,7 +75,7 @@ describe("legacy contributions in declared public slots", () => {
     let api!: PresentationHost;
     await register(plugin => { plugin.registerPresenter({ id: "header", target: "header.workspace", render: props => { api = props.host; return props.fallback; } }); });
     mount(); await api.invoke("header.select-tab", { tabId: "conversation" });
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("preview.show-conversation", {});
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("preview.show-conversation", {}, { signal: expect.any(AbortSignal) });
     await api.invoke("header.close-tab", { tabId: "conversation" });
     expect(invoke).toHaveBeenCalledOnce();
   });
@@ -113,31 +111,43 @@ describe("legacy contributions in declared public slots", () => {
       resource: { root: "/other-worktree", path: "docs/guide.md" },
       snapshot: { contentType: "text/markdown", workspaceRelativePath: "docs/guide.md" },
     });
-    const openFile = vi.fn(async () => {}); const revealItem = vi.fn(async () => {});
-    Object.assign(application, { previewContent: { openFile, revealItem, capabilities: { revealItem: true } } });
+    const preview = new ApplicationPreviewContent({ platform: "linux",
+      readWorkspaceFile: async () => { throw new Error("unused"); },
+      listWorkspaceDirectory: async () => { throw new Error("unused"); },
+      revealWorkspaceItem: async () => {}, showWorkspaceItemMenu: async () => ({ action: "none" }),
+    }, { openFile: async () => {} });
+    vi.spyOn(application, "previewContent", "get").mockReturnValue(preview);
+    const openFile = vi.spyOn(preview, "openFile");
     let captured!: PresentationHost;
     await register(api => { api.registerPresenter({ id: "markdown", target: "content.preview", key: "text/markdown", render: props => { captured = props.host; return <span>Markdown replacement</span>; } }); });
     mount(); expect(element.textContent).toBe("Markdown replacement");
     await captured.invoke("file-preview.open");
-    expect(openFile).toHaveBeenCalledWith({ root: "/other-worktree", path: "docs/guide.md" });
+    expect(openFile).toHaveBeenCalledWith({ root: "/other-worktree", path: "docs/guide.md" }, { signal: expect.any(AbortSignal) });
     await expect(captured.invoke("file-preview.open", { path: "../secret" })).rejects.toThrow();
   });
 
-  it("resolves message presenters and commands from explicit public source IDs", async () => {
+  it.each(["conversation.message", "conversation.message.actions"])("resolves %s from explicit public source IDs", async semanticSlot => {
     const source = { threadId: "secondary", turnId: "turn", itemId: "message" };
-    const { application, register, mount, invoke } = await fixture("conversation.message", source);
+    const { application, register, mount, invoke } = await fixture(semanticSlot, source);
     const baseline = application.getSnapshot();
-    const snapshot = { ...baseline, conversationWorkspace: { ...baseline.conversationWorkspace, threads: [
-      { id: "secondary", turns: [{ id: "turn", status: "completed", items: [{ id: "message", type: "user_message", status: "completed", text: "Selected source" }] }] },
+    const snapshot: ApplicationSnapshotV1 = { ...baseline, conversationWorkspace: { ...baseline.conversationWorkspace, threads: [
+      { id: "secondary", preview: "", model_provider: "test", model: "test", cwd: "/repo", status: "idle", created_at: "", updated_at: "", turns: [{ id: "turn", status: "completed", items_view: "full", items: [{ id: "message", type: "user_message", status: "completed", text: "Selected source" }] }] },
     ] } };
-    application.getSnapshot = () => snapshot as ReturnType<ApplicationServiceV1["getSnapshot"]>;
+    application.getSnapshot = () => snapshot;
     let api!: PresentationHost;
-    await register(plugin => { plugin.registerPresenter({ id: "item", target: "conversation.item", key: "user-message", render: props => {
+    const command = vi.fn();
+    await register(plugin => { plugin.registerCommand({ id: "inspect", title: "Inspect source", placements: ["conversation.message.actions"], execute: command }); plugin.registerPresenter({ id: "item", target: "conversation.item", key: "user-message", render: props => {
       api = props.host; return <span>{(props.snapshot as { text: string }).text}</span>;
     } }); });
-    mount(); expect(element.textContent).toBe("Selected source");
-    await api.invoke("conversation.item.edit");
-    expect(invoke).toHaveBeenCalledWith("history.begin-edit", source);
+    mount();
+    if (semanticSlot === "conversation.message") {
+      expect(element.textContent).toBe("Selected source");
+      await api.invoke("conversation.item.edit");
+      expect(invoke).toHaveBeenCalledWith("history.begin-edit", source, { signal: expect.any(AbortSignal) });
+    } else {
+      await act(async () => { element.querySelector<HTMLButtonElement>('button[aria-label="Inspect source"]')!.click(); });
+      expect(command).toHaveBeenCalledWith(expect.objectContaining({ threadId: "secondary", turnId: "turn", item: expect.objectContaining({ id: "message", text: "Selected source" }) }));
+    }
   });
 
   it("opens declared workspace tools through the public generation-specific action", async () => {
@@ -145,7 +155,7 @@ describe("legacy contributions in declared public slots", () => {
     await register(api => { api.registerViewType({ id: "notes", title: "Notes", render: () => <span>Notes view</span> }); },
       { workspace_tools: [{ id: "notes-entry", view: "notes", title: "Notes" }] });
     mount(); await act(async () => { element.querySelector<HTMLButtonElement>("button")!.click(); });
-    expect(invoke).toHaveBeenCalledWith("preview.open-plugin", expect.objectContaining({ entryId: "notes-entry", pluginId: "extension", generation: "same", viewTypeId: "notes" }));
+    expect(invoke).toHaveBeenCalledWith("preview.open-plugin", expect.objectContaining({ entryId: "notes-entry", pluginId: "extension", generation: "same", viewTypeId: "notes" }), { signal: expect.any(AbortSignal) });
   });
 
   it("renders only the selected generation's workspace view and its title commands", async () => {
