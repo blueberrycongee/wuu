@@ -25,6 +25,18 @@ describe("application settings operations", () => {
     expect(h.get().initialized?.providers?.[0].models).toHaveLength(1);
   });
 
+  it("retains the public settings view across unrelated stream updates", () => {
+    const h = fixture();
+    const first = h.settings.getSnapshot();
+    h.set({ ...h.get(), status: "streaming" });
+    expect(h.settings.getSnapshot()).toBe(first);
+    h.set({ ...h.get(), initialized: { ...h.get().initialized!, model: "changed" } });
+    const changed = h.settings.getSnapshot();
+    expect(changed).not.toBe(first);
+    expect(changed.configuration?.model).toBe("changed");
+    expect(first.configuration?.model).toBe("old");
+  });
+
   it("does not apply a late settings save to another workspace", async () => {
     const h = fixture();
     let resolve!: (value: unknown) => void;

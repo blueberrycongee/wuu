@@ -32,7 +32,11 @@ function immutable<T>(value: T): SettingsReadonly<T> {
 
 /** Host-internal state access never crosses the public application handle. */
 export class ApplicationSettings {
-  private engines?: { context: string; value: EngineListResult };
+  private engines?: { context: string; value: SettingsReadonly<EngineListResult> };
+  private configurationSource?: AppState["initialized"];
+  private configuration?: ApplicationSettingsViewV1["configuration"];
+  private snapshot?: ApplicationSettingsViewV1;
+  private snapshotRows = "";
   private engineError = { context: "", message: "" };
   private engineRequest = 0;
   private codexModels: CodexModelLoadState = { loading: false, error: "", models: [] };
@@ -52,7 +56,9 @@ export class ApplicationSettings {
   getSnapshot(): ApplicationSettingsViewV1 {
     const state = this.host.getState();
     const initialized = state.initialized;
-    const configuration = initialized && {
+    if (initialized !== this.configurationSource) {
+      this.configurationSource = initialized;
+      this.configuration = initialized && immutable({
       protocol_version: initialized.protocol_version, provider: initialized.provider,
       model: initialized.model, workspace_root: initialized.workspace_root, core: initialized.core,
       providers: initialized.providers, catalog_providers: initialized.catalog_providers,
@@ -64,18 +70,30 @@ export class ApplicationSettings {
         provenance: plugin.provenance, state: plugin.state, fingerprint: plugin.fingerprint, enabled: plugin.enabled, approval_state: plugin.approval_state,
         contributions: plugin.contributions && { settings: plugin.contributions.settings },
       })),
-    };
+      });
+    }
+    const configuration = this.configuration;
     const runningProviderNames = [...new Set([state.thread, state.secondaryThread, ...state.threads]
       .filter(thread => thread && isThreadRunning(thread)).map(thread => thread!.model_provider.trim()).filter(Boolean))];
-    return immutable({ configuration,
-      engineInventory: this.engines?.context === this.engineContext().key ? this.engines.value : undefined,
-      engineInventoryError: this.engineError.context === this.engineContext().key ? this.engineError.message : "", runtimeSwitchPending: this.host.isNavigationPending(), runningProviderNames,
-      archivedThreads: state.threads.filter(thread => thread.archived).map(thread => {
-        const project = state.projects.find(candidate => threadBelongsToWorkspace(thread, candidate));
-        return { id: thread.id, title: thread.title, updated_at: thread.updated_at,
-          archive_project_id: project?.id ?? "", archive_project_name: project?.name ?? translateCurrent("appState.noWorkspace") };
-      }),
+    const archivedThreads = state.threads.filter(thread => thread.archived).map(thread => {
+      const project = state.projects.find(candidate => threadBelongsToWorkspace(thread, candidate));
+      return { id: thread.id, title: thread.title, updated_at: thread.updated_at,
+        archive_project_id: project?.id ?? "", archive_project_name: project?.name ?? translateCurrent("appState.noWorkspace") };
     });
+    const context = this.engineContext().key;
+    const engineInventory = this.engines?.context === context ? this.engines.value : undefined;
+    const engineInventoryError = this.engineError.context === context ? this.engineError.message : "";
+    const runtimeSwitchPending = this.host.isNavigationPending();
+    const rows = JSON.stringify([runningProviderNames, archivedThreads]);
+    const previous = this.snapshot;
+    if (previous && previous.configuration === configuration && previous.engineInventory === engineInventory
+      && previous.engineInventoryError === engineInventoryError && previous.runtimeSwitchPending === runtimeSwitchPending
+      && rows === this.snapshotRows) return previous;
+    this.snapshotRows = rows;
+    this.snapshot = Object.freeze({ configuration, engineInventory, engineInventoryError, runtimeSwitchPending,
+      runningProviderNames: Object.freeze(runningProviderNames), archivedThreads: Object.freeze(archivedThreads.map(thread => Object.freeze(thread))),
+    });
+    return this.snapshot;
   }
 
   async invoke<Action extends keyof ApplicationSettingsActionMapV1>(action: Action,
@@ -214,7 +232,7 @@ export class ApplicationSettings {
       const value = await window.wuu.listEngines({ cwd: context.cwd, refresh_models: true });
       signal?.throwIfAborted();
       if (request === this.engineRequest && context.key === this.engineContext().key) {
-        this.engines = { context: context.key, value }; this.engineError = { context: context.key, message: "" }; this.host.changed();
+        this.engines = { context: context.key, value: immutable(value) }; this.engineError = { context: context.key, message: "" }; this.host.changed();
       }
       return immutable(value);
     } catch (error) {
