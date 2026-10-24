@@ -1,150 +1,69 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type Dispatch, type SetStateAction } from "react";
-import type { Thread, ThreadItem, ThreadSearchResultItem } from "../shared/protocol";
-import { conversationSearchPattern } from "./ConversationSearchDisplay";
+import { useCallback, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
+import type { Thread, ThreadItem } from "../shared/protocol";
+import type { ConversationSearchApplication } from "./ConversationSearchState";
 import { showErrorToast } from "./Toast";
-import { updateThreadByID, updateTurnItem, type AppState } from "./AppState";
 
-// Activation can render a cached snapshot before its resume completes. Keep the
-// search address until that snapshot is reconciled, then reveal its actual item.
+/** The host locates and hydrates; this shell reserves only its own reading intent. */
 export function useConversationSearchNavigation({
-  thread, target, switching, activateThread, captureConversationScrollIntent, jumpToConversationMessage, setAppState,
+  application, thread, switching, captureConversationScrollIntent, jumpToConversationMessage,
 }: {
+  application: ConversationSearchApplication;
   thread?: Thread;
-  target: AppState["conversationSearchTarget"];
   switching: boolean;
-  activateThread: (id: string) => Promise<void>;
   captureConversationScrollIntent: (options?: { forHandoff?: boolean }) => () => boolean;
   jumpToConversationMessage: (turnID: string, item: ThreadItem, query?: string) => () => void;
-  setAppState: Dispatch<SetStateAction<AppState>>;
-}): (result: ThreadSearchResultItem, query: string) => void {
-  const targetIntent = useRef<{ id: string; isCurrent: () => boolean } | undefined>(undefined);
-  const loadingPage = useRef("");
+}): void {
+  const target = useSyncExternalStore(application.subscribe, () => application.getSnapshot().search.target);
+  const intent = useRef<{ id: string; isCurrent: () => boolean } | undefined>(undefined);
   const cancelJump = useRef<(() => void) | undefined>(undefined);
-  const loadingContent = useRef("");
-  const mounted = useRef(true);
-  const currentDestination = useRef({ target, threadID: thread?.id });
-  currentDestination.current = { target, threadID: thread?.id };
-  const finishTarget = useCallback((finished: NonNullable<typeof target>) => {
-    setAppState(current => current.conversationSearchTarget?.id === finished.id
-      ? { ...current, conversationSearchTarget: undefined } : current);
-  }, [setAppState]);
+  const finish = useCallback((targetId: string) => {
+    void application.invoke("search.complete-target", { targetId }).catch(showErrorToast);
+  }, [application]);
   const cancelPendingJump = useCallback(() => {
     cancelJump.current?.();
     cancelJump.current = undefined;
   }, []);
 
   useLayoutEffect(() => {
-    if (!target || targetIntent.current?.id !== target.id) targetIntent.current = undefined;
-    // Bind on arrival, before activation or remote message content finishes.
-    // Leaving and returning must not make an old search a new reading intent.
-    if (target && !targetIntent.current && thread?.id === target.result.thread.id) {
-      if (target.isReadingIntentCurrent && !target.isReadingIntentCurrent()) {
-        finishTarget(target);
-        return;
-      }
-      targetIntent.current = { id: target.id, isCurrent: captureConversationScrollIntent() };
-      const isReadingIntentCurrent = captureConversationScrollIntent({ forHandoff: true });
-      setAppState(current => current.conversationSearchTarget?.id === target.id
-        ? { ...current, conversationSearchTarget: { ...current.conversationSearchTarget, isReadingIntentCurrent } }
-        : current);
-    }
-    if (targetIntent.current && !targetIntent.current.isCurrent()) {
+    if (!target || intent.current?.id !== target.id) intent.current = undefined;
+    if (target && !intent.current && thread?.id === target.threadId) {
       cancelPendingJump();
-      if (target) finishTarget(target);
+      intent.current = { id: target.id, isCurrent: captureConversationScrollIntent() };
     }
-  }, [target?.id, thread?.id, captureConversationScrollIntent, cancelPendingJump, finishTarget, setAppState]);
+    if (target && intent.current && !intent.current.isCurrent()) {
+      cancelPendingJump();
+      finish(target.id);
+    }
+  }, [target, thread?.id, captureConversationScrollIntent, cancelPendingJump, finish]);
 
-  // Streaming snapshots must not cancel retries while an old turn mounts.
-  // Only a destination change or unmount abandons the pending jump.
   useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; cancelPendingJump(); };
-  }, [thread?.id, switching, cancelPendingJump]);
+    // Publish reader cancellation before a replacement shell can bind a new
+    // viewport to the same pending address. The viewport handles input first.
+    const checkReadingIntent = () => {
+      const current = intent.current;
+      if (current && !current.isCurrent()) finish(current.id);
+    };
+    const events = ["wheel", "pointerdown", "keydown", "touchstart"] as const;
+    for (const event of events) window.addEventListener(event, checkReadingIntent, { passive: true });
+    return () => { for (const event of events) window.removeEventListener(event, checkReadingIntent); };
+  }, [finish]);
+
+  useEffect(() => cancelPendingJump, [thread?.id, switching, cancelPendingJump]);
   useEffect(() => {
     if (!target) return;
-    cancelPendingJump();
-    loadingPage.current = "";
-    loadingContent.current = "";
-  }, [target?.id, cancelPendingJump]);
-
-  useEffect(() => {
-    if (!target?.ready || switching) return;
-    if (!targetIntent.current?.isCurrent()) { finishTarget(target); return; }
-    if (thread?.id !== target.result.thread.id) {
-      finishTarget(target);
+    if (target.phase === "failed") {
+      if (target.error) showErrorToast(new Error(target.error));
+      finish(target.id);
       return;
     }
-    const stillCurrent = () => {
-      if (!mounted.current || currentDestination.current.target?.id !== target.id || currentDestination.current.threadID !== thread.id) return false;
-      if (targetIntent.current?.isCurrent()) return true;
-      finishTarget(target);
-      return false;
-    };
-    const seq = target.result.message_seq;
-    const turn = thread.turns.find(turn => turn.items.some(item => item.seq === seq &&
-      (item.type === "user_message" || item.type === "agent_message")));
-    if (!turn) {
-      // A page can contain only the trailing tool items of an assistant
-      // message. They share its sequence; its text can be on the prior page.
-      const passedAddress = thread.turns.some(turn => turn.items.some(item =>
-        item.seq !== undefined && seq !== undefined && item.seq < seq));
-      const cursor = passedAddress ? undefined : thread.history_cursor;
-      if (cursor && window.wuu.loadEarlierThreadHistory && loadingPage.current !== cursor) {
-        loadingPage.current = cursor;
-        void window.wuu.loadEarlierThreadHistory(thread.id, cursor).catch(error => {
-          if (!stillCurrent()) return;
-          finishTarget(target);
-          showErrorToast(error);
-        });
-      }
-      if (!cursor) finishTarget(target);
-      return;
-    }
-    const items = turn.items.filter(item => item.seq === seq);
-    const preview = items.find(item =>
-      (item.type === "user_message" || item.type === "agent_message") && item.remote_content_ref);
-    if (preview?.remote_content_ref && window.wuu.readRemoteItem) {
-      const ref = preview.remote_content_ref;
-      if (loadingContent.current === ref) return;
-      loadingContent.current = ref;
-      // A full-text hit can occur beyond the history page's leading preview.
-      // Hydrate only the addressed message and wait for its rendered snapshot.
-      void window.wuu.readRemoteItem(ref).then(complete => {
-        if (!stillCurrent()) return;
-        if (complete.id !== preview.id || complete.type !== preview.type) {
-          throw new Error("Content changed during download");
-        }
-        setAppState(current => updateThreadByID(current, thread.id, currentThread =>
-          updateTurnItem(currentThread, turn.id, preview.id, item =>
-            item.remote_content_ref === ref ? complete : item)));
-      }).catch(error => {
-        if (!stillCurrent()) return;
-        finishTarget(target);
-        showErrorToast(error);
-      });
-      return;
-    }
-    const item = items.find(item =>
-      (item.type === "user_message" || item.type === "agent_message") &&
-      conversationSearchPattern(target.query)?.test(item.text ?? ""));
-    // Technical records and metadata remain searchable, but do not pretend a
-    // tool/reasoning hit is a match in the user's prompt or the final answer.
-    if (!item) {
-      finishTarget(target);
-      return;
-    }
-    // The controller reserves ownership now; its helper waits for item layout.
+    if (target.phase === "not-found") { finish(target.id); return; }
+    if (target.phase !== "ready" || switching) return;
+    if (!intent.current?.isCurrent() || thread?.id !== target.threadId) { finish(target.id); return; }
+    const turn = thread.turns.find(turn => turn.id === target.turnId);
+    const item = turn?.items.find(item => item.id === target.itemId);
+    if (!turn || !item) return;
+    // Reserve the local layout retry before acknowledging the durable address.
     cancelJump.current = jumpToConversationMessage(turn.id, item, target.query);
-    finishTarget(target);
-  }, [target, thread, switching, jumpToConversationMessage, setAppState, finishTarget]);
-
-  return (result, query) => {
-    cancelPendingJump();
-    const next = result.message_seq ? { id: crypto.randomUUID(), result, query, ready: false } : undefined;
-    setAppState(current => ({ ...current, conversationSearchTarget: next }));
-    void activateThread(result.thread.id).then(() => {
-      setAppState(current => next && current.conversationSearchTarget?.id === next.id
-        ? { ...current, conversationSearchTarget: { ...current.conversationSearchTarget, ready: true } } : current);
-    });
-  };
+    finish(target.id);
+  }, [target, thread, switching, jumpToConversationMessage, finish]);
 }

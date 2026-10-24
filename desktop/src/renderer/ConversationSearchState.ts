@@ -2,20 +2,18 @@ import {
   useEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import type {
-  RuntimeContext,
-  ThreadSearchResultItem,
-} from "../shared/protocol";
-import {
-  sameRuntimeContext,
-  type AppState,
-} from "./AppState";
-import { motionDurationMs, prefersReducedMotion } from "./motion";
-import { translateCurrent } from "./i18n";
+import type { ApplicationSearchActionMapV1, ApplicationSearchResultV1, ApplicationSearchViewV1 } from "../../../packages/plugin-sdk/src/ui-search";
+import { showErrorToast } from "./Toast";
 
-const CONVERSATION_SEARCH_RESULT_LIMIT = 100;
+export interface ConversationSearchApplication {
+  getSnapshot(): { readonly search: ApplicationSearchViewV1 };
+  subscribe(listener: () => void): () => void;
+  invoke<A extends keyof ApplicationSearchActionMapV1>(action: A, input: ApplicationSearchActionMapV1[A]["input"]): Promise<ApplicationSearchActionMapV1[A]["result"]>;
+}
+import { motionDurationMs, prefersReducedMotion } from "./motion";
 
 export type CloseConversationSearchOptions = {
   immediate?: boolean;
@@ -29,7 +27,7 @@ export type ConversationSearchState = {
   query: string;
   loading: boolean;
   error: string;
-  results: ThreadSearchResultItem[];
+  results: readonly ApplicationSearchResultV1[];
   selectedIndex: number;
 };
 
@@ -44,29 +42,25 @@ const initialConversationSearch: ConversationSearchState = {
 };
 
 export function useConversationSearch({
-  activeContext,
+  application,
   open,
   onOpenChange,
-  getAppState,
-  cacheThreads,
   onOpen,
-  onSelectThread,
+  onSelect,
 }: {
-  activeContext?: RuntimeContext;
+  application: ConversationSearchApplication;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
-  getAppState: () => AppState;
-  cacheThreads: (threads: ThreadSearchResultItem["thread"][]) => void;
   onOpen: () => void;
-  onSelectThread: (result: ThreadSearchResultItem, query: string) => void;
+  onSelect: () => void;
 }): {
   conversationSearch: ConversationSearchState;
-  conversationSearchResults: ThreadSearchResultItem[];
+  conversationSearchResults: readonly ApplicationSearchResultV1[];
   conversationSearchRef: React.RefObject<HTMLDivElement | null>;
   conversationSearchInputRef: React.RefObject<HTMLInputElement | null>;
   toggleConversationSearch: () => void;
   closeConversationSearch: (options?: CloseConversationSearchOptions) => void;
-  selectConversationSearchResult: (result: ThreadSearchResultItem) => void;
+  selectConversationSearchResult: (result: ApplicationSearchResultV1) => void;
   handleConversationSearchKeyDown: (
     event: ReactKeyboardEvent<HTMLInputElement>,
   ) => void;
@@ -74,14 +68,14 @@ export function useConversationSearch({
   clearConversationSearchQuery: () => void;
   setConversationSearchSelectedIndex: (index: number) => void;
 } {
-  const [conversationSearch, setConversationSearch] =
+  const [presentation, setConversationSearch] =
     useState<ConversationSearchState>(initialConversationSearch);
   const conversationSearchRef = useRef<HTMLDivElement>(null);
   const conversationSearchInputRef = useRef<HTMLInputElement>(null);
-  const conversationSearchRequestRef = useRef(0);
-  const queryRef = useRef({ query: "", composing: false });
-  const [composing, setComposing] = useState(false);
-  const resultsRequestRef = useRef(-1);
+  const search = useSyncExternalStore(application.subscribe, () => application.getSnapshot().search);
+  const queryRef = useRef({ query: search.query, composing: search.composing });
+  const conversationSearch: ConversationSearchState = { ...presentation, ...search, error: search.error ?? "",
+    selectedIndex: Math.max(0, Math.min(presentation.selectedIndex, search.results.length - 1)) };
   const conversationSearchCloseTimerRef = useRef<number | undefined>(
     undefined,
   );
@@ -90,7 +84,6 @@ export function useConversationSearch({
 
   useEffect(() => {
     return () => {
-      conversationSearchRequestRef.current += 1;
       if (conversationSearchCloseTimerRef.current !== undefined) {
         window.clearTimeout(conversationSearchCloseTimerRef.current);
         conversationSearchCloseTimerRef.current = undefined;
@@ -104,22 +97,6 @@ export function useConversationSearch({
     else closeConversationSearch();
   }, [open]);
 
-  useEffect(() => {
-    if (!conversationSearch.open || conversationSearch.closing || composing) {
-      return undefined;
-    }
-    const delay = conversationSearch.query.trim() ? 140 : 0;
-    const timer = window.setTimeout(() => {
-      void refreshConversationSearchThreads(conversationSearch.query);
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [
-    conversationSearch.closing,
-    conversationSearch.open,
-    conversationSearch.query,
-    composing,
-  ]);
-
   function toggleConversationSearch(): void {
     if (conversationSearch.open) {
       closeConversationSearch();
@@ -129,9 +106,6 @@ export function useConversationSearch({
   }
 
   function openConversationSearch(): void {
-    if (!activeContext) {
-      return;
-    }
     if (conversationSearchCloseTimerRef.current !== undefined) {
       window.clearTimeout(conversationSearchCloseTimerRef.current);
       conversationSearchCloseTimerRef.current = undefined;
@@ -142,7 +116,7 @@ export function useConversationSearch({
     focusBeforeOpenRef.current =
       focused instanceof HTMLElement && focused !== document.body ? focused : null;
     queryRef.current.composing = false;
-    setComposing(false);
+    void application.invoke("search.run", {}).catch(showErrorToast);
     setConversationSearch((current) => ({
       ...current,
       open: true,
@@ -167,7 +141,7 @@ export function useConversationSearch({
       return;
     }
     if (open !== false) onOpenChange?.(false);
-    conversationSearchRequestRef.current += 1;
+    if (options.restoreFocus !== false) void application.invoke("search.cancel", {}).catch(showErrorToast);
     if (conversationSearchCloseTimerRef.current !== undefined) {
       window.clearTimeout(conversationSearchCloseTimerRef.current);
       conversationSearchCloseTimerRef.current = undefined;
@@ -201,66 +175,13 @@ export function useConversationSearch({
     }, motionDurationMs("--search-exit-duration", 180));
   }
 
-  async function refreshConversationSearchThreads(
-    query = conversationSearch.query,
-  ): Promise<void> {
-    const sourceContext = getAppState().activeContext;
-    if (!sourceContext) {
-      return;
-    }
-    const requestID = conversationSearchRequestRef.current + 1;
-    conversationSearchRequestRef.current = requestID;
-    setConversationSearch((current) => ({
-      ...current,
-      loading: true,
-      error: "",
-    }));
-    try {
-      const search = await window.wuu.searchThreads(
-        query,
-        CONVERSATION_SEARCH_RESULT_LIMIT,
-      );
-      if (
-        requestID !== conversationSearchRequestRef.current ||
-        !sameRuntimeContext(sourceContext, getAppState().activeContext)
-      ) {
-        return;
-      }
-      const threads = search.results.map((result) => result.thread);
-      resultsRequestRef.current = requestID;
-      cacheThreads(threads);
-      setConversationSearch((current) => ({
-        ...current,
-        results: search.results,
-        loading: false,
-        error: "",
-        selectedIndex: Math.max(
-          0,
-          Math.min(current.selectedIndex, search.results.length - 1),
-        ),
-      }));
-    } catch (error) {
-      if (
-        requestID !== conversationSearchRequestRef.current ||
-        !sameRuntimeContext(sourceContext, getAppState().activeContext)
-      ) {
-        return;
-      }
-      setConversationSearch((current) => ({
-        ...current,
-        loading: false,
-        error: error instanceof Error ? error.message : translateCurrent("conversationSearch.searchFailed"),
-      }));
-    }
-  }
-
-  function selectConversationSearchResult(result: ThreadSearchResultItem): void {
-    if (
-      resultsRequestRef.current !== conversationSearchRequestRef.current ||
-      !conversationSearchResults.includes(result)
-    ) return;
+  function selectConversationSearchResult(result: ApplicationSearchResultV1): void {
+    const current = application.getSnapshot().search;
+    if (current.loading || current.composing || !current.results.some(row => row.resultId === result.resultId)) return;
+    // Locate claims its address before dismissal; dismissal must not cancel it.
+    void application.invoke("search.locate", { resultId: result.resultId }).catch(showErrorToast);
     closeConversationSearch({ restoreFocus: false });
-    onSelectThread(result, conversationSearch.query);
+    onSelect();
   }
 
   function handleConversationSearchKeyDown(
@@ -321,19 +242,8 @@ export function useConversationSearch({
   function setConversationSearchQuery(query: string, composing = false): void {
     if (queryRef.current.query === query && queryRef.current.composing === composing) return;
     queryRef.current = { query, composing };
-    setComposing(composing);
-    // Invalidate before debounce: old responses cannot become selectable
-    // under a new query, even before its request has been sent. The previous
-    // results stay on screen until the new ones arrive, so each keystroke
-    // does not collapse the palette to a loading line and back.
-    conversationSearchRequestRef.current += 1;
-    setConversationSearch((current) => ({
-      ...current,
-      query,
-      loading: true,
-      error: "",
-      selectedIndex: 0,
-    }));
+    void application.invoke("search.query", { query, composing }).catch(showErrorToast);
+    setConversationSearch(current => ({ ...current, selectedIndex: 0 }));
   }
 
   function clearConversationSearchQuery(): void {

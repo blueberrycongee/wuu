@@ -1715,9 +1715,7 @@ export function App({ application, slots, shellPluginId }: {
     clearConversationSearchQuery,
     setConversationSearchSelectedIndex,
   } = useConversationSearch({
-    activeContext: state.activeContext,
-    getAppState: () => appStateRef.current,
-    cacheThreads: cacheSidebarThreads,
+    application,
     onOpen: () => {
       setWorkspaceMenuOpen(false);
       setRuntimeMenuOpen(false);
@@ -1727,10 +1725,7 @@ export function App({ application, slots, shellPluginId }: {
       setEnvironmentDialog(null);
       setPendingFork(undefined);
     },
-    onSelectThread: (result, query) => {
-      closePrimaryPluginView();
-      return openSearchResult(result, query);
-    },
+    onSelect: closePrimaryPluginView,
   });
 
   // Cmd/Ctrl+P toggles the conversation search overlay. Mirrors the
@@ -3802,14 +3797,12 @@ export function App({ application, slots, shellPluginId }: {
     selectRuntimeContext,
   });
 
-  const openSearchResult = useConversationSearchNavigation({
+  useConversationSearchNavigation({
+    application,
     thread: activeThread,
-    target: state.conversationSearchTarget,
     switching: viewSwitchPending,
-    activateThread,
     captureConversationScrollIntent,
     jumpToConversationMessage,
-    setAppState: setState,
   });
 
   useEffect(() => {

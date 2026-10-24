@@ -1,10 +1,11 @@
 import { Search, X } from "./WuuIcons";
 import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
-import type { DesktopProject, Thread, ThreadSearchResultItem } from "../shared/protocol";
+import type { DesktopProject, Thread } from "../shared/protocol";
 import { conversationSearchPattern, conversationSearchVisibleSnippet } from "./ConversationSearchDisplay";
 import { primaryShortcutLabel } from "./platform";
 import type { ConversationSearchState } from "./ConversationSearchState";
-import { conversationSearchContextLabel } from "./AppState";
+import { threadBelongsToWorkspace } from "./AppState";
+import type { ApplicationSearchResultV1 } from "../../../packages/plugin-sdk/src/ui-search";
 import { threadDisplayTitle } from "./ThreadTitles";
 import { formatCurrentDate, useI18n } from "./i18n";
 
@@ -29,7 +30,7 @@ export function ConversationSearchOverlay({
   onSelectIndex, onSelectResult,
 }: {
   state: ConversationSearchState;
-  results: ThreadSearchResultItem[];
+  results: readonly ApplicationSearchResultV1[];
   threads: Thread[];
   projects: DesktopProject[];
   activeThreadID?: string;
@@ -41,7 +42,7 @@ export function ConversationSearchOverlay({
   onClearQuery: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
   onSelectIndex: (index: number) => void;
-  onSelectResult: (result: ThreadSearchResultItem) => void;
+  onSelectResult: (result: ApplicationSearchResultV1) => void;
 }): JSX.Element | null {
   const { t } = useI18n();
   const composingRef = useRef(false);
@@ -53,8 +54,9 @@ export function ConversationSearchOverlay({
 
   const rows = results.map(result => {
     const title = threadDisplayTitle(result.thread, threads, t("search.untitledConversation"));
-    const context = conversationSearchContextLabel(result.thread, projects);
-    const snippet = conversationSearchPattern(state.query)?.test(title) && !result.message_seq
+    const context = projects.find(project => threadBelongsToWorkspace({ cwd: result.thread.cwd, workspace_id: result.thread.workspace_id,
+      worktree: result.thread.worktree && { path: result.thread.worktree.path, base_repo: result.thread.worktree.base_repo } }, project))?.name ?? t("appState.noWorkspace");
+    const snippet = conversationSearchPattern(state.query)?.test(title) && !result.messageSeq
       ? ""
       : conversationSearchVisibleSnippet({ query: state.query, snippet: result.snippet, title });
     return { result, title, context, snippet, key: JSON.stringify([title, context, snippet]) };
