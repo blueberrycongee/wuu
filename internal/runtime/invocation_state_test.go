@@ -201,8 +201,13 @@ func TestOrdinaryTurnReceiptsSurviveGenerationPublication(t *testing.T) {
 				if err := json.Unmarshal(document.Value, &receipt); err != nil {
 					t.Fatal(err)
 				}
-				if receipt.ID != admitted[0].ID || receipt.OperationID != request.Operation.ID || receipt.AttemptID != request.Attempt.ID || receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled {
-					t.Errorf("receipt lost its admitted identity or logical cancellation: %+v", receipt)
+				if receipt.ID != admitted[0].ID || receipt.OperationID != request.Operation.ID || receipt.AttemptID != request.Attempt.ID {
+					t.Errorf("receipt lost its admitted identity: %+v", receipt)
+				}
+				// Logical cancellation may checkpoint before the native observer's
+				// terminal event. An aborted final checkpoint preserves that unknown.
+				if !(timeout && receipt.Outcome == providers.InferenceSubmissionInFlight) && (receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled) {
+					t.Errorf("receipt lost cancellation or invented physical completion: %+v", receipt)
 				}
 				if !timeout && (receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 71 || receipt.ReportedUsage.OutputTokens != 13) {
 					t.Errorf("final required checkpoint lost late physical usage: %+v", receipt)
