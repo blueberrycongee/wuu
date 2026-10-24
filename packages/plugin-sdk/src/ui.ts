@@ -1,3 +1,4 @@
+import type { ApplicationWebWorkspaceV1 } from "./ui-web-workspace.js";
 import type { ApplicationOnboardingV1, OnboardingCallOptionsV1 } from "./ui-onboarding.js";
 import type { ApplicationBrowserV1, BrowserActivityV1, BrowserDockTargetV1, BrowserOperationOptionsV1, BrowserSurfaceHandleV1 } from "./ui-browser.js";
 import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "./ui-side-conversation.js";
@@ -164,6 +165,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly webWorkspace: ApplicationWebWorkspaceV1;
   readonly onboarding: ApplicationOnboardingV1;
   readonly browser: ApplicationBrowserV1;
   readonly fileSelection: ApplicationFileSelectionServiceV1;

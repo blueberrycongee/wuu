@@ -1,3 +1,4 @@
+import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
 import { ApplicationBrowser } from "./ApplicationBrowser";
 import { ApplicationController } from "./ApplicationController";
 import { ApplicationProjects } from "./ApplicationProjects";
@@ -19,6 +20,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    webWorkspace: new ApplicationWebWorkspace(undefined, "linux", async () => {}),
     get onboarding() { return new ApplicationController().onboarding; },
     browser: new ApplicationBrowser({ api: {}, onActivityChanged: () => {} }),
     get fileSelection() { return new ApplicationController().fileSelection; },
@@ -41,6 +43,23 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("owns late web pages until generation cleanup completes", async () => {
+    const { host, service } = fixture();
+    let finish!: () => void;
+    const dispose = vi.fn().mockResolvedValue(undefined);
+    const owner = { open: () => new Promise<void>(resolve => { finish = resolve; }), dispose };
+    Object.defineProperty(service, "webWorkspace", { value: { fork: () => owner } });
+    let application!: ApplicationServiceV1;
+    await host.activateGeneration({ pluginId: "web", generation: "one", register: api => { application = api.application; } });
+    const opening = application.webWorkspace.open({ id: "site", url: "https://example.test" });
+    const rejected = expect(opening).rejects.toThrow();
+    await host.activateGeneration({ pluginId: "web", generation: "two", register: () => {} });
+    expect(dispose).toHaveBeenCalledOnce();
+    finish(); await rejected;
+    await application.webWorkspace.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
   it("releases browser presentation leases when the selected generation retires", async () => {
     const { host, service } = fixture();
     const dispose = vi.fn(), reportBounds = vi.fn();

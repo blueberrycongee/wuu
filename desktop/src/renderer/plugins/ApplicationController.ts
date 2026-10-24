@@ -1,3 +1,5 @@
+import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
+import type { WebWorkspaceApi } from "../../shared/webWorkspace";
 import { ApplicationOnboarding } from "./ApplicationOnboarding";
 import { ApplicationBrowser } from "./ApplicationBrowser";
 import { emptyActivitySessions, mergeActivityList, reduceActivitySessionEvent, clearActivitiesForWorkdir } from "../ActivitySessions";
@@ -71,6 +73,12 @@ export class ApplicationController implements ApplicationServiceV1 {
     return this.composerRuntimeOwner ??= new ApplicationComposerRuntime({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
+  }
+  private webWorkspaceOwner?: ApplicationWebWorkspace;
+  get webWorkspace(): ApplicationWebWorkspace {
+    return this.webWorkspaceOwner ??= new ApplicationWebWorkspace(
+      (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace,
+      window.wuu.platform, url => window.wuu.openExternal(url));
   }
   private onboardingOwner?: ApplicationOnboarding;
   get onboarding(): ApplicationOnboarding {
@@ -422,6 +430,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.composerRuntimeOwner = undefined;
       this.activityRequest++; this.activitySourceKey = undefined;
       this.browserOwner?.dispose(); this.browserOwner = undefined;
+      void this.webWorkspaceOwner?.dispose().catch(error => console.error("Web workspace cleanup failed", error));
+      this.webWorkspaceOwner = undefined;
       this.onboardingOwner?.dispose(); this.onboardingOwner = undefined;
       this.fileSelectionOwner = undefined;
       this.projectsOwner?.dispose();

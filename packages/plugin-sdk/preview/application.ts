@@ -1,3 +1,4 @@
+import type { ApplicationWebWorkspaceV1 } from '../dist/ui-web-workspace.js';
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from '../dist/index.js';
 
 export function createPreviewApplication(initial?: ApplicationSnapshotV1): ApplicationServiceV1 {
@@ -47,8 +48,20 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     for (const listener of listeners) listener();
   };
   const unavailable = (): never => { throw new Error("Settings controls are unavailable in the synthetic preview"); };
+  const webWorkspace: ApplicationWebWorkspaceV1 = {
+    platform: "preview", capabilities: { available: false, windowInsets: false, nativeOverlays: false }, limits: { tabs: 0, zoomMin: 1, zoomMax: 1 },
+    fork: () => webWorkspace, dispose: async () => {}, openExternal: unavailable,
+    open: unavailable, capture: unavailable, initializeTabs: unavailable, close: unavailable,
+    command: unavailable, createTab: unavailable, selectTab: unavailable, closeTab: unavailable, reopenTab: unavailable,
+    setTabPinned: unavailable, setTabMuted: unavailable, reorderTabs: unavailable, find: unavailable, stopFind: unavailable, setZoom: unavailable,
+    reportBounds: unavailable, reportPopover: unavailable, showTooltip: unavailable, showOptions: unavailable, dismissOptions: unavailable,
+    setShortcutTarget: unavailable, listDownloads: unavailable, downloadCommand: unavailable,
+    onPopoverDismiss: () => () => {}, onState: () => () => {}, onReveal: () => () => {}, onFocusAddress: () => () => {}, onFocusFind: () => () => {}, onDownloads: () => () => {},
+    library: { getState: unavailable, setBookmark: unavailable, removeHistory: unavailable, clearHistory: unavailable, onState: () => () => {} },
+  };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    webWorkspace,
     onboarding: { getSnapshot: () => ({ revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } }), subscribe: () => () => {}, checkpoint: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
     browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openExternal: unavailable, consumeNavigation: unavailable },
     fileSelection: { getSnapshot: target => ({ ...target, interactionOwnerKey: "preview", enabled: false, canAskSide: false, comments: [] }), subscribe: () => () => {},
