@@ -368,3 +368,10 @@ func TestSessionJournalClosePropagatesCleanupContextToFinalFlush(t *testing.T) {
 		}
 	})
 }
+
+func TestSessionDomainDescriptorPassesPublicNegotiation(t *testing.T) {
+	service := NewService("session-contract", nil)
+	if err := pluginhost.ValidateServiceNegotiation(pluginhost.CapabilityInitializeResult{ProtocolVersion: 3, ProvidedServices: service.ProvidedServices(), RequiredServices: service.RequiredServices()}); err != nil {
+		t.Fatal(err)
+	}
+}
