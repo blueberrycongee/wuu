@@ -44,7 +44,8 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("plugin id and fingerprint are required"))
 	}
 
-	for _, module := range s.rt.NativeRendererModules() {
+	snapshot := s.rt.ExtensionSnapshot()
+	for _, module := range snapshot.NativeRendererModules() {
 		if params.ID != module.SubjectID {
 			continue
 		}
@@ -56,7 +57,6 @@ func (s *Server) handlePluginDesktopModuleRead(req Request) error {
 		}, nil)
 	}
 
-	snapshot := s.rt.ExtensionSnapshot()
 	var selected *pluginpkg.Plugin
 	for index := range snapshot.Plugins {
 		if snapshot.Plugins[index].SubjectID == params.ID {

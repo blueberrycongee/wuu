@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -69,6 +70,108 @@ func TestPluginDiagnosticsExposeIsolatedCapabilityFailures(t *testing.T) {
 	result := remarshal[PluginDiagnosticsResult](t, responseByID(t, parseOutput(t, out.String()), "diagnostics")["result"])
 	if result.ID != item.SubjectID || len(result.Diagnostics) != 1 || result.Diagnostics[0].Contribution != pluginhost.CapabilityAgentTurnCompleted || !strings.Contains(result.Diagnostics[0].Message, "observer boom") {
 		t.Fatalf("diagnostics result = %+v", result)
+	}
+}
+
+func TestPluginDiagnosticsAdmitInventoryRenderersAndKeepFailures(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = t.TempDir()
+	preparePluginRuntimePathsForTest(t, rt)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	defer srv.Close()
+	cfg := srv.currentExtensionConfig()
+	cfg.Composition = composition.DefaultConfig("desktop")
+	if err := srv.refreshExtensions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	modules := rt.NativeRendererModules()
+	if len(modules) == 0 {
+		t.Fatal("no admitted renderer modules")
+	}
+	for _, module := range modules {
+		t.Run(module.ID, func(t *testing.T) {
+			params := PluginDiagnosticsParams{ID: module.SubjectID, Fingerprint: module.Fingerprint}
+			callPluginPackageRPC(t, srv, module.ID, MethodPluginDiagnosticsList, params)
+			response := responseByID(t, parseOutput(t, out.String()), module.ID)
+			if response["error"] != nil {
+				t.Fatalf("admitted renderer diagnostics failed: %+v", response)
+			}
+			result := remarshal[PluginDiagnosticsResult](t, response["result"])
+			if result.ID != module.SubjectID || result.Diagnostics == nil || len(result.Diagnostics) != 0 {
+				t.Fatalf("healthy renderer diagnostics: %+v", result)
+			}
+			params.Fingerprint = "stale"
+			callPluginPackageRPC(t, srv, module.ID+"-stale", MethodPluginDiagnosticsList, params)
+			if responseByID(t, parseOutput(t, out.String()), module.ID+"-stale")["error"] == nil {
+				t.Fatal("stale renderer fingerprint accepted")
+			}
+		})
+	}
+	module := modules[0]
+	registry := rt.PluginHost.ServiceRegistry()
+	for _, phase := range []string{"registration", "render", "cleanup"} {
+		if err := registry.ReportRenderer(module.ID, module.Fingerprint, "test-window", pluginhost.RendererActivationReport{
+			Activation: 1, Phase: phase, Status: "failed", Message: phase + " failure",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	callPluginPackageRPC(t, srv, "renderer-failures", MethodPluginDiagnosticsList, PluginDiagnosticsParams{ID: module.SubjectID, Fingerprint: module.Fingerprint})
+	response := responseByID(t, parseOutput(t, out.String()), "renderer-failures")
+	if response["error"] != nil {
+		t.Fatalf("failed renderer diagnostics unavailable: %+v", response)
+	}
+	result := remarshal[PluginDiagnosticsResult](t, response["result"])
+	if len(result.Diagnostics) != 3 {
+		t.Fatalf("renderer failures were hidden: %+v", result)
+	}
+	for _, diagnostic := range result.Diagnostics {
+		if !strings.Contains(diagnostic.Contribution, "test-window") || !strings.Contains(diagnostic.Message, "failure") {
+			t.Fatalf("renderer failure lost attribution: %+v", diagnostic)
+		}
+	}
+	for id, params := range map[string]PluginDiagnosticsParams{
+		"missing": {ID: "unknown-plugin", Fingerprint: module.Fingerprint},
+		"empty":   {ID: module.SubjectID},
+	} {
+		callPluginPackageRPC(t, srv, id, MethodPluginDiagnosticsList, params)
+		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
+			t.Fatalf("invalid diagnostic identity accepted: %s", id)
+		}
+	}
+	// Admission retains the original graph even if Session publishes a new host.
+	srv.Close()
+	srv = &Server{rt: rt, out: out}
+	original := rt.PluginHost
+	rt.PluginHost = pluginhost.New()
+	defer func() { rt.PluginHost = original }()
+	callPluginPackageRPC(t, srv, "retained-renderer", MethodPluginDiagnosticsList, PluginDiagnosticsParams{ID: module.SubjectID, Fingerprint: module.Fingerprint})
+	retained := responseByID(t, parseOutput(t, out.String()), "retained-renderer")
+	if retained["error"] != nil || len(remarshal[PluginDiagnosticsResult](t, retained["result"]).Diagnostics) != 3 {
+		t.Fatalf("renderer diagnostics escaped their admitted graph: %+v", retained)
+	}
+}
+
+func TestPluginDiagnosticsIncludePackageRendererFailures(t *testing.T) {
+	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
+		return &isolatedFailureClient{id: id, invokeErr: errors.New("observer failure")}
+	})
+	if err := srv.notifyPluginTurnCompleted(testRuntimeState(t, srv.rt), context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
+		t.Fatal(err)
+	}
+	registry := srv.rt.PluginHost.ServiceRegistry()
+	registry.RegisterRenderer(item.ID, item.Fingerprint)
+	registry.SetComposition(pluginhost.CompositionSnapshot{Modules: []pluginhost.CompositionModuleSnapshot{{ID: item.ID}}})
+	if err := registry.ReportRenderer(item.ID, item.Fingerprint, "package-window", pluginhost.RendererActivationReport{
+		Activation: 1, Phase: "registration", Status: "failed", Message: "package registration failure",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	callPluginPackageRPC(t, srv, "combined", MethodPluginDiagnosticsList, PluginDiagnosticsParams{ID: item.SubjectID, Fingerprint: item.Fingerprint})
+	result := remarshal[PluginDiagnosticsResult](t, responseByID(t, parseOutput(t, out.String()), "combined")["result"])
+	if len(result.Diagnostics) != 2 || !strings.Contains(result.Diagnostics[0].Message, "observer failure") || result.Diagnostics[1].Message != "package registration failure" {
+		t.Fatalf("runtime and renderer failures must both remain visible: %+v", result)
 	}
 }
 

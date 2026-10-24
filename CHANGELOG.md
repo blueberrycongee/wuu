@@ -143,6 +143,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Declare the automation sidebar contribution so its interface loads through the public plugin contract.
 
+- Resolve built-in UI diagnostics against the same retained runtime generation as installed plugins. Show renderer registration, rendering, and cleanup failures alongside runtime contribution failures instead of reporting healthy built-in modules as unavailable.
+
 - Restore built-in composer, menu, text and border colors while keeping public semantic color defaults available to independent UI shells. Explicit plugin theme colors still override the corresponding surfaces; partial themes preserve unspecified component defaults.
 
 - Return to the conversation and exit full-panel mode when the last workspace tab closes. Closing a file no longer creates a replacement Files tab, and restoring a previous file keeps its selected tab and editor content aligned.

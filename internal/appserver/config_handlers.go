@@ -661,7 +661,7 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		}
 	}
 
-	for _, module := range s.rt.NativeRendererModules() {
+	for _, module := range snapshot.NativeRendererModules() {
 		enabled := true
 		records = append(records, ExtensionInventoryRecord{
 			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,

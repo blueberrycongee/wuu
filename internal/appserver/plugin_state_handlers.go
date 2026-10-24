@@ -121,11 +121,27 @@ func (s *Server) handlePluginDiagnosticsList(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	defer release()
-	plugin, err := s.requireActiveDesktopPluginIn(services.Snapshot, params.ID, params.Fingerprint)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	params.ID, params.Fingerprint = strings.TrimSpace(params.ID), strings.TrimSpace(params.Fingerprint)
+	var pluginID string
+	for _, module := range services.Snapshot.NativeRendererModules() {
+		if module.SubjectID != params.ID {
+			continue
+		}
+		if params.Fingerprint != module.Fingerprint {
+			return s.writeResponse(req.ID, nil, errors.New("plugin generation is no longer active"))
+		}
+		pluginID = module.ID
+		break
 	}
-	diagnostics := services.Snapshot.PluginHost.ContributionDiagnostics(plugin.ID)
+	if pluginID == "" {
+		plugin, err := s.requireActiveDesktopPluginIn(services.Snapshot, params.ID, params.Fingerprint)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		pluginID = plugin.ID
+	}
+	host := services.Snapshot.PluginHost
+	diagnostics := host.ContributionDiagnostics(pluginID)
 	result := make([]PluginContributionDiagnostic, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		result = append(result, PluginContributionDiagnostic{
@@ -133,7 +149,39 @@ func (s *Server) handlePluginDiagnosticsList(req Request) error {
 			Message:      diagnostic.Message,
 		})
 	}
-	return s.writeResponse(req.ID, PluginDiagnosticsResult{ID: plugin.SubjectID, Diagnostics: result}, nil)
+	result = append(result, pluginRendererDiagnostics(host, pluginID)...)
+	return s.writeResponse(req.ID, PluginDiagnosticsResult{ID: params.ID, Diagnostics: result}, nil)
+}
+
+func pluginRendererDiagnostics(host *pluginhost.Host, pluginID string) []PluginContributionDiagnostic {
+	registry := host.ServiceRegistry()
+	if registry == nil {
+		return nil
+	}
+	composition := registry.Snapshot(0).Composition
+	if composition == nil {
+		return nil
+	}
+	var diagnostics []PluginContributionDiagnostic
+	for _, module := range composition.Modules {
+		if module.ID != pluginID || module.Renderer == nil {
+			continue
+		}
+		for _, client := range module.Renderer.Clients {
+			for _, phase := range []struct {
+				name  string
+				state *pluginhost.RendererPhaseSnapshot
+			}{{"registration", client.Registration}, {"render", client.Render}, {"cleanup", client.Cleanup}} {
+				if phase.state != nil && phase.state.Status == "failed" {
+					diagnostics = append(diagnostics, PluginContributionDiagnostic{
+						Contribution: "renderer/" + client.RendererID + "/" + phase.name,
+						Message:      phase.state.Message,
+					})
+				}
+			}
+		}
+	}
+	return diagnostics
 }
 
 // handlePluginGenerationDiagnosticsList exposes retired plugin generation

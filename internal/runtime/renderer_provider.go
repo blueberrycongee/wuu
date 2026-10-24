@@ -135,14 +135,19 @@ func rendererModule(item pluginpkg.Plugin) RendererModule {
 // NativeRendererModules returns only modules admitted by this generation.
 // Their source transport differs from file modules; selection and lifecycle do not.
 func (s *Session) NativeRendererModules() []RendererModule {
-	s.pluginGenerationMu.Lock()
-	defer s.pluginGenerationMu.Unlock()
-	if s.PluginHost == nil {
+	return s.ExtensionSnapshot().NativeRendererModules()
+}
+
+// NativeRendererModules resolves metadata against this snapshot's host, so
+// inventory, asset loading, and retained diagnostic requests share admission.
+func (snapshot ExtensionSnapshot) NativeRendererModules() []RendererModule {
+	if snapshot.PluginHost == nil {
 		return nil
 	}
+	statuses := snapshot.PluginHost.Statuses()
 	var result []RendererModule
 	for _, module := range nativeRendererModules() {
-		for _, status := range s.PluginHost.Statuses() {
+		for _, status := range statuses {
 			if status.ID == module.ID && status.State == pluginhost.StateActive {
 				result = append(result, module)
 			}

@@ -111,6 +111,12 @@ A provider receives unsent draft text. Choose deliberately what leaves the machi
 
 For older desktop hosts, check `typeof api.registerComposerInlineCompletionProvider === "function"` before registering. Feature-detect `typeof handle.refresh === "function"` for refresh and interaction support on hosts that already expose registration. The context's `contractVersion: 1` describes this callback shape; it is separate from runtime service versions and Wuu's product CalVer. Exact public types are in the [TypeScript SDK](../../../packages/plugin-sdk/src/index.ts).
 
+## Diagnostics
+
+Plugin details use `plugin/diagnostics/list` for both built-in UI modules and installed plugins. The request's `id` and `fingerprint` are checked against the runtime generation retained for that request. Unknown, disabled, and outdated identities return errors.
+
+The response includes runtime contribution failures and reported renderer registration, render, and cleanup failures. Renderer entries identify the window connection and phase in `contribution`, with the reported error in `message`. A healthy plugin returns an empty diagnostics list.
+
 ## Appearance and cleanup
 
 Use `api.react` and `api.ui` so controls follow the host's theme, spacing, and typography. Keep UI size separate from code size. Prefer declarative theme tokens for appearance-only changes; the [surface matrix](theme-surface-matrix.md) lists the public contract.
