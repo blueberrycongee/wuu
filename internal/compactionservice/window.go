@@ -134,3 +134,10 @@ func acceptedNewContextRequest(results []providers.ChatMessage) *newContextReque
 	}
 	return nil
 }
+
+// BuildWindow is the native policy used by the selected service and explicit
+// local embeddings. Production consumers use Client.Window instead.
+func BuildWindow(in WindowRequest) (Replacement, error) {
+	messages, err := buildFreshContext(in.Messages, in.HistoryHead, in.FixedTokens, in.TargetTokens, in.MediaInput)
+	return Replacement{Messages: messages}, err
+}

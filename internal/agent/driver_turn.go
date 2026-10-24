@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
@@ -27,6 +28,7 @@ type streamTurnGateway struct {
 	historyRewritten        bool
 	onEvent                 StreamCallback
 	client                  providers.StreamClient
+	policy                  *compactionservice.Policy
 	ready                   bool
 	closed                  bool
 	complete                bool
@@ -94,6 +96,13 @@ func (g *streamTurnGateway) acquire(ctx context.Context) (context.Context, func(
 func (g *streamTurnGateway) prepare(ctx context.Context) error {
 	if g.ready {
 		return nil
+	}
+	if g.runner.SelectedCompaction != nil {
+		policy, err := g.runner.SelectedCompaction.Describe(ctx, g.runner.compactionDescription())
+		if err != nil {
+			return err
+		}
+		g.policy = &policy
 	}
 	recovered, err := g.runner.pendingToolResultMessages(ctx, g.input.Messages)
 	if err != nil {

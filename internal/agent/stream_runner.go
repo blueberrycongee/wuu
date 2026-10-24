@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -51,7 +52,9 @@ type StreamRunner struct {
 	// SystemPromptSections mirrors SystemPrompt as metadata only, allowing
 	// request telemetry to explain the stable prompt without exposing text.
 	SystemPromptSections []SystemPromptSectionInfo
-	// CompactionRegistry resolves a generation-owned compactor for each run.
+	// SelectedCompaction is authoritative for production turns and note forks.
+	// CompactionRegistry is only for explicit local embeddings without a service graph.
+	SelectedCompaction  *compactionservice.Client
 	CompactionRegistry  *CompactionRegistry
 	CompactionNoteStore CompactionNoteStore
 	// ArchiveHistory commits in-run messages before accepted steering is
@@ -649,10 +652,10 @@ func (r *StreamRunner) storeRetainedRequestContext(state *RetainedRequestContext
 	r.retainedRequestContext = state
 }
 
-// ContextWindowsAvailable reports whether the active compaction policy opts
-// into summary-free context windows.
+// ContextWindowsAvailable reports local embedding compatibility state.
+// Production setup uses ContextWindowsAvailableContext to preserve service errors.
 func (r *StreamRunner) ContextWindowsAvailable() bool {
-	return r != nil && r.contextWindowProvider() != nil
+	return r != nil && r.SelectedCompaction == nil && r.contextWindowProvider() != nil
 }
 
 func (r *StreamRunner) contextWindowProvider() ContextWindowProvider {
@@ -710,7 +713,13 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 	promptCacheKey := r.PromptCacheKey
 	inferenceJournal := r.InferenceJournal
 	inputBudget := r.freshContextTargetTokens(0)
-	return boundedCompactionNoteFork(func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
+	if r.SelectedCompaction != nil {
+		inputBudget = r.MaxInputTokens
+		if inputBudget <= 0 && r.ContextWindowOverride > 0 {
+			inputBudget = r.ContextWindowOverride - max(0, r.OutputReserveTokens)
+		}
+	}
+	fork := func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
 		tools, err := toolDefinitions(ctx, r.Tools)
 		if err != nil {
 			return CompactionNoteForkResult{}, err
@@ -719,15 +728,20 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 		if client == nil {
 			return CompactionNoteForkResult{}, errors.New("context note client is unavailable")
 		}
-		messages := providers.CloneChatMessages(filterDurableHistory(history))
-		if retained != nil && retained.validFor(messages) {
-			messages = spliceRetainedContext(messages, retained.Messages)
+		var messages []providers.ChatMessage
+		if plan.PreparedMessages != nil {
+			messages = providers.CloneChatMessages(plan.PreparedMessages)
+		} else {
+			messages = providers.CloneChatMessages(filterDurableHistory(history))
+			if retained != nil && retained.validFor(messages) {
+				messages = spliceRetainedContext(messages, retained.Messages)
+			}
+			messages = annotateCompactionNoteHistorySeqs(messages)
+			messages = append(messages, providers.ChatMessage{
+				Role: "user", Content: strings.TrimSpace(plan.Prompt), Hidden: true, ReadOnly: true,
+				Origin: "internal", Cause: "compaction_note_fork",
+			})
 		}
-		messages = annotateCompactionNoteHistorySeqs(messages)
-		messages = append(messages, providers.ChatMessage{
-			Role: "user", Content: strings.TrimSpace(plan.Prompt), Hidden: true, ReadOnly: true,
-			Origin: "internal", Cause: "compaction_note_fork",
-		})
 		req := providers.ChatRequest{
 			Provider:                    providerName,
 			Model:                       model,
@@ -753,7 +767,7 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 			}
 		}
 		req.NativeDeferredToolDiscovery = providers.NativeToolDiscoveryEnabled(req.NativeDeferredToolDiscovery, req.Tools)
-		if _, bounded := ctx.Value(compactionNoteBudgetKey{}).(int); bounded && estimateOutboundRequestTokens(req) > inputBudget {
+		if _, bounded := ctx.Value(compactionNoteBudgetKey{}).(int); bounded && inputBudget > 0 && estimateOutboundRequestTokens(req) > inputBudget {
 			return CompactionNoteForkResult{}, errors.New("transformed context note request exceeds the model input budget")
 		}
 		cacheHint := buildCacheHint(req.Messages)
@@ -776,7 +790,18 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 			return CompactionNoteForkResult{Usage: result.Usage}, errors.New("context note fork returned empty Markdown")
 		}
 		return CompactionNoteForkResult{Markdown: markdown, Usage: result.Usage}, nil
-	})
+	}
+	if r.SelectedCompaction != nil {
+		selectedFork := selectedCompactionNoteFork(r.SelectedCompaction, fork)
+		return func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
+			messages := providers.CloneChatMessages(filterDurableHistory(history))
+			if retained != nil && retained.validFor(messages) {
+				messages = spliceRetainedContext(messages, retained.Messages)
+			}
+			return selectedFork(ctx, messages, plan)
+		}
+	}
+	return boundedCompactionNoteFork(fork)
 }
 
 // commitUsageTracker publishes a run-local usage snapshot as the new

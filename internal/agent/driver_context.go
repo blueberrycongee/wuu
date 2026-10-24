@@ -84,7 +84,9 @@ func (g *streamTurnGateway) ReplaceContext(ctx context.Context, replacement loop
 	}
 	messages = applyArchivedHistorySeqs(messages, g.produced, seqs)
 	key := "driver-context"
-	if provider := g.runner.contextWindowProvider(); provider != nil {
+	if g.policy != nil {
+		key = g.policy.Key
+	} else if provider := g.runner.contextWindowProvider(); provider != nil {
 		key = provider.CompactionKey()
 	}
 	committed, head := messages, g.archiveHead

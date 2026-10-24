@@ -94,7 +94,6 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	case "window":
 		var in WindowRequest
 		if err = decode(p.Params, &in); err == nil {
-			var messages []providers.ChatMessage
 			_, selected, policyErr := legacyPolicy(ctx, in.PolicyKey)
 			if policyErr != nil {
 				return nil, policyErr
@@ -102,8 +101,7 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 			if selected != nil && selected.Descriptor.Version < 3 {
 				return nil, &pluginhost.HostServiceError{Code: "window_unsupported", Message: "selected policy does not provide context windows"}
 			}
-			messages, err = buildFreshContext(in.Messages, in.HistoryHead, in.FixedTokens, in.TargetTokens, in.MediaInput)
-			result = Replacement{Messages: messages}
+			result, err = BuildWindow(in)
 		}
 	case "handoff":
 		var in HandoffRequest

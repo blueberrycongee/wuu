@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -32,10 +33,15 @@ func (g *streamTurnGateway) ReadSettings(ctx context.Context) (pluginprotocol.Dr
 		ForceInitialCompact: r.ForceInitialCompact, CompactOnly: r.CompactOnly,
 		CanArchive: r.ArchiveHistory != nil, CanCompact: g.client != nil,
 	}
-	if r.CompactionRegistry != nil && r.CompactionRegistry.Resolve(nil) != nil {
+	if g.policy != nil {
+		settings.CanCompact = true
+		if g.policy.ContextWindows && r.ArchiveHistory != nil {
+			settings.FreshContextTokens = g.policy.TargetTokens
+		}
+	} else if r.CompactionRegistry != nil && r.CompactionRegistry.Resolve(nil) != nil {
 		settings.CanCompact = true
 	}
-	if r.contextWindowProvider() != nil && r.ArchiveHistory != nil {
+	if g.policy == nil && r.contextWindowProvider() != nil && r.ArchiveHistory != nil {
 		settings.FreshContextTokens = r.freshContextTargetTokens(r.CompactThresholdTokens)
 	}
 	_, sections := r.systemPromptSnapshot()
@@ -137,6 +143,24 @@ func (g *streamTurnGateway) CompactContext(ctx context.Context, messages []provi
 		model = r.Model
 	}
 	media := providers.ResolveMediaInput(g.client, r.MediaInput, r.ProviderOptions)
+	if hint.Window != nil {
+		window := hint.Window
+		if window.HistoryHead != g.archiveHead {
+			return nil, errors.New("context window archive head is stale")
+		}
+		if g.policy != nil {
+			if !g.policy.ContextWindows {
+				return nil, errors.New("selected policy disables context windows")
+			}
+			result, err := r.SelectedCompaction.Window(ctx, compactionservice.WindowRequest{PolicyKey: g.policy.Key, Messages: providers.CloneChatMessages(messages), HistoryHead: window.HistoryHead, FixedTokens: window.FixedTokens, TargetTokens: window.TargetTokens, MediaInput: media})
+			return result.Messages, err
+		}
+		if r.contextWindowProvider() == nil {
+			return nil, errors.New("context window provider is unavailable")
+		}
+		return buildFreshContext(messages, window.HistoryHead, window.FixedTokens, window.TargetTokens, media)
+	}
+
 	ctx = providers.WithInferenceJournal(ctx, r.InferenceJournal)
 	ctx, lineage := providers.BeginInferenceOperationLineage(ctx, g.lastModelOperationID)
 	ctx = withCompactBudgetHint(ctx, compactBudgetHint{Reason: CompactReason(hint.Reason), LastSuccessfulTokens: hint.LastSuccessfulTokens, FailedRequestTokens: hint.FailedRequestTokens, TargetTotalTokens: hint.TargetTotalTokens})
@@ -144,6 +168,20 @@ func (g *streamTurnGateway) CompactContext(ctx context.Context, messages []provi
 		Model: model, CompactionRegistry: r.CompactionRegistry, CompactionNoteStore: r.CompactionNoteStore,
 		ForkCompactionNote: r.compactionNoteFork(r.snapshotRetainedRequestContext()),
 		OnCompactionNote:   func(status string, err error) { emitCompactionNoteEvent(g.onEvent, status, err) },
+	}
+	if g.policy != nil {
+		definitions, err := toolDefinitions(ctx, r.Tools)
+		if err != nil {
+			return nil, err
+		}
+		request := compactionservice.Request{Model: model, Messages: providers.CloneChatMessages(messages), Budget: compact.Budget{MediaInput: media, ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens, OutputReserveTokens: r.OutputReserveTokens, KeepRecentTokens: r.CompactKeepRecentTokens}, Options: compact.NativeOptions{Provider: r.ProviderName, Tools: definitions, Temperature: r.Temperature, ProviderOptions: r.ProviderOptions, MediaInput: media, NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions)}, Hint: compactionservice.BudgetHint{Reason: hint.Reason, LastSuccessfulTokens: hint.LastSuccessfulTokens, FailedRequestTokens: hint.FailedRequestTokens, TargetTotalTokens: hint.TargetTotalTokens}}
+		replacement, err := compactSelected(compactionservice.WithModelClient(ctx, g.client), r.SelectedCompaction, *g.policy, request, cfg)
+		g.proposedContextParentID, g.proposedContextHash = "", ""
+		if err == nil && compactChanged(messages, replacement) {
+			g.proposedContextParentID = lineage.LastOperationID()
+			g.proposedContextHash = hashMessagesForRequestShape(replacement)
+		}
+		return replacement, err
 	}
 	if g.client != nil {
 		cfg.Compact = func(ctx context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
