@@ -1,9 +1,49 @@
-import { act } from "react";
+import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../shared/protocol";
 import { ConfirmDialogHost } from "./ConfirmDialog";
-import { SkillsCatalog } from "./SkillsCatalog";
+import { SkillsCatalog as PublicSkillsCatalog } from "./SkillsCatalog";
+import type { ComponentProps } from "react";
+import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
+import type { ExtensionPackageUpdateParams, PluginPackageInstallResult, PluginPackageRemoveResult, RuntimeContext } from "../shared/protocol";
+
+// Existing UI scenarios provide a public application fixture; production accepts
+// no business callbacks or window transport fallback.
+function SkillsCatalog(props: Omit<ComponentProps<typeof PublicSkillsCatalog>, "application"> & {
+ activeContext?:RuntimeContext; extensionInventory?:ExtensionInventoryRecord[];
+ onTrySkill?:(skill:SkillSummary)=>void;
+ onRefreshCatalog?:()=>Promise<SkillSummary[]|undefined>;
+ onUpdateExtensionPackage?:(input:ExtensionPackageUpdateParams)=>Promise<void>;
+ onInstallPluginPackage?:()=>Promise<PluginPackageInstallResult|undefined>;
+ onRemovePluginPackage?:(id:string)=>Promise<PluginPackageRemoveResult|undefined>;
+}) {
+ const application = useMemo(() => {
+  const empty: never[] = [];
+  const snapshot = {contextKey:JSON.stringify(props.activeContext ?? null),inventory:props.extensionInventory ?? [],
+   capabilities:{install:!window.wuu?.unsupportedMethods?.includes("installPluginPackage"),update:!!props.onUpdateExtensionPackage,remove:!!props.onRemovePluginPackage}};
+  const catalog:ApplicationCatalogV1 = {
+   getSnapshot:()=>snapshot,
+   listSkills:async()=>(await window.wuu.listSkills()).skills,
+   readSkill:input=>window.wuu.readSkillContent(input),
+   refresh:props.onRefreshCatalog ?? (async()=>(await window.wuu.listSkills()).skills),
+   update:async input=>{await props.onUpdateExtensionPackage?.(input);},
+   install:async()=>props.onInstallPluginPackage?.(),remove:async id=>props.onRemovePluginPackage?.(id),
+   loadIcon:async(id,fingerprint,path)=>(await window.wuu.loadPluginIcon({id,fingerprint,path})).url,
+  };
+  return {catalog,settingsControls:{capabilities:{diagnostics:false},subscribe:()=>()=>{},getConflicts:()=>empty,getDiagnostics:()=>empty},subscribe:()=>()=>{},invoke:async(action:string,input:unknown)=>{
+   if(action === "draft.start") return {tabId:"test-draft"};
+   if(action === "composer.checkpoint") {
+    const text=(input as {primary:{text:string}}).primary.text;
+    const identity=JSON.parse(text.split("\n")[0].slice("/skill ".length));
+    const skill=(await window.wuu.listSkills()).skills.find(item=>item.name===identity.name);
+    if(skill) props.onTrySkill?.(skill);
+   }
+  }} as unknown as ComponentProps<typeof PublicSkillsCatalog>["application"];
+ }, [props.activeContext,props.extensionInventory,props.onTrySkill,props.onRefreshCatalog,props.onUpdateExtensionPackage,props.onInstallPluginPackage,props.onRemovePluginPackage]);
+ return <PublicSkillsCatalog {...props} application={application} />;
+}
+
 
 const toastMocks = vi.hoisted(() => ({
   showErrorToast: vi.fn(),
