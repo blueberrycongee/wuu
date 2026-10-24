@@ -9,12 +9,15 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
 // The bundled algorithm has no dependency on the legacy whole-loop service.
@@ -51,7 +54,7 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 		{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 		{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 	})
-	clients := append(testKernelStateProviders(t, dir), kernel, provider)
+	clients := append(testKernelStateProviders(t, dir), kernel, provider, promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
 	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)
@@ -128,7 +131,7 @@ func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 		{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 		{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 	})
-	clients := append(testKernelStateProviders(t, dir), kernel, provider)
+	clients := append(testKernelStateProviders(t, dir), kernel, provider, promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
 	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)
