@@ -28,7 +28,7 @@ export interface ApplicationSnapshotV1 {
   readonly tabs: {
     readonly activeTabId: string;
     readonly items: readonly ApplicationTabV1[];
-    readonly pending?: { readonly kind: "tab" | "workspace" | "thread"; readonly targetId: string };
+    readonly pending?: { readonly kind: "tab" | "workspace" | "thread"; readonly targetId: string; readonly contextSwitching?: boolean };
   };
   readonly conversation: {
     readonly threadId?: string;

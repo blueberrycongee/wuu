@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController";
 import { initialState } from "../AppState";
 import type { WuuDesktopApi } from "../../shared/protocol";
@@ -6,6 +7,49 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("reselects source transport and retains latest draft while a workspace switch is pending", async () => {
+    const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+    const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+    let finishTarget!: (value: never) => void;
+    const select = vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => {
+      if (context.cwd === "/b") return new Promise(resolve => { finishTarget = resolve; });
+      return { projects: [], active_context: source } as never;
+    });
+    const configure = vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockResolvedValue({});
+    try {
+      const controller = new ApplicationController({ ...initialState, activeContext: source, activeSessionTabID: "draft:a", sessionTabs: [
+        { id: "draft:a", kind: "draft", context: source, title: "A", createdAt: 1, prompt: "before", images: [], files: [] },
+        { id: "draft:b", kind: "draft", context: target, title: "B", createdAt: 2, prompt: "destination", images: [], files: [] },
+      ] });
+      const leaving = controller.invoke("tab.select", { tabId: "draft:b" });
+      await controller.invoke("composer.set-draft", { text: "latest source" });
+      await controller.invoke("tab.select", { tabId: "draft:a" });
+      expect(select).toHaveBeenLastCalledWith(source);
+      finishTarget({ projects: [], active_context: target } as never);
+      await leaving;
+      expect(controller.getSnapshot().tabs.activeTabId).toBe("draft:a");
+      expect(controller.getSnapshot().composer.draftText).toBe("latest source");
+    } finally { select.mockRestore(); configure.mockRestore(); }
+  });
+
+  it("creates a separate draft during admission without stealing focus on completion", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    let finish!: (result: unknown) => void;
+    window.wuu = { startThread: () => new Promise(resolve => { finish = resolve; }),
+      startTurn: vi.fn(async () => ({ turn: { id: "sent", status: "in_progress", items: [] } })) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "first", images: [], files: [] },
+    ] });
+    const sending = controller.invoke("composer.submit", {});
+    const next = await controller.invoke("tab.new", {});
+    expect(next.tabId).not.toBe("draft:a");
+    await controller.invoke("composer.set-draft", { text: "next" });
+    finish({ thread: { id: "created", preview: "", updated_at: "2026-10-24T00:00:00Z", cwd: context.cwd, turns: [], status: "idle" } });
+    await sending;
+    expect(controller.getSnapshot().tabs.activeTabId).toBe(next.tabId);
+    expect(controller.getSnapshot().composer.draftText).toBe("next");
+  });
+
   it("keeps a custom project draft title when its mode is selected again", async () => {
     const context = { kind: "project" as const, project_id: "workspace", cwd: "/workspace" };
     const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [

@@ -4,7 +4,7 @@ import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { activeSessionTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, bindActiveSessionTabToThread, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -49,6 +49,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private navigationRequest = 0;
   private pendingNavigation?: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>;
   private submitting = false;
+  private readonly pendingDraftAdmissions = new Set<string>();
   private streamPublication?: number;
 
   constructor(state?: AppState) {
@@ -226,12 +227,13 @@ export class ApplicationController implements ApplicationServiceV1 {
   private async selectTab(tab: SessionTab, signal?: AbortSignal): Promise<void> {
     const request = ++this.navigationRequest;
     const sourceContext = this.state.activeContext;
-    this.pendingNavigation = Object.freeze({ kind: "tab", targetId: tab.id });
+    const contextSwitching = !sameRuntimeContext(sourceContext, tab.context) || this.pendingNavigation?.contextSwitching === true;
+    this.pendingNavigation = Object.freeze({ kind: "tab", targetId: tab.id, contextSwitching });
     this.publish();
     let switchedContext = false;
     try {
       let loaded: Partial<AppState> = {};
-      if (!sameRuntimeContext(sourceContext, tab.context)) {
+      if (contextSwitching) {
         switchedContext = true;
         const workspace = await selectRuntimeContext(tab.context);
         signal?.throwIfAborted();
@@ -341,7 +343,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         const context = workspace ? { kind: "project" as const, project_id: workspace.id, cwd: workspace.path } : this.state.activeContext;
         if (!context) throw new Error("No workspace is selected");
         if (project && context.kind !== "project") throw new Error("Project drafts require a workspace");
-        const existing = this.state.sessionTabs.find(item => item.kind === "draft" && sameRuntimeContext(item.context, context));
+        const existing = this.state.sessionTabs.find(item => item.kind === "draft" && !this.pendingDraftAdmissions.has(item.id) && sameRuntimeContext(item.context, context));
         const tab = existing ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, context);
         await this.selectTab(tab, signal);
         if (this.state.activeSessionTabID !== tab.id) throw new Error("Draft navigation was superseded");
@@ -429,6 +431,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       }
       case "composer.set-draft": this.setDraft((input as ApplicationActionMapV1["composer.set-draft"]["input"]).text); return;
       case "composer.submit": {
+        if (this.pendingNavigation) throw new Error("Wait for navigation to finish before submitting");
         if (this.submitting) throw new Error("A composer submission is already pending");
         const text = this.draft;
         let draftRevision = this.draftRevision;
@@ -437,6 +440,8 @@ export class ApplicationController implements ApplicationServiceV1 {
         let thread = activeThreadForState(this.state);
         if (thread?.read_only) throw new Error("The selected thread is read-only");
         const context = thread ? resolveThreadRuntimeContext(thread, this.state.projects) : this.state.activeContext;
+        const sourceTabId = this.state.activeSessionTabID;
+        if (!thread && sourceTabId) this.pendingDraftAdmissions.add(sourceTabId);
         this.submitting = true; this.publish();
         try {
           if (!thread) {
@@ -445,11 +450,16 @@ export class ApplicationController implements ApplicationServiceV1 {
             thread = created.thread;
             const currentDraft = this.draft;
             const unchanged = this.draftRevision === draftRevision;
-            this.adoptThread(thread, true);
-            // Moving a draft into its first thread must not acknowledge delivery
-            // or discard text typed while that thread was being created.
-            this.setDraft(currentDraft);
-            if (unchanged) draftRevision = this.draftRevision;
+            if (this.state.activeSessionTabID === sourceTabId) {
+              this.adoptThread(thread, true);
+              // Delivery has not been acknowledged, so keep edits made during admission.
+              this.setDraft(currentDraft);
+              if (unchanged) draftRevision = this.draftRevision;
+            } else {
+              const createdThread = thread;
+              this.updateState(state => ({ ...state, threads: upsertThread(state.threads, createdThread),
+                sessionTabs: context ? bindActiveSessionTabToThread(state.sessionTabs, sourceTabId, createdThread, context) : state.sessionTabs }));
+            }
           }
           const clientId = crypto.randomUUID();
           signal?.throwIfAborted();
@@ -466,7 +476,7 @@ export class ApplicationController implements ApplicationServiceV1 {
           }
           signal?.throwIfAborted();
           if (this.draftRevision === draftRevision) this.setDraft("");
-        } finally { this.submitting = false; this.publish(); }
+        } finally { this.pendingDraftAdmissions.delete(sourceTabId); this.submitting = false; this.publish(); }
         return;
       }
       case "composer.stop": {
