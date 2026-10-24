@@ -875,6 +875,10 @@ export class ApplicationController implements HostApplicationService {
   }
 
   private async selectTab(tab: SessionTab, signal?: AbortSignal): Promise<void> {
+    if (tab.kind === "thread") {
+      await this.navigationActions(signal).tabs.selectSessionTab(tab.id);
+      return;
+    }
     const sourceContext = this.state.activeContext;
     const contextSwitching = !sameRuntimeContext(sourceContext, tab.context) || this.pendingNavigation?.contextSwitching === true;
     const request = this.beginNavigation("tab", tab.id, contextSwitching, signal);
@@ -890,19 +894,13 @@ export class ApplicationController implements HostApplicationService {
         signal?.throwIfAborted();
         if (request !== this.navigationRequest) return;
       }
-      const resumed = tab.kind === "thread" ? await window.wuu.resumeThread(tab.threadID) : undefined;
-      signal?.throwIfAborted();
-      if (request !== this.navigationRequest) return;
-      if (tab.kind === "thread" && !resumed?.thread) throw new Error("Thread resume returned no thread");
       this.updateState(state => {
         const target = state.sessionTabs.find(item => item.id === tab.id) ?? tab;
-        const thread = resumed?.thread && reconcileResumedThreadTurns(resumed.thread,
-          [state.thread, state.secondaryThread, ...state.threads].find(item => item?.id === resumed.thread!.id));
-        return { ...state, ...loaded, thread, secondaryThread: undefined, activePane: "primary",
+        return { ...state, ...loaded, thread: undefined, secondaryThread: undefined, activePane: "primary",
           activeContext: tab.context, activeProjectId: tab.context.kind === "project" ? tab.context.project_id : undefined,
           activeSessionTabID: target.id, sessionTabs: ensureSessionTab(state.sessionTabs, target),
-          threads: thread ? upsertThread(loaded.threads ?? state.threads, thread) : loaded.threads ?? state.threads,
-          allowThreadAutoActivation: target.kind === "thread", running: isThreadRunning(thread), status: "ready" };
+          threads: loaded.threads ?? state.threads,
+          allowThreadAutoActivation: false, running: false, status: "ready" };
       });
     } catch (error) {
       // Restore transport selection as well as the visible source after a failed

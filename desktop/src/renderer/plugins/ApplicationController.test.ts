@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController";
 import { streamTextKey, streamTextStore } from "../StreamText";
-import { initialState, type AppState } from "../AppState";
+import { initialState, createThreadSessionTab, type AppState } from "../AppState";
 import type { CodexPetCommand, Thread, WuuDesktopApi } from "../../shared/protocol";
 
 const submissionInitialized = { provider: "fixture", model: "fixture", providers: [{ name: "fixture", type: "openai", model: "fixture", api_key_configured: true }] } as AppState["initialized"];
@@ -471,6 +471,35 @@ describe("shared application state", () => {
       controller.updateState(state => ({ ...state, thread: updated, threads: [updated] }));
       expect(controller.getSnapshot().conversation.turns[0].items[0].text).toBe("resumed");
     } finally { streamTextStore.clearTurn("cached-turn"); }
+  });
+
+  it.each(["tab.select", "thread.activate"] as const)("%s resumes in parallel with configuration and skips a settled reselect", async action => {
+    const source = { kind: "project" as const, project_id: "source", cwd: "/source" };
+    const target = { kind: "project" as const, project_id: "target", cwd: "/target" };
+    const thread: Thread = { id: "parallel", cwd: target.cwd, preview: "", model: "test", model_provider: "test", status: "idle", created_at: "", updated_at: "", turns: [{ id: "parallel-turn", status: "completed", items_view: "full", items: [{ id: "parallel-answer", type: "agent_message", status: "completed", text: "ready" }] }] };
+    const tab = createThreadSessionTab(thread, target);
+    let finish!: (value: Partial<AppState>) => void;
+    const select = vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockResolvedValue({ projects: [], active_context: target });
+    const configure = vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const catalog = vi.spyOn(RuntimeLoader, "loadRuntimeThreadList").mockResolvedValue([]);
+    const resume = vi.fn().mockResolvedValue({ thread });
+    window.wuu = { resumeThread: resume } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: source, threads: [thread], sessionTabs: [tab], projects: [
+      { id: target.project_id, path: target.cwd, name: "Target", created_at: "", updated_at: "" },
+    ] });
+    try {
+      const switching = action === "tab.select" ? controller.invoke(action, { tabId: tab.id }) : controller.invoke(action, { threadId: thread.id });
+      await vi.waitFor(() => expect(configure).toHaveBeenCalledOnce());
+      expect(resume).toHaveBeenCalledOnce();
+      finish({ activeContext: target, activeProjectId: target.project_id });
+      await switching;
+      const pending = controller.getSnapshot().tabs.pending;
+      if (pending?.requestId !== undefined) await controller.invoke("navigation.reveal-complete", { requestId: pending.requestId });
+      expect(controller.getSnapshot().conversation.threadId).toBe(thread.id);
+      if (action === "tab.select") await controller.invoke(action, { tabId: tab.id });
+      else await controller.invoke(action, { threadId: thread.id });
+      expect(resume).toHaveBeenCalledOnce();
+    } finally { select.mockRestore(); configure.mockRestore(); catalog.mockRestore(); }
   });
 
   it("projects complete immutable conversation content and observes host-owned live fields", async () => {
