@@ -112,7 +112,7 @@ import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
 } from "./EnvironmentPanel";
-import { createEnvironmentActions } from "./EnvironmentActions";
+import { createEnvironmentPanelActions } from "./EnvironmentActions";
 import { useGitActionBusy } from "./GitActionBusy";
 import {
   activeTodoUpdateForThread,
@@ -1081,9 +1081,6 @@ export function App({ application: providedApplication }: { application?: Applic
   const pendingEnvironmentPanelHasRoomRef = useRef<boolean | undefined>(
     undefined,
   );
-  const gitRefreshTimerRef = useRef<number | undefined>(undefined);
-  const gitRefreshInFlightRef = useRef(false);
-  const gitRefreshQueuedRef = useRef(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const runtimeMenuRef = useRef<HTMLDivElement>(null);
   const runtimeMenuTriggerRef = useRef<HTMLElement>(null);
@@ -1594,29 +1591,6 @@ export function App({ application: providedApplication }: { application?: Applic
     };
   }, [activeThreadID, state.activeContext?.cwd]);
 
-  function mergeActivityResponse(activity: ActivitySession): void {
-    setActivitySessions((current) =>
-      mergeActivityList(current, activity.workdir, activity.thread_id, [activity]),
-    );
-  }
-
-  async function pauseBrowserTask(inputGeneration?: number): Promise<void> {
-    if (!activeBrowserActivity) {
-      return;
-    }
-    try {
-      const result = await window.wuu.takeoverActivity(
-        activeBrowserActivity.thread_id,
-        activeBrowserActivity.id,
-        inputGeneration,
-        activeBrowserActivity.execution_id,
-      );
-      mergeActivityResponse(result.activity);
-    } catch (error) {
-      showErrorToast(error, t("app.browserPauseFailed"));
-    }
-  }
-
   const sessionRuntime = useMemo(
     () => runtimeViewForSession(state.initialized, activeThread),
     [state.initialized, activeThread],
@@ -2081,10 +2055,6 @@ export function App({ application: providedApplication }: { application?: Applic
     return () => {
       mounted = false;
       off();
-      if (gitRefreshTimerRef.current !== undefined) {
-        window.clearTimeout(gitRefreshTimerRef.current);
-        gitRefreshTimerRef.current = undefined;
-      }
     };
   }, [popOutInit]);
 
@@ -3659,25 +3629,20 @@ export function App({ application: providedApplication }: { application?: Applic
     setWorkspaceFilter("");
   }
 
+  const scheduleGitStatusRefresh = (delayMs: number): void => application.environment.scheduleStatusRefresh(delayMs);
+  async function checkoutBranch(branch: string): Promise<void> {
+    await application.environment.checkoutBranch(branch);
+    closeWorkspaceMenus();
+  }
+  async function createAndCheckoutBranch(branch: string): Promise<void> {
+    await application.environment.createAndCheckoutBranch(branch);
+    setEnvironmentPanelMenu(null);
+  }
   const {
-    checkoutBranch,
-    scheduleGitStatusRefresh,
-    createAndCheckoutBranch,
-    commitEnvironmentChanges,
-    generateEnvironmentCommitMessage,
-    createEnvironmentPullRequest,
     toggleEnvironmentPanel,
     openEnvironmentPanel,
     closeEnvironmentPanel,
-  } = createEnvironmentActions({
-    getAppState: () => appStateRef.current,
-    getEnvironmentRoot: () =>
-      workspacePanelContext(
-        appStateRef.current.activeContext,
-        activeThreadForState(appStateRef.current),
-      )?.cwd,
-    setAppState: setState,
-    closeWorkspaceMenus,
+  } = createEnvironmentPanelActions({
     setEnvironmentPanelOpen,
     setEnvironmentPanelDismissed,
     setEnvironmentPanelMenu,
@@ -3697,9 +3662,6 @@ export function App({ application: providedApplication }: { application?: Applic
     },
     focusEnvironmentToggle: () =>
       environmentToggleRef.current?.focus({ preventScroll: true }),
-    gitRefreshTimerRef,
-    gitRefreshInFlightRef,
-    gitRefreshQueuedRef,
   });
 
   function canShowHistoryEditButton(thread: Thread): boolean {
@@ -5939,6 +5901,7 @@ export function App({ application: providedApplication }: { application?: Applic
         </header>
         <ConversationSidePanels
           state={state}
+          environment={application.environment}
           environmentPanelVisible={environmentPanelVisible}
           environmentPanelMounted={environmentPanelMounted}
           environmentPanelRef={environmentPanelRef}
@@ -5952,14 +5915,6 @@ export function App({ application: providedApplication }: { application?: Applic
           onCloseEnvironmentPanel={() =>
             closeEnvironmentPanel({ dismissed: true })
           }
-          onSelectBranch={async (branch) => {
-            try {
-              await checkoutBranch(branch);
-            } catch (error) {
-              showErrorToast(error, t("git.checkoutFailed"));
-            }
-          }}
-          onCreateBranch={(branch) => createAndCheckoutBranch(branch)}
           onOpenReview={() => {
             openWorkspaceTool("review");
             closeEnvironmentPanel({ dismissed: true });
@@ -6176,6 +6131,7 @@ export function App({ application: providedApplication }: { application?: Applic
       ) : null}
       {poppedOutMode ? null : (
         <WorkspaceRightPanel
+          environment={application.environment}
           covered={settingsOpen || showingWebsite}
           open={rightPanelOpen}
           present={rightPanelOpen || rightPanelAnimating}
@@ -6249,7 +6205,6 @@ export function App({ application: providedApplication }: { application?: Applic
           browserActivity={activeBrowserActivity}
           browserDockTarget={browserDockTarget}
           browserOverlaySuppressed={browserOverlaySuppressed}
-          onBrowserUserInteraction={pauseBrowserTask}
           focusedComposer={
             documentComposerVisible
               ? (
@@ -6294,8 +6249,8 @@ export function App({ application: providedApplication }: { application?: Applic
           gitStatus={state.gitStatus}
           branch={state.gitStatus?.branch}
           onCancel={() => setEnvironmentDialog(null)}
-          onCommit={commitEnvironmentChanges}
-          onGenerateMessage={generateEnvironmentCommitMessage}
+          onCommit={input => application.environment.commit(input)}
+          onGenerateMessage={input => application.environment.generateCommitMessage(input)}
         />
       ) : null}
       {!settingsOpen && environmentDialog === "pull-request" ? (
@@ -6303,7 +6258,7 @@ export function App({ application: providedApplication }: { application?: Applic
           gitStatus={state.gitStatus}
           disabledReason={pullRequestDisabledReason}
           onCancel={() => setEnvironmentDialog(null)}
-          onCreate={createEnvironmentPullRequest}
+          onCreate={input => application.environment.createPullRequest(input)}
         />
       ) : null}
       {!settingsOpen && pendingFork ? (

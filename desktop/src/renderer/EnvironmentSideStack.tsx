@@ -1,3 +1,4 @@
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import type { RefObject } from "react";
 import type { TodoUpdate } from "../shared/protocol";
 import type { InspectorSnapshotV1 } from "../shared/workbench";
@@ -13,6 +14,7 @@ export function EnvironmentSideStack({
   visible,
   mounted,
   state,
+  environment,
   panelRef,
   closing,
   motionState,
@@ -24,8 +26,6 @@ export function EnvironmentSideStack({
   onCloseFilePreview,
   onSetActiveMenu,
   onClose,
-  onSelectBranch,
-  onCreateBranch,
   onOpenReview,
   onOpenCommit,
   onOpenPullRequest,
@@ -33,6 +33,7 @@ export function EnvironmentSideStack({
   visible: boolean;
   mounted: boolean;
   state: AppState;
+  environment: ApplicationEnvironmentV1;
   panelRef: RefObject<HTMLDivElement | null>;
   closing: boolean;
   motionState: EnvironmentPanelMotionState;
@@ -49,8 +50,6 @@ export function EnvironmentSideStack({
   onCloseFilePreview?: () => void;
   onSetActiveMenu: (menu: EnvironmentPanelMenu) => void;
   onClose: () => void;
-  onSelectBranch: (branch: string) => void;
-  onCreateBranch: (branch: string) => Promise<void>;
   onOpenReview: () => void;
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
@@ -73,7 +72,7 @@ export function EnvironmentSideStack({
         motionState={closing ? "closing" : motionState}
         initialized={state.initialized}
         thread={state.thread}
-        gitStatus={state.gitStatus}
+        environment={environment}
         activeMenu={activeMenu}
         running={running}
         pullRequestDisabledReason={pullRequestDisabledReason}
@@ -81,8 +80,6 @@ export function EnvironmentSideStack({
         onCloseFilePreview={onCloseFilePreview}
         onSetActiveMenu={onSetActiveMenu}
         onClose={onClose}
-        onSelectBranch={onSelectBranch}
-        onCreateBranch={onCreateBranch}
         onOpenReview={onOpenReview}
         onOpenCommit={onOpenCommit}
         onOpenPullRequest={onOpenPullRequest}

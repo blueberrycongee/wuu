@@ -1,3 +1,4 @@
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
@@ -192,6 +193,7 @@ function initialWorkspaceFileTreeVisible(): boolean {
 }
 
 export function WorkspaceRightPanel({
+  environment,
   open,
   covered = false,
   present,
@@ -222,12 +224,12 @@ export function WorkspaceRightPanel({
   browserActivity,
   browserDockTarget,
   browserOverlaySuppressed = false,
-  onBrowserUserInteraction,
   focusedComposer,
   fileRefreshKey,
   pluginHost,
   workbenchController,
 }: {
+  environment: ApplicationEnvironmentV1;
   open: boolean;
   covered?: boolean;
   present: boolean;
@@ -265,7 +267,6 @@ export function WorkspaceRightPanel({
   browserActivity?: ActivitySession;
   browserDockTarget?: BrowserDockTarget;
   browserOverlaySuppressed?: boolean;
-  onBrowserUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
   focusedComposer?: ReactNode;
   fileRefreshKey?: string;
   pluginHost?: PluginHost;
@@ -1021,7 +1022,6 @@ export function WorkspaceRightPanel({
                   dockTarget={browserDockTarget}
                   requestedURL={browserNavigation}
                   overlaySuppressed={browserOverlaySuppressed}
-                  onUserInteraction={onBrowserUserInteraction}
                 />
               </div>
             ) : null}
@@ -1084,8 +1084,7 @@ export function WorkspaceRightPanel({
                   </div>
                 ) : activeTab.kind === "review" ? (
                   <WorkspaceReviewPanel
-                    gitStatus={gitStatus}
-                    workspaceRoot={workspaceContext?.cwd}
+                    environment={environment}
                     onOpenFile={onOpenFile}
                   />
                 ) : activeTab.kind === "project" ? (

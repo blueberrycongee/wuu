@@ -1,3 +1,6 @@
+import { ApplicationEnvironment } from "./plugins/ApplicationEnvironment";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
+import { PreviewContentProvider } from "./PreviewContentContext";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -8,7 +11,7 @@ import {
   WORKSPACE_FILE_TREE_DEFAULT_WIDTH,
   WORKSPACE_FILE_TREE_MAX_WIDTH,
   WORKSPACE_FILE_TREE_MIN_WIDTH,
-  WorkspaceRightPanel,
+  WorkspaceRightPanel as WorkspaceRightPanelView,
 } from "./WorkspacePanels";
 import type { RuntimeContext } from "../shared/protocol";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
@@ -25,6 +28,11 @@ import { confirmAction } from "./ConfirmDialog";
 import type { HeaderSnapshotV1, PresentationHost } from "../shared/workbench";
 import { PluginHost } from "./plugins/PluginHost";
 import { WorkbenchController } from "./plugins/Workbench";
+
+function WorkspaceRightPanel(props: Parameters<typeof WorkspaceRightPanelView>[0]) {
+  const service = React.useMemo(() => new ApplicationPreviewContent(window.wuu), []);
+  return <PreviewContentProvider service={service}><WorkspaceRightPanelView {...props} /></PreviewContentProvider>;
+}
 
 vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
 
@@ -179,6 +187,10 @@ function makeSelection(path: string): TurnFileDiffSelection {
 
 function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
   return {
+    environment: new ApplicationEnvironment({
+      getSource: () => ({ contextKey: "test", root: "/repo/project" }),
+      publishStatus: () => {}, assertActive: () => {}, reportError: () => {},
+    }),
     open: true,
     present: true,
     tabs: [],

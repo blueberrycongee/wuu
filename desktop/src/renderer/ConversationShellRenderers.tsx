@@ -609,6 +609,7 @@ export function ConversationTitleActions({
 
 export type ConversationSidePanelsProps = {
   state: AppState;
+  environment: EnvironmentSideStackProps["environment"];
   environmentPanelVisible: boolean;
   environmentPanelMounted: boolean;
   environmentPanelRef: EnvironmentSideStackProps["panelRef"];
@@ -620,8 +621,6 @@ export type ConversationSidePanelsProps = {
   pullRequestDisabledReason: string;
   onSetEnvironmentPanelMenu: EnvironmentSideStackProps["onSetActiveMenu"];
   onCloseEnvironmentPanel: () => void;
-  onSelectBranch: (branch: string) => void;
-  onCreateBranch: EnvironmentSideStackProps["onCreateBranch"];
   onOpenReview: () => void;
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
@@ -632,6 +631,7 @@ export type ConversationSidePanelsProps = {
 
 export function ConversationSidePanels({
   state,
+  environment,
   environmentPanelVisible,
   environmentPanelMounted,
   environmentPanelRef,
@@ -643,8 +643,6 @@ export function ConversationSidePanels({
   pullRequestDisabledReason,
   onSetEnvironmentPanelMenu,
   onCloseEnvironmentPanel,
-  onSelectBranch,
-  onCreateBranch,
   onOpenReview,
   onOpenCommit,
   onOpenPullRequest,
@@ -658,6 +656,7 @@ export function ConversationSidePanels({
         visible={environmentPanelVisible}
         mounted={environmentPanelMounted}
         state={state}
+        environment={environment}
         panelRef={environmentPanelRef}
         closing={environmentPanelClosing}
         motionState={environmentPanelMotionState}
@@ -667,8 +666,6 @@ export function ConversationSidePanels({
         pullRequestDisabledReason={pullRequestDisabledReason}
         onSetActiveMenu={onSetEnvironmentPanelMenu}
         onClose={onCloseEnvironmentPanel}
-        onSelectBranch={onSelectBranch}
-        onCreateBranch={onCreateBranch}
         onOpenReview={onOpenReview}
         onOpenCommit={onOpenCommit}
         onOpenPullRequest={onOpenPullRequest}
