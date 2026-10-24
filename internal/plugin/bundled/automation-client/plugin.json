@@ -28,6 +28,7 @@
     ]
   },
   "contributes": {
+    "slots": [{ "id": "automation.schedule", "target": "sidebar.primary" }],
     "navigation": [
       {
         "id": "automation",
