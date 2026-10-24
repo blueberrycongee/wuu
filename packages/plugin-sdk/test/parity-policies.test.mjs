@@ -16,3 +16,26 @@ test('independent prompt owns the complete main and worker content', {skip: !pro
   provider.shutdown();
   assert.throws(() => invoke('main'), error => error.code === 'service_unavailable');
 });
+
+const compactionEntry = process.env.WUU_PARITY_COMPACTION_ENTRY;
+test('independent refusal policy rejects mutations and preserves caller history', {skip: !compactionEntry}, async () => {
+  const {createCompactionProvider} = await import(pathToFileURL(compactionEntry));
+  const provider = createCompactionProvider();
+  const invoke = (method, params = {}) => provider.invokeService({service: 'agent.compaction', method, caller: 'acceptance', params});
+  provider.initialize();
+  assert.throws(() => invoke('describe'), error => error.code === 'service_unavailable');
+  provider.activate();
+  const policy = invoke('describe');
+  assert.equal(policy.notes_enabled, false);
+  const messages = [{Role: 'user', Content: 'retain this question', seq: 1}, {Role: 'assistant', Content: 'retain this answer', seq: 2}];
+  const original = structuredClone(messages);
+  for (const method of ['compact', 'window', 'recover']) {
+    assert.throws(() => invoke(method, {policy_key: policy.key, messages}), error => error.code === 'author_policy_refused');
+    assert.deepEqual(messages, original);
+    assert.throws(() => invoke(method, {policy_key: 'stale', messages}), error => error.code === 'policy_binding_changed');
+  }
+  for (const method of ['handoff', 'note-plan', 'compact-note', 'note-attempt']) assert.throws(() => invoke(method), error => error.code === 'note_unsupported');
+  assert.throws(() => invoke('unknown'), error => error.code === 'method_not_found');
+  provider.shutdown();
+  assert.throws(() => invoke('describe'), error => error.code === 'service_unavailable');
+});
