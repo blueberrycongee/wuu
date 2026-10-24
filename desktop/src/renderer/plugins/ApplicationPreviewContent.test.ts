@@ -59,3 +59,25 @@ describe("ApplicationPreviewContent", () => {
     await expect(service.exportFile({ root: "/a", path: "x" })).rejects.toThrow("unavailable");
   });
 });
+
+it("resolves local Markdown resources through the host converter and preserves remote image sources", () => {
+  const { api } = setup();
+  const convert = vi.fn((encoded: string) => `https://remote.example/files/${encoded}`);
+  const service = new ApplicationPreviewContent(api, { encodedFileURL: convert });
+  const local = service.resolveResourceURL({ source: "../images/猫.png", cwd: "/repo/docs" });
+  const encoded = convert.mock.calls[0][0];
+  expect(new TextDecoder().decode(Uint8Array.from(atob(encoded.replace(/-/g, "+").replace(/_/g, "/")), char => char.charCodeAt(0)))).toBe("/repo/images/猫.png");
+  expect(local).toBe(`https://remote.example/files/${encoded}`);
+  expect(service.resolveResourceURL({ source: `wuu-file://local/${encoded}` })).toBe(local);
+  expect(service.resolveResourceURL({ source: "https://example.com/image.png" })).toBe("https://example.com/image.png");
+  expect(service.resolveResourceURL({ source: "data:image/png;base64,AA==" })).toBe("data:image/png;base64,AA==");
+  service.dispose();
+  expect(service.resolveResourceURL({ source: "./image.png", cwd: "/repo" })).toBeUndefined();
+});
+
+it("opens the captured workspace file reference without stripping selection or replaying errors", async () => {
+  const { api } = setup(); const openFile = vi.fn().mockRejectedValue(new Error("missing workspace"));
+  const service = new ApplicationPreviewContent(api, { openFile });
+  await expect(service.openFile({ root: "/repo/worktree", path: "src/a.ts#L12,4-L18,9" })).rejects.toThrow("missing workspace");
+  expect(openFile).toHaveBeenCalledExactlyOnceWith({ root: "/repo/worktree", path: "src/a.ts#L12,4-L18,9" });
+});

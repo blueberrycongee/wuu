@@ -1,3 +1,4 @@
+import { useBrowserControls } from "./BrowserControlsContext";
 import { PdfSelectionMenu } from "./PdfSelectionMenu";
 import type { PdfPreviewSource } from "./PdfSelection";
 import { Minus, Plus, RefreshCw } from "./WuuIcons";
@@ -86,6 +87,7 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
   onRefresh?: RefreshPdfSource;
 }): JSX.Element {
   const { t } = useI18n();
+  const browser = useBrowserControls();
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerElementRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<PDFViewer | null>(null);
@@ -122,7 +124,8 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
     let initialized = false;
     const lifetime = new AbortController();
     const eventBus = new EventBus();
-    const linkService = new WorkspacePdfLinkService(eventBus, () => active && visibleRef.current && initialized && !failed);
+    const linkService = new WorkspacePdfLinkService(eventBus, () => active && visibleRef.current && initialized && !failed,
+      browser ? url => browser.openExternal(url) : undefined);
     // PDF.js 5.4 supports abortSignal but does not yet declare it in its types.
     const viewerOptions = {
       container,
@@ -244,7 +247,7 @@ function WorkspacePdfSurface({ url, title, hostRef, source, active, initialPage,
       });
       viewerRef.current = null;
     };
-  }, [url, attempt]);
+  }, [url, attempt, browser]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

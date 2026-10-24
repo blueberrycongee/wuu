@@ -1,4 +1,5 @@
 import type { ApplicationPreviewContentV1, PreviewContentOptionsV1, PreviewFileTargetV1 } from "../../../../packages/plugin-sdk/src/ui-preview-content";
+import { resolvePreviewResourceURL } from "../PreviewResourceURL";
 import type { WuuDesktopApi } from "../../shared/protocol";
 
 type PreviewHost = Pick<WuuDesktopApi, "listWorkspaceDirectory" | "readWorkspaceFile" | "revealWorkspaceItem" | "showWorkspaceItemMenu" | "exportWorkspaceFile" | "unsupportedMethods" | "platform">;
@@ -7,7 +8,8 @@ export class ApplicationPreviewContent implements ApplicationPreviewContentV1 {
   private disposed = false;
   readonly capabilities: ApplicationPreviewContentV1["capabilities"];
 
-  constructor(private readonly api: PreviewHost) {
+  constructor(private readonly api: PreviewHost,
+    private readonly options: { encodedFileURL?: (encoded: string) => string; openFile?: (target: PreviewFileTargetV1) => void | Promise<void> } = {}) {
     this.capabilities = Object.freeze({
       nativeItemMenu: api.platform === "darwin" && !api.unsupportedMethods?.includes("showWorkspaceItemMenu"),
       revealItem: !api.unsupportedMethods?.includes("revealWorkspaceItem"),
@@ -23,6 +25,18 @@ export class ApplicationPreviewContent implements ApplicationPreviewContentV1 {
     // Native operations cannot always be cancelled; never publish their late result.
     if (this.disposed || options?.signal?.aborted) throw new DOMException("Preview content operation cancelled", "AbortError");
     return result;
+  }
+
+  resolveResourceURL({ source, cwd }: { readonly source: string; readonly cwd?: string }): string | undefined {
+    return this.disposed ? undefined : resolvePreviewResourceURL(source, cwd, this.options.encodedFileURL ?? (encoded => window.wuuRenderableFileURL?.(encoded) ?? `wuu-file://local/${encoded}`));
+  }
+
+  openFile(target: PreviewFileTargetV1, options?: PreviewContentOptionsV1): Promise<void> {
+    const captured = Object.freeze({ ...target });
+    return this.run(async () => {
+      if (!this.options.openFile) throw new Error("Workspace file navigation unavailable");
+      await this.options.openFile(captured);
+    }, options);
   }
 
   listDirectory({ root, path }: PreviewFileTargetV1, options?: PreviewContentOptionsV1) {

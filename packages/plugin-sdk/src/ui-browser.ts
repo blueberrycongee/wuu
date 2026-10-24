@@ -32,6 +32,7 @@ export interface ApplicationBrowserV1 {
   acquireSurface(target: BrowserTargetV1): BrowserSurfaceHandleV1;
   onDock(listener: (target: BrowserDockTargetV1) => void): () => void;
   onInvalidate(listener: (event: { readonly workdir: string }) => void): () => void;
+  openURL(input: { readonly url: string; readonly modifiers?: { readonly metaKey?: boolean; readonly ctrlKey?: boolean; readonly altKey?: boolean; readonly button?: number } }, options?: BrowserOperationOptionsV1): Promise<void>;
   openExternal(url: string, options?: BrowserOperationOptionsV1): Promise<void>;
   consumeNavigation(requestID: number): void;
 }

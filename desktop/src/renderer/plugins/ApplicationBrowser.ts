@@ -3,7 +3,9 @@ import type {
   BrowserSurfaceHandleV1, BrowserTargetV1, BrowserDockTargetV1,
 } from "../../../../packages/plugin-sdk/src/ui-browser";
 import type { ActivitySession, WuuDesktopApi } from "../../shared/protocol";
-import { consumeWorkspaceBrowserNavigation } from "../WorkspaceBrowserNavigation";
+import { parseLinkTarget } from "../LinkTargets";
+import { workspaceBrowserOpenIntent, workspaceBrowserFocusDecision, type WorkspaceBrowserFocusState } from "../WorkspaceBrowserOpen";
+import { consumeWorkspaceBrowserNavigation, requestWorkspaceBrowserNavigation } from "../WorkspaceBrowserNavigation";
 
 type BrowserHost = Partial<Pick<WuuDesktopApi, "browserSurface" | "browserCommand" | "onBrowserSurface"
   | "onBrowserTabAdopted" | "onBrowserUserInput" | "reportBrowserBounds" | "suppressBrowserOverlay"
@@ -15,7 +17,9 @@ export class ApplicationBrowser implements ApplicationBrowserV1 {
   private readonly subscriptions = new Set<() => void>();
   private readonly leases = new Map<string, BrowserSurfaceHandleV1>();
   readonly available: boolean;
-  constructor(private readonly host: { api: BrowserHost; onActivityChanged: (activity: ActivitySession) => void }) {
+  constructor(private readonly host: { api: BrowserHost; onActivityChanged: (activity: ActivitySession) => void;
+    workspaceNavigation?: { enabled: boolean; getFocusState: () => WorkspaceBrowserFocusState; openBrowser: (activate: boolean) => void };
+  }) {
     const required = ["browserSurface", "browserCommand", "onBrowserSurface", "onBrowserTabAdopted",
       "onBrowserUserInput", "reportBrowserBounds", "suppressBrowserOverlay", "onBrowserDock", "onBrowserInvalidate"] as const;
     this.available = required.every(name => typeof host.api[name] === "function" && !host.api.unsupportedMethods?.includes(name));
@@ -103,6 +107,21 @@ export class ApplicationBrowser implements ApplicationBrowserV1 {
 
   onDock(listener: (target: BrowserDockTargetV1) => void): () => void { return this.listen(this.host.api.onBrowserDock, listener); }
   onInvalidate(listener: (event: { readonly workdir: string }) => void): () => void { return this.listen(this.host.api.onBrowserInvalidate, listener); }
+
+  async openURL(input: Parameters<ApplicationBrowserV1["openURL"]>[0], options?: BrowserOperationOptionsV1): Promise<void> {
+    this.check(options);
+    const parsed = parseLinkTarget(input.url);
+    if (parsed.kind !== "external") throw new TypeError("Unsupported browser URL");
+    const intent = workspaceBrowserOpenIntent(parsed.url, input.modifiers);
+    if (!intent.target || intent.external || this.host.workspaceNavigation?.enabled === false) {
+      await this.openExternal(intent.target?.url ?? parsed.url, options); return;
+    }
+    const navigation = this.host.workspaceNavigation;
+    if (!navigation) throw new Error("Embedded browser navigation unavailable");
+    const focus = workspaceBrowserFocusDecision(navigation.getFocusState());
+    requestWorkspaceBrowserNavigation(intent.target);
+    navigation.openBrowser(focus.stealFocus);
+  }
 
   async openExternal(url: string, options?: BrowserOperationOptionsV1): Promise<void> {
     this.check(options);

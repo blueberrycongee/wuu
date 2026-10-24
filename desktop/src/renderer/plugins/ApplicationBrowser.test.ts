@@ -97,3 +97,31 @@ it("owns dock and invalidation subscriptions for the application lifetime", () =
   expect(f.off).toHaveBeenCalledTimes(1);
   receive({ workdir: "/other" }); expect(listener).toHaveBeenCalledTimes(1);
 });
+
+it("routes modified links externally and respects foreground browser focus when opening ordinary links", async () => {
+  const f = fixture(); const openBrowser = vi.fn();
+  const browser = new ApplicationBrowser({ api: f.api, onActivityChanged: vi.fn(), workspaceNavigation: {
+    enabled: true, getFocusState: () => ({ rightPanelOpen: true, activeTabID: "files", browserForegroundOccupied: false }), openBrowser,
+  } });
+  await browser.openURL({ url: "https://example.com/docs", modifiers: { ctrlKey: true } });
+  expect(f.api.openExternal).toHaveBeenCalledWith("https://example.com/docs");
+  expect(openBrowser).not.toHaveBeenCalled();
+  await browser.openURL({ url: "https://example.com/docs" });
+  expect(openBrowser).toHaveBeenCalledWith(false);
+  await browser.openURL({ url: "mailto:reader@example.com" });
+  expect(f.api.openExternal).toHaveBeenLastCalledWith("mailto:reader@example.com");
+  await expect(browser.openURL({ url: "javascript:alert(1)" })).rejects.toThrow();
+  browser.dispose(); f.browser.dispose();
+});
+
+it("fails missing embedded navigation explicitly and supports an explicitly external-only host", async () => {
+  const f = fixture();
+  await expect(f.browser.openURL({ url: "https://example.com" })).rejects.toThrow("unavailable");
+  expect(f.api.openExternal).not.toHaveBeenCalled();
+  const browser = new ApplicationBrowser({ api: f.api, onActivityChanged: vi.fn(), workspaceNavigation: { enabled: false,
+    getFocusState: vi.fn(), openBrowser: vi.fn(),
+  } });
+  await browser.openURL({ url: "https://example.com" });
+  expect(f.api.openExternal).toHaveBeenCalledWith("https://example.com/");
+  browser.dispose(); f.browser.dispose();
+});

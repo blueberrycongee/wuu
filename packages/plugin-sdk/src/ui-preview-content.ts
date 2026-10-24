@@ -31,6 +31,9 @@ export interface ApplicationPreviewContentV1 {
     readonly revealItem: boolean;
     readonly exportFile: boolean;
   };
+  /** Resolve an embedded image through the host transport; unavailable resources return undefined. */
+  resolveResourceURL(target: { readonly source: string; readonly cwd?: string }): string | undefined;
+  openFile(target: PreviewFileTargetV1, options?: PreviewContentOptionsV1): Promise<void>;
   listDirectory(target: PreviewFileTargetV1, options?: PreviewContentOptionsV1): Promise<PreviewDirectoryV1>;
   readFile(target: PreviewFileTargetV1, options?: PreviewContentOptionsV1): Promise<PreviewFileV1>;
   revealItem(target: PreviewFileTargetV1, options?: PreviewContentOptionsV1): Promise<void>;
