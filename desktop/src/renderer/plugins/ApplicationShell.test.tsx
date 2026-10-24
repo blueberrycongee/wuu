@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PluginDesktopActivationParams } from "../../shared/protocol";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
+import { ApplicationCatalog } from "./ApplicationCatalog";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationShellOutlet } from "./ApplicationShell";
@@ -13,6 +14,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const listeners = new Set<() => void>();
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
     settingsControls: createApplicationSettingsControls(),
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
     previewContent: new ApplicationPreviewContent({ platform: "linux",
@@ -249,6 +251,24 @@ describe("application shell assembly", () => {
     await expect(captured({ root: "/workspace", path: "other.txt" })).rejects.toThrow();
     expect(read).toHaveBeenCalledTimes(1);
     finish({ root: "/workspace", path: "file.txt", absolute_path: "/workspace/file.txt", size_bytes: 1, mtime_ms: 0, sha256: "digest", binary: false, truncated: false });
+  });
+
+  it("cancels catalog reads on caller abort without admitting a later generation effect", async () => {
+    const { host, service } = fixture();
+    let finish!: (value: readonly []) => void;
+    const list = vi.spyOn(service.catalog, "listSkills").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const remove = vi.spyOn(service.catalog, "remove");
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "catalog", generation: "v1", register: value => { api = value; } });
+    const lifetime = new AbortController();
+    const pending = api.application.catalog.listSkills({ signal: lifetime.signal });
+    const rejected = expect(pending).rejects.toThrow();
+    lifetime.abort(); await rejected;
+    finish([]); expect(list).toHaveBeenCalledTimes(1);
+    const captured = api.application.catalog.remove;
+    await host.activateGeneration({ pluginId: "catalog", generation: "v2", register: () => {} });
+    await expect(captured("package")).rejects.toThrow();
+    expect(remove).not.toHaveBeenCalled();
   });
 
   it("disposes subscriptions and fences old application handles even after same-code reactivation", async () => {

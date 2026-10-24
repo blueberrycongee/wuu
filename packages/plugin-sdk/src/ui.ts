@@ -1,3 +1,4 @@
+import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
 import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1 } from "./ui-preview-content.js";
 import type { ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
@@ -137,6 +138,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly catalog: ApplicationCatalogV1;
   getSnapshot(): ApplicationSnapshotV1;
   /** Unsubscribe is idempotent; generation disposal also removes every listener. */
   subscribe(listener: () => void): () => void;
@@ -359,25 +361,8 @@ export function scopeApplicationConversationText(source: () => ApplicationConver
 /** Fence native file operations without transferring their ownership to a UI. */
 export function scopeApplicationPreviewContent(source: () => ApplicationPreviewContentV1,
   signal: AbortSignal, assertActive: () => void): ApplicationPreviewContentV1 {
-  const invoke = async <T>(operation: (signal: AbortSignal) => Promise<T>, options?: PreviewContentOptionsV1): Promise<T> => {
-    assertActive(); signal.throwIfAborted(); options?.signal?.throwIfAborted();
-    const lifetime = new AbortController();
-    const abort = () => lifetime.abort(signal.aborted ? signal.reason : options?.signal?.reason);
-    signal.addEventListener("abort", abort, { once: true });
-    options?.signal?.addEventListener("abort", abort, { once: true });
-    let rejectAbort!: () => void;
-    const cancelled = new Promise<never>((_resolve, reject) => {
-      rejectAbort = () => reject(lifetime.signal.reason ?? new Error("Preview generation was disposed"));
-      lifetime.signal.addEventListener("abort", rejectAbort, { once: true });
-    });
-    try {
-      const result = await Promise.race([operation(lifetime.signal), cancelled]);
-      assertActive(); lifetime.signal.throwIfAborted(); return result;
-    } finally {
-      signal.removeEventListener("abort", abort); options?.signal?.removeEventListener("abort", abort);
-      lifetime.signal.removeEventListener("abort", rejectAbort);
-    }
-  };
+  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: PreviewContentOptionsV1) =>
+    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
   return Object.freeze({
     get capabilities() { assertActive(); signal.throwIfAborted(); return source().capabilities; },
     listDirectory: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().listDirectory(target, { signal }), options),
@@ -385,5 +370,43 @@ export function scopeApplicationPreviewContent(source: () => ApplicationPreviewC
     revealItem: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().revealItem(target, { signal }), options),
     showItemMenu: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().showItemMenu(target, { signal }), options),
     exportFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().exportFile(target, { signal }), options),
+  });
+}
+
+async function invokeApplicationOperation<T>(operation: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal, assertActive: () => void, requestSignal?: AbortSignal): Promise<T> {
+  assertActive(); signal.throwIfAborted(); requestSignal?.throwIfAborted();
+  const lifetime = new AbortController();
+  const abort = () => lifetime.abort(signal.aborted ? signal.reason : requestSignal?.reason);
+  signal.addEventListener("abort", abort, { once: true });
+  requestSignal?.addEventListener("abort", abort, { once: true });
+  let rejectAbort!: () => void;
+  const cancelled = new Promise<never>((_resolve, reject) => {
+    rejectAbort = () => reject(lifetime.signal.reason ?? new Error("Application generation was disposed"));
+    lifetime.signal.addEventListener("abort", rejectAbort, { once: true });
+  });
+  try {
+    const result = await Promise.race([operation(lifetime.signal), cancelled]);
+    assertActive(); lifetime.signal.throwIfAborted(); return result;
+  } finally {
+    signal.removeEventListener("abort", abort); requestSignal?.removeEventListener("abort", abort);
+    lifetime.signal.removeEventListener("abort", rejectAbort);
+  }
+}
+
+/** Catalog effects retain one source and one generation; never replay on replacement. */
+export function scopeApplicationCatalog(source: () => ApplicationCatalogV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationCatalogV1 {
+  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: CatalogCallOptionsV1) =>
+    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
+  return Object.freeze({
+    getSnapshot: () => { assertActive(); signal.throwIfAborted(); return source().getSnapshot(); },
+    listSkills: (options?: CatalogCallOptionsV1) => invoke(signal => source().listSkills({ signal }), options),
+    readSkill: (input: { readonly name: string; readonly source: string }, options?: CatalogCallOptionsV1) => invoke(signal => source().readSkill(input, { signal }), options),
+    refresh: (options?: CatalogCallOptionsV1) => invoke(signal => source().refresh({ signal }), options),
+    update: (input: CatalogPackageUpdateV1, options?: CatalogCallOptionsV1) => invoke(signal => source().update(input, { signal }), options),
+    install: (options?: CatalogCallOptionsV1) => invoke(signal => source().install({ signal }), options),
+    remove: (id: string, options?: CatalogCallOptionsV1) => invoke(signal => source().remove(id, { signal }), options),
+    loadIcon: (id: string, fingerprint: string, path: string, options?: CatalogCallOptionsV1) => invoke(signal => source().loadIcon(id, fingerprint, path, { signal }), options),
   });
 }

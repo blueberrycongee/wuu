@@ -28,6 +28,7 @@ import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
+import { ApplicationCatalog } from "./ApplicationCatalog";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
@@ -44,6 +45,11 @@ export type ShellInitializeResult = InitializeResult & { application_shell?: App
 /** Shared domain state survives shell replacement; UI providers own only presentation. */
 export class ApplicationController implements ApplicationServiceV1 {
   readonly contractVersion = 1 as const;
+  readonly catalog = new ApplicationCatalog({
+    getSource: () => ({ contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
+      inventory: this.state.initialized?.extension_inventory ?? [] }),
+    assertActive: () => this.lifetime?.signal.throwIfAborted(),
+  });
   private previewContentOwner?: ApplicationPreviewContent;
   get previewContent(): ApplicationPreviewContent { return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu); }
   readonly settingsControls = createApplicationSettingsControls();
