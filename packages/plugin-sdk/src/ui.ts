@@ -1,3 +1,4 @@
+import type { ApplicationSettingsActionMapV1, ApplicationSettingsViewV1 } from "./application-settings.js";
 import type { ApplicationComposerActionMapV1, ApplicationDraftsSnapshotV1 } from "./ui-composer.js";
 import type { ComponentType, ReactNode } from "react";
 import type {
@@ -39,7 +40,7 @@ export interface ApplicationSnapshotV1 {
   };
   readonly composer: ComposerSnapshotV1;
   readonly drafts: ApplicationDraftsSnapshotV1;
-  readonly settings: SettingsSnapshotV1 & { readonly open: boolean };
+  readonly settings: SettingsSnapshotV1 & ApplicationSettingsViewV1 & { readonly open: boolean };
   readonly preview: FilePreviewSnapshotV1 | null;
   readonly appearance: ApplicationAppearanceV1;
   readonly locale: string;
@@ -73,7 +74,7 @@ export interface ApplicationAppearanceV1 {
 }
 
 /** Commands are scoped to the generation that captured this application handle. */
-export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1 {
+export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1 {
   "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
   "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };

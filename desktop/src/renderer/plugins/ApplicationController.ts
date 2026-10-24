@@ -1,3 +1,4 @@
+import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
@@ -18,6 +19,7 @@ import { awaitComposerFiles, awaitComposerImages, createComposerMessage, inputFi
 import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
+import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
 
@@ -40,6 +42,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private draft = "";
   private readonly draftResources = new ApplicationDraftResources(() => this.publish());
   private draftRevision = 0;
+  private readonly applicationSettings: ApplicationSettings;
   private settings = { open: false, pageId: "providers" };
   private preview: ApplicationSnapshotV1["preview"] = null;
   private theme = window.wuu?.initialThemePreference ?? "system";
@@ -51,6 +54,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   private consumers = 0;
   private lifetime?: AbortController;
   private navigationRequest = 0;
+  private navigationAbortCleanup?: () => void;
+  private abortedNavigation?: { request: number; signal: AbortSignal; context: NonNullable<AppState["activeContext"]> };
   private pendingNavigation?: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>;
   private submitting = false;
   private readonly pendingDraftAdmissions = new Set<string>();
@@ -58,6 +63,8 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   constructor(state?: AppState) {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
+    this.applicationSettings = new ApplicationSettings({ getState: () => this.state, updateState: this.updateState,
+      changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady) });
     const tab = activeSessionTab(this.state);
     this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";
     this.rememberDraftResources();
@@ -231,6 +238,34 @@ export class ApplicationController implements ApplicationServiceV1 {
     return draft;
   }
 
+  private beginNavigation(kind: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>["kind"], targetId: string,
+    contextSwitching: boolean, signal?: AbortSignal): number {
+    signal?.throwIfAborted();
+    this.navigationAbortCleanup?.();
+    const requestId = ++this.navigationRequest;
+    const sourceContext = this.state.activeContext;
+    this.pendingNavigation = Object.freeze({ kind, targetId, requestId, contextSwitching });
+    const abort = () => {
+      if (requestId !== this.navigationRequest) return;
+      this.finishNavigation(requestId);
+      this.navigationRequest++;
+      if (signal && contextSwitching && sourceContext) this.abortedNavigation = { request: this.navigationRequest, signal, context: sourceContext };
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    this.navigationAbortCleanup = () => signal?.removeEventListener("abort", abort);
+    this.publish();
+    return requestId;
+  }
+
+  private finishNavigation(requestId: number): boolean {
+    if (requestId !== this.navigationRequest) return false;
+    this.navigationAbortCleanup?.();
+    this.navigationAbortCleanup = undefined;
+    this.pendingNavigation = undefined;
+    this.publish();
+    return true;
+  }
+
   private navigationActions(signal?: AbortSignal) {
     let restoredDraft: ComposerDraftState | undefined;
     const isCurrent = (request: number) => !signal?.aborted && request === this.navigationRequest;
@@ -264,11 +299,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => createDraftSessionTab(`draft:${crypto.randomUUID()}`, context),
       isDraftPending: (tabId: string) => this.pendingDraftAdmissions.has(tabId),
       beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetId: string, contextSwitching = false) => {
-        signal?.throwIfAborted();
-        const requestId = ++this.navigationRequest;
-        this.pendingNavigation = Object.freeze({ kind, targetId, requestId, contextSwitching: contextSwitching || kind !== "thread" });
-        this.publish();
-        return requestId;
+        return this.beginNavigation(kind, targetId, contextSwitching || kind !== "thread", signal);
       },
       prepareThreadReveal: (request: number) => {
         if (!isCurrent(request)) return false;
@@ -277,9 +308,9 @@ export class ApplicationController implements ApplicationServiceV1 {
       },
       finishViewSwitch: (request: number) => {
         if (!isCurrent(request)) return false;
-        this.pendingNavigation = undefined; this.publish(); return true;
+        return this.finishNavigation(request);
       },
-      cancelViewSwitch: () => { this.navigationRequest++; this.pendingNavigation = undefined; this.publish(); },
+      cancelViewSwitch: () => { this.finishNavigation(this.navigationRequest); this.navigationRequest++; },
       onError: (error: Error): never => { throw error; },
     };
     const threads = createThreadActivationActions({ ...common,
@@ -304,11 +335,9 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async selectTab(tab: SessionTab, signal?: AbortSignal): Promise<void> {
-    const request = ++this.navigationRequest;
     const sourceContext = this.state.activeContext;
     const contextSwitching = !sameRuntimeContext(sourceContext, tab.context) || this.pendingNavigation?.contextSwitching === true;
-    this.pendingNavigation = Object.freeze({ kind: "tab", targetId: tab.id, contextSwitching });
-    this.publish();
+    const request = this.beginNavigation("tab", tab.id, contextSwitching, signal);
     let switchedContext = false;
     try {
       let loaded: Partial<AppState> = {};
@@ -347,19 +376,33 @@ export class ApplicationController implements ApplicationServiceV1 {
       }
       throw error;
     } finally {
-      if (request === this.navigationRequest) { this.pendingNavigation = undefined; this.publish(); }
+      this.finishNavigation(request);
     }
   }
 
   async invoke<Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal }): Promise<ApplicationActionMapV1[Action]["result"]> {
     const signal = options?.signal;
     signal?.throwIfAborted();
-    const result = await this.perform(action, input, signal);
-    signal?.throwIfAborted();
-    return result as ApplicationActionMapV1[Action]["result"];
+    try {
+      const result = await this.perform(action, input, signal);
+      signal?.throwIfAborted();
+      return result as ApplicationActionMapV1[Action]["result"];
+    } finally {
+      const recovery = this.abortedNavigation;
+      if (signal?.aborted && recovery?.signal === signal && recovery.request === this.navigationRequest) {
+        this.abortedNavigation = undefined;
+        try { await selectRuntimeContext(recovery.context); }
+        catch (error) {
+          if (recovery.request === this.navigationRequest) this.updateState(state => ({ ...state,
+            initialized: undefined, activeContext: undefined, activeProjectId: undefined, status: String(error) }));
+        }
+      }
+    }
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
+      input as ApplicationSettingsActionMapV1[keyof ApplicationSettingsActionMapV1]["input"], signal);
     switch (action) {
       case "workspace.retarget-draft": {
         const { workspaceId } = input as ApplicationActionMapV1["workspace.retarget-draft"]["input"];
@@ -402,7 +445,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       }
       case "navigation.reveal-complete": {
         const { requestId } = input as ApplicationActionMapV1["navigation.reveal-complete"]["input"];
-        if (requestId === this.navigationRequest) { this.pendingNavigation = undefined; this.publish(); }
+        this.finishNavigation(requestId);
         return;
       }
       case "composer.import-attachments": {
@@ -741,7 +784,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
         primary: this.draftResources.project(primaryDraft), secondary: this.draftResources.project(secondaryDraft),
         attachments: Object.freeze([...attachmentIds].map(id => this.draftResources.describe(id))) }),
-      settings: Object.freeze({ contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
+      settings: Object.freeze({ ...this.applicationSettings.getSnapshot(), contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),
       preview: this.preview,

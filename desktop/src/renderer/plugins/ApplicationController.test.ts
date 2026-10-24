@@ -7,6 +7,24 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("clears pending navigation when its generation aborts before a workspace response", async () => {
+    const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+    let finish!: (value: unknown) => void;
+    window.wuu = { selectProject: vi.fn(id => id === "b" ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ projects: [], active_context: source })) } as unknown as WuuDesktopApi;
+    const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: { kind: "project", project_id: "b", cwd: "/b" } });
+    try {
+      const controller = new ApplicationController({ ...initialState, activeContext: source });
+      const lifetime = new AbortController();
+      const navigation = controller.invoke("workspace.start-draft", { workspaceId: "b" }, { signal: lifetime.signal });
+      lifetime.abort();
+      expect(controller.getSnapshot().tabs.pending).toBeUndefined();
+      finish({ projects: [] });
+      await expect(navigation).rejects.toThrow();
+      expect(controller.getSnapshot().workspaces.activeRoot).toBe("/a");
+      expect(window.wuu.selectProject).toHaveBeenLastCalledWith("a");
+    } finally { load.mockRestore(); }
+  });
+
   it("admits files into their source draft before returning and releases closed draft resources", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
@@ -38,7 +56,7 @@ describe("shared application state", () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const send = vi.fn().mockRejectedValue(new Error("delivery failed"));
     window.wuu = { startTurn: send, queueTurn: send, steerTurn: send } as unknown as WuuDesktopApi;
-    const thread = { id: "thread", cwd: context.cwd, preview: "", status: "in_progress", turns: [{ id: "active", status: "in_progress", items: [] }] } as never;
+    const thread = { id: "thread", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "active", status: "in_progress", items: [] }] } as never;
     const controller = new ApplicationController({ ...initialState, activeContext: context, thread, activeSessionTabID: "thread:thread", sessionTabs: [
       { id: "thread:thread", kind: "thread", threadID: "thread", context, title: "Thread", prompt: "", images: [], files: [{ id: "file", filename: "note.txt", media_type: "text/plain", data: "QQ==" }] },
     ] });
@@ -85,7 +103,7 @@ describe("shared application state", () => {
     const next = await controller.invoke("tab.new", {});
     expect(next.tabId).not.toBe("draft:a");
     await controller.invoke("composer.set-draft", { text: "next" });
-    finish({ thread: { id: "created", preview: "", updated_at: "2026-10-24T00:00:00Z", cwd: context.cwd, turns: [], status: "idle" } });
+    finish({ thread: { id: "created", model_provider: "", preview: "", updated_at: "2026-10-24T00:00:00Z", cwd: context.cwd, turns: [], status: "idle" } });
     await sending;
     expect(controller.getSnapshot().tabs.activeTabId).toBe(next.tabId);
     expect(controller.getSnapshot().composer.draftText).toBe("next");
@@ -251,7 +269,7 @@ describe("shared application state", () => {
     await controller.invoke("composer.set-draft", { text: "Original" });
     const submitting = controller.invoke("composer.submit", {});
     await controller.invoke("composer.set-draft", { text: "Next message" });
-    created({ thread: { id: "created", cwd: context.cwd, preview: "", updated_at: "2026-10-24T00:00:00Z", turns: [], status: "idle" } });
+    created({ thread: { id: "created", model_provider: "", cwd: context.cwd, preview: "", updated_at: "2026-10-24T00:00:00Z", turns: [], status: "idle" } });
     await submitting;
     expect(send).toHaveBeenCalledWith("created", "Original", undefined, undefined, undefined, undefined, undefined, context, expect.any(String));
     expect(controller.getSnapshot().composer.draftText).toBe("Next message");
