@@ -1,7 +1,7 @@
 import type { ApplicationSettingsViewV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationComposerRuntimeActionMapV1 as Actions, ApplicationComposerRuntimeChoiceV1, ApplicationComposerRuntimeOwnerV1, ApplicationComposerRuntimeSelectionV1, ApplicationComposerRuntimeViewV1 } from "../../../../packages/plugin-sdk/src/ui-composer-runtime";
-import type { EngineListResult, InitializeResult, RuntimeContext, Thread } from "../../shared/protocol";
+import type { EngineListResult, InitializeResult, RuntimeContext, Thread, ThreadStartParams } from "../../shared/protocol";
 import { isThreadRunning, sameRuntimeContext, type AppState } from "../AppState";
 import type { CodexModelLoadState } from "../ComposerTypes";
 import { createRuntimeSettingsActions } from "../RuntimeSettingsActions";
@@ -151,6 +151,21 @@ export class ApplicationComposerRuntime {
       this.snapshot = Object.freeze({ activeOwnerTabId, owners: Object.freeze(rows) });
     }
     return this.snapshot;
+  }
+  /** Host submission uses the same selection policy as the public composer view. */
+  getSubmissionRuntime(ownerTabId: string): { pending: boolean; params: ThreadStartParams; worktree?: { startBranch: string } } {
+    const owner = this.getSnapshot().owners.find(owner => owner.ownerTabId === ownerTabId);
+    if (!owner) return { pending: true, params: {} };
+    const selection = owner.selection;
+    const params: ThreadStartParams = selection.engine === "wuu"
+      ? { engine: selection.engine, provider: selection.provider, model: selection.model,
+          effort: selection.variant || selection.effort, speed: selection.speed,
+          permission_mode: selection.permissionMode, approve_for_me: selection.approveForMe }
+      : { engine: selection.engine, model: selection.model, effort: selection.effort, speed: selection.speed,
+          permission_mode: selection.permissionMode,
+          ...(Object.keys(selection.modelOptions).length ? { model_options: { ...selection.modelOptions } } : {}) };
+    return { pending: !owner.available || owner.engineSelectionPending, params,
+      ...(owner.worktree.enabled ? { worktree: { startBranch: owner.worktree.startBranch } } : {}) };
   }
   private admit(ownerTabId: string, signal?: AbortSignal): Source {
     if (this.disposed) throw new Error("Composer runtime is disposed");

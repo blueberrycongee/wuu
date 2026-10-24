@@ -193,3 +193,16 @@ it("reports a rejected thread selection without changing its chosen runtime", as
   expect(h.view().selection.permissionMode).toBe("standard");
   expect(h.view().selectionError).not.toBe("");
 });
+
+it("projects submission parameters from the same owner without leaking builtin configuration into native engines", async () => {
+  installEngineAPI(); const h = fixture();
+  expect(h.runtime.getSubmissionRuntime("missing")).toEqual({ pending: true, params: {} });
+  expect(h.runtime.getSubmissionRuntime("draft-a").pending).toBe(true);
+  await h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  expect(h.runtime.getSubmissionRuntime("draft-a").params).toMatchObject({ engine: "wuu", provider: "api", model: "a", effort: "high", permission_mode: "standard" });
+  await h.runtime.invoke("composer.choose-runtime", { ownerTabId: "draft-a", selection: { kind: "engine", engine: "native" } });
+  await h.runtime.invoke("composer.choose-worktree", { ownerTabId: "draft-a", enabled: true, startBranch: "feature" });
+  const runtime = h.runtime.getSubmissionRuntime("draft-a");
+  expect(runtime).toEqual({ pending: false, params: { engine: "native", model: "", effort: "", speed: "", permission_mode: "unconfined" }, worktree: { startBranch: "feature" } });
+  expect(runtime.params).not.toHaveProperty("provider"); expect(runtime.params).not.toHaveProperty("approve_for_me");
+});
