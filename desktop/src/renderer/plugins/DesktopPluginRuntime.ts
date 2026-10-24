@@ -28,6 +28,11 @@ export interface DesktopPluginFailure {
 }
 
 export const desktopPluginHost = new PluginHost({
+  createLegacyViewHost: identity => desktopWorkbenchController.createViewHostAPI({
+    id: identity.tabId ?? `renderer:${identity.pluginId}`,
+    pluginId: identity.pluginId, generation: identity.generation, viewTypeId: identity.viewTypeId ?? "renderer",
+    region: "primary", persistence: "session", context: { ...identity.context },
+  }),
   reportActivation: params => window.wuu.reportPluginDesktopActivation(params),
   react: React,
   application: {
@@ -115,7 +120,20 @@ export const desktopPluginHost = new PluginHost({
 });
 export const desktopCompositionRoot = createDesktopCompositionRoot();
 void desktopCompositionRoot.plugin(PluginHostService, desktopPluginHost);
-export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost);
+export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost, {
+  getSetting: async (pluginId, generation, key) => {
+    if (!window.wuu?.getPluginSetting) throw new Error("Plugin settings service is unavailable");
+    return (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value;
+  },
+  getStorage: async (pluginId, generation, key, scope) => {
+    if (!window.wuu?.getPluginStorage) throw new Error("Plugin storage service is unavailable");
+    return (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value;
+  },
+  setStorage: async (pluginId, generation, key, value, scope) => {
+    if (!window.wuu?.setPluginStorage) throw new Error("Plugin storage service is unavailable");
+    await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope });
+  },
+});
 void desktopCompositionRoot.plugin(WorkbenchService, desktopWorkbenchController);
 
 export class DesktopPluginRuntime {

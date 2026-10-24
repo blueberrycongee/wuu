@@ -32,6 +32,7 @@ import type {
   ViewPlacementContribution,
   ViewPlacementRegion,
   ViewTypeDefinition,
+  ViewHostAPI,
 } from "../../shared/workbench";
 import { createPluginUIKit, VIEW_PLACEMENT_REGIONS } from "../../shared/workbench";
 import {
@@ -406,6 +407,7 @@ export interface RegisteredApplicationShell extends ApplicationShellDefinition {
 }
 
 export interface RegisteredUISlot extends UISlotDefinition {
+  readonly application: ApplicationServiceV1;
   readonly pluginId: string;
   readonly generation: string;
   readonly name: string;
@@ -417,7 +419,16 @@ export interface RegisteredUIContribution extends UIContributionDefinition {
   readonly application: ApplicationServiceV1;
 }
 
+export interface LegacyViewHostIdentity {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly viewTypeId?: string;
+  readonly tabId?: string;
+  readonly context?: Readonly<Record<string, unknown>>;
+}
+
 export interface PluginHostOptions {
+  createLegacyViewHost?: (identity: LegacyViewHostIdentity) => ViewHostAPI;
   reportActivation?: (report: PluginDesktopActivationParams) => Promise<void>;
   application?: HostApplicationService;
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
@@ -630,6 +641,7 @@ export class PluginHost {
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
   private readonly application?: HostApplicationService;
+  private readonly legacyViewHostFactory?: PluginHostOptions["createLegacyViewHost"];
   private applicationShells: readonly RegisteredApplicationShell[] = Object.freeze([]);
   private uiSlotSnapshot: readonly RegisteredUISlot[] = Object.freeze([]);
   private uiContributionSnapshot: readonly RegisteredUIContribution[] = Object.freeze([]);
@@ -687,6 +699,7 @@ export class PluginHost {
     }
     this.reportActivation = options.reportActivation;
     this.application = options.application;
+    this.legacyViewHostFactory = options.createLegacyViewHost;
     this.react = options.react;
     this.ui = createPluginUIKit(options.react);
     this.styleContainer = options.styleContainer;
@@ -825,6 +838,25 @@ export class PluginHost {
   }
 
   getApplicationShells = (): readonly RegisteredApplicationShell[] => this.applicationShells;
+
+  createLegacyViewHost(identity: LegacyViewHostIdentity): ViewHostAPI {
+    const activation = this.getGenerationActivation(identity.pluginId, identity.generation);
+    const check = () => {
+      if (!activation || this.getGenerationActivation(identity.pluginId, identity.generation) !== activation) throw new Error("Legacy view generation is retired");
+    };
+    check();
+    if (!this.legacyViewHostFactory) throw new Error("Legacy view host is unavailable");
+    const source = this.legacyViewHostFactory(identity);
+    const invoke = async <T,>(operation: () => Promise<T>): Promise<T> => { check(); const result = await operation(); check(); return result; };
+    return Object.freeze({ ...source,
+      getStorage: (key, scope) => invoke(() => source.getStorage(key, scope)),
+      setStorage: (key, value, scope) => invoke(() => source.setStorage(key, value, scope)),
+      getSetting: key => invoke(() => source.getSetting(key)),
+      executeCommand: (id, input) => invoke(() => source.executeCommand(id, input)),
+      openView: (id, options) => invoke(() => source.openView(id, options)),
+      closeView: () => invoke(() => source.closeView()),
+    } satisfies ViewHostAPI);
+  }
 
   getUISlot(name: string): RegisteredUISlot | undefined {
     return this.uiSlotSnapshot.find(slot => slot.name === name);
@@ -1261,7 +1293,7 @@ export class PluginHost {
         }
         const record: UISlotRecord = {
           pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
-          definition: Object.freeze({ ...definition, id, name: `${state.manifestId}/${id}`, pluginId: state.pluginId, generation: state.generation }),
+          definition: Object.freeze({ ...definition, id, name: `${state.manifestId}/${id}`, pluginId: state.pluginId, generation: state.generation, application }),
         };
         state.uiSlots.push(record);
         return this.ownRecord(state, record);

@@ -52,6 +52,30 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("retains the declaring slot service and fences legacy view hosts across same-code replacement", async () => {
+    window.wuu = {} as never;
+    let finish!: (value: string) => void;
+    const execute = vi.fn().mockResolvedValue(undefined);
+    const createViewHost = vi.fn(() => ({ getStorage: vi.fn(() => new Promise<string>(resolve => { finish = resolve; })),
+      setStorage: vi.fn().mockResolvedValue(undefined), getSetting: vi.fn().mockResolvedValue("setting"), executeCommand: execute,
+      openView: vi.fn().mockResolvedValue(undefined), closeView: vi.fn().mockResolvedValue(undefined) }));
+    const { host } = fixture({ createLegacyViewHost: createViewHost });
+    let application!: ApplicationServiceV1;
+    const activate = () => host.activateGeneration({ pluginId: "legacy-source", generation: "same", register: api => {
+      application = api.application; api.registerUISlot({ id: "content.preview", cardinality: "one" });
+    } });
+    await activate();
+    expect(host.getUISlot("legacy-source/content.preview")?.application).toBe(application);
+    const old = host.createLegacyViewHost({ pluginId: "legacy-source", generation: "same", viewTypeId: "view", tabId: "tab" });
+    const reading = old.getStorage("key");
+    const rejected = expect(reading).rejects.toThrow();
+    await activate(); finish("old value"); await rejected;
+    await expect(old.executeCommand("command")).rejects.toThrow(); expect(execute).not.toHaveBeenCalled();
+    const next = host.createLegacyViewHost({ pluginId: "legacy-source", generation: "same" });
+    await next.executeCommand("command"); expect(execute).toHaveBeenCalledOnce();
+    host.unload("legacy-source");
+  });
+
   it("releases preview visibility on retirement without clearing a successor owner", async () => {
     window.wuu = { openExternal: vi.fn().mockResolvedValue(undefined) } as never;
     resetWorkspaceBrowserNavigationForTests();
