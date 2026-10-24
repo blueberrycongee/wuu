@@ -148,9 +148,8 @@ async function run() {
         assert.equal(before.collapsed, collapsed);
         assert.equal(before.toggleHit, true, 'Context toggle is reachable with the rail closed');
         move(await point('[data-wuu-component="conversations-section"]'));
-        await until(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true', 'hover opens rail');
         await settle();
-        // The covered toggle is hidden, so probe its original hit area.
+        // Hover must leave the contextual toggle in its original hit area.
         const togglePoint = { x: Math.round(before.rect.x + before.rect.width / 2), y: Math.round(before.rect.y + before.rect.height / 2) };
         const during = await evaluate(read, togglePoint);
         const label = `${platform}-${theme}-${size}-${width}-${section}-${collapsed ? 'collapsed' : 'docked'}`;
@@ -159,16 +158,9 @@ async function run() {
         fs.writeFileSync(path.join(output, label + '-open.png'), (await win.webContents.capturePage()).toPNG());
         assert.equal(during.caption.length, platform === 'darwin' ? 0 : 3, 'macOS uses native buttons; Linux uses renderer controls');
         if (platform === 'darwin') assert.ok(during.caption.every(control => !control.hit), 'Traffic lights stay hidden while using the ribbon');
-        else assert.ok(during.caption.every(control => control.hit), 'Caption controls remain above the expanded rail');
-        if (platform === 'darwin') {
-          assert.equal(during.toggleHit, false, 'Expanded rail must cover the contextual toggle');
-          assert.equal(during.railHit, true, 'The covered toggle position belongs to the rail');
-          clickAt(togglePoint);
-          await settle();
-          assert.equal((await evaluate(read)).collapsed, collapsed, 'Clicking the covered position cannot toggle the sidebar');
-        } else {
-          assert.equal(during.toggleHit, true, 'Separate Linux caption-row toggle remains reachable');
-        }
+        else assert.ok(during.caption.every(control => control.hit), 'Caption controls remain reachable');
+        assert.equal(during.toggleHit, true, 'Hover keeps the contextual toggle reachable');
+        assert.deepEqual(during.railRect, before.railRect, 'Hover does not widen the ribbon');
         await closeRail();
         const restored = await evaluate(read);
         assert.equal(restored.toggleHit, true, 'Leaving hover restores the contextual toggle');
@@ -176,13 +168,13 @@ async function run() {
         await closeRail();
         result.afterClick = await evaluate(read);
         assert.equal(result.afterClick.collapsed, !collapsed, 'Restored toggle still changes the sidebar');
-        // Keyboard navigation must also raise and release the same overlay.
+        // Keyboard navigation keeps both the rail and toggle usable.
         await evaluate(() => document.querySelector('[data-wuu-component="conversations-section"]').focus());
         win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ArrowDown' });
         win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ArrowDown' });
-        await until(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true', 'keyboard expands rail');
+        await until(() => document.querySelector('.sidebar-ribbon')?.contains(document.activeElement), 'keyboard focus stays in the rail');
         await settle();
-        if (platform === 'darwin') assert.equal((await evaluate(read, togglePoint)).toggleHit, false, 'Keyboard expansion covers the toggle too');
+        assert.equal((await evaluate(read, togglePoint)).toggleHit, true, 'Keyboard navigation keeps the toggle reachable');
         await closeRail();
         fs.writeFileSync(path.join(output, label + '-closed.png'), (await win.webContents.capturePage()).toPNG());
         save();

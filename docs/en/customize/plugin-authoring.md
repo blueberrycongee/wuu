@@ -108,7 +108,7 @@ Declare `contributes.skins` independently of `contributes.themes`. Each skin has
 }
 ```
 
-Images may be PNG, JPEG, WebP, or self-contained SVG, up to 8 MiB each. Use an image for gradients or textures. Image paths remain inside the package; SVG external references and scripts are rejected. The desktop serves only declared images from the requested package fingerprint. Artwork covers the full window continuously behind the ribbon and frame, including the isolated expanded ribbon. The host owns layout, cropping, interaction and content boundaries; skin colors do not override content theme tokens. Pair foreground, hover and active colors with artwork that keeps controls readable.
+Images may be PNG, JPEG, WebP, or self-contained SVG, up to 8 MiB each. Use an image for gradients or textures. Image paths remain inside the package; SVG external references and scripts are rejected. The desktop serves only declared images from the requested package fingerprint. Artwork covers the full window continuously behind the ribbon and frame. The host owns layout, cropping, interaction and content boundaries; skin colors do not override content theme tokens. Pair foreground, hover and active colors with artwork that keeps controls readable.
 
 Skin selection is local to the desktop profile, follows light/dark mode, and survives plugin updates. Disabled, removed, or safe-mode plugins stop decorating the frame; re-enabling the same plugin restores the selection. A failed image load uses the variant background and reports the missing artwork in its preview. One package may offer both skins and content themes, and users select them independently. See the installable shell skin example in `examples/plugins/shell-skins`.
 

@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { closestCenter, DndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { arrayMove, SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { Globe, Pin, PinOff, Plus, RotateCw, Volume2, VolumeX, X } from "./WuuIcons";
-import { SIDEBAR_RIBBON_WIDTH } from "./AppLayoutState";
-import { readFocusModality } from "./FocusModality";
 import { HoverRevealScopeContext } from "./HoverReveal";
 import {
   readNavigationRibbonPreferences,
@@ -15,22 +13,17 @@ import {
 } from "./NavigationRibbonPreferences";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { focusAfterRibbonClose, RibbonDestination } from "./NavigationRibbonDestination";
-import { useChromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
-import type { ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger, ApplicationDesktopChromeDesktopUpdateV1 as ChromeDesktopUpdate, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect, ApplicationDesktopChromeRibbonFocusV1 as ChromeRibbonFocus, ApplicationDesktopChromeRibbonModelV1 as ChromeRibbonModel, ApplicationDesktopRibbonIconModelV1 as RibbonIconModel } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { showActionErrorToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
 import { WebsiteIcon } from "./WebsiteIcon";
-import { RibbonResizeHandle } from "./RibbonResizeHandle";
-import { useRibbonReveal } from "./useRibbonReveal";
 import mascotIcon from "../../../assets/app-icon-source.svg";
 
 export interface NavigationRibbonItem {
   id: string;
   title: string;
   icon: ReactNode;
-  nativeIcon: RibbonIconModel;
   active?: boolean;
   disabled?: boolean;
   pinned?: boolean;
@@ -40,7 +33,6 @@ export interface NavigationRibbonItem {
   pluginId?: string;
   onSelect: () => void;
   onClose?: () => void;
-  onMute?: () => void;
 }
 
 export interface RibbonBrowserActions {
@@ -59,74 +51,20 @@ function restoreReopenedOrder(order: readonly string[], tabs: readonly Pick<Ribb
   return order.map(id => replacements.get(id) ?? id);
 }
 
-export function NavigationRibbon({ onOpenExternal, items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef, onExpandedChange }: {
+export function NavigationRibbon({ onOpenExternal, items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef }: {
   onOpenExternal?: (url: string) => Promise<void>;
   items: NavigationRibbonItem[];
   activeWebsiteId?: string | null;
   onSelectWebsite?: (website: RibbonWebsite) => void;
   footer?: ReactNode;
   ribbonRef?: Ref<HTMLElement>;
-  onExpandedChange?: (expanded: boolean) => void;
 } & RibbonBrowserActions): JSX.Element {
   const { t } = useI18n();
   const preferences = useNavigationRibbonPreferences();
   const navRef = useRef<HTMLElement | null>(null);
-  const width = preferences.width ?? SIDEBAR_RIBBON_WIDTH;
-  const docked = width > SIDEBAR_RIBBON_WIDTH;
-  const resizing = useRef(false);
-  const [isResizing, setIsResizing] = useState(false);
-  const [nativeOpen, setNativeOpen] = useState(false);
-  const [nativeClosing, setNativeClosing] = useState(false);
-  const [nativeBounds, setNativeBounds] = useState<ChromeOverlayRect | null>(null);
-  const [accountTrigger, setAccountTrigger] = useState<ChromeAccountTrigger>();
-  const accountOpen = useRef<((bounds: ChromeOverlayRect) => void) | undefined>(undefined);
-  const [updateModel, setUpdateModel] = useState<ChromeDesktopUpdate>();
-  const updateActivate = useRef<(() => void) | undefined>(undefined);
-  const scrollTop = useRef(0);
-  // One desktop surface owns reveal motion across every destination. Switching
-  // from a shell page to a website must not replace it or restart its reveal.
-  const nativeAvailable = Boolean(useChromeOverlayApi());
-  const accountContext = useMemo(() => ({ publishAccount: (trigger: ChromeAccountTrigger | undefined, open?: (bounds: ChromeOverlayRect) => void) => {
-    setAccountTrigger(current => JSON.stringify(current) === JSON.stringify(trigger) ? current : trigger);
-    accountOpen.current = open;
-  }, publishUpdate: (model: ChromeDesktopUpdate | undefined, activate?: () => void) => {
-    setUpdateModel(current => JSON.stringify(current) === JSON.stringify(model) ? current : model);
-    updateActivate.current = activate;
-  } }), []);
   const [announcement, setAnnouncement] = useState("");
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
-  const [keyboardFocusWithin, setKeyboardFocusWithin] = useState(false);
-  const nativeReturnFocus = useRef<Element | null>(null);
-  useEffect(() => {
-    // A real new input starts a new focus journey. Restoring WebContents focus
-    // after dismissing native chrome must not count as another keyboard entry.
-    const reset = () => { nativeReturnFocus.current = null; };
-    document.addEventListener("keydown", reset, true);
-    document.addEventListener("pointerdown", reset, true);
-    return () => {
-      document.removeEventListener("keydown", reset, true);
-      document.removeEventListener("pointerdown", reset, true);
-    };
-  }, []);
-  const [nativeFocusTarget, setNativeFocusTarget] = useState<ChromeRibbonFocus>();
-  const rememberFocus = (target: EventTarget | null) => {
-    if (!(target instanceof Element)) return;
-    const button = target.closest<HTMLButtonElement>("button");
-    const next: ChromeRibbonFocus | undefined = button?.dataset.ribbonId ? { kind: "item", id: button.dataset.ribbonId }
-      : button?.dataset.ribbonCloseId ? { kind: "close", id: button.dataset.ribbonCloseId }
-      : button?.matches(".desktop-update-button") ? { kind: "desktop-update" }
-      : button?.matches(".sidebar-account-trigger") ? { kind: "account" }
-      : button?.matches(".sidebar-ribbon-add") ? { kind: "new-tab" } : undefined;
-    setNativeFocusTarget(current => JSON.stringify(current) === JSON.stringify(next) ? current : next);
-  };
   const [dragging, setDragging] = useState(false);
-  const [retainedLayers, setRetainedLayers] = useState(0);
-  const retainLayer = useCallback(() => {
-    // Hover hints may retain an open ribbon, but must not expand a compact one.
-    if (navRef.current?.dataset.expanded !== "true") return () => {};
-    setRetainedLayers((count) => count + 1);
-    return () => setRetainedLayers((count) => count - 1);
-  }, []);
   const sensors = useSensors(useSensor(SidebarPointerSensor, { activationConstraint: { distance: 6 } }));
   const destinations: NavigationRibbonItem[] = [
     ...items,
@@ -134,7 +72,6 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
       id: website.id,
       title: website.url === "about:blank" && website.startPage !== false ? t("webWorkspace.newTab") : website.title || website.url,
       icon: website.loading ? <RotateCw className="sidebar-ribbon-tab-loading" aria-hidden="true" /> : <WebsiteIcon url={website.url} favicon={website.favicon} fallback={<span className="sidebar-ribbon-website-icon" aria-hidden="true">{website.url === "about:blank" && website.startPage !== false ? <Globe /> : Array.from(website.title)[0]?.toLocaleUpperCase() || <Globe />}</span>} />,
-      nativeIcon: { kind: "website", ...website },
       active: activeWebsiteId === website.id,
       disabled: !onSelectWebsite,
       pinned: website.pinned,
@@ -143,7 +80,6 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
       component: "website-navigation-item",
       onSelect: () => onSelectWebsite?.(website),
       onClose: onCloseTab ? () => closeWebsite(website.id) : undefined,
-      onMute: onMuteTab ? () => onMuteTab(website.id, !website.muted) : undefined,
     })),
   ];
   const availableIDs = JSON.stringify(destinations.map((item) => item.id));
@@ -210,114 +146,9 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
   }
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
-  const expanded = docked || nativeOpen || keyboardFocusWithin || Boolean(menuWebsite) || retainedLayers > 0;
-  useRibbonReveal(nativeAvailable || isResizing ? undefined : "shell", expanded, () => navRef.current, () => {});
-  useLayoutEffect(() => {
-    onExpandedChange?.(expanded && !docked);
-  }, [expanded, docked, onExpandedChange]);
-  useLayoutEffect(() => () => onExpandedChange?.(false), [onExpandedChange]);
-  useLayoutEffect(() => {
-    if (isResizing && !nativeOpen) return;
-    if (!nativeAvailable || docked || !expanded || !navRef.current) { setNativeOpen(false); return; }
-    if (nativeClosing) return;
-    const nav = navRef.current;
-    scrollTop.current = nav.querySelector(".sidebar-ribbon-main")?.scrollTop ?? 0;
-    const measure = () => {
-      const rect = nav.getBoundingClientRect();
-      const top = Number.parseFloat(getComputedStyle(nav).paddingTop);
-      const next = { x: rect.x, y: rect.y + top, width: rect.width, height: rect.height - top };
-      setNativeBounds(current => current && Object.keys(next).every(key => current[key as keyof ChromeOverlayRect] === next[key as keyof ChromeOverlayRect]) ? current : next);
-    };
-    measure();
-    // Content-box changes include font-driven header padding while the native
-    // ribbon is open. Its own close animation must not feed back into sizing.
-    const observer = new ResizeObserver(measure);
-    observer.observe(nav);
-    setNativeOpen(true);
-    return () => observer.disconnect();
-  }, [nativeAvailable, docked, expanded, nativeClosing, isResizing]);
-  const nativeModel: ChromeRibbonModel = { kind: "ribbon", resizeLabel: t("ribbon.resize"), collapsedWidth: SIDEBAR_RIBBON_WIDTH, items: ordered.map(item => ({ id: item.id, title: item.title, icon: item.nativeIcon,
-    active: item.active, disabled: item.disabled, pinned: item.pinned, audible: item.audible, muted: item.muted, canMute: Boolean(item.onMute), closable: Boolean(item.onClose), website: websiteIDs.has(item.id), component: item.component, pluginId: item.pluginId })),
-    label: t("sidebar.mainNavigation"), newTabLabel: t("webWorkspace.newTab"), canCreateTab: Boolean(onNewTab), closeTabLabel: t("webWorkspace.closeCurrentTab"),
-    pinTabLabel: t("webWorkspace.pinTab"), unpinTabLabel: t("webWorkspace.unpinTab"), reorderHint: t("ribbon.reorderHint"),
-    muteTabLabel: t("webWorkspace.muteTab"), unmuteTabLabel: t("webWorkspace.unmuteTab"),
-    paddingTop: 0,
-    headerHeight: navRef.current ? Number.parseFloat(getComputedStyle(navRef.current).paddingTop) : 0,
-    paddingBottom: navRef.current ? Number.parseFloat(getComputedStyle(navRef.current).paddingBottom) : 8,
-    scrollTop: scrollTop.current, focusTarget: nativeFocusTarget,
-    footer: footer ? { account: accountTrigger, update: updateModel } : undefined,
-  };
-  const closeNative = () => { navRef.current?.style.removeProperty("--ribbon-native-reveal"); setNativeClosing(false); setNativeOpen(false); setKeyboardFocusWithin(false); setDragging(false); };
-  const nativePresented = useChromeOverlay(nativeAvailable && nativeOpen, nativeBounds, nativeModel, command => {
-    if (command.type === "reveal") navRef.current?.style.setProperty("--ribbon-native-reveal", String(command.fraction));
-    else if (command.type === "pointer") {
-      if (resizing.current) return;
-      setNativeClosing(!command.inside);
-      if (command.inside) setNativeOpen(true);
-    }
-    else if (command.type === "resize-ribbon") resizeRibbon(command.width, command.finished);
-    else if (command.type === "select") destinationByID.get(command.id)?.onSelect();
-    // The native ribbon owns its focus; focusing its duplicate shell button
-    // would steal keyboard input while the native surface is still open.
-    else if (command.type === "close-tab") onCloseTab?.(command.id);
-    else if (command.type === "pin-tab") onPinTab?.(command.id, command.pinned);
-    else if (command.type === "mute-tab") onMuteTab?.(command.id, command.muted);
-    else if (command.type === "reorder") reorder(command.id, command.target);
-    else if (command.type === "new-tab") onNewTab?.();
-    else if (command.type === "desktop-update") updateActivate.current?.();
-    else if (command.type === "account-open") accountOpen.current?.(command.anchor);
-    else if (command.type === "scroll") { scrollTop.current = command.top; const main = navRef.current?.querySelector(".sidebar-ribbon-main"); if (main) main.scrollTop = command.top; }
-  }, closeNative, keyboardFocusWithin, navRef.current);
-  useLayoutEffect(() => {
-    if (nativePresented && navRef.current?.contains(document.activeElement)) {
-      nativeReturnFocus.current = document.activeElement;
-    }
-  }, [nativePresented]);
-  const resizeRibbon = (next: number, finished: boolean) => {
-    const nav = navRef.current;
-    if (!nav) return;
-    const shell = nav.closest<HTMLElement>(".app-shell") ?? nav.parentElement!;
-    resizing.current = !finished;
-    setIsResizing(!finished);
-    shell.toggleAttribute("data-ribbon-resizing", !finished);
-    shell.style.setProperty("--sidebar-ribbon-width", `${next}px`);
-    shell.style.setProperty("--sidebar-ribbon-extra", `${next - SIDEBAR_RIBBON_WIDTH}px`);
-    nav.style.width = `${next}px`;
-    nav.style.setProperty("--ribbon-reveal", next > 80 ? "1" : "0");
-    if (finished) {
-      try { saveNavigationRibbonPreferences({ ...readNavigationRibbonPreferences(), width: next }); }
-      catch (error) {
-        shell.style.setProperty("--sidebar-ribbon-width", `${width}px`);
-        shell.style.setProperty("--sidebar-ribbon-extra", `${width - SIDEBAR_RIBBON_WIDTH}px`);
-        showActionErrorToast(error, t("ribbon.saveFailed"));
-      }
-      closeNative();
-      nav.style.removeProperty("width");
-    }
-  };
   return <>
-    <NativeRibbonFooterContext.Provider value={accountContext}>
-    <HoverRevealScopeContext.Provider value={{ disabled: dragging || isResizing, retain: retainLayer }}>
-    <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" aria-label={t("sidebar.mainNavigation")}
-      data-expanded={(expanded && !nativeClosing) || undefined}
-      data-native-supported={(nativeAvailable && !docked) || undefined}
-      data-docked={docked || undefined}
-      data-wuu-layer={expanded && !nativeAvailable ? "popover" : undefined}
-      data-native-overlay={nativePresented || undefined}
-      onPointerDownCapture={() => setKeyboardFocusWithin(false)}
-      onFocus={event => {
-        if (!event.relatedTarget && nativeReturnFocus.current === event.target) return;
-        rememberFocus(event.target);
-        setKeyboardFocusWithin(readFocusModality() === "keyboard");
-      }}
-      onBlur={(event) => {
-        // Paint can trail keyboard traversal: remember the element actually
-        // handed to native chrome, not only the one focused when opening began.
-        if (nativePresented && !event.relatedTarget) nativeReturnFocus.current = event.target;
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusWithin(false);
-      }}
-      onKeyDownCapture={event => { rememberFocus(event.target); setKeyboardFocusWithin(true); }}>
-      {/* The brand hint must not retain or expand the navigation ribbon. */}
+    <HoverRevealScopeContext.Provider value={{ disabled: dragging, retain: () => () => {} }}>
+    <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" aria-label={t("sidebar.mainNavigation")}>
       <HoverRevealScopeContext.Provider value={null}>
         <Tooltip content={t("ribbon.github")} side="bottom" native={Boolean(activeWebsiteId)}>
           <a className="sidebar-ribbon-brand"
@@ -338,11 +169,11 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
         onDragEnd={({ active, over }) => { setDragging(false); if (over) reorder(String(active.id), String(over.id)); }}>
         <div className="sidebar-ribbon-main scrollbar-hidden">
           <SortableContext items={orderedIDs} strategy={verticalListSortingStrategy}>
-            {ordered.map((item) => <RibbonDestination key={item.id} item={item} tabStop={item.id === tabStop} boundedNative={nativePresented} nativeTooltip={Boolean(activeWebsiteId)}
+            {ordered.map((item) => <RibbonDestination key={item.id} item={item} tabStop={item.id === tabStop} nativeTooltip={Boolean(activeWebsiteId)}
               onMove={(direction) => move(item.id, direction)}
               onMenu={websiteIDs.has(item.id) ? (x, y) => setMenu({ id: item.id, x, y }) : undefined} />)}
           </SortableContext>
-          <Tooltip content={t("webWorkspace.newTab")} disabled={nativePresented} native={Boolean(activeWebsiteId)}>
+          <Tooltip content={t("webWorkspace.newTab")} native={Boolean(activeWebsiteId)}>
             <button type="button" className="sidebar-ribbon-button sidebar-ribbon-add" aria-label={t("webWorkspace.newTab")}
               disabled={!onNewTab} onClick={onNewTab}>
               <Plus aria-hidden="true" /><span className="sidebar-ribbon-label">{t("webWorkspace.newTab")}</span>
@@ -353,9 +184,7 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
       {footer ? <div className="sidebar-ribbon-footer">{footer}</div> : null}
       <span className="sr-only" role="status" aria-live="polite">{announcement}</span>
     </nav>
-    <RibbonResizeHandle width={width} label={t("ribbon.resize")} onResize={resizeRibbon} />
     </HoverRevealScopeContext.Provider>
-    </NativeRibbonFooterContext.Provider>
     {menu && menuWebsite ? <ThreadContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[
       { label: t(menuWebsite.pinned ? "webWorkspace.unpinTab" : "webWorkspace.pinTab"), icon: menuWebsite.pinned ? <PinOff /> : <Pin />, onSelect: () => { focusRibbonItem(menuWebsite.id); onPinTab?.(menuWebsite.id, !menuWebsite.pinned); } },
       { label: t(menuWebsite.muted ? "webWorkspace.unmuteTab" : "webWorkspace.muteTab"), icon: menuWebsite.muted ? <Volume2 /> : <VolumeX />, disabled: !onMuteTab, onSelect: () => onMuteTab?.(menuWebsite.id, !menuWebsite.muted) },

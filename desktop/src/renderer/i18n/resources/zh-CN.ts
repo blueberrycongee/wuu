@@ -556,7 +556,6 @@ export const zhCN = {
   "ribbon.moved": "{name}，第 {position} 项，共 {count} 项",
   "ribbon.reorderHint": "按 Alt 加上、下方向键调整顺序，按回车打开。",
   "ribbon.github": "在 GitHub 上查看 Wuu",
-  "ribbon.resize": "调整导航栏宽度",
   "ribbon.saveFailed": "无法保存导航更改。",
   "ribbon.removed": "已移除{name}快捷方式，网站数据已保留。",
   "ribbon.undo": "撤销",

@@ -646,7 +646,7 @@
 
 /* Keep pointer feedback local to the grab point. Pressing gathers the hover
  * light into a soft bead; releasing lets it stretch back along the edge. */
-:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before {
+:is(.app-shell, .settings-shell) > .sidebar-resizer::before {
   --sidebar-resizer-light-height: 96px;
   --sidebar-resizer-light-inset: calc(
     var(--conversation-pane-inset) + var(--conversation-canvas-radius) +
@@ -690,12 +690,12 @@
     transform var(--motion-slow) cubic-bezier(0.22, 1.35, 0.36, 1);
 }
 
-:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):hover::before {
+:is(.app-shell, .settings-shell) > .sidebar-resizer:hover::before {
   opacity: 1;
 }
 
 /* Keyboard focus identifies the entire adjustable boundary. */
-:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after {
+:is(.app-shell, .settings-shell) > .sidebar-resizer::after {
   position: absolute;
   top: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
   bottom: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
@@ -711,21 +711,21 @@
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 
-:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):focus-visible::before {
+:is(.app-shell, .settings-shell) > .sidebar-resizer:focus-visible::before {
   opacity: 0;
 }
 
-:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):focus-visible::after {
+:is(.app-shell, .settings-shell) > .sidebar-resizer:focus-visible::after {
   opacity: 1;
 }
 
-:is(:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer, .ribbon-resizer[data-resizing])::before {
+:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer::before {
   opacity: 1;
   background: color-mix(in srgb, var(--ink) 40%, transparent);
   transform: translate(calc(-50% + var(--sidebar-resizer-grab-x, 0px)), -50%) scale(2.5, 0.72);
 }
 
-:is(:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer, .ribbon-resizer[data-resizing])::after {
+:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer::after {
   opacity: 0;
 }
 

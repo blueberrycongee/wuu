@@ -1,14 +1,12 @@
 import type { SidebarNavigationService } from "./AppSidebar";
-import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { DesktopUpdateState } from "../shared/protocol";
 import { DesktopUpdateButtonSurface } from "./DesktopUpdateButtonSurface";
-import { NativeRibbonFooterContext } from "./ChromeOverlay";
 import type { ChromeDesktopUpdate } from "../shared/chromeOverlay";
 import { useI18n } from "./i18n";
 
 export function DesktopUpdateButton({ navigation }: { navigation?: SidebarNavigationService } = {}): React.JSX.Element | null {
   const { t } = useI18n();
-  const nativeRibbon = useContext(NativeRibbonFooterContext);
   const [legacyState, setState] = useState<DesktopUpdateState>({ kind: "unsupported" });
   const state = navigation?.view.update ?? legacyState;
   const [pending, setPending] = useState(false);
@@ -57,10 +55,5 @@ export function DesktopUpdateButton({ navigation }: { navigation?: SidebarNaviga
 
   const model: ChromeDesktopUpdate | undefined = state.kind === "unsupported" || state.kind === "idle" ? undefined
     : { state: state.kind, label, progressLabel: t("desktopUpdate.progress"), busy, percent: downloading ? state.percent : undefined };
-  const activateRef = useRef(activate); activateRef.current = activate;
-  useLayoutEffect(() => {
-    nativeRibbon?.publishUpdate(model, () => void activateRef.current());
-    return () => nativeRibbon?.publishUpdate(undefined);
-  }, [nativeRibbon, JSON.stringify(model)]);
   return model ? <DesktopUpdateButtonSurface model={model} onActivate={() => void activate()} /> : null;
 }

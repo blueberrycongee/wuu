@@ -4,11 +4,6 @@ import type { ChromeOverlayRendererApi, ChromeOverlayRequest } from "../shared/c
 // This preload is never used by website tabs. No general IPC or Wuu API escapes.
 const bridge: ChromeOverlayRendererApi = {
   ready: () => ipcRenderer.invoke("wuu:chrome-overlay-ready"),
-  onVisibility: listener => {
-    const receive = (_event: Electron.IpcRendererEvent, visible: boolean) => listener(visible);
-    ipcRenderer.on("wuu:chrome-overlay-visibility", receive);
-    return () => ipcRenderer.removeListener("wuu:chrome-overlay-visibility", receive);
-  },
   onState: listener => {
     const receive = (_event: Electron.IpcRendererEvent, state: ChromeOverlayRequest | null) => listener(state);
     ipcRenderer.on("wuu:chrome-overlay-state", receive);

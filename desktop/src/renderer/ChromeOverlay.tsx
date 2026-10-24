@@ -1,13 +1,8 @@
-import { createContext, useLayoutEffect, useRef, useState } from "react";
-import type { ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger, ApplicationDesktopChromeDesktopUpdateV1 as ChromeDesktopUpdate, ApplicationDesktopChromeOverlayApiV1 as ChromeOverlayApi, ApplicationDesktopChromeOverlayCommandV1 as ChromeOverlayCommand, ApplicationDesktopChromeOverlayModelV1 as ChromeOverlayModel, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect, ApplicationDesktopChromeOverlayRequestV1 as ChromeOverlayRequest } from "../../../packages/plugin-sdk/src/ui-desktop";
+import { useLayoutEffect, useRef, useState } from "react";
+import type { ApplicationDesktopChromeOverlayApiV1 as ChromeOverlayApi, ApplicationDesktopChromeOverlayCommandV1 as ChromeOverlayCommand, ApplicationDesktopChromeOverlayModelV1 as ChromeOverlayModel, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect, ApplicationDesktopChromeOverlayRequestV1 as ChromeOverlayRequest } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { APPLICATION_DESKTOP_CHROME_OVERLAY_VERSION as CHROME_OVERLAY_VERSION } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { useDesktopControls } from "./DesktopControlsContext";
 import { useI18n } from "./i18n";
-
-export const NativeRibbonFooterContext = createContext<{
-  publishAccount: (trigger: ChromeAccountTrigger | undefined, open?: (bounds: ChromeOverlayRect) => void) => void;
-  publishUpdate: (model: ChromeDesktopUpdate | undefined, activate?: () => void) => void;
-} | null>(null);
 
 export function useChromeOverlayApi(): ChromeOverlayApi | undefined {
   return useDesktopControls().chromeOverlay;
@@ -38,7 +33,7 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
       if (!token.current || event.token !== token.current) return;
       // Dismissal ends this opening, even if a presentation update crossed it.
       // Business commands still require the exact currently displayed model.
-      const lifecycle = event.command.type === "dismiss" || event.command.type === "pointer" || event.command.type === "reveal";
+      const lifecycle = event.command.type === "dismiss";
       if (lifecycle ? event.generation > generation.current : event.generation !== generation.current) return;
       callbacks.current.onCommand(event.command);
       if (event.command.type === "dismiss") callbacks.current.onDismiss();
@@ -65,17 +60,9 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
       const value = computed.getPropertyValue(name).trim();
       if (value.length <= 512 && !/url\s*\(/i.test(value)) variables[name] = value;
     }
-    if (model.kind === "ribbon") {
-      // The native view is only ribbon-sized; its wallpaper uses the owner's
-      // viewport. Window resize dismisses it, so capture this when presenting.
-      variables["--shell-viewport-width"] = `${window.innerWidth}px`;
-      variables["--shell-viewport-height"] = `${window.innerHeight}px`;
-    }
     const current = ++generation.current;
     const request: ChromeOverlayRequest = { version: CHROME_OVERLAY_VERSION, token: currentToken, generation: current,
-      bounds, model, focus, appearance: { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", locale, fontFamily: computed.fontFamily, variables,
-        shellSkin: model.kind === "ribbon" && document.documentElement.hasAttribute("data-shell-skin"),
-        shellImage: model.kind === "ribbon" ? document.documentElement.dataset.shellImage : undefined } };
+      bounds, model, focus, appearance: { theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light", locale, fontFamily: computed.fontFamily, variables } };
     void api.show(request).catch(() => { if (token.current === currentToken && generation.current === current) callbacks.current.onDismiss(); });
   }, [api, active, modelKey, boundsKey, locale, appearanceRevision, focus, appearanceElement]);
   return active;

@@ -100,10 +100,10 @@ settings.css .settings-usage-heatmap-cell[data-level="4"], .settings-heatmap-leg
 settings.css .settings-usage-trend-day i background --settings-heatmap-level-3
 settings.css .settings-usage-trend-day:hover i background --settings-heatmap-level-4
 settings.css button.settings-engine-expand:hover background --ink-overlay-6
-sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after background --sidebar-resizer-hover-bg
-sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after box-shadow --sidebar-resizer-hover-ring
-sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before background --sidebar-resizer-hover-bg
-sidebar.css :is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before box-shadow --sidebar-resizer-hover-bg
+sidebar.css :is(.app-shell, .settings-shell) > .sidebar-resizer::after background --sidebar-resizer-hover-bg
+sidebar.css :is(.app-shell, .settings-shell) > .sidebar-resizer::after box-shadow --sidebar-resizer-hover-ring
+sidebar.css :is(.app-shell, .settings-shell) > .sidebar-resizer::before background --sidebar-resizer-hover-bg
+sidebar.css :is(.app-shell, .settings-shell) > .sidebar-resizer::before box-shadow --sidebar-resizer-hover-bg
 sidebar.css .app-shell background --sidebar-material-fill
 sidebar.css .project-row .project-row-loading border-top-color --sidebar-project-loading-notch
 sidebar.css .project-row.pending-switch background --sidebar-project-row-pending-bg

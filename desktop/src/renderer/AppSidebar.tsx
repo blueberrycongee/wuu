@@ -98,8 +98,7 @@ import { useSidebarConversationActivity } from "./SidebarConversationActivity";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { SkillsIcon } from "./SkillsIcon";
 import { pluginToggle } from "./extensionPackageState";
-import { PluginIcon, loadPluginIconURL } from "./PublicIcon";
-import type { RibbonIconModel } from "../shared/chromeOverlay";
+import { PluginIcon } from "./PublicIcon";
 import { SidebarBrand } from "./SidebarBrand";
 import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
@@ -498,7 +497,6 @@ export function AppSidebar({
   settingsActive = false,
   onLeaveSettings,
   onRibbonPresenceChange,
-  onRibbonExpandedChange,
   catalogSection = "plugins",
   onSelectCatalogSection,
   onOpenCatalogPlugin,
@@ -594,7 +592,6 @@ export function AppSidebar({
   settingsActive?: boolean;
   onLeaveSettings?: () => void;
   onRibbonPresenceChange?: (present: boolean) => void;
-  onRibbonExpandedChange?: (expanded: boolean) => void;
   catalogSection?: SkillsCatalogSection;
   onSelectCatalogSection?: (section: SkillsCatalogSection) => void;
   onOpenCatalogPlugin?: (id: string) => void;
@@ -1875,29 +1872,12 @@ export function AppSidebar({
     selectedWorkspaceID, initialized, lastViewedTurnByThreadID, t,
   ]);
 
-  const [ribbonPluginIcons, setRibbonPluginIcons] = useState<Record<string, RibbonIconModel>>({});
-  const ribbonIconSources = JSON.stringify(pluginNavigationEntries.map(entry => ({ id: entry.pluginId, fingerprint: entry.generation, icon: entry.icon })));
-  useEffect(() => {
-    let active = true;
-    const sources = JSON.parse(ribbonIconSources) as { id: string; fingerprint: string; icon?: import("../shared/protocol").ExtensionIconDescriptor }[];
-    void Promise.all(sources.map(async source => {
-      if (!source.icon || "name" in source.icon) return [source.id, { kind: "public", name: source.icon?.name }] as const;
-      const paths = "path" in source.icon && source.icon.path ? [source.icon.path] : [source.icon.light!, source.icon.dark!];
-      try {
-        const urls = await Promise.all(paths.map(path => navigation ? navigation.invoke("navigation.load-icon", { pluginId: source.id, fingerprint: source.fingerprint, path }) : loadPluginIconURL(source.id, source.fingerprint, path)));
-        return [source.id, { kind: "image", light: urls[0], dark: urls[1] }] as const;
-      } catch { return [source.id, { kind: "public" }] as const; }
-    })).then(entries => { if (active) setRibbonPluginIcons(Object.fromEntries(entries)); });
-    return () => { active = false; };
-  }, [ribbonIconSources, navigation?.invoke]);
-
   const nativeSidebar = (
     <>
       <HoverRevealScopeContext.Provider value={null}>
       <NavigationRibbon
         onOpenExternal={navigation ? url => navigation.invoke("navigation.open-external", { url }) : undefined}
         ribbonRef={ribbonRef}
-        onExpandedChange={onRibbonExpandedChange}
         websites={websites}
         onNewTab={onNewTab ? () => activateNative(onNewTab) : undefined}
         onCloseTab={onCloseTab}
@@ -1911,7 +1891,6 @@ export function AppSidebar({
             id: "conversations",
             title: t("sidebar.conversations"),
             icon: <MessagesSquare aria-hidden="true" />,
-            nativeIcon: { kind: "conversations" },
             active: conversationsActive,
             component: "conversations-section",
             onSelect: () => activateNative(() => onShowConversations?.()),
@@ -1920,7 +1899,6 @@ export function AppSidebar({
             id: "catalog",
             title: t("skills.sectionSkills"),
             icon: <PluginBlocksIcon aria-hidden="true" />,
-            nativeIcon: { kind: "catalog" },
             active: pluginCatalogActive,
             disabled: !hasRuntimeContext,
             onSelect: () => activateNative(onOpenSkillsTab),
@@ -1929,7 +1907,6 @@ export function AppSidebar({
             id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
             title: entry.title,
             icon: <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
-            nativeIcon: ribbonPluginIcons[entry.pluginId] ?? { kind: "public" as const },
             active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
             component: "plugin-navigation-item",
             pluginId: entry.pluginId,

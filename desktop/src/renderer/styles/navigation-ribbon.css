@@ -47,12 +47,6 @@
   -webkit-app-region: drag;
 }
 
-/* The rail belongs to the sidebar's stacking context. Raise that context over
-   the sibling toggle; caption controls follow the shell and remain above it. */
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon[data-expanded="true"]) > .sidebar {
-  z-index: 152;
-}
-
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .shell-right-sidebar-toggle {
   top: calc(var(--workbench-top) + (var(--canvas-titlebar-height) - var(--control-size-toolbar)) / 2);
 }
@@ -185,7 +179,7 @@
 
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)
   .workspace-right-panel:is([data-sheet="arming"], [data-sheet="open"], [data-sheet="parked"]) {
-  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) calc(var(--workspace-sheet-left) + var(--sidebar-ribbon-extra, 0px));
+  inset: var(--workbench-top) var(--conversation-pane-inset) var(--conversation-pane-inset) var(--workspace-sheet-left);
   margin: 0;
 }
 
@@ -236,23 +230,20 @@
 .sidebar-ribbon {
   --ribbon-brand-size: calc(var(--sidebar-ribbon-compact-width, 52px) - var(--ribbon-inline-inset) * 2);
   --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
-  --ribbon-motion-duration: 220ms;
   /* Every destination shares one row gap; the footer owns the wider break. */
   --ribbon-row-gap: var(--space-2);
   --ribbon-group-gap: var(--space-3);
   --ribbon-inline-inset: var(--space-2);
   --sidebar-ribbon-icon-size: calc(var(--icon-size-xl) + 2px);
-  --sidebar-ribbon-expanded-width: min(248px, calc(100vw - var(--space-4)));
   position: absolute;
   inset: 0 auto 0 0;
   z-index: 126;
   display: flex;
-  width: calc(var(--sidebar-ribbon-width) + (var(--sidebar-ribbon-expanded-width) - var(--sidebar-ribbon-width)) * var(--ribbon-reveal, 0));
+  width: var(--sidebar-ribbon-width);
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  /* All destinations keep the same row positions; native hover chrome starts
-     below the browser toolbar, including when the UI font grows. */
+  /* Keep destinations below the header as the UI font grows. */
   padding: var(--ribbon-header-height) 0 var(--ribbon-inline-inset);
   background: transparent;
   overflow: hidden;
@@ -261,8 +252,7 @@
   -webkit-app-region: no-drag;
 }
 
-/* Use the reserved header so the mark stays on the compact icon axis when
-   the ribbon expands, without moving destinations or native window controls. */
+/* Keep the brand on the icon axis inside the reserved header. */
 .sidebar-ribbon-brand {
   position: absolute;
   top: var(--workbench-top);
@@ -293,19 +283,6 @@
   box-shadow:
     0 1px 2px var(--shadow-color-medium),
     0 5px 12px -6px var(--shadow-color-strong);
-}
-
-/* The layout track and icon axis stay fixed. Only this floating surface opens;
-   the native overlay covers the page without changing its viewport. */
-.sidebar-ribbon::before {
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: inherit;
-  background: var(--sidebar-material-fill);
-  border-right: 1px solid var(--hairline-soft);
-  content: "";
-  opacity: var(--ribbon-reveal, 0);
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .sidebar {
@@ -380,18 +357,12 @@
 }
 
 .sidebar-ribbon :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
-  opacity: var(--ribbon-reveal, 0);
-  transform: translateX(calc(-4px * (1 - var(--ribbon-reveal, 0))));
+  display: none;
 }
 
-.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row.closable .sidebar-ribbon-button {
-  /* Keep the title and pin stable when the close action appears. */
-  padding-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2);
-}
-
-:where(.sidebar-ribbon:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button,
-:where(.sidebar-ribbon:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-ribbon-button:hover,
-.sidebar-ribbon:where(:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-account-trigger:hover {
+:where(.sidebar-ribbon:not(:has([data-dragging="true"]))) .sidebar-ribbon-tab-row:hover .sidebar-ribbon-button,
+:where(.sidebar-ribbon:not(:has([data-dragging="true"]))) .sidebar-ribbon-button:hover,
+:where(.sidebar-ribbon:not(:has([data-dragging="true"]))) .sidebar-account-trigger:hover {
   background: var(--wuu-nav-item-hover-background, var(--ink-overlay-6));
   color: var(--ink);
 }
@@ -404,8 +375,7 @@
   color: var(--ink-strong);
 }
 
-.sidebar-ribbon-button:focus-visible,
-.sidebar-ribbon-close:focus-visible {
+.sidebar-ribbon-button:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
@@ -429,64 +399,6 @@
   cursor: grabbing;
 }
 
-.sidebar-ribbon-close {
-  position: absolute;
-  inset-inline-end: var(--space-1);
-  top: 50%;
-  display: grid;
-  width: var(--sidebar-row-action-size);
-  height: var(--sidebar-row-action-size);
-  padding: 0;
-  place-items: center;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-secondary);
-  opacity: 0;
-  visibility: hidden;
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition: opacity 100ms ease, visibility 100ms;
-}
-
-.sidebar-ribbon-close > svg {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-}
-
-.sidebar-ribbon[data-expanded="true"]:where(:not(:has([data-dragging="true"], [data-resizing])):not([data-ribbon-resizing] *)) .sidebar-ribbon-tab-row:is(:hover, :focus-within, .active):not([data-dragging="true"]) .sidebar-ribbon-close {
-  opacity: 1;
-  visibility: visible;
-  pointer-events: auto;
-  transition-delay: 100ms;
-}
-
-.sidebar-ribbon-close:hover {
-  background: var(--ink-overlay-8);
-  color: var(--ink-strong);
-}
-
-.sidebar-ribbon-audio {
-  position: absolute;
-  inset-inline-end: var(--space-1);
-  top: 50%;
-  display: grid;
-  width: var(--sidebar-row-action-size);
-  height: var(--sidebar-row-action-size);
-  padding: 0;
-  place-items: center;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-secondary);
-  visibility: hidden;
-  transform: translateY(-50%);
-}
-.sidebar-ribbon-audio > svg { width: var(--icon-size-sm); height: var(--icon-size-sm); }
-.sidebar-ribbon-audio:hover { background: var(--ink-overlay-8); color: var(--ink-strong); }
-.sidebar-ribbon-audio:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row:not([data-dragging="true"]) .sidebar-ribbon-audio { visibility: visible; }
-.sidebar-ribbon-tab-row.closable .sidebar-ribbon-audio { inset-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2); }
-.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row.has-audio .sidebar-ribbon-button { padding-inline-end: calc(var(--sidebar-row-action-size) + var(--space-1) * 2); }
-.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row.has-audio.closable .sidebar-ribbon-button { padding-inline-end: calc(var(--sidebar-row-action-size) * 2 + var(--space-1) * 3); }
 .sidebar-ribbon-audio-badge {
   position: absolute;
   inset-inline-start: calc(var(--sidebar-row-pad-x) + var(--sidebar-ribbon-icon-size) - 8px);
@@ -501,16 +413,6 @@
   pointer-events: none;
 }
 .sidebar-ribbon-audio-badge > svg { width: 12px; height: 12px; }
-.sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-audio-badge { visibility: hidden; }
-
-@media (hover: none) {
-  .sidebar-ribbon[data-expanded="true"] .sidebar-ribbon-tab-row:not([data-dragging="true"]) .sidebar-ribbon-close {
-    opacity: 1;
-    visibility: visible;
-    pointer-events: auto;
-  }
-}
-
 .sidebar-ribbon-website-icon {
   display: grid;
   width: var(--sidebar-ribbon-icon-size, var(--icon-size-xl));
@@ -544,13 +446,7 @@
 @keyframes sidebar-ribbon-tab-spin { to { transform: rotate(360deg); } }
 .sidebar-ribbon-tab-loading { animation: sidebar-ribbon-tab-spin 1s linear infinite; }
 @container style(--motion-reduced: 1) {
-  .sidebar-ribbon { --ribbon-motion-duration: 0ms; }
   .sidebar-ribbon-tab-loading { animation: none; }
-  .sidebar-ribbon,
-  .sidebar-ribbon::before,
-  .sidebar-ribbon :is(.sidebar-ribbon-label, .sidebar-ribbon-close, .sidebar-account-name, .sidebar-account-trigger > svg) {
-    transition: none;
-  }
 }
 
 .sidebar-ribbon-divider {
@@ -851,7 +747,7 @@
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) {
   --app-history-width: calc(var(--workbench-control-size) * 2 + var(--control-toolbar-gap));
-  --app-history-origin: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px));
+  --app-history-origin: var(--sidebar-width);
   --app-history-inset: var(--control-toolbar-inset);
   --app-history-end: calc(var(--app-history-origin) + var(--app-history-inset) + var(--app-history-width) + var(--control-toolbar-gap));
 }
@@ -866,82 +762,8 @@
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar,
 :root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) .settings-embedded .settings-titlebar {
-  padding-left: calc(var(--app-history-end) - var(--sidebar-width) - var(--sidebar-ribbon-extra, 0px));
+  padding-left: calc(var(--app-history-end) - var(--sidebar-width));
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).right-panel-globalized .workspace-panel-tabbar {
   padding-left: calc(var(--app-history-end) - var(--workspace-sheet-left));
-}
-/* The native surface owns browser reveal geometry. Closing shell chrome follows
-   the same duration while the live native rail completes its exit. */
-.sidebar-ribbon[data-native-supported="true"][data-expanded="true"] { width: var(--sidebar-ribbon-expanded-width); }
-.sidebar-ribbon[data-native-supported="true"][data-native-overlay="true"] {
-  width: var(--sidebar-ribbon-expanded-width);
-  transition: none;
-}
-
-/* The native view covers the webpage below the toolbar. Complete its header
-   in the shell, using the same reveal progress, while keeping duplicate rows
-   clipped to the collapsed rail and window controls above this surface. */
-.sidebar-ribbon[data-native-supported="true"] {
-  --ribbon-header-width: calc(var(--sidebar-ribbon-width) + (100% - var(--sidebar-ribbon-width)) * var(--ribbon-native-reveal, 0));
-  clip-path: polygon(0 0, var(--ribbon-header-width) 0,
-    var(--ribbon-header-width) var(--ribbon-header-height),
-    var(--sidebar-ribbon-width) var(--ribbon-header-height),
-    var(--sidebar-ribbon-width) 100%, 0 100%);
-}
-
-.sidebar-ribbon[data-native-supported="true"]::before {
-  bottom: auto;
-  height: var(--ribbon-header-height);
-  border-bottom-right-radius: 0;
-  opacity: var(--ribbon-native-reveal, 0);
-  transition: none;
-}
-
-.sidebar-ribbon[data-native-supported="true"] :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
-  opacity: 0;
-  visibility: hidden;
-  transition: none;
-}
-
-.sidebar-ribbon[data-native-supported="true"] .sidebar-ribbon-audio-badge {
-  visibility: visible;
-}
-
-/* A docked ribbon takes layout space independently of the conversation list. */
-.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
-  grid-template-columns: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px)) minmax(0, 1fr) var(--workspace-right-panel-reserved-width, 0px);
-}
-.sidebar-ribbon[data-docked="true"] {
-  width: var(--sidebar-ribbon-width);
-  --ribbon-reveal: 1;
-  border-radius: 0;
-}
-.sidebar-ribbon[data-docked="true"]::before,
-[data-ribbon-resizing] .sidebar-ribbon::before {
-  border-right: 0;
-}
-.sidebar-ribbon[data-docked="true"] :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
-  opacity: 1;
-  visibility: visible;
-  transform: none;
-}
-.ribbon-resizer {
-  position: absolute;
-  top: var(--window-titlebar-height, 44px);
-  bottom: 0;
-  left: calc(var(--sidebar-ribbon-width, 52px) - 4px);
-  width: 8px;
-  container-type: size;
-  z-index: 154;
-  cursor: col-resize;
-  touch-action: none;
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
-}
-[data-ribbon-resizing], [data-ribbon-resizing] * { cursor: col-resize !important; user-select: none; }
-[data-ribbon-resizing] .sidebar-ribbon { clip-path: none; }
-[data-ribbon-resizing] .sidebar-ribbon :is(.sidebar-ribbon-label, .sidebar-account-name, .sidebar-account-trigger > svg) {
-  visibility: visible;
-  opacity: var(--ribbon-reveal, 0);
 }

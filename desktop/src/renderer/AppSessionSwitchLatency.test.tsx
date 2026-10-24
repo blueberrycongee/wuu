@@ -1,4 +1,3 @@
-import type { ChromeOverlayApi, ChromeOverlayEvent, ChromeOverlayRequest } from "../shared/chromeOverlay";
 import { WEB_WORKSPACE_RIBBON_ID, type WebWorkspaceApi, type WebWorkspaceState } from "../shared/webWorkspace";
 import { readComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
@@ -491,27 +490,10 @@ describe("session tab switch latency", () => {
     }
   });
 
-  it.each([false, true])("app history replays ribbon destinations without driving website navigation and skips a removed website (native presenter=%s)", async (nativePresenter) => {
+  it("app history replays ribbon destinations without driving website navigation and skips a removed website", async () => {
     onTestFinished(startFocusModality());
     installWuuApi();
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: "darwin" });
-    const overlayListeners = new Set<(event: ChromeOverlayEvent) => void>();
-    const showOverlay = vi.fn<(request: ChromeOverlayRequest) => Promise<void>>().mockResolvedValue(undefined);
-    if (nativePresenter) {
-      // jsdom lacks Chromium's iterable computed style declaration.
-      const readComputedStyle = window.getComputedStyle.bind(window);
-      vi.spyOn(window, "getComputedStyle").mockImplementation((...args) => {
-        const computed = readComputedStyle(...args);
-        Object.defineProperty(computed, Symbol.iterator, { value: function* () {
-          for (let index = 0; index < computed.length; index++) yield computed.item(index);
-        } });
-        return computed;
-      });
-      (window.wuu as typeof window.wuu & { chromeOverlay?: ChromeOverlayApi }).chromeOverlay = {
-        show: showOverlay, hide: vi.fn().mockResolvedValue(undefined),
-        onEvent: listener => { overlayListeners.add(listener); return () => { overlayListeners.delete(listener); }; },
-      };
-    }
     let nativeState: WebWorkspaceState = { id: WEB_WORKSPACE_RIBBON_ID, url: "https://example.com/", title: "History site", loading: false, canGoBack: true, canGoForward: false,
       activeTabId: "website:history", tabs: [{ id: "website:history", url: "https://example.com/", title: "History site", loading: false, canGoBack: true, canGoForward: false, zoomFactor: 1 }] };
     const listeners = new Set<(state: WebWorkspaceState) => void>();
@@ -532,7 +514,7 @@ describe("session tab switch latency", () => {
     const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
     const toggle = container.querySelector<HTMLButtonElement>(".section-sidebar-toggle")!;
     // Browser mode owns its navigation controls; app history remains mounted
-    // but hidden, independently of ribbon expansion.
+    // but hidden while browser navigation is active.
     expect(history.hidden).toBe(true);
     expect(history.hasAttribute("inert")).toBe(true);
     const destination = ribbon.querySelector<HTMLButtonElement>('[data-ribbon-id]')!;
@@ -540,41 +522,12 @@ describe("session tab switch latency", () => {
       destination.focus();
       destination.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowDown" }));
     });
-    await vi.waitFor(async () => {
-      await act(async () => {});
-      expect(ribbon.dataset.expanded).toBe("true");
-    });
-    expect(history.hidden).toBe(true);
-    expect(history.hasAttribute("inert")).toBe(true);
-    expect(toggle.hidden).toBe(true);
-    expect(toggle.hasAttribute("inert")).toBe(true);
-    expect(ribbon.contains(document.activeElement)).toBe(true);
-    await act(async () => container.querySelector<HTMLElement>(".app-shell")!.focus());
-    if (nativePresenter) {
-      expect(history.hidden).toBe(true);
-      expect(toggle.hidden).toBe(true);
-      const request = showOverlay.mock.calls.map(([request]) => request).findLast(request => request.model.kind === "ribbon")!;
-      expect(request).toBeDefined();
-      await act(async () => overlayListeners.forEach(listener => listener({
-        token: request.token, generation: request.generation, command: { type: "pointer", inside: false },
-      })));
-      // Closing motion retracts the DOM ribbon but native ownership persists
-      // until the matching presenter dismissal completes that opening.
-      expect(ribbon.dataset.expanded).toBeUndefined();
-      expect(history.hidden).toBe(true);
-      expect(toggle.hidden).toBe(true);
-      await act(async () => overlayListeners.forEach(listener => listener({
-        token: request.token, generation: request.generation, command: { type: "dismiss", reason: "leave" },
-      })));
-    }
-    await vi.waitFor(async () => {
-      await act(async () => {});
-      expect(ribbon.dataset.expanded).toBeUndefined();
-    });
     expect(history.hidden).toBe(true);
     expect(history.hasAttribute("inert")).toBe(true);
     expect(toggle.hidden).toBe(false);
     expect(toggle.hasAttribute("inert")).toBe(false);
+    expect(ribbon.contains(document.activeElement)).toBe(true);
+    await act(async () => container.querySelector<HTMLElement>(".app-shell")!.focus());
     expect(document.activeElement).toBe(container.querySelector(".app-shell"));
     // Native webpage navigation changes URL/history state, not the app route.
     await act(async () => {

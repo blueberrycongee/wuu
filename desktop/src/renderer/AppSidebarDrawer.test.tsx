@@ -495,12 +495,9 @@ describe("collapsed sidebar hover drawer", () => {
       ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
     });
     await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
-    expect(ribbon.dataset.expanded).toBe("true");
     await act(async () => { await vi.advanceTimersByTimeAsync(120); });
-    expect(ribbon.dataset.expanded).toBe("true");
     expect(document.activeElement).toBe(destinations[1]);
     await act(async () => appShell()!.focus());
-    expect(ribbon.dataset.expanded).toBeUndefined();
   });
 
   it("retains an edge-opened drawer while the pointer travels over its persistent toggle", async () => {

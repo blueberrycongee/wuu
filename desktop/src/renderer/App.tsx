@@ -88,7 +88,6 @@ import { ImagePreviewProvider } from "./ImagePreview";
 import { JumpToLatestPill } from "./JumpToLatestPill";
 import { useApplicationNavigationState } from "./modules/ApplicationNavigationState";
 import { motionDurationMs } from "./motion";
-import { useNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { ProjectActionsProvider } from "./ProjectActions";
 import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
 import { ProjectStatusCapsule } from "./ProjectViews";
@@ -249,19 +248,7 @@ export function App({ application, slots, shellPluginId }: {
   const setSettingsOpen = useCallback((open: boolean): void => {
     void application.invoke(open ? "settings.open" : "settings.close", {}).catch(showErrorToast);
   }, [application]);
-  const ribbonWidth = useNavigationRibbonPreferences().width ?? SIDEBAR_RIBBON_WIDTH;
   const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
-  const [nativeRibbonExpanded, setNativeRibbonExpanded] = useState(false);
-  const handleRibbonExpandedChange = useCallback((expanded: boolean) => {
-    const shell = appShellRef.current;
-    if (expanded && application.desktop.platform === "darwin"
-      && shell?.querySelector(".section-sidebar-toggle") === document.activeElement) {
-      // Release owned focus before hidden/inert can blur the covered toggle.
-      // Focusing a ribbon item here would turn hover into retained keyboard focus.
-      shell.focus({ preventScroll: true });
-    }
-    setNativeRibbonExpanded(expanded);
-  }, []);
   const embeddedSettings = !poppedOutMode && nativeRibbonPresent;
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
     useState<MainComposerFocusRequest | null>(null);
@@ -297,7 +284,6 @@ export function App({ application, slots, shellPluginId }: {
     layoutRootRef: appShellRef,
     settingsLayoutRootRef: settingsShellRef,
     collapsedSidebarWidth: SIDEBAR_RIBBON_WIDTH,
-    additionalNavigationWidth: ribbonWidth - SIDEBAR_RIBBON_WIDTH,
     // The selected navigation surface owns its menus.
     onCloseWorkspaceMenu: () => {},
   });
@@ -453,7 +439,7 @@ export function App({ application, slots, shellPluginId }: {
     useState(false);
   // Everything the window gives to other columns before the conversation.
   const environmentPanelPaneOffset =
-    effectiveSidebarWidth + ribbonWidth - SIDEBAR_RIBBON_WIDTH +
+    effectiveSidebarWidth +
     (rightPanelOpen && !rightPanelGlobalized ? clampedWorkspaceRightPanelWidth : 0);
   const [environmentPanelHasRoom, setEnvironmentPanelHasRoom] = useState(() =>
     typeof window === "undefined"
@@ -1353,9 +1339,8 @@ export function App({ application, slots, shellPluginId }: {
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${workspaceConversationActive ? " workspace-conversation-active" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
     "--sidebar-width": `${effectiveSidebarWidth}px`,
-    "--sidebar-ribbon-width": `${ribbonWidth}px`,
+    "--sidebar-ribbon-width": `${SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-ribbon-compact-width": `${SIDEBAR_RIBBON_WIDTH}px`,
-    "--sidebar-ribbon-extra": `${ribbonWidth - SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
     "--workspace-sheet-left": `${effectiveSidebarWidth}px`,
     "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
@@ -1834,7 +1819,6 @@ export function App({ application, slots, shellPluginId }: {
               onPointerEnter: openSidebarDrawer,
               onPointerLeave: (event: React.PointerEvent<HTMLElement>) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent),
               onRibbonPresenceChange: setNativeRibbonPresent,
-              onRibbonExpandedChange: handleRibbonExpandedChange,
             }} />
           </HoverRevealScopeContext.Provider>
 
@@ -2091,20 +2075,13 @@ export function App({ application, slots, shellPluginId }: {
       ) : null}
       <slots.Slot name={`${shellPluginId}/workbench.layers`} context={{ settingsOnly: settingsOpen }} />
       {!poppedOutMode && !isTouchWebShell() ? <PageHistoryControls {...pageHistory}
-        hidden={(showingWebPage && !settingsOpen) || (application.desktop.platform === "darwin" && nativeRibbonPresent && (
-          (!(showingWebPage && !settingsOpen) && sidebarDrawerPhase !== "closed")
-          // The expanded ribbon covers the collapsed and browser header lanes.
-          // Docked content starts beyond it, so its history remains available.
-          || (nativeRibbonExpanded && (sidebarCollapsed || (showingWebPage && !settingsOpen)))
-        ))}
+        hidden={(showingWebPage && !settingsOpen) || (application.desktop.platform === "darwin" && nativeRibbonPresent && sidebarDrawerPhase !== "closed")}
       /> : null}
       {contextCapsule}
       {/* macOS applies app regions in DOM order, so a later drag titlebar would
         * cover this no-drag control. Keep it as the shell's last child. */}
       {!poppedOutMode ? (
         <button
-          hidden={application.desktop.platform === "darwin" && nativeRibbonPresent && nativeRibbonExpanded}
-          inert={application.desktop.platform === "darwin" && nativeRibbonPresent && nativeRibbonExpanded}
           className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle section-sidebar-toggle"
           data-wuu-component="sidebar-toggle"
           type="button"

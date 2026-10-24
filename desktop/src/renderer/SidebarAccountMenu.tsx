@@ -3,7 +3,7 @@ import { useMemo } from "react";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { SidebarAccountPanel, SidebarAccountTrigger } from "./SidebarAccountParts";
-import { useChromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
+import { useChromeOverlayApi, useChromeOverlay } from "./ChromeOverlay";
 import type { ApplicationDesktopChromeAccountActionV1 as ChromeAccountAction, ApplicationDesktopChromeAccountPanelV1 as ChromeAccountPanel, ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect } from "../../../packages/plugin-sdk/src/ui-desktop";
 import type { AccountView } from "./AccountPanel";
 import { useDesktopControls } from "./DesktopControlsContext";
@@ -24,8 +24,6 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
   const { t } = useI18n();
   const desktop = useDesktopControls();
   const phoneNavigation = useContext(PhoneNavigationContext);
-  const nativeRibbon = useContext(NativeRibbonFooterContext);
-  const [nativeAnchor, setNativeAnchor] = useState<ChromeOverlayRect | null>(null);
   const [nativeBounds, setNativeBounds] = useState<ChromeOverlayRect | null>(null);
   const useNative = Boolean(useChromeOverlayApi());
   const id = useId();
@@ -75,7 +73,7 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
     return () => document.removeEventListener("pointerdown", outside, true);
   }, [open]);
 
-  const close = () => { setOpen(false); setNativeAnchor(null); anchor.current?.focus(); };
+  const close = () => { setOpen(false); anchor.current?.focus(); };
   const navigate = (page: "providers" | "usage") => { close(); onOpenSettings(page); };
   const logout = async () => {
     if (!driver || busy) return;
@@ -110,13 +108,9 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
     else if (value === "account") { close(); onOpenAccount?.(); }
   };
   useLayoutEffect(() => {
-    nativeRibbon?.publishAccount(triggerModel, bounds => { setNativeAnchor(bounds); setOpen(value => !value); });
-    return () => nativeRibbon?.publishAccount(undefined);
-  }, [nativeRibbon, JSON.stringify(triggerModel)]);
-  useLayoutEffect(() => {
     if (!open || !useNative || !panel.current || !anchor.current) return;
     const measure = () => {
-      const source = nativeAnchor ?? anchor.current!.getBoundingClientRect();
+      const source = anchor.current!.getBoundingClientRect();
       const width = Math.min(window.innerWidth - 16, Math.max(composerMenuWidth(240), matchTriggerWidth ? source.width : 0));
       const height = Math.min(window.innerHeight - 16, panel.current!.scrollHeight);
       setNativeBounds({ x: Math.max(8, Math.min(window.innerWidth - width - 8, source.x)),
@@ -125,16 +119,16 @@ export function SidebarAccountMenu({ navigation, disabled, localOnly = false, ma
     measure();
     const observer = new ResizeObserver(measure); observer.observe(panel.current);
     return () => observer.disconnect();
-  }, [open, useNative, nativeAnchor, matchTriggerWidth, JSON.stringify(panelModel)]);
+  }, [open, useNative, matchTriggerWidth, JSON.stringify(panelModel)]);
   useChromeOverlay(open && useNative, nativeBounds, { kind: "account", panel: panelModel }, command => {
     if (command.type === "account-action") action(command.action);
     if (command.type === "dismiss" && (command.reason === "escape" || command.reason === "tab")) anchor.current?.focus();
-  }, () => { setOpen(false); setNativeAnchor(null); }, true);
+  }, () => { setOpen(false); }, true);
 
   const content = <SidebarAccountPanel panelRef={panel} id={id} model={panelModel} onAction={action} onClose={() => setOpen(false)} trigger={anchor.current}
     onBlur={event => { if (!useNative && event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node) && event.relatedTarget !== anchor.current) setOpen(false); }} />;
   return <div className="sidebar-account">
-    <SidebarAccountTrigger model={triggerModel} anchorRef={anchor} controls={open ? id : undefined} onOpen={() => { setNativeAnchor(null); setOpen(!open); }} />
+    <SidebarAccountTrigger model={triggerModel} anchorRef={anchor} controls={open ? id : undefined} onOpen={() => { setOpen(!open); }} />
     {open && (useNative ? <div aria-hidden="true" style={{ position: "fixed", visibility: "hidden", pointerEvents: "none", width: composerMenuWidth(240),
       "--floating-menu-available-width": `${composerMenuWidth(240)}px`, "--floating-menu-available-height": "400px" } as React.CSSProperties}>{content}</div>
       : <FloatingMenuPortal anchorRef={anchor} owner="sidebar-account" placement="above" align="left"

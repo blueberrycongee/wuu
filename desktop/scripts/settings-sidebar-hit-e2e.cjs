@@ -165,7 +165,7 @@ async function run() {
 
   results.push({ scenario: "real-pointer-hover-and-dock", before, after, readability, hitSamples });
   saveResults();
-  await verifyDockedRibbonSettingsResize(win);
+  await verifyCompactRibbonSettingsResize(win);
   console.log(`PASS: independent workbench rows, unclipped controls, and stable page/drawer click targets. Evidence: ${evidenceDir}`);
   win.close();
   app.quit();
@@ -173,9 +173,9 @@ async function run() {
 
 // The saved sidebar width includes the fixed 52px icon rail, while a docked
 // ribbon adds its extra width on top. The settings rail must start after the
-// docked ribbon and keep the same right edge as the main sidebar so the
+// compact ribbon and keep the same right edge as the main sidebar so the
 // shared separator still owns the visible boundary.
-async function verifyDockedRibbonSettingsResize(win) {
+async function verifyCompactRibbonSettingsResize(win) {
   win.setContentSize(1180, 820);
   win.webContents.setZoomFactor(1);
   await evaluate(win, () => {
@@ -195,7 +195,7 @@ async function verifyDockedRibbonSettingsResize(win) {
 
   const before = await settingsResizeGeometry(win);
   assert.ok(Math.abs(before.rail.width - (before.width - before.compactWidth)) < 1,
-    `Docked ribbon leaves the settings rail at the saved content width: ${JSON.stringify(before)}`);
+    `Compact ribbon leaves the settings rail at the saved content width: ${JSON.stringify(before)}`);
   assert.ok(Math.abs(before.rail.right - before.resizerCenter) < 1,
     `Settings rail ends on the shared separator: ${JSON.stringify(before)}`);
   assert.equal(before.hitResizer, true,
@@ -216,9 +216,9 @@ async function verifyDockedRibbonSettingsResize(win) {
     `Settings rail keeps the saved content width after resizing: ${JSON.stringify(after)}`);
   assert.ok(Math.abs(after.rail.right - after.resizerCenter) < 1,
     `Settings rail stays on the separator after resizing: ${JSON.stringify(after)}`);
-  results.push({ scenario: "docked-ribbon-settings-resize", before, after, point });
+  results.push({ scenario: "compact-ribbon-settings-resize", before, after, point });
   saveResults();
-  await capture(win, "settings-sidebar-docked-ribbon.png");
+  await capture(win, "settings-sidebar-compact-ribbon.png");
 }
 
 async function settingsResizeGeometry(win) {
@@ -353,17 +353,10 @@ async function verifyRibbonHistoryOcclusion(win) {
     assert.equal(before.history.hidden, false, 'History starts visible with the ribbon closed');
     await hoverCompactRibbon(win);
     assert.deepEqual(await snapshot(), before, 'Hover keeps the compact ribbon and history geometry unchanged');
-    await expandRibbonWithKeyboard(win);
+    await focusRibbonWithKeyboard(win);
     const expanded = await snapshot();
-    const a = before.history.bounds, b = expanded.ribbon;
-    const overlaps = Math.min(a.right, b.right) > Math.max(a.left, b.left) &&
-      Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
-    assert.equal(overlaps, collapsed, 'The expanded ribbon covers the collapsed history lane but not the docked240 lane');
-    assert.equal(expanded.history.hidden, overlaps, 'History hides only in the covered lane');
-    assert.equal(expanded.history.inert, overlaps, 'Covered history cannot receive keyboard input');
-    assert.deepEqual(expanded.title, before.title, 'Ribbon expansion does not shift the title');
-    assert.deepEqual(expanded.content, before.content, 'Ribbon expansion does not shift the content');
-    results.push({ scenario: `ribbon-history-240-20px-2-${collapsed ? 'collapsed' : 'docked'}`, before, expanded, overlaps });
+    assert.deepEqual(expanded, before, 'Keyboard focus preserves the compact ribbon, history and content geometry');
+    results.push({ scenario: `ribbon-history-240-20px-2-${collapsed ? 'collapsed' : 'docked'}`, before, focused: expanded });
     saveResults();
     await capture(win, `ribbon-history-240-20px-2-${collapsed ? 'collapsed' : 'docked'}.png`);
     await evaluate(win, () => document.querySelector('.app-shell').focus());
@@ -436,32 +429,16 @@ async function verifyRibbonControlFocus(win, page) {
       } else {
         assert.deepEqual(hovered, before, `${page}/${layout}/${owner}: hover preserves control focus, accessibility and geometry`);
       }
-      await expandRibbonWithKeyboard(win);
+      await focusRibbonWithKeyboard(win);
       const expanded = await snapshot();
-      assert.ok(expanded.toggle.hidden && expanded.toggle.inert, 'Expanded Mac ribbon explicitly removes its covered toggle');
-      assert.equal(expanded.history.hidden, layout !== 'docked', 'Docked history remains outside the ribbon');
+      assert.ok(!expanded.toggle.hidden && !expanded.toggle.inert, "The compact ribbon keeps its sidebar toggle reachable");
+      assert.equal(expanded.history.hidden, expanded.drawerVisible, 'Only the drawer can cover app history');
       assert.equal(expanded.history.inert, expanded.history.hidden);
-      assert.equal(expanded.focusInRibbon, true, 'Keyboard expansion retains focus in the ribbon');
+      assert.equal(expanded.focusInRibbon, true, 'Keyboard navigation retains focus in the ribbon');
       assert.deepEqual(expanded.title, before.title);
       assert.deepEqual(expanded.content, before.content);
-      // Leaving the keyboard-owned ribbon releases its expansion. Pointer
-      // hover no longer expands it or owns its closing transition.
-      await armClosingControlOwnership(win);
-      let closing;
-      try {
-        await evaluate(win, () => document.querySelector('.app-shell').focus());
-        await preparePointerInput(win);
-      } finally {
-        closing = await evaluate(win, () => window.__wuuClosingOwnership.stop());
-        results.push({ scenario: `ribbon-closing-hit-${page}-${layout}-${owner}`, closing });
-        saveResults();
-      }
-      assert.ok(closing.frames.length > 0, 'Renderer observes the closing state');
-      for (const frame of closing.frames) {
-        assert.ok(frame.controls.some(control => control.target === 'sidebar-toggle'), 'Restored toggle is sampled during closing');
-        for (const control of frame.controls) assert.ok(control.samples.every(sample => sample.owned),
-          `Restored controls own their interior during ribbon closing: ${JSON.stringify(frame)}`);
-      }
+      await evaluate(win, () => document.querySelector('.app-shell').focus());
+      await preparePointerInput(win);
       await settleChrome(win);
       const restored = await snapshot();
       assert.ok(!restored.toggle.hidden && !restored.toggle.inert && !restored.ribbonExpanded);
@@ -473,14 +450,14 @@ async function verifyRibbonControlFocus(win, page) {
       saveResults();
     }
   }
-  // Existing keyboard navigation in the ribbon must retain its own expansion.
-  await expandRibbonWithKeyboard(win);
+  // Keyboard navigation retains focus without expanding the ribbon.
+  await focusRibbonWithKeyboard(win);
   const away = await evaluate(win, () => ({ x: innerWidth - 30, y: innerHeight - 30 }));
   const zoom = win.webContents.getZoomFactor();
   win.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(away.x * zoom), y: Math.round(away.y * zoom) });
   await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const keyboard = await snapshot();
-  assert.ok(keyboard.ribbonExpanded && keyboard.focusInRibbon, 'Genuine keyboard ribbon focus survives pointer exit');
+  assert.ok(!keyboard.ribbonExpanded && keyboard.focusInRibbon, 'Keyboard ribbon focus survives pointer exit at compact width');
   await evaluate(win, () => document.querySelector('.app-shell').focus());
   await waitFor(win, () => !document.querySelector('.sidebar-ribbon[data-expanded="true"]'), 3000);
   await settleRibbonMotion(win);
@@ -505,17 +482,7 @@ async function notificationRouteState(win) {
 }
 
 async function settleRibbonMotion(win) {
-  // useRibbonReveal owns a RAF timeline, which getAnimations does not expose.
-  // Wait for its endpoint as well as any browser-owned animation.
-  await waitFor(win, () => {
-    const ribbon = document.querySelector('.sidebar-ribbon');
-    if (!ribbon) throw new Error('Ribbon is required for motion checks');
-    ribbon.getBoundingClientRect();
-    const reveal = Number(getComputedStyle(ribbon).getPropertyValue('--ribbon-reveal'));
-    const target = ribbon.dataset.expanded === 'true' ? 1 : 0;
-    return reveal === target && ribbon.getAnimations().every(animation => !animation.pending &&
-      animation.playState !== 'running');
-  }, 3000);
+  await evaluate(win, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 
 async function hoverCompactRibbon(win) {
@@ -543,61 +510,13 @@ async function hoverCompactRibbon(win) {
   saveResults();
 }
 
-async function expandRibbonWithKeyboard(win) {
+async function focusRibbonWithKeyboard(win) {
   await evaluate(win, () => document.querySelector('.sidebar-ribbon-main .sidebar-ribbon-button').focus());
   win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ArrowDown' });
   win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ArrowDown' });
-  await waitFor(win, () => !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), 3000);
+  await waitFor(win, () => !!document.activeElement.closest('.sidebar-ribbon'), 3000);
+  assert.equal(await evaluate(win, () => document.querySelector('.sidebar-ribbon').getBoundingClientRect().width), 52);
   await settleRibbonMotion(win);
-}
-
-async function armClosingControlOwnership(win) {
-  await evaluate(win, () => {
-    const ribbon = document.querySelector('.sidebar-ribbon');
-    if (window.__wuuClosingOwnership) throw new Error('Closing observer already armed');
-    const frames = [];
-    let raf = 0;
-    let stopped = false;
-    const sample = () => {
-      const bounds = ribbon.getBoundingClientRect().toJSON();
-      const reveal = Number(getComputedStyle(ribbon).getPropertyValue('--ribbon-reveal'));
-      const motionActive = (reveal > 0 && reveal < 1) ||
-        ribbon.getAnimations().some(animation => animation.pending || animation.playState === 'running');
-      const controls = [...document.querySelectorAll('.section-sidebar-toggle, .shell-page-history-controls button')]
-        .filter(element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
-        .map(element => {
-          const rect = element.getBoundingClientRect();
-          return { target: element.dataset.wuuComponent, bounds: rect.toJSON(), samples:
-            [[0.5, 0.5], [0.2, 0.2], [0.8, 0.2], [0.2, 0.8], [0.8, 0.8]].map(([x, y]) => {
-              const point = { x: rect.left + rect.width * x, y: rect.top + rect.height * y };
-              const hit = document.elementFromPoint(point.x, point.y);
-              return { ...point, owned: hit === element || element.contains(hit), hit: hit?.getAttribute('class') };
-            }) };
-        });
-      return { bounds, motionActive, controls };
-    };
-    const capture = () => {
-      if (stopped || ribbon.dataset.expanded === 'true') return;
-      frames.push(sample());
-    };
-    const tick = () => { capture(); if (!stopped) raf = requestAnimationFrame(tick); };
-    const observer = new MutationObserver(capture);
-    observer.observe(ribbon, { attributes: true, attributeFilter: ['data-expanded'] });
-    const stop = () => {
-      stopped = true;
-      observer.disconnect();
-      cancelAnimationFrame(raf);
-      clearTimeout(timer);
-      delete window.__wuuClosingOwnership;
-      return { frames, motionActive: frames.some(frame => frame.motionActive),
-        coverage: frames.some(frame => frame.motionActive) ? 'closing-transition' : 'transition-already-finished' };
-    };
-    // Bound collection using the existing interaction timeout. This timer only
-    // cleans up observation; it never modifies animation or ribbon state.
-    const timer = setTimeout(() => { stopped = true; observer.disconnect(); cancelAnimationFrame(raf); }, 3000);
-    window.__wuuClosingOwnership = { stop };
-    raf = requestAnimationFrame(tick);
-  });
 }
 
 async function preparePointerInput(win) {

@@ -121,7 +121,7 @@ async function run(){
     const views = parent => parent.children.flatMap(view => [view, ...views(view)]);
     let view;
     await until(() => { view = views(win.contentView).find(view => view.webContents?.getURL() === origin + '/animated' && view.getVisible()); return view && !view.webContents.isLoading(); }, 'animated toolbar fixture');
-    await require(process.env.WUU_RIBBON_MOTION === '1' ? './ribbon-motion-acceptance.cjs' : './web-workspace-toolbar-acceptance.cjs')({ win, view, output, report, evaluate, until, settle, click, nativeInput, capture, delay });
+    await require('./web-workspace-toolbar-acceptance.cjs')({ win, view, output, report, evaluate, until, settle, click, nativeInput, capture, delay });
     report.status = 'passed'; save(); server.close(); app.quit(); setTimeout(() => app.exit(0), 1000).unref(); return;
   }
   for(let repeat=0;repeat<(process.env.WUU_RESIZE_ACCEPTANCE==='1'?0:report.repeats);repeat++)for(const [left,right] of [[false,false],[true,false],[false,true],[true,true]])for(const kind of ['none','static','scroll','animated']){

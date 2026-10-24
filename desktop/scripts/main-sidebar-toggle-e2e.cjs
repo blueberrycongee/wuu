@@ -68,66 +68,6 @@ app.whenReady().then(async () => {
   if (process.env.WUU_E2E_URL) await win.loadURL(process.env.WUU_E2E_URL);
   else await win.loadFile(path.join(root, "out/renderer/index.html"));
   await wait(`!!document.querySelector('${toggle}')`);
-  if (process.env.WUU_E2E_RIBBON_RESIZE === "true") {
-    const samples = [];
-    const read = () => js(`(() => {
-      const handle = document.querySelector('.ribbon-resizer');
-      const ribbon = document.querySelector('.sidebar-ribbon');
-      const secondary = document.querySelector('.sidebar-content');
-      return {handle: handle?.getBoundingClientRect().toJSON(), ribbon: ribbon.getBoundingClientRect().toJSON(),
-        secondary: secondary.getBoundingClientRect().toJSON(), conversation: document.querySelector('.conversation-pane').getBoundingClientRect().toJSON()};
-    })()`);
-    for (const theme of ['light', 'dark']) for (const font of [15, 20]) {
-      await js(`document.documentElement.dataset.theme='${theme}';document.documentElement.style.setProperty('--font-ui','${font}px')`);
-      await wait(`document.querySelector('.sidebar-ribbon').getBoundingClientRect().width===52`);
-      const before = await read();
-      assert(before.handle?.width > 0, 'Ribbon edge must be draggable');
-      const x = Math.round(before.handle.x + before.handle.width / 2), y = 400;
-      win.webContents.sendInputEvent({type:'mouseMove',x,y});
-      await wait(`Number(getComputedStyle(document.querySelector('.ribbon-resizer'),'::before').opacity)>0.99`);
-      fs.writeFileSync(path.join(output, `ribbon-handle-hover-${theme}-${font}.png`),(await win.webContents.capturePage()).toPNG());
-      win.webContents.sendInputEvent({type:'mouseDown',x,y,button:'left',clickCount:1});
-      await wait(`!!document.querySelector('[data-ribbon-resizing]')`);
-      for (const delta of [40, 100, 180, 120, 200]) {
-        win.webContents.sendInputEvent({type:'mouseMove',x:x+delta,y,button:'left',modifiers:['leftButtonDown']});
-        await js('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
-        const current = await read();
-        assert(Math.abs(current.ribbon.width - before.ribbon.width - delta) < 2, `Ribbon follows the pointer in both directions: ${JSON.stringify({before,current,delta})}`);
-        assert(Math.abs(current.secondary.width-before.secondary.width)<2, 'Conversation list retains its width');
-        samples.push({theme,font,delta,...current});
-        if (delta === 120) fs.writeFileSync(path.join(output, `ribbon-handle-drag-${theme}-${font}.png`),(await win.webContents.capturePage()).toPNG());
-      }
-      win.webContents.sendInputEvent({type:'mouseUp',x:x+200,y,button:'left',clickCount:1});
-      away(); await settled();
-      const docked = await read();
-      assert(Math.abs(docked.ribbon.width-before.ribbon.width-200)<2, 'Expanded ribbon stays open after pointer leaves');
-      fs.writeFileSync(path.join(output, `ribbon-${theme}-${font}.png`),(await win.webContents.capturePage()).toPNG());
-      const endX=Math.round(docked.handle.x+docked.handle.width/2);
-      win.webContents.sendInputEvent({type:'mouseDown',x:endX,y,button:'left',clickCount:1});
-      await wait(`!!document.querySelector('[data-ribbon-resizing]')`);
-      win.webContents.sendInputEvent({type:'mouseMove',x:endX-200,y,button:'left',modifiers:['leftButtonDown']});
-      win.webContents.sendInputEvent({type:'mouseUp',x:endX-200,y,button:'left',clickCount:1});
-      away(); await settled();
-      await wait(`document.querySelector('.sidebar-ribbon').getBoundingClientRect().width===${before.ribbon.width}`);
-      assert(Math.abs((await read()).ribbon.width-before.ribbon.width)<2,'Ribbon returns to icon width');
-    }
-    await js(`document.querySelector('.ribbon-resizer').focus()`);
-    win.webContents.sendInputEvent({type:'keyDown',keyCode:'End'});
-    win.webContents.sendInputEvent({type:'keyUp',keyCode:'End'});
-    await wait(`document.querySelector('.sidebar-ribbon').getBoundingClientRect().width===360`);
-    win.webContents.reload();
-    await wait(`document.querySelector('.sidebar-ribbon')?.getBoundingClientRect().width===360`);
-    await resize(760);
-    await clickToggle(); await settled();
-    assert.equal((await read()).ribbon.width,360,'Collapsing conversation list preserves the ribbon');
-    await js(`document.querySelector('.ribbon-resizer').focus()`);
-    win.webContents.sendInputEvent({type:'keyDown',keyCode:'Home'});
-    win.webContents.sendInputEvent({type:'keyUp',keyCode:'Home'});
-    away();
-    await wait(`document.querySelector('.sidebar-ribbon').getBoundingClientRect().width===52`);
-    fs.writeFileSync(path.join(output,'ribbon-resize.json'),JSON.stringify({passed:true,samples},null,2));
-    win.destroy(); app.exit(0); return;
-  }
   // Opt-in diagnostic until this interruption case is verified on a native
   // desktop. Use real Chromium layout and trusted mouse input, never mocked
   // rectangles or pointerdown dispatched past CSS hit-testing restrictions.

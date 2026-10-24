@@ -18,7 +18,6 @@ export interface DefaultNavigationLayout {
   onPointerEnter?: () => void;
   onPointerLeave?: (event: PointerEvent<HTMLElement>) => void;
   onRibbonPresenceChange?: (present: boolean) => void;
-  onRibbonExpandedChange?: (expanded: boolean) => void;
 }
 function readIDs(key: string, fallback: string[] = []): Set<string> {
   try { const stored = localStorage.getItem(key); const value: unknown = stored ? JSON.parse(stored) : fallback; return new Set(Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : fallback); }

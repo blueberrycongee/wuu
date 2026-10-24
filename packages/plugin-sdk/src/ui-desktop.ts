@@ -34,26 +34,13 @@ export interface ApplicationDesktopControlsV1 {
 
 /** Presentation-only native overlays; session/account authority remains in the host. */
 export const APPLICATION_DESKTOP_CHROME_OVERLAY_VERSION = 1 as const;
-export type ApplicationDesktopChromeOverlaySurfaceV1 = "ribbon" | "account" | "capsule";
+export type ApplicationDesktopChromeOverlaySurfaceV1 = "account" | "capsule";
 export type ApplicationDesktopChromeOverlayRectV1 = { x: number; y: number; width: number; height: number };
 export type ApplicationDesktopChromeOverlayAppearanceV1 = {
   theme: "light" | "dark";
   locale: "en-US" | "zh-CN";
   fontFamily: string;
   variables: Record<string, string>;
-  shellSkin?: boolean;
-  shellImage?: string;
-};
-export type ApplicationDesktopRibbonIconModelV1 =
-  | { kind: "conversations" }
-  | { kind: "catalog" }
-  | { kind: "public"; name?: string }
-  | { kind: "image"; light: string; dark?: string }
-  | { kind: "website"; url: string; title: string; favicon?: string; loading?: boolean; startPage?: boolean };
-export type ApplicationDesktopChromeRibbonItemV1 = {
-  id: string; title: string; icon: ApplicationDesktopRibbonIconModelV1; active?: boolean; disabled?: boolean;
-  pinned?: boolean; closable?: boolean; website?: boolean; component?: string; pluginId?: string;
-  audible?: boolean; muted?: boolean; canMute?: boolean;
 };
 export type ApplicationDesktopChromeAccountTriggerV1 = { title: string; initials?: string; disabled: boolean; open: boolean; label: string };
 export type ApplicationDesktopChromeDesktopUpdateV1 = { state: "available" | "ready" | "error" | "downloading" | "checking" | "prompting" | "installing"; label: string; progressLabel: string; busy: boolean; percent?: number };
@@ -64,24 +51,9 @@ export type ApplicationDesktopChromeAccountPanelV1 = {
   rows: { action: ApplicationDesktopChromeAccountActionV1; label: string; disabled?: boolean }[];
   error?: string; notice?: string;
 };
-export type ApplicationDesktopChromeRibbonFocusV1 = { kind: "item" | "close"; id: string } | { kind: "account" | "new-tab" | "desktop-update" };
-export type ApplicationDesktopChromeRibbonModelV1 = {
-  collapsedWidth: number;
-  resizeLabel?: string;
-  /** Shell-painted header immediately above the native surface, in CSS pixels. */
-  headerHeight?: number;
-  kind: "ribbon";
-  items: ApplicationDesktopChromeRibbonItemV1[];
-  label: string; newTabLabel: string; canCreateTab: boolean;
-  closeTabLabel: string; pinTabLabel: string; unpinTabLabel: string; reorderHint: string;
-  muteTabLabel: string; unmuteTabLabel: string;
-  paddingTop: number; paddingBottom: number; scrollTop: number;
-  focusTarget?: ApplicationDesktopChromeRibbonFocusV1;
-  footer?: { account?: ApplicationDesktopChromeAccountTriggerV1; update?: ApplicationDesktopChromeDesktopUpdateV1 };
-};
 export type ApplicationDesktopChromeCapsuleModelV1 = { kind: "capsule"; draft: string; expanded: boolean; menuOpen: boolean; busy: boolean; sessionId?: string; error?: string;
   sourceTitle: string; label: string; placeholder: string; sendLabel: string; openLabel: string; collapseLabel: string };
-export type ApplicationDesktopChromeOverlayModelV1 = ApplicationDesktopChromeRibbonModelV1 | { kind: "account"; panel: ApplicationDesktopChromeAccountPanelV1 } | ApplicationDesktopChromeCapsuleModelV1;
+export type ApplicationDesktopChromeOverlayModelV1 = { kind: "account"; panel: ApplicationDesktopChromeAccountPanelV1 } | ApplicationDesktopChromeCapsuleModelV1;
 export type ApplicationDesktopChromeOverlayRequestV1 = {
   version: typeof APPLICATION_DESKTOP_CHROME_OVERLAY_VERSION;
   token: string;
@@ -92,22 +64,10 @@ export type ApplicationDesktopChromeOverlayRequestV1 = {
   model: ApplicationDesktopChromeOverlayModelV1;
 };
 export type ApplicationDesktopChromeOverlayCommandV1 =
-  | { type: "reveal"; fraction: number }
-  | { type: "resize-ribbon"; width: number; finished: boolean }
   | { type: "capsule-expand" | "capsule-open" | "capsule-menu" }
   | { type: "capsule-collapse" | "capsule-draft" | "capsule-send"; text: string }
-  | { type: "select" | "close-tab"; id: string }
-  | { type: "pin-tab"; id: string; pinned: boolean }
-  | { type: "mute-tab"; id: string; muted: boolean }
-  | { type: "reorder"; id: string; target: string }
-  | { type: "new-tab" | "desktop-update" }
-  | { type: "account-open"; anchor: ApplicationDesktopChromeOverlayRectV1 }
   | { type: "account-action"; action: ApplicationDesktopChromeAccountActionV1 }
-  | { type: "dismiss"; reason: "escape" | "tab" | "outside" | "leave" | "owner" | "failed" }
-  | { type: "tab-menu"; id: string; x: number; y: number }
-  | { type: "pointer"; inside: boolean }
-  | { type: "retain"; active: boolean }
-  | { type: "scroll"; top: number };
+  | { type: "dismiss"; reason: "escape" | "tab" | "outside" | "owner" | "failed" };
 export type ApplicationDesktopChromeOverlayEventV1 = { token: string; generation: number; command: ApplicationDesktopChromeOverlayCommandV1 };
 export interface ApplicationDesktopChromeOverlayApiV1 {
   show(request: ApplicationDesktopChromeOverlayRequestV1): Promise<void>;

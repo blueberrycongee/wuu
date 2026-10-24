@@ -18,7 +18,7 @@ Plugins contribute paired light and dark variants. Disabling or removing a skin 
 
 On desktop, choose **Background image → Choose image** in Appearance. Import a local PNG, JPEG or WebP up to 20 MB and 64 megapixels. Wuu stores a resized copy (up to 2048 pixels on its longest edge) in this desktop profile; the original file can be moved or deleted. Images are not uploaded or synced to other devices. Animated images use a still frame.
 
-The picture decorates only the outer frame and ribbon, including the expanded ribbon. Conversation, settings and workspace content keep their own surfaces. Importing selects **My image**; switching to another skin retains the saved picture. Wuu centers and softens the image with Gaussian blur, preserving its color and automatically adjusting contrast for light or dark shell text. This treatment is built in, with no effect, strength or position controls. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image. Existing saved pictures adopt this treatment.
+The picture decorates only the outer frame and ribbon. Conversation, settings and workspace content keep their own surfaces. Importing selects **My image**; switching to another skin retains the saved picture. Wuu centers and softens the image with Gaussian blur, preserving its color and automatically adjusting contrast for light or dark shell text. This treatment is built in, with no effect, strength or position controls. Changes apply to open desktop windows. **Remove** deletes the saved copy; a failed import or save preserves the previous image. Existing saved pictures adopt this treatment.
 
 ## Adjust text and motion
 

@@ -3,8 +3,7 @@ html[data-shell-skin] body {
   isolation: isolate;
 }
 
-.app-background,
-html[data-shell-skin] .sidebar-ribbon::before {
+.app-background {
   /* Resolve viewport geometry only on the painted surfaces. Updating inherited
      root variables on every resize invalidates the conversation's styles too. */
   --shell-image-width: max(var(--shell-viewport-width, 100vw), calc(var(--shell-viewport-height, 100vh) * var(--shell-image-ratio, 1)));

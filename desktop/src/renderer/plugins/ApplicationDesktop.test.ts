@@ -70,12 +70,12 @@ describe("ApplicationDesktop generation and host lifecycle", () => {
     const show = vi.fn((_request: ChromeOverlayRequest) => shown.promise); const off = vi.fn();
     const { desktop } = setup({ chromeOverlay: { show, hide, onEvent: (listener: typeof event) => { event = listener; return off; } } });
     const life = new AbortController(); const api = desktop.createScope(life.signal).chromeOverlay!; const received = vi.fn(); api.onEvent(received);
-    const request = { token: "ribbon", generation: 1 } as ChromeOverlayRequest;
+    const request = { token: "account", generation: 1 } as ChromeOverlayRequest;
     const pending = api.show(request); const rejection = expect(pending).rejects.toThrow(); await flush();
     const token = show.mock.calls[0][0].token;
-    event({ token, generation: 1, command: { type: "new-tab" } });
-    expect(received).toHaveBeenCalledWith({ token: "ribbon", generation: 1, command: { type: "new-tab" } });
-    life.abort(); event({ token, generation: 1, command: { type: "new-tab" } }); shown.resolve(); await rejection; await flush();
+    event({ token, generation: 1, command: { type: "account-action", action: "usage" } });
+    expect(received).toHaveBeenCalledWith({ token: "account", generation: 1, command: { type: "account-action", action: "usage" } });
+    life.abort(); event({ token, generation: 1, command: { type: "account-action", action: "usage" } }); shown.resolve(); await rejection; await flush();
     expect(hide).toHaveBeenCalledWith(token, 1); expect(received).toHaveBeenCalledTimes(1); expect(off).toHaveBeenCalledTimes(1);
     desktop.dispose();
   });

@@ -68,6 +68,26 @@ async function openAutomations(origin) {
   assert.equal(await evaluate(() => Boolean(document.querySelector('.conversation-pane[data-primary-plugin-view] .plugin-workbench-view-primary'))), true, "An empty browser must not deactivate the selected plugin page");
   assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true);
 }
+async function checkCompactRibbon(name) {
+  await evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem("wuu.navigation-ribbon.v1"));
+    localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({ ...saved, width: 360 }));
+    window.dispatchEvent(new Event("wuu-navigation-ribbon-change"));
+    document.querySelector('[data-ribbon-id="conversations"]').focus();
+  });
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
+  await until(() => document.activeElement?.getAttribute('data-ribbon-id') === 'catalog');
+  await capture(`compact-ribbon-${name}`);
+  const geometry = await evaluate(() => ({
+    ribbon: document.querySelector('.sidebar-ribbon').getBoundingClientRect().width,
+    focused: document.activeElement?.getAttribute('data-ribbon-id'),
+    toggleReachable: !document.querySelector('.section-sidebar-toggle').hidden,
+  }));
+  assert.equal(geometry.ribbon, 52, "Saved width and keyboard traversal must preserve the compact icon rail");
+  assert.equal(geometry.focused, "catalog");
+  assert.equal(geometry.toggleReachable, true);
+}
 async function run() {
   await import(pathToFileURL(path.join(desktop, "out/main/index.js")).href);
   await windowCreated;
@@ -92,6 +112,7 @@ async function run() {
   await until(() => document.querySelector('.catalog-refresh:not(:disabled)'));
   assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Plugin management must not mount the conversation composer");
   await capture("plugin-list-without-composer");
+  await checkCompactRibbon("light-wide");
   await openAutomations("plugins");
   await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
   await until(() => document.querySelector('.catalog-refresh:not(:disabled)'));
@@ -113,6 +134,7 @@ async function run() {
   await until(() => document.querySelector('[data-tab="skills"][aria-selected="true"]'));
   assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Skill management must not mount the conversation composer");
   await capture("skills-dark-narrow-large-without-composer");
+  await checkCompactRibbon("dark-narrow-large");
   await openAutomations("skills");
   await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
   await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));

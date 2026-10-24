@@ -130,7 +130,7 @@ The shortcut starts disabled, and no background history or audio is recorded. Ad
 
 In the experimental workbench, website tabs in the left ribbon retain their page while you switch destinations. Downloads, history, bookmarks, and address suggestions open above the live page. Hiding or minimizing Wuu keeps the selected page ready for restore.
 
-Drag the right edge of the left tab ribbon to resize it. A wider ribbon keeps icons and titles visible and moves the page alongside it without narrowing the conversation list. Drag back to the compact width for icons only. The chosen width survives restart; double-click the edge to switch between compact and expanded widths. When the separator has keyboard focus, Left/Right adjusts its width and Home/End selects its minimum/maximum width.
+The left ribbon stays at a fixed icon width. Hover an icon to see its name. Drag icons to reorder them, or use Alt+Up/Down when an icon has focus. Browser tabs provide pin, mute and close actions in their context menu; middle-click or Delete closes a tab.
 
 Hover over the compact tab ribbon to expand it temporarily. Switching between website tabs and app pages keeps the ribbon open while the pointer stays inside, so you can select several destinations without reopening it. Move the pointer away to collapse it, or press Escape to dismiss the focused ribbon.
 
