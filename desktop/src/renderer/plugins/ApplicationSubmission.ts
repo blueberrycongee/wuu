@@ -218,17 +218,18 @@ export class ApplicationSubmission {
   private async send(operation: Operation, prepareThread?: () => Promise<Thread>): Promise<boolean> {
     const { source, context, message, optimistic } = operation;
     const initial = this.options.getState(); const target = operation.thread;
+    const runtime: ReturnType<ApplicationSubmissionOptions["getRuntime"]> = target
+      ? { pending: false, params: { engine: target.engine_id, permission_mode: target.permission_mode } }
+      : this.options.getRuntime(source.id);
+    if (!target && (runtime.pending || (runtime.params.engine ?? "wuu") === "wuu" && !hasAuthenticatedProvider(initial.initialized?.providers))) { forgetLocalTurnTiming(optimistic.id); return false; }
     const key = target?.id ?? source.id;
-    if (this.admissions.has(key) || target?.read_only || target && isThreadRunning(target) && !activeTurnIsAnswerReady(target)) return false;
+    if (this.admissions.has(key) || target?.read_only || target && isThreadRunning(target) && !activeTurnIsAnswerReady(target)) { forgetLocalTurnTiming(optimistic.id); return false; }
     this.admissions.set(key, operation);
     if (!target) this.creations.set(source.id, operation);
     this.options.updateState(state => state.activeSessionTabID === source.id ? { ...state, running: true, status: "" } : state);
     this.publish();
     let optimisticThreadID: string | undefined;
     try {
-      const runtime: ReturnType<ApplicationSubmissionOptions["getRuntime"]> = target
-        ? { pending: false, params: { engine: target.engine_id, permission_mode: target.permission_mode } }
-        : this.options.getRuntime(source.id);
       const projectDraft = !target && source.kind === "draft" && source.project && initial.initialized?.features?.project_agent && context.kind === "project";
       let thread = prepareThread ? await prepareThread() : target;
       if (!thread) {

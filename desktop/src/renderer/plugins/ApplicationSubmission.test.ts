@@ -10,14 +10,14 @@ function deferred<T>() { let resolve!: (value:T) => void; let reject!: (error:Er
   const promise = new Promise<T>((yes,no) => { resolve=yes; reject=no; }); return {promise,resolve,reject}; }
 const context = {kind:"no_project" as const,cwd:"/fixture"};
 const thread = (id="created"):Thread => ({id,cwd:context.cwd,preview:"",status:"idle",model_provider:"fixture",model:"fixture",created_at:"",updated_at:"",turns:[]});
-function fixture(existing?:Thread, reconcileOnUpdate = false) {
+function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture") {
   let state:AppState={...initialState,activeContext:context,initialized:{provider:"fixture",model:"fixture"} as AppState["initialized"],thread:existing,threads:existing?[existing]:[],activeSessionTabID:existing?`thread:${existing.id}`:"draft:a",
     sessionTabs:existing?[{id:`thread:${existing.id}`,kind:"thread",threadID:existing.id,context,title:"Fixture",prompt:"hello",images:[],files:[]}]:[{id:"draft:a",kind:"draft",context,title:"",createdAt:1,prompt:"hello",images:[],files:[]}]};
   const getDraft=(id:string)=>{const tab=state.sessionTabs.find(tab=>tab.id===id);return tab?cloneSessionTabDraft(tab):emptyComposerDraft();};
   const setDraft=(id:string,draft:ReturnType<typeof emptyComposerDraft>)=>{state={...state,sessionTabs:state.sessionTabs.map(tab=>tab.id===id&&tab.kind!=="skills"?{...tab,...draft}:tab)};};
   const pending=createComposerPendingState({getAppState:()=>state,getComposerDraftForThread:getDraft,restoreComposerDraftForThread:setDraft,preserveFailedComposerMessage:vi.fn(),setStatus:vi.fn()});
   const submission=new ApplicationSubmission({getState:()=>state,updateState:update=>{state=update(state);if(reconcileOnUpdate) submission.reconcile();},changed:vi.fn(),isNavigationPending:()=>false,pending,resources:new ApplicationDraftResources(()=>{}),getDraft,setDraft,
-    getRuntime:()=>({pending:false,params:{engine:"fixture",model:"",effort:"",permission_mode:"unconfined"}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
+    getRuntime:()=>({pending:false,params:{engine,model:"",effort:"",permission_mode:"unconfined"}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
   return {submission,pending,getState:()=>state,setState:(next:AppState)=>{state=next;},getDraft};
 }
 
@@ -159,6 +159,13 @@ describe("application submission ownership",()=>{
     const f=fixture(target);const captured={kind:"project" as const,project_id:"source-project",cwd:context.cwd};
     expect(await f.submission.submitBackground({id:"queued",text:"captured",images:[],files:[]},target,captured)).toBe(true);
     expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][8]).toEqual(captured);
+  });
+
+  it("rejects an independent native draft edit before creating a thread when no provider is ready",async()=>{
+    window.wuu={startThread:vi.fn().mockResolvedValue({thread:thread()}),startTurn:vi.fn().mockResolvedValue({turn:{id:"unexpected",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
+    const f=fixture(undefined,false,"wuu");
+    expect(await f.submission.submitIndependent("draft:a",{id:"edit",text:"edit",images:[],files:[]})).toBe(false);
+    expect(window.wuu.startThread).not.toHaveBeenCalled();expect(f.getDraft("draft:a").prompt).toBe("hello");
   });
 
 });
