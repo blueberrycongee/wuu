@@ -37,6 +37,17 @@ describe("public project work owner", () => {
       operation: "resume", brief: "Brief", acceptance: "Evidence", authority: "Read", request_id: expect.any(String) }));
     expect(projectWork.mock.calls.filter(([input]) => input.operation === "resume")).toHaveLength(1);
   });
+  it("refreshes retained ledger data when its first observer returns", async () => {
+    const stopObserving = service.subscribe("project", vi.fn());
+    await vi.waitFor(() => expect(service.getSnapshot("project").snapshot?.works[0].revision).toBe(7));
+    stopObserving();
+    projectWork.mockResolvedValue({ project_id: "project", works: [{ ...work, revision: 8 }], usage: [] });
+    const stopFirst = service.subscribe("project", vi.fn());
+    const stopSecond = service.subscribe("project", vi.fn());
+    await vi.waitFor(() => expect(service.getSnapshot("project").snapshot?.works[0].revision).toBe(8));
+    expect(projectWork).toHaveBeenCalledTimes(2);
+    stopFirst(); stopSecond();
+  });
   it("discards an old source read and never publishes a released session into its successor", async () => {
     let finish!: (value: unknown) => void;
     projectWork.mockImplementation(() => new Promise(resolve => { finish = resolve; }));

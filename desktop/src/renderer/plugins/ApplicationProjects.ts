@@ -52,9 +52,11 @@ export class ApplicationProjects implements ApplicationProjectsV1 {
   getSnapshot(projectId: string): ApplicationProjectViewV1 { return this.entry(projectId).view; }
   subscribe(projectId: string, listener: () => void): () => void {
     const entry = this.entry(projectId);
+    const firstObserver = entry.listeners.size === 0;
     entry.listeners.add(listener);
     this.disconnect ??= subscribeServerEvents(event => this.receive(event));
-    if (this.enabled && !entry.view.snapshot && !entry.view.loading) void this.refresh(projectId).catch(() => {});
+    // Events are not retained while no view observes this project.
+    if (this.enabled && firstObserver && !entry.view.loading) void this.refresh(projectId).catch(() => {});
     let active = true;
     return () => {
       if (!active) return; active = false; entry.listeners.delete(listener);
