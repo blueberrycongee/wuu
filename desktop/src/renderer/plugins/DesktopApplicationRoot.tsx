@@ -3,6 +3,7 @@ import { getDesktopApplication, type ShellInitializeResult } from "./Application
 import { desktopPluginHost, useDesktopPluginRuntime } from "./DesktopPluginRuntime";
 import { ApplicationShellOutlet } from "./ApplicationShell";
 import { dismissToast, showActionErrorToast } from "../Toast";
+import { RuntimeLoading } from "../LoadingViews";
 
 export function DesktopApplicationRoot(): JSX.Element {
   const reportFailure = useSyncExternalStore(listener => desktopPluginHost.subscribe(listener), desktopPluginHost.getActivationReportFailure);
@@ -17,7 +18,7 @@ export function DesktopApplicationRoot(): JSX.Element {
   useDesktopPluginRuntime(state.initialized?.extension_inventory, state.initialized?.features?.safe_mode, state.runtimeConnectionGeneration ?? 0);
   const selection = (state.initialized as ShellInitializeResult | undefined)?.application_shell;
   const binding = selection ? { pluginId: selection.plugin_id, generation: selection.generation, id: selection.provider_id } : null;
-  if (!state.initialized) return <div className="application-recovery" role={state.status === "connecting" ? "status" : "alert"}>{state.status === "connecting" ? "Connecting…" : state.status}</div>;
+  if (!state.initialized) return <RuntimeLoading fullscreen status={state.status} onRetry={() => window.location.reload()} />;
   const surfaceBindings = Object.fromEntries(Object.entries((state.initialized as ShellInitializeResult).application_surfaces ?? {})
     .map(([service, selected]) => [service, { pluginId: selected.plugin_id, generation: selected.generation, id: selected.provider_id }]));
   return <ApplicationShellOutlet host={desktopPluginHost} binding={binding} surfaceBindings={surfaceBindings} />;
