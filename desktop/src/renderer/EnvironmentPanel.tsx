@@ -1,3 +1,5 @@
+import { usePreviewContent } from "./PreviewContentContext";
+import type { PreviewFileV1 } from "../../../packages/plugin-sdk/src/ui-preview-content";
 import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import {
   AlertCircle,
@@ -15,8 +17,7 @@ import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEf
 import type {
   GitStatusResult,
   InitializeResult,
-  Thread,
-  WorkspaceFileReadResult
+  Thread
 } from "../shared/protocol";
 import { desktopApiErrorMessage, formatBytes } from "./WorkspaceReviewHelpers";
 import { useI18n } from "./i18n";
@@ -60,7 +61,7 @@ export function EnvironmentPanel({
    * Absolute path to a workspace file the right panel should preview. When
    * present together with `activeMenu === "file"`, the panel swaps its
    * default environment body for a file viewer that reads the file via
-   * `window.wuu.readWorkspaceFile`.
+   * the selected public preview-content service.
    */
   rightPanelFilePath?: string;
   /**
@@ -98,6 +99,7 @@ export function EnvironmentPanel({
     return (
       <EnvironmentFilePreview
         filePath={rightPanelFilePath}
+        workspaceRoot={snapshot.root}
         onClose={onCloseFilePreview ?? onClose}
         panelRef={panelRef}
         motionState={motionState}
@@ -319,23 +321,26 @@ function EnvironmentBranchMenu({
 /**
  * Right-panel body that replaces the default environment panel when
  * `activeMenu === "file"` and a `rightPanelFilePath` is supplied. Reads the
- * file via `window.wuu.readWorkspaceFile` and renders loading / error /
+ * file via the selected public preview-content service and renders loading / error /
  * binary / text-file states. The header close button falls back to
  * `onClose` when the caller does not provide a file-specific closer.
  */
 function EnvironmentFilePreview({
   filePath,
+  workspaceRoot,
   onClose,
   panelRef,
   motionState
 }: {
   filePath: string;
+  workspaceRoot?: string;
   onClose: () => void;
   panelRef: RefObject<HTMLDivElement | null>;
   motionState: EnvironmentPanelMotionState;
 }): JSX.Element {
   const { locale, t } = useI18n();
-  const [file, setFile] = useState<WorkspaceFileReadResult | undefined>(undefined);
+  const { service } = usePreviewContent();
+  const [file, setFile] = useState<PreviewFileV1 | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -344,8 +349,13 @@ function EnvironmentFilePreview({
     setLoading(true);
     setError(undefined);
     setFile(undefined);
-    void window.wuu
-      .readWorkspaceFile(filePath)
+    if (!workspaceRoot) {
+      setError("session working directory is unavailable");
+      setLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    void service.readFile({ path: filePath, root: workspaceRoot }, { signal: controller.signal })
       .then((result) => {
         if (!cancelled) {
           setFile(result);
@@ -363,8 +373,9 @@ function EnvironmentFilePreview({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [filePath, locale]);
+  }, [filePath, workspaceRoot, locale, service]);
 
   let body: JSX.Element;
   if (loading) {
