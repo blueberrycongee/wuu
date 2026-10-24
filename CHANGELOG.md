@@ -153,6 +153,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Center the startup icon, title, and progress bar without reserving invisible space for the delayed loading hint; showing the hint keeps the startup content in place.
+
 - Align the workspace tool rail icons with the right-panel toggle across UI font sizes and window widths.
 
 - Avoid rewriting unchanged, acknowledged model-call receipts during turn cleanup, preventing completed replies from failing their cleanup deadline when conversations run concurrently. Late usage and physical completion evidence still require durable checkpoints.

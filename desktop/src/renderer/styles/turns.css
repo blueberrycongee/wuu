@@ -4781,6 +4781,7 @@ pre {
 }
 
 .wuu-launch-message {
+  position: relative;
   display: grid;
   justify-items: center;
   gap: 16px;
@@ -4795,7 +4796,10 @@ pre {
 }
 
 .wuu-launch-description {
-  min-height: 3lh;
+  /* Keep the delayed hint from shifting the centered icon, title and rail. */
+  position: absolute;
+  top: calc(100% + 16px);
+  inset-inline: 0;
   color: var(--ink-soft);
 }
 
