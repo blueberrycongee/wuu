@@ -71,6 +71,7 @@ export interface ApplicationComposerActionMapV1 {
   "composer.edit-pending": { input: { readonly messageId: string; readonly kind: "queue" | "guide" }; result: void };
   "composer.toggle-pending-mode": { input: { readonly messageId: string }; result: void };
   "composer.import-attachments": { input: { readonly attachments: readonly ApplicationAttachmentV1[] }; result: void };
+  /** Discard unbound imports or failed admitted reads that will not be restored. */
   "composer.release-attachments": { input: { readonly attachmentIds: readonly string[] }; result: void };
   /** The host owns encoding, retries and previews from this point onward. */
   "composer.attach": { input: { readonly files: readonly File[]; readonly ownerTabId?: string }; result: { readonly attachments: readonly ApplicationAttachmentV1[] } };
@@ -79,6 +80,8 @@ export interface ApplicationComposerActionMapV1 {
   /** Reject a stale source instead of assigning its draft to a new destination. */
   "composer.checkpoint": { input: {
     readonly activeTabId: string;
+    /** Ready capture/history bytes admitted in the same ownership transition. */
+    readonly attachments?: readonly ApplicationAttachmentV1[];
     readonly primary: ApplicationComposerDraftV1;
     readonly secondary?: ApplicationComposerDraftV1;
   }; result: void };

@@ -523,7 +523,10 @@ export class ApplicationController implements ApplicationServiceV1 {
       case "composer.release-attachments": {
         const { attachmentIds } = input as ApplicationActionMapV1["composer.release-attachments"]["input"];
         const referenced = new Set(this.state.sessionTabs.flatMap(tab => tab.kind === "skills" ? [] : [...tab.images, ...tab.files].map(item => item.id)));
-        if (attachmentIds.some(id => referenced.has(id))) throw new Error("Cannot release an attachment owned by a draft");
+        for (const pending of Object.values(this.pendingComposer.pendingComposerMessagesByThread)) {
+          for (const message of [...pending.queued, ...pending.guides]) [...message.images, ...message.files].forEach(item => referenced.add(item.id));
+        }
+        if (attachmentIds.some(id => referenced.has(id))) throw new Error("Cannot release an attachment owned by a draft or pending message");
         this.draftResources.release(attachmentIds); return;
       }
       case "composer.remove-pending": {
@@ -532,7 +535,11 @@ export class ApplicationController implements ApplicationServiceV1 {
       }
       case "composer.edit-pending": {
         const { messageId, kind } = input as ApplicationActionMapV1["composer.edit-pending"]["input"];
-        return kind === "queue" ? this.pendingComposer.editQueuedMessage(messageId) : this.pendingComposer.editGuideMessage(messageId);
+        const message = Object.values(this.pendingComposer.pendingComposerMessagesByThread)
+          .flatMap(pending => kind === "queue" ? pending.queued : pending.guides).find(message => message.id === messageId);
+        const release = this.draftResources.retain(message ? [...message.images, ...message.files].map(item => item.id) : []);
+        try { return await (kind === "queue" ? this.pendingComposer.editQueuedMessage(messageId) : this.pendingComposer.editGuideMessage(messageId)); }
+        finally { release(); }
       }
       case "composer.toggle-pending-mode": return this.pendingComposer.guideQueuedMessage((input as ApplicationActionMapV1["composer.toggle-pending-mode"]["input"]).messageId);
       case "composer.attach": {
@@ -559,9 +566,12 @@ export class ApplicationController implements ApplicationServiceV1 {
       case "composer.checkpoint": {
         const checkpoint = input as ApplicationActionMapV1["composer.checkpoint"]["input"];
         if (checkpoint.activeTabId !== this.state.activeSessionTabID) throw new Error("Draft owner changed");
-        const primary = this.draftResources.read(checkpoint.primary);
-        const secondary = checkpoint.secondary && this.draftResources.read(checkpoint.secondary);
-        if (Boolean(this.state.secondaryThread) !== Boolean(secondary)) throw new Error("Composer pane ownership changed");
+        if (Boolean(this.state.secondaryThread) !== Boolean(checkpoint.secondary)
+          || checkpoint.primary.ownerTabId !== undefined && checkpoint.primary.ownerTabId !== this.composerDraftForPane("primary").ownerTabId
+          || checkpoint.secondary?.ownerTabId !== undefined && checkpoint.secondary.ownerTabId !== this.composerDraftForPane("secondary").ownerTabId) {
+          throw new Error("Composer pane ownership changed");
+        }
+        const { primary, secondary } = this.draftResources.checkpoint(checkpoint.primary, checkpoint.secondary, checkpoint.attachments);
         const captured = captureComposerDrafts(this.state, secondary ? { primary, secondary } : primary);
         this.draft = captured.activeDraft.prompt;
         this.draftRevision++;

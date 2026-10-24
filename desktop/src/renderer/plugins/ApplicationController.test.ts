@@ -42,6 +42,27 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachments[0].id })).rejects.toThrow("Unknown composer attachment");
   });
 
+  it("keeps the image preview alive while editing a queued message back into its draft", async () => {
+    const originalRevoke = URL.revokeObjectURL;
+    const revoke = vi.fn();
+    URL.revokeObjectURL = revoke;
+    try {
+      const context = { kind: "no_project" as const, cwd: "/workspace" };
+      const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [] } as never;
+      window.wuu = { queueTurn: vi.fn().mockResolvedValue({}), dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) } as unknown as WuuDesktopApi;
+      const controller = new ApplicationController({ ...initialState, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
+        { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "image", images: [{ id: "image", media_type: "image/png", data: "QQ==", previewSrc: "blob:owned" }], files: [] },
+      ] });
+      await controller.invoke("composer.submit", { mode: "queue" });
+      await expect(controller.invoke("composer.release-attachments", { attachmentIds: ["image"] })).rejects.toThrow("pending message");
+      await controller.invoke("composer.edit-pending", { messageId: controller.getSnapshot().composerPending[0].queued[0].id, kind: "queue" });
+      expect(revoke).not.toHaveBeenCalled();
+      expect(controller.getSnapshot().drafts.attachments[0].previewUrl).toBe("blob:owned");
+      await controller.invoke("composer.checkpoint", { activeTabId: "thread:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
+      expect(revoke).toHaveBeenCalledWith("blob:owned");
+    } finally { URL.revokeObjectURL = originalRevoke; }
+  });
+
   it("owns accepted queue input and restores edits through public commands", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "turn", status: "in_progress", items: [] }] } as never;
@@ -95,9 +116,51 @@ describe("shared application state", () => {
     })) });
     expect(controller.getSnapshot().drafts.primary.ownerTabId).toBe("thread:a");
     expect(controller.getSnapshot().drafts.secondary.ownerTabId).toBe("thread:b");
+    await expect(controller.invoke("composer.checkpoint", { activeTabId: "thread:b",
+      primary: { ...controller.getSnapshot().drafts.primary, ownerTabId: "stale-primary" },
+      secondary: controller.getSnapshot().drafts.secondary })).rejects.toThrow("Composer pane ownership changed");
     await controller.invoke("composer.set-draft", { ownerTabId: controller.getSnapshot().drafts.primary.ownerTabId, text: "primary" });
     expect(controller.getSnapshot().drafts.primary.text).toBe("primary");
     expect(controller.getSnapshot().drafts.secondary.text).toBe("");
+  });
+
+  it.each([false, true])("settles failed admitted attachment recovery (discard=%s)", async discard => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "", images: [], files: [] },
+    ] });
+    let fail!: (error: Error) => void;
+    const file = new File(["a"], "note.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: vi.fn().mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }))
+      .mockResolvedValue(new Uint8Array([65]).buffer) });
+    const { attachments } = await controller.invoke("composer.attach", { files: [file] });
+    const attachmentId = attachments[0].id;
+    const reading = controller.invoke("composer.resolve-attachment", { attachmentId });
+    await controller.invoke("composer.checkpoint", { activeTabId: "draft:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
+    if (discard) await controller.invoke("composer.release-attachments", { attachmentIds: [attachmentId] });
+    fail(new Error("encoding failed"));
+    await expect(reading).rejects.toThrow("encoding failed");
+    if (discard) {
+      await expect(controller.invoke("composer.retry-attachment", { attachmentId })).rejects.toThrow("Unknown composer attachment");
+      return;
+    }
+    await controller.invoke("composer.checkpoint", { activeTabId: "draft:a", primary: { text: "retry", imageIds: [], fileIds: [attachmentId], selections: [] } });
+    await expect(controller.invoke("composer.retry-attachment", { attachmentId })).resolves.toMatchObject({ status: "ready", data: "QQ==" });
+    expect(controller.getSnapshot().drafts.primary.fileIds).toEqual([attachmentId]);
+  });
+
+  it("imports ready captures with their checkpoint atomically and rejects stale imports", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "", images: [], files: [] },
+    ] });
+    const attachment = { id: "capture", kind: "file" as const, name: "note.txt", mediaType: "text/plain", status: "ready" as const, data: "QQ==" };
+    const primary = { text: "capture", imageIds: [], fileIds: [attachment.id], selections: [] };
+    await expect(controller.invoke("composer.checkpoint", { activeTabId: "stale", primary, attachments: [attachment] })).rejects.toThrow("Draft owner changed");
+    await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachment.id })).rejects.toThrow("Unknown composer attachment");
+    await controller.invoke("composer.checkpoint", { activeTabId: "draft:a", primary, attachments: [attachment] });
+    expect(controller.getSnapshot().drafts.primary.fileIds).toEqual([attachment.id]);
+    expect(controller.getSnapshot().drafts.attachments[0]).toMatchObject({ id: attachment.id, data: "QQ==" });
   });
 
   it("finishes admitted attachment reads after the owning draft removes the resource", async () => {

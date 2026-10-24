@@ -3,7 +3,7 @@ import type { ComposerDraftState } from "../AppState";
 import { composerFilePlaceholder, composerImagePlaceholder, isComposerImageFile,
   revokeComposerImagePreview, type ComposerFile, type ComposerImage } from "../ComposerMessages";
 
-type Resource = { referenced?: boolean; kind: "image" | "file"; value: ComposerImage | ComposerFile };
+type Resource = { recoverable?: boolean; readers?: number; detached?: boolean; discarded?: boolean; referenced?: boolean; kind: "image" | "file"; value: ComposerImage | ComposerFile };
 
 /** Own asynchronous byte preparation independently of mounted composers. */
 export class ApplicationDraftResources {
@@ -23,9 +23,14 @@ export class ApplicationDraftResources {
 
   remember(kind: Resource["kind"], value: Resource["value"]): void {
     const previous = this.resources.get(value.id);
+    if (previous) { previous.detached = false; previous.recoverable = false; }
     // Draft snapshots may retain a pending placeholder after its bytes settle.
     if (previous?.value === value || value.preparation !== undefined && previous?.value.preparation === value.preparation) return;
-    this.resources.set(value.id, { kind, value, referenced: previous?.referenced });
+    // Preserve outstanding read leases when draft cloning replaces the value.
+    const resource = previous ?? { kind, value };
+    resource.kind = kind;
+    resource.value = value;
+    this.resources.set(value.id, resource);
     const pending = value.preparation?.promise ?? value.encodePromise;
     if (pending) void pending.then(() => this.changed(), () => this.changed());
   }
@@ -54,21 +59,31 @@ export class ApplicationDraftResources {
   reconcile(references: ReadonlySet<string>): void {
     for (const [id, resource] of this.resources) {
       if (references.has(id)) resource.referenced = true;
-      else if (resource.referenced) this.release([id]);
+      else if (resource.referenced && !resource.detached) {
+        resource.detached = true;
+        if (!resource.readers) {
+          this.resources.delete(id);
+          if (resource.kind === "image") revokeComposerImagePreview(resource.value as ComposerImage);
+        }
+      }
     }
   }
 
   release(ids: readonly string[]): void {
     for (const id of ids) {
       const resource = this.resources.get(id);
-      if (resource?.kind === "image") revokeComposerImagePreview(resource.value as ComposerImage);
-      this.resources.delete(id);
+      if (resource) {
+        resource.discarded = true;
+        resource.detached = true;
+        if (!resource.readers && resource.kind === "image") revokeComposerImagePreview(resource.value as ComposerImage);
+      }
+      if (!resource?.readers) this.resources.delete(id);
     }
   }
 
   private require(id: string): Resource {
     const resource = this.resources.get(id);
-    if (!resource) throw new Error(`Unknown composer attachment: ${id}`);
+    if (!resource || resource.discarded || resource.detached && !resource.recoverable) throw new Error(`Unknown composer attachment: ${id}`);
     return resource;
   }
 
@@ -88,19 +103,58 @@ export class ApplicationDraftResources {
       width: "width" in ready ? ready.width : undefined, height: "height" in ready ? ready.height : undefined });
   }
 
+  retain(ids: readonly string[]): () => void {
+    const resources = ids.map(id => [id, this.require(id)] as const);
+    resources.forEach(([, resource]) => { resource.readers = (resource.readers ?? 0) + 1; });
+    return () => resources.forEach(([id, resource]) => this.finishRead(id, resource));
+  }
+
+  private finishRead(id: string, resource: Resource): void {
+    resource.readers!--;
+    if (resource.detached && !resource.readers && (!resource.recoverable || resource.discarded)) {
+      if (this.resources.get(id) === resource) this.resources.delete(id);
+      if (resource.kind === "image") revokeComposerImagePreview(resource.value as ComposerImage);
+    }
+  }
+
   async resolve(id: string, retry = false): Promise<ApplicationAttachmentV1> {
     const resource = this.require(id);
-    const { value } = resource;
-    const preparation = value.preparation;
-    if (retry && preparation?.error) {
-      if (preparation.retry) await preparation.retry();
-      else preparation.restart();
-      this.changed();
+    resource.readers = (resource.readers ?? 0) + 1;
+    try {
+      const { value } = resource;
+      const preparation = value.preparation;
+      if (retry && preparation?.error) {
+        if (preparation.retry) await preparation.retry();
+        else preparation.restart();
+        this.changed();
+      }
+      const pending = preparation?.promise ?? value.encodePromise;
+      if (pending) await pending;
+      return this.describeResource(id, resource);
+    } catch (error) {
+      // Optimistic clearing must not discard the File needed by failure recovery.
+      // The caller either checkpoints this resource again or explicitly releases it.
+      if (resource.detached && !resource.discarded) resource.recoverable = true;
+      throw error;
+    } finally {
+      this.finishRead(id, resource);
     }
-    const pending = preparation?.promise ?? value.encodePromise;
-    if (pending) await pending;
-    // An admitted read retains its bytes even after the draft releases its lookup.
-    return this.describeResource(id, resource);
+  }
+
+  checkpoint(primary: ApplicationComposerDraftV1, secondary: ApplicationComposerDraftV1 | undefined,
+    attachments: readonly ApplicationAttachmentV1[] = []): { primary: ComposerDraftState; secondary?: ComposerDraftState } {
+    const incoming = new Map(attachments.map(attachment => [attachment.id, attachment]));
+    for (const draft of [primary, secondary]) {
+      if (!draft) continue;
+      for (const kind of ["image", "file"] as const) {
+        for (const id of kind === "image" ? draft.imageIds : draft.fileIds) {
+          const resource = incoming.get(id) ?? this.require(id);
+          if (resource.kind !== kind) throw new Error(`Attachment ${id} is not a ${kind}`);
+        }
+      }
+    }
+    this.import(attachments);
+    return { primary: this.read(primary), secondary: secondary && this.read(secondary) };
   }
 
   read(input: ApplicationComposerDraftV1): ComposerDraftState {
