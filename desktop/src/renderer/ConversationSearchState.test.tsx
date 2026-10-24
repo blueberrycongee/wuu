@@ -19,7 +19,7 @@ function result(id: string): ThreadSearchResultItem {
   } };
 }
 
-function setup() {
+function setup(controlled?: { open: boolean }) {
   vi.useFakeTimers();
   const pending: { resolve: (value: ThreadSearchResult) => void; reject: (error: Error) => void }[] = [];
   const searchThreads = vi.fn(() => new Promise<ThreadSearchResult>((resolve, reject) => {
@@ -30,18 +30,20 @@ function setup() {
   } });
   const activeContext: RuntimeContext = { kind: "no_project", cwd: "/workspace" };
   const onSelectThread = vi.fn();
+  const onOpenChange = vi.fn();
   const cacheThreads = vi.fn();
   let api: ReturnType<typeof useConversationSearch>;
   function Harness() {
-    api = useConversationSearch({ activeContext,
+    api = useConversationSearch({ activeContext, open: controlled?.open, onOpenChange,
       getAppState: () => ({ activeContext } as AppState),
       cacheThreads, onOpen: () => {}, onSelectThread });
     return null;
   }
   root = createRoot(document.createElement("div"));
   act(() => root.render(createElement(Harness)));
-  act(() => api.toggleConversationSearch());
-  return { get api() { return api; }, pending, searchThreads, cacheThreads, onSelectThread };
+  if (!controlled) act(() => api.toggleConversationSearch());
+  return { get api() { return api; }, pending, searchThreads, cacheThreads, onSelectThread, onOpenChange,
+    setOpen: (open: boolean) => { if (controlled) controlled.open = open; act(() => root.render(createElement(Harness))); } };
 }
 
 async function advance(ms: number) {
@@ -138,4 +140,15 @@ it("returns focus to where it was when dismissed, but not when a result is chose
   expect(document.activeElement).not.toBe(composer);
   composer.remove();
   input.remove();
+});
+
+it("follows the selected navigation visibility and publishes keyboard dismissal", () => {
+  const h = setup({ open: false });
+  expect(h.api.conversationSearch.open).toBe(false);
+  h.setOpen(true);
+  expect(h.api.conversationSearch.open).toBe(true);
+  act(() => h.api.closeConversationSearch({ immediate: true }));
+  expect(h.onOpenChange).toHaveBeenCalledWith(false);
+  h.setOpen(false);
+  expect(h.api.conversationSearch.open).toBe(false);
 });

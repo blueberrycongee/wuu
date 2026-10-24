@@ -45,12 +45,16 @@ const initialConversationSearch: ConversationSearchState = {
 
 export function useConversationSearch({
   activeContext,
+  open,
+  onOpenChange,
   getAppState,
   cacheThreads,
   onOpen,
   onSelectThread,
 }: {
   activeContext?: RuntimeContext;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   getAppState: () => AppState;
   cacheThreads: (threads: ThreadSearchResultItem["thread"][]) => void;
   onOpen: () => void;
@@ -95,6 +99,12 @@ export function useConversationSearch({
   }, []);
 
   useEffect(() => {
+    if (open === undefined || open === conversationSearch.open) return;
+    if (open) openConversationSearch();
+    else closeConversationSearch();
+  }, [open]);
+
+  useEffect(() => {
     if (!conversationSearch.open || conversationSearch.closing || composing) {
       return undefined;
     }
@@ -126,6 +136,7 @@ export function useConversationSearch({
       window.clearTimeout(conversationSearchCloseTimerRef.current);
       conversationSearchCloseTimerRef.current = undefined;
     }
+    if (open !== true) onOpenChange?.(true);
     onOpen();
     const focused = document.activeElement;
     focusBeforeOpenRef.current =
@@ -155,6 +166,7 @@ export function useConversationSearch({
     if (!conversationSearch.open && !conversationSearch.closing) {
       return;
     }
+    if (open !== false) onOpenChange?.(false);
     conversationSearchRequestRef.current += 1;
     if (conversationSearchCloseTimerRef.current !== undefined) {
       window.clearTimeout(conversationSearchCloseTimerRef.current);
