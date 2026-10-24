@@ -137,22 +137,31 @@ func (l *lazyInferenceRuntime) runtimeID() string {
 type lazyInferenceJournal struct {
 	runtime *lazyInferenceRuntime
 	owner   string
+	ctx     context.Context
+}
+
+// WithContext binds initialization and writes to this operation only.
+func (j *lazyInferenceJournal) WithContext(ctx context.Context) providers.InferenceJournal {
+	clone := *j
+	clone.ctx = context.WithoutCancel(ctx)
+	return &clone
 }
 
 func (j *lazyInferenceJournal) withJournal(ctx context.Context, call func(providers.InferenceJournal) error) error {
+	ctx = journalCallContext(ctx, j.ctx)
 	runtime, err := j.runtime.resolve(ctx)
 	if err != nil {
 		return err
 	}
-	return call(runtime.ForOwner(j.owner))
+	return call(providers.InferenceJournalFromContext(providers.WithInferenceJournal(ctx, runtime.ForOwner(j.owner))))
 }
 
 func (j *lazyInferenceJournal) PrepareOperation(record providers.InferenceOperationJournalRecord) error {
-	return j.withJournal(context.Background(), func(journal providers.InferenceJournal) error { return journal.PrepareOperation(record) })
+	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error { return journal.PrepareOperation(record) })
 }
 
 func (j *lazyInferenceJournal) PrepareAttempt(record providers.InferenceAttemptJournalRecord) error {
-	return j.withJournal(context.Background(), func(journal providers.InferenceJournal) error { return journal.PrepareAttempt(record) })
+	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error { return journal.PrepareAttempt(record) })
 }
 
 func (j *lazyInferenceJournal) UpsertSubmission(ctx context.Context, record providers.InferenceSubmissionJournalRecord) error {
@@ -160,7 +169,7 @@ func (j *lazyInferenceJournal) UpsertSubmission(ctx context.Context, record prov
 }
 
 func (j *lazyInferenceJournal) MarkAttemptFirstEvent(operationID, attemptID, submissionID string, at time.Time) error {
-	return j.withJournal(context.Background(), func(journal providers.InferenceJournal) error {
+	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error {
 		return journal.MarkAttemptFirstEvent(operationID, attemptID, submissionID, at)
 	})
 }
@@ -170,13 +179,13 @@ func (j *lazyInferenceJournal) PrepareRecoveryAttempt(ctx context.Context, recor
 }
 
 func (j *lazyInferenceJournal) CompleteAttempt(record providers.InferenceAttemptTerminalRecord) error {
-	return j.withJournal(context.Background(), func(journal providers.InferenceJournal) error { return journal.CompleteAttempt(record) })
+	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error { return journal.CompleteAttempt(record) })
 }
 
 func (j *lazyInferenceJournal) CompleteOperation(record providers.InferenceOperationTerminalRecord) error {
-	return j.withJournal(context.Background(), func(journal providers.InferenceJournal) error { return journal.CompleteOperation(record) })
+	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error { return journal.CompleteOperation(record) })
 }
 
 func (j *lazyInferenceJournal) CompleteWorkflow(record providers.InferenceWorkflowTerminalRecord) error {
-	return j.withJournal(context.Background(), func(journal providers.InferenceJournal) error { return journal.CompleteWorkflow(record) })
+	return j.withJournal(j.ctx, func(journal providers.InferenceJournal) error { return journal.CompleteWorkflow(record) })
 }

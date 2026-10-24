@@ -179,10 +179,10 @@ func (r *InferenceJournalRuntime) closeContext(ctx context.Context) error {
 
 func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJournal {
 	if r != nil && r.lazy != nil {
-		return &lazyInferenceJournal{r.lazy, ownerID}
+		return &lazyInferenceJournal{runtime: r.lazy, owner: ownerID, ctx: context.Background()}
 	}
 	if r != nil && r.remote != nil {
-		return &remoteInferenceJournal{r.remote, ownerID}
+		return &remoteInferenceJournal{runtime: r.remote, owner: ownerID, ctx: context.Background()}
 	}
 	if r == nil {
 		return nil
@@ -192,6 +192,13 @@ func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJo
 		ownerID = "workspace-runtime"
 	}
 	return &documentInferenceJournal{runtime: r, ownerID: ownerID}
+}
+
+// WithContext returns a per-operation binding without changing the runtime.
+func (j *documentInferenceJournal) WithContext(ctx context.Context) providers.InferenceJournal {
+	clone := *j
+	clone.ctx = context.WithoutCancel(ctx)
+	return &clone
 }
 
 func (j *documentInferenceJournal) write(action string, body func(*persistence.Tx) error) error {
@@ -209,6 +216,7 @@ func (j *documentInferenceJournal) writeContext(ctx context.Context, action stri
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = journalCallContext(ctx, j.ctx)
 	done, err := j.runtime.beginUse()
 	if err != nil {
 		return fmt.Errorf("%s: %w", action, err)

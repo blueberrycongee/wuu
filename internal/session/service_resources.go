@@ -17,6 +17,7 @@ type remoteJournalRuntime struct {
 type remoteInferenceJournal struct {
 	runtime *remoteJournalRuntime
 	owner   string
+	ctx     context.Context
 }
 
 func (s *Store) NewInferenceJournalRuntime(scope string) (*InferenceJournalRuntime, error) {
@@ -33,7 +34,7 @@ func (r *remoteJournalRuntime) invoke(method string, args []any, results []any) 
 	return r.store.invoke("Journal."+method, append([]any{r.handle}, args...), results)
 }
 func (j *remoteInferenceJournal) invoke(ctx context.Context, method string, args ...any) error {
-	return j.runtime.store.WithContext(ctx).invoke("Journal."+method, append([]any{j.runtime.handle, j.owner}, args...), []any{})
+	return j.runtime.store.WithContext(journalCallContext(ctx, j.ctx)).invoke("Journal."+method, append([]any{j.runtime.handle, j.owner}, args...), []any{})
 }
 
 var _ providers.InferenceJournal = (*remoteInferenceJournal)(nil)

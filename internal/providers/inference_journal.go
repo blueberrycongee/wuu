@@ -195,6 +195,13 @@ func WithInferenceJournal(ctx context.Context, journal InferenceJournal) context
 	if journal == nil {
 		return ctx
 	}
+	// Bind a per-operation clone so shared runtime handles never retain another
+	// operation's execution identity or cancellation.
+	if contextual, ok := journal.(interface {
+		WithContext(context.Context) InferenceJournal
+	}); ok {
+		journal = contextual.WithContext(ctx)
+	}
 	return context.WithValue(ctx, inferenceJournalContextKey{}, journal)
 }
 
