@@ -45,6 +45,8 @@
     "dist/ui-composer.d.ts",
     "dist/prompt-service.js",
     "dist/prompt-service.d.ts",
+    "dist/title-service.js",
+    "dist/title-service.d.ts",
     "dist/compaction-service.js",
     "dist/compaction-service.d.ts",
     "dist/application-settings.js",

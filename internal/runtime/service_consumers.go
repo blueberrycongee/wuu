@@ -12,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/promptservice"
+	"github.com/blueberrycongee/wuu/internal/titleservice"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
@@ -45,7 +46,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		profile = "default"
 	}
 	loop := &runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared,
-		requirements: []pluginhost.ServiceRequirement{{Name: compactionservice.ServiceName, MajorVersion: 1, Required: true}, {Name: promptservice.ServiceName, MajorVersion: 1, Required: true}, {Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
+		requirements: []pluginhost.ServiceRequirement{{Name: titleservice.ServiceName, MajorVersion: 1}, {Name: compactionservice.ServiceName, MajorVersion: 1, Required: true}, {Name: promptservice.ServiceName, MajorVersion: 1, Required: true}, {Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
 	}
 	state := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{
 		{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true},

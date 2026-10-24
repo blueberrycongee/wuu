@@ -1130,6 +1130,10 @@ func mergeChatProviderOptions(object map[string]any, options map[string]any, for
 			mergeProviderOptionValue(object, key, value)
 		}
 	}
+	// Apply the model capability after all sources so options cannot restore it.
+	if !temperatureSupported(options) {
+		delete(object, "temperature")
+	}
 }
 
 func chatProviderOptionIsAISDKOnly(key string) bool {
@@ -1361,27 +1365,33 @@ func (u *chunkUsage) asTokenUsage() *providers.TokenUsage {
 	}
 }
 
-// effectiveTemperature drops the sampling temperature for models that reject
-// the field (per-model config "temperature": false arrives as the
-// temperatureSupported provider option via modelvariant). Zero is omitted on
-// the wire by omitempty, matching the "do not send" semantics.
+// effectiveTemperature omits the scalar default for models that reject it.
+// An explicit zero can still be carried in ProviderOptions when supported.
 func effectiveTemperature(req providers.ChatRequest) float64 {
+	if !temperatureSupported(req.ProviderOptions) {
+		return 0
+	}
+	return req.Temperature
+}
+
+// Capability constraints apply to both the request default and explicit options.
+func temperatureSupported(options map[string]any) bool {
 	for _, key := range []string{"temperatureSupported", "temperature_supported"} {
-		value, exists := req.ProviderOptions[key]
+		value, exists := options[key]
 		if !exists {
 			continue
 		}
 		switch v := value.(type) {
 		case bool:
 			if !v {
-				return 0
+				return false
 			}
 		case string:
 			switch strings.ToLower(strings.TrimSpace(v)) {
 			case "false", "0", "no", "off":
-				return 0
+				return false
 			}
 		}
 	}
-	return req.Temperature
+	return true
 }

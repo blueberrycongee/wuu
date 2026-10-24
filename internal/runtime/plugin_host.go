@@ -24,6 +24,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/titleservice"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
@@ -151,6 +152,10 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 				required[provider.id] = true
 			}
 		}
+	}
+	if resolved.Includes(titleservice.NativeModule) {
+		nativeModules = append(nativeModules, titleservice.NewService())
+		required[titleservice.NativeModule] = true
 	}
 	if resolved.Includes(promptservice.NativeModule) {
 		nativeModules = append(nativeModules, promptservice.NewService())
@@ -400,7 +405,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{titleservice.NativeModule, compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	available = append(available, stateServiceModules()...)
 	for _, module := range nativeRendererModules() {
 		available = append(available, module.ID)

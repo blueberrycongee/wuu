@@ -2717,3 +2717,5 @@ export * from "./prompt-service.js";
 export * from "./compaction-service.js";
 export * from "./application-settings.js";
 export * from "./ui-preview.js";
+
+export * from "./title-service.js";
