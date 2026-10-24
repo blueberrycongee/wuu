@@ -698,6 +698,17 @@ export class ApplicationController implements HostApplicationService {
       ?? Object.values(cache.workspaceThreadsByWorkspaceID).flat().find(thread => thread.id === id);
   }
 
+  private pendingComposerMessage(input: { ownerTabId: string; messageId: string; kind?: "queue" | "guide" }) {
+    const tab = this.state.sessionTabs.find(tab => tab.id === input.ownerTabId);
+    if (input.ownerTabId !== this.state.activeSessionTabID || tab?.kind !== "thread"
+      || tab.threadID !== activeThreadIDForState(this.state) || this.pendingNavigation) throw new Error("Pending message owner changed");
+    const pending = this.pendingComposer.pendingComposerMessagesByThread[tab.threadID];
+    const messages = input.kind === "queue" ? pending?.queued : input.kind === "guide" ? pending?.guides : [...(pending?.queued ?? []), ...(pending?.guides ?? [])];
+    const message = messages?.find(message => message.id === input.messageId);
+    if (!message) throw new Error("Pending message owner is unavailable");
+    return message;
+  }
+
   private mutationActions() {
     let restoredDraft: ComposerDraftState | undefined;
     return createThreadMutationActions({ getAppState: () => this.state,
@@ -942,18 +953,24 @@ export class ApplicationController implements HostApplicationService {
         this.draftResources.release(attachmentIds.filter(id => !referenced.has(id))); return;
       }
       case "composer.remove-pending": {
-        const { messageId, kind } = input as ApplicationActionMapV1["composer.remove-pending"]["input"];
+        const target = input as ApplicationActionMapV1["composer.remove-pending"]["input"];
+        this.pendingComposerMessage(target);
+        const { messageId, kind } = target;
         return kind === "queue" ? this.pendingComposer.removeQueuedMessage(messageId) : this.pendingComposer.removeGuideMessage(messageId);
       }
       case "composer.edit-pending": {
-        const { messageId, kind } = input as ApplicationActionMapV1["composer.edit-pending"]["input"];
-        const message = Object.values(this.pendingComposer.pendingComposerMessagesByThread)
-          .flatMap(pending => kind === "queue" ? pending.queued : pending.guides).find(message => message.id === messageId);
-        const release = this.draftResources.retain(message ? [...message.images, ...message.files].map(item => item.id) : []);
+        const target = input as ApplicationActionMapV1["composer.edit-pending"]["input"];
+        const message = this.pendingComposerMessage(target);
+        const { messageId, kind } = target;
+        const release = this.draftResources.retain([...message.images, ...message.files].map(item => item.id));
         try { return await (kind === "queue" ? this.pendingComposer.editQueuedMessage(messageId) : this.pendingComposer.editGuideMessage(messageId)); }
         finally { release(); }
       }
-      case "composer.toggle-pending-mode": return this.pendingComposer.guideQueuedMessage((input as ApplicationActionMapV1["composer.toggle-pending-mode"]["input"]).messageId);
+      case "composer.toggle-pending-mode": {
+        const target = input as ApplicationActionMapV1["composer.toggle-pending-mode"]["input"];
+        this.pendingComposerMessage(target);
+        return this.pendingComposer.guideQueuedMessage(target.messageId);
+      }
       case "composer.attach": {
         const { files, ownerTabId = this.state.activeSessionTabID } = input as ApplicationActionMapV1["composer.attach"]["input"];
         const owner = this.state.sessionTabs.find(tab => tab.id === ownerTabId);

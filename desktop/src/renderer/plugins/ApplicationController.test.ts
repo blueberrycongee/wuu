@@ -369,7 +369,7 @@ describe("shared application state", () => {
       await expect(controller.invoke("composer.release-attachments", { attachmentIds: ["image"] })).rejects.toThrow("pending message");
       await controller.invoke("composer.release-attachments", { attachmentIds: ["image"], ifUnreferenced: true });
       expect(controller.getSnapshot().drafts.attachments[0].id).toBe("image");
-      await controller.invoke("composer.edit-pending", { messageId: controller.getSnapshot().composerPending[0].queued[0].id, kind: "queue" });
+      await controller.invoke("composer.edit-pending", { ownerTabId: "thread:a", messageId: controller.getSnapshot().composerPending[0].queued[0].id, kind: "queue" });
       expect(revoke).not.toHaveBeenCalled();
       expect(controller.getSnapshot().drafts.attachments[0].previewUrl).toBe("blob:owned");
       await controller.invoke("composer.checkpoint", { activeTabId: "thread:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
@@ -388,8 +388,13 @@ describe("shared application state", () => {
     const pending = controller.getSnapshot().composerPending[0];
     expect(pending).toMatchObject({ threadId: "a", queued: [{ text: "queued text" }], guides: [] });
     expect(Object.isFrozen(pending.queued[0])).toBe(true);
+    const stale = { ownerTabId: "thread:retired", messageId: pending.queued[0].id, kind: "queue" as const };
+    await expect(controller.invoke("composer.edit-pending", stale)).rejects.toThrow("owner");
+    await expect(controller.invoke("composer.remove-pending", stale)).rejects.toThrow("owner");
+    await expect(controller.invoke("composer.toggle-pending-mode", stale)).rejects.toThrow("owner");
+    expect(window.wuu.dequeueTurn).not.toHaveBeenCalled();
     expect(controller.getSnapshot().drafts.primary.text).toBe("");
-    await controller.invoke("composer.edit-pending", { messageId: pending.queued[0].id, kind: "queue" });
+    await controller.invoke("composer.edit-pending", { ownerTabId: "thread:a", messageId: pending.queued[0].id, kind: "queue" });
     expect(controller.getSnapshot().composerPending).toEqual([]);
     expect(controller.getSnapshot().drafts.primary.text).toBe("queued text");
     expect(window.wuu.dequeueTurn).toHaveBeenCalledWith("a", pending.queued[0].id);

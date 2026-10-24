@@ -67,9 +67,9 @@ export interface ApplicationPendingComposerThreadV1 {
 }
 
 export interface ApplicationComposerActionMapV1 {
-  "composer.remove-pending": { input: { readonly messageId: string; readonly kind: "queue" | "guide" }; result: boolean };
-  "composer.edit-pending": { input: { readonly messageId: string; readonly kind: "queue" | "guide" }; result: void };
-  "composer.toggle-pending-mode": { input: { readonly messageId: string }; result: void };
+  "composer.remove-pending": { input: { readonly ownerTabId: string; readonly messageId: string; readonly kind: "queue" | "guide" }; result: boolean };
+  "composer.edit-pending": { input: { readonly ownerTabId: string; readonly messageId: string; readonly kind: "queue" | "guide" }; result: void };
+  "composer.toggle-pending-mode": { input: { readonly ownerTabId: string; readonly messageId: string }; result: void };
   "composer.import-attachments": { input: { readonly attachments: readonly ApplicationAttachmentV1[] }; result: void };
   /** Discard unbound imports or failed admitted reads that will not be restored. */
   "composer.release-attachments": { input: { readonly attachmentIds: readonly string[]; readonly ifUnreferenced?: boolean }; result: void };
