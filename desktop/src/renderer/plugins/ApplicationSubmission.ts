@@ -47,11 +47,13 @@ type Operation = {
   creationCancelled: boolean;
   implicitFileID?: string;
   clickedAtMs: number;
+  retainResult: boolean;
 };
 
 /** One submission owner for all shells, sharing the controller's drafts and queues. */
 export class ApplicationSubmission {
   private readonly operations = new Map<string, Operation>();
+  private readonly results = new Map<string, ApplicationSubmissionOperationV1>();
   private readonly admissions = new Map<string, Operation>();
   private readonly lanes = new Map<string, { tail: Promise<void>; stopVersion: number }>();
   private readonly creations = new Map<string, Operation>();
@@ -71,7 +73,7 @@ export class ApplicationSubmission {
   };
 
   private publish(): void {
-    this.snapshot = Object.freeze({ operations: Object.freeze([...this.operations.values()].map(operation => Object.freeze({ ...operation.view }))),
+    this.snapshot = Object.freeze({ operations: Object.freeze([...this.results.values(), ...[...this.operations.values()].map(operation => operation.view)].map(view => Object.freeze({ ...view }))),
       pendingCreations: Object.freeze([...this.creations.values()].map(operation => Object.freeze({ ownerTabId: operation.source.id, operationID: operation.view.operationID, startedAtMs: operation.clickedAtMs,
         turn: Object.freeze({ id: operation.optimistic.id, status: "running" as const, items: Object.freeze(operation.optimistic.items.map(item => toConversationItemSnapshot(item, "user-message"))) }) }))),
       failedDraftTabIds: Object.freeze([...this.failedDrafts]),
@@ -129,14 +131,17 @@ export class ApplicationSubmission {
       if (!sent) this.recover(operation);
       this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error);
     }, error => { this.recover(operation); this.phase(operation, "failed", rawErrorMessage(error, t("composer.sendFailed"))); })
-      .finally(() => { signal?.removeEventListener("abort", abort); release(); this.saveRecovery(); });
+      .finally(() => { signal?.removeEventListener("abort", abort); release(); this.finishOperation(operation); this.saveRecovery(); });
     return { accepted: true, operationID: operation.view.operationID, threadId: thread?.id };
   }
 
   private createOperation(message: QueuedComposerMessage, source: Exclude<SessionTab, { kind: "skills" }>, thread?: Thread): Operation {
     let resolve!: Operation["resolve"]; let cancelPreparation!: () => void;
+    // A result belongs to its composing action, not an unbounded history log.
+    for (const [id, view] of this.results) if (view.ownerTabId === source.id || thread && view.threadId === thread.id) this.results.delete(id);
+    for (const active of this.operations.values()) if (active.source.id === source.id || thread && active.thread?.id === thread.id) active.retainResult = false;
     const clickedAtMs = Date.now();
-    const operation: Operation = { clickedAtMs, view: { operationID: message.id, ownerTabId: source.id, threadId: thread?.id, messageID: message.id, phase: "preparing" },
+    const operation: Operation = { retainResult: true, clickedAtMs, view: { operationID: message.id, ownerTabId: source.id, threadId: thread?.id, messageID: message.id, phase: "preparing" },
       message, source, context: thread ? resolveThreadRuntimeContext(thread, this.options.getState().projects) : source.context,
       thread, optimistic: createOptimisticTurn(message, clickedAtMs), previousTurnIDs: new Set(thread?.turns.map(turn => turn.id)),
       ready: new Promise(done => { resolve = done; }), resolve: thread => resolve(thread),
@@ -360,7 +365,7 @@ export class ApplicationSubmission {
     }
   }
   reconcile(): void {
-    const beforeStops = this.stopRequests.size; const beforeFailures = this.failedDrafts.size;
+    const beforeStops = this.stopRequests.size; const beforeFailures = this.failedDrafts.size; const beforeResults = this.results.size;
     const state = this.options.getState();
     for (const [threadID, request] of this.stopRequests) {
       const thread = threadForTab(state, threadID);
@@ -368,9 +373,30 @@ export class ApplicationSubmission {
       if (thread && !isThreadRunning(thread) && !this.admissions.has(threadID) && (request.phase !== "retry" || targetEnded)) this.stopRequests.delete(threadID);
       else if (request.phase === "pending" && thread?.turns.some(turn => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) void this.interruptAccepted(threadID);
     }
+    for (const [id, view] of this.results) if (!this.resultOwnerExists(view)) this.results.delete(id);
+    for (const operation of this.operations.values()) {
+      if (this.resultOwnerExists(operation.view)) continue;
+      operation.retainResult = false;
+      // Background thread requests still have a real thread owner. Only a
+      // removed draft's not-yet-admitted creation must be cancelled here.
+      if (!operation.thread && !operation.sent) this.cancel(operation.view.operationID);
+    }
     this.saveRecovery();
     for (const id of this.failedDrafts) if (id === state.activeSessionTabID || !state.sessionTabs.some(tab => tab.id === id)) this.failedDrafts.delete(id);
-    if (beforeStops !== this.stopRequests.size || beforeFailures !== this.failedDrafts.size) this.publish();
+    if (beforeStops !== this.stopRequests.size || beforeFailures !== this.failedDrafts.size || beforeResults !== this.results.size) this.publish();
+  }
+  private resultOwnerExists(view: ApplicationSubmissionOperationV1): boolean {
+    const state = this.options.getState();
+    return state.sessionTabs.some(tab => tab.id === view.ownerTabId || tab.kind === "thread" && tab.threadID === view.threadId);
+  }
+  private finishOperation(operation: Operation): void {
+    // No terminal receipt retains the message, File, byte preparation, source
+    // draft, or Thread graph. Canonical drafts/pending messages keep recovery.
+    this.operations.delete(operation.view.operationID);
+    if (!this.disposed && operation.retainResult && this.resultOwnerExists(operation.view)) {
+      this.results.set(operation.view.operationID, Object.freeze({ ...operation.view }));
+    }
+    this.publish();
   }
   private recover(operation: Operation): void {
     const { message, source } = operation;
@@ -437,7 +463,7 @@ export class ApplicationSubmission {
       const sent = await (kind === "steer" ? this.steer(operation) : this.send(operation, prepareThread));
       this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error);
       return sent;
-    } finally { release(); }
+    } finally { release(); this.finishOperation(operation); }
   }
   submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {
     return this.submitInternal(message, thread, "send", prepareThread);
@@ -447,6 +473,7 @@ export class ApplicationSubmission {
   }
   dispose(): void {
     this.disposed = true;
+    this.results.clear();
     for (const operation of this.operations.values()) if (!operation.sent) this.cancel(operation.view.operationID);
   }
 }

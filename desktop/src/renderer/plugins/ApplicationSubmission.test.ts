@@ -92,4 +92,18 @@ describe("application submission ownership",()=>{
     expect(f.getState().threads[0].turns.at(-1)?.status).toBe("interrupted");
   });
 
+  it("retires terminal operation receipts on the next submission and when the owner closes",async()=>{
+    window.wuu={startTurn:vi.fn().mockResolvedValue({turn:{id:"accepted",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
+    const f=fixture(thread());const first=f.submission.submit({ownerTabId:"thread:created"});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0].phase).toBe("completed"));
+    const second=f.submission.submit({ownerTabId:"thread:created",text:"next"});
+    expect(f.submission.getSnapshot().operations.map(operation=>operation.operationID)).not.toContain(first.operationID);
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations.find(operation=>operation.operationID===second.operationID)?.phase).toBe("completed"));
+    f.setState({...f.getState(),thread:undefined,threads:[],sessionTabs:[],activeSessionTabID:""});f.submission.reconcile();
+    expect(f.submission.getSnapshot().operations).toEqual([]);
+  });
+
+
+
+
 });
