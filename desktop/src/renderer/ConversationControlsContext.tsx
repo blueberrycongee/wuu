@@ -15,3 +15,11 @@ export function useConversationControls(): ConversationControls {
   if (!controls) throw new Error("Conversation controls require the selected application and composition");
   return controls;
 }
+
+
+const ConversationTurnIdentityContext = createContext<{ threadId?: string; turnId?: string }>({});
+export function ConversationTurnIdentityProvider({ threadId, turnId, children }: { threadId?: string; turnId: string; children: ReactNode }): JSX.Element {
+  const identity = useMemo(() => ({ threadId, turnId }), [threadId, turnId]);
+  return <ConversationTurnIdentityContext.Provider value={identity}>{children}</ConversationTurnIdentityContext.Provider>;
+}
+export function useConversationTurnIdentity() { return useContext(ConversationTurnIdentityContext); }
