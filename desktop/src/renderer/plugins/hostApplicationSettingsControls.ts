@@ -1,3 +1,5 @@
+import { connectionDisplayPreferences, connectionDisplaySnapshot, subscribeConnectionDisplay } from "../ConnectionDisplayPreferences";
+import { readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory } from "../DraftEngineMemory";
 import { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } from "../AppearancePreferences";
 import { listLocalFonts, isMonospaceFont } from "../LocalFonts";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
@@ -52,6 +54,8 @@ export function createApplicationSettingsControls(options: {
       window.addEventListener("storage", listener);
       return () => { window.removeEventListener("wuu-theme-selection", listener); window.removeEventListener("storage", listener); };
     },
+    connectionDisplay: Object.freeze({ ...connectionDisplayPreferences, subscribe: subscribeConnectionDisplay, getSnapshot: connectionDisplaySnapshot }),
+    readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory,
     initialMessageFlowFontSize: window.wuu?.initialMessageFlowFontSize ?? MESSAGE_FLOW_FONT_SIZE_RANGE.default,
     initialThemePreference: window.wuu?.initialThemePreference ?? "system",
     appearanceDefaults: Object.freeze({ ...appearanceDefaults }),

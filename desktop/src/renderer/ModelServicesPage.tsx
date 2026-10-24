@@ -1,6 +1,6 @@
 import { useSettingsControls } from "./SettingsControlsContext";
 import { ConnectionTitle } from "./ConnectionTitle";
-import { useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { GrokLogin } from "./GrokLogin";
 import {
   type FormEvent as ReactFormEvent,
@@ -329,7 +329,7 @@ export function ModelServicesPage({
   const rootRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const providers = initialized?.providers ?? [];
-  const displayPreferences = useConnectionDisplayPreferences();
+  const displayPreferences = useSettingsConnectionDisplay();
   const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
   const [quotaSnapshot, setQuotaSnapshot] = useState<EngineListResult>();
   const [quotaLoading, setQuotaLoading] = useState(false);
@@ -629,7 +629,7 @@ function ServicesOverview({
 }): JSX.Element {
   const { t } = useI18n();
   const summaryID = useId();
-  const display = useConnectionDisplayPreferences();
+  const display = useSettingsConnectionDisplay();
 
   return (
     <>
@@ -703,7 +703,7 @@ export function DefaultModelRows({
 }): JSX.Element {
   const { t } = useI18n();
   const providers = initialized?.providers ?? [];
-  const displayPreferences = useConnectionDisplayPreferences();
+  const displayPreferences = useSettingsConnectionDisplay();
   const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
   const [error, setError] = useState("");
   const [pending, setPending] = useState<{ provider: string; model: string; variant: string } | null>(null);
@@ -1345,7 +1345,7 @@ function ModelChoices({
   const [modelMenu, setModelMenu] = useState<{ model: ProviderModelSummary; x: number; y: number } | null>(null);
   const [replacement, setReplacement] = useState("");
   const [removeError, setRemoveError] = useState("");
-  const preferences = useConnectionDisplayPreferences();
+  const preferences = useSettingsConnectionDisplay();
   const preferenceKey = `provider:${provider.name}`;
   const models = preferences.orderModels(preferenceKey, providerModels(provider));
   const [preferenceError, setPreferenceError] = useState("");

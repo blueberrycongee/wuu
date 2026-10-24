@@ -7,10 +7,9 @@ import type {
   EngineUpdateParams,
   EngineBinarySettings,
 } from "../shared/protocol";
-import { clearDraftEngineMemory } from "./DraftEngineMemory";
 import { EngineIcon } from "./EngineIcons";
 import { ConnectionTitle } from "./ConnectionTitle";
-import { useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { EngineAuthentication } from "./EngineAuthentication";
 import { selectSubscriptionModel, subscriptionSources } from "./SubscriptionSources";
 import { ConnectionPage } from "./ConnectionPage";
@@ -60,6 +59,7 @@ export function DefaultEngineRow({
   result?: EngineListResult;
   onUpdate: (params: EngineUpdateParams) => Promise<EngineListResult>;
 }): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -84,7 +84,7 @@ export function DefaultEngineRow({
     // The composer remembers the last agent picked there. An explicit default
     // change here is the newer decision, so drop that memory instead of
     // letting it mask the setting.
-    clearDraftEngineMemory();
+    controls.clearDraftEngineMemory();
     setBusy(true);
     setError("");
     try {
@@ -144,7 +144,7 @@ export function EngineSettingsSection({
   const controls = useSettingsControls();
   const { t } = useI18n();
   const usageID = useId();
-  const display = useConnectionDisplayPreferences();
+  const display = useSettingsConnectionDisplay();
   const [accountRevision, setAccountRevision] = useState(0);
   const [, setSelectionRevision] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -214,7 +214,7 @@ export function EngineSettingsSection({
   const snapshot = selected ? accountSnapshot(selected) : undefined;
 
   const observedEngine = selected ? { ...selected, ...(snapshot && enabled(selected) ? snapshot : {}), enabled: selected.enabled, quota: quotaFor(selected) } : undefined;
-  const modelSource = observedEngine ? subscriptionSources({ engines: [observedEngine] }, [], observedEngine.id)[0] : undefined;
+  const modelSource = observedEngine ? subscriptionSources(controls, { engines: [observedEngine] }, [], observedEngine.id)[0] : undefined;
   const displayKey = selected ? `engine:${selected.id}` : "";
   const models = display.orderModels(displayKey, (observedEngine?.models ?? []).map(model => ({ id: model.id, label: model.display_name?.trim() || model.id })));
   const headerStatus = selected && enabled(selected) && selected.binary_ok && !selected.error && !selected.models_error
@@ -311,7 +311,7 @@ export function EngineSettingsSection({
         {modelSource && models.length ? <SelectMenu triggerClassName="settings-select-trigger"
           ariaLabel={t("settings.engineModelCurrent")} value={modelSource.selectedModel} disabled={busy || !enabled(selected) || !selected.binary_ok}
           options={display.visibleModels(displayKey, models, [modelSource.selectedModel]).map(model => ({ value: model.id, label: model.label }))}
-          placeholder={t("settings.subscriptionModelUnset")} onChange={id => { selectSubscriptionModel(modelSource, id); setSelectionRevision(value => value + 1); }} /> : null}
+          placeholder={t("settings.subscriptionModelUnset")} onChange={id => { selectSubscriptionModel(controls, modelSource, id); setSelectionRevision(value => value + 1); }} /> : null}
       </SettingsRow>
       <SubscriptionDashboard key={`account-${accountKey}-${selected.binary_path ?? ""}-${accountRevision}`} detailOnly
         scope={{ kind: "engine", id: selected.id }} inventory={result}

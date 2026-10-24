@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -87,11 +89,11 @@ afterEach(() => {
 async function render(onSelectBuiltinModel = vi.fn(), parentInventory = inventory, parentProviders: ProviderSummary[] | null = providers) {
   await act(async () => {
     root.render(
-      <SubscriptionDashboard
+      <SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard
         inventory={parentInventory}
         providers={parentProviders ?? undefined}
         onSelectBuiltinModel={onSelectBuiltinModel}
-      />,
+      />}</SettingsControlsProvider>,
     );
   });
   return onSelectBuiltinModel;
@@ -154,17 +156,17 @@ describe("SubscriptionDashboard", () => {
     expect(account.textContent).toContain("API key");
     expect(account.querySelector("meter")?.value).toBe(75);
 
-    await act(async () => root.render(<SubscriptionDashboard
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard
       inventory={inventory}
       providers={[{ ...providers[1], model: "grok-4.2", models: [{ id: "grok-4.2" }] }, providers[0]]}
       onSelectBuiltinModel={vi.fn()}
-    />));
+    />}</SettingsControlsProvider>));
     const rerendered = container.querySelector('[data-testid="subscription-builtin-xai-subscription"]')!;
     expect(rerendered.textContent).toContain("Work account");
     expect(rerendered.querySelector<HTMLMeterElement>("meter")?.value).toBe(75);
     expect(rerendered.textContent).toContain("grok-4.2");
-    await act(async () => root.render(<SubscriptionDashboard inventory={inventory}
-      providers={[providers[0]]} onSelectBuiltinModel={vi.fn()} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard inventory={inventory}
+      providers={[providers[0]]} onSelectBuiltinModel={vi.fn()} />}</SettingsControlsProvider>));
     expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"]')).toBeNull();
   });
 
@@ -312,7 +314,7 @@ describe("SubscriptionDashboard", () => {
     let fail!: (error: Error) => void;
     vi.mocked(window.wuu.listEngines).mockReturnValueOnce(new Promise((_, reject) => { fail = reject; }));
     await act(async () => {
-      root.render(<SubscriptionDashboard onSelectBuiltinModel={vi.fn()} />);
+      root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard onSelectBuiltinModel={vi.fn()} />}</SettingsControlsProvider>);
     });
     expect(container.querySelector('[role="status"][aria-busy="true"]')).not.toBeNull();
 
@@ -368,7 +370,7 @@ describe("SubscriptionDashboard", () => {
     window.wuu.useCodexCredentials = vi.fn();
     const onSelect = vi.fn();
     const onInventoryLoaded = vi.fn();
-    await act(async () => root.render(<SubscriptionDashboard inventory={nativeInventory} scope={{ kind: "engine", id: engineID }} onSelectBuiltinModel={onSelect} onInventoryLoaded={onInventoryLoaded} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard inventory={nativeInventory} scope={{ kind: "engine", id: engineID }} onSelectBuiltinModel={onSelect} onInventoryLoaded={onInventoryLoaded} />}</SettingsControlsProvider>));
     const source = container.querySelector(`[data-testid="subscription-engine-${engineID}"]`)!;
     await act(async () => source.querySelector<HTMLButtonElement>('[data-testid="engine-auth-local"]')!.click());
     expect(window.wuu.listEngines).toHaveBeenCalledTimes(2);
@@ -378,7 +380,7 @@ describe("SubscriptionDashboard", () => {
     expect(window.wuu.useCodexCredentials).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
     expect(readDraftEngineMemory()).toBeUndefined();
-    expect(subscriptionSources(nativeInventory, [])[0].login).toBe("unknown");
+    expect(subscriptionSources(createApplicationSettingsControls(), nativeInventory, [])[0].login).toBe("unknown");
   });
 
   it("requires current account evidence before treating an engine's model catalog as signed in", async () => {
@@ -388,10 +390,10 @@ describe("SubscriptionDashboard", () => {
     await render(vi.fn(), staticInventory, []);
     expect(container.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
     expect(container.querySelector('[data-testid="engine-auth-local"]')).not.toBeNull();
-    expect(subscriptionSources(staticInventory, [])[0].login).toBe("unknown");
+    expect(subscriptionSources(createApplicationSettingsControls(), staticInventory, [])[0].login).toBe("unknown");
     const verifiedInventory = { engines: [{ ...engine, quota: quota() }] };
-    expect(subscriptionSources(verifiedInventory, [])[0].login).toBe("ready");
-    expect(subscriptionSources({ engines: [{ ...engine, quota: quota({ status: "stale" }) }] }, [])[0].login).toBe("unknown");
+    expect(subscriptionSources(createApplicationSettingsControls(), verifiedInventory, [])[0].login).toBe("ready");
+    expect(subscriptionSources(createApplicationSettingsControls(), { engines: [{ ...engine, quota: quota({ status: "stale" }) }] }, [])[0].login).toBe("unknown");
   });
 });
 
@@ -404,7 +406,7 @@ it.each([false, true])("switches the Codex credential source without changing th
  window.wuu.loadCodexModels = check;
  const select = vi.fn();
  const providersChanged = vi.fn();
- await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={scoped ? { kind: "provider", name: provider.name } : undefined} providers={[provider]} inventory={inventory} onSelectBuiltinModel={select} />));
+ await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard onProvidersChanged={providersChanged} scope={scoped ? { kind: "provider", name: provider.name } : undefined} providers={[provider]} inventory={inventory} onSelectBuiltinModel={select} />}</SettingsControlsProvider>));
  const source = container.querySelector('[data-testid="subscription-builtin-codex-login"]')!;
  const openActions = async () => act(async () => source.querySelector<HTMLButtonElement>('[data-testid="subscription-account-actions"]')!.click());
  await openActions();
@@ -428,15 +430,15 @@ it.each([false, true])("switches the Codex credential source without changing th
  expect(container.querySelector('[role="alert"]')).toBeNull();
  expect(window.wuu.listEngines).toHaveBeenCalledTimes(3);
  if (scoped) {
-   await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[updated]} inventory={inventory} onSelectBuiltinModel={select} />));
+   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[updated]} inventory={inventory} onSelectBuiltinModel={select} />}</SettingsControlsProvider>));
    expect(source.querySelector('[role="status"]')).not.toBeNull();
    const credentialAttribution = source.querySelector('.sr-only')?.textContent;
    expect(credentialAttribution).toBeTruthy();
    const observed = { ...updated, quota: quota({ account: undefined, windows: [{ id: "updated", used_percent: 52 }] }) };
-   await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[observed]} inventory={inventory} onSelectBuiltinModel={select} />));
+   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[observed]} inventory={inventory} onSelectBuiltinModel={select} />}</SettingsControlsProvider>));
    expect(source.querySelector('[role="status"]')).not.toBeNull();
    expect(source.querySelector('.sr-only')?.textContent).toBe(credentialAttribution);
-   await act(async () => root.render(<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[{ ...observed, codex_credential_source: "changed-auth-store", api_key_configured: true }]} inventory={inventory} onSelectBuiltinModel={select} />));
+   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard onProvidersChanged={providersChanged} scope={{ kind: "provider", name: provider.name }} providers={[{ ...observed, codex_credential_source: "changed-auth-store", api_key_configured: true }]} inventory={inventory} onSelectBuiltinModel={select} />}</SettingsControlsProvider>));
    expect(source.querySelector('[role="status"]')).toBeNull();
  }
 });
@@ -445,7 +447,7 @@ it("preserves reset credits, account context and rechecking in compact connectio
   const snapshot: EngineListResult = { engines: [{ id: "codex", enabled: true, binary_ok: true, quota: quota({ windows: [], reset_credits: 0 }) }] };
   const read = vi.fn().mockResolvedValue(snapshot);
   window.wuu = { ...window.wuu, listEngines: read };
-  await act(async () => root.render(<SubscriptionDashboard detailOnly scope={{ kind: "engine", id: "codex" }} inventory={snapshot} providers={[]} onSelectBuiltinModel={vi.fn()} />));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard detailOnly scope={{ kind: "engine", id: "codex" }} inventory={snapshot} providers={[]} onSelectBuiltinModel={vi.fn()} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-testid="subscription-engine-codex"]')?.textContent).toContain("Example account");
   expect(container.querySelector('[data-testid="subscription-engine-codex"]')?.textContent).toContain("0");
   expect(container.querySelector("meter")).toBeNull();
@@ -460,7 +462,7 @@ it("exposes compact quota loading and completion on its accessible section", asy
   const read = vi.fn().mockReturnValueOnce(new Promise<EngineListResult>(resolve => { complete = resolve; }))
     .mockReturnValueOnce(new Promise<EngineListResult>((_resolve, reject) => { fail = reject; }));
   window.wuu = { ...window.wuu, listEngines: read };
-  await act(async () => root.render(<SubscriptionDashboard detailOnly scope={{ kind: "engine", id: "codex" }} inventory={snapshot} providers={[]} onSelectBuiltinModel={vi.fn()} />));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<SubscriptionDashboard detailOnly scope={{ kind: "engine", id: "codex" }} inventory={snapshot} providers={[]} onSelectBuiltinModel={vi.fn()} />}</SettingsControlsProvider>));
   const section = container.querySelector('[data-testid="settings-subscriptions"]')!;
   const refresh = section.querySelector<HTMLButtonElement>('header button')!;
   expect(section.getAttribute("aria-busy")).toBe("true");

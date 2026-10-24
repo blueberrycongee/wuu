@@ -1,11 +1,11 @@
-import { connectionDisplayPreferences as display } from "./ConnectionDisplayPreferences";
+import type { ApplicationSettingsControlsV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import type {
   EngineInfo,
   EngineListResult,
   ProviderSummary,
   SubscriptionQuota,
 } from "../shared/protocol";
-import { readDraftEngineMemory, writeDraftEngineMemory } from "./DraftEngineMemory";
+type SubscriptionPreferences = Pick<ApplicationSettingsControlsV1, "connectionDisplay" | "readDraftEngineMemory" | "writeDraftEngineMemory">;
 
 const BUILTIN_ENGINE = "wuu";
 
@@ -28,33 +28,34 @@ export type SubscriptionSource = {
 };
 
 export function subscriptionSources(
+  controls: SubscriptionPreferences,
   inventory: EngineListResult | undefined,
   providers: readonly ProviderSummary[] | undefined,
   engineID?: string,
 ): SubscriptionSource[] {
   const engines = (inventory?.engines ?? [])
     .filter((engine) => engine.id !== BUILTIN_ENGINE && (engine.binary_ok || engine.latest_request || engine.quota || engine.id === engineID))
-    .map((engine) => engineSource(engine));
+    .map((engine) => engineSource(controls, engine));
   const builtin = (providers ?? [])
     .filter(isBuiltInSubscription)
-    .map((provider) => providerSource(provider));
+    .map((provider) => providerSource(controls, provider));
   return [...engines, ...builtin];
 }
 
-export function selectSubscriptionModel(source: SubscriptionSource, modelID: string): void {
+export function selectSubscriptionModel(controls: SubscriptionPreferences, source: SubscriptionSource, modelID: string): void {
   const model = modelID.trim();
   if (!model || source.kind !== "engine" || source.id === BUILTIN_ENGINE) return;
-  const remembered = readDraftEngineMemory();
+  const remembered = controls.readDraftEngineMemory();
   const effort = remembered?.engine === source.id ? remembered.effort : "";
-  writeDraftEngineMemory({ engine: source.id, model, effort });
+  controls.writeDraftEngineMemory({ engine: source.id, model, effort });
 }
 
-function engineSource(engine: EngineInfo): SubscriptionSource {
+function engineSource(controls: SubscriptionPreferences, engine: EngineInfo): SubscriptionSource {
   const models = (engine.models ?? []).map((model) => ({
     id: model.id,
     label: model.display_name?.trim() || model.id,
   }));
-  const remembered = readDraftEngineMemory();
+  const remembered = controls.readDraftEngineMemory();
   const rememberedModel = remembered?.engine === engine.id ? remembered.model : "";
   const declaredDefault = engine.models?.find((model) => model.is_default)?.id ?? "";
   const selected = models.some((model) => model.id === rememberedModel)
@@ -66,10 +67,10 @@ function engineSource(engine: EngineInfo): SubscriptionSource {
     key: `engine:${engine.id}`,
     kind: "engine",
     id: engine.id,
-    label: display.label(`engine:${engine.id}`, engine.display_name?.trim() || engine.id),
+    label: controls.connectionDisplay.label(`engine:${engine.id}`, engine.display_name?.trim() || engine.id),
     login: engineLogin(engine),
     catalogFailed: !!(engine.models_error || engine.error),
-    models: display.visibleModels(`engine:${engine.id}`, models, [selected]),
+    models: controls.connectionDisplay.visibleModels(`engine:${engine.id}`, models, [selected]),
     selectedModel: selected,
     quota: engine.quota,
     engine,
@@ -87,16 +88,16 @@ function engineLogin(engine: EngineInfo): SubscriptionLogin {
   return "unknown";
 }
 
-function providerSource(provider: ProviderSummary): SubscriptionSource {
+function providerSource(controls: SubscriptionPreferences, provider: ProviderSummary): SubscriptionSource {
   const models = uniqueModels(provider);
   return {
     key: `provider:${provider.name}`,
     kind: "builtin",
     id: provider.name,
-    label: display.label(`provider:${provider.name}`, provider.name),
+    label: controls.connectionDisplay.label(`provider:${provider.name}`, provider.name),
     login: provider.api_key_configured ? "ready" : "sign_in",
     catalogFailed: false,
-    models: display.visibleModels(`provider:${provider.name}`, models, [provider.model]),
+    models: controls.connectionDisplay.visibleModels(`provider:${provider.name}`, models, [provider.model]),
     selectedModel: provider.model,
     quota: provider.quota,
     provider,

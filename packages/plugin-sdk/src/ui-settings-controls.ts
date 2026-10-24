@@ -74,6 +74,11 @@ export interface SettingsControlsDiagnosticV1 {
 }
 /** Public settings mechanisms. Operation results are caller-owned; snapshots are immutable. */
 export interface ApplicationSettingsControlsV1 {
+  readonly connectionDisplay: SettingsConnectionDisplayV1;
+  readDraftEngineMemory(): SettingsDraftEngineMemoryV1 | undefined;
+  writeDraftEngineMemory(memory: SettingsDraftEngineMemoryV1): void;
+  clearDraftEngineMemory(): void;
+
   currentAppliedTheme(): "light" | "dark";
   observeAppliedTheme(listener: (theme: "light" | "dark") => void): () => void;
   observeContentThemeSelection(listener: () => void): () => void;
@@ -474,3 +479,23 @@ type AppContextState = {
   error?: string;
   snapshot?: AppContextSnapshot;
 };
+
+export interface SettingsConnectionDisplayV1 {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): string;
+  get(key: string): { alias?: string; modelOrder: string[]; hiddenModels: string[] };
+  label(key: string, fallback: string): string;
+  orderModels<T extends { id: string }>(key: string, models: readonly T[]): T[];
+  visibleModels<T extends { id: string }>(key: string, models: readonly T[], retainedIDs?: readonly string[]): T[];
+  setAlias(key: string, alias: string): void;
+  setModelOrder(key: string, ids: readonly string[]): void;
+  moveModel<T extends { id: string }>(key: string, models: readonly T[], id: string, direction: -1 | 1): void;
+  setModelVisible(key: string, id: string, visible: boolean): void;
+}
+export interface SettingsDraftEngineMemoryV1 {
+  engine: string;
+  model: string;
+  effort: string;
+  speed?: string;
+  model_options?: Record<string, string>;
+}

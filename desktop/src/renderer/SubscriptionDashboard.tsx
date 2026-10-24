@@ -1,4 +1,5 @@
-import { useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import { useSettingsControls } from "./SettingsControlsContext";
+import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { ConnectionUsageSummary } from "./ConnectionUsageSummary";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MoreHorizontal, RefreshCw } from "./WuuIcons";
@@ -39,8 +40,9 @@ export function SubscriptionDashboard({
   providers?: readonly ProviderSummary[];
   onSelectBuiltinModel: (provider: string, model: string) => Promise<void>;
 }): JSX.Element {
+  const controls = useSettingsControls();
   const { t, formatDate } = useI18n();
-  const displayPreferences = useConnectionDisplayPreferences();
+  const displayPreferences = useSettingsConnectionDisplay();
   const scopedEngine = scope?.kind === "engine" ? inventory?.engines.find(engine => engine.id === scope.id) : undefined;
   const canRefresh = scope?.kind !== "engine" || Boolean(scopedEngine?.enabled && scopedEngine.binary_ok);
   const [error, setError] = useState<"" | "settings.subscriptionRefreshFailed" | "settings.subscriptionModelFailed">("");
@@ -77,7 +79,7 @@ export function SubscriptionDashboard({
     if (!canRefresh) { setRefreshing(false); return; }
     setRefreshing(true);
     setError("");
-    void window.wuu.listEngines({ include_quota: true }).then((result) => {
+    void controls.listEngines({ include_quota: true }).then((result) => {
       if (active) { setLoadedInventory(result); snapshotCallback.current?.(result); setNow(Date.now()); }
     }, () => {
       if (active) setError("settings.subscriptionRefreshFailed");
@@ -102,7 +104,7 @@ export function SubscriptionDashboard({
           codex_credential_source: checked.codex_credential_source, api_key_configured: checked.api_key_configured,
           quota: provider.quota } : provider;
       });
-      const sources = subscriptionSources(refreshed, currentProviders, scope?.kind === "engine" ? scope.id : undefined);
+      const sources = subscriptionSources(controls, refreshed, currentProviders, scope?.kind === "engine" ? scope.id : undefined);
       if (loadedInventory) {
         // Wait for the quota snapshot before moving observed subscriptions to
         // the front. Exhausted and stale allowances still belong to active accounts.
@@ -140,7 +142,7 @@ export function SubscriptionDashboard({
       if (source.kind === "builtin") {
         await onSelectBuiltinModel(source.id, modelID);
       } else {
-        selectSubscriptionModel(source, modelID);
+        selectSubscriptionModel(controls, source, modelID);
         setRevision((current) => current + 1);
       }
     } catch {
@@ -157,11 +159,11 @@ export function SubscriptionDashboard({
     setCheckedProvider("");
     try {
       if (useLocal) {
-        const result = await window.wuu.useCodexCredentials(source.id);
+        const result = await controls.useCodexCredentials(source.id);
         setAuthProviders(result.providers);
         onProvidersChanged?.(result.providers);
       }
-      const result = await window.wuu.loadCodexModels(source.id);
+      const result = await controls.loadCodexModels(source.id);
       setAuthProviders(result.providers);
       onProvidersChanged?.(result.providers);
       setCheckedProvider(source.id);
