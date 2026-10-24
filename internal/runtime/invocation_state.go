@@ -112,7 +112,8 @@ func (k *kernelHostServices) retainModelInvocation(ctx context.Context, cancel c
 	if ownsReceipts {
 		ctx, receipts = providers.NewModelReceiptScope(ctx)
 	}
-	owner, err := registerModelInvocation(binding, cancel, receipts, ownsReceipts, endParent)
+	ctx = WithInvocationState(ctx, binding)
+	owner, err := registerModelInvocation(ctx, binding, cancel, receipts, ownsReceipts, endParent)
 	if err != nil {
 		return ctx, nil, nil, err
 	}
@@ -146,7 +147,8 @@ func (s *State) BeginModelReceipts(ctx context.Context) (context.Context, func()
 func beginModelReceipts(ctx context.Context, binding *State) (context.Context, func() error, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	ctx, receipts := providers.NewModelReceiptScope(ctx)
-	owner, err := registerModelInvocation(binding, cancel, receipts, true, func(error) {})
+	ctx = WithInvocationState(ctx, binding)
+	owner, err := registerModelInvocation(ctx, binding, cancel, receipts, true, func(error) {})
 	if err != nil {
 		cancel()
 		return ctx, nil, err
@@ -159,8 +161,10 @@ func beginModelReceipts(ctx context.Context, binding *State) (context.Context, f
 	}, nil
 }
 
-func registerModelInvocation(binding *State, cancel context.CancelFunc, receipts *providers.ModelReceiptScope, ownsReceipts bool, endParent func(error)) (*modelInvocationOwner, error) {
-	completionCtx, cancelCompletion := context.WithCancelCause(context.Background())
+func registerModelInvocation(ctx context.Context, binding *State, cancel context.CancelFunc, receipts *providers.ModelReceiptScope, ownsReceipts bool, endParent func(error)) (*modelInvocationOwner, error) {
+	// Terminal receipts retain admitted authority independently of logical cancellation.
+	// finish revokes this context only after the actual receipt producers drain.
+	completionCtx, cancelCompletion := context.WithCancelCause(context.WithoutCancel(ctx))
 	owner := &modelInvocationOwner{cancel: cancel, binding: binding, receipts: receipts, ownsReceipts: ownsReceipts, endParentReceipt: endParent, completionCtx: completionCtx, cancelCompletion: cancelCompletion}
 	generation := binding.Generation
 	generation.modelMu.Lock()

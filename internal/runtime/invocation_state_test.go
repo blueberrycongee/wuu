@@ -1005,7 +1005,9 @@ func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer original.Close()
-	parentCtx, parent := providers.NewModelReceiptScope(context.Background())
+	admittedCtx, cancelAdmission := context.WithCancel(WithInvocationState(context.Background(), original))
+	defer cancelAdmission()
+	parentCtx, parent := providers.NewModelReceiptScope(admittedCtx)
 	parent.Seal()
 	ctx, complete, err := original.BeginModelReceipts(parentCtx)
 	if err != nil {
@@ -1014,14 +1016,41 @@ func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) 
 	if providers.ModelReceiptScopeFromContext(ctx) == parent {
 		t.Fatal("independent captured-state work inherited its expired parent scope")
 	}
+	cancelAdmission()
+	original.Generation.modelMu.Lock()
+	var completionContext context.Context
+	for owner := range original.Generation.modelOwners {
+		completionContext = owner.completionCtx
+	}
+	original.Generation.modelMu.Unlock()
+	if completionContext == nil || completionContext.Err() != nil {
+		t.Fatal("caller cancellation revoked receipt completion")
+	}
+	retained, err := RetainInvocationState(completionContext)
+	if err != nil {
+		t.Fatalf("receipt completion lost admitted invocation authority: %v", err)
+	}
+	if err := retained.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := original.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := original.Documents.Read(ctx, persistence.Query{Namespace: "receipt-test"}); err != nil {
+	retained, err = RetainInvocationState(completionContext)
+	if err != nil {
+		t.Fatalf("receipt owner depended on the caller's released capture: %v", err)
+	}
+	if err := retained.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := original.Documents.Read(completionContext, persistence.Query{Namespace: "receipt-test"}); err != nil {
 		t.Fatalf("receipt owner did not retain its captured authority: %v", err)
 	}
 	if err := complete(); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := RetainInvocationState(completionContext); err == nil {
+		t.Fatal("finished receipt context admitted new state work")
 	}
 	if _, err := original.Documents.Read(context.Background(), persistence.Query{Namespace: "receipt-test"}); err == nil {
 		t.Fatal("completed receipt owner retained its authority")
