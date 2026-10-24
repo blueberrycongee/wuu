@@ -18,6 +18,22 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("requests the auxiliary panel again when an existing side conversation is reopened", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const thread = { id: "main", cwd: context.cwd, preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [] };
+    window.wuu = { openSideThread: vi.fn().mockResolvedValue({ summary: null }), getSideThreadHistory: vi.fn().mockResolvedValue(null) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, threads: [thread],
+      initialized: { ...submissionInitialized!, extension_inventory: [{ id: "side", kind: "plugin", name: "Side", state: "active", enabled: true, approval_state: "official", runtime_state: "active",
+        provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
+        contributions: { commands: [{ id: "side", title: "Side", kind: "side_conversation", template: "Side" }] },
+      }] } });
+    await controller.invoke("side.open", { parentThreadId: thread.id });
+    const first = controller.getSnapshot().navigationWorkspace.regionVisibilityRequest;
+    expect(first?.region).toBe("auxiliary");
+    await controller.invoke("side.open", { parentThreadId: thread.id });
+    expect(controller.getSnapshot().navigationWorkspace.regionVisibilityRequest).toEqual({ id: first!.id + 1, region: "auxiliary" });
+  });
+
   it("allows and removes draft-owned followups while the first conversation is being created", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     let finish!: (value: unknown) => void;

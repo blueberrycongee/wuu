@@ -403,7 +403,10 @@ export class ApplicationController implements HostApplicationService {
       getState: () => this.state, updateState: this.updateState, subscribeState: this.subscribeState, changed: () => this.publish(),
       isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       activateThread: (threadId, signal) => this.invoke("thread.activate", { threadId }, { signal }),
-      openPanel: () => { void this.applicationPreview.invoke("preview.open-side-thread", {}); },
+      openPanel: () => {
+        void this.applicationPreview.invoke("preview.open-side-thread", {});
+        void this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" });
+      },
       closePanel: () => { void this.applicationPreview.invoke("preview.close-tabs", { tabIds: this.applicationPreview.getSnapshot().tabs.filter(tab => tab.kind === "side-thread").map(tab => tab.id) }); },
       getContextChatRuntime: () => this.getSubmissionRuntime(this.state.activeSessionTabID),
       submitBackground: (message, thread, context) => this.applicationSubmission.submitBackground(message, thread, context),
