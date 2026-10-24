@@ -198,18 +198,85 @@ export function scopeApplicationSettingsControls(source: () => ApplicationSettin
       assertActive(); signal.throwIfAborted(); return result;
     } finally { signal.removeEventListener("abort", abort); }
   };
-  const subscribe = (kind: "subscribe" | "subscribeRemote", listener: () => void): (() => void) => {
+  const subscribe = <Args extends unknown[]>(register: (listener: (...args: Args) => void) => () => void,
+    listener: (...args: Args) => void): (() => void) => {
     assertActive(); signal.throwIfAborted();
-    const stop = source()[kind](() => { if (!signal.aborted) listener(); });
+    const stop = register((...args) => { if (!signal.aborted) listener(...args); });
     let stopped = false;
     const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
     signal.addEventListener("abort", dispose, { once: true });
+    if (signal.aborted) dispose();
     return dispose;
   };
+  const connectionDisplay = Object.freeze<ApplicationSettingsControlsV1["connectionDisplay"]>({
+    subscribe: listener => subscribe(callback => source().connectionDisplay.subscribe(callback), listener),
+    getSnapshot: () => read(() => source().connectionDisplay.getSnapshot()),
+    get: key => read(() => source().connectionDisplay.get(key)),
+    label: (key, fallback) => read(() => source().connectionDisplay.label(key, fallback)),
+    orderModels: (key, models) => read(() => source().connectionDisplay.orderModels(key, models)),
+    visibleModels: (key, models, retainedIDs) => read(() => source().connectionDisplay.visibleModels(key, models, retainedIDs)),
+    setAlias: (key, alias) => read(() => source().connectionDisplay.setAlias(key, alias)),
+    setModelOrder: (key, ids) => read(() => source().connectionDisplay.setModelOrder(key, ids)),
+    moveModel: (key, models, id, direction) => read(() => source().connectionDisplay.moveModel(key, models, id, direction)),
+    setModelVisible: (key, id, visible) => read(() => source().connectionDisplay.setModelVisible(key, id, visible)),
+  });
   return Object.freeze({
+    get connectionDisplay() { return read(() => connectionDisplay); },
+    get initialMessageFlowFontSize() { return read(() => source().initialMessageFlowFontSize); },
+    get initialThemePreference() { return read(() => source().initialThemePreference); },
+    get appearanceDefaults() { return read(() => source().appearanceDefaults); },
+    readBackground: (...args: Parameters<ApplicationSettingsControlsV1["readBackground"]>) => invoke(() => source().readBackground(...args)),
+    loadSkinImage: (...args: Parameters<ApplicationSettingsControlsV1["loadSkinImage"]>) => invoke(() => source().loadSkinImage(...args)),
+    listLocalFonts: (...args: Parameters<ApplicationSettingsControlsV1["listLocalFonts"]>) => invoke(() => source().listLocalFonts(...args)),
+    getSystemPermissions: (...args: Parameters<ApplicationSettingsControlsV1["getSystemPermissions"]>) => invoke(() => source().getSystemPermissions(...args)),
+    requestSystemPermission: (...args: Parameters<ApplicationSettingsControlsV1["requestSystemPermission"]>) => invoke(() => source().requestSystemPermission(...args)),
+    closeSystemPermissionGuide: (...args: Parameters<ApplicationSettingsControlsV1["closeSystemPermissionGuide"]>) => invoke(() => source().closeSystemPermissionGuide(...args)),
+    getMessageFlowFontSize: (...args: Parameters<ApplicationSettingsControlsV1["getMessageFlowFontSize"]>) => invoke(() => source().getMessageFlowFontSize(...args)),
+    setMessageFlowFontSize: (...args: Parameters<ApplicationSettingsControlsV1["setMessageFlowFontSize"]>) => invoke(() => source().setMessageFlowFontSize(...args)),
+    getThemePreference: (...args: Parameters<ApplicationSettingsControlsV1["getThemePreference"]>) => invoke(() => source().getThemePreference(...args)),
+    setThemePreference: (...args: Parameters<ApplicationSettingsControlsV1["setThemePreference"]>) => invoke(() => source().setThemePreference(...args)),
+    getActivityPreviewAutoShow: (...args: Parameters<ApplicationSettingsControlsV1["getActivityPreviewAutoShow"]>) => invoke(() => source().getActivityPreviewAutoShow(...args)),
+    setActivityPreviewAutoShow: (...args: Parameters<ApplicationSettingsControlsV1["setActivityPreviewAutoShow"]>) => invoke(() => source().setActivityPreviewAutoShow(...args)),
+    getAppContextState: (...args: Parameters<ApplicationSettingsControlsV1["getAppContextState"]>) => invoke(() => source().getAppContextState(...args)),
+    updateAppContextSettings: (...args: Parameters<ApplicationSettingsControlsV1["updateAppContextSettings"]>) => invoke(() => source().updateAppContextSettings(...args)),
+    setAppContextShortcutRecording: (...args: Parameters<ApplicationSettingsControlsV1["setAppContextShortcutRecording"]>) => invoke(() => source().setAppContextShortcutRecording(...args)),
+    listChatGPTAccounts: (...args: Parameters<ApplicationSettingsControlsV1["listChatGPTAccounts"]>) => invoke(() => source().listChatGPTAccounts(...args)),
+    signOutChatGPTAccount: (...args: Parameters<ApplicationSettingsControlsV1["signOutChatGPTAccount"]>) => invoke(() => source().signOutChatGPTAccount(...args)),
+    startChatGPTLogin: (...args: Parameters<ApplicationSettingsControlsV1["startChatGPTLogin"]>) => invoke(() => source().startChatGPTLogin(...args)),
+    pollChatGPTLogin: (...args: Parameters<ApplicationSettingsControlsV1["pollChatGPTLogin"]>) => invoke(() => source().pollChatGPTLogin(...args)),
+    cancelChatGPTLogin: (...args: Parameters<ApplicationSettingsControlsV1["cancelChatGPTLogin"]>) => invoke(() => source().cancelChatGPTLogin(...args)),
+    listEngineAuthMethods: (...args: Parameters<ApplicationSettingsControlsV1["listEngineAuthMethods"]>) => invoke(() => source().listEngineAuthMethods(...args)),
+    authenticateEngine: (...args: Parameters<ApplicationSettingsControlsV1["authenticateEngine"]>) => invoke(() => source().authenticateEngine(...args)),
+    cancelEngineAuth: (...args: Parameters<ApplicationSettingsControlsV1["cancelEngineAuth"]>) => invoke(() => source().cancelEngineAuth(...args)),
+    getShellSkins: (...args: Parameters<ApplicationSettingsControlsV1["getShellSkins"]>) => read(() => source().getShellSkins(...args)),
+    selectShellSkin: (...args: Parameters<ApplicationSettingsControlsV1["selectShellSkin"]>) => read(() => source().selectShellSkin(...args)),
+    readDraftEngineMemory: (...args: Parameters<ApplicationSettingsControlsV1["readDraftEngineMemory"]>) => read(() => source().readDraftEngineMemory(...args)),
+    writeDraftEngineMemory: (...args: Parameters<ApplicationSettingsControlsV1["writeDraftEngineMemory"]>) => read(() => source().writeDraftEngineMemory(...args)),
+    clearDraftEngineMemory: (...args: Parameters<ApplicationSettingsControlsV1["clearDraftEngineMemory"]>) => read(() => source().clearDraftEngineMemory(...args)),
+    currentAppliedTheme: (...args: Parameters<ApplicationSettingsControlsV1["currentAppliedTheme"]>) => read(() => source().currentAppliedTheme(...args)),
+    availableExtensionThemes: (...args: Parameters<ApplicationSettingsControlsV1["availableExtensionThemes"]>) => read(() => source().availableExtensionThemes(...args)),
+    selectedExtensionThemeKey: (...args: Parameters<ApplicationSettingsControlsV1["selectedExtensionThemeKey"]>) => read(() => source().selectedExtensionThemeKey(...args)),
+    selectExtensionTheme: (...args: Parameters<ApplicationSettingsControlsV1["selectExtensionTheme"]>) => read(() => source().selectExtensionTheme(...args)),
+    readAppearance: (...args: Parameters<ApplicationSettingsControlsV1["readAppearance"]>) => read(() => source().readAppearance(...args)),
+    saveAppearance: (...args: Parameters<ApplicationSettingsControlsV1["saveAppearance"]>) => read(() => source().saveAppearance(...args)),
+    applyMessageFlowFontSize: (...args: Parameters<ApplicationSettingsControlsV1["applyMessageFlowFontSize"]>) => read(() => source().applyMessageFlowFontSize(...args)),
+    applyThemePreference: (...args: Parameters<ApplicationSettingsControlsV1["applyThemePreference"]>) => read(() => source().applyThemePreference(...args)),
+    updateSystemPermissionGuide: (...args: Parameters<ApplicationSettingsControlsV1["updateSystemPermissionGuide"]>) => read(() => source().updateSystemPermissionGuide(...args)),
+    observeBackground: (listener: Parameters<ApplicationSettingsControlsV1["observeBackground"]>[0]) => subscribe(callback => source().observeBackground(callback), listener),
+    subscribeShellSkins: (listener: Parameters<ApplicationSettingsControlsV1["subscribeShellSkins"]>[0]) => subscribe(callback => source().subscribeShellSkins(callback), listener),
+    observeAppliedTheme: (listener: Parameters<ApplicationSettingsControlsV1["observeAppliedTheme"]>[0]) => subscribe(callback => source().observeAppliedTheme(callback), listener),
+    observeContentThemeSelection: (listener: Parameters<ApplicationSettingsControlsV1["observeContentThemeSelection"]>[0]) => subscribe(callback => source().observeContentThemeSelection(callback), listener),
+    observeAppearance: (listener: Parameters<ApplicationSettingsControlsV1["observeAppearance"]>[0]) => subscribe(callback => source().observeAppearance(callback), listener),
+    onSystemPermissionGuideChanged: (listener: Parameters<ApplicationSettingsControlsV1["onSystemPermissionGuideChanged"]>[0]) => subscribe(callback => source().onSystemPermissionGuideChanged(callback), listener),
+    onThemePreferenceChange: (listener: Parameters<ApplicationSettingsControlsV1["onThemePreferenceChange"]>[0]) => subscribe(callback => source().onThemePreferenceChange(callback), listener),
+    onActivityPreviewAutoShowChange: (listener: Parameters<ApplicationSettingsControlsV1["onActivityPreviewAutoShowChange"]>[0]) => subscribe(callback => source().onActivityPreviewAutoShowChange(callback), listener),
+    onAppContextChanged: (listener: Parameters<ApplicationSettingsControlsV1["onAppContextChanged"]>[0]) => subscribe(callback => source().onAppContextChanged(callback), listener),
+    updateBackground: (update: Parameters<ApplicationSettingsControlsV1["updateBackground"]>[0]) => invoke(() => source().updateBackground(current => read(() => update(current)))),
+    processBackground: (image: Blob, purpose: "import" | "light" | "dark", requestSignal?: AbortSignal) => invoke(() => source().processBackground(image, purpose,
+      requestSignal ? AbortSignal.any([signal, requestSignal]) : signal)),
     get capabilities() { return read(() => source().capabilities); },
-    subscribe: (listener: () => void) => subscribe("subscribe", listener),
-    subscribeRemote: (listener: () => void) => subscribe("subscribeRemote", listener),
+    subscribe: (listener: () => void) => subscribe(callback => source().subscribe(callback), listener),
+    subscribeRemote: (listener: () => void) => subscribe(callback => source().subscribeRemote(callback), listener),
     getPages: () => read(() => source().getPages()),
     getConflicts: () => read(() => source().getConflicts()),
     getDiagnostics: (...args: Parameters<ApplicationSettingsControlsV1["getDiagnostics"]>) => read(() => source().getDiagnostics(...args)),

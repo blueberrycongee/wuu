@@ -190,6 +190,39 @@ describe("application shell assembly", () => {
     expect(list).toHaveBeenCalledTimes(1);
   });
 
+  it("fences nested preferences, deferred background updates and typed subscriptions on replacement", async () => {
+    const { host, service } = fixture();
+    const controls = service.settingsControls;
+    const setAlias = vi.fn();
+    const stop = vi.fn();
+    let notify!: (theme: "light" | "dark") => void;
+    let update!: Parameters<typeof controls.updateBackground>[0];
+    let finish!: () => void;
+    Object.defineProperty(controls, "connectionDisplay", { value: { ...controls.connectionDisplay, setAlias } });
+    vi.spyOn(controls, "observeAppliedTheme").mockImplementation(listener => { notify = listener; return stop; });
+    vi.spyOn(controls, "updateBackground").mockImplementation(callback => {
+      update = callback; return new Promise(resolve => { finish = resolve; });
+    });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "settings", generation: "v1", register: value => { api = value; } });
+    const scoped = api.application.settingsControls;
+    const capturedAlias = scoped.connectionDisplay.setAlias;
+    const listener = vi.fn();
+    const unsubscribe = scoped.observeAppliedTheme(listener);
+    notify("dark"); expect(listener).toHaveBeenCalledWith("dark");
+    const updater = vi.fn(() => null);
+    const pending = scoped.updateBackground(updater);
+    const rejected = expect(pending).rejects.toThrow();
+    await host.activateGeneration({ pluginId: "settings", generation: "v2", register: () => {} });
+    await rejected;
+    expect(() => capturedAlias("provider", "Old")).toThrow();
+    expect(setAlias).not.toHaveBeenCalled();
+    expect(() => update(null)).toThrow(); expect(updater).not.toHaveBeenCalled();
+    notify("light"); expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe(); expect(stop).toHaveBeenCalledTimes(1);
+    finish();
+  });
+
   it("disposes subscriptions and fences old application handles even after same-code reactivation", async () => {
     const { host, service, listeners } = fixture();
     let old!: PluginGenerationApi;
