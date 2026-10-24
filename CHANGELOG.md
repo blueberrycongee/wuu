@@ -95,6 +95,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Replace sidebar running-state rings with a nine-dot diagonal light wave, shared by workspace and conversation indicators, with a static matrix under reduced motion.
+
 - Increase vertical spacing between desktop navigation ribbon buttons and below the app icon, with more separation above the footer controls.
 
 - Keep action buttons visible on historical assistant answers. Sent-message actions still appear on hover or keyboard focus.

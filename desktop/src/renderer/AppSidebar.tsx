@@ -1,4 +1,5 @@
 import { showErrorToast } from "./Toast";
+import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { SessionOrganizationController } from "./SessionOrganization";
@@ -2895,7 +2896,7 @@ function AttentionThreadRow({
   ].filter(Boolean).join(" ");
   return (
     <div className={className} aria-current={active ? "page" : undefined}>
-      {running ? <span className="thread-row-spinner" aria-hidden="true" /> : null}
+      {running ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
       <button
         className="thread-row-main"
         type="button"

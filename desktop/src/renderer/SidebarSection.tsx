@@ -1,4 +1,5 @@
 import { ChevronRight } from "./WuuIcons";
+import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
 import {
   createContext,
   type HTMLAttributes,
@@ -210,9 +211,9 @@ export function SidebarSection({
             />
           </span>
           {running && !expanded ? (
-            <span className="project-row-loading" aria-hidden="true" />
+            <SidebarActivityIndicator className="project-row-loading" />
           ) : loading ? (
-            <span className="project-row-loading deferred" aria-hidden="true" />
+            <SidebarActivityIndicator className="project-row-loading deferred" />
           ) : null}
           {unread && !loading && !running ? (
             <span className="project-row-unread" aria-hidden="true" />

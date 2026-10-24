@@ -25,11 +25,9 @@
   );
   --sidebar-row-selected-shadow: var(--shadow-soft);
   --sidebar-project-row-pending-bg: var(--ink-overlay-4);
-  --sidebar-project-loading-notch: rgba(19, 19, 20, 0.18);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
-  --sidebar-thread-spinner-notch: rgba(19, 19, 20, 0.18);
   --sidebar-settings-button-hover-ring: transparent;
   /* Collapsed-drawer chrome. */
   --sidebar-drawer-edge: rgba(19, 19, 20, 0.09);
@@ -368,8 +366,7 @@
   --sidebar-session-status-scale: 0.75;
   --sidebar-session-status-unread-bg: var(--info);
   --sidebar-session-status-unread-scale: 1;
-  --sidebar-session-spinner-size: 9px;
-  --sidebar-session-spinner-border-width: 1.5px;
+  --sidebar-activity-size: 12px;
   display: flex;
   width: var(--sidebar-open-width, 296px);
   min-width: var(--sidebar-open-width, 296px);
@@ -1898,30 +1895,16 @@ html[data-focus-modality="keyboard"] :is(
 .project-row .project-row-loading {
   grid-column: 3;
   justify-self: center;
-  width: var(--sidebar-session-spinner-size);
-  height: var(--sidebar-session-spinner-size);
-  flex: 0 0 auto;
-  /*
-   * Container and session running states share one size and stroke weight so
-   * peers in the sidebar do not imply different levels of activity.
-   */
-  border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--ink-strong) 65%, transparent);
-  border-top-color: var(--sidebar-project-loading-notch);
-  border-radius: var(--radius-pill);
-  animation: wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
   transition:
     opacity var(--motion-fast) var(--ease-out),
     scale var(--motion-fast) var(--ease-out);
 }
 
 /* A workspace list or switch usually settles within a few frames. Hold its
- * spinner back so a quick load shows nothing and a slow one still reports
+ * indicator back so a quick load shows nothing and a slow one still reports
  * progress. The delay also applies under reduced motion. */
 .project-row .project-row-loading.deferred {
-  animation:
-    wuu-fade-in var(--motion-fast) var(--ease-out) 240ms backwards,
-    wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
+  animation: wuu-fade-in var(--motion-fast) var(--ease-out) 240ms backwards;
 }
 
 .project-row-unread {
@@ -2218,28 +2201,12 @@ html[data-focus-modality="keyboard"] :is(
 
 .thread-row-spinner {
   position: absolute;
-  top: calc(50% - var(--sidebar-session-spinner-size) / 2);
+  top: calc(50% - var(--sidebar-activity-size) / 2);
   right: calc(
     var(--sidebar-row-pad-x) +
-      (var(--sidebar-row-action-size) - var(--sidebar-session-spinner-size)) / 2
+      (var(--sidebar-row-action-size) - var(--sidebar-activity-size)) / 2
   );
   z-index: 1;
-  width: var(--sidebar-session-spinner-size);
-  height: var(--sidebar-session-spinner-size);
-  flex: 0 0 auto;
-  /*
-   * Session-row running-state spinner. Same inverted "light notch on a
-   * dark ring" treatment as `.session-tab.running .session-tab-status`
-   * and `.project-row .project-row-loading` — heavy dark mass anchors
-   * the rotation at this 9px size. 65% of `--ink-strong` for the ring
-   * keeps it from going inky against the sidebar surface.
-   */
-  border: var(--sidebar-session-spinner-border-width) solid
-    color-mix(in srgb, var(--ink-strong) 65%, transparent);
-  border-top-color: var(--sidebar-thread-spinner-notch);
-  border-radius: var(--radius-pill);
-  animation: wuu-spin var(--session-loading-spin-duration) var(--session-loading-spin-easing) infinite;
-  pointer-events: none;
   transition: opacity var(--motion-fast) var(--ease-out);
 }
 

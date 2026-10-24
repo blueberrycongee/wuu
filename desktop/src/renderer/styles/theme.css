@@ -230,11 +230,9 @@
   --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, rgba(255, 255, 255, 0.08));
   --sidebar-nav-item-focus-shadow: var(--focus-ring);
   --sidebar-project-row-pending-bg: rgba(255, 255, 255, 0.05);
-  --sidebar-project-loading-notch: rgba(228, 232, 235, 0.22);
   --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
   --sidebar-row-action-archive-confirm-bg: rgba(240, 112, 95, 0.15);
   --sidebar-thread-list-button-hover-bg: var(--ink-overlay-6);
-  --sidebar-thread-spinner-notch: rgba(228, 232, 235, 0.22);
   --sidebar-settings-button-hover-ring: rgba(255, 255, 255, 0.08);
 
   /* turns.css — conversation body, process fold, waiting animation. */

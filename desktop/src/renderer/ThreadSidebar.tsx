@@ -1,4 +1,5 @@
 import { hostSupports } from "./HostCapabilities";
+import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
 import { Archive, Folder, FolderOpen, MessageSquare, MessageSquarePlus, MessagesSquare, Pin, Split, Project } from "./WuuIcons";
 import {
   type DragEvent as ReactDragEvent,
@@ -614,7 +615,7 @@ function ThreadList({
       <div className="thread-list project-thread-list" ref={listRef}>
         {pendingConversations.map((pending) => (
           <div key={pending.id} className={`thread-row sidebar-session-row running${pending.id === activeSessionTabID ? " active" : ""}`}>
-            <span className="thread-row-spinner" aria-hidden="true" />
+            <SidebarActivityIndicator className="thread-row-spinner" />
             <button
               className="thread-row-main"
               type="button"
@@ -997,7 +998,7 @@ function ThreadRows({
             {...hoverCard.anchorHandlers(thread.id)}
           >
               {running ? (
-                <span className="thread-row-spinner" aria-hidden="true" />
+                <SidebarActivityIndicator className="thread-row-spinner" />
               ) : null}
               {project ? (
                 <span className="project-thread-glyph" aria-hidden="true">
