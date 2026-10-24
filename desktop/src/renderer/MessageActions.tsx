@@ -25,6 +25,8 @@ export function AgentMessageActions({
   trailingAction,
   showFork = true,
   showCopy = true,
+  hidden = false,
+  reserved = false,
   children,
 }: {
   getText: () => string;
@@ -34,6 +36,8 @@ export function AgentMessageActions({
   trailingAction?: ReactNode;
   showFork?: boolean;
   showCopy?: boolean;
+  hidden?: boolean;
+  reserved?: boolean;
   children?: ReactNode;
 }): JSX.Element {
   const { t } = useI18n();
@@ -42,6 +46,8 @@ export function AgentMessageActions({
   return (
     <div
       className="message-actions agent-message-actions"
+      style={hidden ? { display: "none" } : undefined}
+      aria-hidden={reserved || hidden || undefined}
       data-wuu-component="message-actions"
       data-wuu-placement={placement}
       data-reveal-finished={revealFinished || undefined}

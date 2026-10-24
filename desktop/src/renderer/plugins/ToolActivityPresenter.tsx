@@ -1,43 +1,21 @@
 import { type ReactNode } from "react";
 
 import type { ThreadItem } from "../../shared/protocol";
-import { useI18n } from "../i18n";
 import { toolDisplayLabel } from "../ToolActivityHelpers";
 import type { ToolActivitySnapshot, ToolActivityStructuredResult } from "../../shared/workbench";
-import { desktopPluginHost, desktopWorkbenchController } from "./DesktopPluginRuntime";
-import type { PluginHost } from "./PluginHost";
-import { PluginPresentation } from "./PluginPresentation";
-import type { WorkbenchController } from "./Workbench";
+import { useConversationControls, useConversationTurnIdentity } from "../ConversationControlsContext";
 
 export interface ToolActivityPresenterProps {
   item?: ThreadItem;
   fallback: ReactNode;
-  host?: PluginHost;
-  controller?: WorkbenchController;
 }
 
-export function ToolActivityPresenter({
-  item,
-  fallback,
-  host = desktopPluginHost,
-  controller = desktopWorkbenchController,
-}: ToolActivityPresenterProps): JSX.Element {
-  const { locale } = useI18n();
-  const dispatchKey = item?.display?.capability ?? item?.name;
-  return (
-    <PluginPresentation
-      enabled={item !== undefined && dispatchKey !== undefined}
-      host={host}
-      controller={controller}
-      target="conversation.tool-activity"
-      presentationKey={dispatchKey}
-      snapshot={item === undefined ? EMPTY_TOOL_ACTIVITY_SNAPSHOT : toToolActivitySnapshot(item, locale)}
-      fallback={fallback}
-    />
-  );
+export function ToolActivityPresenter({ item, fallback }: ToolActivityPresenterProps): JSX.Element {
+  const { slots } = useConversationControls();
+  const { threadId, turnId } = useConversationTurnIdentity();
+  return item ? <slots.Slot name="wuu.default-conversation/conversation.tool-activity"
+    context={{ threadId, turnId, itemId: item.id }} fallback={fallback} /> : <>{fallback}</>;
 }
-
-const EMPTY_TOOL_ACTIVITY_SNAPSHOT = Object.freeze({});
 
 /** Convert the private thread record into the complete public presenter DTO. */
 export function toToolActivitySnapshot(item: ThreadItem, locale?: string): ToolActivitySnapshot {

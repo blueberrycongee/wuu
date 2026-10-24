@@ -1,3 +1,4 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -35,9 +36,9 @@ function render(editing = false, message = item) {
     document.body.append(container);
     root = createRoot(container);
   }
-  act(() => root!.render(<ThreadItemView item={message} turnID="turn-1" turnStatus="completed"
+  act(() => root!.render(<ConversationControlsTestProvider>{<ThreadItemView item={message} turnID="turn-1" turnStatus="completed"
     streaming={false} onStreamFrame={() => {}} editing={editing} onSubmitEditMessage={onSubmit}
-    onOpenFile={onOpenFile} />));
+    onOpenFile={onOpenFile} />}</ConversationControlsTestProvider>));
   return { onSubmit, onOpenFile };
 }
 

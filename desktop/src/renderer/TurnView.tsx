@@ -39,7 +39,7 @@ import {
   turnLeftPartialWork,
 } from "./TurnViewHelpers";
 import { translateCurrent as t } from "./i18n";
-import { useConversationControls } from "./ConversationControlsContext";
+import { ConversationTurnIdentityProvider, useConversationControls } from "./ConversationControlsContext";
 
 export { latestAgentMessageItemID };
 
@@ -79,11 +79,13 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   }
   return (
     <ArtifactThreadContext.Provider value={props.threadID}>
+    <ConversationTurnIdentityProvider threadId={props.threadID} turnId={projectedTurn.id}>
       <slots.Slot
         name="wuu.default-conversation/conversation.turn"
         context={{ threadId: props.threadID, turnId: projectedTurn.id }}
         fallback={<TurnContent {...props} turn={projectedTurn} />}
       />
+    </ConversationTurnIdentityProvider>
     </ArtifactThreadContext.Provider>
   );
 }

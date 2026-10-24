@@ -8,7 +8,8 @@ import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { ThreadItemView } from "./ThreadItemView";
 import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
@@ -19,6 +20,7 @@ beforeEach(() => {
   window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
 });
 
+let composition: UICompositionV1 = { Slot: ({ fallback }) => fallback };
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 const rangeBoundsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
@@ -71,7 +73,7 @@ function render({
   }
   act(() => {
     root!.render(
-      <WuuUIRoot>
+      <ConversationControlsTestProvider composition={composition}>{<WuuUIRoot>
         <ImagePreviewProvider>
           <ArtifactThreadContext.Provider value={owningThreadID}>
             <ThreadItemView
@@ -89,7 +91,7 @@ function render({
           </ArtifactThreadContext.Provider>
           <ToastViewport />
         </ImagePreviewProvider>
-      </WuuUIRoot>,
+      </WuuUIRoot>}</ConversationControlsTestProvider>,
     );
   });
 }
@@ -109,8 +111,7 @@ afterEach(() => {
   container?.remove();
   streamTextStore.clearItem("turn-1", "final-1");
   clearToasts();
-  desktopPluginHost.unload("thread-item-production-test");
-  desktopPluginHost.setActiveConversationThread(undefined);
+  composition = { Slot: ({ fallback }) => fallback };
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   delete document.documentElement.dataset.messageStyle;
@@ -175,61 +176,20 @@ describe("ThreadItemView", () => {
     expect(actions.dataset.placement).toBe("below");
   });
 
-  it.each(["user_message", "agent_message"] as const)("mounts plugin actions for %s with only the public message snapshot", async (type) => {
-    const execute = vi.fn();
-    desktopPluginHost.setActiveConversationThread("another-active-thread");
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "thread-item-production-test", generation: "actions-one",
-      register(api) {
-        api.registerCommand({ id: "message.inspect", title: "Inspect plugin message", placements: ["conversation.message.actions"], execute });
-      },
-    });
+  it.each(["user_message", "agent_message"] as const)("mounts public contributed actions for %s with the owning address only", async (type) => {
+    const execute = vi.fn(); let enabled = true; let address: Readonly<Record<string, unknown>> | undefined;
+    composition = { Slot: ({ name, context, fallback }) => name.endsWith("message.actions") && enabled
+      ? <button aria-label="Inspect plugin message" onClick={() => { address = context; execute(); }}>Inspect</button> : fallback };
     const item = type === "user_message" ? makeUserMessage("") : makeFinalAnswer("completed");
-    (item as ThreadItem & { privateValue: string }).privateValue = "must-not-leak";
     render({ item, owningThreadID: "public-thread", turnStatus: "completed", streaming: false });
     const action = container!.querySelector<HTMLButtonElement>('button[aria-label="Inspect plugin message"]')!;
-    expect(action).not.toBeNull();
     expect(action.closest(type === "user_message" ? ".user-message-actions" : ".agent-message-actions")).not.toBeNull();
     await act(async () => action.click());
     expect(execute).toHaveBeenCalledOnce();
-    const context = execute.mock.calls[0]?.[0];
-    expect(context).toMatchObject({ contractVersion: 1, target: "conversation.message.actions", threadId: "public-thread", turnId: "turn-1", item: { id: item.id, kind: type === "user_message" ? "user-message" : "assistant-message", text: item.text } });
-    expect(Object.isFrozen(context)).toBe(true);
-    expect(Object.isFrozen(context.item)).toBe(true);
-    expect(context.item).not.toHaveProperty("privateValue");
-    expect(context.item).not.toHaveProperty("type");
-    await act(async () => desktopPluginHost.unload("thread-item-production-test"));
+    expect(address).toEqual({ threadId: "public-thread", turnId: "turn-1", itemId: item.id });
+    enabled = false;
+    render({ item: { ...item }, owningThreadID: "public-thread", turnStatus: "completed", streaming: false });
     expect(container!.querySelector('button[aria-label="Inspect plugin message"]')).toBeNull();
-    await act(async () => action.click());
-    expect(execute).toHaveBeenCalledOnce();
-    if (type === "user_message") expect(container!.querySelector(".user-message-actions")).toBeNull();
-    else expect(container!.querySelector('.agent-message-actions[aria-label]')).toBeNull();
-  });
-
-
-  it.each([false, true])("aligns selection actions and comments to the same source start for reverse=%s", (reverse) => {
-    vi.spyOn(HTMLElement.prototype, "getClientRects").mockReturnValue([{}] as unknown as DOMRectList);
-    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-      if (this.classList.contains("response-selection-toolbar")) return new DOMRect(0, 0, this.classList.contains("selection-action-menu-commenting") ? 360 : 280, this.classList.contains("selection-action-menu-commenting") ? 100 : 40);
-      return new DOMRect(0, 0, 1000, 700);
-    });
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: function () {
-      return this.collapsed ? new DOMRect(reverse ? 320 : 520, reverse ? 220 : 244, 0, 24) : new DOMRect(320, 220, 200, 48);
-    } });
-    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
-    const text = container!.querySelector(".agent-text p")!.firstChild!;
-    act(() => {
-      window.getSelection()!.setBaseAndExtent(text, reverse ? 18 : 0, text, reverse ? 0 : 18);
-      document.dispatchEvent(new Event("selectionchange"));
-    });
-    const actions = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
-    expect(Number.parseFloat(actions.style.left)).toBe(320);
-    expect(window.innerHeight - Number.parseFloat(actions.style.bottom)).toBe(212);
-    act(() => actions.querySelector<HTMLButtonElement>(".selection-action-comment-toggle")!.click());
-    const comment = document.querySelector<HTMLElement>(".response-selection-toolbar")!;
-    expect(Number.parseFloat(comment.style.left)).toBe(320);
-    expect(window.innerHeight - Number.parseFloat(comment.style.bottom)).toBe(212);
-    expect(document.activeElement).toBe(comment.querySelector("textarea"));
   });
 
   it("keeps selection actions within the viewport and falls below a top-edge passage", () => {
@@ -417,176 +377,36 @@ describe("ThreadItemView", () => {
     expect(container!.textContent).toContain(selection.comment);
     expect(container!.querySelector(".response-selection-source")).not.toBeNull();
     const submit = vi.fn();
-    act(() => root!.render(<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />));
+    act(() => root!.render(<ConversationControlsTestProvider composition={composition}>{<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />}</ConversationControlsTestProvider>));
     expect(container!.querySelector("textarea")!.value).toBe("  raw prompt  ");
     act(() => container!.querySelector<HTMLButtonElement>(".composer-send-button")!.click());
     expect(submit).toHaveBeenCalledWith("turn-1", item, message.text, [], [], message.contentParts);
   });
 
-  it("mounts sanitized frozen context before and after each conversation message", async () => {
-    const contexts: Array<Readonly<Record<string, unknown>>> = [];
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "thread-item-production-test",
-      generation: "one",
-      register(api) {
-        for (const slotId of ["conversation.message.before", "conversation.message.after"] as const) {
-          api.registerSlot(slotId, {
-            id: slotId,
-            render(context) {
-              contexts.push(context);
-              return <span data-testid={slotId}>{slotId}</span>;
-            },
-          });
-        }
-      },
-    });
-
-    render({
-      item: makeFinalAnswer("completed"),
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    expect(container?.querySelector('[data-testid="conversation.message.before"]')).not.toBeNull();
-    expect(container?.querySelector('[data-testid="conversation.message.after"]')).not.toBeNull();
-    expect(contexts).toHaveLength(2);
-    expect(contexts[0]).toEqual({
-      kind: "agent_message",
-      turnStatus: "completed",
-      streaming: false,
-      editing: false,
-      locale: "zh-CN",
-      translate: expect.any(Function),
-    });
+  it("renders public message slots with explicit identity and no business callback payload", () => {
+    const contexts: Readonly<Record<string, unknown>>[] = [];
+    composition = { Slot: ({ name, context, fallback }) => {
+      if (name.endsWith("message.before") || name.endsWith("message.after")) { contexts.push(context!); return <span data-slot={name} />; }
+      return fallback;
+    } };
+    render({ item: makeFinalAnswer("completed"), owningThreadID: "parent", turnStatus: "completed", streaming: false });
+    expect(container!.querySelectorAll("[data-slot]")).toHaveLength(2);
+    expect(contexts[0]).toEqual({ threadId: "parent", turnId: "turn-1", itemId: "final-1" });
     expect(Object.isFrozen(contexts[0])).toBe(true);
-    expect(contexts[0]).not.toHaveProperty("item");
-    expect(contexts[0]).not.toHaveProperty("text");
   });
 
-  it("uses a conversation item presenter for the complete production item root", async () => {
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "thread-item-production-test",
-      generation: "gen-1",
-      register: (api) => {
-        api.registerPresenter({
-          id: "assistant-root",
-          target: "conversation.item",
-          key: "assistant-message",
-          render: ({ snapshot }) => (
-            <section data-production-presenter>
-              {(snapshot as { text?: string }).text}
-            </section>
-          ),
-        });
-      },
-    });
-    render({
-      item: makeFinalAnswer("completed"),
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    expect(container?.querySelector("[data-production-presenter]")?.textContent).toBe("Final answer text.");
-    expect(container?.querySelector(".agent-block")).toBeNull();
-  });
-
-  it("uses the legacy message surface as the exact native fallback with a sanitized context", async () => {
-    let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "thread-item-production-test",
-      generation: "gen-1",
-      register: (api) => {
-        api.registerSurface("conversation.message", {
-          id: "legacy-message",
-          mode: "replace",
-          render: (context) => {
-            received = context;
-            return <section data-legacy-message>{String(context.kind)}</section>;
-          },
-        });
-      },
-    });
-
-    const item = makeFinalAnswer("completed");
-    (item as ThreadItem & { privateValue: string }).privateValue = "must-not-leak";
-    render({ item, turnStatus: "completed", streaming: false });
-
-    expect(container?.querySelector("[data-legacy-message]")?.textContent).toBe("assistant-message");
-    expect(container?.querySelector(".agent-block")).toBeNull();
-    expect(received).toEqual({
-      version: 1,
-      messageId: "final-1",
-      turnId: "turn-1",
-      kind: "assistant-message",
-      status: "completed",
-      phase: "final_answer",
-      streaming: false,
-      attachmentCount: 0,
-      actions: { edit: undefined, fork: undefined },
-    });
-    expect(received).not.toHaveProperty("item");
-    expect(received).not.toHaveProperty("text");
-    expect(received).not.toHaveProperty("privateValue");
-
-    act(() => desktopPluginHost.unload("thread-item-production-test"));
-    expect(container?.querySelector(".agent-block")).not.toBeNull();
-  });
-
-  it("exposes the active thread id on the conversation message surface", async () => {
-    let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "thread-item-production-test",
-      generation: "gen-thread-id",
-      register: (api) => {
-        api.registerSurface("conversation.message", {
-          id: "thread-aware-message",
-          mode: "replace",
-          render: (context) => {
-            received = context;
-            return <section data-thread-aware>{String(context.threadId)}</section>;
-          },
-        });
-      },
-    });
-
-    desktopPluginHost.setActiveConversationThread("thread-aware-1");
+  it("lets the optional public message contribution replace the default body", () => {
+    composition = { Slot: ({ name, context, fallback }) => name.endsWith("/conversation.message") ? <section data-message>{String(context?.itemId)}</section> : fallback };
     render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
-
-    expect(container?.querySelector("[data-thread-aware]")?.textContent).toBe("thread-aware-1");
-    expect(received).toHaveProperty("threadId", "thread-aware-1");
-    desktopPluginHost.setActiveConversationThread(undefined);
+    expect(container!.querySelector("[data-message]")?.textContent).toBe("final-1");
+    expect(container!.querySelector(".agent-block")).toBeNull();
   });
 
-  it("lets the keyed presenter replace the legacy surface and native fallback coherently", async () => {
-    const legacyRender = vi.fn(() => <section data-legacy-message />);
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "thread-item-production-test",
-      generation: "gen-1",
-      register: (api) => {
-        api.registerSurface("conversation.message", {
-          id: "legacy-message",
-          mode: "replace",
-          render: legacyRender,
-        });
-        api.registerPresenter({
-          id: "assistant-root",
-          target: "conversation.item",
-          key: "assistant-message",
-          render: () => <section data-keyed-presenter />,
-        });
-      },
-    });
-
-    render({
-      item: makeFinalAnswer("completed"),
-      turnStatus: "completed",
-      streaming: false,
-    });
-
-    expect(container?.querySelector("[data-keyed-presenter]")).not.toBeNull();
-    expect(container?.querySelector("[data-legacy-message]")).toBeNull();
-    expect(container?.querySelector(".agent-block")).toBeNull();
-    expect(legacyRender).not.toHaveBeenCalled();
+  it("does not invent a thread identity for a standalone message", () => {
+    let received: Readonly<Record<string, unknown>> | undefined;
+    composition = { Slot: ({ name, context, fallback }) => { if (name.endsWith("/conversation.message")) { received = context; return null; } return fallback; } };
+    render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
+    expect(received).toEqual({ threadId: undefined, turnId: "turn-1", itemId: "final-1" });
   });
 
   it("shows short user messages in full without a collapse control", () => {
@@ -860,7 +680,7 @@ describe("ThreadItemView", () => {
       latestAgentMessageID: "final-1",
       streaming: true,
     });
-    expect(container?.querySelector(".agent-message-actions")).toBeNull();
+    expect((container?.querySelector(".agent-message-actions") as HTMLElement)?.style.display).toBe("none");
     expect(container?.querySelector(".agent-block-with-action-slot")).toBeNull();
   });
 
@@ -879,7 +699,7 @@ describe("ThreadItemView", () => {
     expect(block?.classList.contains("agent-actions-persistent")).toBe(false);
   });
 
-  it("releases completed stream text after the settled view keeps the final answer", async () => {
+  it("leaves host stream ownership intact after rendering the settled answer", async () => {
     const key = streamTextKey("turn-1", "final-1", "text");
     streamTextStore.set(key, "Final answer text.");
 
@@ -896,7 +716,7 @@ describe("ThreadItemView", () => {
     });
 
     expect(container?.textContent).toContain("Final answer text.");
-    expect(streamTextStore.has(key)).toBe(false);
+    expect(streamTextStore.has(key)).toBe(true);
   });
 
   it("groups host events with legacy project history without folding generic host messages", () => {

@@ -17,7 +17,6 @@ import {
   type ToolActivityProcessSegment,
 } from "./ToolActivityHelpers";
 import { ToolActivityRow, ToolActivityTimeline } from "./ToolActivity";
-import { ToolActivityPresenter } from "./plugins/ToolActivityPresenter";
 import { ConversationProcessPresentation } from "./plugins/ConversationProcessPresentation";
 import {
   AUTO_FOLLOW_NESTED_SCROLL_ATTR,
@@ -472,24 +471,8 @@ export function ProcessSurface({
       </ProcessSurfaceFold>
     </div>
   );
-  // Nesting is deterministic: conversation.process is the complete outer
-  // boundary. For a single tool, conversation.tool-activity remains the inner
-  // keyed boundary, so process replacement wins and process wrappers surround
-  // either the tool presenter result or the native unified surface.
-  const toolActivityFallback = (
-    <ToolActivityPresenter
-      item={toolItems.length === 1 && !hasReasoning && !hasCompaction ? toolItems[0] : undefined}
-      fallback={nativeFallback}
-    />
-  );
-  return (
-    <ConversationProcessPresentation
-      processItems={processItems}
-      streaming={streaming}
-      active={active}
-      fallback={toolActivityFallback}
-    />
-  );
+  // Keep one boundary as a single activity grows into a process group.
+  return <ConversationProcessPresentation processItems={processItems} fallback={nativeFallback} />;
 }
 
 function ProcessSurfaceSegmentView({
