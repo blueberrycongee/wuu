@@ -19,7 +19,7 @@ async function fixture() {
   let snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), tabs: { ...base.getSnapshot().tabs, activeTabId: "source-tab", items: [{ id: "source-tab", kind: "thread", title: thread.title, threadId: thread.id, workspaceRoot: "/repo", project: false, draftText: "Unsent draft", hasAttachments: false }] }, conversationWorkspace: { ...base.getSnapshot().conversationWorkspace, primaryThreadId: thread.id, threads: [thread] }, navigationWorkspace: { ...base.getSnapshot().navigationWorkspace, activeContextKind: "project", selectedWorkspaceId: "project" } };
   const listeners = new Set<() => void>();
   const publish = (next: ApplicationSnapshotV1) => { snapshot = next; listeners.forEach(listener => listener()); };
-  const invoke = vi.fn().mockImplementation(async action => { if (action === "navigation.show-native" || action === "navigation.close-plugin") publish({ ...snapshot, navigationWorkspace: { ...snapshot.navigationWorkspace, activePluginView: undefined } }); });
+  const invoke = vi.fn().mockImplementation(async action => { if (action === "workspace.start-draft") return { activated: true, tabId: "created-draft" }; if (action === "navigation.show-native" || action === "navigation.close-plugin") publish({ ...snapshot, navigationWorkspace: { ...snapshot.navigationWorkspace, activePluginView: undefined } }); });
   const application = { ...base, getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, invoke,
     createDesktopScope: () => base.desktop, setPreviewVisibility: () => {}, createComposerPresentationScope: () => base.composerPresentation };
   host = new PluginHost({ react: React, application, createLegacyViewHost: () => ({ getStorage: async () => null, setStorage: async () => {}, getSetting: async () => undefined, executeCommand: async () => undefined, openView: async () => {}, closeView: async () => {} }) });
@@ -37,6 +37,7 @@ it("creates a draft in the captured workspace and renames the explicit thread", 
   const h = await fixture();
   await act(async () => container.querySelector<HTMLButtonElement>(".session-tab-new")!.click());
   expect(h.invoke).toHaveBeenCalledWith("workspace.start-draft", { workspaceId: "project" }, { signal: expect.any(AbortSignal) });
+  expect(h.invoke.mock.calls.filter(([action]) => action === "navigation.focus-composer")).toEqual([["navigation.focus-composer", { tabId: "created-draft" }, { signal: expect.any(AbortSignal) }]]);
   act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")!.click());
   const input = container.querySelector<HTMLInputElement>("input")!;
   await act(async () => {
@@ -45,6 +46,24 @@ it("creates a draft in the captured workspace and renames the explicit thread", 
   });
   await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
   expect(h.invoke).toHaveBeenCalledWith("thread.rename", { threadId: "source", title: "Renamed" }, { signal: expect.any(AbortSignal) });
+});
+
+it("does not reclaim focus when the user moves it while draft creation is pending", async () => {
+  const h = await fixture();
+  let finish!: (result: { activated: boolean; tabId: string }) => void;
+  h.invoke.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const button = container.querySelector<HTMLButtonElement>(".session-tab-new")!;
+  act(() => { button.focus(); button.click(); });
+  act(() => container.querySelector<HTMLButtonElement>(".conversation-title-rename")!.focus());
+  await act(async () => finish({ activated: true, tabId: "created-draft" }));
+  expect(h.invoke.mock.calls.filter(([action]) => action === "navigation.focus-composer")).toEqual([]);
+});
+
+it("does not request composer focus when draft creation did not activate an owner", async () => {
+  const h = await fixture();
+  h.invoke.mockResolvedValueOnce({ activated: false });
+  await act(async () => container.querySelector<HTMLButtonElement>(".session-tab-new")!.click());
+  expect(h.invoke.mock.calls.filter(([action]) => action === "navigation.focus-composer")).toEqual([]);
 });
 
 it("uses published closeability and restores native heading focus through public navigation", async () => {

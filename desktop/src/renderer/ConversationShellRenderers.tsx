@@ -432,7 +432,19 @@ export function ConversationTitleContent({ application, slots, slotOwner }: Conv
     {navigateBack ? <button className="icon-button" data-wuu-component="primary-view-back" type="button" aria-label={t("common.back")} title={t("common.back")} onClick={navigateBack}>
       <ArrowLeft aria-hidden="true" />
     </button> : <Tooltip content={t("tabs.newConversation")} side="bottom"><button className="icon-button session-tab-new" type="button" aria-label={t("tabs.newConversation")} disabled={!view.navigationWorkspace.activeContextKind}
-      onClick={() => { void application.invoke("workspace.start-draft", { workspaceId: view.navigationWorkspace.selectedWorkspaceId }).catch(showErrorToast); }}><SquarePen aria-hidden="true" /></button></Tooltip>}
+      onClick={event => {
+        const document = event.currentTarget.ownerDocument;
+        let focusRequested = true;
+        // A later focus choice takes precedence over this asynchronous creation.
+        const cancelFocus = () => { focusRequested = false; };
+        document.addEventListener("focusin", cancelFocus);
+        void application.invoke("workspace.start-draft", { workspaceId: view.navigationWorkspace.selectedWorkspaceId })
+          .then(({ activated, tabId }) => {
+            if (activated && tabId && focusRequested) return application.invoke("navigation.focus-composer", { tabId });
+          })
+          .catch(showErrorToast)
+          .finally(() => document.removeEventListener("focusin", cancelFocus));
+      }}><SquarePen aria-hidden="true" /></button></Tooltip>}
     <ConversationTitleText title={title} editable={editable} editKey={activePrimaryView?.id ?? thread?.id ?? tab?.id} headingRef={headingRef} onRenameTitle={rename} />
   </div>;
   return <>
