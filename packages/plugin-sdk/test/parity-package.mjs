@@ -1,0 +1,43 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { mkdtemp, mkdir, cp, readFile, writeFile, symlink, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const exec = promisify(execFile);
+const sdk = fileURLToPath(new URL('../', import.meta.url));
+const repo = resolve(sdk, '../..');
+const temporary = await mkdtemp(join(tmpdir(), 'wuu-parity-author-'));
+try {
+  const stage = join(temporary, 'package');
+  await mkdir(stage);
+  await cp(join(sdk, 'package.json'), join(stage, 'package.json'));
+  const tsc = join(sdk, 'node_modules/typescript/bin/tsc');
+  await exec(process.execPath, [tsc, '--project', join(sdk, 'tsconfig.json'), '--outDir', join(stage, 'dist')]);
+  const packed = JSON.parse((await exec('npm', ['pack', '--ignore-scripts', '--json', '--pack-destination', temporary], {cwd: stage})).stdout)[0].filename;
+  const project = join(temporary, 'author');
+  const installed = join(project, 'node_modules/@wuu/plugin-sdk');
+  await mkdir(installed, {recursive: true});
+  await exec('tar', ['-xzf', join(temporary, packed), '--strip-components=1', '-C', installed]);
+  // Reuse declared dependencies offline without mutating their shared install.
+  const manifest = JSON.parse(await readFile(join(sdk, 'package.json'), 'utf8'));
+  for (const dependency of Object.keys({...manifest.dependencies, ...manifest.devDependencies})) {
+    const destination = join(project, 'node_modules', dependency);
+    await mkdir(resolve(destination, '..'), {recursive: true});
+    await symlink(join(sdk, 'node_modules', dependency), destination);
+  }
+  await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
+  await cp(join(repo, 'examples/plugins/independent-providers/tools.ts'), join(project, 'tools.ts'));
+  await exec(process.execPath, [tsc, 'tools.ts', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
+  const checked = await exec(process.execPath, ['--test', join(sdk, 'test/parity-tools.test.mjs')], {
+    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js')},
+  });
+  console.log(checked.stdout);
+  console.log('PASS: independent tool registry compiled against packed public SDK; no dependency installation.');
+} catch (error) {
+  console.error(error.stdout ?? '', error.stderr ?? '');
+  throw error;
+} finally {
+  await rm(temporary, {recursive: true, force: true});
+}
