@@ -319,7 +319,7 @@
   --user-message-background: var(--wuu-message-user-background, var(--user-message-bg-color));
   background: var(--user-message-background);
   border: var(--wuu-message-user-border, 0);
-  box-shadow: var(--wuu-message-user-shadow, none);
+  box-shadow: var(--wuu-message-user-shadow, var(--shadow-message));
   color: var(--wuu-message-user-color, var(--user-message-fg-color));
   border-radius: var(--user-message-radius);
   /* The same framed-text inset as the composer draft it was sent from. */
@@ -6007,7 +6007,7 @@ button.turn-edit-summary-overview:focus-visible {
   border-radius: var(--user-message-radius);
   outline: var(--user-message-frame-border);
   outline-offset: -1px;
-  box-shadow: var(--wuu-message-user-shadow, none);
+  box-shadow: var(--wuu-message-user-shadow, var(--shadow-message));
 }
 
 :root[data-message-style="im"] .user-message-edit {

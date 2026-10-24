@@ -82,7 +82,16 @@
   --shadow-color-heavy: rgba(0, 0, 0, 0.3);
   --shadow-soft: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 1px 3px var(--shadow-color-medium));
   --shadow-card: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 3px 10px -4px var(--shadow-color-strong));
-  --shadow-composer: var(--wuu-elevation-panel, inset 0 1px 0 var(--shadow-inset-color), 0 4px 12px -4px var(--shadow-color-medium));
+  --shadow-message: var(
+    --wuu-elevation-panel,
+    inset 0 1px 0 color-mix(in srgb, var(--shadow-inset-color) 50%, transparent),
+    0 1px 2.5px color-mix(in srgb, var(--shadow-color-medium) 75%, transparent)
+  );
+  --shadow-composer: var(
+    --wuu-elevation-panel,
+    inset 0 1px 0 color-mix(in srgb, var(--shadow-inset-color) 50%, transparent),
+    0 3px 9px -3px color-mix(in srgb, var(--shadow-color-medium) 80%, transparent)
+  );
   --shadow-tray: var(--wuu-elevation-panel, var(--shadow-inset));
   --shadow-pop: var(
     --wuu-elevation-overlay,

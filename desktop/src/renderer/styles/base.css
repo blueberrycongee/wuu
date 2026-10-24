@@ -130,10 +130,16 @@
   --shadow-color-heavy: rgba(0, 0, 0, 0.18);
   --shadow-soft: var(--wuu-elevation-panel, 0 1px 2px var(--shadow-color-medium), 0 3px 6px -3px var(--shadow-color-strong));
   --shadow-card: var(--wuu-elevation-panel, 0 2px 3px -1px var(--shadow-color-medium), 0 6px 16px -8px var(--shadow-color-strong));
-  /* Keep the ambient falloff close and light; the fine border defines the edge. */
+  /* Reading surfaces stay closer to the canvas than floating panels. */
+  --shadow-message: var(
+    --wuu-elevation-panel,
+    0 1px 2px color-mix(in srgb, var(--shadow-color-medium) 75%, transparent),
+    0 2px 4px -2px color-mix(in srgb, var(--shadow-color-strong) 50%, transparent)
+  );
   --shadow-composer: var(
     --wuu-elevation-panel,
-    0 2px 4px -1px var(--shadow-color-medium), 0 8px 32px -10px var(--shadow-color-strong)
+    0 1.5px 3.5px -0.5px color-mix(in srgb, var(--shadow-color-medium) 80%, transparent),
+    0 6px 22px -8px color-mix(in srgb, var(--shadow-color-strong) 75%, transparent)
   );
   --shadow-pop: var(
     --wuu-elevation-overlay,
