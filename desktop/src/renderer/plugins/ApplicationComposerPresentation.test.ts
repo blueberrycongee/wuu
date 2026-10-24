@@ -1,3 +1,5 @@
+import type { Thread } from "../../shared/protocol";
+import { externalAgentActivityStatusSource, externalAgentActivityStore } from "../ExternalAgentActivityStore";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
@@ -79,5 +81,45 @@ describe("composer presentation host boundary", () => {
     expect(contributions).toHaveLength(1); expect(Object.keys(contributions[0]).sort()).toEqual(["View", "key", "title"]);
     expect(f.service.getContributions("composer.toolbar")).toBe(contributions);
     f.host.unload("sample"); expect(f.service.getContributions("composer.toolbar")).toHaveLength(0); f.helper.dispose();
+  });
+});
+
+describe("composer status scope", () => {
+  it("normalizes isolated source failures and retires old source subscriptions on replacement", async () => {
+    const f = fixture(); const cleanup = vi.fn(); let stale!: () => void;
+    await f.host.activateGeneration({ pluginId: "status", generation: "one", register: api => {
+      api.registerComposerStatusSource({ id: "bad", getSnapshot: () => { throw Error("broken source"); }, subscribe: () => { throw Error("broken subscribe"); } });
+      api.registerComposerStatusSource({ id: "agents", getSnapshot: () => [
+        { id: " child ", label: " Agent ", action: { kind: "open-session", sessionId: " related " } },
+        { id: "child", label: "duplicate" }, { id: "", label: "invalid" },
+      ], subscribe: (_context, listener) => { stale = listener; return cleanup; } });
+    } });
+    const listener = vi.fn(); const off = f.service.subscribeStatus("parent", listener);
+    const first = f.service.getStatusSnapshot("parent");
+    expect(first.items).toHaveLength(1); expect(first.items[0]).toMatchObject({ id: "child", label: "Agent", action: { kind: "open-session", sessionId: "related" } });
+    expect(Object.isFrozen(first.items[0].action)).toBe(true); expect(f.service.getStatusSnapshot("parent")).toBe(first);
+    await f.host.activateGeneration({ pluginId: "status", generation: "two", register: api => {
+      api.registerComposerStatusSource({ id: "agents", getSnapshot: () => [{ id: "new", label: "New" }], subscribe: () => () => {} });
+    } });
+    expect(cleanup).toHaveBeenCalledTimes(1); listener.mockClear(); stale(); expect(listener).not.toHaveBeenCalled();
+    expect(f.service.getStatusSnapshot("parent").items[0].label).toBe("New");
+    off(); f.helper.dispose();
+  });
+
+  it("includes external activity and active TODOs, then clears them at completion and scope abort", () => {
+    const f = fixture(); const unsubscribe = vi.spyOn(externalAgentActivityStatusSource, "subscribe");
+    const thread: Thread = { id: "parent", cwd: "/one", model: "model", model_provider: "api", preview: "", status: "idle", created_at: "", updated_at: "",
+      turns: [{ id: "turn", status: "in_progress", items_view: "full", items: [{ id: "todo", type: "tool_call", display: { capability: "todo" }, arguments: JSON.stringify({ todos: [{ content: "Work", status: "in_progress" }] }) }] }] };
+    f.set({ ...f.get(), thread, threads: [thread] });
+    const listener = vi.fn(); f.service.subscribeStatus("parent", listener);
+    externalAgentActivityStore.ingest({ kind: "notification", workdir: "/one", message: { method: "turn/event", params: { thread_id: "parent", turn_id: "turn", event: { type: "agent_activity", agent_activity: { id: "agent", engine: "codex", label: "Native worker", state: "running" } } } } });
+    const view = f.service.getStatusSnapshot("parent");
+    expect(view.items.some(item => item.label === "Native worker")).toBe(true); expect(view.todoUpdate?.todos[0].content).toBe("Work");
+    const completed: Thread = { ...thread, status: "idle", turns: [{ ...thread.turns[0], status: "completed" }] };
+    f.set({ ...f.get(), thread: completed, threads: [completed] });
+    externalAgentActivityStore.ingest({ kind: "notification", workdir: "/one", message: { method: "turn/completed", params: { thread_id: "parent", turn_id: "turn" } } });
+    expect(f.service.getStatusSnapshot("parent")).toMatchObject({ items: [], todoUpdate: undefined });
+    f.life.abort(); listener.mockClear(); f.set({ ...f.get() }); expect(listener).not.toHaveBeenCalled(); expect(f.listeners.size).toBe(0);
+    expect(unsubscribe).toHaveBeenCalled(); unsubscribe.mockRestore(); f.helper.dispose();
   });
 });

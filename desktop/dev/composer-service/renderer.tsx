@@ -26,7 +26,9 @@ const presentationView = Object.freeze({ ownerTabId: source, available: true, ru
 const empty = Object.freeze([]);
 const telemetry = Object.freeze({ tokensPerSecond: 0, source: "none" as const, inputTokens: 0, outputTokens: 0 });
 const toolbar = Object.freeze([{ key: "fixture-tool", title: "Fixture tool", View: () => <button type="button" className="composer-tool-button" data-public-tool onClick={() => calls.push({ action: "fixture-tool" })}>Tool</button> }]);
+const emptyStatus = Object.freeze({ items: empty });
 const presentation: ApplicationComposerPresentationV1 = {
+  getStatusSnapshot: () => emptyStatus, subscribeStatus: () => () => {},
   getSnapshot: () => presentationView, subscribe: () => () => {}, getCommands: () => empty, executeCommand: async input => { calls.push(input); },
   getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: slot => slot === "composer.toolbar" ? toolbar : empty,
   getTelemetry: () => telemetry, subscribeTelemetry: () => () => {},

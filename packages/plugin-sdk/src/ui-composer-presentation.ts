@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { ComposerInlineCompletionProviderRegistration, ComposerInlineCompletionRefresh } from "./index.js";
+import type { ComposerInlineCompletionProviderRegistration, ComposerInlineCompletionRefresh, ComposerStatusItem } from "./index.js";
 import type { ApplicationSettingsProviderSummaryV1, SettingsReadonly } from "./application-settings.js";
 import type { CatalogExtensionV1 } from "./ui-catalog.js";
 
@@ -66,8 +66,21 @@ export interface ApplicationComposerContributionV1 {
   /** The host retains the provider's render/error/translation lifecycle. */
   readonly View: ComponentType<{ readonly context: ApplicationComposerContributionContextV1 }>;
 }
+export interface ApplicationComposerStatusItemV1 extends ComposerStatusItem { readonly key: string }
+export interface ApplicationComposerStatusSnapshotV1 {
+  readonly items: readonly ApplicationComposerStatusItemV1[];
+  readonly todoUpdate?: {
+    readonly explanation?: string;
+    readonly todos: readonly { readonly content: string; readonly status: "pending" | "in_progress" | "completed" }[];
+  };
+}
+
 /** Explicit composer presentation mechanisms shared by default and independent composers. */
 export interface ApplicationComposerPresentationV1 {
+  /** Includes extension status and native agent activity; TODO exists only during an active turn. */
+  getStatusSnapshot(threadId?: string): ApplicationComposerStatusSnapshotV1;
+  /** Rebinds provider generations; unsubscribe or scope retirement releases every source. */
+  subscribeStatus(threadId: string | undefined, listener: () => void): () => void;
   getSnapshot(ownerTabId: string): ApplicationComposerPresentationViewV1;
   subscribe(listener: () => void): () => void;
   getCommands(): readonly { readonly pluginId: string; readonly id: string }[];

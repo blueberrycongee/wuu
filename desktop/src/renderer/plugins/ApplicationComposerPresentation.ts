@@ -1,10 +1,12 @@
+import { externalAgentActivityStatusSource } from "../ExternalAgentActivityStore";
+import type { ComposerStatusItem, ComposerStatusState } from "../../../../packages/plugin-sdk/src/index";
 import { createElement } from "react";
-import type { ApplicationComposerPresentationV1, ApplicationComposerPresentationViewV1, ApplicationComposerContributionV1, ApplicationComposerInlineProviderV1, ApplicationComposerContributionContextV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
-import { activeTurnAcceptsSteering, activeTurnForThread, activeTurnIsAnswerReady, isThreadRunning, latestContextUsageForThread, queryTextForUserItem, requestedHandoffIntentForThread, type AppState } from "../AppState";
+import type { ApplicationComposerStatusSnapshotV1, ApplicationComposerStatusItemV1, ApplicationComposerPresentationV1, ApplicationComposerPresentationViewV1, ApplicationComposerContributionV1, ApplicationComposerInlineProviderV1, ApplicationComposerContributionContextV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
+import { activeTodoUpdateForThread, activeTurnAcceptsSteering, activeTurnForThread, activeTurnIsAnswerReady, isThreadRunning, latestContextUsageForThread, queryTextForUserItem, requestedHandoffIntentForThread, type AppState } from "../AppState";
 import { providerModelContextWindow } from "../RuntimeHelpers";
 import { runtimeViewForSession } from "../SessionRuntimeState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
-import type { PluginHost, RegisteredComposerInlineCompletionProvider, RegisteredPluginSlotContribution } from "./PluginHost";
+import type { RegisteredComposerStatusSource, PluginHost, RegisteredComposerInlineCompletionProvider, RegisteredPluginSlotContribution } from "./PluginHost";
 import { PluginSlotContribution } from "./PluginSlot";
 
 function immutable<T>(value: T): T {
@@ -23,6 +25,8 @@ export class ApplicationComposerPresentation {
     if (this.disposed) throw new Error("Composer presentation is disposed");
     signal.throwIfAborted(); let active = true;
     const subscriptions = new Set<() => void>();
+    const statusViews = new Map<string | undefined, { key: string; value: ApplicationComposerStatusSnapshotV1 }>();
+    const statusSources = () => [...this.host.getPluginHost().getComposerStatusSources(), externalAgentActivityStatusSource];
     const views = new Map<string, { key: string; value: ApplicationComposerPresentationViewV1 }>();
     const inlineCache = new WeakMap<readonly RegisteredComposerInlineCompletionProvider[], readonly ApplicationComposerInlineProviderV1[]>();
     const slotCache = new WeakMap<readonly RegisteredPluginSlotContribution[], readonly ApplicationComposerContributionV1[]>();
@@ -34,7 +38,7 @@ export class ApplicationComposerPresentation {
       check(); const stop = start(() => { if (active && !this.disposed && !signal.aborted) callback(); });
       const off = () => { if (subscriptions.delete(off)) stop(); }; subscriptions.add(off); return off;
     };
-    const retire = () => { if (!active) return; active = false; for (const off of [...subscriptions]) off(); views.clear(); signal.removeEventListener("abort", retire); this.scopes.delete(retire); };
+    const retire = () => { if (!active) return; active = false; for (const off of [...subscriptions]) off(); views.clear(); statusViews.clear(); signal.removeEventListener("abort", retire); this.scopes.delete(retire); };
     this.scopes.add(retire); signal.addEventListener("abort", retire, { once: true });
     const owner = (ownerTabId: string) => {
       check(); const state = this.host.getState(); const tab = state.sessionTabs.find(tab => tab.id === ownerTabId && tab.kind !== "skills");
@@ -43,6 +47,43 @@ export class ApplicationComposerPresentation {
       return { state, tab, thread };
     };
     return Object.freeze({
+      getStatusSnapshot: (threadId?: string) => {
+        check(); const context = Object.freeze({ threadId, mainConversation: true as const });
+        const items: ApplicationComposerStatusItemV1[] = []; const seen = new Set<string>();
+        for (const source of statusSources()) {
+          let rows: readonly ComposerStatusItem[];
+          try { rows = source.getSnapshot(context); } catch { continue; }
+          if (!Array.isArray(rows)) continue;
+          for (const row of rows) {
+            const item = normalizeStatusItem(source, row);
+            if (item && !seen.has(item.key)) { seen.add(item.key); items.push(item); }
+          }
+        }
+        const state = this.host.getState();
+        const thread = threadId ? [state.thread, state.secondaryThread, ...state.threads].find(thread => thread?.id === threadId) : undefined;
+        const value = { items, todoUpdate: activeTodoUpdateForThread(thread) };
+        const key = JSON.stringify(value); const previous = statusViews.get(threadId); if (previous?.key === key) return previous.value;
+        const snapshot = immutable(value); statusViews.set(threadId, { key, value: snapshot }); return snapshot;
+      },
+      subscribeStatus: (threadId, callback) => listen(notify => {
+        const context = Object.freeze({ threadId, mainConversation: true as const });
+        let retired = false; let sourceCleanups: Array<() => void> = [];
+        const clearSources = () => { const cleanups = sourceCleanups; sourceCleanups = []; for (const off of cleanups) off(); };
+        const bindSources = () => {
+          clearSources();
+          for (const source of statusSources()) {
+            let subscribed = true;
+            try {
+              const off = source.subscribe(context, () => { if (subscribed && !retired) notify(); });
+              sourceCleanups.push(() => { subscribed = false; try { off(); } catch { /* Isolate untrusted cleanup so other sources are released. */ } });
+            } catch { subscribed = false; }
+          }
+        };
+        bindSources();
+        const providersOff = this.host.getPluginHost().subscribeComposerStatusSources(() => { if (retired) return; bindSources(); notify(); });
+        const stateOff = this.host.subscribeState(notify);
+        return () => { retired = true; providersOff(); stateOff(); clearSources(); };
+      }, callback),
       getSnapshot: (ownerTabId: string) => {
         check();
         if (!this.host.getState().sessionTabs.some(tab => tab.id === ownerTabId && tab.kind !== "skills")) {
@@ -134,4 +175,39 @@ export class ApplicationComposerPresentation {
     } satisfies ApplicationComposerPresentationV1);
   }
   dispose(): void { if (this.disposed) return; this.disposed = true; for (const retire of [...this.scopes]) retire(); }
+}
+
+function normalizeStatusItem(
+  source: RegisteredComposerStatusSource,
+  item: ComposerStatusItem,
+): ApplicationComposerStatusItemV1 | undefined {
+  if (!item || typeof item !== "object") return undefined;
+  const id = typeof item.id === "string" ? item.id.trim() : "";
+  const label = typeof item.label === "string" ? item.label.trim() : "";
+  if (!id || !label) return undefined;
+  const action = item.action?.kind === "open-session" && typeof item.action.sessionId === "string"
+    && item.action.sessionId.trim()
+    ? Object.freeze({ kind: "open-session" as const, sessionId: item.action.sessionId.trim() })
+    : undefined;
+  return Object.freeze({
+    key: `${source.pluginId}:${source.generation}:${source.id}:${id}`,
+    id,
+    label,
+    state: normalizeStatusState(item.state),
+    secondaryText: cleanOptionalText(item.secondaryText),
+    tooltip: cleanOptionalText(item.tooltip),
+    updatedAt: cleanOptionalText(item.updatedAt),
+    action,
+  });
+}
+
+function normalizeStatusState(value: unknown): ComposerStatusState | undefined {
+  return value === "running" || value === "queued" || value === "waiting"
+    || value === "error" || value === "idle"
+    ? value
+    : undefined;
+}
+
+function cleanOptionalText(value: string | undefined): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
