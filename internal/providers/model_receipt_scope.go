@@ -139,16 +139,19 @@ func (s *ModelReceiptScope) Wait(ctx context.Context) error {
 // CheckpointSubmissions waits for receipt quiescence and persists each actual
 // execution's physical receipts in registration order. The owner must Seal
 // first and supply its shared cleanup context; this method owns no cancellation
-// policy. A required failure remains latched on its execution, while other
-// executions can still checkpoint within the remaining context budget.
+// policy. Completed receipt errors remain in the result, while healthy
+// executions still checkpoint within the remaining context budget. Unfinished
+// or aborted observation never permits a final checkpoint.
 func (s *ModelReceiptScope) CheckpointSubmissions(ctx context.Context) error {
-	if err := s.Wait(ctx); err != nil {
-		return err
-	}
+	waitErr := s.Wait(ctx)
 	s.mu.Lock()
+	if s.pending != 0 || s.aborted || ctx.Err() != nil {
+		s.mu.Unlock()
+		return errors.Join(waitErr, ctx.Err())
+	}
 	executions := append([]*InferenceExecution(nil), s.executions...)
 	s.mu.Unlock()
-	var checkpointErr error
+	checkpointErr := waitErr
 	for _, execution := range executions {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(checkpointErr, err)

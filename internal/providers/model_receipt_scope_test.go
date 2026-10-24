@@ -289,8 +289,8 @@ func TestModelReceiptScopeRejectsExecutionAdmissionAfterTicketEnd(t *testing.T) 
 	}
 }
 
-func TestModelReceiptScopeWaitFailureDoesNotCheckpoint(t *testing.T) {
-	for _, mode := range []string{"unsealed", "producer-timeout", "aborted", "completion-error"} {
+func TestModelReceiptScopeCheckpointDistinguishesFailureFromIncomplete(t *testing.T) {
+	for _, mode := range []string{"unsealed", "producer-timeout", "aborted", "aborted-completed", "expired-completed", "completion-error"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, scope := NewModelReceiptScope(context.Background())
 			journal := &receiptScopeJournal{}
@@ -308,12 +308,18 @@ func TestModelReceiptScopeWaitFailureDoesNotCheckpoint(t *testing.T) {
 				scope.Seal()
 			}
 			switch mode {
-			case "unsealed", "producer-timeout":
+			case "unsealed", "producer-timeout", "expired-completed":
 				var cancel context.CancelFunc
 				waitCtx, cancel = context.WithTimeout(waitCtx, 0)
 				defer cancel()
-			case "aborted":
+				if mode == "expired-completed" {
+					end(nil)
+				}
+			case "aborted", "aborted-completed":
 				scope.Abort(want)
+				if mode == "aborted-completed" {
+					end(nil)
+				}
 			case "completion-error":
 				want = errors.New("original receipt transport failed")
 				end(want)
@@ -321,8 +327,12 @@ func TestModelReceiptScopeWaitFailureDoesNotCheckpoint(t *testing.T) {
 			if err := scope.CheckpointSubmissions(waitCtx); !errors.Is(err, want) {
 				t.Fatalf("checkpoint error=%v, want %v", err, want)
 			}
-			if len(journal.writes) != 0 {
-				t.Fatal("failed join performed final writes")
+			wantWrites := 0
+			if mode == "completion-error" {
+				wantWrites = 1
+			}
+			if len(journal.writes) != wantWrites {
+				t.Fatalf("%s final writes=%d, want %d", mode, len(journal.writes), wantWrites)
 			}
 			if mode == "unsealed" {
 				_, childEnd, err := BeginModelReceipt(ctx)
@@ -331,7 +341,7 @@ func TestModelReceiptScopeWaitFailureDoesNotCheckpoint(t *testing.T) {
 				}
 				childEnd(nil)
 			}
-			if mode != "completion-error" {
+			if mode == "unsealed" || mode == "producer-timeout" || mode == "aborted" {
 				select {
 				case <-scope.Done():
 					t.Fatal("failed wait fabricated producer completion")
@@ -347,7 +357,13 @@ func TestModelReceiptScopeCheckpointKeepsFailedWritesAndFinishesHealthyExecution
 	failed, next, healthy := &receiptScopeJournal{}, &receiptScopeJournal{}, &receiptScopeJournal{}
 	first, _ := receiptScopeRequest(t, ctx, failed, ChatRequest{})
 	second, _ := receiptScopeRequest(t, ctx, next, ChatRequest{})
-	_, _ = receiptScopeRequest(t, ctx, healthy, ChatRequest{})
+	_, healthySubmission := receiptScopeRequest(t, ctx, healthy, ChatRequest{})
+	healthySubmission.ObserveUsage(&TokenUsage{InputTokens: 23, OutputTokens: 7})
+	_, endObserver, err := BeginModelReceipt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endObserver(nil)
 	for _, journal := range []*receiptScopeJournal{failed, next, healthy} {
 		journal.writes = nil
 	}
@@ -358,6 +374,9 @@ func TestModelReceiptScopeCheckpointKeepsFailedWritesAndFinishesHealthyExecution
 	if err := first.Execution.CheckpointSubmissions(context.Background()); err != lostResponse {
 		t.Fatal(err)
 	}
+	// Native observers propagate their actual attempt's sticky journal error
+	// when ending the receipt ticket, even though the producer has finished.
+	endObserver(first.Attempt.JournalError())
 	scope.Seal()
 	for pass := 1; pass <= 2; pass++ {
 		err := scope.CheckpointSubmissions(context.Background())
@@ -372,6 +391,9 @@ func TestModelReceiptScopeCheckpointKeepsFailedWritesAndFinishesHealthyExecution
 		}
 		if len(healthy.writes) != pass {
 			t.Fatal("failed execution prevented a healthy execution checkpoint")
+		}
+		if got := healthy.writes[pass-1]; got.ID != healthySubmission.ID || got.ReportedUsage == nil || got.ReportedUsage.InputTokens != 23 || got.ReportedUsage.OutputTokens != 7 {
+			t.Fatalf("healthy execution lost its actual late receipt: %+v", got)
 		}
 	}
 }
@@ -448,8 +470,8 @@ func TestModelReceiptScopeNestedExecutionOwnership(t *testing.T) {
 			endChild(childErr)
 			parentErr := parent.CheckpointSubmissions(context.Background())
 			if childFails {
-				if !errors.Is(parentErr, failure) || len(parentJournal.writes) != 0 {
-					t.Fatalf("parent lost child's incomplete result: %v", parentErr)
+				if !errors.Is(parentErr, failure) || len(parentJournal.writes) != 1 {
+					t.Fatalf("parent lost child failure or healthy final write: err=%v writes=%d", parentErr, len(parentJournal.writes))
 				}
 			} else if parentErr != nil || len(parentJournal.writes) != 1 {
 				t.Fatalf("parent checkpoint=%v writes=%d", parentErr, len(parentJournal.writes))
