@@ -12,7 +12,7 @@ it("uses the explicit public text address, pauses hidden painting and accepts re
   const getSnapshot = vi.fn(() => value);
   const subscribe = vi.fn((_target, listener) => { changed = listener; return unsubscribe; });
   const application = { ...preview,
-    getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { activePane: "primary" as const, threads: [{ id: "source", title: "Source", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle" as const, created_at: "", updated_at: "", turns: [{ id: "turn", status: "in_progress" as const, items_view: "full" as const, items: [{ id: "answer", type: "agent_message" as const }] }] }] } }),
+    getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { ...preview.getSnapshot().conversationWorkspace, activePane: "primary" as const, threads: [{ id: "source", title: "Source", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle" as const, created_at: "", updated_at: "", turns: [{ id: "turn", status: "in_progress" as const, items_view: "full" as const, items: [{ id: "answer", type: "agent_message" as const }] }] }] } }),
     conversationText: { getSnapshot, subscribe },
   };
   const container = document.createElement("div"), root = createRoot(container);

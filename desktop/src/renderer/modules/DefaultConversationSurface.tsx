@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, UserQuestionRequest } from "../../shared/protocol";
+import { ArtifactsProvider } from "../ArtifactsContext";
 import { ConversationControlsProvider } from "../ConversationControlsContext";
 import { CachedConversationPanes } from "../CachedConversationPanes";
 import { ConversationSplitPane } from "../ConversationSplitPane";
@@ -41,7 +42,7 @@ export interface DefaultConversationLayout {
 const noop = () => {};
 
 export function DefaultConversationSurface({ application, slots, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
-  return <ConversationControlsProvider application={application} slots={slots}><ImagePreviewProvider><ConversationSurface application={application} {...layout} /></ImagePreviewProvider></ConversationControlsProvider>;
+  return <ConversationControlsProvider application={application} slots={slots}><ArtifactsProvider application={application}><ImagePreviewProvider><ConversationSurface application={application} {...layout} /></ImagePreviewProvider></ArtifactsProvider></ConversationControlsProvider>;
 }
 
 function ConversationSurface({ application, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1 }): JSX.Element {

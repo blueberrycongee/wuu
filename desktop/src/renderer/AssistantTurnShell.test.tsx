@@ -180,7 +180,7 @@ function publicShellService(turn: Turn) {
   const preview = createConversationTestApplication();
   const source = { turn, service: preview };
   source.service = { ...preview,
-    getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { activePane: "primary", threads: [{ id: "shell-thread", title: "Shell", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [source.turn] }] } }),
+    getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { ...preview.getSnapshot().conversationWorkspace, activePane: "primary", threads: [{ id: "shell-thread", title: "Shell", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [source.turn] }] } }),
     conversationText: { getSnapshot: target => { const key = streamTextKey(target.turnId, target.itemId, target.field); return streamTextStore.has(key) ? streamTextStore.get(key) : undefined; }, subscribe: (target, listener) => streamTextStore.subscribe(streamTextKey(target.turnId, target.itemId, target.field), listener) },
   };
   return source;

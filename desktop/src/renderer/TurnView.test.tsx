@@ -536,7 +536,7 @@ describe("TurnView", () => {
     const preview = createConversationTestApplication();
     let currentTurn = makeTurn("in_progress", []);
     const service = { ...preview,
-      getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { activePane: "primary" as const, threads: [{ id: "thread-live", title: "Live", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle" as const, created_at: "", updated_at: "", turns: [currentTurn] }] } }),
+      getSnapshot: () => ({ ...preview.getSnapshot(), conversationWorkspace: { ...preview.getSnapshot().conversationWorkspace, activePane: "primary" as const, threads: [{ id: "thread-live", title: "Live", preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle" as const, created_at: "", updated_at: "", turns: [currentTurn] }] } }),
       conversationText: { getSnapshot: (target: { turnId: string; itemId: string; field: "text" | "arguments" | "result" }) => { const key = streamTextKey(target.turnId, target.itemId, target.field); return streamTextStore.has(key) ? streamTextStore.get(key) : undefined; }, subscribe: (target: { turnId: string; itemId: string; field: "text" | "arguments" | "result" }, listener: () => void) => streamTextStore.subscribe(streamTextKey(target.turnId, target.itemId, target.field), listener) },
     };
     const update = (turn: Turn): void => {
