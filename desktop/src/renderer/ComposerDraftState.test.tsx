@@ -1,6 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createScopedTestApplication } from "./test-support/ScopedApplication";
 import { ApplicationController } from "./plugins/ApplicationController";
 import type { ComposerDraftState } from "./AppState";
 import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, createThreadSessionTab, initialState, sessionTabDraftForThread, threadSessionTabID, type AppState } from "./AppState";
@@ -16,9 +17,8 @@ import {
 import { clearToasts, ToastViewport } from "./Toast";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
-const originalBridge = window.wuu;
-beforeEach(() => { Object.defineProperty(window, "wuu", { configurable: true, writable: true, value: {} }); });
-
+const originalHost = window.wuu;
+beforeEach(() => { window.wuu = {} as typeof window.wuu; });
 let mountedRoots: Root[] = [];
 let cleanupCallbacks: Array<() => void> = [];
 
@@ -32,7 +32,7 @@ afterEach(() => {
   clearToasts();
   vi.useRealTimers();
   vi.restoreAllMocks();
-  Object.defineProperty(window, "wuu", { configurable: true, writable: true, value: originalBridge });
+  window.wuu = originalHost;
 });
 
 async function flushEffects(): Promise<void> {
@@ -40,14 +40,17 @@ async function flushEffects(): Promise<void> {
   await Promise.resolve();
 }
 
-async function renderComposerDraftState(application?: Parameters<typeof useComposerDraftState>[0]): Promise<{
+async function renderComposerDraftState(application?: ApplicationController): Promise<{
   unmount: () => void;
   get: () => ComposerDraftStateController;
 }> {
   let latest: ComposerDraftStateController | undefined;
   const context = { kind: "no_project" as const, cwd: "/tmp" };
-  const service = application ?? new ApplicationController({ ...initialState, activeContext: context,
+  const controller = application ?? new ApplicationController({ ...initialState, activeContext: context,
     activeSessionTabID: "draft", sessionTabs: [createDraftSessionTab("draft", context)] });
+
+  const { application: service, dispose } = await createScopedTestApplication(controller);
+  cleanupCallbacks.push(dispose);
 
   function Probe() {
     latest = useComposerDraftState(service);
