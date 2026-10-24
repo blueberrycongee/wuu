@@ -18,6 +18,29 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("keeps history retries and recovery sends bound to the requested conversation", async () => {
+    const context = { kind: "no_project" as const, cwd: "/foreground" };
+    const thread = { id: "background", cwd: "/background", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [], history_cursor: "page:one" };
+    const history = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
+    const send = vi.fn().mockResolvedValue({ turn: { id: "sent", items: [], items_view: "full", status: "in_progress" } });
+    window.wuu = { loadEarlierThreadHistory: history, startTurn: send } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context,
+      threads: [thread], activeSessionTabID: "draft:foreground", sessionTabs: [{ id: "draft:foreground", kind: "draft", context, title: "", createdAt: 1, prompt: "untouched", images: [], files: [] }] });
+    await expect(controller.invoke("conversation.load-earlier", { threadId: thread.id, cursor: "stale" })).rejects.toThrow();
+    expect(history).not.toHaveBeenCalled();
+    await expect(controller.invoke("conversation.load-earlier", { threadId: thread.id, cursor: "page:one" })).rejects.toThrow("offline");
+    await controller.invoke("conversation.load-earlier", { threadId: thread.id, cursor: "page:one" });
+    expect(history).toHaveBeenCalledTimes(2);
+    await expect(controller.invoke("conversation.continue", { threadId: "missing", text: "continue" })).resolves.toEqual({ accepted: false });
+    expect(send).not.toHaveBeenCalled();
+    await expect(controller.invoke("conversation.continue", { threadId: thread.id, text: "continue" })).resolves.toEqual({ accepted: true });
+    expect(send.mock.calls[0][0]).toBe(thread.id);
+    expect(send.mock.calls[0][7]).toEqual({ kind: "no_project", cwd: "/background" });
+    expect(controller.getState().activeContext).toEqual(context);
+    expect(controller.getState().activeSessionTabID).toBe("draft:foreground");
+    expect(controller.getState().sessionTabs[0].prompt).toBe("untouched");
+  });
+
   it("hydrates only the captured remote item and rejects stale, mismatched, or cancelled reads", async () => {
     const remote = { id: "item", type: "agent_message" as const, remote_content_ref: "ref:one", text: "preview" };
     const thread = { id: "remote", cwd: "/fixture", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const,

@@ -19,7 +19,7 @@ import type { ApplicationConversationThreadItemV1, ApplicationConversationDetail
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
 import type { ApplicationSettingsControlsV1 } from "./ui-settings-controls.js";
 import type { ApplicationPreviewActionMapV1, ApplicationPreviewWorkspaceV1 } from "./ui-preview.js";
-import type { ApplicationSettingsActionMapV1, ApplicationSettingsViewV1 } from "./application-settings.js";
+import type { SettingsReadonly, ApplicationSettingsUsageResponseV1, ApplicationSettingsActionMapV1, ApplicationSettingsViewV1 } from "./application-settings.js";
 import type { ApplicationComposerActionMapV1, ApplicationDraftsSnapshotV1, ApplicationPendingComposerThreadV1 } from "./ui-composer.js";
 import type { ComponentType, ReactNode } from "react";
 import type {
@@ -128,6 +128,9 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "workspace.remove": { input: { readonly workspaceId: string }; result: void };
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
   "navigation.cancel": { input: { readonly requestId?: number }; result: void };
+  "conversation.load-earlier": { input: { readonly threadId: string; readonly cursor: string }; result: void };
+  "conversation.continue": { input: { readonly threadId: string; readonly text: string }; result: { readonly accepted: boolean } };
+  "conversation.read-usage": { input: { readonly timezone: string }; result: SettingsReadonly<Pick<ApplicationSettingsUsageResponseV1, "total_sessions" | "metrics" | "days">> };
   "conversation.load-item": { input: { readonly threadId: string; readonly turnId: string; readonly itemId: string }; result: ApplicationConversationThreadItemV1 };
   "conversation.open-split": { input: { readonly threadId: string }; result: void };
   "conversation.activate-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };

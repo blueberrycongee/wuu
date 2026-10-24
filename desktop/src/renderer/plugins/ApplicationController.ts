@@ -42,7 +42,7 @@ import { getActiveLocale, translateCurrent } from "../i18n";
 import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
-import { awaitComposerImages, awaitComposerFiles, inputImagesFromComposer, inputFilesFromComposer, createOptimisticTurn, queuedMessagePreview, queuedMessageFullPreview, type QueuedComposerMessage } from "../ComposerMessages";
+import { createComposerMessage, awaitComposerImages, awaitComposerFiles, inputImagesFromComposer, inputFilesFromComposer, createOptimisticTurn, queuedMessagePreview, queuedMessageFullPreview, type QueuedComposerMessage } from "../ComposerMessages";
 import { createComposerPendingState } from "../ComposerPendingState";
 import { createSidebarThreadCache } from "../SidebarWorkspaceState";
 import { createConversationPaneActions } from "../ConversationPaneActions";
@@ -859,6 +859,28 @@ export class ApplicationController implements HostApplicationService {
     if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
       input as ApplicationSettingsActionMapV1[keyof ApplicationSettingsActionMapV1]["input"], signal);
     switch (action) {
+      case "conversation.load-earlier": {
+        const { threadId, cursor } = input as ApplicationActionMapV1["conversation.load-earlier"]["input"];
+        if (!cursor || this.knownThread(threadId)?.history_cursor !== cursor) throw new Error("Conversation history cursor changed");
+        if (!window.wuu.loadEarlierThreadHistory) throw new Error("Earlier conversation history is unavailable");
+        await window.wuu.loadEarlierThreadHistory(threadId, cursor);
+        return;
+      }
+      case "conversation.continue": {
+        const { threadId, text } = input as ApplicationActionMapV1["conversation.continue"]["input"];
+        const thread = this.knownThread(threadId);
+        const message = createComposerMessage(text, [], []);
+        if (!thread || thread.read_only || !message) return { accepted: false };
+        return { accepted: await this.applicationSubmission.submitBackground(message, thread, resolveThreadRuntimeContext(thread, this.state.projects)) };
+      }
+      case "conversation.read-usage": {
+        const { timezone } = input as ApplicationActionMapV1["conversation.read-usage"]["input"];
+        const usage = await window.wuu.getUsageOverview({ timezone });
+        signal?.throwIfAborted();
+        return Object.freeze({ total_sessions: usage.total_sessions,
+          metrics: Object.freeze({ ...usage.metrics, date_range: Object.freeze([...usage.metrics.date_range]) }),
+          days: Object.freeze(usage.days.map(day => Object.freeze({ ...day }))) });
+      }
       case "conversation.load-item": {
         const { threadId, turnId, itemId } = input as ApplicationActionMapV1["conversation.load-item"]["input"];
         const source = this.knownThread(threadId)?.turns.find(turn => turn.id === turnId)?.items.find(item => item.id === itemId);
