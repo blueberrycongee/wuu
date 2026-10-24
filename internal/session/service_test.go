@@ -216,3 +216,50 @@ func TestSessionServiceReportsUnknownDeletionOutcome(t *testing.T) {
 		}
 	})
 }
+
+type reentrantDomainDocuments struct {
+	persistence.Documents
+	status func() pluginhost.Status
+}
+
+func (d *reentrantDomainDocuments) Read(ctx context.Context, q persistence.Query) (persistence.View, error) {
+	if d.status().State != pluginhost.StateActive {
+		return persistence.View{}, errors.New("consumer is not active")
+	}
+	return d.Documents.Read(ctx, q)
+}
+func TestSessionServiceDependencyCanInspectConsumerStatus(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		documents := &reentrantDomainDocuments{Documents: native.documents}
+		service := NewService("reentrant", documents)
+		documents.status = service.Status
+		if err := service.Activate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer service.Close(context.Background())
+		client := NewClient(context.Background(), func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+			return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: "test", Method: method, Params: params})
+		})
+		if _, err := client.Create("reentrant"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+func TestSessionClientTransportLossPreservesUncertainty(t *testing.T) {
+	for _, call := range []Call{
+		func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+			return nil, errors.New("transport disconnected")
+		},
+		func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+			return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "connection lost after admission"}
+		},
+		func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+			return json.RawMessage(`{"values":[]}`), nil
+		},
+	} {
+		client := NewClient(context.Background(), call)
+		if _, err := client.Delete("delete"); !errors.Is(err, ErrOutcomeUnknown) {
+			t.Fatalf("ambiguous delete was treated as safe failure: %v", err)
+		}
+	}
+}

@@ -69,18 +69,22 @@ func (s *Store) invoke(method string, args []any, results []any) error {
 	}
 	raw, err = s.call(s.ctx, method, raw)
 	if err != nil {
+		var remote *pluginhost.HostServiceError
+		if !errors.As(err, &remote) || remote.Code == "service_unavailable" || remote.Code == "request_cancelled" || remote.Code == "deadline_exceeded" {
+			return errors.Join(ErrOutcomeUnknown, decodeDomainError(err))
+		}
 		return decodeDomainError(err)
 	}
 	var response invocationResult
 	if err := json.Unmarshal(raw, &response); err != nil {
-		return fmt.Errorf("decode %s.%s: %w", ServiceName, method, err)
+		return errors.Join(ErrOutcomeUnknown, fmt.Errorf("decode %s.%s: %w", ServiceName, method, err))
 	}
 	if response.Values == nil || len(response.Values) != len(results) {
-		return fmt.Errorf("%s.%s returned %d values; expected %d", ServiceName, method, len(response.Values), len(results))
+		return errors.Join(ErrOutcomeUnknown, fmt.Errorf("%s.%s returned %d values; expected %d", ServiceName, method, len(response.Values), len(results)))
 	}
 	for i, result := range results {
 		if err := unmarshalDomainValue(response.Values[i], result); err != nil {
-			return fmt.Errorf("decode %s.%s result %d: %w", ServiceName, method, i, err)
+			return errors.Join(ErrOutcomeUnknown, fmt.Errorf("decode %s.%s result %d: %w", ServiceName, method, i, err))
 		}
 	}
 	return nil
