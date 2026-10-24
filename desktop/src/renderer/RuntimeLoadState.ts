@@ -116,14 +116,23 @@ export async function loadRuntime(
     ? (liveThreads.find((candidate) => candidate.id === options.resumeThreadID) ??
       liveThreads.find((candidate) => !candidate.pinned) ?? liveThreads[0])
     : undefined;
-  const resumed: ThreadResumeResult | undefined = defaultThread
-    ? await window.wuu.resumeThread(defaultThread.id)
-    : undefined;
+  let resumed: ThreadResumeResult | undefined;
+  let restoreFailure: string | undefined;
+  if (defaultThread) {
+    try {
+      resumed = await window.wuu.resumeThread(defaultThread.id);
+      requireThread(resumed, translateCurrent("thread.resumeMissing"));
+    } catch (error) {
+      resumed = undefined;
+      restoreFailure = translateCurrent("runtime.historyRestoreSkipped", { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
   const thread = resumed
     ? requireThread(resumed, translateCurrent("thread.resumeMissing"))
     : undefined;
   return {
     ...runtimeConfiguration(workspaceState, initialized),
+    ...(restoreFailure ? { status: restoreFailure } : {}),
     initialized: thread ? initialized : applyDraftRuntimeMemory(initialized),
     thread,
     secondaryThread: undefined,

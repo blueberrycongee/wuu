@@ -58,6 +58,22 @@ function workspaceList(activeContext?: RuntimeContext): ProjectListResult {
 }
 
 describe("runtime load helpers", () => {
+  it("opens a usable draft when a historical conversation cannot be restored", async () => {
+    const context: RuntimeContext = { kind: "no_project", cwd: "/tmp/wuu" };
+    const failure = new Error("unsupported legacy checkpoint");
+    installWuuStub({
+      initialize: vi.fn().mockResolvedValue({ status: "ready", provider: "fixture", model: "fixture", providers: [] }),
+      listThreads: vi.fn().mockResolvedValue({ threads: [thread("old")] }),
+      listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
+      resumeThread: vi.fn().mockRejectedValue(failure),
+    });
+    const state = await loadRuntime(workspaceList(context));
+    expect(state.initialized?.status).toBe("ready");
+    expect(state.thread).toBeUndefined();
+    expect(state.allowThreadAutoActivation).toBe(false);
+    expect(state.threads?.map(item => item.id)).toEqual(["old"]);
+    expect(state.status).toContain(failure.message);
+  });
   it("starts runtime initialization and conversation loading together", async () => {
     const activeContext: RuntimeContext = {
       kind: "project",

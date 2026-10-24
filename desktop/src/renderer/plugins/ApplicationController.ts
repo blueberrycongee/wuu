@@ -617,7 +617,7 @@ export class ApplicationController implements HostApplicationService {
         signal?.throwIfAborted();
         const active = this.recoveredDrafts.tabs.find(tab => tab.id === this.recoveredDrafts.activeTabID
           && workspace.active_context && sameRecoveryContext(tab.context, workspace.active_context));
-        loaded = await loadRuntime(workspace, { resumeLatestThread: active?.kind !== "draft", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
+        loaded = await loadRuntime(workspace, { resumeLatestThread: active?.kind === "thread", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
       }
       signal?.throwIfAborted();
       this.loaded = loaded;

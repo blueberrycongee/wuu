@@ -2287,6 +2287,7 @@ export const enUS = {
   "settings.pets.readFailed": "Unable to read Codex Pets",
   "settings.pets.saveFailed": "Unable to save Codex Pet",
   "runtime.configureCredentials": "Configure model credentials in Settings",
+  "runtime.historyRestoreSkipped": "Opened a new conversation because the previous conversation could not be restored: {error}",
   "runtime.workspaceUnavailable": "The current workspace directory is unavailable. Restore or relocate the workspace.",
   "greeting.workspaceFallback": "this workspace",
   "greeting.workspace.morning": "Good morning. What would you like to tackle first in {workspace}?",

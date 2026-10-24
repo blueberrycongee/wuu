@@ -1634,27 +1634,12 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:project-list", () => {
     const result = projectManager.list();
-    const contexts: RuntimeContext[] = [];
+    // Open the selected workspace first. Other workspaces start on selection;
+    // prewarming them here duplicates state admission while the shell is loading.
     if (result.active_context) {
-      contexts.push(result.active_context);
       appServerClientPool.noteContextUsed(result.active_context);
+      appServerClientPool.prewarmContexts([result.active_context]);
     }
-    for (const project of result.projects) {
-      if (project.missing || project.id === result.active_project_id) {
-        continue;
-      }
-      contexts.push({
-        kind: "project",
-        project_id: project.id,
-        cwd: project.path,
-      });
-    }
-    // Project runtimes take seconds to cold-start. Fill the small client pool
-    // while the user is still reading the current project so switching among
-    // the pooled projects does not begin that startup work after the click.
-    // prewarmContexts fills in MRU order (most recently used first) so the
-    // pool stays warm for the projects the user actually switches between.
-    appServerClientPool.prewarmContexts(contexts);
     return result;
   });
   ipcMain.handle(

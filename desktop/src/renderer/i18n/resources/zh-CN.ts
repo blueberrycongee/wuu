@@ -2284,6 +2284,7 @@ export const zhCN = {
   "settings.pets.readFailed": "无法读取 Codex Pets",
   "settings.pets.saveFailed": "无法保存 Codex Pet",
   "runtime.configureCredentials": "请在设置中配置模型凭据",
+  "runtime.historyRestoreSkipped": "上次会话无法恢复，已打开新对话：{error}",
   "runtime.workspaceUnavailable": "当前工作区目录不可用，请恢复或重新定位该工作区。",
   "greeting.workspaceFallback": "这个工作区",
   "greeting.workspace.morning": "早上好，今天想在 {workspace} 里先搞定什么？",
