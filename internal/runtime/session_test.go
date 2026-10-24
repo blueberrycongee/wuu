@@ -1615,6 +1615,7 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 }
 
 func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
+	const temperature = 0.37
 	for _, tc := range []struct{ model, api string }{
 		{"claude-sonnet-4-5", "anthropic"},
 		{"gpt-5.5", "openai-compatible"},
@@ -1647,6 +1648,7 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 						},
 					},
 					Agent: config.AgentConfig{
+						Temperature: temperature,
 						ModelRoles: config.ModelRolesConfig{
 							Worker: config.ModelRoleConfig{Provider: "worker", Model: tc.model},
 						},
@@ -1693,6 +1695,9 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 			}
 
 			req := client.LastRequest()
+			if req.Temperature != temperature {
+				t.Fatalf("worker temperature = %v, want captured value %v", req.Temperature, temperature)
+			}
 			toolNames := map[string]bool{}
 			for _, def := range req.Tools {
 				toolNames[def.Name] = true

@@ -1444,6 +1444,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				DefaultMaxInputTokens:          workerModelBudget.InputLimitTokens,
 				DefaultOutputReserveTokens:     workerModelBudget.OutputReserveTokens,
 				DefaultCompactThresholdTokens:  workerModelBudget.CompactThresholdTokens,
+				DefaultTemperature:             s.StreamRunner.Temperature,
 				DefaultCompactThresholdPct:     s.StreamRunner.CompactThresholdPct,
 				DefaultCompactKeepRecentTokens: s.StreamRunner.CompactKeepRecentTokens,
 				DefaultDisableAutoCompact:      s.StreamRunner.DisableAutoCompact,
