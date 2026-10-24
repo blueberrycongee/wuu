@@ -12,6 +12,32 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
+// A completed import retires its legacy source from startup. Even an unreadable
+// old source must not gate opening the current document store.
+func TestStateInitializationDoesNotReauditRetiredLegacySource(t *testing.T) {
+	ctx, dir := context.Background(), t.TempDir()
+	source := filepath.Join(dir, "sessions.sqlite3")
+	if err := os.WriteFile(source, []byte("retired source"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	documents, err := persistence.Open(ctx, filepath.Join(t.TempDir(), "docs"), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer documents.Close()
+	if err := persistence.Update(ctx, documents, func(tx *persistence.Tx) error {
+		return tx.Put("wuu.legacy_sqlite_migrations.v1", "sessions.sqlite3", session.LegacyMigrationResult{Fingerprint: "completed-import"})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := initializeSessionState(ctx, dir, documents, session.NewStore(ctx, documents)); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(source); err != nil || string(raw) != "retired source" {
+		t.Fatalf("source changed: %v", err)
+	}
+}
+
 // An old live server must not be mistaken for a migration-ready snapshot. The
 // source remains untouched and a later exclusive startup may complete import.
 func TestStateMigrationRejectsLiveLegacyWriter(t *testing.T) {

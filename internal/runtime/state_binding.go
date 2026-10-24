@@ -113,21 +113,24 @@ func initializeSessionState(ctx context.Context, dir string, documents persisten
 		return err
 	}
 	defer lease.Release()
-	if _, err := os.Stat(filepath.Join(dir, "sessions.sqlite3")); err == nil {
-		if !first {
-			migrated, err := session.LegacySQLiteMigrationRecorded(ctx, documents)
-			if err != nil {
-				return err
-			}
-			if !migrated {
-				return fmt.Errorf("%w: stop live app-servers before importing legacy sessions", persistence.ErrMigrationRequired)
-			}
-		}
-		if _, err := session.MigrateLegacySQLite(ctx, dir, documents, session.NewLegacyInferenceConverter(), toolstate.NewLegacyConverter(), execution.NewLegacyConverter()); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
+	migrated, err := session.LegacySQLiteMigrationRecorded(ctx, documents)
+	if err != nil {
 		return err
 	}
+	if !migrated {
+		if _, err := os.Stat(filepath.Join(dir, "sessions.sqlite3")); err == nil {
+			if !first {
+				return fmt.Errorf("%w: stop live app-servers before importing legacy sessions", persistence.ErrMigrationRequired)
+			}
+			if _, err := session.MigrateLegacySQLite(ctx, dir, documents, session.NewLegacyInferenceConverter(), toolstate.NewLegacyConverter(), execution.NewLegacyConverter()); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	// The completed import is authoritative. Auditing a retired legacy file
+	// belongs to explicit migration/check commands, not every workspace startup.
+
 	return store.WithContext(ctx).RebuildSessionIndexes()
 }
