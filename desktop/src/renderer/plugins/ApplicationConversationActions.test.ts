@@ -93,6 +93,12 @@ describe("application conversation domain workflows", () => {
     expect(h.actions.getSnapshot().pendingFork?.worktreeDisabledReason).toBeTruthy();
     await expect(h.actions.invoke("history.choose-fork", { mode: "worktree" })).rejects.toThrow(); expect(h.api.forkThread).not.toHaveBeenCalled();
   });
+  it("loads the worktree eligibility reason before exposing an unknown fork choice", async () => {
+    const h = harness(); h.setState({ ...h.state(), gitStatus: undefined }); h.api.gitStatus.mockResolvedValue({ is_repo: false });
+    await h.actions.invoke("history.request-fork", { ...target, itemId: "assistant" });
+    expect(h.actions.getSnapshot().pendingFork?.worktreeDisabledReason).toBeTruthy();
+    expect(h.api.forkThread).not.toHaveBeenCalled();
+  });
   it("does not resurrect resolved questions from an earlier list or publish after disposal", async () => {
     const h = harness(), listing = deferred<{ questions: UserQuestionRequest[] }>(); h.api.listUserQuestions.mockReturnValue(listing.promise);
     const stop = h.actions.start(); notify("user-question/requested", { request: request() }); notify("user-question/resolved", { request_id: "question" });

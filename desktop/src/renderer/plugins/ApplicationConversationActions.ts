@@ -156,7 +156,15 @@ export class ApplicationConversationActions {
         if (this.forkMode) throw new Error("Fork is already in progress");
         const request = input as Actions["history.request-fork"]["input"], { thread } = this.target(request);
         this.forkMode = "local";
-        try { await this.history.forkThreadFromMessage(thread, request.turnId, request.itemId); return { accepted: true }; }
+        try {
+          const origin = this.host.getState().activeContext;
+          await this.history.forkThreadFromMessage(thread, request.turnId, request.itemId);
+          if (this.pendingFork && !this.host.getState().gitStatus) {
+            const gitStatus = await window.wuu.gitStatus();
+            if (sameRuntimeContext(this.host.getState().activeContext, origin)) this.host.updateState(state => ({ ...state, gitStatus }));
+          }
+          return { accepted: true };
+        }
         finally { this.forkMode = undefined; this.host.changed(); }
       }
       case "history.choose-fork": {
