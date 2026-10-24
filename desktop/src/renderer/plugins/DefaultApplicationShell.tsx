@@ -14,7 +14,7 @@ export function activate(api: ApplicationGenerationAPI & { readonly pluginId: st
       <slots.Slot name={`${api.pluginId}/application.before`} />
       <App application={application} />
       <slots.Slot name={`${api.pluginId}/application.after`} />
-      {ENABLE_APP_SNAPSHOTS && <AppContextCaptureHost />}
+      {ENABLE_APP_SNAPSHOTS && <AppContextCaptureHost application={application} />}
     </>;
   }
   api.registerApplicationShell({ id: "ui.shell", render: DefaultShell });

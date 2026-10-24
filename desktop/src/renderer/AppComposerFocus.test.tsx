@@ -865,6 +865,16 @@ describe("main composer focus continuity", () => {
     }), { kind: "no_project", cwd: scratchCwd });
   });
 
+  it("honors a public composer focus request for the current draft", async () => {
+    await renderApp(false);
+    const trigger = document.createElement("button");
+    container.append(trigger);
+    trigger.focus();
+    const application = applicationState.getDesktopApplication();
+    await act(async () => application.invoke("navigation.focus-composer", { tabId: application.getSnapshot().tabs.activeTabId }));
+    await waitForMainComposerFocus("dock");
+  });
+
   it("keeps the new workspace sendable when an older engine settings save finishes", async () => {
     await import("./SettingsView");
     installWuuApi();

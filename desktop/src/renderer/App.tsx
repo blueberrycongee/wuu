@@ -5,7 +5,6 @@ import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { usePageHistory } from "./PageHistory";
 import { PageHistoryControls } from "./PageHistoryControls";
 import { visibleWorkbenchView } from "./plugins/Workbench";
-import { useAppContextDraftTarget } from "./AppContextCapture";
 import { sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
@@ -2638,6 +2637,30 @@ export function App({ application: providedApplication }: { application?: Applic
     },
     [],
   );
+  const publicComposerFocusRequest = useSyncExternalStore(application.subscribe,
+    () => application.getSnapshot().navigationWorkspace.composerFocusRequest);
+  const handledPublicComposerFocus = useRef(publicComposerFocusRequest?.id);
+  useLayoutEffect(() => {
+    const request = publicComposerFocusRequest;
+    if (!request || handledPublicComposerFocus.current === request.id) return;
+    handledPublicComposerFocus.current = request.id;
+    const snapshot = application.getSnapshot();
+    if (snapshot.tabs.activeTabId !== request.tabId) return;
+    setRightPanelOpenWithMotion(false);
+    if (isTouchWebShell()) return;
+    const interactionVersion = userInteractionVersionRef.current;
+    if (snapshot.drafts.split) {
+      const frame = window.requestAnimationFrame(() => {
+        if (application.getSnapshot().tabs.activeTabId !== request.tabId
+          || userInteractionVersionRef.current !== interactionVersion) return;
+        focusComposerTextarea(document.querySelector<HTMLTextAreaElement>(".conversation-split-pane.active textarea"));
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }
+    requestMainComposerFocus("dock", document.activeElement, interactionVersion,
+      current => current.activeSessionTabID === request.tabId);
+  }, [application, publicComposerFocusRequest, requestMainComposerFocus, setRightPanelOpenWithMotion]);
+
   const cancelMainComposerFocusRequest = useCallback(
     (request: MainComposerFocusRequest): void => {
       setMainComposerFocusRequest((current) =>
@@ -5455,29 +5478,6 @@ export function App({ application: providedApplication }: { application?: Applic
     return () => window.removeEventListener("wuu:workbench-back", back);
   }, [accountOpen, settingsOpen, showingWebsite, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion, nativeSection, showingPrimaryPluginView]);
 
-  useAppContextDraftTarget(submissionTargetPending || !state.initialized || showingWebsite || showingManagementCatalog || showingPrimaryPluginView ? undefined : JSON.stringify([
-    state.activeContext ? runtimeContextKey(state.activeContext) : undefined, state.activeSessionTabID, state.activePane, state.thread?.id, state.secondaryThread?.id,
-  ]), (image, context) => {
-    // A workspace panel may cover split panes without changing their draft
-    // ownership. Route by the conversation state, never by panel visibility.
-    const current = appStateRef.current;
-    setSettingsOpen(false);
-    setAccountOpen(false);
-    if (rightPanelGlobalized) focusWorkspaceConversation();
-    setRightPanelOpenWithMotion(false);
-    closePrimaryPluginView();
-    if (current.thread && current.secondaryThread) {
-      const pane = current.activePane;
-      setSplitComposerDrafts((drafts) => ({ ...drafts, [pane]: {
-        ...drafts[pane], images: [...drafts[pane].images, image], files: [...drafts[pane].files, context],
-      } }));
-      requestAnimationFrame(() => focusComposerTextarea(document.querySelector<HTMLTextAreaElement>(".conversation-split-pane.active textarea")));
-    } else {
-      setComposerImages((images) => [...images, image]);
-      setComposerFiles((files) => [...files, context]);
-      requestMainComposerFocus(emptyConversation ? "hero" : "dock");
-    }
-  });
 
   // This is a window history of existing destinations, never a second owner of
   // session content. Docked panels and split-pane focus are not page visits.
