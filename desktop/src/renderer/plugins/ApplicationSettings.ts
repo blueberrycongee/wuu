@@ -1,6 +1,6 @@
 import type { SetStateAction } from "react";
 import type { ApplicationSettingsActionMapV1, ApplicationSettingsViewV1, SettingsReadonly } from "../../../../packages/plugin-sdk/src/application-settings";
-import type { EngineListResult, InitializeResult } from "../../shared/protocol";
+import type { EngineListResult } from "../../shared/protocol";
 import { activeThreadForState, createDraftSessionTab, isThreadRunning, mergeListedThreads, sameRuntimeContext,
   threadBelongsToWorkspace, threadSessionTabID, updateThreadByID, upsertThread, type AppState } from "../AppState";
 import type { CodexModelLoadState } from "../ComposerTypes";
@@ -52,11 +52,19 @@ export class ApplicationSettings {
   getSnapshot(): ApplicationSettingsViewV1 {
     const state = this.host.getState();
     const initialized = state.initialized;
-    const configuration = initialized && Object.fromEntries([
-      "protocol_version", "core", "provider", "model", "effort", "variant", "speed", "status", "runtime_host",
-      "workspace_root", "permissions", "extension_trust", "extension_inventory", "model_roles", "model_aliases",
-      "project_models", "providers", "catalog_providers", "advanced_settings", "general_settings", "features",
-    ].map(key => [key, initialized[key as keyof InitializeResult]])) as InitializeResult | undefined;
+    const configuration = initialized && {
+      protocol_version: initialized.protocol_version, provider: initialized.provider,
+      model: initialized.model, workspace_root: initialized.workspace_root, core: initialized.core,
+      providers: initialized.providers, catalog_providers: initialized.catalog_providers,
+      model_aliases: initialized.model_aliases, project_models: initialized.project_models,
+      advanced_settings: initialized.advanced_settings, general_settings: initialized.general_settings,
+      features: initialized.features,
+      extension_inventory: initialized.extension_inventory?.map(plugin => ({
+        id: plugin.id, name: plugin.name, description: plugin.description, kind: plugin.kind,
+        provenance: plugin.provenance, state: plugin.state, fingerprint: plugin.fingerprint, enabled: plugin.enabled, approval_state: plugin.approval_state,
+        contributions: plugin.contributions && { settings: plugin.contributions.settings },
+      })),
+    };
     const runningProviderNames = [...new Set([state.thread, state.secondaryThread, ...state.threads]
       .filter(thread => thread && isThreadRunning(thread)).map(thread => thread!.model_provider.trim()).filter(Boolean))];
     return immutable({ configuration,
@@ -157,7 +165,7 @@ export class ApplicationSettings {
         signal?.throwIfAborted();
         this.host.updateState(state => ({ ...state, threads: mergeListedThreads(state.threads,
           [...state.threads.filter(thread => !thread.archived), ...threads]) }));
-        result = immutable(threads); break;
+        result = immutable(threads.map(thread => ({ id: thread.id, archived: thread.archived }))); break;
       }
       case "settings.delete-archived": {
         const { threadId } = input as ApplicationSettingsActionMapV1["settings.delete-archived"]["input"];
