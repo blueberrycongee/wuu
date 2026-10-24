@@ -101,6 +101,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 
 import { App } from "./App";
 import { translateCurrent } from "./i18n";
+import { permissionModeOption } from "./ComposerRuntimeMenus";
 import * as applicationState from "./plugins/ApplicationController";
 import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
 import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
@@ -416,6 +417,50 @@ async function enterCommand(
   await flushAsync();
 }
 
+async function holdShellReplacement(stage: "bridge" | "register") {
+  const controller = new applicationState.ApplicationController();
+  vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+  const host = new PluginHost({ react: React, application: controller });
+  let replacing = false;
+  let release!: () => void, started!: () => void;
+  const ready = new Promise<void>(resolve => { started = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  window.wuu.loadPluginDesktopModule = vi.fn(async ({ id, fingerprint }) => {
+    if (replacing && stage === "bridge") { started(); await gate; }
+    return { id, fingerprint, digest: "a".repeat(64), url: "runtime-picker-fixture" };
+  });
+  const runtime = new DesktopPluginRuntime(host, async () => ({ async activate(api: PluginGenerationApi) {
+    activateDefaultShell(api);
+    if (replacing && stage === "register") { started(); await gate; }
+  } }));
+  const shell: ExtensionInventoryRecord = {
+    id: "user:shell", name: "shell", kind: "plugin",
+    provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "shell" },
+    state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+    fingerprint: "same-source", graph_generation: "first", desktop: { entry: "desktop.js" },
+  };
+  let pending: Promise<unknown> | undefined;
+  await runtime.sync([shell]);
+  await act(async () => {
+    root = createRoot(container);
+    root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
+  });
+  await flushAsync();
+  replacing = true;
+  act(() => { pending = runtime.sync([{ ...shell, graph_generation: "second" }]); });
+  await ready;
+  return {
+    controller,
+    commit: async () => { await act(async () => { release(); await pending; }); await flushAsync(); },
+    dispose: async () => {
+      release();
+      await pending;
+      act(() => { root?.unmount(); root = null; });
+      await runtime.sync([]);
+    },
+  };
+}
+
 describe("main composer focus continuity", () => {
   const originalWindowWidth = window.innerWidth;
 
@@ -442,7 +487,7 @@ describe("main composer focus continuity", () => {
     vi.restoreAllMocks();
   });
 
-  it.each(["bridge", "register"])("keeps an opened runtime picker usable through a held %s shell replacement", async (stage) => {
+  it.each(["bridge", "register"] as const)("keeps an opened runtime picker usable through a held %s shell replacement", async (stage) => {
     composerFixture.real = true;
     installWuuApi();
     await window.wuu.selectProject(project.id);
@@ -461,28 +506,7 @@ describe("main composer focus continuity", () => {
     window.wuu.checkoutGitBranch = vi.fn<WuuDesktopApi["checkoutGitBranch"]>(() => new Promise(resolve => {
       finishCheckout = () => resolve({ ...gitStatus, branch: "feature" });
     }));
-    const controller = new applicationState.ApplicationController();
-    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
-    const host = new PluginHost({ react: React, application: controller });
-    let replacing = false;
-    let release!: () => void, started!: () => void;
-    const ready = new Promise<void>(resolve => { started = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    window.wuu.loadPluginDesktopModule = vi.fn(async ({ id, fingerprint }) => {
-      if (replacing && stage === "bridge") { started(); await gate; }
-      return { id, fingerprint, digest: "a".repeat(64), url: "runtime-picker-fixture" };
-    });
-    const runtime = new DesktopPluginRuntime(host, async () => ({ async activate(api: PluginGenerationApi) {
-      activateDefaultShell(api);
-      if (replacing && stage === "register") { started(); await gate; }
-    } }));
-    const shell: ExtensionInventoryRecord = {
-      id: "user:shell", name: "shell", kind: "plugin",
-      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "shell" },
-      state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
-      fingerprint: "same-source", graph_generation: "first", desktop: { entry: "desktop.js" },
-    };
-    let pending: Promise<unknown> | undefined;
+    const replacement = await holdShellReplacement(stage);
     const click = async (selector: string) => {
       const button = document.querySelector<HTMLButtonElement>(selector)!;
       expect(button).not.toBeNull();
@@ -492,15 +516,7 @@ describe("main composer focus continuity", () => {
       await flushAsync();
     };
     try {
-      await runtime.sync([shell]);
-      await act(async () => {
-        root = createRoot(container);
-        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
-      });
-      await flushAsync();
-      replacing = true;
-      act(() => { pending = runtime.sync([{ ...shell, graph_generation: "second" }]); });
-      await ready;
+      const { controller } = replacement;
       // An old checkout may finish after the replacement; its menu cleanup
       // must not dismiss a picker opened in the replacement shell.
       await click(".composer-git-controls .hero-project-pill");
@@ -510,8 +526,7 @@ describe("main composer focus continuity", () => {
       await click(".codex-runtime-trigger");
       expect(oldTrigger.getAttribute("aria-expanded")).toBe("true");
       expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
-      await act(async () => { release(); await pending; });
-      await flushAsync();
+      await replacement.commit();
       expect(oldTrigger.isConnected).toBe(false);
       expect(container.querySelector(".codex-runtime-trigger")?.getAttribute("aria-expanded")).toBe("true");
       expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
@@ -531,11 +546,83 @@ describe("main composer focus continuity", () => {
       await click(".composer-project-control .hero-project-pill");
       expect(document.querySelector(".runtime-panel")).toBeNull();
     } finally {
-      release();
-      finishCheckout?.();
-      await pending;
-      act(() => { root?.unmount(); root = null; });
-      await runtime.sync([]);
+      await act(async () => finishCheckout?.());
+      await replacement.dispose();
+    }
+  });
+
+  it.each([
+    { stage: "bridge", mode: "read_only" },
+    { stage: "register", mode: "standard" },
+  ] as const)("submits the chosen $mode permission after a held $stage shell replacement", async ({ stage, mode }) => {
+    composerFixture.real = true;
+    installWuuApi();
+    window.wuu.listEngines = vi.fn(async () => ({ settings: { default_engine: "wuu" }, engines: [
+      { id: "wuu", enabled: true, binary_ok: true },
+      { id: "codex", enabled: true, binary_ok: true, models: [{ id: "engine-model", display_name: "Engine fixture model", supported_efforts: ["medium", "high"] }] },
+    ] }));
+    let storedThread: Thread | undefined;
+    vi.mocked(window.wuu.startThread).mockImplementation(async (params) => {
+      storedThread = { ...newThread(), engine_id: params?.engine, model: params?.model ?? "", permission_mode: params?.permission_mode };
+      return { thread: storedThread };
+    });
+    vi.mocked(window.wuu.listThreads).mockImplementation(async () => ({ threads: storedThread ? [storedThread] : [] }));
+    vi.mocked(window.wuu.resumeThread).mockImplementation(async () => ({ thread: storedThread! }));
+    vi.mocked(window.wuu.startTurn).mockImplementation(async () => {
+      const turn: Turn = { id: "accepted", status: "completed", items_view: "full", items: [] };
+      storedThread = { ...storedThread!, turns: [turn] };
+      return { turn };
+    });
+    const replacement = await holdShellReplacement(stage);
+    const click = async (selector: string) => {
+      const button = document.querySelector<HTMLButtonElement>(selector)!;
+      expect(button).not.toBeNull();
+      expect(button.disabled).toBe(false);
+      await act(async () => button.click());
+      await flushAsync();
+    };
+    const selectEngine = async (name: string) => {
+      await click(".codex-runtime-trigger");
+      await click(".runtime-panel-context button:has(.engine-icon)");
+      const option = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-engine-option"))
+        .find(button => button.querySelector(".runtime-engine-option-name")?.textContent === name)!;
+      await act(async () => option.click());
+      await flushAsync();
+    };
+    const selectPermission = async () => {
+      await click(".permission-chip");
+      const option = Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]'))
+        .find(button => button.textContent?.includes(permissionModeOption(mode).label))!;
+      await act(async () => option.click());
+      await flushAsync();
+    };
+    try {
+      await selectEngine("Codex");
+      await click(".runtime-panel-model");
+      const model = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item"))
+        .find(button => button.textContent?.includes("Engine fixture model"))!;
+      await act(async () => model.click());
+      await selectPermission();
+      expect(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption(mode).label);
+      const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
+      await replacement.commit();
+      expect(oldTrigger.isConnected).toBe(false);
+      expect.soft(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption(mode).label);
+      await enterCommand(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer] textarea')!, "preserve this permission");
+      expect.soft(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
+        engine: "codex", model: "engine-model", permission_mode: mode,
+      }), { kind: "no_project", cwd: scratchCwd });
+      expect.soft(vi.mocked(window.wuu.startTurn).mock.calls[0]?.[4]).toBe(mode);
+      // Entering a new draft after a real thread still uses the existing default.
+      await click("button.session-tab-new");
+      expect(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption("unconfined").label);
+      await selectPermission();
+      await selectEngine("Wuu");
+      await click(".codex-runtime-trigger");
+      await selectEngine("Codex");
+      expect(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption("unconfined").label);
+    } finally {
+      await replacement.dispose();
     }
   });
 

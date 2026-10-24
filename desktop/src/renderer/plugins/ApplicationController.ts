@@ -3,7 +3,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
-import { activeSessionTab, activeThreadForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
+import { activeSessionTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
@@ -70,8 +70,13 @@ export class ApplicationController implements ApplicationServiceV1 {
     if (activeTab && activeTab.kind !== "skills" && activeTab.prompt !== this.draft) {
       current = { ...current, sessionTabs: current.sessionTabs.map(tab => tab === activeTab ? { ...tab, prompt: this.draft } : tab) };
     }
-    const next = typeof update === "function" ? update(current) : update;
+    let next = typeof update === "function" ? update(current) : update;
     if (next === this.state) return;
+    // Navigation can occur with no shell mounted. Clear draft choices at each
+    // thread transition, even when navigation returns to the original draft.
+    if (activeThreadIDForState(next) !== activeThreadIDForState(current)) {
+      next = { ...next, draftWorktree: undefined, draftPermissionMode: "", codexRuntimeMenu: null };
+    }
     if (next.activeSessionTabID !== this.state.activeSessionTabID) {
       const tab = activeSessionTab(next);
       this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";

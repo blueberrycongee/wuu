@@ -1473,7 +1473,14 @@ export function App({ application: providedApplication }: { application?: Applic
   // Switching the parent engine in the picker must not discard that engine's
   // child model/effort choice when the user switches back within the draft.
   const draftEngineRuntimeByID = useRef<Record<string, EngineRuntimeSelection>>({});
-  const [draftPermissionMode, setDraftPermissionMode] = useState<PermissionMode | "">("");
+  const draftPermissionMode = state.draftPermissionMode ?? "";
+  const setDraftPermissionMode = useCallback((update: SetStateAction<PermissionMode | "">) => {
+    setState(current => {
+      const previous = current.draftPermissionMode ?? "";
+      const next = typeof update === "function" ? update(previous) : update;
+      return next === previous ? current : { ...current, draftPermissionMode: next };
+    });
+  }, [setState]);
   // Present while the next conversation starts in its own worktree. It belongs
   // to one project root, so switching projects never carries one repository's
   // start branch into another. An empty start branch means the project's HEAD.
@@ -1492,8 +1499,6 @@ export function App({ application: providedApplication }: { application?: Applic
       draftEngineSeed.current = { threadID: activeThreadID, done: false };
       setDraftEngine("");
       setDraftEngineRuntime({ model: "", effort: "" });
-      setDraftPermissionMode("");
-      setDraftWorktree(undefined);
     }
     // Only a brand-new conversation seeds from memory. An open thread is
     // already bound to its engine, and a seeded draft would otherwise win the
@@ -1516,7 +1521,7 @@ export function App({ application: providedApplication }: { application?: Applic
       speed: remembered.speed,
       model_options: remembered.model_options,
     };
-    setDraftPermissionMode(remembered.engine === "wuu" ? "" : "unconfined");
+    setDraftPermissionMode(current => current || (remembered.engine === "wuu" ? "" : "unconfined"));
   }, [activeThreadID, engineInventory]);
   const selectDraftEngine = useCallback((id: string) => {
     const runtime = draftEngineRuntimeByID.current[id]

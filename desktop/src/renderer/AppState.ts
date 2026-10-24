@@ -27,7 +27,7 @@ import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
 import type { FirstRunOnboardingState } from "./FirstRunOnboarding";
-import type { CodexRuntimeMenu } from "./ComposerTypes";
+import type { CodexRuntimeMenu, PermissionMode } from "./ComposerTypes";
 import { sortChildAgents } from "./ThreadAgents";
 import {
   hasAuthoritativeTurnItems,
@@ -143,6 +143,7 @@ type AppState = {
   // Composer choices survive graph-only shell replacement within this session.
   codexRuntimeMenu?: CodexRuntimeMenu;
   draftWorktree?: { cwd: string; startBranch: string };
+  draftPermissionMode?: PermissionMode | "";
   onboarding?: FirstRunOnboardingState;
   onboardingComplete?: boolean;
   // Pending search addresses survive shell replacement during workspace activation.
