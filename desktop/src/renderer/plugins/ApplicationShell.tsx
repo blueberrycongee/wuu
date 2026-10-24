@@ -22,7 +22,7 @@ const SlotAncestors = React.createContext<readonly string[]>([]);
 
 function compositionFor(host: PluginHost): UICompositionV1 {
   function Slot({ name, context = {}, fallback }: UISlotProps): React.ReactNode {
-    React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
+    const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
     const ancestors = React.useContext(SlotAncestors);
     if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${[...ancestors, name].join(" → ")}`);
     // A contribution cannot recreate a slot after its defining provider unloads.
@@ -32,7 +32,8 @@ function compositionFor(host: PluginHost): UICompositionV1 {
     let contributions = host.getUIContributions(name);
     if (slot.service) {
       const binding = bindings[slot.service];
-      contributions = binding ? contributions.filter(item => item.pluginId === binding.pluginId
+      // The graph selects a surface independently of the layout that renders it.
+      contributions = binding ? registered.filter(item => item.pluginId === binding.pluginId
         && item.generation === binding.generation && item.id === binding.id) : [];
       if (contributions.length !== 1) return <div role="alert">Selected UI surface is unavailable: {slot.service}</div>;
     }
