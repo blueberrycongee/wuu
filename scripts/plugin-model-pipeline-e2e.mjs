@@ -49,6 +49,12 @@ const result = { started_at: new Date().toISOString(), scratch, checks: [], stat
   limitations: ["Synthetic provider: wire equality and lifecycle evidence only; no real prompt-cache hit or cost saving is claimed."] };
 let child, stderr = "", sequence = 0, graphGeneration;
 
+// Background title generation shares this provider; attribute assertions to
+// the tagged journey while preserving every request in the evidence log.
+function providerCallsFor(tag) {
+  return providerCalls.filter(call => call.tag === tag);
+}
+
 function waitFor(event, history, predicate, label, timeout = 20_000) {
   const previous = history.find(predicate);
   if (previous !== undefined) return Promise.resolve(previous);
@@ -341,13 +347,14 @@ try {
   result.origin_threads = [thread.id, secondThread.id];
   result.checks.push("foreground transform, middleware and observer origins distinguish threads and preserve descendant attribution");
 
-  const beforeUncapped = providerCalls.length;
+  const beforeUncapped = providerCallsFor(native.tag).length;
   const unscoped = await client("replay", "start", { request: snapshot, stream: false, generation_scope: true, preserve_limits: true });
   const uncapped = await terminalJob("replay", unscoped.job_id);
   assert.equal(uncapped.state, "completed", JSON.stringify(uncapped));
-  assert.equal(providerCalls.length, beforeUncapped + 1);
-  assert.equal(providerCalls.at(-1).body.max_tokens, native.body.max_tokens);
-  assert.deepEqual(contextWire(providerCalls.at(-1).body), contextWire(native.body));
+  const uncappedCalls = providerCallsFor(native.tag);
+  assert.equal(uncappedCalls.length, beforeUncapped + 1);
+  assert.equal(uncappedCalls.at(-1).body.max_tokens, native.body.max_tokens);
+  assert.deepEqual(contextWire(uncappedCalls.at(-1).body), contextWire(native.body));
   result.checks.push("generation-scoped host starts background work without foreground execution authority",
     "general invocation preserves the original output limit when no override is requested");
 
@@ -378,9 +385,10 @@ try {
   assert.equal(overriddenAlias.provider_options.temperature, 0.19);
   assert.equal(overriddenAlias.provider_options.fixture_alias_default, "configured");
   assert.equal(overriddenAlias.max_tokens, 31);
-  assert.equal(providerCalls.at(-1).body.max_tokens, 31);
-  assert.equal(providerCalls.at(-1).body.model, "claude-fixture-alias");
-  assert.equal(providerCalls.at(-1).body.output_config.effort, "max");
+  const aliasOptionsWire = providerCallsFor("pipeline-alias").at(-1).body;
+  assert.equal(aliasOptionsWire.max_tokens, 31);
+  assert.equal(aliasOptionsWire.model, "claude-fixture-alias");
+  assert.equal(aliasOptionsWire.output_config.effort, "max");
   result.checks.push("explicit alias invocation options override configured defaults while keeping its output cap");
 
   const adapterCallsBeforeNative = (await client("shadow", "state")).adapterRequests.length;
@@ -390,10 +398,11 @@ try {
   const aliasNative = await terminalJob("replay", aliasNativeStart.job_id);
   assert.equal(aliasNative.state, "completed", JSON.stringify(aliasNative));
   assert.equal((await client("shadow", "state")).adapterRequests.length, adapterCallsBeforeNative);
-  assert.equal(providerCalls.at(-1).body.model, "claude-fixture-alias");
-  assert.equal(providerCalls.at(-1).body.max_tokens, 31);
-  assert.equal(providerCalls.at(-1).body.temperature, 0.17);
-  assert.equal(providerCalls.at(-1).body.output_config.effort, "low");
+  const aliasNativeWire = providerCallsFor("pipeline-alias").at(-1).body;
+  assert.equal(aliasNativeWire.model, "claude-fixture-alias");
+  assert.equal(aliasNativeWire.max_tokens, 31);
+  assert.equal(aliasNativeWire.temperature, 0.17);
+  assert.equal(aliasNativeWire.output_config.effort, "low");
   result.alias = { inherited: inheritedAlias, overridden: overriddenAlias, native: aliasNative };
   result.checks.push("explicit native adapter selection overrides alias and request option adapter routing");
 
@@ -494,20 +503,20 @@ try {
   assert.equal(noUsage.state, "completed", JSON.stringify(noUsage));
   assert.equal(noUsage.result.result.response.usage, undefined);
 
-  const beforeDelegate = providerCalls.length;
+  const beforeDelegate = providerCallsFor(native.tag).length;
   const delegated = await client("shadow", "start", { request: snapshot, mode: "native", stream: false });
   const delegation = await terminalJob("shadow", delegated.job_id);
   assert.equal(delegation.state, "completed", JSON.stringify(delegation));
   assert.equal(delegation.result.response.usage.input_tokens, 11);
-  assert.equal(providerCalls.length, beforeDelegate + 1);
+  assert.equal(providerCallsFor(native.tag).length, beforeDelegate + 1);
   result.native_delegation = delegation;
   result.checks.push("custom adapter can explicitly delegate to native transport");
 
-  const beforeMissing = providerCalls.length;
+  const beforeMissing = providerCallsFor(native.tag).length;
   const missing = await client("replay", "start", { request: { ...snapshot, adapter: "fixture.missing" }, stream: false });
   const missingStatus = await terminalJob("replay", missing.job_id);
   assert.equal(missingStatus.state, "failed", JSON.stringify(missingStatus));
-  assert.equal(providerCalls.length, beforeMissing, "missing custom adapter silently fell back to native");
+  assert.equal(providerCallsFor(native.tag).length, beforeMissing, "missing custom adapter silently fell back to native");
   result.checks.push("missing exact custom adapter fails closed before provider dispatch");
 
   await turn("pipeline-hold-break");
@@ -552,9 +561,9 @@ try {
 
   await turn("pipeline-middleware-first");
   const middlewareOperation = (await client("replay", "state")).snapshots.at(-1).origin.operation_id;
-  const beforeShortCircuit = providerCalls.length;
+  const beforeShortCircuit = providerCallsFor("pipeline-middleware-second").length;
   await turn("pipeline-middleware-second");
-  assert.equal(providerCalls.length, beforeShortCircuit, "middleware short circuit reached provider");
+  assert.equal(providerCallsFor("pipeline-middleware-second").length, beforeShortCircuit, "middleware short circuit reached provider");
   assert.equal((await client("shadow", "state")).middlewareHits, 1);
   result.checks.push("around-call middleware can inspect result, rewrite output and short circuit provider");
 
@@ -578,7 +587,7 @@ try {
   const pinnedStart = await client("replay", "start", { request: snapshot, stream: false });
   const pinned = await terminalJob("replay", pinnedStart.job_id);
   assert.equal(pinned.state, "completed", JSON.stringify(pinned));
-  assert.equal(providerCalls.at(-1).body.model, "claude-fixture", "snapshot drifted to new default model");
+  assert.equal(providerCallsFor(native.tag).at(-1).body.model, "claude-fixture", "snapshot drifted to new default model");
   await turn("pipeline-model-changed");
   assert.equal(providerCalls.find(call => call.tag === "pipeline-model-changed").body.model, "claude-fixture-next");
   result.checks.push("saved request remains pinned while next foreground request uses changed model");
