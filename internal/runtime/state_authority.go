@@ -593,21 +593,9 @@ func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client
 		return 0, persistence.ErrCorrupt
 	}
 	lock.Release()
-	var proofEpoch string
-	var probeErrors []error
-	for _, owner := range members {
-		epoch, err := a.requestProbe(ctx, client, owner)
-		if err == nil {
-			proofEpoch = epoch
-			break
-		}
-		if errors.Is(err, persistence.ErrMigrationRequired) || ctx.Err() != nil {
-			return 0, err
-		}
-		probeErrors = append(probeErrors, err)
-	}
-	if proofEpoch == "" {
-		return 0, errors.Join(probeErrors...)
+	proofEpoch, err := a.probeLiveAuthority(ctx, client, members)
+	if err != nil {
+		return 0, err
 	}
 	lock, err = storelock.AcquireContext(ctx, a.dir)
 	if err != nil {
@@ -672,7 +660,34 @@ func (a *StateAuthority) activate(ctx context.Context, client *persistence.Clien
 		}
 	} else {
 		if len(members) != 0 && record.Epoch != epoch {
-			return 0, fmt.Errorf("%w: live authority changed after candidate preparation", persistence.ErrBindingChanged)
+			// Another candidate can become the live owner after Prepare. Prove
+			// shared storage against that owner without holding its probe lock.
+			lock.Release()
+			proofEpoch, err := a.probeLiveAuthority(ctx, client, members)
+			if err != nil {
+				return 0, err
+			}
+			lock, err = storelock.AcquireContext(ctx, a.dir)
+			if err != nil {
+				return 0, err
+			}
+			defer lock.Release()
+			record, err = a.readRecord()
+			if err != nil {
+				return 0, err
+			}
+			if record == nil {
+				return 0, persistence.ErrCorrupt
+			}
+			// Even if every member has exited, a second epoch change invalidates
+			// this proof before the candidate can take over the durable head.
+			if record.Epoch != proofEpoch {
+				return 0, fmt.Errorf("%w: authority changed during candidate probe", persistence.ErrBindingChanged)
+			}
+			members, err = a.liveMembers()
+			if err != nil {
+				return 0, err
+			}
 		}
 		if err := a.recoverPending(ctx, client, record); err != nil {
 			return 0, err
@@ -688,6 +703,20 @@ func (a *StateAuthority) activate(ctx context.Context, client *persistence.Clien
 		}
 	}
 	return record.Checkpoint.Revision, a.register()
+}
+func (a *StateAuthority) probeLiveAuthority(ctx context.Context, client *persistence.Client, members []string) (string, error) {
+	var probeErrors []error
+	for _, owner := range members {
+		epoch, err := a.requestProbe(ctx, client, owner)
+		if err == nil {
+			return epoch, nil
+		}
+		if errors.Is(err, persistence.ErrMigrationRequired) || ctx.Err() != nil {
+			return "", err
+		}
+		probeErrors = append(probeErrors, err)
+	}
+	return "", errors.Join(probeErrors...)
 }
 func (a *StateAuthority) liveMembers() ([]string, error) {
 	root := filepath.Join(a.dir, "members")

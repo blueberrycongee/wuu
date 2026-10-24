@@ -288,6 +288,119 @@ func TestStateAuthorityRejectsLiveCopiesAndAcceptsSharedHandles(t *testing.T) {
 	}
 }
 
+func TestStateAuthorityActivatesCandidatesPreparedBeforeOwner(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl"} {
+		for _, scenario := range []struct {
+			name   string
+			seeded bool
+			copied bool
+		}{
+			{name: "fresh-shared"},
+			{name: "restarted-shared", seeded: true},
+			{name: "restarted-copy", seeded: true, copied: true},
+		} {
+			t.Run(kind+"/"+scenario.name, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+				defer cancel()
+				home := t.TempDir()
+				dir := filepath.Join(t.TempDir(), "documents")
+				target := dir
+				if scenario.seeded {
+					seed := newAuthorityFixture(t, home, dir, kind)
+					admitAuthority(t, seed)
+					if _, err := seed.plugin.Commit(ctx, authorityWrite("seed", authorityHead(t, seed.documents).Revision, "saved")); err != nil {
+						t.Fatal(err)
+					}
+					snapshot, err := seed.documents.Export(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					seed.close(t)
+					if scenario.copied {
+						target = filepath.Join(t.TempDir(), "copy")
+						if err := persistence.Import(ctx, target, kind, snapshot); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				first := makeAuthorityFixture(t, home, dir, kind, false)
+				second := makeAuthorityFixture(t, home, target, kind, false)
+				var checkpoints [2]persistence.Checkpoint
+				// Complete both real preparation lifecycles before either host can
+				// publish a live authority. No scheduling delay controls this order.
+				for index, candidate := range []*authorityFixture{first, second} {
+					candidate.consumer.prepare = func(ctx context.Context) error {
+						if err := candidate.gate.Preflight(ctx, candidate.documents); err != nil {
+							return err
+						}
+						checkpoint, err := persistence.CaptureCheckpoint(ctx, candidate.documents)
+						checkpoints[index] = checkpoint
+						return err
+					}
+					candidate.consumer.activate = func(ctx context.Context) error {
+						return candidate.gate.Activate(ctx, candidate.documents)
+					}
+					if err := candidate.host.Prepare(ctx); err != nil {
+						t.Fatal(err)
+					}
+				}
+				initial := checkpoints[0]
+				if checkpoints[1] != initial {
+					t.Fatalf("candidates did not prepare the same checkpoint: %+v != %+v", checkpoints[1], initial)
+				}
+				if err := first.host.Activate(ctx); err != nil {
+					t.Fatalf("first activation: %v", err)
+				}
+				if scenario.copied {
+					// An existing head changes owner without changing the checkpoint.
+					// Only a live challenge can distinguish this copy from shared storage.
+					if checkpoint, err := persistence.CaptureCheckpoint(ctx, first.documents); err != nil || checkpoint != initial {
+						t.Fatalf("owner changed the seeded checkpoint before candidate admission: %+v, %v", checkpoint, err)
+					}
+					if err := second.host.Activate(ctx); err == nil {
+						t.Fatal("independent copy admitted after the owner activated")
+					}
+					if _, err := second.plugin.Commit(ctx, authorityWrite("rejected-copy", initial.Revision, "forked")); err == nil {
+						t.Fatal("rejected copy wrote through another caller")
+					}
+					second.close(t)
+					stored, err := persistence.Open(ctx, target, kind)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() {
+						if err := stored.Close(); err != nil {
+							t.Error(err)
+						}
+					}()
+					if checkpoint, err := persistence.CaptureCheckpoint(ctx, stored); err != nil || checkpoint != initial {
+						t.Fatalf("rejected copy changed durable documents or receipts: %+v, %v", checkpoint, err)
+					}
+					if _, err := first.plugin.Commit(ctx, authorityWrite("after-rejection", authorityHead(t, first.documents).Revision, "still writable")); err != nil {
+						t.Fatalf("owner lost write access after rejecting copy: %v", err)
+					}
+					return
+				}
+				if err := second.host.Activate(ctx); err != nil {
+					t.Fatalf("shared candidate activation after peer publication: %v", err)
+				}
+				if _, err := second.plugin.Commit(ctx, authorityWrite("from-second", authorityHead(t, second.documents).Revision, "second")); err != nil {
+					t.Fatal(err)
+				}
+				if got := authorityHead(t, first.documents); len(got.Documents) != 1 || string(got.Documents[0].Value) != `"second"` {
+					t.Fatalf("first handle missed second handle's commit: %+v", got)
+				}
+				if _, err := first.plugin.Commit(ctx, authorityWrite("from-first", authorityHead(t, first.documents).Revision, "first")); err != nil {
+					t.Fatal(err)
+				}
+				if got := authorityHead(t, second.documents); len(got.Documents) != 1 || string(got.Documents[0].Value) != `"first"` {
+					t.Fatalf("second handle missed first handle's commit: %+v", got)
+				}
+			})
+		}
+	}
+}
+
 // Restart must resolve only the durable pending intent, whether the reply was
 // lost before or after the provider committed. An empty replacement cannot
 // receive that intent and become a fabricated successor.
@@ -353,13 +466,27 @@ func TestStateAuthorityProcessHelper(t *testing.T) {
 	if os.Getenv("WUU_AUTHORITY_HELPER") != "1" {
 		return
 	}
-	f := newAuthorityFixture(t, os.Getenv("WUU_AUTHORITY_HOME"), os.Getenv("WUU_AUTHORITY_STORE"), "jsonl")
-	admitAuthority(t, f)
+	f := makeAuthorityFixture(t, os.Getenv("WUU_AUTHORITY_HOME"), os.Getenv("WUU_AUTHORITY_STORE"), "jsonl", false)
+	f.consumer.prepare = func(ctx context.Context) error { return f.gate.Preflight(ctx, f.documents) }
+	f.consumer.activate = func(ctx context.Context) error { return f.gate.Activate(ctx, f.documents) }
+	if err := f.host.Prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	enc, dec := json.NewEncoder(os.Stdout), json.NewDecoder(os.Stdin)
-	if err := enc.Encode(map[string]bool{"ready": true}); err != nil {
+	if err := enc.Encode(map[string]bool{"prepared": true}); err != nil {
 		t.Fatal(err)
 	}
 	var command string
+	if err := dec.Decode(&command); err != nil || command != "activate" {
+		t.Fatalf("activation command: %q, %v", command, err)
+	}
+	if err := f.host.Activate(context.Background()); err != nil {
+		_ = enc.Encode(map[string]string{"error": err.Error()})
+		t.Fatal(err)
+	}
+	if err := enc.Encode(map[string]bool{"ready": true}); err != nil {
+		t.Fatal(err)
+	}
 	if err := dec.Decode(&command); err != nil {
 		t.Fatal(err)
 	}
@@ -375,15 +502,19 @@ func TestStateAuthorityProcessHelper(t *testing.T) {
 	}
 }
 func TestStateAuthoritySharesAcrossProcesses(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
 	home, dir := t.TempDir(), t.TempDir()
-	parent := newAuthorityFixture(t, home, dir, "jsonl")
-	admitAuthority(t, parent)
+	parent := makeAuthorityFixture(t, home, dir, "jsonl", false)
+	parent.consumer.prepare = func(ctx context.Context) error { return parent.gate.Preflight(ctx, parent.documents) }
+	parent.consumer.activate = func(ctx context.Context) error { return parent.gate.Activate(ctx, parent.documents) }
+	if err := parent.host.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
 	child := exec.CommandContext(ctx, executable, "-test.run=^TestStateAuthorityProcessHelper$")
 	child.Env = append(os.Environ(), "WUU_AUTHORITY_HELPER=1", "WUU_AUTHORITY_HOME="+home, "WUU_AUTHORITY_STORE="+dir)
 	child.Stderr = os.Stderr
@@ -405,14 +536,30 @@ func TestStateAuthoritySharesAcrossProcesses(t *testing.T) {
 		}
 	})
 	decoder, encoder := json.NewDecoder(output), json.NewEncoder(input)
-	var response map[string]bool
-	if err := decoder.Decode(&response); err != nil || !response["ready"] {
+	var response struct {
+		Prepared bool   `json:"prepared"`
+		Ready    bool   `json:"ready"`
+		Written  bool   `json:"written"`
+		Error    string `json:"error"`
+	}
+	if err := decoder.Decode(&response); err != nil || !response.Prepared {
+		t.Fatalf("child preparation: %+v %v", response, err)
+	}
+	// Both processes have prepared without a live owner. The command ACK keeps
+	// the child at that boundary until the parent has published its authority.
+	if err := parent.host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := encoder.Encode("activate"); err != nil {
+		t.Fatal(err)
+	}
+	if err := decoder.Decode(&response); err != nil || !response.Ready {
 		t.Fatalf("child admission: %+v %v", response, err)
 	}
 	if err := encoder.Encode("from child"); err != nil {
 		t.Fatal(err)
 	}
-	if err := decoder.Decode(&response); err != nil || !response["written"] {
+	if err := decoder.Decode(&response); err != nil || !response.Written {
 		t.Fatalf("child write: %+v %v", response, err)
 	}
 	if got := authorityHead(t, parent.documents); len(got.Documents) != 1 || string(got.Documents[0].Value) != `"from child"` {
