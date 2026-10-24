@@ -19,7 +19,7 @@ async function fixture(semanticSlot: string, context: Readonly<Record<string, un
     subscribe: () => () => {}, invoke: invoke as ApplicationServiceV1["invoke"],
   });
   const createViewHost = vi.fn((): ViewHostAPI => ({ getStorage: async () => null, setStorage: async () => {},
-    getSetting: async () => undefined, executeCommand: async () => undefined, openView: async () => {}, closeView: async () => {} }));
+    getSetting: async () => undefined, executeCommand: async () => undefined, openView: vi.fn(async () => {}), closeView: async () => {} }));
   const host = new PluginHost({ react: React, application, createLegacyViewHost: createViewHost });
   // Only the semantic slot is declared; no adapter contribution is registered.
   await host.activateGeneration({ pluginId: "custom-shell", generation: "one", register(api) {
@@ -30,7 +30,7 @@ async function fixture(semanticSlot: string, context: Readonly<Record<string, un
     act(() => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "custom-shell", generation: "one", id: "shell" }} />)); };
   const register = (register: (api: PluginGenerationApi) => void, contributions?: Parameters<PluginHost["activateGeneration"]>[0]["contributions"]) =>
     act(async () => { await host.activateGeneration({ pluginId: "extension", generation: "same", register, contributions }); });
-  return { host, application, invoke, mount, register };
+  return { host, application, invoke, mount, register, createViewHost };
 }
 
 // Failure cases: disconnected registrations, same-code reload retaining state,
@@ -256,6 +256,46 @@ describe("legacy contributions in declared public slots", () => {
     await expect(old.invoke("preview.show-conversation", {})).rejects.toThrow();
     await captured.at(-1)!.invoke("preview.show-conversation", {});
     expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves normal presenter openView defaults, options and generation fences", async () => {
+    const { register, mount, invoke, createViewHost } = await fixture("header.workspace", { snapshot: { contractVersion: 1, scope: "workspace" } });
+    let captured!: PresentationHost;
+    await register(api => {
+      api.registerViewType({ id: "details", title: "Details", defaultRegion: "primary", render: () => null });
+      api.registerPresenter({ id: "header", target: "header.workspace", render: props => { captured = props.host; return props.fallback; } });
+    });
+    mount(); const base = createViewHost.mock.results[0].value;
+    await captured.openView("details");
+    expect(base.openView).toHaveBeenCalledWith("details", undefined);
+    const options = { region: "overlay" as const, context: { source: "header" }, persistence: "session" as const, reveal: false };
+    await captured.openView("details", options);
+    expect(base.openView).toHaveBeenLastCalledWith("details", options);
+    expect(invoke).not.toHaveBeenCalled();
+    const old = captured; await register(() => {});
+    await expect(old.openView("details")).rejects.toThrow();
+    expect(base.openView).toHaveBeenCalledTimes(2);
+  });
+
+  it("translates only preview-owned auxiliary targets without discarding view options", async () => {
+    const { register, mount, invoke, createViewHost } = await fixture("workspace.view", {
+      pluginId: "extension", generation: "same", viewTypeId: "source", tabId: "source-tab", region: "workspace",
+    });
+    let captured!: ViewHostAPI;
+    await register(api => {
+      api.registerViewType({ id: "source", title: "Source", render: props => { captured = props.host; return <span>Source</span>; } });
+      api.registerViewType({ id: "details", title: "Details", defaultRegion: "auxiliary", render: () => null });
+      api.registerViewType({ id: "primary", title: "Primary", defaultRegion: "primary", render: () => null });
+    }, { workspace_tools: [{ id: "details-entry", view: "details", title: "Details" }] });
+    mount(); const base = createViewHost.mock.results[0].value;
+    await captured.openView("primary");
+    expect(base.openView).toHaveBeenCalledWith("primary", undefined);
+    await captured.openView("details");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("preview.open-plugin", expect.objectContaining({ viewTypeId: "details" }), { signal: expect.any(AbortSignal) });
+    const options = { region: "auxiliary" as const, context: { document: "notes" }, persistence: "durable" as const, reveal: false };
+    await captured.openView("details", options);
+    expect(base.openView).toHaveBeenLastCalledWith("details", options);
+    expect(invoke).toHaveBeenCalledOnce();
   });
 
   it("renders ordered inspector sections with predicates, isolation and captured owner methods", async () => {

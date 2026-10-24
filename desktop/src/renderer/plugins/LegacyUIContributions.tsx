@@ -206,10 +206,19 @@ function capturedHost(props: LegacyUIContributionsProps, identity: LegacyViewIde
     executeCommand: async (...args: Parameters<ViewHostAPI["executeCommand"]>) => { assertActive(); const result = await base.executeCommand(...args); assertActive(); return result; },
     openView: async (viewTypeId: string, options?: Parameters<ViewHostAPI["openView"]>[1]) => {
       assertActive();
-      if (options?.region && options.region !== "auxiliary") return base.openView(viewTypeId, options);
-      const entry = props.host.getWorkspaceTools().find(entry => entry.pluginId === identity.pluginId && entry.generation === identity.generation && entry.view === viewTypeId);
-      if (!entry) throw new Error("Workspace view is not declared by this generation");
-      await props.application.invoke("preview.open-plugin", { entryId: entry.id, pluginId: entry.pluginId, generation: entry.generation, viewTypeId, title: entry.title, icon: entry.icon });
+      const definition = props.host.getViewTypes().find(view => view.pluginId === identity.pluginId && view.generation === identity.generation && view.id === viewTypeId);
+      const region = options?.region ?? definition?.defaultRegion ?? "primary";
+      const entry = identity.tabId && region === "auxiliary"
+        ? props.host.getWorkspaceTools().find(entry => entry.pluginId === identity.pluginId && entry.generation === identity.generation && entry.view === viewTypeId)
+        : undefined;
+      // Preview tabs cannot represent instance context, persistence or reveal policy.
+      if (!entry || options?.context !== undefined || options?.persistence !== undefined
+        || options?.reveal !== undefined || definition?.persistence !== undefined) {
+        await base.openView(viewTypeId, options);
+      } else {
+        await props.application.invoke("preview.open-plugin", { entryId: entry.id, pluginId: entry.pluginId, generation: entry.generation, viewTypeId, title: entry.title, icon: entry.icon });
+      }
+      assertActive();
     },
     closeView: async () => { assertActive(); if (identity.tabId) await props.application.invoke("preview.close-tab", { tabId: identity.tabId }); else await base.closeView(); },
   });
