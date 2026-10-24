@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { ViewHostAPI, PresentationHost } from "../../shared/workbench";
+import type { ViewHostAPI, PresentationHost, InspectorSectionHostAPI, InspectorSnapshotV1 } from "../../shared/workbench";
 import { ApplicationController } from "./ApplicationController";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { LegacyUIContributions, type LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
@@ -256,6 +256,37 @@ describe("legacy contributions in declared public slots", () => {
     await expect(old.invoke("preview.show-conversation", {})).rejects.toThrow();
     await captured.at(-1)!.invoke("preview.show-conversation", {});
     expect(invoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders ordered inspector sections with predicates, isolation and captured owner methods", async () => {
+    const snapshot = Object.freeze<InspectorSnapshotV1>({ contractVersion: 1, session: { id: "source", status: "idle" } });
+    const { host, register, mount } = await fixture("inspector.sections", { snapshot });
+    let captured!: InspectorSectionHostAPI;
+    const cleanup = vi.fn();
+    function Content({ host: api }: { host: InspectorSectionHostAPI }) {
+      captured = api; React.useEffect(() => cleanup, []); return <span>Inspector content</span>;
+    }
+    const silence = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await register(api => {
+        api.registerInspectorSection({ id: "late", title: "Later", priority: 20, render: () => <span>Later content</span> });
+        api.registerInspectorSection({ id: "early", title: "Earlier", priority: 1, when: value => value.session.id === "source", render: Content });
+        api.registerInspectorSection({ id: "hidden", title: "Hidden", priority: 0, when: () => false, render: () => <span>Hidden content</span> });
+        api.registerInspectorSection({ id: "broken", title: "Broken", priority: 10, render: () => { throw new Error("inspector failed"); } });
+      });
+      mount();
+      expect(Array.from(element.querySelectorAll("h2"), node => node.textContent)).toEqual(["Earlier", "Broken", "Later"]);
+      expect(element.textContent).toContain("Inspector content"); expect(element.textContent).not.toContain("Hidden content");
+      expect(element.querySelector('[role="alert"]')).not.toBeNull();
+      expect(host.getGenerationDiagnostics("extension", "same")).toEqual(expect.arrayContaining([expect.objectContaining({ contributionId: "broken" })]));
+      await captured.openView("extension.detail"); await captured.executeCommand("extension.refresh");
+      const old = captured;
+      await register(api => { api.registerInspectorSection({ id: "early", title: "Replaced", render: Content }); });
+      expect(element.textContent).toContain("Replaced"); expect(cleanup).toHaveBeenCalledOnce();
+      await expect(old.executeCommand("extension.refresh")).rejects.toThrow();
+      await act(async () => { host.unload("extension"); });
+      expect(element.textContent).toBe("Native content"); expect(cleanup).toHaveBeenCalledTimes(2);
+    } finally { silence.mockRestore(); }
   });
 
   it("renders only the selected generation's workspace view and its title commands", async () => {

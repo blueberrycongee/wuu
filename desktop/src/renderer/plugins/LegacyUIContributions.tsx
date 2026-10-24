@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { ConversationItemSnapshotV1, HeaderSnapshotV1, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
+import type { ConversationItemSnapshotV1, HeaderSnapshotV1, InspectorSnapshotV1, InspectorSectionHostAPI, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
 import { HEADER_ACTIONS, FILE_PREVIEW_ACTIONS, CONVERSATION_ITEM_ACTIONS } from "../../shared/workbench";
 import { PLUGIN_SLOT_IDS, type PluginHost, type PluginSlotId, type RegisteredPresenter } from "./PluginHost";
 import { PluginSlotContribution } from "./PluginSlot";
@@ -65,6 +65,7 @@ export function LegacyUIContributions(props: LegacyUIContributionsProps): React.
     return props.renderLegacyWorkbench({ application: props.application, context: props.context });
   }
   if ((PLUGIN_SLOT_IDS as readonly string[]).includes(semanticSlot)) return <LegacySlots {...props} id={semanticSlot as PluginSlotId} />;
+  if (semanticSlot === "inspector.sections") return <InspectorSections {...props} />;
   if (semanticSlot === "workspace.tools") return <WorkspaceTools {...props} />;
   if (semanticSlot === "workspace.view") return <WorkspaceView {...props} />;
   if (semanticSlot === "conversation.cards") return <Cards {...props} />;
@@ -115,6 +116,34 @@ function MessageActions(props: LegacyUIContributionsProps): React.ReactNode {
   const applicable = props.host.resolveCommandActions(context).actions;
   if (!applicable.length) return props.fallback;
   return retain(props.host, commands, <PluginCommandActions host={props.host} context={context} />);
+}
+
+function InspectorSections(props: LegacyUIContributionsProps): React.ReactNode {
+  const sections = useRegistry(props.host, () => props.host.getInspectorSections());
+  const snapshot = props.context.snapshot as InspectorSnapshotV1;
+  return <>{props.fallback}{sections.length > 0 && <div className="plugin-inspector-sections" data-wuu-component="plugin-inspector-sections">
+    {sections.map(section => <Lifetime key={`${activationKey(props.host, section)}:${section.id}`} host={props.host} identity={section}>
+      <LegacyBoundary host={props.host} identity={section} onFailure={error => props.host.recordInspectorFailure(section, error)}
+        fallback={<section className="plugin-inspector-section" data-plugin-id={section.pluginId} data-plugin-generation={section.generation}>
+          <h2>{section.title}</h2><div className="plugin-inspector-section-content"><p className="plugin-inspector-section-error" role="alert">This section could not be displayed.</p></div>
+        </section>}>
+        <InspectorSection {...props} section={section} snapshot={snapshot} />
+      </LegacyBoundary>
+    </Lifetime>)}
+  </div>}</>;
+}
+function InspectorSection({ section, snapshot, ...props }: LegacyUIContributionsProps & {
+  section: ReturnType<PluginHost["getInspectorSections"]>[number]; snapshot: InspectorSnapshotV1;
+}): React.ReactNode {
+  const api = React.useMemo<InspectorSectionHostAPI>(() => {
+    const host = props.createViewHost(section);
+    return Object.freeze({ executeCommand: host.executeCommand, openView: host.openView });
+  }, [props.createViewHost, section]);
+  if (section.when?.(snapshot) === false) return null;
+  const Content = section.render;
+  return <section className="plugin-inspector-section" data-plugin-id={section.pluginId} data-plugin-generation={section.generation}>
+    <h2>{section.title}</h2><div className="plugin-inspector-section-content"><Content snapshot={snapshot} host={api} /></div>
+  </section>;
 }
 
 function WorkspaceTools(props: LegacyUIContributionsProps): React.ReactNode {
