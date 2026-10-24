@@ -12,7 +12,7 @@ const { spawnSync } = require('node:child_process');
 const createSessionFixture = require('./session-fixture.cjs');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, nativeImage } = require('electron');
 const { validateCorpus } = require('./conversation-corpus.cjs');
 const { createWebsiteFixture, runWebsiteAcceptance, readRibbonInteraction } = require('./web-workspace-acceptance.cjs');
 
@@ -219,18 +219,20 @@ async function point(target, scroll = true) {
     return { x, y, rect: r.toJSON(), name: node.getAttribute('aria-label') || node.textContent?.trim() };
   }, { ...(typeof target === 'string' ? { selector: target } : target), scroll });
 }
-async function capture(label) {
+async function capture(label, afterPixels) {
   await settle();
   const name = `${String(report.screenshots.length + 1).padStart(3, '0')}-${label.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 90)}.png`;
+  const captureStartedAtMs = Date.now() - started;
   const screenshot = await win.webContents.capturePage();
   const png = screenshot.toPNG();
   fs.writeFileSync(path.join(output, name), png);
-  report.screenshots.push({ file: name, sha256: createHash('sha256').update(png).digest('hex'), atMs: Date.now() - started, image: screenshot.getSize(), window: win.getBounds(),
+  report.screenshots.push({ file: name, sha256: createHash('sha256').update(png).digest('hex'), captureStartedAtMs, atMs: Date.now() - started, image: screenshot.getSize(), window: win.getBounds(),
     viewport: await evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, theme: document.documentElement.dataset.theme,
       uiSize: getComputedStyle(document.documentElement).getPropertyValue('--conversation-message-font-size').trim(),
       activeElement: document.activeElement?.outerHTML.slice(0, 180) })),
     ribbonInteraction: await readRibbonInteraction(win) });
   save();
+  if (afterPixels) await afterPixels(report.screenshots.at(-1));
   // A short viewing hold makes the real-time recording readable; success is
   // always decided by observable state, never by this pacing delay.
   await delay(160);
@@ -528,10 +530,89 @@ async function run() {
     await waitFor(() => document.querySelector('.skills-catalog .settings-group-empty'));
     await capture('catalog-empty-search');
     await fill('.catalog-toolbar input', '');
-    await click('.catalog-refresh', 'catalog-refresh');
-    await waitFor(() => document.querySelector('.catalog-refresh')?.getAttribute('aria-busy') === 'false');
-    assert.ok(await evaluate(() => Boolean(document.querySelector('.catalog-section-pane:not([hidden]) .catalog-row[aria-label="Preview acceptance-skill"]'))), 'Refreshing the catalog preserves the selected Skills page');
-    await capture('skills-after-catalog-refresh');
+    await evaluate(() => {
+      const evidence = { timeOrigin: performance.timeOrigin, startedAt: performance.now(), frames: 0, mutations: 0, dropped: 0, samples: [] };
+      const identities = new WeakMap();
+      let sequence = 0, frame, previous;
+      const inspect = selector => {
+        const node = document.querySelector(selector);
+        if (!node) return null;
+        if (!identities.has(node)) identities.set(node, ++sequence);
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return { node: identities.get(node), rect: rect.toJSON(), display: style.display, visibility: style.visibility,
+          opacity: style.opacity, transform: style.transform, hidden: node.hidden, inert: node.inert,
+          hitWithin: Boolean(hit && node.contains(hit)), text: node.textContent.trim().slice(0, 100) };
+      };
+      const sample = (source, force = false) => {
+        const state = { shell: inspect('.app-shell'), main: inspect('.conversation-pane'),
+          title: inspect('.conversation-pane > .titlebar'), catalog: inspect('.catalog-section-pane:not([hidden])'),
+          page: inspect('.catalog-section-pane:not([hidden]) .settings-page'),
+          heading: inspect('.catalog-section-pane:not([hidden]) .settings-page-title'), toolbar: inspect('.catalog-toolbar'),
+          shellClass: document.querySelector('.app-shell')?.className ?? null,
+          busy: document.querySelector('.catalog-refresh')?.getAttribute('aria-busy') ?? null,
+          recovery: document.querySelector('.application-recovery')?.textContent ?? null,
+          animations: document.getAnimations().flatMap(animation => {
+            const target = animation.effect?.target, timing = animation.effect?.getComputedTiming();
+            if (!(target instanceof Element) || !target.closest('.conversation-pane') || !Number.isFinite(timing?.endTime)) return [];
+            return [{ target: target.className, name: animation.animationName ?? animation.transitionProperty ?? animation.id,
+              playState: animation.playState, currentTime: animation.currentTime, endTime: timing.endTime, progress: timing.progress }];
+          }).slice(0, 12) };
+        const key = JSON.stringify(state);
+        if (force || key !== previous) {
+          if (evidence.samples.length < 600) evidence.samples.push({ at: performance.now(), source, ...state });
+          else evidence.dropped++;
+          previous = key;
+        }
+      };
+      const observer = new MutationObserver(records => { evidence.mutations += records.length; sample('mutation'); });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+      const tick = () => { evidence.frames++; sample('frame'); frame = requestAnimationFrame(tick); };
+      sample('before-refresh', true); frame = requestAnimationFrame(tick);
+      window.__wuuSkillsRefreshPresentation = { sample, stop: () => {
+        sample('before-Escape', true); observer.disconnect(); cancelAnimationFrame(frame);
+        return { ...evidence, endedAt: performance.now() };
+      } };
+    });
+    const presentation = { pairs: [], reportEpochMs: started, clock: 'Capture intervals use report atMs; DOM samples use timeOrigin + performance.now().',
+      boundary: 'Sequential renderer and X11 captures are not atomic. A changed DOM/animation state or a gap between captures prevents a capture-only verdict. Layout sampling can affect rendering timing.' };
+    try {
+      await click('.catalog-refresh', 'catalog-refresh');
+      await waitFor(() => document.querySelector('.catalog-refresh')?.getAttribute('aria-busy') === 'false');
+      assert.ok(await evaluate(() => Boolean(document.querySelector('.catalog-section-pane:not([hidden]) .catalog-row[aria-label="Preview acceptance-skill"]'))), 'Refreshing the catalog preserves the selected Skills page');
+      await capture('skills-after-catalog-refresh', async renderer => {
+        const pair = { renderer: { file: renderer.file, sha256: renderer.sha256, startedAtMs: renderer.captureStartedAtMs, endedAtMs: renderer.atMs } };
+        presentation.pairs.push(pair);
+        await evaluate(() => window.__wuuSkillsRefreshPresentation.sample('before-native-capture', true));
+        const nativeLayers = (parent = win.contentView, visible = true, prefix = 'root') => parent.children.flatMap((view, index) => [{
+          path: `${prefix}/${index}`, id: view.webContents?.id ?? null, visible: visible && view.getVisible(),
+          ownVisible: view.getVisible(), bounds: view.getBounds(),
+        }, ...nativeLayers(view, visible && view.getVisible(), `${prefix}/${index}`)]);
+        const bounds = win.getBounds();
+        pair.native = { file: 'skills-refresh-native-after-renderer.png', source: 'x11-whole-native-window', window: bounds,
+          layersBefore: nativeLayers(), startedAtMs: Date.now() - started };
+        // Capture before the existing viewing hold and before goConversations sends Escape.
+        const taken = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'x11grab', '-video_size', `${bounds.width}x${bounds.height}`, '-i', `${process.env.DISPLAY}+${bounds.x},${bounds.y}`, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'], { timeout: 12000, maxBuffer: 24 * 1024 * 1024 });
+        Object.assign(pair.native, { endedAtMs: Date.now() - started, status: taken.status,
+          error: taken.status === 0 ? undefined : String(taken.stderr || taken.error), layersAfter: nativeLayers() });
+        await evaluate(() => window.__wuuSkillsRefreshPresentation.sample('after-native-capture', true));
+        assert.equal(taken.status, 0, pair.native.error);
+        const image = nativeImage.createFromBuffer(taken.stdout);
+        assert.ok(!image.isEmpty(), 'Skills refresh native-window PNG is readable');
+        fs.writeFileSync(path.join(output, pair.native.file), taken.stdout);
+        Object.assign(pair.native, { sha256: createHash('sha256').update(taken.stdout).digest('hex'), image: image.getSize() });
+      });
+    } finally {
+      presentation.dom = await evaluate(() => {
+        const result = window.__wuuSkillsRefreshPresentation.stop();
+        delete window.__wuuSkillsRefreshPresentation; return result;
+      }).catch(error => ({ unavailable: String(error) }));
+      report.skillsRefreshPresentation = presentation;
+      fs.writeFileSync(path.join(output, 'skills-refresh-presentation.json'), JSON.stringify(presentation, null, 2));
+      save();
+    }
+    assert.equal(presentation.dom.unavailable, undefined, 'Skills refresh presentation evidence is available');
+    assert.ok(presentation.dom.frames > 0, 'Skills refresh presentation spans renderer frames');
     await goConversations();
   });
 
