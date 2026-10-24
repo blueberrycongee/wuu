@@ -29,9 +29,10 @@ function SkillsCatalog(props: Omit<ComponentProps<typeof PublicSkillsCatalog>, "
   const catalog:ApplicationCatalogV1 = {
    getSnapshot:()=>snapshot,
    listSkills:async()=>(await window.wuu.listSkills()).skills,
+   listSkillsForThread:async input=>({ contextKey:snapshot.contextKey, threadId:input.threadId, skills:(await window.wuu.listSkills({thread_id:input.threadId})).skills }),
    readSkill:input=>window.wuu.readSkillContent(input),
    refresh:props.onRefreshCatalog ?? (async()=>(await window.wuu.listSkills()).skills),
-   update:async input=>{await props.onUpdateExtensionPackage?.(input);},
+   update:async input=>{await props.onUpdateExtensionPackage?.(input.updates ? { updates: input.updates.map(update => ({ ...update })) } : input);},
    install:async()=>props.onInstallPluginPackage?.(),remove:async id=>props.onRemovePluginPackage?.(id),
    loadIcon:async(id,fingerprint,path)=>(await window.wuu.loadPluginIcon({id,fingerprint,path})).url,
   };
