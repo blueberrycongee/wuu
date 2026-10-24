@@ -1,10 +1,13 @@
+import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { Thread } from "../../shared/protocol";
 import { createConversationTestApplication } from "../ConversationControlsTestProvider";
-import { DefaultConversationSurface } from "./DefaultConversationSurface";
+import { PluginHost } from "../plugins/PluginHost";
+import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
+import { activate, DefaultConversationSurface } from "./DefaultConversationSurface";
 
 vi.mock("../EmptyHomeOverview", () => ({ EmptyHomeOverview: () => <div data-overview /> }));
 let root: Root | undefined, container: HTMLDivElement | undefined;
@@ -29,9 +32,15 @@ it("retains cached panes and routes message editing by explicit public identity"
   await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="two"] .message-edit-button')!.click());
   expect(h.invoke).toHaveBeenCalledWith("history.begin-edit", { threadId: "two", turnId: "two-turn", itemId: "two-user" });
 });
-it("selects split layout and closes its explicit secondary pane", async () => {
+it("preserves split history editing, questions and closing the explicit secondary pane", async () => {
   const h = fixture(); h.update({ ...h.get(), conversationWorkspace: { ...h.get().conversationWorkspace, secondaryThreadId: "two" } });
   expect(container!.querySelectorAll(".conversation-split-pane")).toHaveLength(2);
+  await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="two"] .message-edit-button')!.click());
+  expect(h.invoke).toHaveBeenCalledWith("history.begin-edit", { threadId: "two", turnId: "two-turn", itemId: "two-user", pane: "secondary" });
+  h.update({ ...h.get(), conversationActions: { ...h.get().conversationActions, questions: [{ request_id: "split-question", plugin_id: "ask-user", execution_id: "execution", thread_id: "two", turn_id: "two-turn", created_at: "2026-10-24T00:00:00Z", questions: [{ id: "choice", question: "Which path?", options: [{ label: "Safe" }], allow_custom: true }] }] } });
+  expect(container!.querySelector('[data-thread-id="two"] .user-question-card')?.textContent).toContain("Which path?");
+  await act(async () => container!.querySelector<HTMLButtonElement>('[data-thread-id="two"] .user-question-cancel')!.click());
+  expect(h.invoke).toHaveBeenCalledWith("question.cancel", { requestId: "split-question" });
   await act(async () => container!.querySelector<HTMLButtonElement>(".conversation-split-close")!.click());
   expect(h.invoke).toHaveBeenCalledWith("conversation.close-pane", { pane: "secondary" });
 });
@@ -61,4 +70,44 @@ it("renders the canonical pending creation turn only for its tab owner", () => {
   h.update({ ...h.get(), tabs: { ...h.get().tabs, activeTabId: "another-tab" } });
   expect(container!.querySelector('[data-turn-id="pending-turn"]')).toBeNull();
   expect(container!.querySelector('[data-turn-id="one-turn"]')).not.toBeNull();
+});
+
+it("uses the selected composer for both split owners and removes it when disabled", async () => {
+  const base = createConversationTestApplication(), one = thread("one"), two = thread("two");
+  const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), phase: "ready",
+    conversationWorkspace: { primaryThreadId: one.id, secondaryThreadId: two.id, activePane: "primary", turnStreamStatus: {}, threads: [one, two] },
+    drafts: { ...base.getSnapshot().drafts, split: true, primary: { ...base.getSnapshot().drafts.primary, ownerTabId: "owner-one" }, secondary: { ...base.getSnapshot().drafts.secondary, ownerTabId: "owner-two" } } };
+  const application = { ...base, getSnapshot: () => snapshot, createDesktopScope: () => base.desktop,
+    setPreviewVisibility: () => {}, createComposerPresentationScope: () => base.composerPresentation };
+  const host = new PluginHost({ react: React, application });
+  try {
+    await host.activateGeneration({ pluginId: "wuu.default-conversation", generation: "test", register: activate });
+    await host.activateGeneration({ pluginId: "shell", generation: "test", register: api => {
+      api.registerUISlot({ id: "application.conversation", cardinality: "one", service: "ui.conversation" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="shell/application.conversation" /> });
+    } });
+    for (const id of ["first", "replacement"]) await host.activateGeneration({ pluginId: id, generation: "test", register: api => {
+      api.registerUIContribution({ id: "composer", target: "shell/application.composer", render: ({ context }) =>
+        <div data-selected-composer={id} data-pane={String(context.pane)} data-owner={String(context.ownerTabId)} data-variant={String(context.variant)} /> });
+    } });
+    container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+    const render = (pluginId: string) => act(async () => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "test", id: "shell" }}
+      surfaceBindings={{ "ui.conversation": { pluginId: "wuu.default-conversation", generation: "test", id: "ui.conversation" }, "ui.composer": { pluginId, generation: "test", id: "composer" } }} />));
+    await render("first");
+    expect([...container.querySelectorAll('[data-selected-composer="first"]')].map(node => [node.getAttribute("data-pane"), node.getAttribute("data-owner"), node.getAttribute("data-variant")])).toEqual([
+      ["primary", "owner-one", "dock"], ["secondary", "owner-two", "dock"],
+    ]);
+    await render("replacement");
+    expect(container.querySelectorAll('[data-selected-composer="replacement"]')).toHaveLength(2);
+    expect(container.querySelector('[data-selected-composer="first"]')).toBeNull();
+    await act(async () => host.unload("replacement"));
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(2);
+    expect(container.querySelector('[data-selected-composer]')).toBeNull();
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.textContent).toContain("Answer one");
+    expect(container.textContent).toContain("Answer two");
+  } finally {
+    act(() => root?.unmount()); root = undefined;
+    for (const id of ["first", "replacement", "shell", "wuu.default-conversation"]) host.unload(id);
+  }
 });

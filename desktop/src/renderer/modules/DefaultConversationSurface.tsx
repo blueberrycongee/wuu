@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, Turn, UserQuestionRequest } from "../../shared/protocol";
@@ -16,11 +16,10 @@ import { EmptyHomeOverview } from "../EmptyHomeOverview";
 import { WorkbenchConnectionContext } from "../WorkbenchConnectionContext";
 import { ImagePreviewProvider } from "../ImagePreview";
 import { TurnView } from "../TurnView";
-import { isThreadRunning, queryTextsForThread, requestedHandoffIntentForThread, type ComposerDraftState } from "../AppState";
+import { isThreadRunning } from "../AppState";
 import type { ContextCompositionEntry } from "../ContextCompositionCard";
 import type { InstructionFilesEntry } from "../InstructionFilesCard";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
-import { createApplicationComposerAttachments } from "./ApplicationComposerAttachments";
 import { showErrorToast } from "../Toast";
 import { greetingFor, useCurrentHour } from "../greetings";
 import { useI18n } from "../i18n";
@@ -158,48 +157,14 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
   openAgent: (agent: { id: string }) => void; openDiff: (thread: Thread, selection: TurnFileDiffSelection) => void;
 }): JSX.Element {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
-  const [, refresh] = useState(0);
-  const resources = useMemo(() => createApplicationComposerAttachments(application, () => refresh(value => value + 1)), [application]);
-  useEffect(() => { resources.resume(); return resources.dispose; }, [resources]);
-  const publicDraft = view.drafts[pane];
-  const attachments = new Map(view.drafts.attachments.map(item => [item.id, item]));
-  const draft: ComposerDraftState = {
-    prompt: publicDraft.text, selections: publicDraft.selections.map(selection => structuredClone(selection)),
-    images: publicDraft.imageIds.flatMap(id => attachments.has(id) ? [resources.read(attachments.get(id)!)] : []) as import("../ComposerMessages").ComposerImage[],
-    files: publicDraft.fileIds.flatMap(id => attachments.has(id) ? [resources.read(attachments.get(id)!)] : []) as import("../ComposerMessages").ComposerFile[],
-  };
-  const change = (patch: Partial<typeof publicDraft>) => {
-    const latest = application.getSnapshot().drafts;
-    void application.invoke("composer.checkpoint", { activeTabId: latest.activeTabId, primary: pane === "primary" ? { ...latest.primary, ...patch } : latest.primary, secondary: pane === "secondary" ? { ...latest.secondary, ...patch } : latest.secondary }).catch(showErrorToast);
-  };
-  const pending = view.composerPending.find(row => row.threadId === thread.id);
   const editing = view.conversationActions.editing?.threadId === thread.id ? view.conversationActions.editing : undefined;
   const question = view.conversationActions.questions.find(row => row.thread_id === thread.id && row.mode !== "offer");
-  const workspace = view.workspaces.workspaces.find(row => row.root === thread.cwd);
   return <><ConversationSplitPane pane={pane} thread={thread} active={view.conversationWorkspace.activePane === pane}
-    workspaceId={workspace?.id} workspaceRoot={thread.cwd} activeContextCwd={view.workspaces.activeRoot}
-    streamStatus={view.conversationWorkspace.turnStreamStatus[thread.turns.at(-1)?.id ?? ""]} draft={draft}
-    viewSwitchPending={Boolean(view.tabs.pending && !view.tabs.pending.contentReady)} queuedCount={pending?.queued.length} pendingCount={(pending?.queued.length ?? 0) + (pending?.guides.length ?? 0)}
-    stopState={view.submission.stopRequests.find(row => row.threadId === thread.id)?.phase}
-    submitting={view.submission.operations.some(row => row.threadId === thread.id && (row.phase === "preparing" || row.phase === "sending"))}
-    queryHistory={queryTextsForThread(thread)} requestedHandoffIntent={requestedHandoffIntentForThread(thread)}
+    ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
+    streamStatus={view.conversationWorkspace.turnStreamStatus[thread.turns.at(-1)?.id ?? ""]}
     editingMessage={editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined}
     onActivate={() => { if (application.getSnapshot().conversationWorkspace.activePane !== pane) void application.invoke("conversation.activate-pane", { pane }).catch(showErrorToast); }}
     onClose={() => { void application.invoke("conversation.close-pane", { pane }).catch(showErrorToast); }} onBodyRef={onBodyRef} onScroll={onScroll ?? noop}
-    onSetPrompt={text => change({ text })}
-    onPasteAttachmentFiles={files => { void application.invoke("composer.attach", { files, ownerTabId: publicDraft.ownerTabId }).catch(showErrorToast); }}
-    onRemoveFile={id => change({ fileIds: publicDraft.fileIds.filter(value => value !== id) })}
-    onRemoveImage={id => change({ imageIds: publicDraft.imageIds.filter(value => value !== id) })}
-    onChangeSelection={selection => change({ selections: publicDraft.selections.map(value => value.id === selection.id ? selection : value) })}
-    onRemoveSelection={id => change({ selections: publicDraft.selections.filter(value => value.id !== id) })}
-    onSend={(text, contentParts) => {
-      if (!publicDraft.ownerTabId) return false;
-      void application.invoke("composer.submit", { ownerTabId: publicDraft.ownerTabId, text, contentParts, mode: "queue" }).catch(showErrorToast);
-      // The host clears the accepted source draft; an asynchronous rejection
-      // must not trigger the legacy composer's synchronous optimistic clear.
-      return false;
-    }}
-    onInterrupt={() => { void application.invoke("conversation.interrupt", { threadId: thread.id }).catch(showErrorToast); }}
     onForkMessage={(turnId, itemId) => fork(thread, turnId, itemId)} onOpenFile={path => openFile(thread, path)} onOpenURL={openURL} onOpenAgent={id => openAgent({ id })}
     onEditMessage={canEdit(thread) ? (turnId, item) => edit(thread, turnId, item) : undefined}
     onCancelEditMessage={cancelEdit} onSubmitEditMessage={(turnId, item, text, images, files, parts) => submitEdit(thread, turnId, item, text, images, files, parts)}
@@ -211,6 +176,7 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
 
 export function activate(api: ApplicationGenerationAPI): void {
   registerConversationSlots(api);
+  api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
   api.registerUIContribution({ id: "ui.conversation", target: "wuu.default-shell/application.conversation",
     render: ({ application, slots, context }: UISlotRenderProps) => <DefaultConversationSurface application={application} slots={slots} {...context as DefaultConversationLayout} /> });
 }

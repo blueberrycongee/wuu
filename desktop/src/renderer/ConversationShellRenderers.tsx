@@ -2,7 +2,6 @@ import {
   lazy,
   Suspense,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -24,7 +23,6 @@ import type {
   InputFile,
   InputImage,
   MessageContentPart,
-  ResponseSelection,
   Thread,
   ThreadItem,
   UserQuestionAnswer,
@@ -32,14 +30,9 @@ import type {
 } from "../shared/protocol";
 import {
   activeTurnForThread,
-  emptyComposerDraft,
   isThreadPresentationRunning,
-  queryTextsForThread,
-  resolveThreadRuntimeContext,
-  requestedHandoffIntentForThread,
   turnStreamStatusForThread,
   type AppState,
-  type ComposerDraftState,
   type ConversationPaneID,
 } from "./AppState";
 import {
@@ -55,7 +48,6 @@ import {
 } from "./ComposerView";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
-import type { ThreadPendingComposerMessages } from "./ComposerPendingMessages";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { Tooltip } from "./Tooltip";
 import { ViewSwitchLoading } from "./LoadingViews";
@@ -77,31 +69,12 @@ export type ConversationSplitPaneRendererProps = {
   state: AppState;
   thread: Thread;
   pane: ConversationPaneID;
-  splitComposerDrafts: Record<ConversationPaneID, ComposerDraftState>;
+  composerOwnerTabIds: Partial<Record<ConversationPaneID, string>>;
   splitPaneRefs: MutableRefObject<Record<ConversationPaneID, HTMLElement | null>>;
-  viewSwitchPending: boolean;
-  pendingComposerMessagesForThread?: (threadID: string) => ThreadPendingComposerMessages;
-  stopRequests?: Record<string, "pending" | "retry">;
-  submittingThreadIDs?: ReadonlySet<string>;
   historyMessageEdit?: HistoryMessageEditState;
   onActivatePane: (pane: ConversationPaneID) => void;
   onClosePane: (pane: ConversationPaneID) => void;
   onConversationScroll: (node: HTMLElement) => void;
-  onSetPrompt: (pane: ConversationPaneID, value: string) => void;
-  onPasteAttachmentFiles: (
-    pane: ConversationPaneID,
-    files: File[],
-  ) => void;
-  onRemoveFile: (pane: ConversationPaneID, id: string) => void;
-  onRemoveImage: (pane: ConversationPaneID, id: string) => void;
-  onChangeSelection?: (pane: ConversationPaneID, selection: ResponseSelection) => void;
-  onRemoveSelection?: (pane: ConversationPaneID, id: string) => void;
-  onSend: (
-    pane: ConversationPaneID,
-    promptOverride?: string,
-    contentParts?: MessageContentPart[],
-  ) => boolean | void;
-  onInterrupt: (pane: ConversationPaneID) => void;
   onForkMessage: (thread: Thread, turnID: string, itemID: string) => void;
   onOpenFile?: (thread: Thread, path: string) => void;
   onOpenURL?: (url: string, modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number }) => void;
@@ -135,24 +108,12 @@ export function ConversationSplitPaneRenderer({
   state,
   thread,
   pane,
-  splitComposerDrafts,
+  composerOwnerTabIds,
   splitPaneRefs,
-  viewSwitchPending,
-  pendingComposerMessagesForThread,
-  stopRequests,
-  submittingThreadIDs,
   historyMessageEdit,
   onActivatePane,
   onClosePane,
   onConversationScroll,
-  onSetPrompt,
-  onPasteAttachmentFiles,
-  onRemoveFile,
-  onRemoveImage,
-  onChangeSelection,
-  onRemoveSelection,
-  onSend,
-  onInterrupt,
   onForkMessage,
   onOpenFile,
   onOpenURL,
@@ -167,26 +128,14 @@ export function ConversationSplitPaneRenderer({
   onAnswerUserQuestion,
   onCancelUserQuestion,
 }: ConversationSplitPaneRendererProps): JSX.Element {
-  const queryHistory = useMemo(() => queryTextsForThread(thread), [thread]);
-  const pending = pendingComposerMessagesForThread?.(thread.id);
-  const completionWorkspace = resolveThreadRuntimeContext(thread, state.projects);
   return (
     <ConversationSplitPane
       pane={pane}
       thread={thread}
       active={state.activePane === pane}
       activeContextCwd={state.activeContext?.cwd}
-      workspaceId={completionWorkspace.kind === "project" ? completionWorkspace.project_id : undefined}
-      workspaceRoot={completionWorkspace.cwd}
       streamStatus={turnStreamStatusForThread(state, thread)}
-      draft={splitComposerDrafts[pane] ?? emptyComposerDraft()}
-      viewSwitchPending={viewSwitchPending}
-      queuedCount={pending?.queued.length}
-      pendingCount={pending?.guides.length}
-      submitting={submittingThreadIDs?.has(thread.id)}
-      stopState={stopRequests?.[thread.id]}
-      queryHistory={queryHistory}
-      requestedHandoffIntent={requestedHandoffIntentForThread(thread)}
+      ownerTabId={composerOwnerTabIds[pane]}
       editingMessage={
         historyMessageEdit?.threadID === thread.id
           ? historyMessageEdit
@@ -198,14 +147,6 @@ export function ConversationSplitPaneRenderer({
         splitPaneRefs.current[pane] = node;
       }}
       onScroll={onConversationScroll}
-      onSetPrompt={(value) => onSetPrompt(pane, value)}
-      onPasteAttachmentFiles={(files) => onPasteAttachmentFiles(pane, files)}
-      onRemoveFile={(id) => onRemoveFile(pane, id)}
-      onRemoveImage={(id) => onRemoveImage(pane, id)}
-      onChangeSelection={(selection) => onChangeSelection?.(pane, selection)}
-      onRemoveSelection={(id) => onRemoveSelection?.(pane, id)}
-      onSend={(promptOverride, contentParts) => onSend(pane, promptOverride, contentParts)}
-      onInterrupt={() => onInterrupt(pane)}
       onForkMessage={(turnID, itemID) => onForkMessage(thread, turnID, itemID)}
       onOpenFile={(path) => onOpenFile?.(thread, path)}
       onOpenURL={onOpenURL}

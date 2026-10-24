@@ -6,7 +6,6 @@ import type { Thread } from "../shared/protocol";
 import type { HeaderSnapshotV1 } from "../shared/workbench";
 import {
   createThreadSessionTab,
-  emptyComposerDraft,
   initialState,
   threadSessionTabID,
 } from "./AppState";
@@ -21,27 +20,15 @@ vi.mock("./ConversationSplitPane", () => ({
   ConversationSplitPane: ({
     onOpenFile,
     thread,
-    queuedCount,
-    pendingCount,
-    workspaceId,
-    workspaceRoot,
     activeContextCwd,
   }: {
     onOpenFile?: (path: string) => void;
     thread: Thread;
-    queuedCount?: number;
-    pendingCount?: number;
-    workspaceId?: string;
-    workspaceRoot?: string;
     activeContextCwd?: string;
   }) => (
     <button
       type="button"
       data-testid={`open-file-${thread.id}`}
-      data-queued-count={queuedCount}
-      data-pending-count={pendingCount}
-      data-workspace-id={workspaceId}
-      data-workspace-root={workspaceRoot}
       data-display-root={activeContextCwd}
       onClick={() => onOpenFile?.("src/App.tsx")}
     >
@@ -83,7 +70,7 @@ function thread(id: string, cwd: string): Thread {
 }
 
 describe("ConversationSplitPaneRenderer file routing", () => {
-  it.each([true, false])("routes the pane thread and preserves known versus unknown pending counts (known=%s)", (known) => {
+  it("routes file requests to the pane thread", () => {
     const secondaryThread = { ...thread("secondary", "/secondary"), workspace_id: "secondary-workspace" };
     const primaryThread = { ...thread("secondary", "/primary"), workspace_id: "primary-workspace" };
     const projects = [primaryThread, secondaryThread].map((item) => ({
@@ -102,26 +89,11 @@ describe("ConversationSplitPaneRenderer file routing", () => {
             activeContext: { kind: "project", project_id: "primary-workspace", cwd: "/primary" } }}
           thread={secondaryThread}
           pane="secondary"
-          splitComposerDrafts={{
-            primary: emptyComposerDraft(),
-            secondary: emptyComposerDraft(),
-          }}
+          composerOwnerTabIds={{ primary: "primary-owner", secondary: "secondary-owner" }}
           splitPaneRefs={{ current: { primary: null, secondary: null } }}
-          viewSwitchPending={false}
-          pendingComposerMessagesForThread={known ? (threadID) => {
-            expect(threadID).toBe("secondary");
-            const message = { id: "one", text: "Queued", files: [], images: [] };
-            return { queued: [message, { ...message, id: "two" }], guides: [{ ...message, id: "three" }] };
-          } : undefined}
           onActivatePane={() => {}}
           onClosePane={() => {}}
           onConversationScroll={() => {}}
-          onSetPrompt={() => {}}
-          onPasteAttachmentFiles={() => {}}
-          onRemoveFile={() => {}}
-          onRemoveImage={() => {}}
-          onSend={() => {}}
-          onInterrupt={() => {}}
           onForkMessage={() => {}}
           onOpenFile={onOpenFile}
           onOpenAgent={() => {}}
@@ -141,10 +113,6 @@ describe("ConversationSplitPaneRenderer file routing", () => {
 
     expect(onOpenFile).toHaveBeenCalledWith(secondaryThread, "src/App.tsx");
     const pane = container.querySelector('[data-testid="open-file-secondary"]')!;
-    expect(pane.getAttribute("data-queued-count")).toBe(known ? "2" : null);
-    expect(pane.getAttribute("data-pending-count")).toBe(known ? "1" : null);
-    expect(pane.getAttribute("data-workspace-id")).toBe("secondary-workspace");
-    expect(pane.getAttribute("data-workspace-root")).toBe("/secondary");
     expect(pane.getAttribute("data-display-root")).toBe("/primary");
   });
 });
@@ -164,7 +132,7 @@ describe("ConversationTitleContent presentation boundary", () => {
 
   it("stops presenting the conversation as busy when its terminal answer is ready", () => {
     const props = renderTitle();
-    const ready = { ...thread("answer-ready", "/repo"), status: "in_progress" as const, turns: [{ id: "turn", status: "in_progress" as const, items_view: "full" as const, answer_ready_at: "2026-08-31T12:00:00Z", items: [{ id: "answer", type: "agent_message" as const, status: "completed" as const, terminal: true, text: "done" }] }] };
+    const ready = { ...thread("answer-ready", "/repo"), status: "in_progress" as const, turns: [{ id: "turn", started_at: "2026-08-31T11:59:00Z", status: "in_progress" as const, items_view: "full" as const, answer_ready_at: "2026-08-31T12:00:00Z", items: [{ id: "answer", type: "agent_message" as const, status: "completed" as const, terminal: true, text: "done" }] }] };
     props.update({ ...props.application.getSnapshot(), conversationWorkspace: { ...props.application.getSnapshot().conversationWorkspace, primaryThreadId: ready.id, threads: [ready] }, navigationWorkspace: { ...props.application.getSnapshot().navigationWorkspace, threads: [{ ...ready, turn_count: 1 }] } });
     expect(props.header()?.busy).toBeUndefined();
   });
