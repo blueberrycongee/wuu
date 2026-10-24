@@ -7,6 +7,33 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("admits files into their source draft before returning and releases closed draft resources", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "", images: [], files: [] },
+      { id: "draft:b", kind: "draft", context, title: "B", createdAt: 2, prompt: "", images: [], files: [] },
+    ] });
+    const file = new File(["a"], "note.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([65]).buffer });
+    const adding = controller.invoke("composer.attach", { files: [file], ownerTabId: "draft:a" });
+    await controller.invoke("tab.select", { tabId: "draft:b" });
+    const { attachments } = await adding;
+    await controller.invoke("tab.select", { tabId: "draft:a" });
+    expect(controller.getSnapshot().drafts.primary.fileIds).toEqual([attachments[0].id]);
+    await controller.invoke("tab.close", { tabId: "draft:a" });
+    await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachments[0].id })).rejects.toThrow("Unknown composer attachment");
+  });
+
+  it("imports only ready attachment values and rejects conflicting resource identities", async () => {
+    const controller = new ApplicationController();
+    const attachment = { id: "ready", kind: "file" as const, name: "note.txt", mediaType: "text/plain", status: "ready" as const, data: "QQ==" };
+    await controller.invoke("composer.import-attachments", { attachments: [attachment] });
+    await expect(controller.invoke("composer.import-attachments", { attachments: [{ ...attachment, data: "Qg==" }] })).rejects.toThrow("conflict");
+    expect(await controller.invoke("composer.resolve-attachment", { attachmentId: "ready" })).toMatchObject({ data: "QQ==" });
+    await controller.invoke("composer.release-attachments", { attachmentIds: ["ready"] });
+    await expect(controller.invoke("composer.resolve-attachment", { attachmentId: "ready" })).rejects.toThrow("Unknown composer attachment");
+  });
+
   it.each(["send", "queue", "steer"] as const)("submits owned attachment bytes through %s and retains them on failure", async mode => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const send = vi.fn().mockRejectedValue(new Error("delivery failed"));

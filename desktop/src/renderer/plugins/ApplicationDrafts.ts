@@ -1,9 +1,9 @@
 import type { ApplicationAttachmentV1, ApplicationComposerDraftV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { ComposerDraftState } from "../AppState";
 import { composerFilePlaceholder, composerImagePlaceholder, isComposerImageFile,
-  type ComposerFile, type ComposerImage } from "../ComposerMessages";
+  revokeComposerImagePreview, type ComposerFile, type ComposerImage } from "../ComposerMessages";
 
-type Resource = { kind: "image" | "file"; value: ComposerImage | ComposerFile };
+type Resource = { referenced?: boolean; kind: "image" | "file"; value: ComposerImage | ComposerFile };
 
 /** Own asynchronous byte preparation independently of mounted composers. */
 export class ApplicationDraftResources {
@@ -25,9 +25,45 @@ export class ApplicationDraftResources {
     const previous = this.resources.get(value.id);
     // Draft snapshots may retain a pending placeholder after its bytes settle.
     if (previous?.value === value || value.preparation !== undefined && previous?.value.preparation === value.preparation) return;
-    this.resources.set(value.id, { kind, value });
+    this.resources.set(value.id, { kind, value, referenced: previous?.referenced });
     const pending = value.preparation?.promise ?? value.encodePromise;
     if (pending) void pending.then(() => this.changed(), () => this.changed());
+  }
+
+  import(attachments: readonly ApplicationAttachmentV1[]): void {
+    // Validate the complete batch before publishing any resource.
+    const batch = new Map<string, ApplicationAttachmentV1>();
+    for (const attachment of attachments) {
+      if (!attachment.id.trim()) throw new Error("Attachment identity cannot be empty");
+      if (attachment.status !== "ready" || attachment.data === undefined && !attachment.remoteRef) throw new Error("Only ready attachment content can be imported");
+      const existing = batch.get(attachment.id) ?? (this.resources.has(attachment.id) ? this.describe(attachment.id) : undefined);
+      if (existing) {
+        for (const key of ["kind", "name", "mediaType", "data", "remoteRef", "width", "height"] as const) {
+          if ((key === "data" ? existing.data ?? "" : existing[key]) !== (key === "data" ? attachment.data ?? "" : attachment[key])) throw new Error(`Composer attachment identity conflict: ${attachment.id}`);
+        }
+      }
+      batch.set(attachment.id, attachment);
+    }
+    for (const attachment of batch.values()) {
+      if (this.resources.has(attachment.id)) continue;
+      this.remember(attachment.kind, { id: attachment.id, media_type: attachment.mediaType, data: attachment.data ?? "", remote_ref: attachment.remoteRef,
+        ...(attachment.kind === "file" ? { filename: attachment.name } : { width: attachment.width, height: attachment.height }) });
+    }
+  }
+
+  reconcile(references: ReadonlySet<string>): void {
+    for (const [id, resource] of this.resources) {
+      if (references.has(id)) resource.referenced = true;
+      else if (resource.referenced) this.release([id]);
+    }
+  }
+
+  release(ids: readonly string[]): void {
+    for (const id of ids) {
+      const resource = this.resources.get(id);
+      if (resource?.kind === "image") revokeComposerImagePreview(resource.value as ComposerImage);
+      this.resources.delete(id);
+    }
   }
 
   private require(id: string): Resource {

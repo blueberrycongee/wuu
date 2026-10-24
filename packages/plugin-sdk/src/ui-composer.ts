@@ -44,8 +44,10 @@ export interface ApplicationDraftsSnapshotV1 {
 }
 
 export interface ApplicationComposerActionMapV1 {
+  "composer.import-attachments": { input: { readonly attachments: readonly ApplicationAttachmentV1[] }; result: void };
+  "composer.release-attachments": { input: { readonly attachmentIds: readonly string[] }; result: void };
   /** The host owns encoding, retries and previews from this point onward. */
-  "composer.attach": { input: { readonly files: readonly File[] }; result: { readonly attachments: readonly ApplicationAttachmentV1[] } };
+  "composer.attach": { input: { readonly files: readonly File[]; readonly ownerTabId?: string }; result: { readonly attachments: readonly ApplicationAttachmentV1[] } };
   "composer.resolve-attachment": { input: { readonly attachmentId: string }; result: ApplicationAttachmentV1 };
   "composer.retry-attachment": { input: { readonly attachmentId: string }; result: ApplicationAttachmentV1 };
   /** Reject a stale source instead of assigning its draft to a new destination. */

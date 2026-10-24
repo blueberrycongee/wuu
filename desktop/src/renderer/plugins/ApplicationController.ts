@@ -211,11 +211,14 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private rememberDraftResources(): void {
+    const references = new Set<string>();
     for (const tab of this.state.sessionTabs) {
       if (tab.kind === "skills") continue;
+      [...tab.images, ...tab.files].forEach(attachment => references.add(attachment.id));
       tab.images.forEach(image => this.draftResources.remember("image", image));
       tab.files.forEach(file => this.draftResources.remember("file", file));
     }
+    this.draftResources.reconcile(references);
   }
 
   private composerDraftForPane(pane: "primary" | "secondary") {
@@ -402,9 +405,31 @@ export class ApplicationController implements ApplicationServiceV1 {
         if (requestId === this.navigationRequest) { this.pendingNavigation = undefined; this.publish(); }
         return;
       }
+      case "composer.import-attachments": {
+        const { attachments } = input as ApplicationActionMapV1["composer.import-attachments"]["input"];
+        this.draftResources.import(attachments); return;
+      }
+      case "composer.release-attachments": {
+        const { attachmentIds } = input as ApplicationActionMapV1["composer.release-attachments"]["input"];
+        const referenced = new Set(this.state.sessionTabs.flatMap(tab => tab.kind === "skills" ? [] : [...tab.images, ...tab.files].map(item => item.id)));
+        if (attachmentIds.some(id => referenced.has(id))) throw new Error("Cannot release an attachment owned by a draft");
+        this.draftResources.release(attachmentIds); return;
+      }
       case "composer.attach": {
-        const { files } = input as ApplicationActionMapV1["composer.attach"]["input"];
-        return Object.freeze({ attachments: this.draftResources.attach(files) });
+        const { files, ownerTabId = this.state.activeSessionTabID } = input as ApplicationActionMapV1["composer.attach"]["input"];
+        const owner = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
+        if (!owner || owner.kind === "skills") throw new Error("Attachment draft owner is unavailable");
+        const attachments = this.draftResources.attach(files);
+        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => {
+          if (tab.id !== ownerTabId || tab.kind === "skills") return tab;
+          const draft = this.draftResources.read({ text: tab.prompt,
+            imageIds: [...tab.images.map(image => image.id), ...attachments.filter(item => item.kind === "image").map(item => item.id)],
+            fileIds: [...tab.files.map(file => file.id), ...attachments.filter(item => item.kind === "file").map(item => item.id)],
+            selections: tab.selections ?? [] });
+          return { ...tab, ...draft };
+        }) }));
+        this.draftRevision++;
+        return Object.freeze({ attachments });
       }
       case "composer.resolve-attachment":
       case "composer.retry-attachment": {
@@ -549,7 +574,15 @@ export class ApplicationController implements ApplicationServiceV1 {
         const result = await window.wuu.archiveThread(threadId, archived);
         signal?.throwIfAborted(); this.adoptThread(result.thread); return;
       }
-      case "composer.set-draft": this.setDraft((input as ApplicationActionMapV1["composer.set-draft"]["input"]).text); return;
+      case "composer.set-draft": {
+        const { text, ownerTabId = this.state.activeSessionTabID } = input as ApplicationActionMapV1["composer.set-draft"]["input"];
+        if (ownerTabId === this.state.activeSessionTabID) this.setDraft(text);
+        else {
+          if (!this.state.sessionTabs.some(tab => tab.id === ownerTabId && tab.kind !== "skills")) throw new Error("Draft owner is unavailable");
+          this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, prompt: text } : tab) }));
+        }
+        return;
+      }
       case "composer.submit": {
         if (this.pendingNavigation && !this.pendingNavigation.contentReady) throw new Error("Wait for navigation to finish before submitting");
         if (this.submitting) throw new Error("A composer submission is already pending");
