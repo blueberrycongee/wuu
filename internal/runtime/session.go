@@ -640,20 +640,8 @@ func NewSession(opts Options) (*Session, error) {
 		kit.SetNativeDeferredToolDiscovery(nativeDeferredDiscovery)
 		kit.SetGitAttributionEnabled(cfg.Agent.GitAttributionEnabledValue())
 		kit.SetActivityRegistry(activityRegistry)
-		kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, info tools.ToolInfo, call providers.ToolCall) error {
-			_, err := hookDispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{
-				SessionID: active.SessionID(), CWD: active.RootDir(), ToolName: call.Name,
-				ToolInput: json.RawMessage(call.Arguments),
-			})
-			return err
-		})
+		bindToolkitHooks(kit, hookDispatcher)
 		kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome))
-		kit.SetOnFileChanged(func(absPath string) {
-			_, _ = hookDispatcher.Dispatch(context.Background(), hooks.FileChanged, &hooks.Input{
-				CWD:      rootDir,
-				FilePath: absPath,
-			})
-		})
 		toolkit = kit
 		toolExecutor = newPluginAwareToolExecutor(kit, pluginHost, hookDispatcher, "", "", rootDir)
 		connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
@@ -1381,6 +1369,9 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		kit.SetBrowserTabs(browserTabs)
 		kit.SetImageInputSupported(s.ModelRoles.Main.Capabilities.ImageInput)
 		kit.SetAgentIdentity(id, agentthread.RootPath)
+		if generation != nil {
+			bindToolkitHooks(kit, generation.hooks)
+		}
 		fileScopeExtras := []string{artifactDir}
 		// Rebase the file-scope whitelist on the thread root (the clone
 		// inherited the parent session's roots): thread root + registered
@@ -1498,6 +1489,9 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					workerKit.SetToolSearchEnabled(workerToolSearchEnabled)
 					workerKit.SetNativeDeferredToolDiscovery(workerNativeDeferredDiscovery)
 					workerKit.SetAgentIdentity(meta.ID, meta.Path)
+					if generation != nil {
+						bindToolkitHooks(workerKit, generation.hooks)
+					}
 					applyWorkerToolFilter(workerKit, wt)
 					return workerKit, nil
 				},
@@ -2719,6 +2713,30 @@ func mcpOAuthConfig(in *config.MCPOAuthConfig) *mcp.OAuthConfig {
 		Scopes:       append([]string(nil), in.Scopes...),
 		RedirectURI:  in.RedirectURI,
 	}
+}
+
+func bindToolkitHooks(kit *tools.Toolkit, dispatcher *hooks.Dispatcher) {
+	if dispatcher == nil {
+		kit.SetPermissionRequestHook(nil)
+		kit.SetOnFileChanged(nil)
+		return
+	}
+	kit.SetPermissionRequestHook(func(ctx context.Context, active *tools.Toolkit, _ tools.ToolInfo, call providers.ToolCall) error {
+		actorID, _ := active.ExecutionActor()
+		_, err := dispatcher.Dispatch(ctx, hooks.PermissionRequest, &hooks.Input{
+			SessionID: active.SessionID(), CWD: active.RootDir(), AgentID: actorID,
+			ToolName: call.Name, ToolInput: json.RawMessage(call.Arguments),
+		})
+		return err
+	})
+	kit.SetOnFileChanged(func(ctx context.Context, absPath string) {
+		actorID, _ := kit.ExecutionActor()
+		// The file is already written. Ordinary hook errors remain advisory;
+		// required model receipt errors propagate through the enclosing owner.
+		_, _ = dispatcher.Dispatch(ctx, hooks.FileChanged, &hooks.Input{
+			SessionID: kit.SessionID(), CWD: kit.RootDir(), AgentID: actorID, FilePath: absPath,
+		})
+	})
 }
 
 func ConfigureToolkitPermissions(kit *tools.Toolkit, permissions config.ResolvedPermissions) {

@@ -646,7 +646,7 @@ func (t *Toolkit) SetAgentIdentity(id, path string) {
 
 // SetOnFileChanged sets the callback fired after write_file/edit_file
 // successfully modifies a file. Used to dispatch FileChanged hooks.
-func (t *Toolkit) SetOnFileChanged(fn func(absPath string)) {
+func (t *Toolkit) SetOnFileChanged(fn func(context.Context, string)) {
 	t.env.OnFileChanged = fn
 }
 

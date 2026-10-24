@@ -228,7 +228,7 @@ type Env struct {
 	// OnFileChanged is called after write_file/edit_file successfully
 	// modifies a file. Enables FileChanged hook dispatch without
 	// coupling the tools package to the hooks package.
-	OnFileChanged func(absPath string)
+	OnFileChanged func(context.Context, string)
 	// OnSessionWorkspaceChanged persists and broadcasts an explicit main-agent
 	// workspace move before subsequent tools start resolving paths there.
 	OnSessionWorkspaceChanged func(root string) error

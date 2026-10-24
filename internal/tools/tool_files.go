@@ -950,7 +950,7 @@ func (t *WriteFileTool) executeResolvedWrite(ctx context.Context, resolved, disp
 	}
 	t.env.RecordWriteState(resolved, []byte(content))
 	if t.env.OnFileChanged != nil {
-		t.env.OnFileChanged(resolved)
+		t.env.OnFileChanged(ctx, resolved)
 	}
 
 	result := map[string]any{
@@ -1370,7 +1370,7 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 	}
 	t.env.RecordWriteState(resolved, []byte(newContent))
 	if t.env.OnFileChanged != nil {
-		t.env.OnFileChanged(resolved)
+		t.env.OnFileChanged(ctx, resolved)
 	}
 
 	diff := computeDiff(text, newContent, 3)

@@ -65,7 +65,7 @@ func TestPresentArtifactSnapshotsSurviveEditsAndReplay(t *testing.T) {
 	kit.SetSessionID("thread")
 	kit.SetSessionDir(statepath.SessionArtifactDir(state, "thread"))
 	changed := false
-	kit.SetOnFileChanged(func(string) { changed = true })
+	kit.SetOnFileChanged(func(context.Context, string) { changed = true })
 	source := filepath.Join(root, "chart.svg")
 	firstSVG := `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><rect width="200" height="80" fill="red"/></svg>`
 	if err := os.WriteFile(source, []byte(firstSVG), 0o600); err != nil {

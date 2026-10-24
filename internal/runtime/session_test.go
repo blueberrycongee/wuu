@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -82,12 +83,16 @@ func TestSessionCleanupClosesMCPManager(t *testing.T) {
 }
 
 type sessionHookReceiptClient struct {
-	started chan providers.ChatRequest
-	release chan struct{}
-	done    chan struct{}
+	started  chan providers.ChatRequest
+	release  chan struct{}
+	done     chan struct{}
+	observed chan context.Context
 }
 
 func (c sessionHookReceiptClient) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	if c.observed != nil {
+		c.observed <- ctx
+	}
 	_, end, err := providers.BeginModelReceipt(ctx)
 	if err != nil {
 		return providers.ChatResponse{}, err
@@ -105,6 +110,135 @@ func (c sessionHookReceiptClient) Chat(ctx context.Context, request providers.Ch
 	}()
 	c.started <- request
 	return providers.ChatResponse{Content: `{"ok":true}`}, nil
+}
+
+// Successful file mutations keep their result while the enclosing owner is
+// responsible for prompt-hook receipts, including required late-write errors.
+func TestFileChangedPromptReceiptsUseCapturedTurn(t *testing.T) {
+	for _, toolName := range []string{"write_file", "edit_file"} {
+		for _, failReceipt := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail_receipt_%t", toolName, failReceipt), func(t *testing.T) {
+				root, home := t.TempDir(), t.TempDir()
+				t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+				provider := &sessionHookDocuments{modelTerminalDocuments: &modelTerminalDocuments{Service: persistence.NewService("test.file-hook-documents", filepath.Join(root, "documents"), "jsonl"), entered: make(chan context.Context, 1), release: make(chan struct{}), closed: make(chan struct{})}, logicalDone: make(chan struct{}), failReceipt: failReceipt}
+				close(provider.release)
+				modules := testStateModules()
+				modules[1] = provider.ID()
+				modules = append(modules, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, loopdriver.DefaultDriverID)
+				cfg := config.Config{
+					Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
+					DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "fixture", Model: "portable-coder"}},
+					Hooks: map[string][]config.HookEntry{string(hooks.FileChanged): {{Type: "prompt", Prompt: "$ARGUMENTS"}}},
+				}
+				rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg, NativeProviders: []NativeProviderFactory{{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _, _ = rt.Cleanup() })
+				client := sessionHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{}), observed: make(chan context.Context, 1)}
+				unblock := sync.OnceFunc(func() { close(client.release) })
+				defer unblock()
+				dispatcher := buildHookDispatcher(cfg, nil, client, "fixture", nil)
+				rt.HookDispatcher.Replace(dispatcher)
+				rt.pluginGeneration.hooks.Replace(dispatcher)
+				threadRoot := filepath.Join(root, "thread")
+				if err := os.MkdirAll(threadRoot, 0700); err != nil {
+					t.Fatal(err)
+				}
+				thread, err := rt.NewThreadRuntimeForRoot("file-hook-thread", threadRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer rt.ReleasePluginGeneration(thread.PluginGeneration)
+				defer thread.AgentControl.Close()
+				thread.Toolkit.SetBoundary(tools.UnconfinedBoundary())
+				args := `{"path":"value.txt","content":"after\n"}`
+				if toolName == "edit_file" {
+					if err := os.WriteFile(filepath.Join(threadRoot, "value.txt"), []byte("before\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					args = `{"path":"value.txt","old_text":"before","new_text":"after"}`
+				}
+				type contextKey struct{}
+				ctx, finish, err := agent.BeginModelReceipts(context.WithValue(context.Background(), contextKey{}, "captured-turn"), thread.StreamRunner.BeginModelReceipts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx = providers.WithInferenceJournal(ctx, shutdownCheckpointJournal{thread.StreamRunner.InferenceJournal})
+				text, toolErr := thread.Toolkit.Execute(ctx, providers.ToolCall{ID: "file-change", Name: toolName, Arguments: args})
+				if toolErr != nil {
+					t.Fatalf("completed mutation failed: %v", toolErr)
+				}
+				var result struct{ Action, Path string }
+				if err := json.Unmarshal([]byte(text), &result); err != nil || result.Action == "" || result.Path == "" {
+					t.Fatalf("successful mutation result = %q, %v", text, err)
+				}
+				data, err := os.ReadFile(filepath.Join(threadRoot, "value.txt"))
+				if err != nil || string(data) != "after\n" {
+					t.Fatalf("completed write = %q, %v", data, err)
+				}
+				var request providers.ChatRequest
+				select {
+				case request = <-client.started:
+				default:
+					t.Fatal("FileChanged did not reach its prompt model")
+				}
+				hookCtx := <-client.observed
+				if hookCtx.Value(contextKey{}) != "captured-turn" || providers.ModelReceiptScopeFromContext(hookCtx) != providers.ModelReceiptScopeFromContext(ctx) {
+					t.Error("FileChanged dropped the actual tool receipt context")
+				}
+				var input hooks.Input
+				if err := json.Unmarshal([]byte(request.Messages[len(request.Messages)-1].Content), &input); err != nil {
+					t.Fatal(err)
+				}
+				if input.SessionID != "file-hook-thread" || input.AgentID != "file-hook-thread" || input.CWD != thread.Toolkit.RootDir() {
+					t.Errorf("FileChanged used another toolkit identity: %+v", input)
+				}
+				admitted := request.Execution.Snapshot().Submissions
+				if len(admitted) != 1 {
+					t.Fatalf("physical admissions = %d", len(admitted))
+				}
+				completed := make(chan error, 1)
+				go func() { completed <- finish() }()
+				unblock()
+				select {
+				case finishErr := <-completed:
+					if failReceipt {
+						if !errors.Is(finishErr, agent.ErrModelReceiptLifecycle) || !strings.Contains(finishErr.Error(), "lifecycle receipt rejected") {
+							t.Errorf("required receipt failure was swallowed: %v", finishErr)
+						}
+					} else if finishErr != nil {
+						t.Errorf("receipt completion: %v", finishErr)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("receipt owner did not finish")
+				}
+				<-client.done
+				if !failReceipt {
+					_, snapshot, err := persistence.Inspect(context.Background(), filepath.Join(root, "documents"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					found := false
+					for _, document := range snapshot.Documents {
+						if document.Namespace != "wuu.inference_submissions.v1" {
+							continue
+						}
+						var receipt providers.InferenceSubmissionJournalRecord
+						if err := json.Unmarshal(document.Value, &receipt); err != nil {
+							t.Fatal(err)
+						}
+						if receipt.ID == admitted[0].ID && receipt.OperationID == request.Operation.ID && receipt.AttemptID == request.Attempt.ID {
+							found = receipt.ReportedUsage != nil && receipt.ReportedUsage.InputTokens == 31 && receipt.ReportedUsage.OutputTokens == 7
+						}
+					}
+					if !found {
+						t.Error("captured journal lost the original physical receipt or late usage")
+					}
+				}
+			})
+		}
+	}
 }
 
 type sessionHookDocuments struct {
@@ -1611,6 +1745,111 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 	}
 	if _, err := os.Stat(filepath.Join(statepath.SessionArtifactDir(rt.StateDir, threadID), "threads")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("AgentControl thread store exists after preflight failure: %v", err)
+	}
+}
+
+func TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+	logA, logB := filepath.Join(root, "hooks-a.json"), filepath.Join(root, "hooks-b.json")
+	entries := func(path string) map[string][]config.HookEntry {
+		command := "cat >> '" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+		return map[string][]config.HookEntry{
+			string(hooks.PermissionRequest): {{Command: command}},
+			// A FileChanged block is advisory after the write has succeeded.
+			string(hooks.FileChanged): {{Command: command + "; exit 2"}},
+		}
+	}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "fixture", Model: "portable-coder"}}, Hooks: entries(logA)}
+	rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	newThread := func(id string) *ThreadRuntime {
+		t.Helper()
+		thread, err := rt.NewThreadRuntime(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		thread.Toolkit.SetBoundary(tools.UnconfinedBoundary())
+		t.Cleanup(func() { thread.AgentControl.Close(); rt.ReleasePluginGeneration(thread.PluginGeneration) })
+		return thread
+	}
+	a := newThread("thread-a")
+	cfg.Hooks = entries(logB)
+	candidate, err := rt.PreflightExtensions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	worker := &sessionRecordingClient{}
+	call := providers.ToolCall{ID: "worker-write", Name: "write_file", Arguments: `{"path":"worker.txt","content":"worker"}`}
+	worker.streamBatches = [][]providers.StreamEvent{{{Type: providers.EventToolUseStart, ToolCall: &call}, {Type: providers.EventToolUseDelta, Content: call.Arguments}, {Type: providers.EventToolUseEnd, ToolCall: &call}, {Type: providers.EventDone}}}
+	rt.WorkerClient = worker
+	b := newThread("thread-b")
+	// Removing hooks from C must not leave A/B callbacks on new clones.
+	cfg.Hooks = nil
+	candidate, err = rt.PreflightExtensions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := newThread("thread-c")
+	for _, thread := range []*ThreadRuntime{a, b, c} {
+		text, err := thread.Toolkit.Execute(context.Background(), providers.ToolCall{ID: thread.Toolkit.SessionID(), Name: "write_file", Arguments: fmt.Sprintf(`{"path":%q,"content":"written"}`, thread.Toolkit.SessionID()+".txt")})
+		if err != nil || !strings.Contains(text, `"action":"create"`) {
+			t.Fatalf("completed file write changed by advisory hook: %s, %v", text, err)
+		}
+	}
+	spawn, err := b.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{Type: agentcontrol.DefaultSubagentType, TaskName: "write", Prompt: "write worker.txt", Synchronous: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "worker.txt"))
+	if err != nil || string(data) != "worker" {
+		t.Fatalf("worker write = %q, %v", data, err)
+	}
+	for _, tc := range []struct {
+		path   string
+		actors map[string]string
+	}{
+		{logA, map[string]string{"thread-a": "thread-a"}},
+		{logB, map[string]string{"thread-b": "thread-b", spawn.AgentID: "thread-b"}},
+	} {
+		file, err := os.Open(tc.path)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		decoder := json.NewDecoder(file)
+		seen := map[string]map[hooks.Event]int{}
+		for {
+			var input hooks.Input
+			if err := decoder.Decode(&input); errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			sessionID, expected := tc.actors[input.AgentID]
+			if !expected || input.SessionID != sessionID || input.CWD != b.Toolkit.RootDir() {
+				t.Errorf("callback used wrong captured generation or identity: %+v", input)
+			}
+			if seen[input.AgentID] == nil {
+				seen[input.AgentID] = map[hooks.Event]int{}
+			}
+			seen[input.AgentID][input.Event]++
+		}
+		_ = file.Close()
+		for actor := range tc.actors {
+			if seen[actor][hooks.PermissionRequest] != 1 || seen[actor][hooks.FileChanged] != 1 {
+				t.Errorf("captured hook calls for %q = %+v", actor, seen[actor])
+			}
+		}
 	}
 }
 

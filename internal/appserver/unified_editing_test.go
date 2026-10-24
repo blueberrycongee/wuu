@@ -41,7 +41,7 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 			rt.Toolkit = kit
 			require.NoError(t, os.WriteFile(filepath.Join(rt.RootDir, "value.txt"), []byte("before\nrepeat\nrepeat\n"), 0600))
 			var changed []string
-			kit.SetOnFileChanged(func(path string) { changed = append(changed, filepath.Base(path)) })
+			kit.SetOnFileChanged(func(_ context.Context, path string) { changed = append(changed, filepath.Base(path)) })
 
 			sess, err := rt.Sessions.CreateWithMetadata("historical-patch", rt.RootDir)
 			require.NoError(t, err)
