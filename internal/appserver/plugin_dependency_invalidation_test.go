@@ -19,7 +19,8 @@ import (
 // A failed rebuild must not republish the provider's or consumer's last-good UI
 // and skills, and must retain the original crash for recovery diagnostics.
 func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
+	model := &fakeClient{}
+	rt := newTestRuntime(t, model)
 	rt.WuuHome = t.TempDir()
 	provider := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "provider"}, SubjectID: "plugin:user:provider", Fingerprint: "provider-one", Source: "user"}
 	consumer := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "consumer", Requires: []string{"provider"}, Desktop: &pluginpkg.DesktopSpec{Entry: "desktop.js"}}, SubjectID: "plugin:user:consumer", Fingerprint: "consumer-one", Source: "user"}
@@ -38,16 +39,52 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 	rt.PluginHost.Add(client)
 	rt.PluginHost.SetPackageRequirements(map[string][]string{provider.ID: nil, consumer.ID: {provider.ID}})
 	out := &lockedBuffer{}
-	srv := &Server{rt: rt, out: out}
+	srv := &Server{rt: rt, out: out, threads: make(map[string]*threadState)}
 	_, before := srv.currentExtensionState()
 	if len(before) != 3 {
 		t.Fatalf("initial skills = %+v", before)
 	}
 	client.failed = true
+	sess, err := rt.Sessions.CreateWithMetadata("retirement-admission", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retirementCalls := 0
+	client.onClose = func() {
+		retirementCalls++
+		// Host has removed the failed client, but runtime has not restored its
+		// failed diagnostic yet. Health alone cannot identify this transition.
+		if rt.PluginGenerationNeedsRecovery() {
+			t.Error("fixture did not enter the failed-client retirement gap")
+		}
+		if err := srv.refreshPluginGenerationIfChanged(); !errors.Is(err, errPluginGenerationRefreshBusy) {
+			t.Errorf("retirement callback bypassed refresh admission: %v", err)
+		}
+		th.mu.Lock()
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+		if acquired {
+			th.releaseThreadExecutionLeaseLocked()
+		}
+		th.mu.Unlock()
+		if err != nil || acquired {
+			t.Errorf("retirement callback admitted execution: acquired=%t err=%v", acquired, err)
+		}
+	}
 	recoveryErr := errors.New("recovery build failed")
 	srv.refreshExtensionsForTest = func(config.Config) error { return recoveryErr }
 	if err := srv.refreshPluginGenerationIfChanged(); !errors.Is(err, recoveryErr) {
 		t.Fatalf("recovery result = %v", err)
+	}
+	if retirementCalls != 1 {
+		t.Fatalf("failed client closed %d times, want one", retirementCalls)
+	}
+	assertFakeClientRequestCount(t, model, 0)
+	if records, err := rt.Sessions.LoadHistoryRecords(sess.ID, true); err != nil || len(records) != 0 {
+		t.Fatalf("retirement admission changed user history: records=%+v err=%v", records, err)
 	}
 	catalog, _, err := srv.skillCatalog("")
 	if err != nil {
@@ -96,8 +133,9 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 }
 
 type dependencyInventoryClient struct {
-	id     string
-	failed bool
+	id      string
+	failed  bool
+	onClose func()
 }
 
 func (c *dependencyInventoryClient) ID() string { return c.id }
@@ -108,7 +146,12 @@ func (c *dependencyInventoryClient) Status() pluginhost.Status {
 	}
 	return pluginhost.Status{ID: c.id, State: state, StartedAt: time.Unix(1, 0)}
 }
-func (c *dependencyInventoryClient) Close(context.Context) error { return nil }
+func (c *dependencyInventoryClient) Close(context.Context) error {
+	if c.onClose != nil {
+		c.onClose()
+	}
+	return nil
+}
 
 func TestFailedDeclarativeConsumerCannotLoadDesktopModule(t *testing.T) {
 	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {

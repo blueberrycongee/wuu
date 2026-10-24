@@ -2464,7 +2464,7 @@ func (s *Session) RefreshExtensions(cfg config.Config) error {
 	if s == nil {
 		return errors.New("runtime is not initialized")
 	}
-	s.RevokeFailedPluginDependencies()
+	s.RevokeFailedPluginDependencies(nil)
 	candidate, err := s.PreflightExtensions(cfg)
 	if err != nil {
 		return err

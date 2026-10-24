@@ -129,7 +129,7 @@ func TestDependencyRevocationReachesPinnedSkillCatalogs(t *testing.T) {
 	for range 4 {
 		<-ready
 	}
-	changed := s.RevokeFailedPluginDependencies()
+	changed := s.RevokeFailedPluginDependencies(nil)
 	close(done)
 	readers.Wait()
 	if !changed || !clients["consumer"].closed {
@@ -188,7 +188,7 @@ func TestDependencyRevocationReachesPinnedSkillCatalogs(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unsupported negotiated protocol version 999") {
 		t.Fatalf("replacement did not fail its real initialize handshake: %v", err)
 	}
-	if s.RevokeFailedPluginDependencies() {
+	if s.RevokeFailedPluginDependencies(nil) {
 		t.Fatal("unchanged dependency failure was revoked twice")
 	}
 	if _, found := skills.Find(worker.Skills(), "revocable"); found {
@@ -263,7 +263,7 @@ func TestDependencyRevocationKeepsHealthyReplacementGeneration(t *testing.T) {
 	if s.PluginGenerationNeedsRecovery() {
 		t.Fatal("old generation failure incorrectly requires replacing the healthy current runtime")
 	}
-	if !s.RevokeFailedPluginDependencies() {
+	if !s.RevokeFailedPluginDependencies(nil) {
 		t.Fatal("pinned old generation failure was ignored")
 	}
 	if !oldConsumer.closed || newConsumer.closed || newProvider.closed {

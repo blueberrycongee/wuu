@@ -52,7 +52,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParall
 	if projectExecutionDisabled(th.Source) {
 		return false, errProjectAgentDisabled
 	}
-	if s != nil && s.pluginGenerationMutation.Load() {
+	if s != nil && (s.pluginGenerationMutation.Load() || s.pluginGenerationRefreshing.Load()) {
 		return false, nil
 	}
 	if th.admissionReserved || th.executionLease != nil || th.runtimeSelectionMutation {
@@ -72,12 +72,7 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParall
 		}
 		// This function owns th.mu. Never initialize or activate plugins here:
 		// their synchronous host callbacks can inspect or submit to this thread.
-		if !s.pluginGenerationRefreshMu.TryLock() {
-			_ = lease.Release()
-			return false, nil
-		}
 		needsRefresh := lease.Epoch() != s.pluginGenerationEpoch.Load() || s.rt.PluginGenerationNeedsRecovery()
-		s.pluginGenerationRefreshMu.Unlock()
 		if needsRefresh {
 			_ = lease.Release()
 			_ = s.startBackgroundWithState(th.state, func(binding *runtime.State) {
@@ -89,6 +84,14 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParall
 		}
 		th.pluginExecutionLease = lease
 		newPluginLease = true
+	}
+	// A transition may start while the shared lease or health was observed.
+	// This also fences admissions that already retain their generation lease.
+	if s != nil && (s.pluginGenerationMutation.Load() || s.pluginGenerationRefreshing.Load()) {
+		if newPluginLease {
+			th.releasePluginGenerationExecutionLeaseLocked()
+		}
+		return false, nil
 	}
 	current, err := s.rt.RetainState()
 	if err != nil {

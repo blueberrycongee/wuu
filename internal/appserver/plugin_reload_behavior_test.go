@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -741,9 +742,11 @@ func TestPluginGrantActivationFailurePublishesCommittedInventory(t *testing.T) {
 // Exercise a real plugin-to-host RPC while the app-server owns its refresh
 // boundary. The callback must be queued, not time out waiting for that boundary.
 func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
-	for _, admission := range []bool{false, true} {
-		t.Run(fmt.Sprintf("admission=%v", admission), func(t *testing.T) {
-			rt := newTestRuntime(t, &fakeClient{response: providers.ChatResponse{Content: "done"}})
+	for _, scenario := range []struct{ admission, recovery bool }{{false, false}, {true, false}, {false, true}, {true, true}} {
+		admission, recovery := scenario.admission, scenario.recovery
+		t.Run(fmt.Sprintf("admission=%v/recovery=%v", admission, recovery), func(t *testing.T) {
+			client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
+			rt := newTestRuntime(t, client)
 			// Start without a watcher; drive the exact refresh boundary deterministically.
 			rt.WuuHome = ""
 			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
@@ -769,18 +772,35 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 				t.Fatal(err)
 			}
 			rt.Plugins = []pluginpkg.Plugin{item}
+			publishedHealthy := false
 			srv.refreshExtensionsForTest = func(cfg config.Config) error {
 				candidate, err := rt.PreflightExtensionPolicy(cfg)
 				if err != nil {
 					return err
 				}
 				err = rt.ActivatePluginGeneration(candidate, nil)
+				if recovery && err == nil {
+					publishedHealthy = !rt.PluginGenerationNeedsRecovery()
+					if !publishedHealthy {
+						return fmt.Errorf("recovery did not publish a healthy host")
+					}
+					// Actual activation has finished and published, but the watcher
+					// still owns transition bookkeeping at the unchanged disk epoch.
+					if pending := srv.refreshPluginGenerationIfChanged(); !errors.Is(pending, errPluginGenerationRefreshBusy) {
+						return fmt.Errorf("published recovery lost its admission fence: %v", pending)
+					}
+				}
 				if runtime.PluginGenerationWasCommitted(err) {
 					return nil
 				}
 				return err
 			}
-			epoch := advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)
+			epoch := srv.pluginGenerationEpoch.Load()
+			if recovery {
+				rt.PluginHost.Add(&dependencyInventoryClient{id: "failed-before-recovery", failed: true})
+			} else {
+				epoch = advancePluginGenerationWatchTestEpoch(t, rt.WuuHome)
+			}
 			if admission {
 				th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), threadID)
 				if err != nil {
@@ -798,7 +818,16 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			} else if err := srv.refreshPluginGenerationIfChanged(); err != nil {
 				t.Fatal(err)
 			}
-			waitPluginGenerationWatchTest(t, func() bool { return srv.pluginGenerationEpoch.Load() == epoch })
+			waitPluginGenerationWatchTest(t, func() bool {
+				_, err := os.Stat(resultPath)
+				return err == nil && srv.pluginGenerationEpoch.Load() == epoch
+			})
+			// The mutex is a completion barrier here, never an admission retry.
+			srv.pluginGenerationRefreshMu.Lock()
+			srv.pluginGenerationRefreshMu.Unlock()
+			if recovery && !publishedHealthy {
+				t.Fatal("same-epoch recovery did not finish the real activation path")
+			}
 			raw, err = os.ReadFile(resultPath)
 			if err != nil {
 				t.Fatalf("activation callback did not complete: %v; statuses=%+v", err, rt.PluginHost.Statuses())
@@ -812,6 +841,7 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			}
 			requireActiveRuntime(t, rt.PluginHost, "reload-callback")
 			waitForTurnCompletedForThread(t, out, threadID)
+			assertFakeClientRequestCount(t, client, 1)
 		})
 	}
 }

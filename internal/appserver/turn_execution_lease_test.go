@@ -69,6 +69,59 @@ func TestThreadRuntimeGenerationInvalidatedByRuntimeRecovery(t *testing.T) {
 	}
 }
 
+func TestServerTurnStartDuringUnchangedGenerationObservation(t *testing.T) {
+	for _, externalOwner := range []bool{false, true} {
+		t.Run(fmt.Sprintf("external_owner_%t", externalOwner), func(t *testing.T) {
+			client := &fakeClient{response: providers.ChatResponse{Content: "admitted once"}}
+			rt := newTestRuntime(t, client)
+			rt.WuuHome = retryingTempDir(t)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			dispatchPayload(t, srv, "thread", MethodThreadStart, ThreadStartParams{})
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
+			if externalOwner {
+				lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, threadID)
+				if err != nil || !acquired {
+					t.Fatalf("acquire external thread lease: acquired=%t err=%v", acquired, err)
+				}
+				defer lease.Release()
+			}
+			// A watcher can hold this mutex while reading an unchanged epoch.
+			// Keep that observation in progress through the actual RPC admission.
+			srv.pluginGenerationRefreshMu.Lock()
+			func() {
+				defer srv.pluginGenerationRefreshMu.Unlock()
+				dispatchPayload(t, srv, "turn", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first user input"})
+			}()
+			response := responseByID(t, parseOutput(t, out.String()), "turn")
+			if externalOwner {
+				if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "another app-server") {
+					t.Fatalf("actual thread owner must reject admission: %+v", response)
+				}
+				assertFakeClientRequestCount(t, client, 0)
+				records, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+				if err != nil || len(records) != 0 {
+					t.Fatalf("rejected admission changed history: records=%+v err=%v", records, err)
+				}
+				probe, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, threadID)
+				if probe != nil {
+					_ = probe.Release()
+				}
+				if err != nil || acquired {
+					t.Fatalf("rejected admission displaced the actual owner: acquired=%t err=%v", acquired, err)
+				}
+				return
+			}
+			if response["error"] != nil {
+				t.Fatalf("unchanged generation observation rejected the first user turn: %+v", response)
+			}
+			waitForMethod(t, out, NotificationTurnCompleted)
+			assertFakeClientRequestCount(t, client, 1)
+		})
+	}
+}
+
 func TestServerThreadExecutionLeaseReleasesBeforeTerminalNotification(t *testing.T) {
 	holderClient := &fakeClient{response: providers.ChatResponse{Content: "holder finished"}}
 	holderRuntime := newTestRuntime(t, holderClient)

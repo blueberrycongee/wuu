@@ -200,7 +200,9 @@ func (s *Session) PluginGenerationNeedsRecovery() bool {
 // snapshots and its own admission mask; a crash in an older implementation does
 // not revoke the same package ID in a healthy replacement. Call outside thread
 // admission locks because shutdown may synchronously call host services.
-func (s *Session) RevokeFailedPluginDependencies() bool {
+// beforeRevoke runs once, before the first retirement effect, so callers can
+// fence admission before failed clients temporarily disappear from the host.
+func (s *Session) RevokeFailedPluginDependencies(beforeRevoke func()) bool {
 	if s == nil {
 		return false
 	}
@@ -247,6 +249,9 @@ func (s *Session) RevokeFailedPluginDependencies() bool {
 		}
 		generation.revokedMu.Unlock()
 		if invalidated {
+			if !changed && beforeRevoke != nil {
+				beforeRevoke()
+			}
 			generation.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
 			if generation == current && s.HookDispatcher != nil && s.HookDispatcher != generation.hooks {
 				s.HookDispatcher.Replace(generation.hooks)
