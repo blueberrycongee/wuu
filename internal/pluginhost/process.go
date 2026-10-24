@@ -562,7 +562,7 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 				observationCtx := receiptScope.ObservationContext()
 				response, completionErr := c.waitResponse(observationCtx, responseCh)
 				if completionErr != nil && observationCtx.Err() != nil {
-					completionErr = context.Cause(observationCtx)
+					completionErr = errors.Join(completionErr, context.Cause(observationCtx))
 				}
 				if completionErr == nil && response.Error == nil && result != nil && len(response.Result) == 0 {
 					completionErr = errors.New("response is missing result")
