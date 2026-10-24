@@ -13,6 +13,7 @@ import (
 
 const defaultShellModule = "wuu.default-shell"
 const defaultSettingsModule = "wuu.default-settings"
+const defaultNavigationModule = "wuu.default-navigation"
 
 // ApplicationShellBinding identifies the renderer contribution selected by the
 // same service registry as native and process implementations. Nil disables it.
@@ -39,7 +40,10 @@ func nativeRendererModules() []RendererModule {
 		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}},
 		{ID: defaultSettingsModule, SubjectID: defaultSettingsModule,
 			Fingerprint: "ui-settings-v1:" + version.Info().Version + ":" + version.Info().Commit,
-			Entry:       "wuu-builtin:default-settings", Services: []pluginhost.ServiceDescriptor{{Name: "ui.settings", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.settings.describe.input.v1", OutputSchema: "ui.settings.describe.output.v1"}}}}}}
+			Entry:       "wuu-builtin:default-settings", Services: []pluginhost.ServiceDescriptor{{Name: "ui.settings", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.settings.describe.input.v1", OutputSchema: "ui.settings.describe.output.v1"}}}}},
+		{ID: defaultNavigationModule, SubjectID: defaultNavigationModule,
+			Fingerprint: "ui-navigation-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-navigation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.navigation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.navigation.describe.input.v1", OutputSchema: "ui.navigation.describe.output.v1"}}}}}}
 }
 
 // rendererServiceClient adds a renderer transport to a package's graph node.

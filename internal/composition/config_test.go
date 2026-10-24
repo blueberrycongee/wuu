@@ -176,14 +176,14 @@ func TestDesktopSettingsCanBeRemovedWithoutShellRemoval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !desktop.Includes("wuu.default-settings") {
+	if !desktop.Includes("wuu.default-settings") || !desktop.Includes("wuu.default-navigation") {
 		t.Fatal("desktop has no settings provider")
 	}
 	headless, err := DefaultConfig("headless").Resolve()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if headless.Includes("wuu.default-settings") {
+	if headless.Includes("wuu.default-settings") || headless.Includes("wuu.default-navigation") {
 		t.Fatal("headless activated a settings renderer")
 	}
 	cfg := DefaultConfig("desktop")
