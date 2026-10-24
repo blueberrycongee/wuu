@@ -81,6 +81,8 @@
     "dist/ui-desktop.d.ts",
     "dist/ui-projects.js",
     "dist/ui-projects.d.ts",
+    "dist/ui-file-selection.js",
+    "dist/ui-file-selection.d.ts",
     "dist/ui.js",
     "dist/ui.d.ts",
     "bin/preview.mjs",
