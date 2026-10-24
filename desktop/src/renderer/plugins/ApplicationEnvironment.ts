@@ -1,4 +1,5 @@
 import type {
+  EnvironmentReviewTargetV1, EnvironmentChangesV1, EnvironmentFileDiffV1,
   ApplicationEnvironmentV1, EnvironmentCallOptionsV1, EnvironmentCommitResultV1,
   EnvironmentPullRequestResultV1, EnvironmentSnapshotV1,
 } from "../../../../packages/plugin-sdk/src/ui-environment";
@@ -45,6 +46,8 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
     this.assertActive();
     const source = this.host.getSource();
     const value = { contextKey: source.contextKey, root: source.root, status: source.status, capabilities: {
+      review: typeof window.wuu.listGitChanges === "function" && typeof window.wuu.readGitFileDiff === "function"
+        && hostSupports("listGitChanges") && hostSupports("readGitFileDiff"),
       checkout: hostSupports("checkoutGitBranch"), createBranch: hostSupports("createCheckoutGitBranch"),
       commit: hostSupports("commitGitChanges"), pullRequest: hostSupports("createPullRequest"),
     } };
@@ -155,6 +158,32 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
     this.finish(source, options);
     this.publish(result.status, true);
     return immutable(result);
+  }
+
+  async listChanges(target: EnvironmentReviewTargetV1, options?: EnvironmentCallOptionsV1): Promise<EnvironmentChangesV1> {
+    const source = this.begin(options);
+    this.finish(target, options);
+    try {
+      const result = await window.wuu.listGitChanges(source.root);
+      this.finish(source, options);
+      return immutable(result);
+    } catch (error) {
+      this.finish(source, options);
+      throw error;
+    }
+  }
+
+  async readDiff(target: EnvironmentReviewTargetV1 & { readonly path: string }, options?: EnvironmentCallOptionsV1): Promise<EnvironmentFileDiffV1> {
+    const source = this.begin(options);
+    this.finish(target, options);
+    try {
+      const result = await window.wuu.readGitFileDiff(target.path, source.root);
+      this.finish(source, options);
+      return immutable(result);
+    } catch (error) {
+      this.finish(source, options);
+      throw error;
+    }
   }
 
   scheduleStatusRefresh(delayMs: number): void {

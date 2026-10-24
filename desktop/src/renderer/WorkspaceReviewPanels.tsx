@@ -15,15 +15,16 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState
+  useState,
+  useSyncExternalStore
 } from "react";
-import type { GitChangeFile, GitChangesResult, GitFileDiffResult, GitStatusResult } from "../shared/protocol";
+import type { ApplicationEnvironmentV1, EnvironmentChangeFileV1 as GitChangeFile,
+  EnvironmentChangesV1 as GitChangesResult, EnvironmentFileDiffV1 as GitFileDiffResult } from "../../../packages/plugin-sdk/src/ui-environment";
 import { TruncatedText } from "./TruncatedText";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import { WorkspacePreviewBoundary } from "./WorkspacePreviewBoundary";
 import {
   desktopApiErrorMessage,
-  desktopApiSupportsGitReview,
   filterGitChangeFiles,
   gitChangeStatusLabel,
   gitChangeStatusText,
@@ -81,15 +82,15 @@ type ReviewDiff = { path: string; result?: GitFileDiffResult; error?: string };
  * while an agent keeps editing, without losing the open file.
  */
 export function WorkspaceReviewPanel({
-  gitStatus,
-  workspaceRoot,
+  environment,
   onOpenFile,
 }: {
-  gitStatus?: GitStatusResult;
-  workspaceRoot?: string;
+  environment: ApplicationEnvironmentV1;
   onOpenFile?: (path: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const snapshot = useSyncExternalStore(listener => environment.subscribe(listener), () => environment.getSnapshot(), () => environment.getSnapshot());
+  const { status: gitStatus, root: workspaceRoot, contextKey, capabilities } = snapshot;
   const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -129,18 +130,18 @@ export function WorkspaceReviewPanel({
     setDetailOpen(false);
     setDiff(undefined);
     setQuery("");
-  }, [workspaceRoot]);
+  }, [contextKey, workspaceRoot]);
 
   // Every new Git status, including the ones an agent's edits cause, reloads
   // the list in place: the open file and the scroll position stay.
   useEffect(() => {
-    if (!desktopApiSupportsGitReview()) {
+    if (!capabilities.review || !workspaceRoot) {
       setListError(t("workspaceReview.apiUnavailable"));
       return undefined;
     }
     let cancelled = false;
-    void window.wuu
-      .listGitChanges(workspaceRoot)
+    const controller = new AbortController();
+    void environment.listChanges({ contextKey, root: workspaceRoot }, { signal: controller.signal })
       .then((result) => {
         if (!cancelled) {
           setChanges(result);
@@ -154,8 +155,9 @@ export function WorkspaceReviewPanel({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [workspaceRoot, gitStatus]);
+  }, [environment, contextKey, workspaceRoot, capabilities.review, gitStatus]);
 
   // The open file's diff reloads with the list. Until the reload lands the
   // previous diff stays, so a refresh never flashes a loading state.
@@ -164,13 +166,13 @@ export function WorkspaceReviewPanel({
       return undefined;
     }
     setDiff((current) => (current?.path === shownPath ? current : { path: shownPath }));
-    if (!desktopApiSupportsGitReview()) {
+    if (!capabilities.review || !workspaceRoot) {
       setDiff({ path: shownPath, error: t("workspaceReview.apiUnavailable") });
       return undefined;
     }
     let cancelled = false;
-    void window.wuu
-      .readGitFileDiff(shownPath, workspaceRoot)
+    const controller = new AbortController();
+    void environment.readDiff({ contextKey, root: workspaceRoot, path: shownPath }, { signal: controller.signal })
       .then((result) => {
         if (!cancelled) {
           setDiff({ path: shownPath, result });
@@ -183,8 +185,9 @@ export function WorkspaceReviewPanel({
       });
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [shownPath, workspaceRoot, changes]);
+  }, [environment, contextKey, shownPath, workspaceRoot, capabilities.review, changes]);
 
   useLayoutEffect(() => {
     const selector = pendingFocusRef.current;

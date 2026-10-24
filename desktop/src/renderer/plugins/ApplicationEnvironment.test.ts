@@ -17,6 +17,8 @@ function fixture() {
   const publishStatus = vi.fn((value: GitStatusResult) => { source = { ...source, status: value }; });
   const reportError = vi.fn();
   const api = {
+    listGitChanges: vi.fn().mockResolvedValue({ is_repo: true, root: "/one", files: [] }),
+    readGitFileDiff: vi.fn().mockResolvedValue({ is_repo: true, path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "", truncated: false }),
     checkoutGitBranch: vi.fn().mockResolvedValue(status("feature")),
     createCheckoutGitBranch: vi.fn().mockResolvedValue({ status: status("feature") }),
     gitStatus: vi.fn().mockResolvedValue(status()),
@@ -95,4 +97,24 @@ describe("ApplicationEnvironment", () => {
     h.change({ root: undefined }); await expect(h.service.commit({ message: "no", includeUnstaged: true })).rejects.toThrow("unavailable");
     expect(h.api.commitGitChanges).not.toHaveBeenCalled();
   });
+  it("reads immutable review data only for the explicitly selected source", async () => {
+    const h = fixture(); const target = { contextKey: "project:one", root: "/one" };
+    const changes = await h.service.listChanges(target);
+    expect(h.api.listGitChanges).toHaveBeenCalledWith("/one");
+    expect(Object.isFrozen(changes.files)).toBe(true);
+    await h.service.readDiff({ ...target, path: "a.ts" });
+    expect(h.api.readGitFileDiff).toHaveBeenCalledWith("a.ts", "/one");
+    await expect(h.service.listChanges({ ...target, contextKey: "project:old" })).rejects.toThrow("workspace changed");
+    expect(h.api.listGitChanges).toHaveBeenCalledTimes(1);
+  });
+  it.each(["resolve", "reject"] as const)("fences late diff %s after source changes", async outcome => {
+    const h = fixture(); let resolve!: (value: unknown) => void; let reject!: (reason: unknown) => void;
+    h.api.readGitFileDiff.mockReturnValue(new Promise((yes, no) => { resolve = yes; reject = no; }));
+    const result = h.service.readDiff({ contextKey: "project:one", root: "/one", path: "a.ts" });
+    h.change({ contextKey: "project:two" });
+    if (outcome === "resolve") resolve({ is_repo: false }); else reject(new Error("old secret error"));
+    await expect(result).rejects.toThrow("workspace changed");
+    expect(h.reportError).not.toHaveBeenCalled();
+  });
+
 });

@@ -35,14 +35,48 @@ export interface EnvironmentSnapshotV1 {
   readonly contextKey: string;
   readonly root?: string;
   readonly status?: EnvironmentGitStatusV1;
-  readonly capabilities: { readonly checkout: boolean; readonly createBranch: boolean; readonly commit: boolean; readonly pullRequest: boolean };
+  readonly capabilities: { readonly review: boolean; readonly checkout: boolean; readonly createBranch: boolean; readonly commit: boolean; readonly pullRequest: boolean };
 }
 export interface EnvironmentCallOptionsV1 { readonly signal?: AbortSignal; }
 /** Calls retain their selected application generation and captured worktree.
  * Aborting an admitted Git mutation does not roll it back; callers must not replay it.
  * A changed workspace rejects a foreground result rather than updating a new workspace.
  */
+export interface EnvironmentReviewTargetV1 { readonly root: string; readonly contextKey: string; }
+export type EnvironmentChangeStatusV1 = "modified" | "added" | "deleted" | "renamed" | "copied" | "untracked" | "ignored" | "unknown";
+
+export type EnvironmentChangeFileV1 = {
+  path: string;
+  old_path?: string;
+  status: EnvironmentChangeStatusV1;
+  additions: number;
+  deletions: number;
+  binary?: boolean;
+};
+
+export type EnvironmentChangesV1 = {
+  is_repo: boolean;
+  root?: string;
+  files: EnvironmentChangeFileV1[];
+};
+
+export type EnvironmentFileDiffV1 = {
+  is_repo: boolean;
+  path: string;
+  old_path?: string;
+  status: EnvironmentChangeStatusV1;
+  additions: number;
+  deletions: number;
+  binary?: boolean;
+  patch: string;
+  original_text?: string;
+  modified_text?: string;
+  truncated: boolean;
+};
+
 export interface ApplicationEnvironmentV1 {
+  listChanges(target: EnvironmentReviewTargetV1, options?: EnvironmentCallOptionsV1): Promise<EnvironmentChangesV1>;
+  readDiff(target: EnvironmentReviewTargetV1 & { readonly path: string }, options?: EnvironmentCallOptionsV1): Promise<EnvironmentFileDiffV1>;
   getSnapshot(): EnvironmentSnapshotV1;
   subscribe(listener: () => void): () => void;
   checkoutBranch(branch: string, options?: EnvironmentCallOptionsV1): Promise<void>;
