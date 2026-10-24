@@ -16,7 +16,10 @@ import { ConversationTitleActions } from "../../src/renderer/ConversationShellRe
 import { Composer } from "../../src/renderer/ComposerView";
 import { ConversationStatusCluster } from "../../src/renderer/ConversationStatusCluster";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
-import { ProjectActionsProvider, type ProjectActions } from "../../src/renderer/ProjectActions";
+import { ProjectActionsProvider } from "../../src/renderer/ProjectActions";
+import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
+import type { ApplicationProjectsV1 } from "../../../packages/plugin-sdk/src/ui-projects";
+import type { ApplicationActionMapV1 } from "../../../packages/plugin-sdk/src/ui";
 import { ProjectStatusCapsule } from "../../src/renderer/ProjectViews";
 import { projectSessionsOf } from "../../src/renderer/ProjectSessions";
 import { TurnView } from "../../src/renderer/TurnView";
@@ -191,15 +194,35 @@ function Fixture() {
     setTabs(currentTabs => currentTabs.some(item => item.id === tab.id) ? currentTabs : [...currentTabs, tab]);
     setActiveTab(tab.id);
   };
-  const actions = useMemo<ProjectActions>(() => ({
-    threads, openThread: setActive,
-    openProjectPanel: (project) => openTab(workspaceProjectViewTab(project.id, project.title ?? "")),
-    release: noop,
-  }), []);
+  const application = useMemo(() => {
+    const base = createPreviewApplication();
+    const snapshot = { ...base.getSnapshot(), navigationWorkspace: { ...base.getSnapshot().navigationWorkspace,
+      threads: summarizeThreadsForSidebar(threads).map(thread => ({ ...thread,
+        turns: thread.turns.map(turn => ({ ...turn, started_at: turn.started_at ?? date, completed_at: turn.completed_at ?? undefined })),
+      })), projectAgentEnabled: true } };
+    const views = new Map<string, ReturnType<ApplicationProjectsV1["getSnapshot"]>>();
+    const projects: ApplicationProjectsV1 = {
+      getSnapshot: (projectId) => {
+        if (!views.has(projectId)) views.set(projectId, { projectId, enabled: true, loading: false, error: "" });
+        return views.get(projectId)!;
+      },
+      subscribe: () => () => {}, refresh: async () => {}, control: async () => {}, releaseSession: async () => {},
+    };
+    return { ...base, projects, getSnapshot: () => snapshot,
+      invoke: async <Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]["input"]) => {
+        if (action === "thread.activate") setActive((input as ApplicationActionMapV1["thread.activate"]["input"]).threadId);
+        else if (action === "preview.open-project") {
+          const target = input as ApplicationActionMapV1["preview.open-project"]["input"];
+          openTab(workspaceProjectViewTab(target.projectId, target.title));
+        } else if (action !== "navigation.show-native") return base.invoke(action, input);
+        return undefined as ApplicationActionMapV1[Action]["result"];
+      },
+    };
+  }, []);
   const current = threads.find(item => item.id === active);
   const draft = view === "draft" || empty;
   const projectSessions = current?.source === "project" ? projectSessionsOf(current.id, threads) : [];
-  return <WuuUIRoot><ProjectActionsProvider value={actions}>
+  return <WuuUIRoot><ProjectActionsProvider application={application}>
     <div className={`app-shell sample-shell${tabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh", "--workspace-right-panel-width": params.has("panel-width") ? `${Number(params.get("panel-width"))}px` : undefined } as CSSProperties}>
       <AppSidebar
         initialized={Boolean(state.initialized)}

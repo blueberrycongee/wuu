@@ -64,7 +64,7 @@ export function projectDirectory(
  * A project's live managed sessions, oldest first, so a session that starts
  * or stops running never moves.
  */
-export function projectSessionsOf<T extends ThreadSummary | Thread>(projectID: string, threads: readonly T[]): T[] {
+export function projectSessionsOf<T extends Pick<Thread, "id" | "source" | "project_id" | "archived" | "created_at">>(projectID: string, threads: readonly T[]): T[] {
   return threads
     .filter((thread) => thread.source === PROJECT_SESSION_SOURCE && thread.project_id === projectID && !thread.archived)
     .sort((a, b) => (Date.parse(a.created_at) || 0) - (Date.parse(b.created_at) || 0) || a.id.localeCompare(b.id));
