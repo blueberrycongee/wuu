@@ -61,6 +61,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    desktop: { hostKind: "web", popOut: { kind: null, threadID: null, context: null }, capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false }, onVisibilityChange: () => () => {} },
     webWorkspace,
     onboarding: { getSnapshot: () => ({ revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } }), subscribe: () => () => {}, checkpoint: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
     browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openExternal: unavailable, consumeNavigation: unavailable },

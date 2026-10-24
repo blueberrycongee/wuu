@@ -1,3 +1,5 @@
+import { ApplicationDesktop } from "./ApplicationDesktop";
+import type { HostApplicationService } from "./HostApplicationService";
 import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
 import { ApplicationBrowser } from "./ApplicationBrowser";
 import { ApplicationController } from "./ApplicationController";
@@ -17,9 +19,10 @@ import { ApplicationShellOutlet } from "./ApplicationShell";
 
 function fixture(options: Partial<PluginHostOptions> = {}) {
   const listeners = new Set<() => void>();
-  const service: ApplicationServiceV1 = {
+  const service: HostApplicationService = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    createDesktopScope: signal => new ApplicationDesktop().createScope(signal),
     webWorkspace: new ApplicationWebWorkspace(undefined, "linux", async () => {}),
     get onboarding() { return new ApplicationController().onboarding; },
     browser: new ApplicationBrowser({ api: {}, onActivityChanged: () => {} }),
@@ -43,6 +46,22 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("gives each replacement UI its own native window scope", async () => {
+    const { host, service } = fixture();
+    const signals: AbortSignal[] = [];
+    const factory = vi.fn((signal: AbortSignal) => { signals.push(signal); return { close: async () => signal.throwIfAborted() }; });
+    Object.defineProperty(service, "createDesktopScope", { value: factory });
+    let first!: ApplicationServiceV1;
+    let second!: ApplicationServiceV1;
+    await host.activateGeneration({ pluginId: "desktop", generation: "one", register: api => { first = api.application; } });
+    const old = first.desktop; expect(first.desktop).toBe(old);
+    await host.activateGeneration({ pluginId: "desktop", generation: "two", register: api => { second = api.application; } });
+    const next = second.desktop;
+    expect(next).not.toBe(old); expect(factory).toHaveBeenCalledTimes(2);
+    expect(signals[0].aborted).toBe(true); expect(signals[1].aborted).toBe(false);
+    await expect(old.close!()).rejects.toThrow(); await next.close!();
+  });
+
   it("owns late web pages until generation cleanup completes", async () => {
     const { host, service } = fixture();
     let finish!: () => void;

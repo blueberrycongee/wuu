@@ -18,7 +18,7 @@ async function settleSubmission(controller: ApplicationController, result: Await
 describe("shared application state", () => {
   it("completes onboarding through canonical workspace navigation without resuming an old thread", async () => {
     const context = { kind: "project" as const, project_id: "imported", cwd: "/imported" };
-    const workspace = { projects: [{ id: "imported", path: "/imported", name: "Imported" }], active_context: context };
+    const workspace = { projects: [{ id: "imported", path: "/imported", name: "Imported", created_at: "", updated_at: "" }], active_context: context };
     window.wuu = { importWorkspaces: vi.fn().mockResolvedValue(workspace), selectProject: vi.fn().mockResolvedValue(workspace),
       completeOnboarding: vi.fn().mockResolvedValue(undefined) } as unknown as WuuDesktopApi;
     const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: context, projects: workspace.projects });

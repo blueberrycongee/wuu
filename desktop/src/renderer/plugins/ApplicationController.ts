@@ -1,3 +1,5 @@
+import { ApplicationDesktop } from "./ApplicationDesktop";
+import type { HostApplicationService } from "./HostApplicationService";
 import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
 import type { WebWorkspaceApi } from "../../shared/webWorkspace";
 import { ApplicationOnboarding } from "./ApplicationOnboarding";
@@ -61,7 +63,7 @@ export interface ApplicationShellSelection {
 export type ShellInitializeResult = InitializeResult & { application_shell?: ApplicationShellSelection | null; application_surfaces?: Readonly<Record<string, ApplicationShellSelection>> };
 
 /** Shared domain state survives shell replacement; UI providers own only presentation. */
-export class ApplicationController implements ApplicationServiceV1 {
+export class ApplicationController implements HostApplicationService {
   readonly contractVersion = 1 as const;
   readonly catalog = new ApplicationCatalog({
     getSource: () => ({ contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
@@ -74,11 +76,15 @@ export class ApplicationController implements ApplicationServiceV1 {
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
   }
+  private desktopOwner?: ApplicationDesktop;
+  createDesktopScope(signal: AbortSignal) {
+    return (this.desktopOwner ??= new ApplicationDesktop()).createScope(signal);
+  }
   private webWorkspaceOwner?: ApplicationWebWorkspace;
   get webWorkspace(): ApplicationWebWorkspace {
     return this.webWorkspaceOwner ??= new ApplicationWebWorkspace(
       (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace,
-      window.wuu.platform, url => window.wuu.openExternal(url));
+      window.wuu.platform ?? "", url => window.wuu.openExternal(url));
   }
   private onboardingOwner?: ApplicationOnboarding;
   get onboarding(): ApplicationOnboarding {
@@ -430,6 +436,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.composerRuntimeOwner = undefined;
       this.activityRequest++; this.activitySourceKey = undefined;
       this.browserOwner?.dispose(); this.browserOwner = undefined;
+      this.desktopOwner?.dispose(); this.desktopOwner = undefined;
       void this.webWorkspaceOwner?.dispose().catch(error => console.error("Web workspace cleanup failed", error));
       this.webWorkspaceOwner = undefined;
       this.onboardingOwner?.dispose(); this.onboardingOwner = undefined;

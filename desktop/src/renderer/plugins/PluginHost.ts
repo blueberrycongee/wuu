@@ -1,3 +1,4 @@
+import type { HostApplicationService } from "./HostApplicationService";
 import { scopeApplicationWebWorkspace } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
 import { scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
@@ -418,7 +419,7 @@ export interface RegisteredUIContribution extends UIContributionDefinition {
 
 export interface PluginHostOptions {
   reportActivation?: (report: PluginDesktopActivationParams) => Promise<void>;
-  application?: ApplicationServiceV1;
+  application?: HostApplicationService;
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
   /** Internal startup budget override for deterministic host and renderer checks. */
@@ -628,7 +629,7 @@ export class PluginGenerationSupersededError extends Error {
 export class PluginHost {
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
-  private readonly application?: ApplicationServiceV1;
+  private readonly application?: HostApplicationService;
   private applicationShells: readonly RegisteredApplicationShell[] = Object.freeze([]);
   private uiSlotSnapshot: readonly RegisteredUISlot[] = Object.freeze([]);
   private uiContributionSnapshot: readonly RegisteredUIContribution[] = Object.freeze([]);
@@ -847,13 +848,15 @@ export class PluginHost {
   }
 
   private createApplicationService(state: GenerationState): ApplicationServiceV1 {
-    const service = (): ApplicationServiceV1 => {
+    let desktop: ApplicationServiceV1["desktop"] | undefined;
+    const service = (): HostApplicationService => {
       this.assertActive(state);
       if (!this.application) throw new Error("Application service is unavailable");
       return this.application;
     };
     return Object.freeze({
       contractVersion: 1 as const,
+      get desktop() { return desktop ??= service().createDesktopScope(state.lifetime.signal); },
       webWorkspace: scopeApplicationWebWorkspace(() => service().webWorkspace, state.lifetime.signal, () => this.assertActive(state)),
       onboarding: scopeApplicationOnboarding(() => service().onboarding, state.lifetime.signal, () => this.assertActive(state)),
       browser: scopeApplicationBrowser(() => service().browser, state.lifetime.signal, () => this.assertActive(state)),
