@@ -13,6 +13,7 @@ test('independent registry owns discovery, resolution, execution and cleanup', {
   assert.equal(initialized.provided_services[0].name, 'agent.tools');
   assert.throws(() => invoke('list', {}), /not active/);
   plugin.activate();
+  assert.deepEqual(invoke('prepare', {history: [{Role: 'user', Content: 'probe'}]}), {messages: []});
   invoke('freeze', {});
   const listed = invoke('list', {});
   invoke('unfreeze', {});

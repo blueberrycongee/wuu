@@ -2,7 +2,7 @@ import { RuntimeHostServiceError, type RuntimePlugin, type ServiceDescriptor } f
 
 const descriptor: ServiceDescriptor = {
   name: 'agent.tools', version: '1.0.0',
-  methods: ['list', 'resolve', 'execute', 'freeze', 'unfreeze'].map(name => ({
+  methods: ['list', 'resolve', 'execute', 'freeze', 'unfreeze', 'prepare'].map(name => ({
     name, input_schema: `agent.tools.${name}.input.v1`, output_schema: `agent.tools.${name}.output.v1`,
   })),
 };
@@ -18,6 +18,7 @@ export function createToolsProvider(owner = 'independent-tools'): RuntimePlugin 
       if (service !== descriptor.name) throw new Error('unknown service');
       // The catalog is immutable for this provider generation, so freezing cannot change it.
       if (method === 'freeze' || method === 'unfreeze') return {};
+      if (method === 'prepare') return {messages: []};
       if (method === 'list') return {
         tools: [{name: 'author_echo', description: 'Echo text with the selected provider identity.', input_schema: {
           type: 'object', properties: {text: {type: 'string'}}, required: ['text'], additionalProperties: false,
