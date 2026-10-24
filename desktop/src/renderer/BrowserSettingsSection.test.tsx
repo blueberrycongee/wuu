@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -73,9 +75,9 @@ async function render(): Promise<void> {
   act(() => {
     root = createRoot(container);
     root.render(
-      <I18nProvider>
+      <SettingsControlsProvider controls={createApplicationSettingsControls()}>{<I18nProvider>
         <BrowserSettingsSection />
-      </I18nProvider>,
+      </I18nProvider>}</SettingsControlsProvider>,
     );
   });
   await act(async () => {

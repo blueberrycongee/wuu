@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { ArrowUp, ArrowDown, ChevronRight, ExternalLink, RefreshCw } from "./WuuIcons";
 import { useCallback, useId, useMemo, useState } from "react";
 import type {
@@ -140,6 +141,7 @@ export function EngineSettingsSection({
   onSelectEngine: (id: string) => void;
   onCloseEngine: () => void;
 }): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
   const usageID = useId();
   const display = useConnectionDisplayPreferences();
@@ -224,7 +226,7 @@ export function EngineSettingsSection({
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };
   const refreshAccount = async () => {
-    const loaded = await window.wuu.listEngines({ include_quota: true });
+    const loaded = await controls.listEngines({ include_quota: true });
     const observed = loaded.engines.find(engine => engine.id === selected?.id);
     if (observed) setAccountSnapshots(current => ({ ...current, [accountKey]: observed }));
     setAccountRevision(value => value + 1);
@@ -239,7 +241,7 @@ export function EngineSettingsSection({
     actions={<>
       {selected.binary_ok && (selected.update_url || selected.install_url) ? <button className="settings-button" type="button" data-testid="engine-update-guide"
         title={t("settings.engineUpdateGuideHint")} disabled={busy}
-        onClick={() => void window.wuu.openExternal((selected.update_url || selected.install_url)!).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
+        onClick={() => void controls.openExternal((selected.update_url || selected.install_url)!).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
         {t("settings.engineUpdateGuide")}
       </button> : null}
       <EngineAuthentication key={`auth-${accountKey}`} entry engineID={selected.id} protocol={selected.protocol}
@@ -271,7 +273,7 @@ export function EngineSettingsSection({
       {!selected.binary_ok ? <SettingsRow title={t("settings.engineInstall")}
         description={selected.error || t("settings.engineNotInstalledHint")}>
         {selected.install_url ? <button className="settings-button" type="button"
-          onClick={() => void window.wuu.openExternal(selected.install_url!).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
+          onClick={() => void controls.openExternal(selected.install_url!).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))}>
           {t("settings.engineInstall")}<ExternalLink className="icon" aria-hidden="true" />
         </button> : null}
       </SettingsRow> : null}

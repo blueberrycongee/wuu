@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
@@ -12,11 +14,11 @@ it("allows offline configured Grok model changes without promoting the connectio
   window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }) } as unknown as WuuDesktopApi;
   const onSave = vi.fn().mockResolvedValue(undefined);
   try {
-    await act(async () => root.render(<ModelServicesPage
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ModelServicesPage
       initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "local", model: "local-model", providers: [
         { name: "grok", type: "grok-build", model: "grok-4.5", api_key_configured: false, models: [{ id: "grok-4.5" }, { id: "grok-4.6" }] },
       ] }} running={false} runningProviderNames={new Set()} onSave={onSave}
-      onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />));
+      onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
     const model = container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model"][data-model="grok-4.6"]')!;
     expect(model).not.toBeNull();
@@ -44,7 +46,7 @@ it.each(["wuu-auth-store", "codex-cli", "codex-cli-readonly", "explicit", undefi
   const changed = vi.fn(); const save = vi.fn(); const login = vi.fn();
   window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }), useCodexCredentials: reuse, loadCodexModels: models, startChatGPTLogin: login } as unknown as WuuDesktopApi;
   try {
-    await act(async () => root.render(<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "saved-codex", model: "chosen-model", providers: [provider] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} onProvidersChanged={changed} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "saved-codex", model: "chosen-model", providers: [provider] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} onProvidersChanged={changed} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
     const action = container.querySelector<HTMLButtonElement>('[data-testid="settings-auth-method-local"]')!;
     expect(action.getAttribute("aria-pressed")).toBe("false");
@@ -72,7 +74,7 @@ it("keeps alias and display ordering separate from configuration identity and se
   const save = vi.fn();
   window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }) } as unknown as WuuDesktopApi;
   try {
-    await act(async () => root.render(<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "api-stable-id", model: "model-a", providers: [{ name: "api-stable-id", type: "openai", model: "model-a", api_key_configured: true, models: [{ id: "model-a", display_name: "A" }, { id: "model-b", display_name: "B" }] }] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "api-stable-id", model: "model-a", providers: [{ name: "api-stable-id", type: "openai", model: "model-a", api_key_configured: true, models: [{ id: "model-a", display_name: "A" }, { id: "model-b", display_name: "B" }] }] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('.connection-title-edit button')!.click());
     const input = container.querySelector<HTMLInputElement>('.connection-title-form input')!;

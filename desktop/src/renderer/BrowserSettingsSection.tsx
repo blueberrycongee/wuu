@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import type {
   BrowserCookieImportResult,
@@ -9,22 +10,11 @@ import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSe
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
 
-function available(): boolean {
-  const api = window.wuu;
-  return Boolean(
-    api?.listBrowserProfiles &&
-      api.importBrowserCookies &&
-      api.listBrowserExtensions &&
-      api.addBrowserExtension &&
-      api.setBrowserExtensionEnabled &&
-      api.removeBrowserExtension,
-  );
-}
-
 export function BrowserSettingsSection(): JSX.Element | null {
+  const controls = useSettingsControls();
   const { t } = useI18n();
-  const supported = available();
-  const platform = window.wuu?.platform;
+  const supported = controls.capabilities.browser;
+  const platform = controls.capabilities.platform;
   const [profiles, setProfiles] = useState<BrowserProfile[]>([]);
   const [extensions, setExtensions] = useState<BrowserExtensionRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,8 +37,8 @@ export function BrowserSettingsSection(): JSX.Element | null {
     const current = ++revision.current;
     void (async () => {
       const [profileResult, extensionResult] = await Promise.allSettled([
-        window.wuu.listBrowserProfiles!(),
-        window.wuu.listBrowserExtensions!(),
+        controls.listBrowserProfiles!(),
+        controls.listBrowserExtensions!(),
       ]);
       if (!mounted.current || current !== revision.current) return;
       if (profileResult.status === "fulfilled") {
@@ -78,7 +68,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
     setProfileError("");
     setResult(undefined);
     try {
-      const next = await window.wuu.importBrowserCookies!(profile.profilePath);
+      const next = await controls.importBrowserCookies!(profile.profilePath);
       if (mounted.current) setResult(next);
     } catch (reason) {
       if (mounted.current) setProfileError(messageOf(reason));
@@ -92,7 +82,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
     setBusy("add");
     setExtensionError("");
     try {
-      const next = await window.wuu.addBrowserExtension!();
+      const next = await controls.addBrowserExtension!();
       if (mounted.current) setExtensions(next);
     } catch (reason) {
       if (mounted.current) setExtensionError(messageOf(reason));
@@ -106,7 +96,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
     setBusy(`toggle:${extension.id}`);
     setExtensionError("");
     try {
-      const next = await window.wuu.setBrowserExtensionEnabled!(
+      const next = await controls.setBrowserExtensionEnabled!(
         extension.id,
         !extension.enabled,
       );
@@ -119,15 +109,15 @@ export function BrowserSettingsSection(): JSX.Element | null {
   };
 
   const reloadExtension = async (extension: BrowserExtensionRecord): Promise<void> => {
-    if (busy || !window.wuu.reloadBrowserExtension) return;
+    if (busy || !controls.capabilities.browserReload) return;
     setBusy(`reload:${extension.id}`);
     setExtensionError("");
     try {
-      const next = await window.wuu.reloadBrowserExtension(extension.id);
+      const next = await controls.reloadBrowserExtension(extension.id);
       if (mounted.current) setExtensions(next);
     } catch (reason) {
       if (mounted.current) setExtensionError(messageOf(reason));
-      const next = await window.wuu.listBrowserExtensions!();
+      const next = await controls.listBrowserExtensions!();
       if (mounted.current) setExtensions(next);
     } finally {
       if (mounted.current) setBusy("");
@@ -139,7 +129,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
     setBusy(`remove:${extension.id}`);
     setExtensionError("");
     try {
-      const next = await window.wuu.removeBrowserExtension!(extension.id);
+      const next = await controls.removeBrowserExtension!(extension.id);
       if (mounted.current) setExtensions(next);
     } catch (reason) {
       if (mounted.current) setExtensionError(messageOf(reason));
@@ -149,11 +139,11 @@ export function BrowserSettingsSection(): JSX.Element | null {
   };
 
   const openOptions = async (extension: BrowserExtensionRecord): Promise<void> => {
-    if (busy || !window.wuu.openBrowserExtensionOptions) return;
+    if (busy || !controls.capabilities.browserOptions) return;
     setBusy(`options:${extension.id}`);
     setExtensionError("");
     try {
-      await window.wuu.openBrowserExtensionOptions(extension.id);
+      await controls.openBrowserExtensionOptions(extension.id);
     } catch (reason) {
       if (mounted.current) setExtensionError(messageOf(reason));
     } finally {
@@ -176,8 +166,8 @@ export function BrowserSettingsSection(): JSX.Element | null {
               setExtensionError("");
               ++revision.current;
               void Promise.allSettled([
-                window.wuu.listBrowserProfiles!().then(setProfiles),
-                window.wuu.listBrowserExtensions!().then(setExtensions),
+                controls.listBrowserProfiles!().then(setProfiles),
+                controls.listBrowserExtensions!().then(setExtensions),
               ]).then(([profileResult, extensionResult]) => {
                 if (!mounted.current) return;
                 if (profileResult.status === "rejected") {
@@ -287,7 +277,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
                   ].filter(Boolean).join(" · ")}
                 >
                   <div className="browser-settings-actions">
-                    {extension.hasOptions && window.wuu.openBrowserExtensionOptions ? <button
+                    {extension.hasOptions && controls.capabilities.browserOptions ? <button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"
                       title={t("settings.browserExtensionsOptions", { name: extension.name })}
@@ -307,7 +297,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
                     >
                       <ChevronDown size={16} aria-hidden="true" />
                     </button>
-                    {window.wuu.reloadBrowserExtension ? <button
+                    {controls.capabilities.browserReload ? <button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"
                       title={extension.enabled ? t("settings.browserExtensionsReload", { name: extension.name }) : t("settings.browserExtensionsEnableToReload")}

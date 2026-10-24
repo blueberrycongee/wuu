@@ -1,0 +1,329 @@
+import type { ReactNode } from "react";
+import type { SettingsPageHostAPI } from "./index.js";
+import type { ApplicationSettingsCoreBuildInfoV1 as CoreBuildInfo } from "./application-settings.js";
+import type { ApplicationSettingsProviderSummaryV1 as ProviderSummary } from "./application-settings.js";
+import type { ApplicationSettingsCatalogProviderSummaryV1 as CatalogProviderSummary } from "./application-settings.js";
+import type { ApplicationSettingsEngineListResultV1 as EngineListResult } from "./application-settings.js";
+import type { ApplicationSettingsProviderModelSummaryV1 as ProviderModelSummary } from "./application-settings.js";
+export interface SettingsControlsCapabilitiesV1 {
+  readonly browser: boolean;
+  readonly browserReload: boolean;
+  readonly browserOptions: boolean;
+  readonly remote: boolean;
+  readonly build: boolean;
+  readonly catalog: boolean;
+  readonly engines: boolean;
+  readonly pets: boolean;
+  readonly diagnostics: boolean;
+  readonly platform?: string;
+}
+export interface SettingsControlsPageV1 {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly id: string;
+  readonly view: string;
+  readonly title: string;
+  readonly description?: string;
+  readonly order?: number;
+  readonly icon?: {
+    name: string;
+    path?: never;
+    light?: never;
+    dark?: never;
+  } | {
+    name?: never;
+    path: string;
+    light?: never;
+    dark?: never;
+  } | {
+    name?: never;
+    path?: never;
+    light: string;
+    dark: string;
+  };
+}
+export interface SettingsControlsConflictV1 {
+  readonly key: string;
+  readonly kind: "surface" | "presenter";
+  readonly target: string;
+  readonly winnerPluginId: string;
+  readonly candidates: readonly {
+    readonly pluginId: string;
+    readonly generation: string;
+    readonly contributionId: string;
+    readonly title?: string;
+  }[];
+}
+export interface SettingsControlsDiagnosticV1 {
+  readonly kind: "activation" | "cleanup" | "render";
+  readonly message: string;
+}
+/** Public settings mechanisms. Operation results are caller-owned; snapshots are immutable. */
+export interface ApplicationSettingsControlsV1 {
+  renderPresentation(input: SettingsControlsPresentationV1): ReactNode;
+  readonly capabilities: SettingsControlsCapabilitiesV1;
+  subscribe(listener: () => void): () => void;
+  getPages(): readonly SettingsControlsPageV1[];
+  getConflicts(): readonly SettingsControlsConflictV1[];
+  getDiagnostics(pluginId: string, generation: string): readonly SettingsControlsDiagnosticV1[];
+  chooseConflict(key: string, pluginId: string): Promise<void>;
+  subscribeRemote(listener: () => void): () => void;
+  renderPage(input: {
+    pluginId: string;
+    view: string;
+    settings: SettingsPageHostAPI;
+    onFailure: () => void;
+  }): ReactNode;
+  getBuildInfo: () => Promise<BuildInfoResult>;
+  useCodexCredentials: (provider: string) => Promise<{
+    providers: ProviderSummary[];
+  }>;
+  loadCodexModels: (provider?: string) => Promise<ConfigCodexModelsResult>;
+  refreshModelCatalog: () => Promise<ConfigModelCatalogRefreshResult>;
+  listCatalogProviders: (provider?: string) => Promise<ConfigModelCatalogProvidersResult>;
+  listEngines: (options?: {
+    include_quota?: boolean;
+    refresh_models?: boolean;
+    cwd?: string;
+  }, context?: RuntimeContext) => Promise<EngineListResult>;
+  getPluginSetting: (params: PluginSettingGetParams) => Promise<PluginSettingResult>;
+  setPluginSetting: (params: PluginSettingSetParams) => Promise<PluginSettingResult>;
+  getPluginDiagnostics: (params: PluginIdentityParams) => Promise<PluginDiagnosticsResult>;
+  listMCPServers: () => Promise<MCPListResult>;
+  connectMCPServer: (name: string) => Promise<MCPServerActionResult>;
+  disconnectMCPServer: (name: string) => Promise<MCPServerActionResult>;
+  refreshMCPServer: (name: string) => Promise<MCPServerActionResult>;
+  startMCPAuth: (name: string) => Promise<MCPAuthStartResult>;
+  finishMCPAuth: (name: string, state: string, code: string) => Promise<MCPAuthFinishResult>;
+  removeMCPAuth: (name: string) => Promise<MCPAuthRemoveResult>;
+  listChatGPTModels: (accountId: string) => Promise<{
+    models: (ProviderModelSummary & {
+      name: string;
+      account_descriptor?: Record<string, unknown>;
+    })[];
+    providers?: ProviderSummary[];
+  }>;
+  startXAILogin: () => Promise<AuthXAILoginStartResult>;
+  pollXAILogin: (loginId: string) => Promise<AuthXAILoginPollResult>;
+  cancelXAILogin: (loginId: string) => Promise<{
+    ok: boolean;
+  }>;
+  listBrowserProfiles: () => Promise<BrowserProfile[]>;
+  importBrowserCookies: (profilePath: string) => Promise<BrowserCookieImportResult>;
+  listBrowserExtensions: () => Promise<BrowserExtensionRecord[]>;
+  addBrowserExtension: () => Promise<BrowserExtensionRecord[]>;
+  setBrowserExtensionEnabled: (id: string, enabled: boolean) => Promise<BrowserExtensionRecord[]>;
+  reloadBrowserExtension: (id: string) => Promise<BrowserExtensionRecord[]>;
+  openBrowserExtensionOptions: (id: string) => Promise<void>;
+  removeBrowserExtension: (id: string) => Promise<BrowserExtensionRecord[]>;
+  getRemoteControlSnapshot: () => Promise<RemoteControlSnapshot>;
+  setRemoteHostEnabled: (enabled: boolean) => Promise<RemoteControlSnapshot>;
+  startRemotePairing: () => Promise<RemoteControlSnapshot>;
+  removeRemoteDevice: (fingerprintOrPub: string) => Promise<RemoteControlSnapshot>;
+  openExternal: (url: string) => Promise<void>;
+}
+type BuildInfoResult = {
+  core: CoreBuildInfo | undefined;
+  desktop: DesktopBuildInfo;
+};
+type DesktopBuildInfo = {
+  version: string;
+  date: string;
+};
+type ConfigCodexModelsResult = {
+  providers: ProviderSummary[];
+  provider: string;
+  model: string;
+  effort?: string;
+  variant?: string;
+  models: CodexModelSummary[];
+};
+type CodexModelSummary = {
+  slug: string;
+  display_name?: string;
+  default_reasoning_level?: string;
+  supported_reasoning?: string[];
+  supported_in_api: boolean;
+};
+type ConfigModelCatalogRefreshResult = {
+  provider_count: number;
+  model_count: number;
+  providers: ProviderSummary[];
+  catalog_providers?: CatalogProviderSummary[];
+};
+type ConfigModelCatalogProvidersResult = {
+  providers: CatalogProviderSummary[];
+};
+type RuntimeContext = {
+  kind: "project";
+  project_id: string;
+  cwd: string;
+} | {
+  kind: "no_project";
+  cwd: string;
+};
+interface PluginSettingGetParams extends PluginIdentityParams {
+  key: string;
+}
+interface PluginIdentityParams {
+  id: string;
+  fingerprint: string;
+}
+interface PluginSettingResult {
+  /** Secret values are always blank; this only indicates presence in the OS credential store. */
+  configured?: boolean;
+  id: string;
+  key: string;
+  scope: PluginValueScope;
+  value: boolean | string | number;
+}
+type PluginValueScope = "user" | "workspace";
+interface PluginSettingSetParams extends PluginSettingGetParams {
+  value: boolean | string | number;
+}
+interface PluginDiagnosticsResult {
+  id: string;
+  diagnostics: PluginContributionDiagnostic[];
+}
+interface PluginContributionDiagnostic {
+  contribution: string;
+  message: string;
+}
+type MCPListResult = {
+  servers: MCPServerStatus[];
+};
+type MCPServerStatus = {
+  name: string;
+  state: string;
+  auth_status?: string;
+  connected: boolean;
+  tool_count: number;
+  error?: string;
+};
+type MCPServerActionResult = {
+  status: MCPServerStatus;
+};
+type MCPAuthStartResult = {
+  authorization_url: string;
+  state: string;
+  scopes?: string[];
+};
+type MCPAuthFinishResult = {
+  auth: MCPAuthStatusResult;
+  server: MCPServerStatus;
+};
+type MCPAuthStatusResult = {
+  name: string;
+  authenticated: boolean;
+  expires_at?: string;
+  scopes?: string[];
+};
+type MCPAuthRemoveResult = {
+  auth: MCPAuthStatusResult;
+  server: MCPServerStatus;
+};
+type AuthXAILoginStartResult = {
+  login_id: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete?: string;
+  expires_in: number;
+  interval_ms: number;
+};
+type AuthXAILoginPollResult = {
+  status: "pending" | "success" | "denied" | "expired" | "failed" | string;
+  interval_ms?: number;
+  error?: string;
+  providers?: ProviderSummary[];
+};
+type BrowserProfile = {
+  /** Stable host-side browser adapter id. */
+  browserId: string;
+  appName: string;
+  profileDirectoryName: string;
+  profileName: string;
+  profilePath: string;
+  hasCookies: boolean;
+  hasPasswords: boolean;
+  userName?: string;
+  /** Last profile activity reported by the browser, as Unix milliseconds. */
+  lastUsedAt?: number;
+};
+type BrowserCookieImportResult = {
+  appName: string;
+  profileName: string;
+  profilePath: string;
+  discovered: number;
+  imported: number;
+  skippedExpired: number;
+  skippedInvalid: number;
+  failed: number;
+};
+type BrowserExtensionRecord = {
+  id: string;
+  name: string;
+  version: string;
+  path: string;
+  enabled: boolean;
+  loaded: boolean;
+  hasOptions?: boolean;
+  manifest?: BrowserExtensionManifest;
+  needsReview?: boolean;
+  error?: string;
+};
+type BrowserExtensionManifest = {
+  name: string;
+  version: string;
+  manifestVersion: 2 | 3;
+  description?: string;
+  permissions: string[];
+  sites: string[];
+  optionalPermissions: string[];
+  optionalSites: string[];
+  unsupportedPermissions: string[];
+  compatibility: ("serviceWorker" | "action" | "options" | "browserUI" | "devtools")[];
+};
+type RemoteControlSnapshot = {
+  status: RemoteControlStatus | null;
+  status_error?: string;
+  host_running: boolean;
+  /** Saved access preference, including when startup failed or is still pending. */
+  host_enabled?: boolean;
+  pair_uri: string | null;
+  web_url?: string | null;
+};
+type RemoteControlStatus = {
+  fingerprint: string;
+  account_server?: string;
+  host_name?: string;
+  relay_url?: string;
+  store: string;
+  devices: RemoteControlDevice[];
+};
+type RemoteControlDevice = {
+  pub: string;
+  fingerprint: string;
+  name?: string;
+  added_at: string;
+};
+export interface SettingsControlsPresentationV1 {
+  initialized?: import("./application-settings.js").ApplicationSettingsConfigurationV1 & {
+    protocol_version: string;
+    workspace_root: string;
+    runtime_host?: {
+      kind: "local" | "cloud";
+      instance_id?: string;
+    };
+    status?: "needs_setup" | "ready";
+  };
+  activePageId: string;
+  availablePages: readonly import("./index.js").SettingsPageSummaryV1[];
+  runningProviderNames?: readonly string[];
+  busy: boolean;
+  hasError: boolean;
+  fallback: ReactNode;
+  onOpenPage(pageId: string): void;
+  onAdvancedSave(input: import("./application-settings.js").ApplicationSettingsRuntimeAdvancedSettingsUpdateV1): Promise<void>;
+  onGeneralSave(input: import("./application-settings.js").ApplicationSettingsRuntimeGeneralSettingsUpdateV1): Promise<void>;
+  onRefresh(): Promise<void>;
+}

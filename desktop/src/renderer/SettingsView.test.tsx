@@ -1,3 +1,4 @@
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
@@ -178,7 +179,7 @@ function renderSettings(props: {
     window.wuu.initialSystemLocale = props.locale;
   }
   const view = (
-    <SettingsView
+    <SettingsView application={{settingsControls:createApplicationSettingsControls()}}
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
         page={props.page}
