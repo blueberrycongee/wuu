@@ -18,20 +18,40 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("allows and removes draft-owned followups while the first conversation is being created", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    let finish!: (value: unknown) => void;
+    const startTurn = vi.fn().mockResolvedValue({ turn: { id: "turn", status: "in_progress", items_view: "full", items: [] } });
+    window.wuu = { startThread: vi.fn(() => new Promise(resolve => { finish = resolve; })), startTurn, queueTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, activeSessionTabID: "draft:pending",
+      sessionTabs: [{ id: "draft:pending", kind: "draft", context, title: "", createdAt: 1, prompt: "", images: [], files: [] }] });
+    await controller.invoke("composer.submit", { ownerTabId: "draft:pending", text: "first" });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    expect(controller.getSnapshot().tabs.canSubmit).toBe(true);
+    await controller.invoke("composer.submit", { ownerTabId: "draft:pending", text: "followup" });
+    const pending = controller.getSnapshot().composerPending.find(row => row.threadId === "draft:pending")!.queued[0];
+    await expect(controller.invoke("composer.remove-pending", { ownerTabId: "draft:pending", messageId: pending.id, kind: "queue" })).resolves.toBe(true);
+    finish({ thread: { id: "created", cwd: context.cwd, preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle", turns: [] } });
+    await vi.waitFor(() => expect(startTurn).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(controller.getSnapshot().submission.operations.every(operation => /completed|failed|cancelled/.test(operation.phase))).toBe(true));
+    expect(startTurn).toHaveBeenCalledOnce(); expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+  });
+
   it("restores the selected draft while discarding recovery for relocated inactive projects", async () => {
     const context = { kind: "no_project" as const, cwd: "/scratch" };
     const project = { id: "moved", name: "Moved", path: "/new", created_at: "", updated_at: "" };
     const tab = (id: string, cwd = context.cwd): AppState["sessionTabs"][number] => ({ id, kind: "draft", context: { ...context, cwd }, title: "", createdAt: 1, prompt: id, images: [], files: [] });
-    const tabs = [tab("draft:first"), tab("draft:selected"), { ...tab("draft:old"), context: { kind: "project" as const, project_id: "moved", cwd: "/old" } }];
+    const tabs = [tab("draft:first"), tab("draft:recovery:selected"), { ...tab("draft:old"), context: { kind: "project" as const, project_id: "moved", cwd: "/old" } }];
     window.wuu = { listProjects: vi.fn().mockResolvedValue({ projects: [project], active_context: context }) } as unknown as WuuDesktopApi;
     const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ initialized: submissionInitialized, activeContext: context, projects: [project], threads: [] });
     const controller = new ApplicationController({ ...initialState, sessionTabs: tabs });
-    controller.recoveredDrafts.tabs = tabs; controller.recoveredDrafts.activeTabID = "draft:selected";
+    controller.recoveredDrafts.tabs = tabs; controller.recoveredDrafts.activeTabID = "draft:recovery:selected";
     try {
       await controller.initialize();
       expect(controller.getState().sessionTabs.map(tab => tab.id)).not.toContain("draft:old");
-      expect(controller.getState().activeSessionTabID).toBe("draft:selected");
-      expect(controller.getSnapshot().drafts.primary.text).toBe("draft:selected");
+      expect(controller.getState().activeSessionTabID).toBe("draft:recovery:selected");
+      expect(controller.getSnapshot().drafts.primary.text).toBe("draft:recovery:selected");
+      expect(controller.getSnapshot().drafts.recoveryNotices).toEqual([{ ownerTabId: "draft:recovery:selected", reason: "interrupted" }]);
       expect(load).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ resumeLatestThread: false }));
     } finally { load.mockRestore(); }
   });

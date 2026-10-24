@@ -33,7 +33,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     submission: { operations: [], pendingCreations: [], failedDraftTabIds: [], stopRequests: [] },
     composerRuntime: { owners: [] },
     composerPending: [],
-    drafts: { activeTabId: 'thread:research-1', activePane: 'primary', split: false,
+    drafts: { recoveryNotices: [], activeTabId: 'thread:research-1', activePane: 'primary', split: false,
       primary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, secondary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, attachments: [] },
     settings: { contractVersion: 1, open: false, engineInventoryError: '', runningProviderNames: [], archivedThreads: [], runtimeSwitchPending: false, availablePages: [{ id: 'appearance', label: 'Appearance' }],
       providers: [{ id: 'preview', label: 'Synthetic preview data', configured: true }], plugins: [] },

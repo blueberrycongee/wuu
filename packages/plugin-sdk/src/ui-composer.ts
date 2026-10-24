@@ -42,6 +42,7 @@ export interface ApplicationComposerDraftSnapshotV1 extends ApplicationComposerD
 }
 
 export interface ApplicationDraftsSnapshotV1 {
+  readonly recoveryNotices: readonly { readonly ownerTabId: string; readonly reason: "interrupted" }[];
   readonly activeTabId: string;
   readonly activePane: "primary" | "secondary";
   readonly split: boolean;

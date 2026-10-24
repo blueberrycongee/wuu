@@ -823,9 +823,9 @@ export class ApplicationController implements HostApplicationService {
 
   private pendingComposerMessage(input: { ownerTabId: string; messageId: string; kind?: "queue" | "guide" }) {
     const tab = this.state.sessionTabs.find(tab => tab.id === input.ownerTabId);
-    if (input.ownerTabId !== this.state.activeSessionTabID || tab?.kind !== "thread"
-      || tab.threadID !== activeThreadIDForState(this.state) || this.pendingNavigation) throw new Error("Pending message owner changed");
-    const pending = this.pendingComposer.pendingComposerMessagesByThread[tab.threadID];
+    if (input.ownerTabId !== this.state.activeSessionTabID || !tab || tab.kind === "skills"
+      || tab.kind === "thread" && tab.threadID !== activeThreadIDForState(this.state) || this.pendingNavigation) throw new Error("Pending message owner changed");
+    const pending = this.pendingComposer.pendingComposerMessagesByThread[tab.kind === "thread" ? tab.threadID : tab.id];
     const messages = input.kind === "queue" ? pending?.queued : input.kind === "guide" ? pending?.guides : [...(pending?.queued ?? []), ...(pending?.guides ?? [])];
     const message = messages?.find(message => message.id === input.messageId);
     if (!message) throw new Error("Pending message owner is unavailable");
@@ -1421,7 +1421,7 @@ export class ApplicationController implements HostApplicationService {
         })) }),
       tabs: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, navigationRevision: this.navigationRequest,
         primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id,
-        canSubmit: !Boolean(this.submissionOwner?.isOwnerPending(state.activeSessionTabID)) && (!this.pendingNavigation || this.pendingNavigation.contentReady === true) && !thread?.read_only,
+        canSubmit: (!this.pendingNavigation || this.pendingNavigation.contentReady === true) && !thread?.read_only,
         pending: this.pendingNavigation,
         items: Object.freeze(state.sessionTabs.map(tab => Object.freeze({ id: tab.id, kind: tab.kind,
           title: sessionTabLabel(tab, state), workspaceId: tab.context.kind === "project" ? tab.context.project_id : undefined,
@@ -1442,11 +1442,14 @@ export class ApplicationController implements HostApplicationService {
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),
-        runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: Boolean(this.submissionOwner?.isOwnerPending(state.activeSessionTabID)) ? "Submitting" : undefined }),
+        runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: undefined }),
       submission: this.applicationSubmission.getSnapshot(),
       composerRuntime: this.applicationComposerRuntime.getSnapshot(),
       composerPending,
-      drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
+      drafts: Object.freeze({ recoveryNotices: Object.freeze(state.sessionTabs.flatMap(tab => {
+        if (this.recoveredDrafts.tabs.some(recovered => recovered.id === tab.id) && tab.id.startsWith("draft:recovery:")) return [Object.freeze({ ownerTabId: tab.id, reason: "interrupted" as const })];
+        return [];
+      })), activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
         primary: Object.freeze({ ...this.draftResources.project(primaryDraft), ownerTabId: primaryDraft.ownerTabId, revision: this.draftRevisions.get(primaryDraft.ownerTabId ?? "") ?? 0 }), secondary: Object.freeze({ ...this.draftResources.project(secondaryDraft), ownerTabId: secondaryDraft.ownerTabId, revision: this.draftRevisions.get(secondaryDraft.ownerTabId ?? "") ?? 0 }),
         attachments: Object.freeze([...attachmentIds].map(id => this.draftResources.describe(id))) }),
       settings: Object.freeze({ ...this.applicationSettings.getSnapshot(), contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
