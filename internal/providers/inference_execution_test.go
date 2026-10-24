@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -129,6 +130,188 @@ func TestStreamingJournalFailureDegradesButDoesNotAbortStream(t *testing.T) {
 	subs := execution.Snapshot().Submissions
 	if len(subs) != 1 || subs[0].Outcome != InferenceSubmissionSucceeded || subs[0].OutputBytes != wantBytes {
 		t.Fatalf("submission = %+v", subs)
+	}
+}
+
+type submissionCheckpointJournal struct {
+	recordingInferenceJournal
+	submissions      map[string]InferenceSubmissionJournalRecord
+	beforeTransition func()
+	upserts          int
+}
+
+func (j *submissionCheckpointJournal) UpsertSubmission(record InferenceSubmissionJournalRecord) error {
+	j.upserts++
+	if err := j.recordingInferenceJournal.UpsertSubmission(record); err != nil {
+		return err
+	}
+	if j.submissions == nil {
+		j.submissions = make(map[string]InferenceSubmissionJournalRecord)
+	}
+	j.submissions[record.ID] = record
+	return nil
+}
+
+func (j *submissionCheckpointJournal) CompleteAttempt(record InferenceAttemptTerminalRecord) error {
+	j.beforeTransition()
+	return j.recordingInferenceJournal.CompleteAttempt(record)
+}
+
+func (j *submissionCheckpointJournal) CompleteOperation(record InferenceOperationTerminalRecord) error {
+	j.beforeTransition()
+	return j.recordingInferenceJournal.CompleteOperation(record)
+}
+
+func (j *submissionCheckpointJournal) PrepareRecoveryAttempt(ctx context.Context, record InferenceRecoveryAttemptJournalRecord) error {
+	j.beforeTransition()
+	return j.recordingInferenceJournal.PrepareRecoveryAttempt(ctx, record)
+}
+
+type droppedSubmissionProgressJournal struct {
+	*submissionCheckpointJournal
+}
+
+// A dropped async update must not substitute for a required checkpoint.
+func (*droppedSubmissionProgressJournal) RecordSubmissionProgress(InferenceSubmissionJournalRecord) {}
+
+func completeSubmissionBoundary(boundary string, execution *InferenceExecution, attempt InferenceAttempt) error {
+	switch boundary {
+	case "attempt":
+		return attempt.Complete(InferenceOutcomeFailed, NormalizedFailure{Category: FailureIncompleteStream})
+	case "operation":
+		return execution.Complete(InferenceOutcomeFailed, NormalizedFailure{Category: FailureIncompleteStream})
+	default:
+		_, err := attempt.PrepareRecoveryAttempt(context.Background(), RecoveryPlan{Action: RecoveryReplaySame}, time.Time{})
+		return err
+	}
+}
+
+func TestInferenceTerminalCheckpointPersistsCurrentSubmission(t *testing.T) {
+	for _, boundary := range []string{"attempt", "operation", "recovery"} {
+		t.Run(boundary, func(t *testing.T) {
+			journal := &submissionCheckpointJournal{}
+			execution := NewInferenceExecution(NewInferenceOperation(InferenceOperationAgentRound, InferenceProfileInteractive))
+			execution.journal = &droppedSubmissionProgressJournal{journal}
+			attempt := execution.BeginAttempt()
+			submission, err := attempt.RecordSubmission(InferenceSubmissionMeta{Provider: "openai", Transport: "http", RequestBytes: 400})
+			if err != nil {
+				t.Fatal(err)
+			}
+			submission.ObserveOutput("partial answer")
+			submission.CompleteFailure(NormalizedFailure{Category: FailureIncompleteStream})
+			submission.ObserveUsage(&TokenUsage{InputTokens: 80, OutputTokens: 4})
+			other, err := execution.BeginAttempt().RecordSubmission(InferenceSubmissionMeta{Transport: "http"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			otherInitial := journal.submissions[other.ID]
+			other.ObserveOutput("still running")
+			current := execution.Snapshot().Submissions
+			if journal.submissions[submission.ID].Outcome != InferenceSubmissionInFlight {
+				t.Fatal("fixture persisted advisory terminal progress")
+			}
+			transitions := 0
+			journal.beforeTransition = func() {
+				transitions++
+				want := journalSubmission(execution.operation.ID, current[0])
+				if got := journal.submissions[submission.ID]; !reflect.DeepEqual(got, want) {
+					t.Errorf("logical %s crossed an unpersisted physical terminal: got %+v, want %+v", boundary, got, want)
+				}
+				wantOther := otherInitial
+				if boundary == "operation" {
+					// Operation completion persists every current observation without
+					// inventing a terminal receipt for a still-running transport.
+					wantOther = journalSubmission(execution.operation.ID, current[1])
+				}
+				if got := journal.submissions[other.ID]; !reflect.DeepEqual(got, wantOther) {
+					t.Errorf("%s persisted the wrong other-attempt snapshot: got %+v, want %+v", boundary, got, wantOther)
+				}
+			}
+			if err := completeSubmissionBoundary(boundary, execution, attempt); err != nil {
+				t.Fatal(err)
+			}
+			if transitions != 1 {
+				t.Fatalf("logical transitions = %d, want 1", transitions)
+			}
+		})
+	}
+}
+
+func TestInferenceTerminalCheckpointFailureStopsAdvancement(t *testing.T) {
+	for _, boundary := range []string{"attempt", "operation", "recovery"} {
+		for _, writeErr := range []error{errors.New("submission commit failed"), context.Canceled, context.DeadlineExceeded} {
+			t.Run(boundary+"/"+writeErr.Error(), func(t *testing.T) {
+				transitions := 0
+				journal := &submissionCheckpointJournal{beforeTransition: func() { transitions++ }}
+				execution := NewInferenceExecution(NewInferenceOperation(InferenceOperationAgentRound, InferenceProfileInteractive))
+				execution.journal = &droppedSubmissionProgressJournal{journal}
+				attempt := execution.BeginAttempt()
+				submission, err := attempt.RecordSubmission(InferenceSubmissionMeta{Provider: "openai", Transport: "http"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				submission.CompleteFailure(NormalizedFailure{Category: FailureIncompleteStream})
+				before := execution.Snapshot()
+				journal.failSubmission = writeErr
+				if err := completeSubmissionBoundary(boundary, execution, attempt); err != writeErr {
+					t.Errorf("required checkpoint error = %v, want original %v", err, writeErr)
+				}
+				if err := execution.JournalError(); err != writeErr {
+					t.Errorf("JournalError = %v, want original %v", err, writeErr)
+				}
+				if after := execution.Snapshot(); after.Attempts != before.Attempts || !reflect.DeepEqual(after.Workflow, before.Workflow) {
+					t.Errorf("failed checkpoint advanced recovery accounting: before=%+v after=%+v", before, after)
+				}
+				// A later healthy writer cannot retry an uncertain commit or
+				// resume this operation after its required checkpoint failed.
+				journal.failSubmission = nil
+				if err := execution.Complete(InferenceOutcomeFailed, NormalizedFailure{}); err != writeErr {
+					t.Errorf("later operation completion error = %v, want %v", err, writeErr)
+				}
+				if next, err := execution.BeginAttemptChecked(); err != writeErr || next.Valid() {
+					t.Errorf("next attempt = %+v, error = %v", next, err)
+				}
+				if transitions != 0 || journal.upserts != 2 {
+					t.Errorf("logical transitions=%d submission writes=%d, want 0/2", transitions, journal.upserts)
+				}
+			})
+		}
+	}
+}
+
+func TestInferenceDeltaJournalFailureDoesNotPoisonCheckpoints(t *testing.T) {
+	journal := &submissionCheckpointJournal{beforeTransition: func() {}}
+	first := NewInferenceExecution(NewInferenceOperation(InferenceOperationAgentRound, InferenceProfileInteractive))
+	first.journal = journal
+	attempt := first.BeginAttempt()
+	if _, err := attempt.RecordSubmission(InferenceSubmissionMeta{Transport: "http"}); err != nil {
+		t.Fatal(err)
+	}
+	deltaErr := errors.New("advisory delta unavailable")
+	journal.failSubmission = deltaErr
+	if err := attempt.ObserveStreamEvent(StreamEvent{Type: EventContentDelta, Content: "hello"}); err != nil {
+		t.Fatalf("advisory failure aborted stream: %v", err)
+	}
+	if first.JournalDegraded() != deltaErr || first.JournalError() != nil {
+		t.Fatalf("advisory error promoted to required failure: degraded=%v required=%v", first.JournalDegraded(), first.JournalError())
+	}
+	journal.failSubmission = nil
+	second := NewInferenceExecution(NewInferenceOperation(InferenceOperationTitle, InferenceProfileBestEffort))
+	second.journal = journal
+	secondAttempt := second.BeginAttempt()
+	if _, err := secondAttempt.RecordSubmission(InferenceSubmissionMeta{Transport: "http"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []InferenceAttempt{attempt, secondAttempt} {
+		if err := a.ObserveStreamEvent(StreamEvent{Type: EventDone}); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.Complete(InferenceOutcomeSucceeded, NormalizedFailure{}); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.execution.Complete(InferenceOutcomeSucceeded, NormalizedFailure{}); err != nil {
+			t.Fatalf("advisory failure poisoned operation %s: %v", a.execution.operation.ID, err)
+		}
 	}
 }
 

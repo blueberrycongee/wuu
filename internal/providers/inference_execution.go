@@ -685,6 +685,9 @@ func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure Nor
 	if e.journal == nil {
 		return nil
 	}
+	if err := e.checkpointSubmissionsLocked(a.ID); err != nil {
+		return err
+	}
 	if err := e.journal.CompleteAttempt(InferenceAttemptTerminalRecord{
 		OperationID: e.operation.ID,
 		AttemptID:   a.ID,
@@ -722,6 +725,9 @@ func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan Recov
 		}
 		if e.journal == nil {
 			return nil
+		}
+		if err := e.checkpointSubmissionsLocked(a.ID); err != nil {
+			return err
 		}
 		return e.journal.PrepareRecoveryAttempt(ctx, InferenceRecoveryAttemptJournalRecord{
 			Recovery: InferenceRecoveryJournalRecord{
@@ -766,6 +772,9 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 		return e.journalErr
 	}
 	if e.journal != nil {
+		if err := e.checkpointSubmissionsLocked(""); err != nil {
+			return err
+		}
 		if err := e.journal.CompleteOperation(InferenceOperationTerminalRecord{
 			OperationID: e.operation.ID,
 			Outcome:     outcome,
@@ -779,6 +788,23 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 	e.terminal = true
 	if e.ownsWorkflow {
 		if err := CompleteInferenceWorkflow(e.workflow, e.journal, outcome); err != nil {
+			e.journalErr = err
+			return err
+		}
+	}
+	return nil
+}
+
+// checkpointSubmissionsLocked persists the actual observations before a logical
+// transition. Empty attemptID covers the entire operation. The caller holds e.mu.
+func (e *InferenceExecution) checkpointSubmissionsLocked(attemptID string) error {
+	for _, submission := range e.submissions {
+		if attemptID != "" && submission.AttemptID != attemptID {
+			continue
+		}
+		if err := e.journal.UpsertSubmission(journalSubmission(e.operation.ID, snapshotSubmission(submission))); err != nil {
+			// Cancellation of a required write is still a persistence failure;
+			// recovery must not discard it as ordinary caller cancellation.
 			e.journalErr = err
 			return err
 		}
@@ -907,8 +933,8 @@ func (e *InferenceExecution) updateSubmission(id string, update func(*InferenceS
 			// durability checkpoint. Hand it to the journal's async progress
 			// path when available so the write never blocks token delivery, and
 			// never let a bookkeeping failure poison the execution or abort the
-			// stream — the terminal record (via CompleteAttempt) is the real
-			// durability boundary and stays synchronous.
+			// stream. Completion and recovery boundaries synchronously
+			// checkpoint the current submission before advancing.
 			if journal != nil {
 				record := journalSubmission(operationID, submission)
 				if progress, ok := journal.(InferenceProgressJournal); ok {

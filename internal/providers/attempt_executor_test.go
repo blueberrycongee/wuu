@@ -152,7 +152,9 @@ func TestExecuteChatCommitsWriteAheadLifecycle(t *testing.T) {
 		"attempt:prepared",
 		"submission:in_flight",
 		"submission:succeeded",
+		"submission:succeeded",
 		"attempt:succeeded",
+		"submission:succeeded",
 		"operation:succeeded",
 		"complete_workflow",
 	}
