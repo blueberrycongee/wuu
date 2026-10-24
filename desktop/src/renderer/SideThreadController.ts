@@ -1,27 +1,7 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState
-} from "react";
-import type {
-  RuntimeContext,
-  SideThreadEventEnvelope,
-  SideThreadHistoryResult,
-  SideThreadOpenResult,
-  SideThreadSendParams,
-  SideThreadSendResult,
-  SideThreadSelection
-} from "../shared/protocol";
-import {
-  createInitialSideThreadStore,
-  ensureSideThreadEntry,
-  reduceSideThreadStore,
-  sideThreadRequestError,
-  type SideThreadAction,
-  type SideThreadStoreState
-} from "./SideThreadState";
-import { useI18n } from "./i18n";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import type { RuntimeContext, SideThreadEventEnvelope, SideThreadHistoryResult, SideThreadOpenResult, SideThreadSendParams, SideThreadSendResult, SideThreadSelection } from "../shared/protocol";
+import { createInitialSideThreadStore, ensureSideThreadEntry, reduceSideThreadStore, sideThreadRequestError, type SideThreadAction, type SideThreadStoreState } from "./SideThreadState";
+import { translateCurrent as t, useI18n } from "./i18n";
 import { statusMessageForError } from "./UserFacingErrors";
 import { showActionErrorToast } from "./Toast";
 
@@ -82,463 +62,181 @@ function defaultIPC(): SideThreadIPC | undefined {
   return candidate as SideThreadIPC;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+
+/** The same reducer and async owner serve both the legacy hook and public host. */
+export class SideThreadOwner {
+  private store = createInitialSideThreadStore();
+  private readonly listeners = new Set<() => void>();
+  private readonly announced = new Map<string, string>();
+  private readonly generations = new Map<string, number>();
+  private readonly resets = new Map<string, number>();
+  private readonly sends = new Map<string, Promise<boolean>>();
+  private stopEvents?: () => void;
+  private timer?: ReturnType<typeof setInterval>;
+  private polling = false;
+  private lifetime = 0;
+  private started = false;
+  constructor(private options: SideThreadControllerOptions) {
+    if (options.activeThreadId) this.store = ensureSideThreadEntry(this.store, options.activeThreadId).store;
+  }
+  getSnapshot = (): SideThreadStoreState => this.store;
+  subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  private ipc(): SideThreadIPC | undefined { return this.options.ipc ?? defaultIPC(); }
+  private key(): string | undefined { return this.options.activeThreadId && this.options.activeContext?.cwd ? `${this.options.activeContext.cwd}\0${this.options.activeThreadId}` : undefined; }
+  get sendDisabledReason(): string | undefined {
+    return !this.ipc() ? t("sideThread.unsupported") : this.options.disabled ? this.options.disabledReason ?? t("sideThread.unavailable") : !this.options.activeContext ? t("sideThread.selectWorkspace") : undefined;
+  }
+  private announce(): void {
+    const id = this.options.activeThreadId, entry = id ? this.store.byThread[id] : undefined;
+    if (!id || !entry) return;
+    const error = sideThreadRequestError(entry);
+    if (!error || this.announced.get(id) === error) return;
+    this.announced.set(id, error); showActionErrorToast(statusMessageForError(error, t("sideThread.unavailable")));
+  }
+  private dispatch(action: SideThreadAction): void {
+    const next = reduceSideThreadStore(this.store, action);
+    if (next === this.store) return;
+    this.store = next; this.listeners.forEach(listener => listener()); this.announce();
+  }
+  configure(options: SideThreadControllerOptions): void {
+    const previous = this.key(), previousIPC = this.ipc(), wasDisabled = this.options.disabled;
+    this.options = options;
+    if (options.activeThreadId) {
+      const next = ensureSideThreadEntry(this.store, options.activeThreadId).store;
+      if (next !== this.store) { this.store = next; this.listeners.forEach(listener => listener()); }
+    }
+    if (this.started && previousIPC !== this.ipc()) this.bindEvents();
+    if (this.started && (previous !== this.key() || wasDisabled && !options.disabled) && options.activeThreadId && this.store.byThread[options.activeThreadId]?.open && !this.sendDisabledReason) void this.refresh(false);
+    this.announce();
+  }
+  private bindEvents(): void {
+    this.stopEvents?.();
+    this.stopEvents = this.ipc()?.onSideThreadEvent(envelope => {
+      if (envelope.workdir !== this.options.activeContext?.cwd) return;
+      if (envelope.event.type === "reset") this.invalidateReset(envelope.event.main_thread_id, envelope.workdir);
+      this.dispatch({ type: "applyEvent", event: envelope.event });
+    });
+  }
+  start(): () => void {
+    if (this.timer !== undefined) clearInterval(this.timer);
+    this.started = true; const lifetime = ++this.lifetime; this.bindEvents();
+    this.timer = setInterval(() => { void this.poll(); }, SIDE_THREAD_RECOVERY_POLL_MS);
+    return () => {
+      if (lifetime !== this.lifetime) return;
+      this.started = false; this.lifetime++; this.stopEvents?.(); this.stopEvents = undefined;
+      if (this.timer !== undefined) clearInterval(this.timer); this.timer = undefined;
+    };
+  }
+  private invalidateReset(id: string, cwd: string): void {
+    const key = `${cwd}\0${id}`;
+    this.resets.set(key, (this.resets.get(key) ?? 0) + 1);
+    this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+  }
+  private async refresh(explicit: boolean): Promise<void> {
+    const id = this.options.activeThreadId, key = this.key(), ipc = this.ipc(), lifetime = this.lifetime;
+    if (!id || !key || !ipc || this.sendDisabledReason) return;
+    const generation = (this.generations.get(key) ?? 0) + 1; this.generations.set(key, generation);
+    const current = () => this.lifetime === lifetime && !this.sendDisabledReason && this.key() === key && this.generations.get(key) === generation;
+    try {
+      const opened = await ipc.openSideThread(id);
+      if (!current() || !opened.summary) return;
+      this.dispatch({ type: "mergeSummary", mainThreadId: id, summary: opened.summary });
+      const history = await ipc.getSideThreadHistory(id);
+      if (!current() || !history) return;
+      await this.sends.get(id);
+      if (current()) this.dispatch({ type: "mergeHistory", mainThreadId: id, ...history });
+    } catch (error) {
+      // Activation recovery is best effort; explicit actions retain visible errors.
+      if (explicit && current()) this.dispatch({ type: "setError", mainThreadId: id, error: errorMessage(error) });
+    }
+  }
+  private async poll(): Promise<void> {
+    const id = this.options.activeThreadId, key = this.key(), ipc = this.ipc(), lifetime = this.lifetime;
+    const entry = id ? this.store.byThread[id] : undefined;
+    if (!id || !key || !ipc || this.sendDisabledReason || !entry?.open || entry.summary?.status !== "running" || this.polling) return;
+    const reset = this.resets.get(key); this.polling = true;
+    try {
+      const history = await ipc.getSideThreadHistory(id);
+      await this.sends.get(id);
+      if (history && this.lifetime === lifetime && this.key() === key && this.resets.get(key) === reset) this.dispatch({ type: "mergeHistory", mainThreadId: id, ...history });
+    } catch {
+      // Events are authoritative; polling only repairs missed terminal delivery.
+    } finally { this.polling = false; }
+  }
+  async open(): Promise<void> {
+    const id = this.options.activeThreadId;
+    if (!id || this.options.disabled) return;
+    this.announced.delete(id); this.dispatch({ type: "open", mainThreadId: id });
+    this.dispatch({ type: "setError", mainThreadId: id, error: undefined });
+    await this.refresh(true);
+  }
+  close(): void { if (this.options.activeThreadId) this.dispatch({ type: "close", mainThreadId: this.options.activeThreadId }); }
+  toggle(): void { if (this.options.activeThreadId && this.store.byThread[this.options.activeThreadId]?.open) this.close(); else void this.open(); }
+  setDraft(draft: string): void { if (this.options.activeThreadId) this.dispatch({ type: "setDraft", mainThreadId: this.options.activeThreadId, draft }); }
+  setDraftSelection(selection: SideThreadSelection | undefined): void { if (this.options.activeThreadId) this.dispatch({ type: "setDraftSelection", mainThreadId: this.options.activeThreadId, selection: selection && structuredClone(selection) }); }
+  sendMessage(prompt: string, commandID = this.options.commandID): Promise<boolean> {
+    const id = this.options.activeThreadId, key = this.key(), ipc = this.ipc(), lifetime = this.lifetime;
+    const trimmed = prompt.trim(), entry = id ? this.store.byThread[id] : undefined;
+    if (!id || !key || !ipc || this.sendDisabledReason || !trimmed || entry?.streaming || this.sends.has(id)) return Promise.resolve(false);
+    const selection = entry?.draftSelection && structuredClone(entry.draftSelection), reset = this.resets.get(key);
+    const optimisticID = `local-${crypto.randomUUID()}`;
+    this.announced.delete(id);
+    this.dispatch({ type: "appendMessage", mainThreadId: id, message: { id: optimisticID, side_thread_id: entry?.summary?.side_thread_id ?? "", role: "user", text: trimmed, selection, created_at: new Date().toISOString() } });
+    this.dispatch({ type: "setDraft", mainThreadId: id, draft: "" }); this.dispatch({ type: "setDraftSelection", mainThreadId: id, selection: undefined });
+    this.dispatch({ type: "setStreaming", mainThreadId: id, streaming: true }); this.dispatch({ type: "setError", mainThreadId: id, error: undefined });
+    const current = () => this.lifetime === lifetime && this.resets.get(key) === reset;
+    const task = (async () => {
+      try {
+        const result = await ipc.sendSideThreadMessage({ main_thread_id: id, prompt: trimmed, ...(commandID ? { command_id: commandID } : {}), ...(selection ? { selection } : {}) });
+        if (!current()) return true;
+        this.dispatch({ type: "mergeSummary", mainThreadId: id, summary: result.summary });
+        this.dispatch({ type: "removeMessage", mainThreadId: id, messageId: result.user_message_id });
+        this.dispatch({ type: "updateMessage", mainThreadId: id, messageId: optimisticID, patch: { id: result.user_message_id, side_thread_id: result.summary.side_thread_id } });
+        return true;
+      } catch (error) {
+        if (!current()) return false;
+        this.dispatch({ type: "removeMessage", mainThreadId: id, messageId: optimisticID }); this.dispatch({ type: "setStreaming", mainThreadId: id, streaming: false });
+        this.dispatch({ type: "setError", mainThreadId: id, error: errorMessage(error) });
+        const latest = this.store.byThread[id];
+        if (!latest?.draft && !latest?.draftSelection) {
+          this.dispatch({ type: "setDraft", mainThreadId: id, draft: trimmed }); this.dispatch({ type: "setDraftSelection", mainThreadId: id, selection });
+        }
+        return false;
+      }
+    })();
+    this.sends.set(id, task);
+    void task.finally(() => { if (this.sends.get(id) === task) this.sends.delete(id); });
+    return task;
+  }
+  async interrupt(): Promise<void> {
+    const id = this.options.activeThreadId, ipc = this.ipc(), lifetime = this.lifetime;
+    if (!id || !ipc) return;
+    this.announced.delete(id); this.dispatch({ type: "setError", mainThreadId: id, error: undefined });
+    try { await ipc.interruptSideThread(id); }
+    catch (error) { if (lifetime === this.lifetime) this.dispatch({ type: "setError", mainThreadId: id, error: errorMessage(error) }); }
+  }
+  async reset(): Promise<void> {
+    const id = this.options.activeThreadId, cwd = this.options.activeContext?.cwd, ipc = this.ipc(), lifetime = this.lifetime;
+    if (!id || !cwd || !ipc || this.sendDisabledReason) return;
+    this.announced.delete(id); this.dispatch({ type: "setError", mainThreadId: id, error: undefined });
+    try { await ipc.resetSideThread(id); if (lifetime === this.lifetime) { this.invalidateReset(id, cwd); this.dispatch({ type: "reset", mainThreadId: id }); } }
+    catch (error) { if (lifetime === this.lifetime) this.dispatch({ type: "setError", mainThreadId: id, error: errorMessage(error) }); }
+  }
 }
 
-export function useSideThreadController(
-  options: SideThreadControllerOptions
-): SideThreadController {
-  const { t } = useI18n();
-  const { activeThreadId, activeContext, ipc, disabled, disabledReason, commandID } = options;
-  const ipcImpl = ipc ?? defaultIPC();
-  const effectiveDisabled = Boolean(disabled || !ipcImpl);
-  const effectiveReason = !ipcImpl
-    ? t("sideThread.unsupported")
-    : disabled
-      ? disabledReason ?? t("sideThread.unavailable")
-      : undefined;
-
-  const disabledRef = useRef(effectiveDisabled);
-  disabledRef.current = effectiveDisabled;
-
-  const [store, setStore] = useState<SideThreadStoreState>(() =>
-    createInitialSideThreadStore()
-  );
-  const storeRef = useRef(store);
-  const announcedErrorsRef = useRef(new Map<string, string>());
-  const openGenerationRef = useRef(new Map<string, number>());
-  const pendingSendTasksRef = useRef(new Map<string, Promise<void>>());
-  const lastActiveRuntimeKeyRef = useRef<string | undefined>(undefined);
-  const activeRuntimeKey =
-    activeThreadId && activeContext?.cwd
-      ? `${activeContext.cwd}\0${activeThreadId}`
-      : undefined;
-  const activeRuntimeKeyRef = useRef(activeRuntimeKey);
-  activeRuntimeKeyRef.current = activeRuntimeKey;
-  storeRef.current = store;
-  const entry = activeThreadId ? store.byThread[activeThreadId] : undefined;
-  const dispatch = useCallback((action: SideThreadAction) => {
-    setStore((previous) => reduceSideThreadStore(previous, action));
-  }, []);
-
-  // Notification ownership outlives the keyed panel/composer. Revisiting a
-  // thread must not replay its last failure, but an explicit retry can fail again.
-  useEffect(() => {
-    if (!activeThreadId || !entry) return;
-    const error = sideThreadRequestError(entry);
-    if (!error || announcedErrorsRef.current.get(activeThreadId) === error) return;
-    announcedErrorsRef.current.set(activeThreadId, error);
-    showActionErrorToast(statusMessageForError(error, t("sideThread.unavailable")));
-  }, [activeThreadId, entry, t]);
-
-  useEffect(() => {
-    if (!ipcImpl) {
-      return;
-    }
-    return ipcImpl.onSideThreadEvent((envelope) => {
-      if (envelope.workdir !== activeContext?.cwd) {
-        return;
-      }
-      setStore((previous) =>
-        reduceSideThreadStore(previous, {
-          type: "applyEvent",
-          event: envelope.event
-        })
-      );
-    });
-  }, [activeContext?.cwd, ipcImpl]);
-
-  useEffect(() => {
-    if (!activeThreadId) {
-      return;
-    }
-    setStore((previous) =>
-      ensureSideThreadEntry(previous, activeThreadId).store
-    );
-  }, [activeThreadId]);
-
-  useEffect(() => {
-    if (!activeThreadId || !activeRuntimeKey || !ipcImpl || effectiveDisabled) {
-      lastActiveRuntimeKeyRef.current = activeRuntimeKey;
-      return;
-    }
-    if (lastActiveRuntimeKeyRef.current === activeRuntimeKey) {
-      return;
-    }
-    lastActiveRuntimeKeyRef.current = activeRuntimeKey;
-    if (!storeRef.current.byThread[activeThreadId]?.open) {
-      return;
-    }
-
-    let cancelled = false;
-    const generation = (openGenerationRef.current.get(activeRuntimeKey) ?? 0) + 1;
-    openGenerationRef.current.set(activeRuntimeKey, generation);
-    const isCurrentRequest = () =>
-      !disabledRef.current &&
-      !cancelled &&
-      activeRuntimeKeyRef.current === activeRuntimeKey &&
-      openGenerationRef.current.get(activeRuntimeKey) === generation;
-
-    void (async () => {
-      try {
-        const opened = await ipcImpl.openSideThread(activeThreadId);
-        const openedSummary = opened.summary;
-        if (!isCurrentRequest() || !openedSummary) {
-          return;
-        }
-        setStore((previous) =>
-          reduceSideThreadStore(previous, {
-            type: "mergeSummary",
-            mainThreadId: activeThreadId,
-            summary: openedSummary
-          })
-        );
-
-        const history = await ipcImpl.getSideThreadHistory(activeThreadId);
-        if (!isCurrentRequest() || !history) {
-          return;
-        }
-        await pendingSendTasksRef.current.get(activeThreadId);
-        if (!isCurrentRequest()) {
-          return;
-        }
-        setStore((previous) =>
-          reduceSideThreadStore(previous, {
-            type: "mergeHistory",
-            mainThreadId: activeThreadId,
-            summary: history.summary,
-            messages: history.messages
-          })
-        );
-      } catch {
-        // Activation refresh is best-effort recovery. The explicit open/send
-        // paths surface actionable failures in the panel.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeRuntimeKey, activeThreadId, ipcImpl, effectiveDisabled]);
-
-  useEffect(() => {
-    if (
-      !activeThreadId ||
-      !activeRuntimeKey ||
-      !ipcImpl ||
-      effectiveDisabled ||
-      !entry?.open ||
-      entry.summary?.status !== "running"
-    ) {
-      return;
-    }
-    let cancelled = false;
-    let requestInFlight = false;
-    const refresh = async () => {
-      if (
-        cancelled ||
-        requestInFlight ||
-        activeRuntimeKeyRef.current !== activeRuntimeKey
-      ) {
-        return;
-      }
-      requestInFlight = true;
-      try {
-        const history = await ipcImpl.getSideThreadHistory(activeThreadId);
-        if (
-          !cancelled &&
-          history &&
-          activeRuntimeKeyRef.current === activeRuntimeKey
-        ) {
-          setStore((previous) =>
-            reduceSideThreadStore(previous, {
-              type: "mergeHistory",
-              mainThreadId: activeThreadId,
-              summary: history.summary,
-              messages: history.messages
-            })
-          );
-        }
-      } catch {
-        // Notifications remain the primary path; polling only repairs missed
-        // terminal events and peer-process updates.
-      } finally {
-        requestInFlight = false;
-      }
-    };
-    const timer = window.setInterval(() => void refresh(), SIDE_THREAD_RECOVERY_POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [activeRuntimeKey, activeThreadId, entry?.open, entry?.summary?.status, ipcImpl, effectiveDisabled]);
-
-  const open = useCallback(() => {
-    if (!activeThreadId || disabled) {
-      return;
-    }
-    announcedErrorsRef.current.delete(activeThreadId);
-    dispatch({ type: "open", mainThreadId: activeThreadId });
-    dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
-    if (!ipcImpl || disabled || !activeContext || !activeRuntimeKey) {
-      return;
-    }
-
-    const generation = (openGenerationRef.current.get(activeRuntimeKey) ?? 0) + 1;
-    openGenerationRef.current.set(activeRuntimeKey, generation);
-    const isCurrentRequest = () =>
-      !disabledRef.current &&
-      activeRuntimeKeyRef.current === activeRuntimeKey &&
-      openGenerationRef.current.get(activeRuntimeKey) === generation;
-
-    void (async () => {
-      try {
-        const opened = await ipcImpl.openSideThread(activeThreadId);
-        const openedSummary = opened.summary;
-        if (!isCurrentRequest() || !openedSummary) {
-          return;
-        }
-        setStore((previous) =>
-          reduceSideThreadStore(previous, {
-            type: "mergeSummary",
-            mainThreadId: activeThreadId,
-            summary: openedSummary
-          })
-        );
-
-        const history = await ipcImpl.getSideThreadHistory(activeThreadId);
-        if (!isCurrentRequest() || !history) {
-          return;
-        }
-        await pendingSendTasksRef.current.get(activeThreadId);
-        if (!isCurrentRequest()) {
-          return;
-        }
-        setStore((previous) =>
-          reduceSideThreadStore(previous, {
-            type: "mergeHistory",
-            mainThreadId: activeThreadId,
-            summary: history.summary,
-            messages: history.messages
-          })
-        );
-      } catch (error) {
-        if (isCurrentRequest()) {
-          dispatch({
-            type: "setError",
-            mainThreadId: activeThreadId,
-            error: errorMessage(error)
-          });
-        }
-      }
-    })();
-  }, [activeContext, activeRuntimeKey, activeThreadId, disabled, dispatch, ipcImpl]);
-
-  const close = useCallback(() => {
-    if (activeThreadId) {
-      dispatch({ type: "close", mainThreadId: activeThreadId });
-    }
-  }, [activeThreadId, dispatch]);
-
-  const toggle = useCallback(() => {
-    if (!activeThreadId) {
-      return;
-    }
-    if (storeRef.current.byThread[activeThreadId]?.open) {
-      close();
-    } else {
-      open();
-    }
-  }, [activeThreadId, close, open]);
-
-  const setDraft = useCallback(
-    (draft: string) => {
-      if (activeThreadId) {
-        dispatch({ type: "setDraft", mainThreadId: activeThreadId, draft });
-      }
-    },
-    [activeThreadId, dispatch]
-  );
-
-  const setDraftSelection = useCallback((selection: SideThreadSelection | undefined) => {
-    if (activeThreadId) dispatch({ type: "setDraftSelection", mainThreadId: activeThreadId, selection });
-  }, [activeThreadId, dispatch]);
-
-  const sendMessage = useCallback(
-    (prompt: string, selectedCommandID = commandID) => {
-      if (!activeThreadId || !activeContext || !ipcImpl || effectiveDisabled) {
-        return;
-      }
-      const trimmed = prompt.trim();
-      const currentEntry = storeRef.current.byThread[activeThreadId];
-      const selection = currentEntry?.draftSelection;
-      if (
-        !trimmed ||
-        currentEntry?.streaming ||
-        pendingSendTasksRef.current.has(activeThreadId)
-      ) {
-        return;
-      }
-
-      announcedErrorsRef.current.delete(activeThreadId);
-      const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const optimisticMessage = {
-        id: optimisticId,
-        side_thread_id: currentEntry?.summary?.side_thread_id ?? "",
-        role: "user" as const,
-        text: trimmed,
-        ...(selection ? { selection } : {}),
-        created_at: new Date().toISOString()
-      };
-      setStore((previous) => {
-        let next = reduceSideThreadStore(previous, {
-          type: "appendMessage",
-          mainThreadId: activeThreadId,
-          message: optimisticMessage
-        });
-        next = reduceSideThreadStore(next, {
-          type: "setDraft",
-          mainThreadId: activeThreadId,
-          draft: ""
-        });
-        next = reduceSideThreadStore(next, {
-          type: "setDraftSelection",
-          mainThreadId: activeThreadId,
-          selection: undefined
-        });
-        next = reduceSideThreadStore(next, {
-          type: "setStreaming",
-          mainThreadId: activeThreadId,
-          streaming: true
-        });
-        return reduceSideThreadStore(next, {
-          type: "setError",
-          mainThreadId: activeThreadId,
-          error: undefined
-        });
-      });
-
-      const task = (async () => {
-        try {
-          const result = await ipcImpl.sendSideThreadMessage({
-            main_thread_id: activeThreadId,
-            prompt: trimmed,
-            ...(selectedCommandID ? { command_id: selectedCommandID } : {}),
-            ...(selection ? { selection } : {})
-          });
-          setStore((previous) => {
-            let next = reduceSideThreadStore(previous, {
-              type: "mergeSummary",
-              mainThreadId: activeThreadId,
-              summary: result.summary
-            });
-            next = reduceSideThreadStore(next, {
-              type: "removeMessage",
-              mainThreadId: activeThreadId,
-              messageId: result.user_message_id
-            });
-            return reduceSideThreadStore(next, {
-              type: "updateMessage",
-              mainThreadId: activeThreadId,
-              messageId: optimisticId,
-              patch: {
-                id: result.user_message_id,
-                side_thread_id: result.summary.side_thread_id
-              }
-            });
-          });
-        } catch (error) {
-          setStore((previous) => {
-            let next = reduceSideThreadStore(previous, {
-              type: "removeMessage",
-              mainThreadId: activeThreadId,
-              messageId: optimisticId
-            });
-            next = reduceSideThreadStore(next, {
-              type: "setStreaming",
-              mainThreadId: activeThreadId,
-              streaming: false
-            });
-            next = reduceSideThreadStore(next, {
-              type: "setError",
-              mainThreadId: activeThreadId,
-              error: errorMessage(error)
-            });
-            const nextDraft = next.byThread[activeThreadId];
-            // Text and its selected source belong to one submission. Restoring
-            // either field alone can attach failed context to a newer question.
-            if (!nextDraft?.draft && !nextDraft?.draftSelection) {
-              next = reduceSideThreadStore(next, {
-                type: "setDraft",
-                mainThreadId: activeThreadId,
-                draft: trimmed
-              });
-              next = reduceSideThreadStore(next, { type: "setDraftSelection", mainThreadId: activeThreadId, selection });
-            }
-            return next;
-          });
-        }
-      })();
-      pendingSendTasksRef.current.set(activeThreadId, task);
-      void task.finally(() => {
-        if (pendingSendTasksRef.current.get(activeThreadId) === task) {
-          pendingSendTasksRef.current.delete(activeThreadId);
-        }
-      });
-    },
-    [activeContext, activeThreadId, effectiveDisabled, ipcImpl, commandID]
-  );
-
-  const interrupt = useCallback(() => {
-    if (!activeThreadId || !ipcImpl) {
-      return;
-    }
-    announcedErrorsRef.current.delete(activeThreadId);
-    dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
-    void ipcImpl.interruptSideThread(activeThreadId).catch((error: unknown) => {
-      dispatch({
-        type: "setError",
-        mainThreadId: activeThreadId,
-        error: errorMessage(error)
-      });
-    });
-  }, [activeThreadId, dispatch, ipcImpl]);
-
-  const reset = useCallback(() => {
-    if (!activeThreadId || !ipcImpl || effectiveDisabled) {
-      return;
-    }
-    announcedErrorsRef.current.delete(activeThreadId);
-    dispatch({ type: "setError", mainThreadId: activeThreadId, error: undefined });
-    // The server's reset broadcast also clears this entry; dispatching
-    // locally just avoids a visible round-trip delay.
-    void ipcImpl
-      .resetSideThread(activeThreadId)
-      .then(() => {
-        dispatch({ type: "reset", mainThreadId: activeThreadId });
-      })
-      .catch((error: unknown) => {
-        dispatch({
-          type: "setError",
-          mainThreadId: activeThreadId,
-          error: errorMessage(error)
-        });
-      });
-  }, [activeThreadId, dispatch, effectiveDisabled, ipcImpl]);
-
-  return {
-    entry,
-    open,
-    close,
-    toggle,
-    setDraft,
-    setDraftSelection,
-    sendMessage,
-    interrupt,
-    reset,
-    sendDisabledReason:
-      effectiveDisabled || !activeContext
-        ? effectiveReason ?? t("sideThread.selectWorkspace")
-        : undefined
-  };
+/** Compatibility adapter while default UI moves to the application service. */
+export function useSideThreadController(options: SideThreadControllerOptions): SideThreadController {
+  useI18n();
+  const owner = useRef<SideThreadOwner | null>(null);
+  if (!owner.current) owner.current = new SideThreadOwner(options);
+  const value = owner.current;
+  useEffect(() => value.configure(options), [value, options.activeThreadId, options.activeContext, options.ipc, options.commandID, options.disabled, options.disabledReason]);
+  useEffect(() => value.start(), [value]);
+  const store = useSyncExternalStore(value.subscribe, value.getSnapshot);
+  return { entry: options.activeThreadId ? store.byThread[options.activeThreadId] : undefined,
+    open: () => { void value.open(); }, close: () => value.close(), toggle: () => value.toggle(),
+    setDraft: draft => value.setDraft(draft), setDraftSelection: selection => value.setDraftSelection(selection),
+    sendMessage: (prompt, commandID) => { void value.sendMessage(prompt, commandID); },
+    interrupt: () => { void value.interrupt(); }, reset: () => { void value.reset(); }, sendDisabledReason: value.sendDisabledReason };
 }
