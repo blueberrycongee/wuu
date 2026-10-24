@@ -76,7 +76,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       listManaged: unavailable, readManaged: unavailable, writeManaged: unavailable, resizeManaged: unavailable, stopManaged: unavailable,
     },
     catalog: { getSnapshot: () => ({ contextKey: "preview", inventory: [], capabilities: { install: false, update: false, remove: false } }),
-      listSkills: async () => [], readSkill: unavailable, refresh: unavailable, update: unavailable, install: unavailable, remove: unavailable, loadIcon: unavailable },
+      listSkillsForThread: unavailable, listSkills: async () => [], readSkill: unavailable, refresh: unavailable, update: unavailable, install: unavailable, remove: unavailable, loadIcon: unavailable },
     previewContent: { resolveResourceURL: unavailable, openFile: unavailable, capabilities: Object.freeze({ nativeItemMenu: false, revealItem: false, exportFile: false }),
       listDirectory: unavailable, readFile: unavailable, revealItem: unavailable, showItemMenu: unavailable, exportFile: unavailable },
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },

@@ -13,7 +13,7 @@ import type { ApplicationSearchActionMapV1, ApplicationSearchViewV1 } from "./ui
 import type { ApplicationConversationActionMapV1, ApplicationConversationActionsViewV1 } from "./ui-conversation-actions.js";
 import type { ApplicationSubmissionActionMapV1, ApplicationSubmissionSnapshotV1 } from "./ui-submission.js";
 import type { ApplicationComposerRuntimeActionMapV1, ApplicationComposerRuntimeViewV1 } from "./ui-composer-runtime.js";
-import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
+import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogThreadSkillsInputV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
 import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1 } from "./ui-preview-content.js";
 import type { ApplicationConversationDetailsActionMapV1, ApplicationConversationDetailV1, ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
@@ -442,6 +442,7 @@ export function scopeApplicationCatalog(source: () => ApplicationCatalogV1,
     invokeApplicationOperation(operation, signal, assertActive, options?.signal);
   return Object.freeze({
     getSnapshot: () => { assertActive(); signal.throwIfAborted(); return source().getSnapshot(); },
+    listSkillsForThread: (input: CatalogThreadSkillsInputV1, options?: CatalogCallOptionsV1) => invoke(signal => source().listSkillsForThread(input, { signal }), options),
     listSkills: (options?: CatalogCallOptionsV1) => invoke(signal => source().listSkills({ signal }), options),
     readSkill: (input: { readonly name: string; readonly source: string }, options?: CatalogCallOptionsV1) => invoke(signal => source().readSkill(input, { signal }), options),
     refresh: (options?: CatalogCallOptionsV1) => invoke(signal => source().refresh({ signal }), options),
