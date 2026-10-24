@@ -4,7 +4,6 @@ import { SettingsControlsProvider } from "../SettingsControlsContext";
 import { focusComposerTextarea } from "../ComposerFocus";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
-import type { ApplicationComposerPresentationV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
 import { Composer } from "../ComposerView";
@@ -18,8 +17,6 @@ import { createApplicationComposerAttachments } from "./ApplicationComposerAttac
 import { showErrorToast } from "../Toast";
 import { useI18n } from "../i18n";
 
-// Remove this augmentation when the public facade exports composerPresentation.
-type ComposerApplication = ApplicationServiceV1 & { readonly composerPresentation: ApplicationComposerPresentationV1 };
 export interface DefaultComposerLayout {
   variant?: ComposerVariant;
   pane?: "primary" | "secondary";
@@ -28,7 +25,7 @@ export interface DefaultComposerLayout {
 }
 
 /** A selected composer receives geometry only; every operation retains its public draft owner. */
-export function DefaultComposerSurface({ application, ...layout }: DefaultComposerLayout & { application: ComposerApplication }): JSX.Element | null {
+export function DefaultComposerSurface({ application, ...layout }: DefaultComposerLayout & { application: ApplicationServiceV1 }): JSX.Element | null {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const pane = layout.pane ?? "primary";
   const ownerTabId = layout.ownerTabId ?? view.drafts[pane].ownerTabId;
@@ -36,7 +33,7 @@ export function DefaultComposerSurface({ application, ...layout }: DefaultCompos
   return <OwnedComposer key={`${pane}:${ownerTabId}`} application={application} {...layout} pane={pane} ownerTabId={ownerTabId} />;
 }
 
-function OwnedComposer({ application, variant = "dock", pane, ownerTabId, containerRef }: DefaultComposerLayout & { application: ComposerApplication; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
+function OwnedComposer({ application, variant = "dock", pane, ownerTabId, containerRef }: DefaultComposerLayout & { application: ApplicationServiceV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
   const { t } = useI18n();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
@@ -153,5 +150,5 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
 
 export function activate(api: ApplicationGenerationAPI): void {
   api.registerUIContribution({ id: "ui.composer", target: "wuu.default-shell/application.composer", render: ({ application, context }: UISlotRenderProps) =>
-    <DefaultComposerSurface application={application as ComposerApplication} {...context as DefaultComposerLayout} /> });
+    <DefaultComposerSurface application={application} {...context as DefaultComposerLayout} /> });
 }
