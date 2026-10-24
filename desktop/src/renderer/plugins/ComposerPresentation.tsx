@@ -1,3 +1,4 @@
+import type { ComposerConfiguration } from "../ComposerTypes";
 import type { ReactNode, RefObject } from "react";
 import type { InitializeResult } from "../../shared/protocol";
 import { COMPOSER_ACTIONS, type AttachmentDescriptorV1, type ComposerSnapshotV1, type ComposerSubmissionModeV1 } from "../../shared/workbench";
@@ -15,7 +16,7 @@ interface ComposerPresentationProps {
   files: readonly ComposerFile[]; images: readonly ComposerImage[];
   queuedMessages: readonly QueuedComposerMessage[]; pendingMessages: readonly QueuedComposerMessage[];
   running: boolean; readOnly: boolean; sendDisabled: boolean; variant: ComposerVariant;
-  threadId?: string; initialized?: InitializeResult; contextUsage?: TurnContextUsage | null;
+  threadId?: string; initialized?: ComposerConfiguration | InitializeResult; contextUsage?: TurnContextUsage | null;
   disabledReason?: string;
   activeSubmissionMode: ComposerSubmissionModeV1; availableSubmissionModes: readonly ComposerSubmissionModeV1[];
   attachmentInputRef: RefObject<HTMLInputElement | null>; attachmentsEnabled: boolean;

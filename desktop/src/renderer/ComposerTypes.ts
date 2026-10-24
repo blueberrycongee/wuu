@@ -1,4 +1,4 @@
-import type { CodexModelSummary } from "../shared/protocol";
+import type { CodexModelSummary, InitializeResult, DesktopProject } from "../shared/protocol";
 import { resolveLocalizedText } from "./i18n";
 
 export const COMPOSER_PROJECT_MENU_WIDTH = 320;
@@ -73,3 +73,8 @@ export type ComposerWorktreeControl = {
   onToggle: () => void;
   onSelectStartBranch: (branch: string) => void;
 };
+
+/** Only presentation fields consumed by the editor and its runtime menus. */
+export type ComposerConfiguration = Pick<InitializeResult, "provider" | "model" | "effort" | "variant" | "speed" | "providers" | "permissions" | "features" | "extension_inventory" | "extension_trust" | "runtime_host" | "advanced_settings">;
+
+export type ComposerWorkspace = Pick<DesktopProject, "id" | "name" | "path" | "missing">;

@@ -1,5 +1,8 @@
+import { useComposerServices } from "../ComposerServicesContext";
+import type { ApplicationComposerContributionV1, ApplicationComposerContributionContextV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
 import { Ellipsis } from "../WuuIcons";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useRef,
@@ -10,7 +13,7 @@ import {
 
 import { FloatingMenuPortal, isInsideFloatingMenu } from "../ComposerFloatingMenu";
 import { useI18n } from "../i18n";
-import type { PluginHost, PluginSlotRenderContext } from "./PluginHost";
+import type { PluginHost, PluginSlotRenderContext, RegisteredPluginSlotContribution } from "./PluginHost";
 import { PluginSlotContribution } from "./PluginSlot";
 
 const INLINE_PLUGIN_TOOL_LIMIT = 2;
@@ -23,19 +26,23 @@ export function ComposerPluginToolbar({
   context: PluginSlotRenderContext;
 }): ReactNode {
   const { t } = useI18n();
+  const services = useComposerServices();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLDivElement>(null);
   const subscribe = useCallback(
-    (listener: () => void) => host.subscribeSlot("composer.toolbar", listener),
-    [host],
+    (listener: () => void) => services ? services.presentation.subscribe(listener) : host.subscribeSlot("composer.toolbar", listener),
+    [host, services],
   );
   const getSnapshot = useCallback(
-    () => host.getSlotSnapshot("composer.toolbar"),
-    [host],
+    () => services ? services.presentation.getContributions("composer.toolbar") : host.getSlotSnapshot("composer.toolbar"),
+    [host, services],
   );
-  const contributions = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-  const inline = contributions.slice(0, INLINE_PLUGIN_TOOL_LIMIT);
-  const overflow = contributions.slice(INLINE_PLUGIN_TOOL_LIMIT);
+  const contributions = useSyncExternalStore<readonly RegisteredPluginSlotContribution[] | readonly ApplicationComposerContributionV1[]>(subscribe, getSnapshot, getSnapshot);
+  const items = contributions.map(contribution => "View" in contribution
+    ? { key: contribution.key, title: contribution.title || contribution.key, node: <contribution.View context={{ ownerTabId: services!.ownerTabId, variant: context.variant as ApplicationComposerContributionContextV1["variant"], mainConversation: context.mainConversation === true, running: context.running === true, readOnly: context.readOnly === true, hasDraft: context.hasDraft === true, attachmentCount: context.attachmentCount as number }} /> }
+    : { key: `${contribution.pluginId}:${contribution.generation}:${contribution.id}`, title: contribution.title || `${contribution.pluginId}: ${contribution.id}`, node: <PluginSlotContribution host={host} id="composer.toolbar" context={context} contribution={contribution} /> });
+  const inline = items.slice(0, INLINE_PLUGIN_TOOL_LIMIT);
+  const overflow = items.slice(INLINE_PLUGIN_TOOL_LIMIT);
 
   useEffect(() => {
     if (overflow.length === 0) {
@@ -76,15 +83,7 @@ export function ComposerPluginToolbar({
 
   return (
     <div className="composer-plugin-toolbar">
-      {inline.map((contribution) => (
-        <PluginSlotContribution
-          key={`${contribution.pluginId}:${contribution.generation}:${contribution.id}`}
-          host={host}
-          id="composer.toolbar"
-          context={context}
-          contribution={contribution}
-        />
-      ))}
+      {inline.map(item => <Fragment key={item.key}>{item.node}</Fragment>)}
       {overflow.length > 0 ? (
         <div className="composer-plugin-tools-anchor" ref={triggerRef}>
           <button
@@ -117,21 +116,16 @@ export function ComposerPluginToolbar({
                 }}
               >
                 {overflow.map((contribution) => {
-                  const label = contribution.title || `${contribution.pluginId}: ${contribution.id}`;
+                  const label = contribution.title;
                   return (
                     <div
                       className="composer-plugin-tools-item"
                       role="group"
                       aria-label={label}
-                      key={`${contribution.pluginId}:${contribution.generation}:${contribution.id}`}
+                      key={contribution.key}
                     >
                       <span className="composer-plugin-tools-label">{label}</span>
-                      <PluginSlotContribution
-                        host={host}
-                        id="composer.toolbar"
-                        context={context}
-                        contribution={contribution}
-                      />
+                      {contribution.node}
                     </div>
                   );
                 })}

@@ -1,3 +1,4 @@
+import { useComposerServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
@@ -250,8 +251,9 @@ export function SplitPaneComposer({
     inputDraftUpdates.current.push(nextPrompt);
     setPrompt(nextPrompt);
   }
+  const services = useComposerServices();
   const inline = useComposerInlineCompletion({
-    host: desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
+    host: services?.presentation ?? desktopPluginHost, inputRef: textareaRef, value: visiblePromptValue,
     kind: "main",
     enabled: !readOnly && connected && !hasCollapsedPromptBlocks && !cameraOpen,
     contextKey: JSON.stringify([workspaceId, workspaceRoot, queryHistorySessionID]), revisionKey: JSON.stringify([submissionRevision, turnId, requestedHandoffIntent]),
