@@ -1,3 +1,4 @@
+import { scopeApplicationOnboarding } from "../../../../packages/plugin-sdk/src/ui";
 import { resetWorkspaceBrowserNavigationForTests } from "../WorkspaceBrowserNavigation";
 import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
@@ -17,6 +18,26 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("settles admitted onboarding imports after their initiating UI retires", async () => {
+    let finish!: (value: unknown) => void;
+    window.wuu = { importBrowserCookies: vi.fn(() => new Promise(resolve => { finish = resolve; })) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, onboardingComplete: false, onboarding: {
+      step: "browser", selectedPluginIDs: new Set(), initializedPluginSelection: true, applyingPlugins: false, savingProvider: false,
+      connected: true, savingRuntime: false, finishing: false, importingBrowser: "", browserImportError: "", browserImportResults: {}, browserImported: false,
+      scanningWorkspaces: false, choosingWorkspace: false, selectedPaths: new Set(), scanAttempt: 0, scannedRevision: 0, error: null, selectedEngine: "wuu",
+    } });
+    const generation = new AbortController();
+    const scoped = scopeApplicationOnboarding(() => controller.onboarding, generation.signal, () => generation.signal.throwIfAborted());
+    const importing = scoped.run({ kind: "browser", profilePath: "/fixture/profile" });
+    const rejected = expect(importing).rejects.toThrow();
+    expect(controller.onboarding.getSnapshot().workflow?.importingBrowser).toBe("/fixture/profile");
+    generation.abort(); await rejected;
+    finish({ imported: 1, skipped: 0, failed: 0 });
+    await vi.waitFor(() => expect(controller.onboarding.getSnapshot().workflow?.importingBrowser).toBe(""));
+    expect(controller.onboarding.getSnapshot().workflow?.browserImported).toBe(true);
+    expect(window.wuu.importBrowserCookies).toHaveBeenCalledExactlyOnceWith("/fixture/profile");
+  });
+
   it("uses the active worktree for environment operations and publishes shared Git status", async () => {
     const context = { kind: "project" as const, project_id: "project", cwd: "/project" };
     const thread = { id: "worktree", cwd: "/worktree", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [] };

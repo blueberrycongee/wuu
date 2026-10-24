@@ -111,6 +111,10 @@ export class ApplicationController implements HostApplicationService {
   private onboardingOwner?: ApplicationOnboarding;
   get onboarding(): ApplicationOnboarding {
     return this.onboardingOwner ??= new ApplicationOnboarding({ getState: () => this.state, updateState: this.updateState,
+      operations: { plugins: async input => { await this.catalog.update(input); },
+        runtime: async engine => { await this.applicationSettings.invoke("settings.update-engine", { default_engine: engine }); },
+        provider: input => this.applicationSettings.invoke("settings.save-provider", input),
+        browser: profilePath => this.settingsControls.importBrowserCookies(profilePath) },
       selectImportedWorkspace: (workspaceId, signal) => this.invoke("workspace.select", { workspaceId, resumeLatestThread: false }, { signal }) });
   }
   private activitySessions = emptyActivitySessions();

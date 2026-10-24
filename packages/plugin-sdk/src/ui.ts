@@ -554,6 +554,7 @@ export function scopeApplicationOnboarding(source: () => ApplicationOnboardingV1
   return Object.freeze<ApplicationOnboardingV1>({
     getSnapshot: () => read(() => source().getSnapshot()),
     checkpoint: input => read(() => source().checkpoint(input)),
+    run: operation => invoke(() => source().run(operation)),
     subscribe: listener => read(() => {
       const stop = source().subscribe(() => { if (!signal.aborted) listener(); });
       let stopped = false;
