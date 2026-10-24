@@ -91,6 +91,7 @@ export type ConversationHistoryActionsDeps = {
     prepareThread?: () => Promise<Thread>,
   ) => Promise<boolean>;
   worktreeForkNonGitReason: string;
+  onError?: (error: unknown, fallback: string) => void;
 };
 
 export type ConversationHistoryActions = {
@@ -248,7 +249,7 @@ export function createConversationHistoryActions(
         }),
       );
     } catch (error) {
-      showErrorToast(error, t("thread.forkFailed"));
+      (deps.onError ?? showErrorToast)(error, t("thread.forkFailed"));
       throw error;
     }
   }
@@ -369,6 +370,7 @@ deps.rememberConversationScrollForEdit();
       media_type: file.media_type,
       data: file.data,
       filename: file.filename,
+      remote_ref: file.remote_ref,
     }));
     const message = createComposerMessage(text, composerImages, composerFiles, contentParts);
     if (!message) {
@@ -496,7 +498,7 @@ deps.rememberConversationScrollForEdit();
           ? { ...current, submitting: false }
           : current,
       );
-      showErrorToast(error, t("history.editFailed"));
+      (deps.onError ?? showErrorToast)(error, t("history.editFailed"));
     }
   }
 
