@@ -849,7 +849,7 @@ function SettingsViewContent({
                     <SettingsNavItem
                       key={pageId}
                       pageID={pageId}
-                      icon={<PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
+                      icon={<PluginIcon loadIcon={controls.loadPluginIconURL} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
                       active={activePage === pageId}
                       onClick={() => selectPage(pageId)}
                     >

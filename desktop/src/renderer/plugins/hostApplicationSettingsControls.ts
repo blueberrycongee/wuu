@@ -1,3 +1,4 @@
+import { loadPluginIconURL } from "../PublicIcon";
 import { readBackground, updateBackground, observeBackground } from "../background/preferences";
 import { processBackground } from "../background/image";
 import { subscribeShellSkins, getShellSkins, selectShellSkin, loadSkinImage } from "../background/ShellSkin";
@@ -61,6 +62,7 @@ export function createApplicationSettingsControls(options: {
     },
     connectionDisplay: Object.freeze({ ...connectionDisplayPreferences, subscribe: subscribeConnectionDisplay, getSnapshot: connectionDisplaySnapshot }),
     readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory,
+    loadPluginIconURL,
     readBackground, updateBackground, observeBackground, processBackground,
     subscribeShellSkins, selectShellSkin, loadSkinImage,
     getShellSkins: () => {
