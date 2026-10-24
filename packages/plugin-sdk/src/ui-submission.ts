@@ -1,5 +1,5 @@
 import type { ApplicationResponseSelectionV1 } from "./ui-composer.js";
-import type { ApplicationTurnV1 } from "./ui.js";
+import type { ApplicationConversationTurnV1 } from "./ui-conversation.js";
 
 /** Ordered text and references; attachment bytes stay with the draft resource owner. */
 export type ApplicationSubmissionContentPartV1 =
@@ -41,7 +41,7 @@ export interface ApplicationSubmissionOperationV1 {
 }
 export interface ApplicationSubmissionSnapshotV1 {
   readonly operations: readonly ApplicationSubmissionOperationV1[];
-  readonly pendingCreations: readonly { readonly ownerTabId: string; readonly operationID: string; readonly startedAtMs: number; readonly turn: ApplicationTurnV1 }[];
+  readonly pendingCreations: readonly { readonly ownerTabId: string; readonly operationID: string; readonly startedAtMs: number; readonly turn: ApplicationConversationTurnV1 }[];
   readonly failedDraftTabIds: readonly string[];
   readonly stopRequests: readonly { readonly threadId: string; readonly phase: "pending" | "retry" }[];
 }

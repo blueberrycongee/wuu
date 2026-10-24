@@ -169,3 +169,22 @@ describe("application submission ownership",()=>{
   });
 
 });
+
+it("projects a complete immutable optimistic turn while thread creation is pending", async () => {
+  const creating = deferred<{thread:Thread}>();
+  window.wuu = {startThread:vi.fn(() => creating.promise), deleteThread:vi.fn().mockResolvedValue({})} as unknown as WuuDesktopApi;
+  const f = fixture();
+  const state = f.getState();
+  const image = {id:"image",media_type:"image/png",data:"b3JpZ2luYWw="};
+  f.setState({...state, sessionTabs:state.sessionTabs.map(tab => ({...tab, images:[image]}))});
+  const parts = [{type:"pasted_text" as const, text:"original source", title:"Source"}];
+  const result = f.submission.submit({ownerTabId:"draft:a", contentParts:parts});
+  const pending = f.submission.getSnapshot().pendingCreations[0];
+  expect(pending.turn).toMatchObject({status:"in_progress", items_view:"full", started_at:new Date(pending.startedAtMs).toISOString(),
+    items:[{type:"user_message",content_parts:parts,images:[{media_type:"image/png",data:"b3JpZ2luYWw="}]}]});
+  expect(Object.isFrozen(pending.turn.items[0])).toBe(true);
+  expect(Object.isFrozen(pending.turn.items[0].images![0])).toBe(true);
+  expect(pending.turn.items[0].images![0]).not.toBe(image);
+  f.submission.cancel(result.operationID!); creating.resolve({thread:thread()});
+  await vi.waitFor(() => expect(f.submission.getSnapshot().pendingCreations).toHaveLength(0));
+});

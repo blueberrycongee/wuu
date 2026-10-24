@@ -14,7 +14,6 @@ import { forgetLocalTurnTiming } from "../LocalTurnTiming";
 import { rememberCollapsedPromptParts, readCollapsedPromptParts } from "../ComposerCollapsedPrompt";
 import { writeComposerDraftRecovery } from "../ComposerDraftRecovery";
 import { hasAuthenticatedProvider } from "../RuntimeHelpers";
-import { toConversationItemSnapshot } from "./ApplicationSnapshots";
 
 export interface ApplicationSubmissionOptions {
   getState(): AppState;
@@ -75,8 +74,17 @@ export class ApplicationSubmission {
 
   private publish(): void {
     this.snapshot = Object.freeze({ operations: Object.freeze([...this.results.values(), ...[...this.operations.values()].map(operation => operation.view)].map(view => Object.freeze({ ...view }))),
-      pendingCreations: Object.freeze([...this.creations.values()].map(operation => Object.freeze({ ownerTabId: operation.source.id, operationID: operation.view.operationID, startedAtMs: operation.clickedAtMs,
-        turn: Object.freeze({ id: operation.optimistic.id, status: "running" as const, items: Object.freeze(operation.optimistic.items.map(item => toConversationItemSnapshot(item, "user-message"))) }) }))),
+      pendingCreations: Object.freeze([...this.creations.values()].map(operation => {
+        const turn = structuredClone(operation.optimistic);
+        const freeze = (value: unknown): void => {
+          if (!value || typeof value !== "object") return;
+          Object.values(value).forEach(freeze);
+          Object.freeze(value);
+        };
+        freeze(turn);
+        return Object.freeze({ownerTabId: operation.source.id, operationID: operation.view.operationID,
+          startedAtMs: operation.clickedAtMs, turn});
+      })),
       failedDraftTabIds: Object.freeze([...this.failedDrafts]),
       stopRequests: Object.freeze([...this.stopRequests].map(([threadId, request]) => Object.freeze({ threadId, phase: request.phase }))) });
     this.options.changed();
