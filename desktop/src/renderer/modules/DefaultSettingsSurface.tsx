@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationGenerationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationSettingsLayoutV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { EngineListResult, InitializeResult } from "../../shared/protocol";
 import { SettingsShellRenderer, type SettingsShellRendererProps } from "../ConversationShellRenderers";
+import { useArchiveDeletion } from "../useArchiveDeletion";
 import { useSettingsRuntimeState } from "../SettingsRuntimeState";
 import type { SettingsPage } from "../SettingsView";
 import { showErrorToast } from "../Toast";
@@ -71,4 +72,25 @@ export function DefaultSettingsSurface({ application, archive, onNoticeVisibilit
       />
     </div>}
   </>;
+}
+
+/** Settings owns its domain reads and mutations; the slot supplies only presentation geometry. */
+export function activate(api: ApplicationGenerationAPI): void {
+  function SettingsContribution({ application, context }: UISlotRenderProps): JSX.Element {
+    const layout = context.layout as ApplicationSettingsLayoutV1;
+    const settings = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings);
+    const archiveDeletion = useArchiveDeletion({
+      list: () => application.invoke("settings.list-archived", {}),
+      remove: threadId => application.invoke("settings.delete-archived", { threadId }),
+    });
+    const onNoticeVisibilityChange = useCallback((visible: boolean) => layout.onNoticeVisibilityChange?.(visible), [layout.onNoticeVisibilityChange]);
+    return <DefaultSettingsSurface {...layout} application={application}
+      onNoticeVisibilityChange={onNoticeVisibilityChange}
+      archive={{ archivedThreads: settings.archivedThreads,
+        onUnarchiveThread: thread => { void application.invoke("settings.unarchive", { threadId: thread.id }).catch(showErrorToast); },
+        archiveDeletion, onDeleteAllArchivedThreads: () => void archiveDeletion.removeAll(),
+        onRetryArchiveDeletion: () => void archiveDeletion.retry(),
+      }} />;
+  }
+  api.registerUIContribution({ id: "ui.settings", target: "wuu.default-shell/application.settings", render: SettingsContribution });
 }

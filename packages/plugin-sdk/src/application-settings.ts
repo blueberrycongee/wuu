@@ -59,6 +59,8 @@ export interface ApplicationSettingsActionMapV1 {
 
 /** Layout-owned geometry and interactions; contains no settings domain state. */
 export interface ApplicationSettingsLayoutV1 {
+  /** Allows a layout to arbitrate overlapping transient notices. */
+  readonly onNoticeVisibilityChange?: (visible: boolean) => void;
   readonly browserSettingsAllowed: boolean;
   readonly embedded: boolean;
   readonly embeddedDrawerPhase: "closed" | "open" | "closing" | "docking";
