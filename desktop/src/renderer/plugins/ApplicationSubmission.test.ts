@@ -32,7 +32,7 @@ describe("application submission ownership",()=>{
     const f=fixture(undefined,false,"fixture",{provider:"chosen",model:"chosen-model",effort:"high",speed:"",permission_mode:"read_only",approve_for_me:true});
     const workspace={kind:"project" as const,project_id:"workspace",cwd:"/workspace"};
     const state=f.getState();
-    f.setState({...state,activeContext:workspace,initialized:{...state.initialized!,features:{project_agent:true}},sessionTabs:state.sessionTabs.map(tab=>tab.kind==="draft"?{...tab,context:workspace,project}:tab)});
+    f.setState({...state,activeContext:workspace,initialized:{...state.initialized!,features:{project_agent:true}},sessionTabs:state.sessionTabs.map(tab=>tab.kind==="draft"?{...tab,context:workspace,project:project ? true as const : undefined}:tab)});
     expect(f.submission.submit({ownerTabId:"draft:a"}).accepted).toBe(true);
     await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
     const params=vi.mocked(window.wuu.startThread).mock.calls[0][0]!;
