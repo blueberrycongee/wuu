@@ -218,6 +218,8 @@ async function run() {
     await type('.research-settings input',String(size));
     await until(()=>evaluate(({theme,size})=>document.documentElement.dataset.theme===theme && parseFloat(getComputedStyle(document.querySelector('.research-shell')).fontSize)===size,{theme,size}),'appearance applied to rendered shell');
     await toggleSettings();
+    // Finish the native click before resizing moves its target.
+    await until(()=>evaluate(()=>!document.querySelector('.research-settings') && Boolean(document.querySelector('.research-composer textarea'))),'settings close before resize');
     win.setBounds({x:0,y:0,width,height:850});
     await capture(`research-${theme}-${size}-${width}`);
     const geometry=await evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,composer:document.querySelector('.research-composer').getBoundingClientRect().toJSON()}));
