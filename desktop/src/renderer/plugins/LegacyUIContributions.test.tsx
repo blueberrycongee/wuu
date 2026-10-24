@@ -6,6 +6,7 @@ import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../pa
 import type { ViewHostAPI, PresentationHost } from "../../shared/workbench";
 import { ApplicationController } from "./ApplicationController";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
+import { LegacyUIContributions } from "./LegacyUIContributions";
 import { ApplicationShellOutlet } from "./ApplicationShell";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
@@ -156,6 +157,30 @@ describe("legacy contributions in declared public slots", () => {
       { workspace_tools: [{ id: "notes-entry", view: "notes", title: "Notes" }] });
     mount(); await act(async () => { element.querySelector<HTMLButtonElement>("button")!.click(); });
     expect(invoke).toHaveBeenCalledWith("preview.open-plugin", expect.objectContaining({ entryId: "notes-entry", pluginId: "extension", generation: "same", viewTypeId: "notes" }), { signal: expect.any(AbortSignal) });
+  });
+
+  it("unmounts host workbench layers and fences their captured application with their owner", async () => {
+    const { host, register, mount, invoke } = await fixture("test-layer", { visible: true });
+    const cleanup = vi.fn();
+    let captured!: ApplicationServiceV1;
+    function Layer() { React.useEffect(() => cleanup, []); return <span>Host workbench</span>; }
+    await register(api => {
+      api.registerUIContribution({ id: "layer-owner", target: "custom-shell/test-layer", render: ({ application, context }) =>
+        <LegacyUIContributions host={host} semanticSlot="workbench.layers" application={application} context={context}
+          createViewHost={() => { throw new Error("No view requested"); }} renderLegacyWorkbench={input => {
+            captured = input.application;
+            expect(input.context).toEqual({ visible: true });
+            return <Layer />;
+          }} /> });
+    });
+    mount(); expect(element.textContent).toBe("Host workbench");
+    await captured.invoke("preview.show-conversation", {});
+    expect(invoke).toHaveBeenCalledOnce();
+    await act(async () => { host.unload("extension"); });
+    expect(cleanup).toHaveBeenCalledOnce();
+    expect(element.textContent).toBe("Native content");
+    await expect(captured.invoke("preview.show-conversation", {})).rejects.toThrow();
+    expect(invoke).toHaveBeenCalledOnce();
   });
 
   it("renders only the selected generation's workspace view and its title commands", async () => {

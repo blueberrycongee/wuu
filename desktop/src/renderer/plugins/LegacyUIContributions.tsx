@@ -20,6 +20,10 @@ export interface LegacyViewIdentity {
   readonly tabId?: string;
   readonly context?: Readonly<Record<string, unknown>>;
 }
+export interface LegacyWorkbenchRenderInput {
+  readonly application: ApplicationServiceV1;
+  readonly context: Readonly<Record<string, unknown>>;
+}
 export interface LegacyUIContributionsProps {
   readonly host: PluginHost;
   /** The declared semantic slot ID, independent of the declaring plugin's ID. */
@@ -28,6 +32,7 @@ export interface LegacyUIContributionsProps {
   readonly context: Readonly<Record<string, unknown>>;
   readonly fallback?: React.ReactNode;
   readonly createViewHost: (identity: LegacyViewIdentity) => ViewHostAPI;
+  readonly renderLegacyWorkbench?: (input: LegacyWorkbenchRenderInput) => React.ReactNode;
 }
 
 type Identity = Pick<LegacyViewIdentity, "pluginId" | "generation">;
@@ -55,6 +60,10 @@ function retain(host: PluginHost, identities: readonly Identity[], child: React.
 /** Called only for a declared non-service slot by the host's composition boundary. */
 export function LegacyUIContributions(props: LegacyUIContributionsProps): React.ReactNode {
   const { semanticSlot } = props;
+  if (semanticSlot === "workbench.layers") {
+    if (!props.renderLegacyWorkbench) throw new Error("Legacy workbench host is unavailable");
+    return props.renderLegacyWorkbench({ application: props.application, context: props.context });
+  }
   if ((PLUGIN_SLOT_IDS as readonly string[]).includes(semanticSlot)) return <LegacySlots {...props} id={semanticSlot as PluginSlotId} />;
   if (semanticSlot === "workspace.tools") return <WorkspaceTools {...props} />;
   if (semanticSlot === "workspace.view") return <WorkspaceView {...props} />;
