@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { BrowserControlsProvider } from "./BrowserControlsContext";
+import { ApplicationBrowser } from "./plugins/ApplicationBrowser";
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import type { ActivitySession, BrowserDockTarget, BrowserCommandParams, BrowserSurfaceSnapshot } from "../shared/protocol";
 import {
@@ -10,6 +12,12 @@ import {
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let browser: ApplicationBrowser;
+let interaction: ((generation?: number) => void | Promise<void>) | undefined;
+let currentActivity: ActivitySession | undefined;
+function renderElement(element: JSX.Element) {
+  root!.render(<BrowserControlsProvider service={browser}>{element}</BrowserControlsProvider>);
+}
 const browserCommand = vi.fn(async (params: BrowserCommandParams): Promise<BrowserSurfaceSnapshot> => ({
   workdir: params.workdir,
   tabID: params.tabID,
@@ -28,6 +36,10 @@ beforeEach(() => {
   surfaceHandlers.length = 0;
   (window as unknown as { wuu: unknown }).wuu = {
     browserCommand,
+    takeoverActivity: vi.fn(async (_thread, _activity, generation) => {
+      await interaction?.(generation);
+      return { activity: currentActivity! };
+    }),
     browserSurface: vi.fn(async () => null),
     reportBrowserBounds,
     suppressBrowserOverlay: vi.fn(),
@@ -35,10 +47,15 @@ beforeEach(() => {
       surfaceHandlers.push(handler);
       return () => undefined;
     },
+    onBrowserDock: vi.fn(() => () => undefined),
+    onBrowserInvalidate: vi.fn(() => () => undefined),
     onBrowserUserInput: vi.fn(() => () => undefined),
     onBrowserTabAdopted: vi.fn(() => () => undefined),
     openExternal: vi.fn(),
   };
+  interaction = undefined;
+  currentActivity = undefined;
+  browser = new ApplicationBrowser({ api: window.wuu, onActivityChanged: vi.fn() });
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -48,6 +65,7 @@ afterEach(() => {
     root?.unmount();
   });
   root = null;
+  browser.dispose();
   if (container.parentNode) container.remove();
   resetWorkspaceBrowserNavigationForTests();
   vi.restoreAllMocks();
@@ -70,15 +88,16 @@ function render(props: PanelProps) {
 }
 
 function rerender(props: PanelProps) {
+  interaction = props.onUserInteraction;
+  currentActivity = props.activity;
   act(() => {
-    root!.render(
+    renderElement(
       <WorkspaceBrowserPanel
         visible={props.visible ?? true}
         threadID={props.threadID ?? "thread-1"}
         dockTarget={props.dockTarget}
         activeContext={{ kind: "no_project", cwd: "/repo" }}
         activity={props.activity}
-        onUserInteraction={props.onUserInteraction}
       />
     );
   });
@@ -198,7 +217,7 @@ describe("WorkspaceBrowserPanel", () => {
       reuseKey: "https://docs.example.com/api",
     });
     await act(async () => {
-      root!.render(
+      renderElement(
         <WorkspaceBrowserPanel
           visible
           threadID="thread-1"
@@ -224,7 +243,7 @@ describe("WorkspaceBrowserPanel", () => {
       reuseKey: "https://docs.example.com/api",
     });
     act(() => {
-      root!.render(
+      renderElement(
         <WorkspaceBrowserPanel
           visible={false}
           threadID="thread-1"
@@ -235,7 +254,7 @@ describe("WorkspaceBrowserPanel", () => {
     });
     expect(browserCommand).not.toHaveBeenCalled();
     await act(async () => {
-      root!.render(
+      renderElement(
         <WorkspaceBrowserPanel
           visible
           threadID="thread-1"
@@ -279,7 +298,7 @@ describe("WorkspaceBrowserPanel", () => {
     reportBrowserBounds.mockClear();
     rerender({ visible: false, activity });
     expect(browserCommand).not.toHaveBeenCalled();
-    expect(reportBrowserBounds).toHaveBeenCalledWith("/repo", "tab-live", null);
+    expect(reportBrowserBounds).toHaveBeenCalledWith("/repo", "tab-live", null, undefined);
   });
 
   it("pauses for same-thread input on the displayed tab and waits before navigating", async () => {
@@ -339,4 +358,32 @@ describe("WorkspaceBrowserPanel", () => {
     act(() => { userInput()({ threadID: "thread-1", inputGeneration: 2, workdir: "/repo", tabID: "retained-preview" }); });
     expect(onUserInteraction).toHaveBeenCalledExactlyOnceWith(2);
   });
+});
+
+it("shows unavailable without a browser provider even when preload exists", () => {
+  root = createRoot(container);
+  act(() => root!.render(<WorkspaceBrowserPanel threadID="thread-1" activeContext={{ kind: "no_project", cwd: "/repo" }} />));
+  expect(container.querySelector('[role="alert"]')).not.toBeNull();
+  expect(window.wuu.browserSurface).not.toHaveBeenCalled();
+});
+
+it("does not navigate the previous lease after takeover finishes on a switched thread", async () => {
+  let finish!: () => void;
+  const waiting = new Promise<void>(resolve => { finish = resolve; });
+  const activity: ActivitySession = { id: "activity", kind: "browser", thread_id: "thread-1", workdir: "/repo", state: "active", controller: "agent", target: "tab", created_at: "", updated_at: "", execution_id: "run" };
+  render({ activity, onUserInteraction: () => waiting });
+  act(() => surfaceHandlers.at(-1)!({ workdir: "/repo", tabID: "tab", url: "https://example.com", title: "Page", canGoBack: true, canGoForward: false, loading: false }));
+  act(() => container.querySelector<HTMLButtonElement>(".workspace-browser-nav")!.click());
+  await act(async () => { rerender({ threadID: "thread-2" }); finish(); await waiting; });
+  expect(browserCommand).not.toHaveBeenCalled();
+});
+
+it("does not report an old external-open failure in the next thread", async () => {
+  let reject!: (error: Error) => void;
+  vi.mocked(window.wuu.openExternal).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; }));
+  render({});
+  act(() => surfaceHandlers.at(-1)!({ workdir: "/repo", tabID: "user:thread-1", url: "https://example.com", title: "Page", canGoBack: false, canGoForward: false, loading: false }));
+  act(() => container.querySelector<HTMLButtonElement>(".workspace-browser-open-external")!.click());
+  await act(async () => { rerender({ threadID: "thread-2" }); reject(new Error("OLD EXTERNAL ERROR")); });
+  expect(container.textContent).not.toContain("OLD EXTERNAL ERROR");
 });

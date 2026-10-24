@@ -13,15 +13,16 @@ import {
   useState,
   type FormEvent
 } from "react";
-import type { ActivitySession, BrowserDockTarget, BrowserSurfaceSnapshot, RuntimeContext } from "../shared/protocol";
+import type { ApplicationBrowserV1, BrowserActivityV1 as ActivitySession, BrowserDockTargetV1 as BrowserDockTarget,
+  BrowserSurfaceV1 as BrowserSurfaceSnapshot, BrowserSurfaceHandleV1, BrowserNavigationRequestV1 as WorkspaceBrowserNavigationRequest,
+} from "../../../packages/plugin-sdk/src/ui-browser";
+import type { ApplicationPreviewContextV1 as RuntimeContext } from "../../../packages/plugin-sdk/src/ui-preview";
+import { useBrowserControls } from "./BrowserControlsContext";
 import { useI18n } from "./i18n";
 import { normalizeWebsiteURL } from "./NavigationRibbonPreferences";
 import { browserTabIDForActivity, displayedBrowserTabID, observeBrowserPanelBounds } from "./BrowserVisibility";
-import { openExternalURL, workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
-import {
-  useWorkspaceBrowserNavigationConsumer,
-  type WorkspaceBrowserNavigationRequest,
-} from "./WorkspaceBrowserNavigation";
+import { workspaceBrowserOpenTarget } from "./WorkspaceBrowserOpen";
+
 
 
 const HOME_PAGE_URL = "wuu://new-tab";
@@ -76,16 +77,7 @@ function hasPageURL(url: string | undefined): boolean {
 // Chrome for one browser tab. The page is a main-process view positioned over
 // the host element. The agent and the address bar drive that same tab: an
 // empty state is shown only while the tab has no page.
-export function WorkspaceBrowserPanel({
-  visible = true,
-  threadID,
-  activeContext,
-  activity,
-  dockTarget,
-  requestedURL,
-  overlaySuppressed = false,
-  onUserInteraction,
-}: {
+type WorkspaceBrowserPanelProps = {
   visible?: boolean;
   threadID?: string;
   activeContext?: RuntimeContext;
@@ -93,10 +85,23 @@ export function WorkspaceBrowserPanel({
   dockTarget?: BrowserDockTarget;
   requestedURL?: WorkspaceBrowserNavigationRequest;
   overlaySuppressed?: boolean;
+  // Remove once WorkspacePanels drops the legacy App pause callback; takeover is service-owned.
   onUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
-}): JSX.Element {
+};
+
+export function WorkspaceBrowserPanel(props: WorkspaceBrowserPanelProps): JSX.Element {
+  const service = useBrowserControls();
+  const { t } = useI18n();
+  if (!service?.available) return <div className="workspace-browser-error" role="alert">{t("workspace.browser.previewUnavailable")}</div>;
+  return <BrowserPanel {...props} service={service} />;
+}
+
+function BrowserPanel({ visible = true, threadID, activeContext, activity, dockTarget,
+  requestedURL, overlaySuppressed = false, service,
+}: WorkspaceBrowserPanelProps & { service: ApplicationBrowserV1 }): JSX.Element {
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const workdir = activeContext?.cwd;
   const agentTabID =
     activity && activity.kind === "browser" && activity.state !== "stopped"
@@ -118,7 +123,15 @@ export function WorkspaceBrowserPanel({
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);
   const [pendingURL, setPendingURL] = useState<string | undefined>(undefined);
-  const consumeNavigation = useWorkspaceBrowserNavigationConsumer();
+  const [lease, setLease] = useState<BrowserSurfaceHandleV1>();
+  const leaseRef = useRef<BrowserSurfaceHandleV1 | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!workdir || !selectedTabID) { setLease(undefined); leaseRef.current = undefined; return; }
+    const next = service.acquireSurface({ workdir, tabID: selectedTabID, threadID });
+    leaseRef.current = next;
+    setLease(next);
+    return () => { leaseRef.current = undefined; next.dispose(); };
+  }, [service, workdir, selectedTabID, threadID]);
   const consumedRequestIDRef = useRef<number | undefined>(undefined);
 
   const applySurface = useCallback((snapshot: BrowserSurfaceSnapshot) => {
@@ -151,11 +164,9 @@ export function WorkspaceBrowserPanel({
   }, [workdir, selectedTabID]);
 
   useEffect(() => {
-    if (!workdir || !selectedTabID) return undefined;
-    const read = window.wuu?.browserSurface;
-    if (typeof read !== "function") return undefined;
+    if (!lease || lease !== leaseRef.current) return undefined;
     let cancelled = false;
-    void read(workdir, selectedTabID).then((snapshot) => {
+    void lease.read().then((snapshot) => {
       if (cancelled) return;
       if (snapshot && snapshot.tabID === selectedTabID && snapshot.workdir === workdir) {
         applySurface(snapshot);
@@ -171,49 +182,53 @@ export function WorkspaceBrowserPanel({
     return () => {
       cancelled = true;
     };
-  }, [applySurface, requestedTabID, selectedTabID, t, workdir]);
+  }, [lease, applySurface, requestedTabID, selectedTabID, t, workdir]);
 
   useEffect(() => {
-    const subscribe = window.wuu?.onBrowserSurface;
-    if (typeof subscribe !== "function") return undefined;
-    return subscribe((snapshot) => {
+    if (!lease || lease !== leaseRef.current) return undefined;
+    return lease.onSurface((snapshot) => {
       if (snapshot.workdir !== workdir || snapshot.tabID !== selectedTabIDRef.current) return;
       applySurface(snapshot);
     });
-  }, [applySurface, workdir]);
+  }, [lease, applySurface, workdir]);
 
   useEffect(() => {
-    const subscribe = window.wuu?.onBrowserTabAdopted;
-    if (typeof subscribe !== "function") return undefined;
-    return subscribe((payload) => {
+    if (!lease || lease !== leaseRef.current) return undefined;
+    return lease.onTabAdopted((payload) => {
       if (!workdir || payload.workdir !== workdir) return;
       if (payload.openerTabID !== selectedTabIDRef.current) return;
       setAdoptedTab({ sourceKey, tabID: payload.tabID });
     });
-  }, [sourceKey, workdir]);
+  }, [lease, sourceKey, workdir]);
 
   useEffect(() => {
-    const subscribe = window.wuu?.onBrowserUserInput;
-    if (typeof subscribe !== "function") return undefined;
-    return subscribe((payload) => {
+    if (!lease || lease !== leaseRef.current) return undefined;
+    return lease.onUserInput((payload) => {
       if (!workdir || payload.workdir !== workdir) return;
       if (payload.tabID !== selectedTabIDRef.current) return;
       if (!activity || activity.state === "stopped" || payload.threadID !== activity.thread_id) return;
-      void onUserInteraction?.(payload.inputGeneration);
+      void lease.takeOver(activity, payload.inputGeneration).catch(cause => {
+        if (leaseRef.current !== lease) return;
+        setStatus("error"); setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+      });
     });
-  }, [activity, onUserInteraction, workdir]);
+  }, [lease, activity, workdir]);
 
   const runCommand = useCallback(async (command: "navigate" | "back" | "forward" | "reload" | "stop", url?: string) => {
-    const tabID = selectedTabIDRef.current;
-    const send = window.wuu?.browserCommand;
-    if (!workdir || !tabID || typeof send !== "function") return;
-    if (activity && activity.thread_id === threadID && activity.state !== "stopped") {
-      await onUserInteraction?.();
+    const current = leaseRef.current;
+    if (!current) return;
+    try {
+      if (activity && activity.thread_id === threadID && activity.state !== "stopped") {
+        await current.takeOver(activity);
+      }
+      if (current !== leaseRef.current) return;
+      const snapshot = await current.command({ command, url });
+      if (current === leaseRef.current && snapshot) applySurface(snapshot);
+    } catch (cause) {
+      if (current !== leaseRef.current) return;
+      setStatus("error"); setErrorMessage(cause instanceof Error ? cause.message : String(cause));
     }
-    if (tabID !== selectedTabIDRef.current) return;
-    const snapshot = await send({ workdir, threadID, tabID, command, url });
-    if (snapshot && snapshot.tabID === selectedTabIDRef.current) applySurface(snapshot);
-  }, [activity, applySurface, onUserInteraction, threadID, workdir]);
+  }, [activity, applySurface, threadID]);
 
   const navigate = useCallback((rawInput: string) => {
     const target = resolveNavigationInput(rawInput);
@@ -231,8 +246,8 @@ export function WorkspaceBrowserPanel({
     const currentKey = workspaceBrowserOpenTarget(currentURL)?.reuseKey;
     if (currentKey !== requestedURL.reuseKey) navigate(requestedURL.url);
     consumedRequestIDRef.current = requestedURL.requestID;
-    consumeNavigation(requestedURL.requestID);
-  }, [consumeNavigation, currentURL, navigate, requestedURL, visible]);
+    service.consumeNavigation(requestedURL.requestID);
+  }, [service, currentURL, navigate, requestedURL, visible]);
 
   const goBack = useCallback(() => {
     if (!canGoBack) return;
@@ -252,32 +267,31 @@ export function WorkspaceBrowserPanel({
   const paintPage = visible && showPage && status !== "error";
 
   useEffect(() => {
-    const report = window.wuu?.reportBrowserBounds;
-    if (typeof report !== "function" || !workdir || !selectedTabID) return undefined;
+    if (!lease || lease !== leaseRef.current) return undefined;
+    const report = lease.reportBounds;
     if (!paintPage) {
-      report(workdir, selectedTabID, null);
+      report(null);
       return undefined;
     }
     let first = true;
     const stop = observeBrowserPanelBounds((rect) => {
       if (rect.width <= 0 || rect.height <= 0) return;
-      report(workdir, selectedTabID, rect, first);
+      report(rect, first);
       first = false;
-    });
+    }, panelRef.current ?? undefined);
     return () => {
       stop();
-      report(workdir, selectedTabID, null);
+      report(null);
     };
-  }, [paintPage, selectedTabID, workdir]);
+  }, [lease, paintPage, selectedTabID, workdir]);
 
   useEffect(() => {
-    const suppress = window.wuu?.suppressBrowserOverlay;
-    if (typeof suppress !== "function" || !workdir || !selectedTabID || !paintPage) return undefined;
-    suppress(workdir, selectedTabID, overlaySuppressed);
+    if (!lease || lease !== leaseRef.current || !paintPage) return undefined;
+    lease.suppressOverlay(overlaySuppressed);
     return () => {
-      suppress(workdir, selectedTabID, false);
+      lease.suppressOverlay(false);
     };
-  }, [overlaySuppressed, paintPage, selectedTabID, workdir]);
+  }, [lease, overlaySuppressed, paintPage, selectedTabID, workdir]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
@@ -290,6 +304,7 @@ export function WorkspaceBrowserPanel({
 
   return (
     <div
+      ref={panelRef}
       className="workspace-browser-panel"
       data-wuu-component="workspace-browser"
       data-wuu-state={status}
@@ -355,7 +370,11 @@ export function WorkspaceBrowserPanel({
             disabled={!showChromePage}
             onClick={() => {
               if (showChromePage) {
-                openExternalURL(currentURL);
+                const current = leaseRef.current;
+                void service.openExternal(currentURL).catch(cause => {
+                  if (leaseRef.current !== current) return;
+                  setStatus("error"); setErrorMessage(cause instanceof Error ? cause.message : String(cause));
+                });
               }
             }}
           >

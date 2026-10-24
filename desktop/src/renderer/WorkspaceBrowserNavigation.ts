@@ -51,14 +51,14 @@ export function useWorkspaceBrowserNavigationRequest():
   return request;
 }
 
+export function consumeWorkspaceBrowserNavigation(requestID: number): void {
+  if (latestWorkspaceBrowserNavigation?.requestID === requestID) latestWorkspaceBrowserNavigation = undefined;
+}
+
 export function useWorkspaceBrowserNavigationConsumer(): (
   requestID: number,
 ) => void {
-  return useCallback((requestID: number) => {
-    if (latestWorkspaceBrowserNavigation?.requestID === requestID) {
-      latestWorkspaceBrowserNavigation = undefined;
-    }
-  }, []);
+  return useCallback(consumeWorkspaceBrowserNavigation, []);
 }
 
 export function resetWorkspaceBrowserNavigationForTests(): void {
