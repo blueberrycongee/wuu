@@ -69,7 +69,7 @@ const request: UserQuestionRequest = {
 };
 const card = <UserQuestionCard request={request} onAnswer={async () => {}} onCancel={async () => {}} onHold={async () => {}} onCustom={noop} />;
 
-const application = createFixtureApplication();
+const application = await createFixtureApplication();
 
 function Fixture(): JSX.Element {
   const draft = useComposerDraftState(application);

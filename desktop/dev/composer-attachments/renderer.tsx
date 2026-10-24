@@ -118,7 +118,7 @@ function run(task: () => Promise<void> | void): Promise<void> {
 }
 Object.assign(window, { fixtureIdle: () => queue });
 
-const application = createFixtureApplication();
+const application = await createFixtureApplication();
 
 function Fixture(): JSX.Element {
   const draft = useComposerDraftState(application);
