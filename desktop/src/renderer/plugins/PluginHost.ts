@@ -887,6 +887,10 @@ export class PluginHost {
         const application = service();
         const signal = options?.signal ? AbortSignal.any([state.lifetime.signal, options.signal]) : state.lifetime.signal;
         signal.throwIfAborted();
+        if (action === "preview.set-visibility") {
+          application.setPreviewVisibility((input as ApplicationActionMapV1["preview.set-visibility"]["input"]).open, state.lifetime.signal);
+          return undefined as ApplicationActionMapV1[Action]["result"];
+        }
         const result = await application.invoke(action, input, { signal });
         this.assertActive(state);
         signal.throwIfAborted();

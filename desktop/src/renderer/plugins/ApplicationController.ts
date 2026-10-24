@@ -171,6 +171,28 @@ export class ApplicationController implements HostApplicationService {
   private activityRequest = 0;
   private browserDockTarget?: ApplicationSnapshotV1["browserDockTarget"];
   private previewVisible = false;
+  private previewVisibilityOwner?: { signal?: AbortSignal };
+  private clearPreviewVisibility?: () => void;
+  setPreviewVisibility(open: boolean, signal?: AbortSignal): void {
+    signal?.throwIfAborted();
+    if (!open) {
+      if (this.previewVisibilityOwner?.signal === signal) this.clearPreviewVisibility?.();
+      return;
+    }
+    this.clearPreviewVisibility?.();
+    const owner = { signal };
+    this.previewVisibilityOwner = owner;
+    this.previewVisible = true;
+    const clear = () => {
+      signal?.removeEventListener("abort", clear);
+      if (this.previewVisibilityOwner !== owner) return;
+      this.previewVisibilityOwner = undefined;
+      this.previewVisible = false;
+      this.clearPreviewVisibility = undefined;
+    };
+    this.clearPreviewVisibility = clear;
+    signal?.addEventListener("abort", clear, { once: true });
+  }
   private get activeBrowserActivity() {
     return ENABLE_EMBEDDED_BROWSER ? activitiesForThread(this.activitySessions, this.state.activeContext?.cwd, activeThreadIDForState(this.state))
       .filter(activity => activity.kind === "browser" && activity.state !== "stopped").at(-1) : undefined;
@@ -529,6 +551,7 @@ export class ApplicationController implements HostApplicationService {
       stopped = true;
       if (--this.consumers !== 0) return;
       this.lifetime?.abort();
+      this.clearPreviewVisibility?.();
       this.conversationDetails.stop();
       this.submissionOwner?.dispose();
       this.submissionOwner = undefined;
@@ -865,8 +888,12 @@ export class ApplicationController implements HostApplicationService {
   }
 
   async invoke<Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal }): Promise<ApplicationActionMapV1[Action]["result"]> {
-    const cancellation = new AbortController();
     options?.signal?.throwIfAborted();
+    if (action === "preview.set-visibility") {
+      this.setPreviewVisibility((input as ApplicationActionMapV1["preview.set-visibility"]["input"]).open, options?.signal ?? this.lifetime?.signal);
+      return undefined as ApplicationActionMapV1[Action]["result"];
+    }
+    const cancellation = new AbortController();
     const relayAbort = () => cancellation.abort(options?.signal?.reason);
     options?.signal?.addEventListener("abort", relayAbort, { once: true });
     const signal = action === "composer.submit" && options?.signal ? options.signal : cancellation.signal;
@@ -892,7 +919,6 @@ export class ApplicationController implements HostApplicationService {
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
     if (action === "preview.open-url") return this.browser.openURL(input as ApplicationActionMapV1["preview.open-url"]["input"], { signal });
-    if (action === "preview.set-visibility") { this.previewVisible = (input as ApplicationActionMapV1["preview.set-visibility"]["input"]).open; return; }
     if (isApplicationSideConversationAction(action)) return this.applicationSideConversation.invoke(action,
       input as ApplicationSideConversationActionMapV1[keyof ApplicationSideConversationActionMapV1]["input"]);
     if (isApplicationSearchAction(action)) return this.applicationSearch.invoke(action,

@@ -5,6 +5,7 @@ import type { ApplicationDesktopControlsV1 } from "../../../../packages/plugin-s
 
 /** Internal composition seam; selected UI providers receive only their scoped controls. */
 export interface HostApplicationService extends Omit<ApplicationServiceV1, "desktop" | "composerPresentation"> {
+  setPreviewVisibility(open: boolean, signal?: AbortSignal): void;
   createComposerPresentationScope(signal: AbortSignal, getPluginHost: () => PluginHost): ApplicationComposerPresentationV1;
   createDesktopScope(signal: AbortSignal): ApplicationDesktopControlsV1;
 }

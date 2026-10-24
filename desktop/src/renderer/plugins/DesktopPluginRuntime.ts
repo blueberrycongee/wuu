@@ -34,6 +34,7 @@ export const desktopPluginHost = new PluginHost({
     contractVersion: 1,
     get environment() { return getDesktopApplication().environment; },
     get artifacts() { return getDesktopApplication().artifacts; },
+    setPreviewVisibility: (open, signal) => getDesktopApplication().setPreviewVisibility(open, signal),
     createComposerPresentationScope: (signal, getPluginHost) => getDesktopApplication().createComposerPresentationScope(signal, getPluginHost),
     createDesktopScope: signal => getDesktopApplication().createDesktopScope(signal),
     get webWorkspace() { return getDesktopApplication().webWorkspace; },

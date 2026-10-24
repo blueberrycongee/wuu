@@ -1,3 +1,5 @@
+import { initialState } from "../AppState";
+import { resetWorkspaceBrowserNavigationForTests } from "../WorkspaceBrowserNavigation";
 import { ApplicationDesktop } from "./ApplicationDesktop";
 import type { HostApplicationService } from "./HostApplicationService";
 import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
@@ -24,6 +26,8 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
     get environment() { return new ApplicationController().environment; },
     get artifacts() { return new ApplicationController().artifacts; },
+    setPreviewVisibility: vi.fn(),
+    createComposerPresentationScope: (signal, getHost) => new ApplicationController().createComposerPresentationScope(signal, getHost),
     createDesktopScope: signal => new ApplicationDesktop().createScope(signal),
     webWorkspace: new ApplicationWebWorkspace(undefined, "linux", async () => {}),
     get onboarding() { return new ApplicationController().onboarding; },
@@ -48,6 +52,34 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("releases preview visibility on retirement without clearing a successor owner", async () => {
+    window.wuu = { openExternal: vi.fn().mockResolvedValue(undefined) } as never;
+    resetWorkspaceBrowserNavigationForTests();
+    const controller = new ApplicationController({ ...initialState, activeContext: { kind: "no_project", cwd: "/fixture" } });
+    const host = new PluginHost({ react: React, application: controller });
+    let old!: ApplicationServiceV1, next!: ApplicationServiceV1;
+    try {
+      await host.activateGeneration({ pluginId: "preview-owner", generation: "one", register: api => { old = api.application; } });
+      await old.invoke("preview.open-tool", { toolId: "terminal" });
+      await old.invoke("preview.set-visibility", { open: true });
+      await host.activateGeneration({ pluginId: "preview-owner", generation: "two", register: api => { next = api.application; } });
+      await expect(old.invoke("preview.set-visibility", { open: false })).rejects.toThrow();
+      await next.invoke("preview.open-url", { url: "https://example.test" });
+      expect(next.getSnapshot().previewWorkspace.activeTabId).toBe("browser");
+      let other!: ApplicationServiceV1;
+      await host.activateGeneration({ pluginId: "other-preview", generation: "one", register: api => { other = api.application; } });
+      await next.invoke("preview.set-visibility", { open: true });
+      await other.invoke("preview.set-visibility", { open: true });
+      await other.invoke("preview.open-tool", { toolId: "terminal" });
+      host.unload("preview-owner");
+      await other.invoke("preview.open-url", { url: "https://example.test/next" });
+      expect(other.getSnapshot().previewWorkspace.activeTabId).toBe("terminal");
+      await other.invoke("preview.set-visibility", { open: false });
+      await other.invoke("preview.open-url", { url: "https://example.test/hidden" });
+      expect(other.getSnapshot().previewWorkspace.activeTabId).toBe("browser");
+    } finally { host.unload("preview-owner"); host.unload("other-preview"); resetWorkspaceBrowserNavigationForTests(); }
+  });
+
   it("releases late artifact leases through their captured owner after UI replacement", async () => {
     const { host, service } = fixture();
     let finish!: (value: { url: string; leaseId: string }) => void;
