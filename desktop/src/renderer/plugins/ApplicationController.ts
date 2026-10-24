@@ -24,6 +24,7 @@ import { createThreadMutationActions } from "../ThreadMutationActions";
 import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
+import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
@@ -39,6 +40,7 @@ export type ShellInitializeResult = InitializeResult & { application_shell?: App
 /** Shared domain state survives shell replacement; UI providers own only presentation. */
 export class ApplicationController implements ApplicationServiceV1 {
   readonly contractVersion = 1 as const;
+  readonly settingsControls = createApplicationSettingsControls();
   readonly recoveredDrafts = readComposerDraftRecovery();
   private state: AppState;
   private readonly stateListeners = new Set<() => void>();

@@ -5,12 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { PluginDesktopActivationParams } from "../../shared/protocol";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
+import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationShellOutlet } from "./ApplicationShell";
 
 function fixture(options: Partial<PluginHostOptions> = {}) {
   const listeners = new Set<() => void>();
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    settingsControls: createApplicationSettingsControls(),
     getSnapshot: vi.fn(),
     subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     invoke: vi.fn(async () => undefined) as ApplicationServiceV1["invoke"],
@@ -159,6 +161,33 @@ describe("application shell assembly", () => {
       expect(container.textContent).not.toContain("default");
       expect(container.querySelector('[role="alert"]')).not.toBeNull();
     } finally { act(() => root.unmount()); }
+  });
+
+  it("aborts settings reads and subscriptions with the generation and fences captured methods", async () => {
+    const { host, service } = fixture();
+    let notify!: () => void;
+    const stopped = vi.fn();
+    let finish!: (value: { servers: [] }) => void;
+    const list = vi.spyOn(service.settingsControls, "listMCPServers").mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    vi.spyOn(service.settingsControls, "subscribeRemote").mockImplementation(listener => { notify = listener; return stopped; });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "settings", generation: "v1", register: value => { api = value; } });
+    const controls = api.application.settingsControls;
+    const listener = vi.fn();
+    const unsubscribe = controls.subscribeRemote(listener);
+    const capturedRead = controls.listMCPServers;
+    const pending = capturedRead();
+    const rejected = expect(pending).rejects.toThrow();
+    await host.activateGeneration({ pluginId: "settings", generation: "v2", register: () => {} });
+    await rejected;
+    notify();
+    expect(listener).not.toHaveBeenCalled();
+    expect(stopped).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    expect(stopped).toHaveBeenCalledTimes(1);
+    finish({ servers: [] });
+    await expect(capturedRead()).rejects.toThrow(/no longer active/);
+    expect(list).toHaveBeenCalledTimes(1);
   });
 
   it("disposes subscriptions and fences old application handles even after same-code reactivation", async () => {

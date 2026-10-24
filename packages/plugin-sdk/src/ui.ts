@@ -1,3 +1,4 @@
+import type { ApplicationSettingsControlsV1 } from "./ui-settings-controls.js";
 import type { ApplicationPreviewActionMapV1, ApplicationPreviewWorkspaceV1 } from "./ui-preview.js";
 import type { ApplicationSettingsActionMapV1, ApplicationSettingsViewV1 } from "./application-settings.js";
 import type { ApplicationComposerActionMapV1, ApplicationDraftsSnapshotV1, ApplicationPendingComposerThreadV1 } from "./ui-composer.js";
@@ -124,6 +125,7 @@ export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1, 
 
 export interface ApplicationServiceV1 {
   readonly contractVersion: 1;
+  readonly settingsControls: ApplicationSettingsControlsV1;
   getSnapshot(): ApplicationSnapshotV1;
   /** Unsubscribe is idempotent; generation disposal also removes every listener. */
   subscribe(listener: () => void): () => void;
@@ -176,4 +178,83 @@ export interface ApplicationGenerationAPI {
   registerApplicationShell(definition: ApplicationShellDefinition): Disposable;
   registerUISlot(definition: UISlotDefinition): Disposable;
   registerUIContribution(definition: UIContributionDefinition): Disposable;
+}
+
+/** Apply the same lifecycle boundary in the desktop and standalone preview hosts. */
+export function scopeApplicationSettingsControls(source: () => ApplicationSettingsControlsV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationSettingsControlsV1 {
+  const read = <T>(operation: () => T): T => { assertActive(); signal.throwIfAborted(); return operation(); };
+  const invoke = async <T>(operation: () => Promise<T>): Promise<T> => {
+    assertActive(); signal.throwIfAborted();
+    let abort!: () => void;
+    const aborted = new Promise<never>((_resolve, reject) => {
+      abort = () => reject(signal.reason ?? new Error("Settings generation was disposed"));
+      signal.addEventListener("abort", abort, { once: true });
+    });
+    try {
+      const result = await Promise.race([operation(), aborted]);
+      assertActive(); signal.throwIfAborted(); return result;
+    } finally { signal.removeEventListener("abort", abort); }
+  };
+  const subscribe = (kind: "subscribe" | "subscribeRemote", listener: () => void): (() => void) => {
+    assertActive(); signal.throwIfAborted();
+    const stop = source()[kind](() => { if (!signal.aborted) listener(); });
+    let stopped = false;
+    const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
+    signal.addEventListener("abort", dispose, { once: true });
+    return dispose;
+  };
+  return Object.freeze({
+    get capabilities() { return read(() => source().capabilities); },
+    subscribe: (listener: () => void) => subscribe("subscribe", listener),
+    subscribeRemote: (listener: () => void) => subscribe("subscribeRemote", listener),
+    getPages: () => read(() => source().getPages()),
+    getConflicts: () => read(() => source().getConflicts()),
+    getDiagnostics: (...args: Parameters<ApplicationSettingsControlsV1["getDiagnostics"]>) => read(() => source().getDiagnostics(...args)),
+    renderPage: (input: Parameters<ApplicationSettingsControlsV1["renderPage"]>[0]) => read(() => source().renderPage({ ...input,
+      onFailure: () => { if (!signal.aborted) input.onFailure(); },
+      settings: { contractVersion: 1, getValue: key => read(() => input.settings.getValue(key)),
+        updateValue: (key, value) => invoke(() => input.settings.updateValue(key, value)),
+        listAvailableModels: input.settings.listAvailableModels && (() => read(() => input.settings.listAvailableModels!())) },
+    })),
+    renderPresentation: (input: Parameters<ApplicationSettingsControlsV1["renderPresentation"]>[0]) => read(() => source().renderPresentation({ ...input,
+      onOpenPage: id => { if (!signal.aborted) input.onOpenPage(id); },
+      onAdvancedSave: value => invoke(() => input.onAdvancedSave(value)),
+      onGeneralSave: value => invoke(() => input.onGeneralSave(value)), onRefresh: () => invoke(() => input.onRefresh()),
+    })),
+    chooseConflict: (...args: Parameters<ApplicationSettingsControlsV1["chooseConflict"]>) => invoke(() => source().chooseConflict(...args)),
+    getBuildInfo: (...args: Parameters<ApplicationSettingsControlsV1["getBuildInfo"]>) => invoke(() => source().getBuildInfo(...args)),
+    useCodexCredentials: (...args: Parameters<ApplicationSettingsControlsV1["useCodexCredentials"]>) => invoke(() => source().useCodexCredentials(...args)),
+    loadCodexModels: (...args: Parameters<ApplicationSettingsControlsV1["loadCodexModels"]>) => invoke(() => source().loadCodexModels(...args)),
+    refreshModelCatalog: (...args: Parameters<ApplicationSettingsControlsV1["refreshModelCatalog"]>) => invoke(() => source().refreshModelCatalog(...args)),
+    listCatalogProviders: (...args: Parameters<ApplicationSettingsControlsV1["listCatalogProviders"]>) => invoke(() => source().listCatalogProviders(...args)),
+    listEngines: (...args: Parameters<ApplicationSettingsControlsV1["listEngines"]>) => invoke(() => source().listEngines(...args)),
+    getPluginSetting: (...args: Parameters<ApplicationSettingsControlsV1["getPluginSetting"]>) => invoke(() => source().getPluginSetting(...args)),
+    setPluginSetting: (...args: Parameters<ApplicationSettingsControlsV1["setPluginSetting"]>) => invoke(() => source().setPluginSetting(...args)),
+    getPluginDiagnostics: (...args: Parameters<ApplicationSettingsControlsV1["getPluginDiagnostics"]>) => invoke(() => source().getPluginDiagnostics(...args)),
+    listMCPServers: (...args: Parameters<ApplicationSettingsControlsV1["listMCPServers"]>) => invoke(() => source().listMCPServers(...args)),
+    connectMCPServer: (...args: Parameters<ApplicationSettingsControlsV1["connectMCPServer"]>) => invoke(() => source().connectMCPServer(...args)),
+    disconnectMCPServer: (...args: Parameters<ApplicationSettingsControlsV1["disconnectMCPServer"]>) => invoke(() => source().disconnectMCPServer(...args)),
+    refreshMCPServer: (...args: Parameters<ApplicationSettingsControlsV1["refreshMCPServer"]>) => invoke(() => source().refreshMCPServer(...args)),
+    startMCPAuth: (...args: Parameters<ApplicationSettingsControlsV1["startMCPAuth"]>) => invoke(() => source().startMCPAuth(...args)),
+    finishMCPAuth: (...args: Parameters<ApplicationSettingsControlsV1["finishMCPAuth"]>) => invoke(() => source().finishMCPAuth(...args)),
+    removeMCPAuth: (...args: Parameters<ApplicationSettingsControlsV1["removeMCPAuth"]>) => invoke(() => source().removeMCPAuth(...args)),
+    listChatGPTModels: (...args: Parameters<ApplicationSettingsControlsV1["listChatGPTModels"]>) => invoke(() => source().listChatGPTModels(...args)),
+    startXAILogin: (...args: Parameters<ApplicationSettingsControlsV1["startXAILogin"]>) => invoke(() => source().startXAILogin(...args)),
+    pollXAILogin: (...args: Parameters<ApplicationSettingsControlsV1["pollXAILogin"]>) => invoke(() => source().pollXAILogin(...args)),
+    cancelXAILogin: (...args: Parameters<ApplicationSettingsControlsV1["cancelXAILogin"]>) => invoke(() => source().cancelXAILogin(...args)),
+    listBrowserProfiles: (...args: Parameters<ApplicationSettingsControlsV1["listBrowserProfiles"]>) => invoke(() => source().listBrowserProfiles(...args)),
+    importBrowserCookies: (...args: Parameters<ApplicationSettingsControlsV1["importBrowserCookies"]>) => invoke(() => source().importBrowserCookies(...args)),
+    listBrowserExtensions: (...args: Parameters<ApplicationSettingsControlsV1["listBrowserExtensions"]>) => invoke(() => source().listBrowserExtensions(...args)),
+    addBrowserExtension: (...args: Parameters<ApplicationSettingsControlsV1["addBrowserExtension"]>) => invoke(() => source().addBrowserExtension(...args)),
+    setBrowserExtensionEnabled: (...args: Parameters<ApplicationSettingsControlsV1["setBrowserExtensionEnabled"]>) => invoke(() => source().setBrowserExtensionEnabled(...args)),
+    reloadBrowserExtension: (...args: Parameters<ApplicationSettingsControlsV1["reloadBrowserExtension"]>) => invoke(() => source().reloadBrowserExtension(...args)),
+    openBrowserExtensionOptions: (...args: Parameters<ApplicationSettingsControlsV1["openBrowserExtensionOptions"]>) => invoke(() => source().openBrowserExtensionOptions(...args)),
+    removeBrowserExtension: (...args: Parameters<ApplicationSettingsControlsV1["removeBrowserExtension"]>) => invoke(() => source().removeBrowserExtension(...args)),
+    getRemoteControlSnapshot: (...args: Parameters<ApplicationSettingsControlsV1["getRemoteControlSnapshot"]>) => invoke(() => source().getRemoteControlSnapshot(...args)),
+    setRemoteHostEnabled: (...args: Parameters<ApplicationSettingsControlsV1["setRemoteHostEnabled"]>) => invoke(() => source().setRemoteHostEnabled(...args)),
+    startRemotePairing: (...args: Parameters<ApplicationSettingsControlsV1["startRemotePairing"]>) => invoke(() => source().startRemotePairing(...args)),
+    removeRemoteDevice: (...args: Parameters<ApplicationSettingsControlsV1["removeRemoteDevice"]>) => invoke(() => source().removeRemoteDevice(...args)),
+    openExternal: (...args: Parameters<ApplicationSettingsControlsV1["openExternal"]>) => invoke(() => source().openExternal(...args)),
+  });
 }
