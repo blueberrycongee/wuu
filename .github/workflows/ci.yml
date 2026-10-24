@@ -101,7 +101,7 @@ jobs:
 
       - name: Guard generation admission under race detector
         timeout-minutes: 10
-        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery)' ./internal/appserver
+        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$)' ./internal/appserver
 
       - name: Guard shared authority and model receipt lifecycle under race detector
         timeout-minutes: 10
