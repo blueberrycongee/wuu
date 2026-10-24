@@ -7,7 +7,6 @@ import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
 import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { TurnView } from "./TurnView";
-import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail } from "./TurnNotice";
 import { translateCurrent as t } from "./i18n";
 import type { TurnStreamStatus } from "./AppState";
 import { ImagePreviewProvider } from "./ImagePreview";
@@ -22,9 +21,11 @@ vi.mock("./FeatureFlags", async (importOriginal) => ({
 }));
 
 beforeEach(() => {
+  service = createConversationTestApplication();
   window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
 });
 
+let service = createConversationTestApplication();
 let composition: UICompositionV1 = { Slot: ({ fallback }) => fallback };
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -92,7 +93,7 @@ function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatu
   root = createRoot(container);
   act(() => {
     root!.render(
-      <ConversationControlsTestProvider composition={composition}><ImagePreviewProvider>
+      <ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider>
         <TurnView
           threadID={threadID}
           turn={turn}
@@ -109,7 +110,7 @@ function render(turn: Turn, isLatestTurn = false, streamStatus?: TurnStreamStatu
 function rerender(turn: Turn, isLatestTurn = false): void {
   act(() => {
     root!.render(
-      <ConversationControlsTestProvider composition={composition}><ImagePreviewProvider>
+      <ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider>
         <TurnView
           turn={turn}
           onStreamFrame={() => {}}
@@ -176,7 +177,7 @@ describe("TurnView", () => {
     let context: Readonly<Record<string, unknown>> | undefined;
     composition = { Slot: props => { context = props.context; return null; } };
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
-    act(() => root!.render(<ConversationControlsTestProvider composition={composition}><TurnView turn={makeTurn("completed")} onStreamFrame={() => {}} /></ConversationControlsTestProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><TurnView turn={makeTurn("completed")} onStreamFrame={() => {}} /></ConversationControlsTestProvider>));
     expect(context).toEqual({ threadId: undefined, turnId: "turn-1" });
   });
 
@@ -445,7 +446,7 @@ describe("TurnView", () => {
     const tools = Array.from({ length: count }, (_, index) => inspect(index));
     const turn = makeTurn("completed", [...tools, makeFinalAnswer("Checked.")]);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-    act(() => root!.render(<ConversationControlsTestProvider composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
     expect(container.querySelectorAll('.turn-answer-body [data-wuu-component="turn-artifacts-inline"]')).toHaveLength(0);
     expect(container.querySelectorAll('img')).toHaveLength(0);
     await act(async () => { container!.querySelector<HTMLElement>('.turn-process-toggle')!.click(); });
@@ -463,7 +464,7 @@ describe("TurnView", () => {
       result_detail: { content: [{ type: "image", mime_type: "image/png", uri: "images/preview.png", name: "preview.png" }] },
     }]);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-    act(() => root!.render(<ConversationControlsTestProvider composition={composition}><ImagePreviewProvider><TurnView turn={turn} cwd="/workspace/owning-thread" onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} cwd="/workspace/owning-thread" onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
     const process = container.querySelector<HTMLDetailsElement>('.turn-process-entry .process-surface-fold')!;
     await act(async () => { process.open = true; process.dispatchEvent(new Event("toggle")); });
     const source = container.querySelector('img')?.getAttribute('src');
@@ -481,7 +482,7 @@ describe("TurnView", () => {
       makeFinalAnswer("图已生成。"),
     ]);
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-    act(() => root!.render(<ConversationControlsTestProvider composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>));
     const preview = container.querySelector('[data-wuu-component="turn-artifacts-inline"]')!;
     const diff = container.querySelector(".turn-edit-summary-card")!;
     expect(preview.querySelector("img")?.getAttribute("src")).toBe(uri);
@@ -623,14 +624,14 @@ describe("TurnView", () => {
     const turn = makeTurn("in_progress", [makeCommentary("checking the files")]);
     act(() => {
       root!.render(
-        <ConversationControlsTestProvider composition={composition}>{<ConversationRenderActivityProvider active={false}>
+        <ConversationControlsTestProvider service={service} composition={composition}>{<ConversationRenderActivityProvider active={false}>
           <TurnView turn={turn} onStreamFrame={() => {}} />
         </ConversationRenderActivityProvider>}</ConversationControlsTestProvider>,
       );
     });
     act(() => {
       root!.render(
-        <ConversationControlsTestProvider composition={composition}>{<ConversationRenderActivityProvider active={false}>
+        <ConversationControlsTestProvider service={service} composition={composition}>{<ConversationRenderActivityProvider active={false}>
           <TurnView
             turn={makeTurn("in_progress", [
               makeCommentary("checking the files"),
@@ -643,7 +644,7 @@ describe("TurnView", () => {
     });
     act(() => {
       root!.render(
-        <ConversationControlsTestProvider composition={composition}>{<ConversationRenderActivityProvider active>
+        <ConversationControlsTestProvider service={service} composition={composition}>{<ConversationRenderActivityProvider active>
           <TurnView
             turn={makeTurn("in_progress", [
               makeCommentary("checking the files"),
@@ -861,7 +862,7 @@ describe("TurnView", () => {
     );
     act(() => {
       root!.render(
-        <ConversationControlsTestProvider composition={composition}>{<TurnView
+        <ConversationControlsTestProvider service={service} composition={composition}>{<TurnView
           turn={turn}
           onStreamFrame={() => {}}
           isLatestTurn
@@ -887,10 +888,10 @@ it("removes the recovery card immediately on item removal without duplicating st
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => { root!.render(<ConversationControlsTestProvider composition={composition}>{<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} streamStatus={{ text: "reconnecting", liveProgress: true }} />}</ConversationControlsTestProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} streamStatus={{ text: "reconnecting", liveProgress: true }} />}</ConversationControlsTestProvider>); });
   expect(container.querySelectorAll(".turn-failure.is-retrying")).toHaveLength(1);
   expect(container.querySelector(".stream-status-notice")).toBeNull();
-  act(() => { root!.render(<ConversationControlsTestProvider composition={composition}>{<TurnView turn={{ ...turn, items: [turn.items[0]] }} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={{ ...turn, items: [turn.items[0]] }} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
   expect(container.querySelector(".turn-failure")).toBeNull();
 });
 
@@ -900,10 +901,10 @@ it("keeps the retrying card's node when automatic recovery gives up", () => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => { root!.render(<ConversationControlsTestProvider composition={composition}>{<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={turn} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
   const card = container.querySelector(".turn-failure.is-retrying");
   expect(card).not.toBeNull();
-  act(() => { root!.render(<ConversationControlsTestProvider composition={composition}>{<TurnView turn={{ ...turn, status: "interrupted", items: [turn.items[0], { ...item, status: "failed" }] }} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={{ ...turn, status: "interrupted", items: [turn.items[0], { ...item, status: "failed" }] }} isLatestTurn onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
   expect(container.querySelectorAll("aside.turn-failure")).toHaveLength(1);
   expect(container.querySelector("aside.turn-failure")).toBe(card);
   expect(card!.getAttribute("role")).toBe("alert");
@@ -925,13 +926,13 @@ it.each(["failed", "interrupted"] as const)("routes the retry of a turn that end
   document.body.appendChild(container);
   root = createRoot(container);
   const turn = makeTurn(status, [user, item]);
-  act(() => { root!.render(<ConversationControlsTestProvider composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} isLatestTurn onEditMessage={onEditMessage} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>); });
   const retryButton = () => [...container!.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")]
     .find((button) => button.textContent === t("appState.retryAction"));
   await act(async () => { retryButton()?.click(); });
   expect(onSubmitEditMessage).toHaveBeenCalledWith(turn.id, user, user.input_text, user.images, user.files, user.content_parts);
   expect(onEditMessage).not.toHaveBeenCalled();
-  act(() => { root!.render(<ConversationControlsTestProvider composition={composition}><ImagePreviewProvider><TurnView turn={turn} onEditMessage={onEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>); });
+  act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}><ImagePreviewProvider><TurnView turn={turn} onEditMessage={onEditMessage} onStreamFrame={() => {}} /></ImagePreviewProvider></ConversationControlsTestProvider>); });
   expect(retryButton()).toBeUndefined();
 });
 
@@ -942,25 +943,22 @@ it("continues a turn that already wrote part of its reply instead of resending i
   const partial: ThreadItem = { id: "partial", type: "agent_message", status: "completed", text: "First half of the report" };
   const item: ThreadItem = { id: "retry", type: "stream_reconnect", status: "failed", reason: "incomplete_stream" };
   const onSubmitEditMessage = vi.fn();
-  const continued = vi.fn((event: Event) => {
-    event.preventDefault();
-    (event as CustomEvent<ContinueTurnDetail>).detail.done(true);
-  });
-  window.addEventListener(CONTINUE_TURN_EVENT, continued);
+  const continued = vi.fn().mockResolvedValue({ accepted: true });
+  service = { ...service, invoke: continued };
   try {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     const turn = makeTurn("interrupted", [user, partial, item]);
-    act(() => { root!.render(<ConversationControlsTestProvider composition={composition}>{<TurnView turn={turn} threadID="thread-1" isLatestTurn onEditMessage={vi.fn()} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
+    act(() => { root!.render(<ConversationControlsTestProvider service={service} composition={composition}>{<TurnView turn={turn} threadID="thread-1" isLatestTurn onEditMessage={vi.fn()} onSubmitEditMessage={onSubmitEditMessage} onStreamFrame={() => {}} />}</ConversationControlsTestProvider>); });
     const labels = [...container.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")].map((button) => button.textContent);
     expect(labels).toEqual([t("turnFailure.continue")]);
     await act(async () => { container!.querySelector<HTMLButtonElement>(".turn-failure-recovery button")!.click(); });
     expect(continued).toHaveBeenCalledOnce();
-    expect((continued.mock.calls[0][0] as CustomEvent<ContinueTurnDetail>).detail).toMatchObject({ threadID: "thread-1", text: t("turnFailure.continuePrompt") });
+    expect(continued).toHaveBeenCalledWith("conversation.continue", { threadId: "thread-1", text: t("turnFailure.continuePrompt") });
     expect(onSubmitEditMessage).not.toHaveBeenCalled();
   } finally {
-    window.removeEventListener(CONTINUE_TURN_EVENT, continued);
+    service = createConversationTestApplication();
   }
 });
 
@@ -972,20 +970,20 @@ it("sends a rejected credential to Model services from the latest turn only", ()
     recovery: { attempt_count: 1, retry_count: 0, max_attempts: 11, submission_count: 1, stop_reason: "non_retryable", failure_category: "authentication" },
   };
   const turn: Turn = { ...makeTurn("failed", [{ id: "user", type: "user_message", status: "completed", text: "Check this" }]), error };
-  const opened = vi.fn();
-  window.addEventListener(OPEN_SETTINGS_EVENT, opened);
+  const opened = vi.fn().mockResolvedValue(undefined);
+  service = { ...service, invoke: opened };
   try {
     const view = render(turn, true);
     const settings = [...view.querySelectorAll<HTMLButtonElement>(".turn-failure-recovery button")]
       .find((button) => button.textContent === t("turnFailure.openSettings"));
     act(() => settings?.click());
     expect(opened).toHaveBeenCalledOnce();
-    expect((opened.mock.calls[0][0] as CustomEvent).detail).toEqual({ page: "providers" });
+    expect(opened).toHaveBeenCalledWith("settings.open", { pageId: "providers" });
     rerender(turn, false);
     expect(view.querySelector(".turn-failure")).not.toBeNull();
     expect(view.querySelectorAll(".turn-failure-recovery button")).toHaveLength(0);
   } finally {
-    window.removeEventListener(OPEN_SETTINGS_EVENT, opened);
+    service = createConversationTestApplication();
   }
 });
 

@@ -18,10 +18,6 @@ import { TurnEditSummaryPresentation } from "./TurnEditSummaryPresentation";
 import { ENABLE_TURN_ARTIFACT_SUMMARY, ENABLE_TURN_EDIT_SUMMARY } from "./FeatureFlags";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import {
-  CONTINUE_TURN_EVENT,
-  type ContinueTurnDetail,
-  OPEN_SETTINGS_EVENT,
-  type OpenSettingsDetail,
   StreamStatusNotice,
   TurnEventNotice,
   TurnFailureNotice,
@@ -38,6 +34,7 @@ import {
   turnEndedInFailure,
   turnLeftPartialWork,
 } from "./TurnViewHelpers";
+import { showErrorToast } from "./Toast";
 import { translateCurrent as t } from "./i18n";
 import { ConversationTurnIdentityProvider, useConversationControls } from "./ConversationControlsContext";
 
@@ -90,19 +87,6 @@ export function TurnView(props: TurnViewProps): JSX.Element | null {
   );
 }
 
-function openModelServices(): void {
-  window.dispatchEvent(new CustomEvent<OpenSettingsDetail>(OPEN_SETTINGS_EVENT, { detail: { page: "providers" } }));
-}
-
-// Resolves once the app sent the follow-up, or at once when nothing claimed
-// the request.
-function continueTurn(threadID: string): Promise<void> {
-  return new Promise((resolve) => {
-    const detail: ContinueTurnDetail = { threadID, text: t("turnFailure.continuePrompt"), done: () => resolve() };
-    if (window.dispatchEvent(new CustomEvent(CONTINUE_TURN_EVENT, { detail, cancelable: true }))) resolve();
-  });
-}
-
 function workspaceTurnForPresentation(turn: Turn): Turn {
   const items = turn.items.filter(
     (item) =>
@@ -131,6 +115,7 @@ function TurnContent({
   streamStatus,
   isLatestTurn,
 }: TurnViewProps): JSX.Element {
+  const { application } = useConversationControls();
   const turnElementRef = useRef<HTMLElement | null>(null);
   useLayoutEffect(() => {
     const node = turnElementRef.current;
@@ -261,7 +246,7 @@ function TurnContent({
   const canRewindHistory = !engineID || engineID === "wuu" || engineID === "codex";
   const shouldContinue = !canRewindHistory || turnLeftPartialWork(turn);
   const continueFailedTurn = recoverable && shouldContinue && threadID
-    ? () => continueTurn(threadID)
+    ? async () => { await application.invoke("conversation.continue", { threadId: threadID, text: t("turnFailure.continuePrompt") }); }
     : undefined;
   const retryFailedTurn = recoverable && !shouldContinue && retryMessage
     ? () => onSubmitEditMessage(
@@ -274,7 +259,7 @@ function TurnContent({
     error: turn.error,
     onRetry: retryFailedTurn,
     onContinue: continueFailedTurn,
-    onOpenSettings: isLatestTurn && (!engineID || engineID === "wuu") ? openModelServices : undefined,
+    onOpenSettings: isLatestTurn && (!engineID || engineID === "wuu") ? () => { void application.invoke("settings.open", { pageId: "providers" }).catch(showErrorToast); } : undefined,
   };
   const incomplete = turn.status === "failed" || turn.status === "interrupted";
   const editSummary = ENABLE_TURN_EDIT_SUMMARY ? (

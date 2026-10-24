@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import type { ThreadItem } from "../../shared/protocol";
 import { useConversationControls, useConversationTurnIdentity } from "../ConversationControlsContext";
-export { toConversationProcessSnapshot } from "./ApplicationSnapshots";
 
 export interface ConversationProcessPresentationProps {
   processItems: readonly ThreadItem[];
