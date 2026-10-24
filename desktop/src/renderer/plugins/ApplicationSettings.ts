@@ -153,7 +153,11 @@ export class ApplicationSettings {
         signal?.throwIfAborted();
         result = context === this.engineContext().key ? await this.refreshEngines(signal) ?? immutable(next) : immutable(next); break;
       }
-      case "settings.read-usage": result = immutable(await window.wuu.getSettingsUsage()); break;
+      case "settings.read-usage":
+        if (!window.wuu.getSettingsUsage) throw new Error(translateCurrent("settings.usageUnsupported"));
+        try { result = immutable(await window.wuu.getSettingsUsage()); }
+        catch { throw new Error(translateCurrent("settings.usageLoadFailed")); }
+        break;
       case "settings.read-pets":
         if (!window.wuu.listCodexPets || !hostSupports("listCodexPets")) throw new Error(translateCurrent("settings.pets.unsupported"));
         result = immutable(await window.wuu.listCodexPets()); break;

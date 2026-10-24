@@ -20,7 +20,9 @@ function deferred<T>() {
 function mount(deleteThread = vi.fn().mockResolvedValue(undefined)) {
   let controller!: ReturnType<typeof useArchiveDeletion>;
   const refresh = vi.fn();
-  function Harness() { controller = useArchiveDeletion(deleteThread, refresh); return null; }
+  function Harness() { controller = useArchiveDeletion({ remove: deleteThread, list: async () => {
+    const { threads } = await window.wuu.listArchivedThreads(); refresh(threads); return threads;
+  } }); return null; }
   container = document.createElement("div"); document.body.append(container);
   root = createRoot(container);
   act(() => root!.render(createElement(Harness)));
@@ -52,6 +54,19 @@ describe("archive deletion scope and recovery", () => {
     expect(h.deleteThread.mock.calls).toEqual([["one"], ["two"]]);
     expect(h.current.result).toMatchObject({ deleted: 2, failed: 0 });
     expect(h.refresh).toHaveBeenLastCalledWith([archived("new")]);
+  });
+
+  it("stops a confirmed batch when its settings module has been unloaded", async () => {
+    const prompt = deferred<boolean>();
+    vi.mocked(confirmAction).mockReturnValue(prompt.promise);
+    list([archived("one")]);
+    const h = mount();
+    let pending!: Promise<void>;
+    await act(async () => { pending = h.current.removeAll(); });
+    act(() => root!.unmount());
+    root = undefined;
+    await act(async () => { prompt.resolve(true); await pending; });
+    expect(h.deleteThread).not.toHaveBeenCalled();
   });
 
   it("does nothing when confirmation is canceled or authoritative listing fails", async () => {

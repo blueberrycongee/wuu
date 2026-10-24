@@ -230,10 +230,10 @@ import { ArchiveTip } from "./ArchiveTip";
 import { TopNotice } from "./TopNotice";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { showActionErrorToast, showErrorToast, showToast } from "./Toast";
-import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
-import { CircleAlert, RefreshCw } from "./WuuIcons";
+import { CircleAlert } from "./WuuIcons";
 import type { CodexPetCommand, CodexPetSubmitTarget } from "../shared/protocol";
+import { useArchiveDeletion } from "./useArchiveDeletion";
 import { DefaultSettingsSurface } from "./modules/DefaultSettingsSurface";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { JumpToLatestPill } from "./JumpToLatestPill";
@@ -975,13 +975,7 @@ export function App({ application: providedApplication }: { application?: Applic
   const dismissArchiveTip = useCallback(() => {
     setArchiveTip(null);
   }, []);
-  const [modelCatalogTip, setModelCatalogTip] = useState<{
-    message: string;
-    isError: boolean;
-  } | null>(null);
-  const dismissModelCatalogTip = useCallback(() => {
-    setModelCatalogTip(null);
-  }, []);
+  const [settingsNoticeVisible, setSettingsNoticeVisible] = useState(false);
   // Agent engine inventory is shared by the composer and settings within a
   // runtime context. A workspace switch must not reuse another CLI environment.
   // Settings remounts keep the snapshot until a refresh finishes.
@@ -1005,6 +999,11 @@ export function App({ application: providedApplication }: { application?: Applic
     setEngineInventory({ context: engineInventoryContext, result: next });
     setEngineInventoryError("");
   }, [engineInventoryContext]);
+
+  const publicEngineInventory = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.engineInventory);
+  useEffect(() => {
+    if (publicEngineInventory) storeEngineInventory(structuredClone(publicEngineInventory) as EngineListResult, engineInventoryRequestRef.current);
+  }, [publicEngineInventory, storeEngineInventory]);
 
   const refreshEngineInventory = useCallback((force = false): Promise<EngineListResult | undefined> => {
     const cached = engineInventoryRef.current;
@@ -3044,16 +3043,6 @@ export function App({ application: providedApplication }: { application?: Applic
     unreadThreadIDs,
     waitingThreadIDs,
   ]);
-  const runningProviderNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const thread of [state.thread, state.secondaryThread, ...state.threads]) {
-      const provider = thread?.model_provider.trim();
-      if (provider && isThreadRunning(thread)) {
-        names.add(provider);
-      }
-    }
-    return Array.from(names);
-  }, [state.thread, state.secondaryThread, state.threads]);
   useEffect(() => {
     if (!state.initialized?.extension_inventory || sideConversationAvailable) return;
     pendingSideSelectionRef.current = null;
@@ -3633,39 +3622,6 @@ export function App({ application: providedApplication }: { application?: Applic
         }),
       },
     } : current);
-  }
-
-  async function refreshModelCatalog(): Promise<void> {
-    setModelCatalogTip(null);
-    try {
-      const result = await window.wuu.refreshModelCatalog();
-      setState((current) =>
-        current.initialized
-          ? {
-              ...current,
-              initialized: {
-                ...current.initialized,
-                providers: result.providers,
-                catalog_providers: result.catalog_providers,
-              },
-            }
-          : current,
-      );
-      for (const provider of result.providers) {
-        if (["openai-codex", "codex-subscription", "chatgpt-codex"].includes(provider.type.replaceAll("_", "-").toLowerCase())) {
-          await loadCodexModelsForProvider(provider.name, true);
-        }
-      }
-      setModelCatalogTip({
-        message: t("settings.modelCatalogUpdated", { count: result.model_count }),
-        isError: false,
-      });
-    } catch {
-      setModelCatalogTip({
-        message: t("settings.modelCatalogUpdateFailed"),
-        isError: true,
-      });
-    }
   }
 
   function toggleWorkspacePicker(): void {
@@ -4340,13 +4296,16 @@ export function App({ application: providedApplication }: { application?: Applic
     clearThreadPendingComposerMessages,
   });
 
-  const archiveDeletion = useArchiveDeletion(deleteArchivedThread, (archived) => {
-    // Other workspaces keep independent live-sidebar caches. Reconcile them
-    // even if the freshly discovered archive is followed by Cancel.
-    for (const thread of archived) removeCachedSidebarThread(thread.id);
-    setState(current => ({ ...current,
-      threads: mergeListedThreads(current.threads, [...current.threads.filter(thread => !thread.archived), ...archived]),
-    }));
+  const archiveDeletion = useArchiveDeletion({
+    remove: deleteArchivedThread,
+    list: async () => {
+      const { threads } = await window.wuu.listArchivedThreads();
+      for (const thread of threads) removeCachedSidebarThread(thread.id);
+      setState(current => ({ ...current,
+        threads: mergeListedThreads(current.threads, [...current.threads.filter(thread => !thread.archived), ...threads]),
+      }));
+      return threads;
+    },
   });
 
   function commitConversationTitle(nextTitle: string): void {
@@ -4367,9 +4326,6 @@ export function App({ application: providedApplication }: { application?: Applic
   const {
     updateRuntimeSettings,
     updateProviderSettings,
-    updateAdvancedSettings,
-    updateGeneralSettings,
-    removeProvider,
     toggleCodexRuntimeMenu,
     loadCodexModelsForProvider,
     selectRuntimeModel,
@@ -5491,18 +5447,6 @@ export function App({ application: providedApplication }: { application?: Applic
     </UILayerPortal>
   ) : null;
 
-  const modelCatalogTipNode = modelCatalogTip ? (
-    <UILayerPortal layer="notice">
-      <TopNotice
-        message={modelCatalogTip.message}
-        icon={modelCatalogTip.isError ? CircleAlert : RefreshCw}
-        onDismiss={dismissModelCatalogTip}
-        isError={modelCatalogTip.isError}
-        dismissAriaLabel={t("common.closeNotice")}
-      />
-    </UILayerPortal>
-  ) : null;
-
   useEffect(() => {
     const back = (event: Event): void => {
       if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
@@ -5761,8 +5705,7 @@ export function App({ application: providedApplication }: { application?: Applic
         disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized}
       >
       {archiveTipNode}
-      {modelCatalogTipNode}
-      {!archiveTip && !modelCatalogTip && failedDraftNotice}
+      {!archiveTip && !settingsNoticeVisible && failedDraftNotice}
       <ImagePreviewProvider>
       <ProjectActionsProvider value={projectAgentEnabled ? projectActions : null}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
@@ -6429,56 +6372,32 @@ export function App({ application: providedApplication }: { application?: Applic
         />
       ) : null}
       <DefaultSettingsSurface
-          application={application}
-          browserSettingsAllowed={!poppedOutMode}
-          embedded={embeddedSettings}
-          embeddedDrawerPhase={sidebarDrawerPhase}
-          onSidebarPointerEnter={openSidebarDrawer}
-          onSidebarPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
-          initialized={state.initialized}
-          running={viewContextSwitchPending}
-          runningProviderNames={runningProviderNames}
-          engineInventory={engineInventory}
-          engineInventoryError={engineInventoryError}
-          sidebarWidth={sidebarWidth}
-          resizingSidebar={resizingSidebar}
-          shellRef={settingsShellRef}
-          sidebarCollapsed={sidebarCollapsed}
-          sidebarAnimating={sidebarAnimating}
-          onToggleSidebar={toggleSidebar}
-          onSave={updateProviderSettings}
-          onRemoveProvider={removeProvider}
-          onRefreshModelCatalog={refreshModelCatalog}
-          onProvidersChanged={updateConnectionProviders}
-          onProviderModelsChanged={(name, accountId, models) => setState(current => current.initialized ? {
-            ...current,
-            initialized: { ...current.initialized, providers: current.initialized.providers?.map(provider =>
-              provider.name === name && provider.chatgpt_account_id === accountId && provider.auth_status === "connected" ? { ...provider, models } : provider) },
-          } : current)}
-          onRefreshEngineInventory={() => refreshEngineInventory(true)}
-          onUpdateEngineInventory={updateEngineInventory}
-          onAdvancedSave={updateAdvancedSettings}
-          onGeneralSave={updateGeneralSettings}
-          onSidebarResizeStart={startSidebarResize}
-          onSidebarResizerPointer={trackSidebarResizerPointer}
-          onSidebarSeparatorKey={handleSidebarSeparatorKey}
-          archivedThreads={state.threads
-            .filter((thread) => thread.archived)
-            .map((thread) => {
-              const project = state.projects.find((candidate) =>
-                threadBelongsToWorkspace(thread, candidate),
-              );
-              return {
-                ...thread,
-                archive_project_id: project?.id ?? "",
-                archive_project_name: project?.name ?? t("appState.noWorkspace"),
-              };
-            })}
-          onUnarchiveThread={(thread) => void unarchiveThread(thread)}
-          archiveDeletion={archiveDeletion}
-          onDeleteAllArchivedThreads={() => void archiveDeletion.removeAll()}
-          onRetryArchiveDeletion={() => void archiveDeletion.retry()}
-        />
+        application={application}
+        onNoticeVisibilityChange={setSettingsNoticeVisible}
+        archive={{
+          archivedThreads: state.threads.filter(thread => thread.archived).map(thread => {
+            const project = state.projects.find(candidate => threadBelongsToWorkspace(thread, candidate));
+            return { ...thread, archive_project_id: project?.id ?? "", archive_project_name: project?.name ?? t("appState.noWorkspace") };
+          }),
+          onUnarchiveThread: thread => void unarchiveThread(thread), archiveDeletion,
+          onDeleteAllArchivedThreads: () => void archiveDeletion.removeAll(),
+          onRetryArchiveDeletion: () => void archiveDeletion.retry(),
+        }}
+        browserSettingsAllowed={!poppedOutMode}
+        embedded={embeddedSettings}
+        embeddedDrawerPhase={sidebarDrawerPhase}
+        onSidebarPointerEnter={openSidebarDrawer}
+        onSidebarPointerLeave={event => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
+        sidebarWidth={sidebarWidth}
+        resizingSidebar={resizingSidebar}
+        shellRef={settingsShellRef}
+        sidebarCollapsed={sidebarCollapsed}
+        sidebarAnimating={sidebarAnimating}
+        onToggleSidebar={toggleSidebar}
+        onSidebarResizeStart={startSidebarResize}
+        onSidebarResizerPointer={trackSidebarResizerPointer}
+        onSidebarSeparatorKey={handleSidebarSeparatorKey}
+      />
       {!poppedOutMode ? (
         <section className="web-workspace-stage" hidden={!showingWebsite || settingsOpen} aria-label={activeWebsite?.title}>
           <WebWorkspacePanel site={ribbonBrowser.state ? { id: WEB_WORKSPACE_RIBBON_ID, url: "about:blank", title: activeWebsite?.title } : undefined} active={showingWebsite && !settingsOpen && !accountOpen} tabs resizeWithWindow />

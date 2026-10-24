@@ -27,7 +27,7 @@ async function mount() {
     },
   });
   function Harness() {
-    const deletion = useArchiveDeletion(remove, () => {});
+    const deletion = useArchiveDeletion({ remove, list: async () => (await window.wuu.listArchivedThreads()).threads });
     return (
       <>
         <button

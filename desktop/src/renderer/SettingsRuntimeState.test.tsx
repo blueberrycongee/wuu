@@ -1,3 +1,4 @@
+import { ApplicationController } from "./plugins/ApplicationController";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -83,9 +84,10 @@ async function renderSettingsRuntimeState(settingsOpen: boolean): Promise<{
   rerender: (nextSettingsOpen: boolean) => Promise<void>;
 }> {
   let latest: SettingsRuntimeState | undefined;
+  const application = new ApplicationController();
 
   function Probe({ open }: { open: boolean }) {
-    latest = useSettingsRuntimeState({ settingsOpen: open });
+    latest = useSettingsRuntimeState({ settingsOpen: open, application });
     return null;
   }
 
