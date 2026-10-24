@@ -1,24 +1,10 @@
-import { RuntimeHostServiceError, type RuntimePlugin, type ServiceDescriptor } from '@wuu/plugin-sdk';
+import {
+  RuntimeHostServiceError, sessionDomainProvider, type RuntimePlugin,
+  type SessionDomainHandlers, type SessionDomainSession as Session,
+  type SessionDomainHistoryRecord as HistoryRecord,
+} from '@wuu/plugin-sdk';
 
-interface HistoryRecord {role: string; content: string; seq?: number; [field: string]: unknown}
-interface Session {
-  id: string; created_at: string; updated_at: string; title: string; entries: number;
-  cwd: string; workspace_id?: string; engine_id?: string; archived_at?: string;
-  forked_from_id?: string; forked_from_turn_id?: string; forked_from_item_id?: string;
-  provider?: string; model?: string; variant?: string; effort?: string;
-}
-const methods = ['CreateWithMetadata', 'Find', 'List', 'ListForCWD', 'UpdateTitle',
-  'UpdateArchived', 'Delete', 'SetEngine', 'SetWorkspaceID', 'SetRuntimeSelection',
-  'WritePluginGenerationSnapshot', 'ReadPluginGenerationSnapshot', 'CreateInitialized',
-  'AppendHistoryRecord', 'AppendHistoryRecordReturningSeq', 'AppendHistoryRecords', 'AppendHistoryRecordsReturningRange',
-  'LoadHistoryRecords', 'LoadActiveHistoryRecords', 'LoadProviderHistorySnapshot', 'LatestHistoryCheckpoint'];
-const descriptor: ServiceDescriptor = {
-  name: 'session.domain', version: '1.0.0', methods: methods.map(name => ({
-    name, input_schema: `session.domain.${name}.input.v1`, output_schema: `session.domain.${name}.output.v1`,
-  })),
-};
-
-function checkedHistory(value: unknown): HistoryRecord[] {
+function checkedHistory(value: readonly HistoryRecord[]): HistoryRecord[] {
   if (!Array.isArray(value) || value.some(record => !record || typeof record.role !== 'string' || typeof record.content !== 'string')) throw new Error('invalid history record batch');
   if (value.some(record => record.expected_held_message_bytes !== undefined)) throw new RuntimeHostServiceError({code: 'method_not_found', message: 'held-message admission is not supported'});
   return structuredClone(value);
@@ -27,90 +13,94 @@ function checkedHistory(value: unknown): HistoryRecord[] {
 /** Volatile author probe. Inference, compaction and recovery are deliberately unsupported. */
 export function createSessionProvider(owner = 'independent-sessions'): RuntimePlugin {
   const sessions = new Map<string, Session>();
-  const generations = new Map<string, unknown>();
-  const histories = new Map<string, HistoryRecord[]>();
+  const generations = new Map<string, Parameters<NonNullable<SessionDomainHandlers['WritePluginGenerationSnapshot']>>[0][1]>();
+  const histories = new Map<string, readonly HistoryRecord[]>();
   let active = false;
-  return {
-    initialize() { return {protocol_version: 3, provided_services: [descriptor]}; },
-    activate() { active = true; },
-    invokeService({service, method, params}) {
-      if (!active) throw new RuntimeHostServiceError({code: 'service_unavailable', message: 'session provider is not active'});
-      if (service !== descriptor.name || !methods.includes(method)) {
-        throw new RuntimeHostServiceError({code: 'method_not_found', message: `unsupported session operation: ${method}`});
-      }
-      const args = (params as {args?: unknown[]} | undefined)?.args;
-      if (!Array.isArray(args)) throw new Error('args must be an array');
-      const id = args[0];
-      let values: unknown[];
-      if (method === 'CreateInitialized') {
-        const input = args[0] as Partial<Session>;
-        if (!input || typeof input.id !== 'string' || !input.id.trim()) throw new Error('id is required');
-        if (sessions.has(input.id)) throw new Error('session already exists');
-        const records = checkedHistory(args[1] ?? []).map((record, index) => ({...record, seq: index + 1}));
-        const now = new Date().toISOString();
-        const created = {created_at: now, updated_at: now, title: owner, entries: records.length, cwd: '', ...structuredClone(input)} as Session;
-        sessions.set(input.id, created); histories.set(input.id, records); values = [created];
-      } else if (method === 'CreateWithMetadata') {
-        if (typeof id !== 'string' || !id.trim() || typeof args[1] !== 'string') throw new Error('id and cwd are required');
-        if (sessions.has(id)) throw new Error('session already exists');
-        const now = new Date().toISOString();
-        const created: Session = {id, cwd: args[1], title: owner, entries: 0, created_at: now, updated_at: now};
-        sessions.set(id, created); histories.set(id, []); values = [created];
-      } else if (method === 'List' || method === 'ListForCWD') {
-        const limit = method === 'List' ? args[0] : args[2];
-        if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 0) throw new Error('limit must be a nonnegative integer');
-        let rows = [...sessions.values()].filter(row => method === 'List' || (args[1] ? row.workspace_id === args[1] : row.cwd === args[0]));
-        rows.sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id));
-        if (limit) rows = rows.slice(0, limit);
-        values = [rows];
-      } else {
-        if (typeof id !== 'string') throw new Error('id is required');
-        const current = sessions.get(id);
-        if (method === 'Find') return {values: structuredClone([current ?? {}, !!current])};
-        if (!current) throw new RuntimeHostServiceError({code: 'session_not_found', message: 'session not found'});
-        const history = histories.get(id)!;
-        if (method === 'LoadHistoryRecords' || method === 'LoadActiveHistoryRecords') return {values: [structuredClone(history.filter(record => args[1] || record.role !== 'meta'))]};
-        if (method === 'LoadProviderHistorySnapshot') return {values: [structuredClone({HeadSeq: history.length, Checkpoint: null, Records: history})]};
-        if (method === 'LatestHistoryCheckpoint') return {values: [{}, false]};
-        if (method.startsWith('AppendHistory')) {
-          const batch = checkedHistory(method === 'AppendHistoryRecords' || method === 'AppendHistoryRecordsReturningRange' ? args[1] : [args[1]]);
-          const start = history.length + 1;
-          const appended = batch.map((record, index) => ({...record, seq: start + index}));
-          histories.set(id, [...history, ...appended]);
-          if (method === 'AppendHistoryRecordsReturningRange') return {values: batch.length ? [start, start + batch.length - 1] : [0, 0]};
-          return {values: method === 'AppendHistoryRecordReturningSeq' ? [start] : []};
-        }
-        const next = {...current};
-        switch (method) {
-          case 'UpdateTitle':
-            if (typeof args[1] !== 'string' || !args[1].trim()) throw new Error('title is required');
-            next.title = args[1].trim(); break;
-          case 'UpdateArchived':
-            if (typeof args[1] !== 'boolean') throw new Error('archived must be a boolean');
-            if (args[1]) next.archived_at = new Date().toISOString(); else delete next.archived_at;
-            break;
-          case 'SetEngine': case 'SetWorkspaceID':
-            if (typeof args[1] !== 'string') throw new Error('value must be a string');
-            if (method === 'SetEngine') next.engine_id = args[1]; else next.workspace_id = args[1];
-            break;
-          case 'SetRuntimeSelection': {
-            const selection = args[1] as Record<string, unknown>;
-            if (typeof selection?.Provider !== 'string' || typeof selection.Model !== 'string') throw new Error('provider and model are required');
-            next.provider = selection.Provider; next.model = selection.Model;
-            if (typeof selection.Variant === 'string') next.variant = selection.Variant;
-            if (typeof selection.Effort === 'string') next.effort = selection.Effort;
-            break;
-          }
-          case 'WritePluginGenerationSnapshot': generations.set(id, structuredClone(args[1])); return {values: []};
-          case 'ReadPluginGenerationSnapshot': return {values: structuredClone([generations.get(id) ?? {}, generations.has(id)])};
-          case 'Delete': sessions.delete(id); generations.delete(id); histories.delete(id); return {values: [structuredClone(current)]};
-        }
-        next.updated_at = new Date().toISOString(); sessions.set(id, next); values = [next];
-      }
-      return {values: structuredClone(values)};
+  const requireSession = (id: string) => {
+    const current = sessions.get(id);
+    if (!current) throw new RuntimeHostServiceError({code: 'session_not_found', message: 'session not found'});
+    return current;
+  };
+  const create = (input: Partial<Session>, records: readonly HistoryRecord[] = []) => {
+    if (!input || typeof input.id !== 'string' || !input.id.trim()) throw new Error('id is required');
+    if (sessions.has(input.id)) throw new Error('session already exists');
+    const history = checkedHistory(records).map((record, index) => ({...record, seq: index + 1}));
+    const now = new Date().toISOString();
+    const created: Session = {...structuredClone(input), id: input.id, created_at: input.created_at || now, updated_at: now, title: input.title || owner, entries: history.length};
+    sessions.set(input.id, created); histories.set(input.id, history);
+    return structuredClone(created);
+  };
+  const update = (id: string, fields: Partial<Session>) => {
+    const next = {...requireSession(id), ...fields, updated_at: new Date().toISOString()};
+    sessions.set(id, next); return structuredClone(next);
+  };
+  const list = (limit: number, matches: (row: Session) => boolean) => {
+    if (!Number.isInteger(limit) || limit < 0) throw new Error('limit must be a nonnegative integer');
+    const rows = [...sessions.values()].filter(matches).sort((a, b) => b.created_at.localeCompare(a.created_at) || a.id.localeCompare(b.id));
+    return structuredClone(limit ? rows.slice(0, limit) : rows);
+  };
+  const readHistory = (id: string, includeMeta: boolean) => {
+    requireSession(id);
+    return structuredClone(histories.get(id)!.filter(record => includeMeta || record.role !== 'meta'));
+  };
+  const append = (id: string, records: readonly HistoryRecord[]): [number, number] => {
+    requireSession(id);
+    const batch = checkedHistory(records);
+    const history = histories.get(id)!;
+    const start = history.length + 1;
+    histories.set(id, [...history, ...batch.map((record, index) => ({...record, seq: start + index}))]);
+    return batch.length ? [start, start + batch.length - 1] : [0, 0];
+  };
+  const handlers: SessionDomainHandlers = {
+    CreateWithMetadata: ([id, cwd]) => {
+      if (typeof cwd !== 'string') throw new Error('cwd is required');
+      return [create({id, cwd})];
     },
-    shutdown() { active = false; sessions.clear(); generations.clear(); histories.clear(); },
+    CreateInitialized: ([input, records]) => [create(input, records ?? [])],
+    Find: ([id]) => [structuredClone(sessions.get(id) ?? {id: '', created_at: '0001-01-01T00:00:00Z', entries: 0}), sessions.has(id)],
+    List: ([limit]) => [list(limit, () => true)],
+    ListForCWD: ([cwd, workspaceID, limit]) => [list(limit, row => workspaceID ? row.workspace_id === workspaceID : row.cwd === cwd)],
+    UpdateTitle: ([id, title]) => {
+      requireSession(id);
+      if (typeof title !== 'string' || !title.trim()) throw new Error('title is required');
+      return [update(id, {title: title.trim()})];
+    },
+    UpdateArchived: ([id, archived]) => {
+      if (typeof archived !== 'boolean') throw new Error('archived must be a boolean');
+      return [update(id, {archived_at: archived ? new Date().toISOString() : undefined})];
+    },
+    Delete: ([id]) => {
+      const current = requireSession(id);
+      sessions.delete(id); generations.delete(id); histories.delete(id);
+      return [structuredClone(current)];
+    },
+    SetEngine: ([id, engine]) => [update(id, {engine_id: engine})],
+    SetWorkspaceID: ([id, workspaceID]) => [update(id, {workspace_id: workspaceID})],
+    SetRuntimeSelection: ([id, selection]) => {
+      if (!selection.Provider || !selection.Model) throw new Error('provider and model are required');
+      return [update(id, {provider: selection.Provider, model: selection.Model, variant: selection.Variant, effort: selection.Effort,
+        speed: selection.Speed, model_options: selection.ModelOptions ?? undefined, permission_mode: selection.PermissionMode, approve_for_me: selection.ApproveForMe})];
+    },
+    WritePluginGenerationSnapshot: ([id, snapshot]) => {requireSession(id); generations.set(id, structuredClone(snapshot)); return [];},
+    ReadPluginGenerationSnapshot: ([id]) => [structuredClone(generations.get(id) ?? {version: 1, plugins: []}), generations.has(id)],
+    AppendHistoryRecord: ([id, record]) => {append(id, [record]); return [];},
+    AppendHistoryRecordReturningSeq: ([id, record]) => [append(id, [record])[0]],
+    AppendHistoryRecords: ([id, records]) => {append(id, records ?? []); return [];},
+    AppendHistoryRecordsReturningRange: ([id, records]) => append(id, records ?? []),
+    LoadHistoryRecords: ([id, includeMeta]) => [readHistory(id, includeMeta)],
+    LoadActiveHistoryRecords: ([id, includeMeta]) => [readHistory(id, includeMeta)],
+    LoadProviderHistorySnapshot: ([id]) => {const records = readHistory(id, true); return [{HeadSeq: records.length, Checkpoint: null, Records: records}];},
+    LatestHistoryCheckpoint: ([id]) => {requireSession(id); return [{version: 1, session_id: id, through_seq: 0, kind: '', created_at: '0001-01-01T00:00:00Z', replacement: []}, false];},
+  };
+  const domain = sessionDomainProvider(handlers);
+  return {
+    initialize() {return {protocol_version: 3, provided_services: [domain.descriptor]};},
+    activate() {active = true;},
+    invokeService(request) {
+      if (!active) throw new RuntimeHostServiceError({code: 'service_unavailable', message: 'session provider is not active'});
+      return domain.invoke(request);
+    },
+    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear();},
   };
 }
-
 export default createSessionProvider();

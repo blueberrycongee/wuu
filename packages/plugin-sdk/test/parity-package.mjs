@@ -6,8 +6,9 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const exec = promisify(execFile);
-const sdk = fileURLToPath(new URL('../', import.meta.url));
-const repo = resolve(sdk, '../..');
+const authorSDK = fileURLToPath(new URL('../', import.meta.url));
+const sdk = resolve(process.env.WUU_PARITY_SDK_ROOT ?? authorSDK);
+const repo = resolve(authorSDK, '../..');
 const temporary = await mkdtemp(join(tmpdir(), 'wuu-parity-author-'));
 try {
   const stage = join(temporary, 'package');
@@ -29,12 +30,13 @@ try {
   }
   await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
   for (const name of ['tools', 'sessions']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
-  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
-  const checked = await exec(process.execPath, ['--test', join(sdk, 'test/parity-tools.test.mjs'), join(sdk, 'test/parity-sessions.test.mjs')], {
+  for (const name of ['shell', 'navigation']) await cp(join(repo, `examples/plugins/independent-providers/${name}.tsx`), join(project, `${name}.tsx`));
+  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'shell.tsx', 'navigation.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
+  const checked = await exec(process.execPath, ['--test', join(authorSDK, 'test/parity-tools.test.mjs'), join(authorSDK, 'test/parity-sessions.test.mjs')], {
     env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js')},
   });
   console.log(checked.stdout);
-  console.log('PASS: independent tool registry compiled against packed public SDK; no dependency installation.');
+  console.log('PASS: independent session metadata and tool providers compiled against packed public SDK; no dependency installation.');
 } catch (error) {
   console.error(error.stdout ?? '', error.stderr ?? '');
   throw error;
