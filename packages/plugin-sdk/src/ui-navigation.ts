@@ -1,4 +1,4 @@
-import type { ViewPlacementRegion } from "./index";
+import type { ViewPlacementRegion } from "./index.js";
 /** Navigation data remains available when no application shell is mounted. */
 export type NavigationReadonly<T> = T extends readonly (infer U)[] ? readonly NavigationReadonly<U>[] : T extends object ? { readonly [K in keyof T]: NavigationReadonly<T[K]> } : T;
 export type NavigationIconV1 = { name: string; path?: never; light?: never; dark?: never } | { path: string; name?: never; light?: never; dark?: never } | { light: string; dark: string; name?: never; path?: never };
