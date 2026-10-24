@@ -5,10 +5,13 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   let state: ApplicationSnapshotV1 = initial ?? {
     contractVersion: 1, revision: 0, phase: 'ready', connection: { status: 'connected' }, locale: 'en',
     workspaces: { activeWorkspaceId: 'research', workspaces: [{ id: 'research', name: 'Research', root: '/preview/research', available: true }] },
-    navigation: { contractVersion: 1, activeNodeId: 'research-1', nodes: [
+    navigation: { contractVersion: 1, section: 'conversations', catalogSection: 'plugins', catalogPluginId: '', activeNodeId: 'research-1', nodes: [
       { id: 'research', kind: 'project', label: 'Research' },
       { id: 'research-1', kind: 'thread', label: 'Compare the evidence', parentId: 'research', active: true },
     ] },
+    tabs: { activeTabId: 'thread:research-1', items: [{ id: 'thread:research-1', kind: 'thread',
+      title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
+      threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{
       id: 'turn-1', status: 'completed', items: [
         { contractVersion: 1, id: 'user-1', kind: 'user-message', text: 'Which approach has the strongest evidence?' },
