@@ -10,6 +10,8 @@ import (
 )
 
 type NoteRequest struct {
+	InputTokens             int                     `json:"input_tokens,omitempty"`
+	Force                   bool                    `json:"force,omitempty"`
 	PolicyKey               string                  `json:"policy_key"`
 	Model                   string                  `json:"model"`
 	Messages                []providers.ChatMessage `json:"messages"`
@@ -20,9 +22,12 @@ type NoteRequest struct {
 	CoveredMessages         int                     `json:"covered_messages,omitempty"`
 }
 type NotePlan struct {
-	Prompt         string `json:"prompt"`
-	IntervalTokens int    `json:"interval_tokens"`
-	MaxBytes       int    `json:"max_bytes"`
+	Messages        []providers.ChatMessage `json:"messages"`
+	CoveredMessages int                     `json:"covered_messages"`
+	Due             bool                    `json:"due"`
+	Prompt          string                  `json:"prompt"`
+	IntervalTokens  int                     `json:"interval_tokens"`
+	MaxBytes        int                     `json:"max_bytes"`
 }
 type NoteReplacement struct {
 	Messages        []providers.ChatMessage `json:"messages"`
@@ -132,7 +137,7 @@ func (c *Client) NotePlan(ctx context.Context, in NoteRequest) (NotePlan, error)
 	if err := c.invoke(ctx, "note-plan", in, &out); err != nil {
 		return out, err
 	}
-	if strings.TrimSpace(out.Prompt) == "" {
+	if out.Messages == nil || out.CoveredMessages < 0 || out.CoveredMessages > len(in.Messages) || (out.Due && strings.TrimSpace(out.Prompt) == "") {
 		return NotePlan{}, fmt.Errorf("invalid note plan")
 	}
 	return out, nil

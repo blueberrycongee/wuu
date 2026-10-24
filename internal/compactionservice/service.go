@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -26,8 +25,8 @@ func (s *Service) Status() pluginhost.Status {
 	return pluginhost.Status{ID: s.ID(), State: s.state}
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
-	methods := make([]pluginhost.ServiceMethodDescriptor, 0, 4)
-	for _, name := range []string{"describe", "compact", "window", "handoff", "note-plan", "compact-note", "recover"} {
+	methods := make([]pluginhost.ServiceMethodDescriptor, 0, 8)
+	for _, name := range []string{"describe", "compact", "window", "handoff", "note-plan", "compact-note", "recover", "note-attempt"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1"})
 	}
 	return []pluginhost.ServiceDescriptor{{Name: ServiceName, Version: "1.0.0", Methods: methods}}
@@ -114,18 +113,14 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	case "note-plan", "compact-note":
 		var in NoteRequest
 		if err = decode(p.Params, &in); err == nil {
-			operation := "note_plan"
-			if p.Method == "compact-note" {
-				operation = "compact_with_note"
+			if p.Method == "note-plan" {
+				result, err = prepareNativeNote(ctx, in)
+				break
 			}
+			operation := "compact_with_note"
 			var out pluginhost.CompactionOutput
 			out, err = nativeNote(ctx, in, operation)
-			if err == nil && p.Method == "note-plan" {
-				if strings.TrimSpace(out.NotePrompt) == "" {
-					return nil, &pluginhost.HostServiceError{Code: "note_unsupported", Message: "note plan is unavailable"}
-				}
-				result = NotePlan{Prompt: out.NotePrompt, IntervalTokens: out.CheckpointIntervalTokens, MaxBytes: out.MaxNoteBytes}
-			} else if err == nil {
+			if err == nil {
 				if out.CoveredMessages <= 0 || out.CoveredMessages > len(out.Messages) {
 					return nil, fmt.Errorf("invalid note coverage")
 				}
@@ -133,6 +128,11 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 					result = NoteReplacement{Messages: out.Messages, CoveredMessages: out.CoveredMessages}
 				}
 			}
+		}
+	case "note-attempt":
+		var in NoteAttemptRequest
+		if err = decode(p.Params, &in); err == nil {
+			result, err = nativeNoteAttempt(in)
 		}
 	case "recover":
 		var in RecoveryRequest

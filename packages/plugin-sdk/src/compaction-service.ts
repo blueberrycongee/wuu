@@ -3,7 +3,7 @@ import type { RuntimeHost, ServiceDescriptor, CompactionMessage } from './index.
 export const COMPACTION_SERVICE = 'agent.compaction';
 export const COMPACTION_SERVICE_DESCRIPTOR: ServiceDescriptor = {
   name: COMPACTION_SERVICE, version: '1.0.0',
-  methods: ['describe', 'compact', 'window', 'handoff', 'note-plan', 'compact-note', 'recover'].map(name => ({
+  methods: ['describe', 'compact', 'window', 'handoff', 'note-plan', 'compact-note', 'recover', 'note-attempt'].map(name => ({
     name, input_schema: `agent.compaction.${name}.input.v1`, output_schema: `agent.compaction.${name}.output.v1`,
   })),
 };
@@ -92,6 +92,8 @@ export interface PolicyHandoffRequest {
   readonly source_through_seq?: number;
 }
 export interface PolicyNoteRequest {
+  readonly input_tokens?: number;
+  readonly force?: boolean;
   readonly policy_key: string;
   readonly model?: string;
   readonly messages?: readonly PolicyMessage[];
@@ -101,8 +103,15 @@ export interface PolicyNoteRequest {
   readonly note?: string;
   readonly covered_messages?: number;
 }
-export interface PolicyNotePlan { readonly prompt: string; readonly interval_tokens: number; readonly max_bytes: number }
+export interface PolicyNotePlan { readonly messages: readonly PolicyMessage[]; readonly covered_messages: number; readonly due: boolean; readonly prompt: string; readonly interval_tokens: number; readonly max_bytes: number }
 export interface PolicyNoteReplacement extends PolicyReplacement { readonly covered_messages: number }
+export interface PolicyNoteAttemptRequest {
+  readonly messages: readonly PolicyMessage[];
+  readonly plan: PolicyHandoffPlan;
+  readonly attempt: number;
+  readonly previous_failure?: string;
+}
+export interface PolicyNoteAttemptPlan extends PolicyHandoffPlan { readonly messages: readonly PolicyMessage[]; readonly invoke: boolean }
 export interface PolicyRecoveryRequest extends PolicyCompactRequest {
   readonly failure: { readonly code: string; readonly message: string };
 }
@@ -130,9 +139,17 @@ export function compactionService(host: RuntimeHost) {
       }
       return result;
     },
+    noteAttempt: async (params: PolicyNoteAttemptRequest): Promise<PolicyNoteAttemptPlan> => {
+      const result = await call<PolicyNoteAttemptPlan>('note-attempt', params);
+      if (!result || !Array.isArray(result.messages) || typeof result.invoke !== 'boolean' || typeof result.prompt !== 'string'
+        || (result.invoke && !result.prompt.trim()) || !Number.isInteger(result.max_bytes) || result.max_bytes < 0) {
+        throw new TypeError('Invalid note attempt plan');
+      }
+      return result;
+    },
     notePlan: async (params: PolicyNoteRequest): Promise<PolicyNotePlan> => {
       const result = await call<PolicyNotePlan>('note-plan', params);
-      if (!result || typeof result.prompt !== 'string' || !result.prompt.trim()) throw new TypeError('Invalid note plan');
+      if (!result || !Array.isArray(result.messages) || typeof result.due !== 'boolean' || !Number.isInteger(result.covered_messages) || result.covered_messages < 0 || result.covered_messages > (params.messages?.length ?? 0) || (result.due && (typeof result.prompt !== 'string' || !result.prompt.trim()))) throw new TypeError('Invalid note plan');
       return result;
     },
     compactNote: async (params: PolicyNoteRequest): Promise<PolicyNoteReplacement> => {
