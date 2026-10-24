@@ -6,6 +6,7 @@ export type ApplicationConversationInputImageV1 = ConversationInputImageData;
 export type ApplicationConversationMessageContentPartV1 = ConversationMessageContentPartData;
 export type ApplicationConversationInputFileV1 = ConversationInputFileData;
 export interface ApplicationConversationWorkspaceV1 {
+    readonly turnStreamStatus: Readonly<Record<string, { readonly text: string; readonly liveProgress: boolean }>>;
     readonly primaryThreadId?: string;
     readonly secondaryThreadId?: string;
     readonly activePane: "primary" | "secondary";

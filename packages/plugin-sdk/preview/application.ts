@@ -17,7 +17,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
       threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
     conversationDetails: [],
-    conversationWorkspace: { activePane: "primary", threads: [] },
+    conversationWorkspace: { turnStreamStatus: {}, activePane: "primary", threads: [] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{
       id: 'turn-1', status: 'completed', items: [
         { contractVersion: 1, id: 'user-1', kind: 'user-message', text: 'Which approach has the strongest evidence?' },

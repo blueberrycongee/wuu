@@ -1325,7 +1325,7 @@ export class ApplicationController implements HostApplicationService {
       navigationWorkspace: Object.freeze({ ...this.applicationNavigation.getSnapshot(),
         pendingConversations: Object.freeze(this.applicationNavigation.getSnapshot().pendingConversations.map(pending => {
           const creation = this.applicationSubmission.getSnapshot().pendingCreations.find(creation => creation.ownerTabId === pending.id);
-          return Object.freeze({ ...pending, title: creation?.turn.items.find(item => item.kind === "user-message")?.text ?? pending.title });
+          return Object.freeze({ ...pending, title: creation?.turn.items.find(item => item.type === "user_message")?.text ?? pending.title });
         })) }),
       tabs: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, navigationRevision: this.navigationRequest,
         primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id,
@@ -1344,7 +1344,7 @@ export class ApplicationController implements HostApplicationService {
       search: this.applicationSearch.getSnapshot(),
       conversationActions,
       conversationDetails: this.conversationDetails.getSnapshot(),
-      conversationWorkspace: Object.freeze({ primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
+      conversationWorkspace: Object.freeze({ turnStreamStatus: Object.freeze(Object.fromEntries(Object.entries(state.turnStreamStatus).map(([id, status]) => [id, Object.freeze({ ...status })]))), primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
         threads: Object.freeze([...new Map([...state.threads, state.secondaryThread, state.thread].filter((item): item is Thread => Boolean(item))
           .map(item => [item.id, item])).values()].map(this.projectConversationThread)) }),
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),

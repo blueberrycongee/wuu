@@ -322,7 +322,9 @@ describe("shared application state", () => {
       result_detail: { content: [{ type: "image", uri: "wuu-artifact://owned", artifact: { sha256: "digest" } }] } };
     const thread = { id: "stream-thread", model_provider: "test", turns: [{ id: "stream-turn", status: "in_progress", items: [item],
       error: { message: "failure", recovery: { attempt_count: 2 } } }], child_agents: [{ id: "child", status: "running" }], history_cursor: "older" } as never;
-    const controller = new ApplicationController({ ...initialState, thread, threads: [thread] });
+    const controller = new ApplicationController({ ...initialState, thread, threads: [thread], turnStreamStatus: { "stream-turn": { text: "Reconnecting", liveProgress: true } } });
+    expect(controller.getSnapshot().conversationWorkspace.turnStreamStatus["stream-turn"]).toEqual({ text: "Reconnecting", liveProgress: true });
+    expect(Object.isFrozen(controller.getSnapshot().conversationWorkspace.turnStreamStatus["stream-turn"])).toBe(true);
     const view = controller.getSnapshot().conversationWorkspace.threads[0];
     expect(view.history_cursor).toBe("older");
     expect(view.child_agents?.[0].id).toBe("child");
