@@ -112,6 +112,7 @@ function contextDownloadReferrer(params: Electron.ContextMenuParams, target: str
 }
 
 export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
+  private optionsMenus = new Map<string, { owner: BrowserWindow; menu: Menu }>();
   private shortcutTargets = new Map<number, string>();
   private groups = new Map<string, WorkspaceGroup>();
   private pages = new Map<string, WorkspacePage>();
@@ -382,7 +383,16 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
     return this.state(group);
   }
 
+  dismissOptions(owner: BrowserWindow, id: string): void {
+    const current = this.optionsMenus.get(id);
+    if (!current) return;
+    if (current.owner !== owner) throw new Error("This menu belongs to another window.");
+    this.optionsMenus.delete(id);
+    current.menu.closePopup(owner);
+  }
+
   showOptions(owner: BrowserWindow, id: string, request: WebWorkspaceMenuRequest): Promise<WebWorkspaceMenuAction | null> {
+    this.dismissOptions(owner, id);
     const group = this.group(owner, id), tab = this.activeTab(group);
     if (!tab || !owner.isVisible() || owner.isMinimized()) return Promise.resolve(null);
     if (![request.x, request.y].every(Number.isFinite)) throw new Error("Menu coordinates must be finite numbers.");
@@ -404,10 +414,15 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
         ...(group.tabbed ? [item("reopenTab", group.closedTabs.length > 0 && group.tabs.length < WEB_WORKSPACE_TAB_LIMIT)] : []),
         item("openExternal", !blank),
       ]);
+      this.optionsMenus.set(id, { owner, menu });
       const zoom = owner.webContents.getZoomFactor();
       // Menu coordinates are relative to the owner's content view, in DIPs.
       menu.popup({ window: owner, x: Math.round(request.x * zoom), y: Math.round(request.y * zoom),
-        callback: () => resolve(this.groups.get(id) === group && this.activeTab(group) === tab ? selected : null) });
+        callback: () => {
+          const current = this.optionsMenus.get(id)?.menu === menu;
+          if (current) this.optionsMenus.delete(id);
+          resolve(current && this.groups.get(id) === group && this.activeTab(group) === tab ? selected : null);
+        } });
     });
   }
 
@@ -653,6 +668,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
   }
 
   close(owner: BrowserWindow, id: string): void {
+    this.dismissOptions(owner, id);
     const group = this.groups.get(id);
     // Explicit removal also forgets destinations not opened since startup.
     if (!group) { this.options.library?.removeSession(id); return; }
@@ -663,6 +679,7 @@ export class WebWorkspaceHost implements BrowserSessionPermissionDelegate {
 
   destroyAll(): void {
     clearInterval(this.discardTimer);
+    for (const [id, { owner }] of this.optionsMenus) this.dismissOptions(owner, id);
     for (const group of [...this.groups.values()]) this.destroyGroup(group);
     this.closeDetachedWindows();
     this.flushLibrary();

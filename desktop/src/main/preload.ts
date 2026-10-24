@@ -751,6 +751,7 @@ if (!process.argv.includes("--wuu-browser-disabled")) {
     initializeTabs: (destinations) => ipcRenderer.invoke("wuu:web-workspace-tabs-initialize", destinations),
     open: (destination) => ipcRenderer.invoke("wuu:web-workspace-open", destination),
     showTooltip: (token, hint) => ipcRenderer.invoke("wuu:web-workspace-tooltip", token, hint),
+    dismissOptions: id => ipcRenderer.invoke("wuu:web-workspace-options-dismiss", id),
     showOptions: (id, request) => ipcRenderer.invoke("wuu:web-workspace-options", id, request),
     capture: (id) => ipcRenderer.invoke("wuu:web-workspace-capture", id),
     onReveal: handler => {
