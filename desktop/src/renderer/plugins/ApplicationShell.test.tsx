@@ -52,6 +52,38 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("automatically composes legacy registrations only within declared non-service slots", async () => {
+    window.wuu = {} as never;
+    const { host } = fixture();
+    await host.activateGeneration({ pluginId: "custom-shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "conversation.message.before", cardinality: "many" });
+      api.registerUISlot({ id: "workspace.header", cardinality: "one", service: "ui.navigation" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <>
+        <slots.Slot name="custom-shell/conversation.message.before" fallback={<span>Native fallback</span>} />
+        <slots.Slot name="custom-shell/workspace.header" fallback={<span>Forbidden service fallback</span>} />
+        <slots.Slot name="missing/conversation.message.before" fallback={<span>Forbidden missing fallback</span>} />
+      </> });
+    } });
+    await host.activateGeneration({ pluginId: "legacy", generation: "one", register: api => {
+      api.registerSlot("conversation.message.before", { id: "before", render: () => <span>Legacy before</span> });
+      api.registerSlot("workspace.header", { id: "header", render: () => <span>Forbidden legacy service</span> });
+    } });
+    await host.activateGeneration({ pluginId: "public", generation: "one", register: api => {
+      api.registerUIContribution({ id: "before", target: "custom-shell/conversation.message.before", render: () => <span>Public before</span> });
+    } });
+    const element = document.createElement("div"); const root = createRoot(element);
+    try {
+      act(() => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "custom-shell", generation: "one", id: "shell" }} />));
+      expect(element.textContent).toContain("Public beforeLegacy before");
+      expect(element.textContent).not.toContain("Forbidden");
+      await act(async () => { host.unload("public"); });
+      expect(element.textContent).toContain("Native fallbackLegacy before");
+      await act(async () => { host.unload("legacy"); });
+      expect(element.textContent).not.toContain("Legacy before");
+      expect(element.textContent).toContain("Native fallback");
+    } finally { act(() => root.unmount()); host.unload("custom-shell"); host.unload("legacy"); host.unload("public"); }
+  });
+
   it("retains the declaring slot service and fences legacy view hosts across same-code replacement", async () => {
     window.wuu = {} as never;
     let finish!: (value: string) => void;

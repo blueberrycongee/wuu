@@ -1,3 +1,4 @@
+import { LegacyUIContributions } from "./LegacyUIContributions";
 import * as React from "react";
 import type { UICompositionV1, UISlotProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginHost, RegisteredApplicationShell, RegisteredUIContribution } from "./PluginHost";
@@ -21,6 +22,7 @@ const SurfaceBindings = React.createContext<Readonly<Record<string, ApplicationS
 const SlotAncestors = React.createContext<readonly string[]>([]);
 
 function compositionFor(host: PluginHost): UICompositionV1 {
+  const createViewHost = host.createLegacyViewHost.bind(host);
   function Slot({ name, context = {}, fallback }: UISlotProps): React.ReactNode {
     const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
     const ancestors = React.useContext(SlotAncestors);
@@ -37,13 +39,15 @@ function compositionFor(host: PluginHost): UICompositionV1 {
         && item.generation === binding.generation && item.id === binding.id) : [];
       if (contributions.length !== 1) return <div role="alert">Selected UI surface is unavailable: {slot.service}</div>;
     }
-    return <SlotAncestors.Provider value={[...ancestors, name]}>
-      {contributions.length === 0 ? fallback : contributions.map(contribution => {
+    const content = contributions.length === 0 ? fallback : contributions.map(contribution => {
         return <ShellBoundary key={activationKey(contribution)}
           identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
           <Contribution host={host} contribution={contribution} slots={composition} context={context} />
         </ShellBoundary>;
-      })}
+      });
+    return <SlotAncestors.Provider value={[...ancestors, name]}>
+      {slot.service ? content : <LegacyUIContributions key={activationKey(slot)} host={host} semanticSlot={slot.id}
+        application={slot.application} context={context} fallback={content} createViewHost={createViewHost} />}
     </SlotAncestors.Provider>;
   }
   const composition: UICompositionV1 = Object.freeze({ Slot });
