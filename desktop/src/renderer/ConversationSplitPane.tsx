@@ -91,7 +91,7 @@ export function ConversationSplitPane({
   onRemoveImage: (id: string) => void;
   onChangeSelection?: (selection: ResponseSelection) => void;
   onRemoveSelection?: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   onForkMessage: (turnID: string, itemID: string) => void;
   onOpenFile?: (path: string) => void;

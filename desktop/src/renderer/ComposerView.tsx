@@ -349,9 +349,9 @@ export function Composer({
   onGuideQueuedMessage: (id: string) => void;
   onEditQueuedMessage: (id: string) => void;
   onEditGuideMessage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
-  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
-  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
+  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
+  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   telemetryTurnID?: string;
   tokensPerSecond?: number;
@@ -410,6 +410,7 @@ export function Composer({
   // interval where two gestures can still read the same rendered draft, while
   // allowing a real input change (even to the same eventual text) to re-arm it.
   const submittedDraftSignatureRef = useRef<string | null>(null);
+  useEffect(() => () => { submittedDraftSignatureRef.current = null; }, []);
   const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
     setLastPromptRevision(promptRevision);
@@ -757,7 +758,7 @@ export function Composer({
   }
 
   function submitComposerWith(
-    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void,
+    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>,
     promptOverride = prompt,
     mode: ComposerSubmissionModeV1 = "send",
   ): void {
@@ -793,15 +794,26 @@ export function Composer({
     const contentParts = collapsedContentPartsForPrompt(promptOverride);
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : promptOverride;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
-    const accepted = contentParts
-      ? onSubmit(canonicalPrompt, contentParts)
-      : onSubmit(promptOverride);
-    if (accepted === false) return;
-    inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
     submittedDraftSignatureRef.current = draftSignature;
-    optimisticPromptQueueRef.current.length = 0;
-    setLocalPrompt("");
-    setSubmissionClearRevision((current) => current + 1);
+    const finish = (accepted: boolean | void): void => {
+      if (submittedDraftSignatureRef.current !== draftSignature) return;
+      if (accepted === false) {
+        submittedDraftSignatureRef.current = null;
+        return;
+      }
+      inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
+      optimisticPromptQueueRef.current.length = 0;
+      setLocalPrompt("");
+      setSubmissionClearRevision((current) => current + 1);
+    };
+    try {
+      const accepted = contentParts ? onSubmit(canonicalPrompt, contentParts) : onSubmit(promptOverride);
+      if (accepted instanceof Promise) void accepted.then(finish, () => finish(false));
+      else finish(accepted);
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
     // Restore focus within the user action so software keyboards can open.
     // An already-focused editor must not blur/refocus or scroll on send.
     const textarea = textareaRef.current;

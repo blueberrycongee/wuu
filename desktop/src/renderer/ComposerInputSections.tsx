@@ -145,7 +145,7 @@ export function SplitPaneComposer({
   onPasteAttachmentFiles: (files: File[]) => void;
   onRemoveFile: (id: string) => void;
   onRemoveImage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -179,6 +179,7 @@ export function SplitPaneComposer({
   const hasDraft = prompt.trim().length > 0 || hasAttachments;
   const draftSignature = JSON.stringify([prompt, images.map(image => image.id), files.map(file => file.id), selections]);
   const submittedDraftRef = useRef<string | undefined>(undefined);
+  useEffect(() => () => { submittedDraftRef.current = undefined; }, []);
   useEffect(() => { submittedDraftRef.current = undefined; }, [draftSignature, queryHistorySessionID]);
   // Match the dock composer: the button is a stop control only while running
   // with an empty input. Once there is a draft, it flips to send (queuing
@@ -321,12 +322,25 @@ export function SplitPaneComposer({
     const contentParts = collapsedContentPartsForPrompt(currentPrompt);
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : currentPrompt;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
-    const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend(currentPrompt);
-    if (accepted === false) return;
-    inline.actions.dispatched(canonicalPrompt, running ? "queue" : "send");
     submittedDraftRef.current = currentSignature;
-    composing.current = false;
-    setSubmissionRevision((revision) => revision + 1);
+    const finish = (accepted: boolean | void): void => {
+      if (submittedDraftRef.current !== currentSignature) return;
+      if (accepted === false) {
+        submittedDraftRef.current = undefined;
+        return;
+      }
+      inline.actions.dispatched(canonicalPrompt, running ? "queue" : "send");
+      composing.current = false;
+      setSubmissionRevision((revision) => revision + 1);
+    };
+    try {
+      const accepted = contentParts ? onSend(canonicalPrompt, contentParts) : onSend(currentPrompt);
+      if (accepted instanceof Promise) void accepted.then(finish, () => finish(false));
+      else finish(accepted);
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
     // Keep focus restoration in the user action, without viewport scrolling.
     const textarea = textareaRef.current;
     if (textarea && document.activeElement !== textarea) {
