@@ -9,7 +9,7 @@ import { PluginHost } from "../plugins/PluginHost";
 import type { HostApplicationService } from "../plugins/HostApplicationService";
 import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate as activateComposer } from "./DefaultComposerSurface";
-import { DefaultComposerSurface } from "./DefaultComposerSurface";
+import { DefaultComposerSurface, type DefaultComposerLayout } from "./DefaultComposerSurface";
 import { WuuUIRoot } from "../ui/layers/UILayerHost";
 
 let root: Root;
@@ -57,10 +57,25 @@ function setup() {
   } as ApplicationServiceV1;
 
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  const render = async () => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={application} /></WuuUIRoot>)); };
+  const render = async (layout: DefaultComposerLayout = {}) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={application} {...layout} /></WuuUIRoot>)); };
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  it("keeps secondary split input source-bound without adding runtime controls", async () => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view,
+      tabs: { ...view.tabs, activePane: "secondary", items: [...view.tabs.items, { ...view.tabs.items[0], id: "secondary", threadId: "other", kind: "thread" }] },
+      drafts: { ...view.drafts, split: true, activePane: "secondary", secondary: { ...view.drafts.primary, ownerTabId: "secondary", text: "other query" } },
+      composerRuntime: { ...view.composerRuntime, owners: [...view.composerRuntime.owners, { ...view.composerRuntime.owners[0], ownerTabId: "secondary", threadId: "other" }] },
+    }));
+    await fixture.render({ pane: "secondary", ownerTabId: "secondary" });
+    expect(container.querySelector(".codex-runtime-trigger")).toBeNull();
+    expect(container.querySelector(".permission-chip")).toBeNull();
+    const editor = container.querySelector("textarea")!;
+    expect(editor.value).toBe("other query");
+    await act(async () => editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(fixture.calls).toContainEqual(expect.objectContaining({ action: "composer.submit", input: expect.objectContaining({ ownerTabId: "secondary", text: "other query" }) }));
+  });
   it("selects, replaces, and disables the side composer through the preview service slot", async () => {
     const fixture = setup();
     await fixture.update(view => ({ ...view,

@@ -7,7 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
-import { Composer } from "../ComposerView";
+import { Composer, SplitPaneComposer } from "../ComposerView";
 import { createComposerControls } from "../ComposerControls";
 import { ComposerServicesProvider } from "../ComposerServicesContext";
 import { FileSelectionProvider } from "../FileSelectionContext";
@@ -86,6 +86,7 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
   const tab = view.tabs.items.find(row => row.id === ownerTabId);
   const draft = view.drafts[pane];
   if (!runtime || !tab || draft.ownerTabId !== ownerTabId) return null;
+  const Input = view.drafts.split ? SplitPaneComposer : Composer;
   const selection = runtime.selection;
   const context: RuntimeContext = tab.workspaceId ? { kind: "project", project_id: tab.workspaceId, cwd: tab.workspaceRoot } : { kind: "no_project", cwd: tab.workspaceRoot };
   const projects = view.workspaces.workspaces.map(workspace => ({ id: workspace.id, name: workspace.name, path: workspace.root, missing: !workspace.available }));
@@ -120,7 +121,9 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
     onHold={() => application.invoke("question.hold", { requestId: offer.request_id })}
     onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null); }} /> : undefined;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}><FileSelectionProvider application={application} source={{ ownerTabId }}><div ref={contentRef} style={{ display: "contents" }}>
-    <Composer variant={variant} mainConversation containerRef={containerRef} topAccessory={question}
+    <Input workspaceId={tab.workspaceId} workspaceRoot={runtime.cwd} turnId={presentation.turnId}
+      queuedCount={pending?.queued.length ?? 0} pendingCount={(pending?.queued.length ?? 0) + (pending?.guides.length ?? 0)}
+      variant={variant} mainConversation containerRef={containerRef} topAccessory={question}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
       prompt={draft.text} promptRevision={draft.revision} setPrompt={text => run(controls.setText(text))}
