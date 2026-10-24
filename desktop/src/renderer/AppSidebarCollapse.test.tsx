@@ -44,7 +44,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 import { createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
 import * as applicationState from "./plugins/ApplicationController";
-import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { TestApplicationShellOutlet as ApplicationShellOutlet } from "./test-support/DefaultApplication";
 import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
 import { PluginHost } from "./plugins/PluginHost";
 

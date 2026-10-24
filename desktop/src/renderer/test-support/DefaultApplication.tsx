@@ -35,6 +35,13 @@ export async function registerDefaultTestSurfaces(host: PluginHost): Promise<voi
   await host.activateGeneration({ pluginId: "wuu.default-settings", generation: "fixture", register: activateSettings });
 }
 
+/** Mirrors DesktopApplicationRoot: replacing a selected shell cannot stop its host. */
+export function TestApplicationShellOutlet(props: React.ComponentProps<typeof ApplicationShellOutlet>): React.ReactElement {
+  const [application] = React.useState(applicationState.getDesktopApplication);
+  React.useEffect(() => application.start(), [application]);
+  return <ApplicationShellOutlet {...props} />;
+}
+
 /** Behavior suites mount the shipped shell and independently selected providers. */
 export async function createDefaultApplicationTestView(
   application = new applicationState.ApplicationController(),
@@ -51,7 +58,7 @@ export async function createDefaultApplicationTestView(
       host.unload("wuu.default-navigation");
       host.unload("wuu.default-preview");
     }, []);
-    return <ApplicationShellOutlet host={host}
+    return <TestApplicationShellOutlet host={host}
       binding={{ pluginId: "wuu.default-shell", generation: "fixture", id: "ui.shell" }}
       surfaceBindings={defaultSurfaceBindings} />;
   }

@@ -470,7 +470,6 @@ export function App({ application, slots, shellPluginId }: {
   const recoveredDrafts = applicationController.recoveredDrafts;
   const state = useSyncExternalStore(applicationController.subscribeState, applicationController.getState, applicationController.getState);
   const setState = applicationController.updateState;
-  useEffect(() => applicationController.start(), [applicationController]);
   useEffect(() => {
     writeThreadReadState(state.lastViewedTurnByThreadID);
   }, [state.lastViewedTurnByThreadID]);

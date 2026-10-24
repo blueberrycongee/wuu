@@ -103,7 +103,7 @@ import { createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultS
 import { translateCurrent } from "./i18n";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
 import * as applicationState from "./plugins/ApplicationController";
-import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { TestApplicationShellOutlet as ApplicationShellOutlet } from "./test-support/DefaultApplication";
 import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
 import { DesktopPluginRuntime } from "./plugins/DesktopPluginRuntime";
 import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
