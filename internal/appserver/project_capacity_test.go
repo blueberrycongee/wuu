@@ -246,15 +246,15 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 }
 
 func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
-	srv, client, calls, rt := newProjectFixture(t)
-	setProjectWorkerLimit(t, srv, 1)
-	lead := startProject(t, client, "Prelaunch capacity")
-	a := capacityWorker(t, srv, lead.ID, "hook-holder", "worker")
-	b := capacityWorker(t, srv, lead.ID, "hook-pending", "worker")
+	var enabled atomic.Bool
 	entered, released := make(chan struct{}, 1), make(chan struct{})
 	var once sync.Once
 	release := func() { once.Do(func() { close(released) }) }
 	gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !enabled.Load() {
+			_, _ = w.Write([]byte("0"))
+			return
+		}
 		select {
 		case entered <- struct{}{}:
 		default:
@@ -267,9 +267,13 @@ func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
 	}))
 	defer gate.Close()
 	defer release()
-	rt.HookDispatcher.Replace(hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-		hooks.UserPromptSubmit: {{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.exit(Number(t)))"`, gate.URL)}},
-	})))
+	hook := hooks.HookConfig{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.exit(Number(t)))"`, gate.URL)}
+	srv, client, calls, rt := newProjectFixture(t, hook)
+	setProjectWorkerLimit(t, srv, 1)
+	lead := startProject(t, client, "Prelaunch capacity")
+	a := capacityWorker(t, srv, lead.ID, "hook-holder", "worker")
+	b := capacityWorker(t, srv, lead.ID, "hook-pending", "worker")
+	enabled.Store(true)
 	rejected := make(chan *ResponseError, 1)
 	go func() {
 		rejected <- client.call(t, MethodTurnStart, TurnStartParams{ThreadID: a.ID, Prompt: "rejected reservation"}, nil)
@@ -284,7 +288,7 @@ func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
 	if ids := deliveredClientIDs(t, rt, b.ID, "after-hook-rollback"); len(ids) != 0 {
 		t.Fatal("pending worker appended early")
 	}
-	rt.HookDispatcher.Replace(hooks.NewDispatcher(nil))
+	enabled.Store(false)
 	release()
 	if failure := <-rejected; failure == nil {
 		t.Fatal("hook rejection not reported")

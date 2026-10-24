@@ -409,7 +409,9 @@ func TestQueuedAdmissionRejectionKeepsInputHeldWithReason(t *testing.T) {
 		hooks.UserPromptSubmit: {{Command: `echo 'prompt rejected by configured hook' >&2; exit 2`}},
 	}))
 	out := &lockedBuffer{}
+	attachTestHookGeneration(t, rt)
 	s := New(rt, out)
+	defer s.Close()
 	if err := s.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatal(err)
 	}

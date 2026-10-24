@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -48,9 +49,12 @@ import (
 //   - a remote executor's unfinished history is mistaken for completion, or
 //     a later execution prevents reading an earlier completed result.
 
-func newProjectFixture(t *testing.T) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
+func newProjectFixture(t *testing.T, promptHooks ...hooks.HookConfig) (*Server, *rpcClient, *projectCalls, *runtime.Session) {
 	t.Helper()
 	rt := newTestRuntime(t, &fakeClient{})
+	if len(promptHooks) > 0 {
+		rt.HookDispatcher = hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{hooks.UserPromptSubmit: promptHooks}))
+	}
 	initAppserverGitRepo(t, rt.RootDir)
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {

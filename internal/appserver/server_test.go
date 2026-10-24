@@ -4492,7 +4492,9 @@ func TestServerTurnDispatchesPromptAndStopHooksOnce(t *testing.T) {
 		hooks.Stop:             {{Command: command("stop")}},
 	}))
 	out := &lockedBuffer{}
+	attachTestHookGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
@@ -4524,7 +4526,9 @@ func TestServerUserPromptHookBlocksBeforeHistory(t *testing.T) {
 		hooks.UserPromptSubmit: {{Command: "exit 2"}},
 	}))
 	out := &lockedBuffer{}
+	attachTestHookGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
@@ -9655,7 +9659,17 @@ func TestServerForwardsAgentNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatalf("coordinator: %v", err)
 	}
-	rt.AgentControl = coord
+	t.Cleanup(func() {
+		coord.BeginShutdown()
+		coord.StopAll()
+		coord.YieldWorkerTerminalFinalizations()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := coord.WaitOwnedWorkerExecutions(ctx); err != nil {
+			t.Error(err)
+		}
+		coord.Close()
+	})
 
 	out := &lockedBuffer{}
 	srv := New(rt, out)

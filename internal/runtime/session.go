@@ -2049,25 +2049,7 @@ func (s *Session) dispatchSessionLifecycleHook(event hooks.Event, sessionID stri
 		return err
 	}
 	defer func() { hookErr = errors.Join(hookErr, binding.Close()) }()
-	if binding.Generation == nil {
-		return serviceError("service_unavailable", "session lifecycle hooks require a captured generation")
-	}
-	// Publication may have changed the graph since the no-hook fast path.
-	// The dispatcher, journal and receipt owner must all use this capture.
-	dispatcher = binding.Generation.hooks
-	if dispatcher == nil || !dispatcher.HasHooks(event) {
-		return nil
-	}
-	if binding.InferenceJournalRuntime == nil {
-		return serviceError("service_unavailable", "session lifecycle inference accounting is unavailable")
-	}
-	ctx, finish, err := binding.BeginModelReceipts(context.Background())
-	if err != nil {
-		return err
-	}
-	defer func() { hookErr = errors.Join(hookErr, finish()) }()
-	ctx = providers.WithInferenceJournal(ctx, binding.InferenceJournalRuntime.ForOwner("session-lifecycle:"+sessionID))
-	_, hookErr = dispatcher.Dispatch(ctx, event, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
+	_, hookErr = binding.DispatchHook(context.Background(), event, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
 	return hookErr
 }
 

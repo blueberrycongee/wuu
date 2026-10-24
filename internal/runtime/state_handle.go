@@ -10,8 +10,10 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
@@ -23,6 +25,7 @@ type State struct {
 	// SystemPrompt is immutable request metadata captured with this authority.
 	SystemPrompt            string
 	models                  *StateModels
+	hookDispatcher          *hooks.Dispatcher
 	Documents               persistence.Documents
 	Sessions                *session.Store
 	Generation              *PluginGeneration
@@ -33,6 +36,34 @@ type State struct {
 	once                    sync.Once
 	close                   func() error
 	closeErr                error
+}
+
+// DispatchHook uses this capture's hooks and journal, joining required model
+// receipts before returning. A generationless hook configuration fails closed.
+func (s *State) DispatchHook(ctx context.Context, event hooks.Event, input *hooks.Input) (*hooks.Output, error) {
+	dispatcher := s.hookDispatcher
+	if s.Generation != nil {
+		dispatcher = s.Generation.hooks
+	}
+	if dispatcher == nil || !dispatcher.HasHooks(event) {
+		return &hooks.Output{}, nil
+	}
+	if s.Generation == nil {
+		return nil, errors.Join(agent.ErrModelReceiptLifecycle, serviceError("service_unavailable", "hooks require a captured generation"))
+	}
+	if s.InferenceJournalRuntime == nil {
+		return nil, errors.Join(agent.ErrModelReceiptLifecycle, serviceError("service_unavailable", "hook inference accounting is unavailable"))
+	}
+	if input == nil {
+		input = &hooks.Input{}
+	}
+	ctx = providers.WithInferenceJournal(ctx, s.InferenceJournalRuntime.ForOwner(input.SessionID))
+	ctx, finish, err := agent.BeginModelReceipts(ctx, s.BeginModelReceipts)
+	if err != nil {
+		return nil, err
+	}
+	output, err := dispatcher.Dispatch(ctx, event, input)
+	return output, errors.Join(err, finish())
 }
 
 func (s *State) Close() error {
@@ -68,7 +99,7 @@ func (s *Session) RetainState() (*State, error) {
 	if documents == nil || sessions == nil {
 		return nil, errors.New("selected composition has no session state")
 	}
-	result := &State{Documents: documents, Sessions: sessions, Host: s.PluginHost, Generation: generation, InferenceJournalRuntime: s.InferenceJournalRuntime, models: captureSessionStateModels(s)}
+	result := &State{Documents: documents, Sessions: sessions, Host: s.PluginHost, Generation: generation, InferenceJournalRuntime: s.InferenceJournalRuntime, models: captureSessionStateModels(s), hookDispatcher: s.HookDispatcher}
 	if s.StreamRunner != nil {
 		result.SystemPrompt = s.StreamRunner.SystemPrompt
 	}
@@ -197,7 +228,7 @@ func (s *State) Retain() *State {
 		return nil
 	}
 	s.Generation.retain()
-	return &State{SystemPrompt: s.SystemPrompt, Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, models: s.models, close: s.close}
+	return &State{SystemPrompt: s.SystemPrompt, Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, models: s.models, hookDispatcher: s.hookDispatcher, close: s.close}
 }
 
 var ErrStateGenerationChanged = errors.New("state generation changed before runtime admission")

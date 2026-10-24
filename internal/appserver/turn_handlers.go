@@ -3199,18 +3199,16 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
-	if s.rt != nil && s.rt.HookDispatcher != nil {
-		th.mu.Lock()
-		title := th.Title
-		th.mu.Unlock()
-		_, stopErr := s.rt.HookDispatcher.Dispatch(ctx, hookspkg.Stop, &hookspkg.Input{
-			SessionID: th.ID,
-			CWD:       s.rt.RootDir,
-			Title:     title,
-			Message:   stopHookMessage(res),
-		})
-		err = errors.Join(err, stopErr)
-	}
+	th.mu.Lock()
+	title, threadCWD := th.Title, th.CWD
+	th.mu.Unlock()
+	_, stopErr := binding.DispatchHook(ctx, hookspkg.Stop, &hookspkg.Input{
+		SessionID: th.ID,
+		CWD:       threadCWD,
+		Title:     title,
+		Message:   stopHookMessage(res),
+	})
+	err = errors.Join(err, stopErr)
 	// RunWithCallback has consumed every per-turn callback. Restore the
 	// long-lived runner before the thread can become idle and admit another
 	// turn; the deferred call remains as panic-safe cleanup.
@@ -3218,7 +3216,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	s.rt.ActivityRegistry.EndExecution(th.ID, browserTurn.executionID)
 	browserCleanupErr := s.finishBrowserTurn(browserTurn, turnKit)
 
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, context.Canceled) && !errors.Is(err, agent.ErrModelReceiptLifecycle) {
 		th.mu.Lock()
 		handoff := th.completeAfterAnswerReadyCancel && !th.interrupting && currentTurnIsAnswerReadyLocked(th)
 		th.mu.Unlock()
@@ -3298,7 +3296,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	status := TurnStatusCompleted
 	if err != nil {
 		status = TurnStatusFailed
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) && !errors.Is(err, agent.ErrModelReceiptLifecycle) {
 			status = TurnStatusInterrupted
 		}
 	}
@@ -3575,7 +3573,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		errorText := ""
 		if err != nil {
 			lifecycleState = pluginhost.TurnLifecycleFailed
-			if errors.Is(err, context.Canceled) {
+			if errors.Is(err, context.Canceled) && !errors.Is(err, agent.ErrModelReceiptLifecycle) {
 				lifecycleState = pluginhost.TurnLifecycleInterrupted
 			}
 			errorText = err.Error()
@@ -4308,13 +4306,11 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		abortAdmission()
 		return startedThreadTurn{}, false, nil
 	}
-	if s.rt != nil && s.rt.HookDispatcher != nil {
-		if _, err := s.rt.HookDispatcher.Dispatch(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
-			SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
-		}); err != nil {
-			abortAdmission()
-			return startedThreadTurn{}, false, fmt.Errorf("user prompt hook: %w", err)
-		}
+	if _, err := th.state.DispatchHook(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
+		SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
+	}); err != nil {
+		abortAdmission()
+		return startedThreadTurn{}, false, fmt.Errorf("user prompt hook: %w", err)
 	}
 
 	th.mu.Lock()

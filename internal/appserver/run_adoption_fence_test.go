@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,7 +26,35 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 		for _, released := range []bool{false, true} {
 			for _, stopped := range []bool{false, true} {
 				t.Run(fmt.Sprintf("hook_%v_released_%v_stop_%v", duringHook, released, stopped), func(t *testing.T) {
-					srv, client, calls, rt := newProjectFixture(t)
+					var release func()
+					var entered chan struct{}
+					var enabled atomic.Bool
+					var promptHooks []hooks.HookConfig
+					if duringHook {
+						entered = make(chan struct{}, 1)
+						releasedHook := make(chan struct{})
+						var once sync.Once
+						release = func() { once.Do(func() { close(releasedHook) }) }
+						gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+							if !enabled.Load() {
+								_, _ = w.Write([]byte("{}"))
+								return
+							}
+							select {
+							case entered <- struct{}{}:
+							default:
+							}
+							select {
+							case <-releasedHook:
+								_, _ = w.Write([]byte("{}"))
+							case <-r.Context().Done():
+							}
+						}))
+						defer gate.Close()
+						defer release()
+						promptHooks = append(promptHooks, hooks.HookConfig{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.stdout.write(t))"`, gate.URL)})
+					}
+					srv, client, calls, rt := newProjectFixture(t, promptHooks...)
 					lead := startProject(t, client, "Run adoption stop")
 					lease, ok, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
 					if err != nil || !ok {
@@ -64,27 +93,8 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 					}
 					started := start("run-adoption-original")
 					first := calls.next(t, id, "run-adoption-original")
-					var release func()
 					if duringHook {
-						entered, releasedHook := make(chan struct{}, 1), make(chan struct{})
-						var once sync.Once
-						release = func() { once.Do(func() { close(releasedHook) }) }
-						gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							select {
-							case entered <- struct{}{}:
-							default:
-							}
-							select {
-							case <-releasedHook:
-								_, _ = w.Write([]byte("{}"))
-							case <-r.Context().Done():
-							}
-						}))
-						defer gate.Close()
-						defer release()
-						rt.HookDispatcher.Replace(hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-							hooks.UserPromptSubmit: {{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.stdout.write(t))"`, gate.URL)}},
-						})))
+						enabled.Store(true)
 						first.response <- providersResponse(`{"wrong":true}`)
 						select {
 						case <-entered:

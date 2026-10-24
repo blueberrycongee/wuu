@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,7 +32,29 @@ func TestProjectPeerAdmissionRechecksControlsAfterPromptHook(t *testing.T) {
 		{name: "unchanged_controls_admit_once"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv, client, calls, rt := newProjectFixture(t)
+			var enabled atomic.Bool
+			entered, released := make(chan struct{}, 1), make(chan struct{})
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(released) }) }
+			gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !enabled.Load() {
+					_, _ = w.Write([]byte("{}"))
+					return
+				}
+				select {
+				case entered <- struct{}{}:
+				default:
+				}
+				select {
+				case <-released:
+					_, _ = w.Write([]byte("{}"))
+				case <-r.Context().Done():
+				}
+			}))
+			defer gate.Close()
+			defer release()
+			hook := hooks.HookConfig{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.stdout.write(t))"`, gate.URL)}
+			srv, client, calls, rt := newProjectFixture(t, hook)
 			lead := startProject(t, client, "Peer admission fence")
 			create := func(id string) Thread {
 				t.Helper()
@@ -55,25 +78,7 @@ func TestProjectPeerAdmissionRechecksControlsAfterPromptHook(t *testing.T) {
 				target = create("receiver")
 			}
 
-			entered, released := make(chan struct{}, 1), make(chan struct{})
-			var releaseOnce sync.Once
-			release := func() { releaseOnce.Do(func() { close(released) }) }
-			gate := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				select {
-				case entered <- struct{}{}:
-				default:
-				}
-				select {
-				case <-released:
-					_, _ = w.Write([]byte("{}"))
-				case <-r.Context().Done():
-				}
-			}))
-			defer gate.Close()
-			defer release()
-			rt.HookDispatcher.Replace(hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-				hooks.UserPromptSubmit: {{Command: fmt.Sprintf(`node -e "fetch('%s').then(r=>r.text()).then(t=>process.stdout.write(t))"`, gate.URL)}},
-			})))
+			enabled.Store(true)
 			request := tools.ProjectSessionRequest{Action: "message", SessionID: target.ID, Prompt: "Delayed peer instruction", Wake: true}
 			handler := srv.projectSessionHandler(sender.ID)
 			if _, err := handler(context.Background(), "delayed-peer", request); err != nil {

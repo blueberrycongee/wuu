@@ -2,21 +2,26 @@ package appserver
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/permissionpolicy"
 	"github.com/blueberrycongee/wuu/internal/persistence"
@@ -375,5 +380,258 @@ func TestThreadHistoryUsesCapturedPromptAfterPublication(t *testing.T) {
 				t.Fatalf("read-only source changed: %+v, %v", persisted, err)
 			}
 		})
+	}
+}
+
+// Receipt completion can fail independently of a successful prompt response.
+type turnHookReceiptClient struct {
+	started       chan providers.ChatRequest
+	release       chan struct{}
+	done          chan struct{}
+	completionErr error
+}
+
+func (c *turnHookReceiptClient) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	_, finish, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "hook-fixture", Protocol: "controlled", Transport: "memory", Mode: "chat"})
+	if err != nil {
+		finish(nil)
+		return providers.ChatResponse{}, err
+	}
+	c.started <- request
+	go func() {
+		defer close(c.done)
+		defer finish(c.completionErr)
+		<-c.release
+		submission.CompleteSuccess(&providers.TokenUsage{InputTokens: 19, OutputTokens: 4})
+	}()
+	<-c.done
+	return providers.ChatResponse{Content: `{"ok":true}`}, nil
+}
+
+type turnHookOutput struct {
+	lockedBuffer
+	terminal chan struct{}
+	once     sync.Once
+}
+
+func (o *turnHookOutput) Write(data []byte) (int, error) {
+	n, err := o.lockedBuffer.Write(data)
+	var message struct {
+		Method string `json:"method"`
+	}
+	if json.Unmarshal(data, &message) == nil && (message.Method == NotificationTurnCompleted || message.Method == NotificationTurnError) {
+		o.once.Do(func() { close(o.terminal) })
+	}
+	return n, err
+}
+
+func newTurnHookFixture(t *testing.T, event hooks.Event, client providers.Client, generation, journal bool) (*runtime.Session, *Server, *turnHookOutput, string) {
+	t.Helper()
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("done")})
+	registry := hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{event: {{Type: "prompt", Prompt: "$ARGUMENTS"}}})
+	registry.SetModelClient(hooks.NewProviderModelClient(client, "hook-fixture", nil))
+	rt.HookDispatcher = hooks.NewDispatcher(registry)
+	if journal {
+		var err error
+		rt.InferenceJournalRuntime, err = rt.Sessions.NewInferenceJournalRuntime("captured-turn-hooks")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ownedJournal := rt.InferenceJournalRuntime
+		t.Cleanup(func() { _ = ownedJournal.Close() })
+	}
+	if generation {
+		rt.PluginHost = pluginhost.New()
+	}
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	out := &turnHookOutput{terminal: make(chan struct{})}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	raw, err := json.Marshal(map[string]any{"id": "hook-thread", "method": MethodThreadStart, "params": ThreadStartParams{CWD: t.TempDir()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatal(err)
+	}
+	id := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "hook-thread")["result"]).Thread.ID
+	return rt, srv, out, id
+}
+
+func TestTurnHooksKeepCapturedDispatcherAndJournal(t *testing.T) {
+	for _, event := range []hooks.Event{hooks.UserPromptSubmit, hooks.Stop} {
+		t.Run(string(event), func(t *testing.T) {
+			client := &turnHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{})}
+			close(client.release)
+			rt, srv, out, id := newTurnHookFixture(t, event, client, true, true)
+			original := srv.thread(id).state
+			successor := &fakeClient{response: providersResponse(`{"ok":true}`)}
+			registry := hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{event: {{Type: "prompt", Prompt: "$ARGUMENTS"}}})
+			registry.SetModelClient(hooks.NewProviderModelClient(successor, "successor", nil))
+			rt.HookDispatcher = hooks.NewDispatcher(registry)
+			replacement := newAppserverTestStore(t, t.TempDir())
+			journal, err := replacement.NewInferenceJournalRuntime("successor")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer journal.Close()
+			rt.InferenceJournalRuntime = journal
+			raw := fmt.Sprintf(`{"id":"hook-turn","method":"turn/start","params":{"thread_id":%q,"prompt":"hello"}}`, id)
+			if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-out.terminal:
+			case <-time.After(5 * time.Second):
+				t.Fatalf("turn did not finish: %s", out.String())
+			}
+			var request providers.ChatRequest
+			select {
+			case request = <-client.started:
+			default:
+				t.Fatal("captured hook was replaced by workspace dispatcher")
+			}
+			successor.mu.Lock()
+			calls := len(successor.requests)
+			successor.mu.Unlock()
+			if calls != 0 {
+				t.Fatalf("successor hook ran %d times", calls)
+			}
+			var input hooks.Input
+			if err := json.Unmarshal([]byte(request.Messages[len(request.Messages)-1].Content), &input); err != nil {
+				t.Fatal(err)
+			}
+			if input.SessionID != id || input.CWD != srv.thread(id).CWD {
+				t.Fatalf("hook lost thread identity: %+v", input)
+			}
+			view, err := original.Documents.Read(context.Background(), persistence.Query{Namespace: "wuu.inference_submissions.v1"})
+			if err != nil || len(view.Documents) != 1 {
+				t.Fatalf("captured receipts = %+v, %v", view.Documents, err)
+			}
+			var receipt providers.InferenceSubmissionJournalRecord
+			if err := json.Unmarshal(view.Documents[0].Value, &receipt); err != nil {
+				t.Fatal(err)
+			}
+			if receipt.ID != request.Execution.Snapshot().Submissions[0].ID || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 19 || receipt.ReportedUsage.OutputTokens != 4 {
+				t.Fatalf("captured physical receipt lost: %+v", receipt)
+			}
+			operations, err := original.Documents.Read(context.Background(), persistence.Query{Namespace: "wuu.inference_operations.v1"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, doc := range operations.Documents {
+				var op struct {
+					ID      string
+					OwnerID string
+				}
+				if err := json.Unmarshal(doc.Value, &op); err != nil {
+					t.Fatal(err)
+				}
+				if op.ID == request.Operation.ID {
+					found = true
+					if op.OwnerID != id {
+						t.Errorf("hook journal owner = %q, want %q", op.OwnerID, id)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("hook operation missing from captured journal")
+			}
+		})
+	}
+}
+
+func TestTurnHookReceiptFailuresPreventDelivery(t *testing.T) {
+	for _, event := range []hooks.Event{hooks.UserPromptSubmit, hooks.Stop} {
+		for _, failure := range []string{"missing-generation", "missing-journal", "completion"} {
+			t.Run(string(event)+"/"+failure, func(t *testing.T) {
+				client := &turnHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{})}
+				close(client.release)
+				if failure == "completion" {
+					client.completionErr = errors.New("required hook receipt failed")
+				}
+				_, srv, out, id := newTurnHookFixture(t, event, client, failure != "missing-generation", failure != "missing-journal")
+				raw := fmt.Sprintf(`{"id":"hook-turn","method":"turn/start","params":{"thread_id":%q,"prompt":"must not succeed"}}`, id)
+				if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+					t.Fatal(err)
+				}
+				response := responseByID(t, parseOutput(t, out.String()), "hook-turn")
+				if event == hooks.UserPromptSubmit {
+					if response["error"] == nil {
+						t.Fatalf("prompt hook failure admitted a turn: %+v", response)
+					}
+					messages, err := loadChatMessages(srv.thread(id).state.Sessions, id)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, message := range messages {
+						if message.Role == "user" {
+							t.Fatalf("failed admission appended user history: %+v", messages)
+						}
+					}
+				} else {
+					select {
+					case <-out.terminal:
+					case <-time.After(5 * time.Second):
+						t.Fatalf("turn did not finish: %s", out.String())
+					}
+					th := srv.thread(id)
+					th.mu.Lock()
+					turn := th.Turns[len(th.Turns)-1]
+					th.mu.Unlock()
+					if turn.Status != TurnStatusFailed || turn.Error == nil {
+						t.Fatalf("Stop hook failure was delivered as success: %+v", turn)
+					}
+				}
+				if failure != "completion" {
+					select {
+					case <-client.started:
+						t.Fatal("missing receipt authority admitted a model call")
+					default:
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestStopHookReceiptFailureSurvivesAnswerReadyCancellation(t *testing.T) {
+	client := &turnHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{}), completionErr: errors.Join(context.Canceled, errors.New("required hook receipt failed"))}
+	release := sync.OnceFunc(func() { close(client.release) })
+	defer release()
+	_, srv, out, id := newTurnHookFixture(t, hooks.Stop, client, true, true)
+	raw := fmt.Sprintf(`{"id":"hook-turn","method":"turn/start","params":{"thread_id":%q,"prompt":"finish the answer"}}`, id)
+	if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-client.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Stop hook did not start")
+	}
+	th := srv.thread(id)
+	th.mu.Lock()
+	ready := currentTurnIsAnswerReadyLocked(th)
+	th.completeAfterAnswerReadyCancel = true
+	th.mu.Unlock()
+	if !ready {
+		t.Fatal("fixture did not reach answer-ready handoff")
+	}
+	release()
+	select {
+	case <-out.terminal:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("turn did not finish: %s", out.String())
+	}
+	th.mu.Lock()
+	turn := th.Turns[len(th.Turns)-1]
+	th.mu.Unlock()
+	if turn.Status != TurnStatusFailed || turn.Error == nil || !strings.Contains(turn.Error.Message, agent.ErrModelReceiptLifecycle.Error()) || !strings.Contains(turn.Error.Message, "required hook receipt failed") {
+		t.Fatalf("answer-ready cancellation discarded required receipt failure: %+v", turn)
 	}
 }

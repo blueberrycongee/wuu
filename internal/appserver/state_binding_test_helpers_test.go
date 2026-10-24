@@ -21,6 +21,17 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session) {
 	})
 }
 
+func attachTestHookGeneration(t *testing.T, rt *runtime.Session) {
+	t.Helper()
+	journal, err := rt.Sessions.NewInferenceJournalRuntime("appserver-hook-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.InferenceJournalRuntime = journal
+	t.Cleanup(func() { _ = journal.Close() })
+	attachTestModelGeneration(t, rt)
+}
+
 func testRuntimeState(t *testing.T, rt *runtime.Session) *runtime.State {
 	t.Helper()
 	binding, err := rt.RetainState()
