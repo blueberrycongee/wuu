@@ -114,7 +114,6 @@ afterEach(() => {
   composition = { Slot: ({ fallback }) => fallback };
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  delete document.documentElement.dataset.messageStyle;
   if (rangeBoundsDescriptor) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeBoundsDescriptor);
   else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
   root = undefined;
@@ -122,60 +121,6 @@ afterEach(() => {
 });
 
 describe("ThreadItemView", () => {
-  it("measures action placement only in IM mode and resumes after appearance changes", () => {
-    let resizeActions: ResizeObserverCallback | undefined;
-    vi.stubGlobal("ResizeObserver", class {
-      constructor(private callback: ResizeObserverCallback) {}
-      observe(node: Element): void {
-        if (node.classList.contains("user-message-block")) resizeActions = this.callback;
-      }
-      unobserve(): void {}
-      disconnect(): void {}
-    });
-    let lastGlyphLeft = 50;
-    const measureGlyph = vi.fn(() => new DOMRect(lastGlyphLeft, 20, 8, 20));
-    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: measureGlyph });
-    document.documentElement.dataset.messageStyle = "bubble";
-    render({ item: makeUserMessage("A short question"), turnStatus: "completed", streaming: false });
-    const block = container!.querySelector<HTMLElement>(".user-message-block")!;
-    const message = block.querySelector<HTMLElement>(".user-message")!;
-    const actions = block.querySelector<HTMLElement>(".user-message-actions")!;
-    expect(actions.querySelector("button")).not.toBeNull();
-    expect(measureGlyph).not.toHaveBeenCalled();
-
-    message.getBoundingClientRect = () => new DOMRect(0, 0, 300, 60);
-    Object.defineProperty(actions, "offsetWidth", { configurable: true, value: 64 });
-    const computedStyle = window.getComputedStyle.bind(window);
-    vi.spyOn(window, "getComputedStyle").mockImplementation(node => {
-      if (node === message) return { paddingBottom: "20px", paddingRight: "12px" } as CSSStyleDeclaration;
-      if (node.classList.contains("rich-paragraph")) return { lineHeight: "24px" } as CSSStyleDeclaration;
-      return computedStyle(node);
-    });
-    const resize = () => act(() => resizeActions!([], {} as ResizeObserver));
-    document.documentElement.dataset.messageStyle = "im";
-    resize();
-    expect(measureGlyph).toHaveBeenCalledOnce();
-    expect(actions.dataset.placement).toBe("inline");
-    // Reflow or font changes can move the last glyph without resizing the row.
-    lastGlyphLeft = 250;
-    act(() => block.dispatchEvent(new Event("pointerenter")));
-    expect(actions.dataset.placement).toBe("below");
-    lastGlyphLeft = 50;
-    act(() => block.dispatchEvent(new Event("focusin")));
-    expect(actions.dataset.placement).toBe("inline");
-
-    document.documentElement.dataset.messageStyle = "bubble";
-    measureGlyph.mockClear();
-    resize();
-    act(() => block.dispatchEvent(new Event("pointerenter")));
-    expect(measureGlyph).not.toHaveBeenCalled();
-    document.documentElement.dataset.messageStyle = "im";
-    lastGlyphLeft = 250;
-    resize();
-    expect(measureGlyph).toHaveBeenCalledOnce();
-    expect(actions.dataset.placement).toBe("below");
-  });
-
   it.each(["user_message", "agent_message"] as const)("mounts public contributed actions for %s with the owning address only", async (type) => {
     const execute = vi.fn(); let enabled = true; let address: Readonly<Record<string, unknown>> | undefined;
     composition = { Slot: ({ name, context, fallback }) => name.endsWith("message.actions") && enabled

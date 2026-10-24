@@ -117,7 +117,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Keep the experimental navigation ribbon at its saved width on pointer hover.
 
-- Keep IM user-message timestamps beside the text when space permits, with stable hover actions and a separate metadata row for narrow panes and complex content.
+- Float sent-message timestamps and actions in trailing text space, otherwise below or above the frame as available. Match their typography and vertical alignment to the message text without reserving a row or moving following content.
 
 - Replace the page chat shortcut with Wuu's mascot, with click-to-compose, a keyboard-accessible context menu, and draft-preserving focus return to the page.
 
@@ -206,7 +206,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Prevent sent messages from flickering or jumping when server events confirm them before the send request returns.
 - Use lowercase `worktree` for the English composer toggle label.
 
-- Place user attachments above the text frame in IM-style conversations, keeping images aligned with the message text and hover actions aligned with the final line.
+- Place user attachments above the text frame in IM-style conversations, keeping images aligned with the message text.
 
 - Fold progress messages and tool/reasoning groups after published images into the process section when the final answer appears, keeping delivered images and the answer visible.
 

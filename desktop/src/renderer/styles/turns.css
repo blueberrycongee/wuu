@@ -869,27 +869,46 @@
   transform: var(--message-copy-active-transform);
 }
 
-/* The padding bridges hover from the query bubble to its action row. */
+/* The overlay borrows trailing whitespace or floats outside the frame.
+ * Placement never changes the message's size or neighboring content. */
 .user-message-block-with-actions {
   position: relative;
 }
 
 .message-actions.user-message-actions {
+  --user-message-action-target-size: max(var(--conversation-user-action-size), var(--conversation-reading-line-height));
   position: absolute;
   top: 100%;
-  bottom: auto;
   right: 0;
+  z-index: 2;
   justify-content: flex-end;
-  min-height: var(--conversation-user-action-size);
+  min-height: var(--user-message-action-target-size);
   width: max-content;
   max-width: 100%;
-  gap: 8px;
-  padding-top: 2px;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding-inline: 4px;
+  border-radius: var(--radius-sm);
+  transform: none;
+}
+
+.message-actions.user-message-actions[data-placement]:not([data-placement="inline"]) {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+
+/* Bridge the gap so the pointer can reach either floating placement. */
+.message-actions.user-message-actions:is([data-placement="below"], [data-placement="above"])::before {
+  position: absolute;
+  inset: -4px 0;
+  content: "";
+  z-index: -1;
 }
 
 .message-actions.user-message-actions .message-action-button {
-  width: var(--conversation-user-action-size);
-  height: var(--conversation-user-action-size);
+  flex: none;
+  width: var(--user-message-action-target-size);
+  height: var(--user-message-action-target-size);
 }
 
 .message-time {
@@ -901,13 +920,10 @@
 }
 
 .user-message-time {
-  font-weight: var(--weight-medium);
-  line-height: var(--conversation-user-action-size);
-}
-
-/* Reserve the scaled action row and hover bridge between queued queries. */
-.user-message-block-with-actions + .user-message-block {
-  margin-top: calc(var(--conversation-user-action-size) + 2px - var(--conversation-turn-item-gap));
+  font-family: var(--conversation-message-font-family);
+  font-size: var(--conversation-message-font-size);
+  font-weight: var(--weight-regular);
+  line-height: var(--conversation-reading-line-height);
 }
 
 .message-images {
@@ -6000,43 +6016,6 @@ button.turn-edit-summary-overview:focus-visible {
 
 :root[data-message-style="im"] .user-message-edit-input {
   padding-inline: 0;
-}
-
-/* Metadata and actions reveal together at the end of the last line when it
-   has room, otherwise under the frame's trailing corner in the gap before the
-   next item. Neither placement reserves space or moves text when revealed. */
-/* The top padding bridges hover across the hanging gap. */
-:root[data-message-style="im"] .message-actions.user-message-actions {
-  top: 100%;
-  right: 0;
-  bottom: auto;
-  width: max-content;
-  max-width: none;
-  padding: 2px 0 0;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
-}
-
-:root[data-message-style="im"] .message-actions.user-message-actions[data-placement="inline"] {
-  top: auto;
-  bottom: calc(var(--conversation-framed-text-inset-block) + (var(--conversation-reading-line-height) - var(--conversation-user-action-size)) / 2);
-  padding: 0 0 0 var(--space-3);
-}
-
-:root[data-message-style="im"] .user-message-time {
-  /* Match the prose metrics so centering this row also aligns its baseline. */
-  font-family: var(--appearance-content-font, var(--appearance-ui-font, system-ui, sans-serif));
-  font-size: var(--conversation-message-font-size);
-  font-weight: var(--weight-regular);
-}
-
-:root[data-message-style="im"] .user-message-block-with-actions + .user-message-block {
-  margin-top: 0;
-}
-
-/* A queued query leaves room for a hanging action row above it. */
-:root[data-message-style="im"] .user-message-block:has(> .user-message-actions:not([data-placement="inline"])) + .user-message-block {
-  margin-top: calc(var(--conversation-user-action-size) + 2px - var(--conversation-turn-item-gap));
 }
 
 :root[data-message-style="im"] .session-message-source {
