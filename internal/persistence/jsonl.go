@@ -31,6 +31,7 @@ type jsonlBackend struct {
 	revision    Revision
 	documents   map[documentKey]valueLocation
 	keys        map[string][]string
+	namespaces  []string
 	receipts    map[string]CommitRecord
 	ordered     []CommitRecord
 }
@@ -319,6 +320,12 @@ func journalLocations(line []byte, kind, collection string, base int64) ([]value
 func (b *jsonlBackend) putDocument(namespace, key string, location valueLocation) {
 	id := documentKey{namespace, key}
 	if _, exists := b.documents[id]; !exists {
+		if _, known := b.keys[namespace]; !known {
+			i := sort.SearchStrings(b.namespaces, namespace)
+			b.namespaces = append(b.namespaces, "")
+			copy(b.namespaces[i+1:], b.namespaces[i:])
+			b.namespaces[i] = namespace
+		}
 		keys := b.keys[namespace]
 		i := sort.SearchStrings(keys, key)
 		keys = append(keys, "")
@@ -461,6 +468,73 @@ func (b *jsonlBackend) export(ctx context.Context) (Snapshot, error) {
 	}
 	sortDocuments(s.Documents)
 	return s, nil
+}
+
+func (b *jsonlBackend) exportPage(ctx context.Context, q ExportQuery, generation string) (ExportPage, error) {
+	if err := ctx.Err(); err != nil {
+		return ExportPage{}, err
+	}
+	if err := b.refresh(); err != nil {
+		return ExportPage{}, err
+	}
+	if !b.initialized {
+		return ExportPage{}, ErrCorrupt
+	}
+	builder, err := newExportPage(q, b.revision, generation)
+	if err != nil {
+		return ExportPage{}, err
+	}
+	if q.Section == "receipts" {
+		var start Revision
+		if q.After != nil {
+			start = *q.After.Revision
+		}
+		for i := start; i < Revision(len(b.ordered)); i++ {
+			if err := ctx.Err(); err != nil {
+				return ExportPage{}, err
+			}
+			fits, err := builder.addReceipt(b.ordered[i])
+			if err != nil {
+				return ExportPage{}, err
+			}
+			if !fits {
+				return builder.page, nil
+			}
+		}
+	} else {
+		start := 0
+		if q.After != nil {
+			start = sort.SearchStrings(b.namespaces, q.After.Namespace)
+		}
+		for _, namespace := range b.namespaces[start:] {
+			keys := b.keys[namespace]
+			at := 0
+			if q.After != nil && namespace == q.After.Namespace {
+				at = sort.Search(len(keys), func(i int) bool { return keys[i] > q.After.Key })
+			}
+			for _, key := range keys[at:] {
+				if err := ctx.Err(); err != nil {
+					return ExportPage{}, err
+				}
+				if builder.items == q.MaxItems || builder.items > 0 && builder.size >= q.TargetBytes {
+					return builder.page, nil
+				}
+				d, err := b.readDocument(namespace, key, b.documents[documentKey{namespace, key}])
+				if err != nil {
+					return ExportPage{}, err
+				}
+				fits, err := builder.addDocument(d)
+				if err != nil {
+					return ExportPage{}, err
+				}
+				if !fits {
+					return builder.page, nil
+				}
+			}
+		}
+	}
+	builder.page.Done = true
+	return builder.page, nil
 }
 
 func (b *jsonlBackend) restore(ctx context.Context, s Snapshot) error {

@@ -28,16 +28,35 @@ func lockPreparedStore(ctx context.Context, dir string) (*storelock.Lock, error)
 	return storelock.AcquireContext(ctx, dir)
 }
 
-// Prepared access never creates a provider generation, repairs a journal or
-// writes a logical record. Read and export share the writer lock and binding
-// checks, while each call observes fresh source data for authority probes.
-func withPreparedBackend(ctx context.Context, dir, kind string, read func(backend) error) error {
+// A prepared store retains only its read-only backend/index. Every access
+// checks the captured physical binding under the writer lock; it never repairs
+// a journal, creates a generation, or silently follows a replacement generation.
+type preparedStore struct {
+	observed bool
+	binding  binding
+	source   backend
+}
+
+func (p *preparedStore) close() error {
+	if p.source == nil {
+		return nil
+	}
+	err := p.source.close()
+	p.source = nil
+	return err
+}
+
+func (p *preparedStore) withBackend(ctx context.Context, dir, kind string, read func(backend, binding) error) error {
 	lock, err := lockPreparedStore(ctx, dir)
 	if err != nil {
 		return err
 	}
 	if lock == nil {
-		return nil
+		if p.observed && p.binding.Generation != "" {
+			return fmt.Errorf("%w: prepared store disappeared", ErrCorrupt)
+		}
+		p.observed = true
+		return read(nil, binding{})
 	}
 	defer lock.Release()
 	selected, err := readBinding(dir)
@@ -45,52 +64,63 @@ func withPreparedBackend(ctx context.Context, dir, kind string, read func(backen
 		if err := requireEmptyDirectory(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%w: prepared authority missing in nonempty store", ErrCorrupt)
 		}
-		return nil
+		if p.observed && p.binding.Generation != "" {
+			return fmt.Errorf("%w: prepared authority disappeared", ErrCorrupt)
+		}
+		p.observed = true
+		return read(nil, binding{})
 	}
 	if err != nil {
 		return err
 	}
+	if p.observed && selected != p.binding {
+		return ErrBindingChanged
+	}
 	if selected.Backend != kind {
 		return ErrMigrationRequired
 	}
-	name := "state.sqlite3"
-	if kind == "jsonl" {
-		name = "state.jsonl"
+	if p.source == nil {
+		name := "state.sqlite3"
+		if kind == "jsonl" {
+			name = "state.jsonl"
+		}
+		path := filepath.Join(dir, selected.Generation, name)
+		info, err := os.Stat(path)
+		if err != nil || info.Size() == 0 {
+			return fmt.Errorf("%w: prepared data file is missing or empty", ErrCorrupt)
+		}
+		var source backend
+		if kind == "jsonl" {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			source, err = readJSONLFile(file, true)
+			if err != nil {
+				return err
+			}
+		} else {
+			name := filepath.ToSlash(path)
+			if !strings.HasPrefix(name, "/") {
+				name = "/" + name
+			}
+			uri := url.URL{Scheme: "file", Path: name}
+			query := uri.Query()
+			query.Set("mode", "ro")
+			query.Add("_pragma", "busy_timeout(5000)")
+			uri.RawQuery = query.Encode()
+			db, err := sql.Open("sqlite", uri.String())
+			if err != nil {
+				return err
+			}
+			db.SetMaxOpenConns(1)
+			source = &sqliteBackend{db: db, path: path}
+		}
+		p.source = source
+		p.binding = selected
+		p.observed = true
 	}
-	path := filepath.Join(dir, selected.Generation, name)
-	info, err := os.Stat(path)
-	if err != nil || info.Size() == 0 {
-		return fmt.Errorf("%w: prepared data file is missing or empty", ErrCorrupt)
-	}
-	var source backend
-	if kind == "jsonl" {
-		file, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		source, err = readJSONLFile(file, true)
-		if err != nil {
-			return err
-		}
-	} else {
-		p := filepath.ToSlash(path)
-		if !strings.HasPrefix(p, "/") {
-			p = "/" + p
-		}
-		uri := url.URL{Scheme: "file", Path: p}
-		query := uri.Query()
-		query.Set("mode", "ro")
-		query.Add("_pragma", "busy_timeout(5000)")
-		uri.RawQuery = query.Encode()
-		db, err := sql.Open("sqlite", uri.String())
-		if err != nil {
-			return err
-		}
-		db.SetMaxOpenConns(1)
-		source = &sqliteBackend{db: db, path: path}
-	}
-	defer source.close()
-	if err := read(source); err != nil {
+	if err := read(p.source, selected); err != nil {
 		return err
 	}
 	current, err := readBinding(dir)
@@ -103,9 +133,12 @@ func withPreparedBackend(ctx context.Context, dir, kind string, read func(backen
 	return nil
 }
 
-func preparedSnapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
+func (p *preparedStore) snapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
 	snapshot := Snapshot{Version: 1, Documents: []Document{}, Receipts: []CommitRecord{}}
-	err := withPreparedBackend(ctx, dir, kind, func(source backend) error {
+	err := p.withBackend(ctx, dir, kind, func(source backend, _ binding) error {
+		if source == nil {
+			return nil
+		}
 		var err error
 		snapshot, err = source.export(ctx)
 		return err
@@ -115,23 +148,48 @@ func preparedSnapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
 	}
 	return snapshot, nil
 }
-
-func preparedView(ctx context.Context, dir, kind string, query Query) (View, error) {
-	if err := validateQuery(query); err != nil {
+func (p *preparedStore) view(ctx context.Context, dir, kind string, q Query) (View, error) {
+	if err := validateQuery(q); err != nil {
 		return View{}, err
 	}
 	view := View{Documents: []Document{}}
-	err := withPreparedBackend(ctx, dir, kind, func(source backend) error {
+	err := p.withBackend(ctx, dir, kind, func(source backend, _ binding) error {
+		if source == nil {
+			return nil
+		}
 		var err error
-		view, err = source.read(ctx, query)
+		view, err = source.read(ctx, q)
 		return err
 	})
 	if err != nil {
 		return View{}, err
 	}
-	// A missing candidate has revision zero without a backend to enforce the pin.
-	if query.AtRevision != nil && *query.AtRevision != view.Revision {
+	if q.AtRevision != nil && *q.AtRevision != view.Revision {
 		return View{}, ErrConflict
 	}
 	return view, nil
+}
+func (p *preparedStore) exportPage(ctx context.Context, dir, kind string, q ExportQuery) (ExportPage, error) {
+	if err := validateExportQuery(q); err != nil {
+		return ExportPage{}, err
+	}
+	var page ExportPage
+	err := p.withBackend(ctx, dir, kind, func(source backend, b binding) error {
+		if source == nil {
+			builder, err := newExportPage(q, 0, "empty")
+			if err != nil {
+				return err
+			}
+			builder.page.Done = true
+			page = builder.page
+			return nil
+		}
+		var err error
+		page, err = source.exportPage(ctx, q, b.Generation)
+		return err
+	})
+	if err != nil {
+		return ExportPage{}, err
+	}
+	return page, nil
 }

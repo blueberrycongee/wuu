@@ -228,6 +228,84 @@ func (b *sqliteBackend) export(ctx context.Context) (Snapshot, error) {
 	return s, validateSnapshot(s)
 }
 
+func (b *sqliteBackend) exportPage(ctx context.Context, q ExportQuery, generation string) (ExportPage, error) {
+	var revision Revision
+	if err := b.db.QueryRowContext(ctx, `SELECT revision FROM state_metadata WHERE id = 1`).Scan(&revision); err != nil {
+		return ExportPage{}, err
+	}
+	builder, err := newExportPage(q, revision, generation)
+	if err != nil {
+		return ExportPage{}, err
+	}
+	// Preserve the full export's physical integrity check once per traversal,
+	// never once per continuation page.
+	if q.Section == "documents" && q.After == nil {
+		var integrity string
+		if err := b.db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&integrity); err != nil {
+			return ExportPage{}, fmt.Errorf("%w: %v", ErrCorrupt, err)
+		}
+		if integrity != "ok" {
+			return ExportPage{}, fmt.Errorf("%w: %s", ErrCorrupt, integrity)
+		}
+	}
+	var statement string
+	var args []any
+	if q.Section == "documents" {
+		statement = `SELECT namespace, key, value FROM state_documents`
+		if q.After != nil {
+			statement += ` WHERE (namespace, key) > (?, ?)`
+			args = append(args, q.After.Namespace, q.After.Key)
+		}
+		statement += ` ORDER BY namespace, key LIMIT ?`
+	} else {
+		statement = `SELECT id, revision, digest FROM state_receipts`
+		if q.After != nil {
+			statement += ` WHERE revision > ?`
+			args = append(args, *q.After.Revision)
+		}
+		statement += ` ORDER BY revision LIMIT ?`
+	}
+	args = append(args, q.MaxItems+1)
+	rows, err := b.db.QueryContext(ctx, statement, args...)
+	if err != nil {
+		return ExportPage{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		if err := ctx.Err(); err != nil {
+			return ExportPage{}, err
+		}
+		if builder.items == q.MaxItems || builder.items > 0 && builder.size >= q.TargetBytes {
+			return builder.page, nil
+		}
+		var fits bool
+		if q.Section == "documents" {
+			var d Document
+			if err = rows.Scan(&d.Namespace, &d.Key, &d.Value); err != nil {
+				return ExportPage{}, err
+			}
+			fits, err = builder.addDocument(d)
+		} else {
+			var r CommitRecord
+			if err = rows.Scan(&r.ID, &r.Revision, &r.Digest); err != nil {
+				return ExportPage{}, err
+			}
+			fits, err = builder.addReceipt(r)
+		}
+		if err != nil {
+			return ExportPage{}, err
+		}
+		if !fits {
+			return builder.page, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return ExportPage{}, err
+	}
+	builder.page.Done = true
+	return builder.page, nil
+}
+
 func (b *sqliteBackend) restore(ctx context.Context, snapshot Snapshot) error {
 	if err := validateSnapshot(snapshot); err != nil {
 		return err

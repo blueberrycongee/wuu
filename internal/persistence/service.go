@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -26,6 +25,7 @@ type Service struct {
 	id, dir, kind string
 	state         pluginhost.State
 	store         *Store
+	prepared      preparedStore
 }
 
 func NewService(id, dir, kind string) *Service {
@@ -43,40 +43,25 @@ func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 		{Name: "commit", InputSchema: "state.documents.commit.input.v1", OutputSchema: "state.documents.commit.output.v1"},
 		{Name: "import", InputSchema: "state.documents.import.input.v1", OutputSchema: "state.documents.import.output.v1"},
 		{Name: "compact", InputSchema: "state.documents.compact.input.v1", OutputSchema: "state.documents.compact.output.v1"},
-		{Name: "export", InputSchema: "state.documents.export.input.v1", OutputSchema: "state.documents.export.output.v1", Preparation: true},
+		{Name: "export", InputSchema: ExportInputSchema, OutputSchema: ExportOutputSchema, Preparation: true},
 	}}}
 }
 func (s *Service) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 
 func (s *Service) Prepare(ctx context.Context) error {
-	lock, err := lockPreparedStore(ctx, s.dir)
-	if err != nil {
-		return err
-	}
-	if lock == nil {
-		return nil
-	}
-	defer lock.Release()
-	current, err := readBinding(s.dir)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := requireEmptyDirectory(s.dir); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("%w: authority is missing in a nonempty store: %v", ErrCorrupt, err)
-		}
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if current.Backend != s.kind {
-		return ErrMigrationRequired
-	}
-	return nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prepared.withBackend(ctx, s.dir, s.kind, func(backend, binding) error { return nil })
 }
 func (s *Service) Activate(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.state != pluginhost.StatePrepared {
 		return fmt.Errorf("state provider cannot activate from %s", s.state)
+	}
+	if err := s.prepared.close(); err != nil {
+		s.state = pluginhost.StateFailed
+		return err
 	}
 	store, err := Open(ctx, s.dir, s.kind)
 	if err != nil {
@@ -91,10 +76,11 @@ func (s *Service) Close(context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = pluginhost.StateStopped
+	preparedErr := s.prepared.close()
 	if s.store == nil {
-		return nil
+		return preparedErr
 	}
-	err := s.store.Close()
+	err := errors.Join(preparedErr, s.store.Close())
 	s.store = nil
 	return err
 }
@@ -112,7 +98,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 		var query Query
 		if err = decode(params.Params, &query); err == nil {
 			if s.state == pluginhost.StatePrepared {
-				result, err = preparedView(ctx, s.dir, s.kind, query)
+				result, err = s.prepared.view(ctx, s.dir, s.kind, query)
 			} else {
 				result, err = s.store.Read(ctx, query)
 			}
@@ -133,10 +119,17 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 			result, err = s.store.Compact(ctx)
 		}
 	case "export":
-		var request struct{}
-		if err = decode(params.Params, &request); err == nil {
-			if s.state == pluginhost.StatePrepared {
-				result, err = preparedSnapshot(ctx, s.dir, s.kind)
+		var query *ExportQuery
+		query, err = DecodeExportRequest(params.Params)
+		if err == nil {
+			if query != nil {
+				if s.state == pluginhost.StatePrepared {
+					result, err = s.prepared.exportPage(ctx, s.dir, s.kind, *query)
+				} else {
+					result, err = s.store.ExportPage(ctx, *query)
+				}
+			} else if s.state == pluginhost.StatePrepared {
+				result, err = s.prepared.snapshot(ctx, s.dir, s.kind)
 			} else {
 				result, err = s.store.Export(ctx)
 			}
@@ -166,6 +159,9 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 	}
 	if snapshot, ok := result.(Snapshot); ok {
 		return MarshalSnapshot(snapshot)
+	}
+	if page, ok := result.(ExportPage); ok {
+		return MarshalExportPage(page)
 	}
 	return json.Marshal(result)
 }

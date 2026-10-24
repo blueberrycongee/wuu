@@ -19,6 +19,7 @@ type backend interface {
 	read(context.Context, Query) (View, error)
 	commit(context.Context, Transaction, string) (Receipt, error)
 	export(context.Context) (Snapshot, error)
+	exportPage(context.Context, ExportQuery, string) (ExportPage, error)
 	compact(context.Context) (Compaction, error)
 	restore(context.Context, Snapshot) error
 	close() error
