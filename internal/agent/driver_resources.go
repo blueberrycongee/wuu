@@ -151,7 +151,10 @@ func (g *streamTurnGateway) CompactContext(ctx context.Context, messages []provi
 			if err != nil {
 				return nil, err
 			}
-			definitions := toolDefinitions(r.Tools)
+			definitions, err := toolDefinitions(ctx, r.Tools)
+			if err != nil {
+				return nil, err
+			}
 			return compact.CompactWithNativeOrSummary(ctx, messages, g.client, model, budget, compact.NativeOptions{Provider: r.ProviderName, Tools: definitions, Temperature: r.Temperature, ProviderOptions: r.ProviderOptions, MediaInput: media, NativeDeferredToolDiscovery: providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, definitions)})
 		}
 	}

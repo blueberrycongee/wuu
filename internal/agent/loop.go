@@ -504,7 +504,11 @@ func RunToolLoop(
 			fixedMessages := assembleModelRequest(nil, fixedSegments).Messages
 			fixedRequest := providers.ChatRequest{Messages: fixedMessages, MediaInput: cfg.MediaInput}
 			if cfg.Tools != nil {
-				fixedRequest.Tools = cfg.Tools.Definitions()
+				definitions, err := toolDefinitions(ctx, cfg.Tools)
+				if err != nil {
+					return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+				}
+				fixedRequest.Tools = definitions
 			}
 			fixedTokens := estimateOutboundRequestTokens(fixedRequest)
 			beforeTokens := fixedTokens + estimateFreshContextMessages(messages, cfg.MediaInput)
@@ -673,7 +677,11 @@ func RunToolLoop(
 			NativeDeferredToolDiscovery: cfg.NativeDeferredToolDiscovery,
 		}
 		if cfg.Tools != nil {
-			req.Tools = cfg.Tools.Definitions()
+			definitions, err := toolDefinitions(ctx, cfg.Tools)
+			if err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
+			req.Tools = definitions
 		}
 		// Providers only emit a forced tool_choice when the request carries
 		// tools, so the intent passes through unconditionally here.

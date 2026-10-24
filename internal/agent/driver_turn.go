@@ -127,9 +127,13 @@ func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest
 	if model == "" {
 		model = r.Model
 	}
+	definitions, err := toolDefinitions(ctx, r.Tools)
+	if err != nil {
+		return providers.ChatRequest{}, err
+	}
 	return providers.ChatRequest{
 		Provider: r.ProviderName, Model: model,
-		Messages: providers.CloneChatMessages(g.activeHistory), Tools: toolDefinitions(r.Tools),
+		Messages: providers.CloneChatMessages(g.activeHistory), Tools: definitions,
 		Temperature: r.Temperature, Effort: r.Effort,
 		ProviderOptions:             providers.CloneRequestObject(r.ProviderOptions),
 		MediaInput:                  providers.ResolveMediaInput(g.client, r.MediaInput, r.ProviderOptions),

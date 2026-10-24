@@ -57,6 +57,13 @@ func (h *HookedExecutor) Definitions() []providers.ToolDefinition {
 	return h.inner.Definitions()
 }
 
+func (h *HookedExecutor) DefinitionsContext(ctx context.Context) ([]providers.ToolDefinition, error) {
+	if contextual, ok := h.inner.(agent.ContextualToolDefinitions); ok {
+		return contextual.DefinitionsContext(ctx)
+	}
+	return h.inner.Definitions(), nil
+}
+
 func (h *HookedExecutor) FinalizeToolResult(call providers.ToolCall, result toolresult.Result) toolresult.Result {
 	if finalizer, ok := h.inner.(agent.ToolResultFinalizer); ok {
 		return finalizer.FinalizeToolResult(call, result)

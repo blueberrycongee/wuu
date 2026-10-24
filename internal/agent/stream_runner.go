@@ -702,17 +702,20 @@ func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState)
 	client, _ := r.providerConnectionSnapshot()
 	providerName := r.ProviderName
 	model := r.requestModel()
-	tools := toolDefinitions(r.Tools)
 	temperature := r.Temperature
 	effort := r.Effort
 	providerOptions := provideroptions.Clone(r.ProviderOptions)
-	nativeDeferredToolDiscovery := providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, tools)
 	mediaInput := providers.ResolveMediaInput(client, r.MediaInput, providerOptions)
 	beforeRequest := r.BeforeRequest
 	promptCacheKey := r.PromptCacheKey
 	inferenceJournal := r.InferenceJournal
 	inputBudget := r.freshContextTargetTokens(0)
 	return boundedCompactionNoteFork(func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (CompactionNoteForkResult, error) {
+		tools, err := toolDefinitions(ctx, r.Tools)
+		if err != nil {
+			return CompactionNoteForkResult{}, err
+		}
+		nativeDeferredToolDiscovery := providers.NativeToolDiscoveryEnabled(r.NativeDeferredToolDiscovery, tools)
 		if client == nil {
 			return CompactionNoteForkResult{}, errors.New("context note client is unavailable")
 		}
