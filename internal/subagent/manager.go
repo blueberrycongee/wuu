@@ -664,17 +664,14 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		//     stopped without saying anything. Ask once for a final summary,
 		//     reusing the same turn machinery in place (no parallel loop).
 		if strings.TrimSpace(content) == "" && ctx.Err() == nil {
-			if nudged, nudgedHistory, ok := m.runFinalSummaryNudge(ctx, runner, sa, nextHistory, onEvent); ok {
-				nextHistory = nudgedHistory
-				if strings.TrimSpace(nudged) != "" {
-					content = nudged
-				}
-			}
+			var nudgeErr error
+			content, nextHistory, nudgeErr = m.runFinalSummaryNudge(ctx, runner, sa, nextHistory, onEvent)
+			err = errors.Join(err, nudgeErr)
 		}
 		//  3. Clearly labelled placeholder: only if the worker genuinely
 		//     produced nothing. A placeholder is not a fabricated statement,
 		//     so it does not violate "the runtime never answers for the model".
-		if strings.TrimSpace(content) == "" {
+		if err == nil && strings.TrimSpace(content) == "" {
 			content = emptyWorkerResultPlaceholder
 		}
 	}
@@ -876,9 +873,9 @@ func lastAssistantText(history []providers.ChatMessage) string {
 // runFinalSummaryNudge runs exactly one additional turn asking a completed
 // worker that produced no text for a final summary. It reuses the same runner
 // and turn loop in place (no parallel goroutine) and reports the recovered
-// text plus the extended history. Best-effort: a nudge that errors leaves the
-// worker's completed result and history untouched.
-func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.StreamRunner, sa *SubAgent, history []providers.ChatMessage, onEvent agent.StreamCallback) (string, []providers.ChatMessage, bool) {
+// text plus the extended history. Ordinary generation failures are best-effort;
+// required receipt failures preserve accepted output and fail the worker.
+func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.StreamRunner, sa *SubAgent, history []providers.ChatMessage, onEvent agent.StreamCallback) (string, []providers.ChatMessage, error) {
 	nudge := providers.ChatMessage{
 		Role:    "user",
 		Content: "You have finished the task but returned no final message. Provide your final summary now: state what you did, what you found or changed, and anything left undone.",
@@ -887,7 +884,11 @@ func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.Stream
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: rand.Text()})
 	res, err := runner.RunWithCallback(ctx, turnHistory, onEvent)
 	if err != nil {
-		return "", history, false
+		if !errors.Is(err, agent.ErrModelReceiptLifecycle) {
+			return "", history, nil
+		}
+		sa.acceptDriverCheckpoint(res)
+		return res.Content, mergeTurnHistory(history, res), err
 	}
 	sa.acceptDriverCheckpoint(res)
 	nextHistory := mergeTurnHistory(turnHistory, res)
@@ -895,7 +896,7 @@ func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.Stream
 	if strings.TrimSpace(content) == "" {
 		content = lastAssistantText(nextHistory)
 	}
-	return content, nextHistory, true
+	return content, nextHistory, nil
 }
 
 func (sa *SubAgent) acceptDriverCheckpoint(result agent.LoopResult) {

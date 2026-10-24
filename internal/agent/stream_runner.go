@@ -27,6 +27,10 @@ type StreamCallback func(event providers.StreamEvent)
 // synchronously joins bounded receipt cleanup before the caller releases state.
 type BeginModelReceiptsFunc func(context.Context) (context.Context, func() error, error)
 
+// ErrModelReceiptLifecycle identifies required receipt admission or completion
+// failures that callers must not discard as best-effort model output failures.
+var ErrModelReceiptLifecycle = errors.New("model receipt lifecycle failed")
+
 const maxConsecutiveProactiveCompactFailures = 3
 
 // StreamRunner binds a selected driver to one execution and its model, tool,
@@ -406,7 +410,16 @@ func beginModelReceipts(ctx context.Context, begin BeginModelReceiptsFunc) (cont
 	if begin == nil {
 		return ctx, func() error { return nil }, nil
 	}
-	return begin(ctx)
+	ctx, finish, err := begin(ctx)
+	if err != nil {
+		return ctx, nil, errors.Join(ErrModelReceiptLifecycle, err)
+	}
+	return ctx, func() error {
+		if err := finish(); err != nil {
+			return errors.Join(ErrModelReceiptLifecycle, err)
+		}
+		return nil
+	}, nil
 }
 
 func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpoint loopdriver.Checkpoint) error {

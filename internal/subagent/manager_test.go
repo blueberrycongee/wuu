@@ -897,6 +897,90 @@ func TestRunTurn_EmptyOutputNudgeRecoversFinalSummary(t *testing.T) {
 	}
 }
 
+func TestRunTurnNudgePreservesReceiptFailure(t *testing.T) {
+	for _, admission := range []bool{false, true} {
+		t.Run(fmt.Sprintf("admission-%t", admission), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client := &scriptedStreamClient{responses: []providers.ChatResponse{{StopReason: "end_turn"}, {Content: "accepted summary", StopReason: "end_turn"}}}
+			journal := &managerTestJournal{}
+			receiptErr := errors.New("nudge receipt required write failed")
+			var admissions atomic.Int32
+			manager := NewManagerWithOptions(client, "test", ManagerOptions{
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+				InferenceJournal:  journal,
+				BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+					ordinal := admissions.Add(1)
+					if admission && ordinal == 2 {
+						return ctx, nil, receiptErr
+					}
+					return ctx, func() error {
+						if ordinal == 2 {
+							return receiptErr
+						}
+						return nil
+					}, nil
+				},
+			})
+			historyPath := filepath.Join(t.TempDir(), "worker.json")
+			sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, HistoryPath: historyPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := manager.Wait(ctx, sa.ID)
+			if err != nil || snapshot.Status != StatusFailed || !errors.Is(snapshot.Error, receiptErr) || !errors.Is(snapshot.Error, agent.ErrModelReceiptLifecycle) {
+				t.Fatalf("nudge swallowed required receipt failure: status=%s workerErr=%v waitErr=%v", snapshot.Status, snapshot.Error, err)
+			}
+			wantCalls, wantResult := 2, "accepted summary"
+			if admission {
+				wantCalls, wantResult = 1, ""
+			}
+			if admissions.Load() != 2 || client.callCount() != wantCalls || snapshot.Result != wantResult || lastAssistantText(sa.HistorySnapshot()) != wantResult {
+				t.Fatalf("nudge lost accepted output: admissions=%d calls=%d result=%q history=%+v", admissions.Load(), client.callCount(), snapshot.Result, sa.HistorySnapshot())
+			}
+			persisted, err := LoadPersistedRun(historyPath)
+			if err != nil || persisted.Status != StatusFailed || lastAssistantText(persisted.Messages) != wantResult {
+				t.Fatalf("nudge failed to persist accepted history: status=%s history=%+v err=%v", persisted.Status, persisted.Messages, err)
+			}
+			journal.mu.Lock()
+			defer journal.mu.Unlock()
+			if len(journal.workflowCompletions) != 1 || journal.workflowCompletions[0].Outcome != providers.InferenceOutcomeFailed {
+				t.Fatalf("nudge falsely completed worker workflow: %+v", journal.workflowCompletions)
+			}
+		})
+	}
+}
+
+type failedNudgeClient struct{ scriptedStreamClient }
+
+func (c *failedNudgeClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	if c.callCount() == 1 {
+		c.next()
+		return nil, &providers.HTTPError{StatusCode: 400, Body: "summary generation rejected"}
+	}
+	return c.scriptedStreamClient.StreamChat(ctx, req)
+}
+
+func TestRunTurnNudgeModelFailureRemainsBestEffort(t *testing.T) {
+	client := &failedNudgeClient{}
+	manager := NewManagerWithOptions(client, "test", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+			return ctx, func() error { return nil }, nil
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.Wait(ctx, sa.ID)
+	if err != nil || snapshot.Status != StatusCompleted || snapshot.Error != nil || snapshot.Result != emptyWorkerResultPlaceholder || client.callCount() != 2 {
+		t.Fatalf("ordinary nudge failure stopped being best-effort: %+v calls=%d waitErr=%v", snapshot, client.callCount(), err)
+	}
+}
+
 func TestRunTurn_EmptyOutputFallsBackToPlaceholder(t *testing.T) {
 	// The worker produces nothing on the main turn and nothing on the nudge:
 	// the result settles on the clearly-labelled placeholder, and the run is
