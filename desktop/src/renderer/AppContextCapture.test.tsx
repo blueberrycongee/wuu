@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppContextState, InitializeResult, WuuDesktopApi } from "../shared/protocol";
 import { AppContextCaptureHost } from "./AppContextCapture";
 import { createDraftSessionTab, initialState } from "./AppState";
+import { createScopedTestApplication } from "./test-support/ScopedApplication";
 import { ApplicationController } from "./plugins/ApplicationController";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
+const generationCleanups: Array<() => void> = [];
 let root: Root | undefined;
 let captured: AppContextState;
 let changed: (() => void) | undefined;
@@ -22,6 +24,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   act(() => root?.unmount()); root = undefined;
+  generationCleanups.splice(0).forEach(dispose => dispose());
   document.body.innerHTML = "";
   window.wuu = originalHost;
   vi.unstubAllGlobals();
@@ -38,7 +41,9 @@ async function mount(discard: (id?: string) => Promise<AppContextState> = vi.fn(
   await application.invoke("composer.set-draft", { text: "Keep this draft" });
   const container = document.createElement("div"); document.body.append(container);
   root = createRoot(container);
-  await act(async () => root!.render(<WuuUIRoot><AppContextCaptureHost application={application} /></WuuUIRoot>));
+  const scoped = await createScopedTestApplication(application);
+  generationCleanups.push(scoped.dispose);
+  await act(async () => root!.render(<WuuUIRoot><AppContextCaptureHost application={scoped.application} /></WuuUIRoot>));
   return { application, discard };
 }
 

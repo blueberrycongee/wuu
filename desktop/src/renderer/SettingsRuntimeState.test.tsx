@@ -1,3 +1,4 @@
+import { createScopedTestApplication } from "./test-support/ScopedApplication";
 import { ApplicationController } from "./plugins/ApplicationController";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,12 +15,14 @@ import {
 import { translateCurrent } from "./i18n";
 
 let mountedRoots: Root[] = [];
+const generationCleanups: Array<() => void> = [];
 
 afterEach(() => {
   act(() => {
     for (const root of mountedRoots) root.unmount();
   });
   mountedRoots = [];
+  generationCleanups.splice(0).forEach(dispose => dispose());
   document.body.innerHTML = "";
   delete (window as unknown as { wuu?: unknown }).wuu;
 });
@@ -84,7 +87,9 @@ async function renderSettingsRuntimeState(settingsOpen: boolean): Promise<{
   rerender: (nextSettingsOpen: boolean) => Promise<void>;
 }> {
   let latest: SettingsRuntimeState | undefined;
-  const application = new ApplicationController();
+  const scoped = await createScopedTestApplication(new ApplicationController());
+  const application = scoped.application;
+  generationCleanups.push(scoped.dispose);
 
   function Probe({ open }: { open: boolean }) {
     latest = useSettingsRuntimeState({ settingsOpen: open, application });
