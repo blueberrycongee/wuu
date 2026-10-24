@@ -1,3 +1,4 @@
+import { ApplicationTerminals } from "./ApplicationTerminals";
 import type { ApplicationSearchActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-search";
 import { ApplicationSearch, isApplicationSearchAction } from "./ApplicationSearch";
 import type { ApplicationConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-conversation-actions";
@@ -64,6 +65,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
   }
+  private terminalOwner?: ApplicationTerminals;
+  get terminals(): ApplicationTerminals { return this.terminalOwner ??= new ApplicationTerminals(window.wuu); }
   private previewContentOwner?: ApplicationPreviewContent;
   get previewContent(): ApplicationPreviewContent { return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu); }
   readonly settingsControls = createApplicationSettingsControls();
@@ -317,6 +320,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.submissionOwner = undefined;
       this.composerRuntimeOwner?.dispose();
       this.composerRuntimeOwner = undefined;
+      void this.terminalOwner?.dispose().catch(error => console.error("Terminal cleanup failed", error));
+      this.terminalOwner = undefined;
       this.previewContentOwner?.dispose();
       this.previewContentOwner = undefined;
       this.flushBackgroundEvents();

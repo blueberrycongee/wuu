@@ -1,3 +1,4 @@
+import { ApplicationTerminals } from "./ApplicationTerminals";
 import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
@@ -15,6 +16,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    terminals: new ApplicationTerminals({ unsupportedMethods: ["startTerminalSession"] } as never),
     settingsControls: createApplicationSettingsControls(),
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
     previewContent: new ApplicationPreviewContent({ platform: "linux",
@@ -32,6 +34,22 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("cleans up a terminal created after its selected generation retires", async () => {
+    const { host, service } = fixture();
+    let finish!: (value: { id: string; cwd: string; shell: string; started_at: string }) => void;
+    const stop = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(service, "terminals", { value: { capabilities: { createTerminal: true },
+      start: () => new Promise(resolve => { finish = resolve; }), stop } });
+    let application!: ApplicationServiceV1;
+    await host.activateGeneration({ pluginId: "terminal", generation: "one", register: api => { application = api.application; } });
+    const starting = application.terminals.start({ cwd: "/fixture" });
+    const rejected = expect(starting).rejects.toThrow();
+    await host.activateGeneration({ pluginId: "terminal", generation: "two", register: () => {} });
+    finish({ id: "late", cwd: "/fixture", shell: "sh", started_at: "now" });
+    await rejected;
+    expect(stop).toHaveBeenCalledExactlyOnceWith("late");
+  });
+
   it.each(["shell/navigation", "canonical/navigation"])("selects an independently owned surface from %s and fails visibly when its provider unloads", async target => {
     const { host } = fixture();
     await host.activateGeneration({ pluginId: "shell", generation: "root", register: api => {

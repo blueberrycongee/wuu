@@ -1,3 +1,5 @@
+import type { ApplicationTerminalsV1 } from "./ui-terminals.js";
+export { scopeApplicationTerminals } from "./ui-terminals.js";
 import type { ApplicationSearchActionMapV1, ApplicationSearchViewV1 } from "./ui-search.js";
 import type { ApplicationConversationActionMapV1, ApplicationConversationActionsViewV1 } from "./ui-conversation-actions.js";
 import type { ApplicationSubmissionActionMapV1, ApplicationSubmissionSnapshotV1 } from "./ui-submission.js";
@@ -146,6 +148,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly terminals: ApplicationTerminalsV1;
   readonly catalog: ApplicationCatalogV1;
   getSnapshot(): ApplicationSnapshotV1;
   /** Unsubscribe is idempotent; generation disposal also removes every listener. */

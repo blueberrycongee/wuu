@@ -1,4 +1,4 @@
-import { scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
+import { scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
 import * as React from 'react';
 import type {
   ApplicationServiceV1, ApplicationShellDefinition, ApplicationShellRenderProps, Disposable,
@@ -59,6 +59,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
       };
       const scoped: ApplicationServiceV1 = {
         contractVersion: 1,
+        terminals: scopeApplicationTerminals(() => application.terminals, controller.signal, assertActive),
         catalog: scopeApplicationCatalog(() => application.catalog, controller.signal, assertActive),
         previewContent: scopeApplicationPreviewContent(() => application.previewContent, controller.signal, assertActive),
         conversationText: scopeApplicationConversationText(() => application.conversationText, controller.signal, assertActive),
