@@ -92,7 +92,10 @@ export class ApplicationWebWorkspace implements ApplicationWebWorkspaceV1 {
       if(!resource.borrowed || presentation?.bounds===this) await this.native().reportBounds(id,null);
       if(!resource.borrowed || presentation?.shortcuts===this) await this.native().setShortcutTarget(id,false);
       if(!resource.borrowed) await this.native().close(id);
-      if(presentation){for(const key of ["options","bounds","shortcuts"] as const)if(presentation[key]===this)delete presentation[key];}
+      if(presentation){
+        for(const key of ["options","bounds","shortcuts"] as const)if(presentation[key]===this)delete presentation[key];
+        if(Object.keys(presentation).length===0)this.shared.presentation.delete(id);
+      }
       resource.closed=true;if(this.shared.resources.get(id)===resource)this.shared.resources.delete(id);
     });
     resource.closing=pending;

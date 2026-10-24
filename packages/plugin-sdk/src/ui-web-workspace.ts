@@ -183,8 +183,9 @@ export function scopeApplicationWebWorkspace(source: () => ApplicationWebWorkspa
   let disposed = false;
   const check = () => { if(disposed) throw new DOMException("Web workspace scope disposed", "AbortError"); assertActive(); signal.throwIfAborted(); };
   const get = () => { if(!owned) {check();owned=source().fork();} return owned; };
-  const dispose = () => { disposed=true; return disposal ??= (owned?.dispose() ?? Promise.resolve()).catch(error=>{disposal=undefined;throw error;}); };
-  signal.addEventListener("abort", () => { void dispose().catch(error => console.error("Web workspace cleanup failed", error)); }, {once:true});
+  const dispose = () => { disposed=true; signal.removeEventListener("abort",abort); return disposal ??= (owned?.dispose() ?? Promise.resolve()).catch(error=>{disposal=undefined;throw error;}); };
+  const abort = () => { void dispose().catch(error => console.error("Web workspace cleanup failed", error)); };
+  signal.addEventListener("abort", abort, {once:true});
   const bind = <T extends object>(getTarget: () => T): T => new Proxy({} as T, {
     get(_target,key) {
       if (key === "dispose") return dispose;
