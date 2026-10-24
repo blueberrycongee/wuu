@@ -1,8 +1,8 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import type { ProviderSummary } from "../shared/protocol";
 import { ChatGPTLogin } from "./ChatGPTLogin";
 import { ConnectionPage } from "./ConnectionPage";
-import { hostSupports } from "./HostCapabilities";
 import { Modal } from "./Modal";
 import { ProviderMark } from "./ProviderMarks";
 import { SelectMenu } from "./SelectMenu";
@@ -20,8 +20,9 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
   inline?: boolean;
   renderAuthMethods?: (disabled: boolean) => ReactNode;
 }): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
-  const [accounts, setAccounts] = useState<Awaited<ReturnType<typeof window.wuu.listChatGPTAccounts>>["accounts"]>([]);
+  const [accounts, setAccounts] = useState<Awaited<ReturnType<typeof settingsControls.listChatGPTAccounts>>["accounts"]>([]);
   const [accountId, setAccountId] = useState("");
   const [revision, setRevision] = useState(0);
   const [models, setModels] = useState<{ id: string; name: string }[]>([]);
@@ -42,7 +43,7 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
   const account = accounts.find(item => item.id === accountId);
   useEffect(() => {
     let active = true;
-    void window.wuu.listChatGPTAccounts().then(result => {
+    void settingsControls.listChatGPTAccounts().then(result => {
       if (!active) return;
       setAccounts(result.accounts);
       setAccountId(current => current || result.accounts.find(item => item.status === "connected")?.id || "");
@@ -54,7 +55,7 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
     setModels([]); setModel(""); setCatalogAccount(""); setError("");
     if (!accountId || account?.status !== "connected") { setLoading(false); return; }
     setLoading(true);
-    void window.wuu.listChatGPTModels(accountId).then(result => {
+    void settingsControls.listChatGPTModels(accountId).then(result => {
       if (!active) return;
       setModels(result.models); setModel(result.models[0]?.id ?? ""); setCatalogAccount(accountId);
     }, cause => { if (active) setError(String(cause)); }).finally(() => { if (active) setLoading(false); });
@@ -87,7 +88,7 @@ export function ChatGPTConnectionDialog({ providers, running, defaultOn, onSave,
       <ChatGPTLogin key={account?.status === "connected" ? "new-account" : accountId} accountId={account?.status !== "connected" ? accountId || undefined : undefined}
         onAdvisory={setAuthNotice} onProvidersChanged={onProvidersChanged} enablePlanUsage={account?.status === "permission_required"}
         disabled={busy || running} onBusyChange={setSigningIn} onAuthenticated={authenticated} />
-      {account?.status === "connected" && hostSupports("startChatGPTLogin") ? <p className="settings-muted-line">{t("provider.chatgptAddAccountHint")}</p> : null}
+      {account?.status === "connected" && settingsControls.capabilities.chatGPTLogin ? <p className="settings-muted-line">{t("provider.chatgptAddAccountHint")}</p> : null}
       <div className="model-connect-field"><span>{t("provider.modelLabel")}</span><SelectMenu value={model} disabled={!models.length || loading || busy || signingIn}
         ariaLabel={t("provider.modelLabel")} dataTestid="settings-provider-connect-model" options={models.map(item => ({ value: item.id, label: item.name || item.id }))} onChange={setModel}
         placeholder={t(loading ? "settings.loading" : "provider.chatgptNoModels")} /></div>

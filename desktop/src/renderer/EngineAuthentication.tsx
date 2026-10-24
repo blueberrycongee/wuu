@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import type { EngineAuthResult } from "../shared/protocol";
 import { GrokLogin } from "./GrokLogin";
@@ -13,6 +14,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
   onAuthenticated?: () => void | Promise<void>;
   onReuseLocal: () => void | Promise<void>;
 }): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [methods, setMethods] = useState<EngineAuthResult["methods"]>();
@@ -27,7 +29,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     return () => {
       const current = operation.current;
       operation.current = undefined;
-      if (current?.kind === "auth") void window.wuu.cancelEngineAuth(engineID).catch(() => {});
+      if (current?.kind === "auth") void settingsControls.cancelEngineAuth(engineID).catch(() => {});
     };
   }, [engineID]);
 
@@ -40,8 +42,8 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     setMethods(undefined);
     try {
       const next = method
-        ? await window.wuu.authenticateEngine(engineID, method)
-        : await window.wuu.listEngineAuthMethods(engineID);
+        ? await settingsControls.authenticateEngine(engineID, method)
+        : await settingsControls.listEngineAuthMethods(engineID);
       if (operation.current !== current || current.cancelled) return;
       setMethods(next.methods.filter(choice => choice.id && (!choice.type || choice.type === "agent")));
       // An ACP acknowledgment need not prove a provider account is signed in.
@@ -86,7 +88,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     if (!current || current.kind !== "auth") return;
     current.cancelled = true;
     try {
-      await window.wuu.cancelEngineAuth(engineID);
+      await settingsControls.cancelEngineAuth(engineID);
       if (operation.current === current) {
         operation.current = undefined;
         setBusy(null);

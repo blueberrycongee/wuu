@@ -17,6 +17,8 @@ export function createApplicationSettingsControls(options: {
   const diagnostics = new WeakMap<readonly unknown[], readonly SettingsControlsDiagnosticV1[]>();
   return {
     capabilities: Object.freeze({
+      chatGPTLogin: hostSupports("startChatGPTLogin"),
+      engineLogin: window.wuu?.hostKind !== "web",
       platform: window.wuu?.platform,
       browser: Boolean(window.wuu?.listBrowserProfiles && window.wuu.importBrowserCookies && window.wuu.listBrowserExtensions && window.wuu.addBrowserExtension && window.wuu.setBrowserExtensionEnabled && window.wuu.removeBrowserExtension),
       browserReload: typeof window.wuu?.reloadBrowserExtension === "function",
@@ -66,6 +68,38 @@ export function createApplicationSettingsControls(options: {
       ...input,
       initialized: input.initialized ? structuredClone(input.initialized) as InitializeResult : undefined
     }),
+    listChatGPTAccounts: async (...args) => {
+      if (typeof window.wuu?.listChatGPTAccounts !== "function") throw new Error("Settings operation unavailable: listChatGPTAccounts");
+      return window.wuu.listChatGPTAccounts(...args);
+    },
+    signOutChatGPTAccount: async (...args) => {
+      if (typeof window.wuu?.signOutChatGPTAccount !== "function") throw new Error("Settings operation unavailable: signOutChatGPTAccount");
+      return window.wuu.signOutChatGPTAccount(...args);
+    },
+    startChatGPTLogin: async (...args) => {
+      if (typeof window.wuu?.startChatGPTLogin !== "function") throw new Error("Settings operation unavailable: startChatGPTLogin");
+      return window.wuu.startChatGPTLogin(...args);
+    },
+    pollChatGPTLogin: async (...args) => {
+      if (typeof window.wuu?.pollChatGPTLogin !== "function") throw new Error("Settings operation unavailable: pollChatGPTLogin");
+      return window.wuu.pollChatGPTLogin(...args);
+    },
+    cancelChatGPTLogin: async (...args) => {
+      if (typeof window.wuu?.cancelChatGPTLogin !== "function") throw new Error("Settings operation unavailable: cancelChatGPTLogin");
+      return window.wuu.cancelChatGPTLogin(...args);
+    },
+    listEngineAuthMethods: async (...args) => {
+      if (typeof window.wuu?.listEngineAuthMethods !== "function") throw new Error("Settings operation unavailable: listEngineAuthMethods");
+      return window.wuu.listEngineAuthMethods(...args);
+    },
+    authenticateEngine: async (...args) => {
+      if (typeof window.wuu?.authenticateEngine !== "function") throw new Error("Settings operation unavailable: authenticateEngine");
+      return window.wuu.authenticateEngine(...args);
+    },
+    cancelEngineAuth: async (...args) => {
+      if (typeof window.wuu?.cancelEngineAuth !== "function") throw new Error("Settings operation unavailable: cancelEngineAuth");
+      return window.wuu.cancelEngineAuth(...args);
+    },
     getBuildInfo: async (...args) => {
       if (typeof window.wuu?.getBuildInfo !== "function") throw new Error("Settings operation unavailable: getBuildInfo");
       return window.wuu.getBuildInfo(...args);

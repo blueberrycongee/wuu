@@ -1,3 +1,4 @@
+import type { ApplicationSettingsChatGPTAuthStatusV1 as ChatGPTAuthStatus } from "./application-settings.js";
 import type { ReactNode } from "react";
 import type { SettingsPageHostAPI } from "./index.js";
 import type { ApplicationSettingsCoreBuildInfoV1 as CoreBuildInfo } from "./application-settings.js";
@@ -6,6 +7,8 @@ import type { ApplicationSettingsCatalogProviderSummaryV1 as CatalogProviderSumm
 import type { ApplicationSettingsEngineListResultV1 as EngineListResult } from "./application-settings.js";
 import type { ApplicationSettingsProviderModelSummaryV1 as ProviderModelSummary } from "./application-settings.js";
 export interface SettingsControlsCapabilitiesV1 {
+  readonly chatGPTLogin: boolean;
+  readonly engineLogin: boolean;
   readonly browser: boolean;
   readonly browserReload: boolean;
   readonly browserOptions: boolean;
@@ -60,6 +63,14 @@ export interface SettingsControlsDiagnosticV1 {
 }
 /** Public settings mechanisms. Operation results are caller-owned; snapshots are immutable. */
 export interface ApplicationSettingsControlsV1 {
+  listChatGPTAccounts: () => Promise<{ accounts: ChatGPTAccount[] }>;
+  signOutChatGPTAccount: (accountId: string) => Promise<{ ok: boolean; revocation_confirmed: boolean; providers: ProviderSummary[] }>;
+  startChatGPTLogin: (accountId?: string, enablePlanUsage?: boolean) => Promise<AuthChatGPTLoginResult>;
+  pollChatGPTLogin: (loginId: string) => Promise<AuthChatGPTLoginResult>;
+  cancelChatGPTLogin: (loginId: string) => Promise<{ ok: boolean }>;
+  listEngineAuthMethods: (engineID: string) => Promise<EngineAuthResult>;
+  authenticateEngine: (engineID: string, methodID: string) => Promise<EngineAuthResult>;
+  cancelEngineAuth: (engineID: string) => Promise<{ ok: boolean }>;
   renderPresentation(input: SettingsControlsPresentationV1): ReactNode;
   readonly capabilities: SettingsControlsCapabilitiesV1;
   subscribe(listener: () => void): () => void;
@@ -327,3 +338,20 @@ export interface SettingsControlsPresentationV1 {
   onGeneralSave(input: import("./application-settings.js").ApplicationSettingsRuntimeGeneralSettingsUpdateV1): Promise<void>;
   onRefresh(): Promise<void>;
 }
+
+type ChatGPTAccount = { id: string; email?: string; status: ChatGPTAuthStatus };
+type AuthChatGPTLoginResult = {
+  providers?: ProviderSummary[];
+  login_id: string;
+  status: "pending" | "success" | "failed" | "expired" | "cancelled";
+  // Go-to-main only. Main opens the browser and removes this before renderer IPC.
+  authorization_url?: string;
+  account_id?: string;
+  interval_ms: number;
+  expires_in: number;
+  error?: string;
+};
+type EngineAuthResult = {
+  methods: { id: string; name: string; description?: string; type?: string }[];
+  authenticated: boolean;
+};

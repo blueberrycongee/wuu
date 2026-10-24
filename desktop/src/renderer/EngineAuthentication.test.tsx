@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -19,7 +21,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => root!.render(<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} />}</SettingsControlsProvider>));
 });
 
 afterEach(() => {
@@ -36,7 +38,7 @@ async function click(id: string): Promise<void> {
 
 it("separates opening settings, method discovery, and explicit login", async () => {
   const onAuthenticated = vi.fn();
-  act(() => root!.render(<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />}</SettingsControlsProvider>));
   expect(discover).not.toHaveBeenCalled();
   expect(authenticate).not.toHaveBeenCalled();
   await click("engine-auth-discover");
@@ -56,7 +58,7 @@ it("does not treat an empty discovery as authentication or invoke terminal and e
     { id: "setup", name: "Terminal setup", type: "terminal" },
     { id: "key", name: "Environment key", type: "env_var" },
   ] }).mockResolvedValueOnce({ authenticated: false, methods: [] });
-  act(() => root!.render(<EngineAuthentication engineID="future-agent" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="future-agent" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />}</SettingsControlsProvider>));
   await click("engine-auth-discover");
   expect(container.querySelector('[data-testid="engine-auth-method"]')).toBeNull();
   await click("engine-auth-discover");
@@ -68,7 +70,7 @@ it("does not treat an empty discovery as authentication or invoke terminal and e
 it.each(["codex", "claude", "opencode", "dsh", "hermes", "pi"])("reuses %s local configuration without invoking unsupported authentication or copying credentials", async (engineID) => {
   const onReuseLocal = vi.fn();
   const onAuthenticated = vi.fn();
-  act(() => root!.render(<EngineAuthentication engineID={engineID} protocol={["dsh", "hermes", "pi"].includes(engineID) ? "acp" : engineID} onReuseLocal={onReuseLocal} onAuthenticated={onAuthenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID={engineID} protocol={["dsh", "hermes", "pi"].includes(engineID) ? "acp" : engineID} onReuseLocal={onReuseLocal} onAuthenticated={onAuthenticated} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
   expect(container.querySelector('[role="status"]')?.textContent).toBeTruthy();
   await click("engine-auth-local");
@@ -81,7 +83,7 @@ it.each(["codex", "claude", "opencode", "dsh", "hermes", "pi"])("reuses %s local
 it("retains the local reuse action when ACP has no invocable login method", async () => {
   const onReuseLocal = vi.fn();
   discover.mockResolvedValue({ methods: [], authenticated: false });
-  act(() => root!.render(<EngineAuthentication engineID="future-agent" protocol="acp" onReuseLocal={onReuseLocal} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="future-agent" protocol="acp" onReuseLocal={onReuseLocal} />}</SettingsControlsProvider>));
   await click("engine-auth-discover");
   await click("engine-auth-local");
   expect(onReuseLocal).toHaveBeenCalledOnce();
@@ -104,7 +106,7 @@ it("ignores a cancelled login success and permits a new attempt without waiting 
   let resolveLogin!: (result: EngineAuthResult) => void;
   const onAuthenticated = vi.fn();
   authenticate.mockImplementationOnce(() => new Promise(resolve => { resolveLogin = resolve; }));
-  act(() => root!.render(<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />}</SettingsControlsProvider>));
   await click("engine-auth-discover");
   await click("engine-auth-method");
   await click("engine-auth-cancel");
@@ -121,7 +123,7 @@ it("keeps a failed cancellation locked until its original request settles", asyn
   const onAuthenticated = vi.fn();
   authenticate.mockImplementationOnce(() => new Promise(resolve => { resolveLogin = resolve; }));
   cancel.mockRejectedValueOnce(new Error("cancel failed"));
-  act(() => root!.render(<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />}</SettingsControlsProvider>));
   await click("engine-auth-discover");
   await click("engine-auth-method");
   await click("engine-auth-cancel");
@@ -146,7 +148,7 @@ it("isolates a new engine from the old engine's pending discovery and late resul
   let resolveDiscovery!: (result: EngineAuthResult) => void;
   discover.mockImplementationOnce(() => new Promise((resolve) => { resolveDiscovery = resolve; }));
   await click("engine-auth-discover");
-  act(() => root!.render(<EngineAuthentication engineID="cursor" protocol="acp" onReuseLocal={vi.fn()} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="cursor" protocol="acp" onReuseLocal={vi.fn()} />}</SettingsControlsProvider>));
   expect(cancel).toHaveBeenCalledExactlyOnceWith("devin");
   await click("engine-auth-discover");
   expect(discover).toHaveBeenLastCalledWith("cursor");
@@ -158,7 +160,7 @@ it("isolates a new engine from the old engine's pending discovery and late resul
 it("waits for a local refresh and reports failure without starting login or exposing diagnostics", async () => {
   let rejectRefresh!: (reason: Error) => void;
   const onReuseLocal = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectRefresh = reject; }));
-  act(() => root!.render(<EngineAuthentication engineID="devin" protocol="acp" compact onReuseLocal={onReuseLocal} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="devin" protocol="acp" compact onReuseLocal={onReuseLocal} />}</SettingsControlsProvider>));
   await click("engine-auth-local");
   expect(container.querySelector<HTMLButtonElement>('[data-testid="engine-auth-discover"]')!.disabled).toBe(true);
   expect(container.querySelector('[data-testid="engine-auth-cancel"]')).toBeNull();
@@ -173,7 +175,7 @@ it("waits for a local refresh and reports failure without starting login or expo
 it("does not cancel a completed engine login while its account refresh is pending", async () => {
   let finishRefresh!: () => void;
   const onAuthenticated = vi.fn(() => new Promise<void>(resolve => { finishRefresh = resolve; }));
-  act(() => root!.render(<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={vi.fn()} onAuthenticated={onAuthenticated} />}</SettingsControlsProvider>));
   await click("engine-auth-discover");
   await click("engine-auth-method");
   expect(onAuthenticated).toHaveBeenCalledOnce();
@@ -186,7 +188,7 @@ it("does not cancel a completed engine login while its account refresh is pendin
 
 it("opening the credential entry never discovers methods or starts login", async () => {
   const local = vi.fn();
-  act(() => root!.render(<EngineAuthentication entry engineID="devin" protocol="acp" onReuseLocal={local} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<EngineAuthentication entry engineID="devin" protocol="acp" onReuseLocal={local} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-testid="engine-auth-discover"]')).toBeNull();
   await click("engine-auth-entry");
   expect(discover).not.toHaveBeenCalled();
