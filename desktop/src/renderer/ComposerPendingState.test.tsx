@@ -10,6 +10,7 @@ import {
 } from "./AppState";
 import type { QueuedComposerMessage } from "./ComposerMessages";
 import {
+  createComposerPendingState,
   heldComposerMessagesFromResumeResult,
   useComposerPendingState,
   type ComposerPendingStateController,
@@ -134,6 +135,22 @@ async function renderComposerPendingState({
     },
   };
 }
+
+it("keeps pending input in its host owner across observer disposal", () => {
+  const owner = createComposerPendingState({ getAppState: () => initialState,
+    getComposerDraftForThread: () => emptyComposerDraft(), restoreComposerDraftForThread: vi.fn(),
+    preserveFailedComposerMessage: vi.fn(), setStatus: vi.fn() });
+  const notify = vi.fn();
+  const dispose = owner.subscribe(notify);
+  owner.enqueueComposerMessage("thread", message("queued", "keep me"));
+  dispose();
+  owner.enqueueComposerMessage("other", message("second", "other input"));
+  expect(notify).toHaveBeenCalledTimes(1);
+  expect(owner.pendingComposerMessagesForThread("thread").queued[0].text).toBe("keep me");
+  owner.clearThreadPendingComposerMessages("thread");
+  expect(owner.pendingComposerMessagesForThread("thread").queued).toEqual([]);
+  expect(owner.pendingComposerMessagesForThread("other").queued[0].id).toBe("second");
+});
 
 describe("useComposerPendingState", () => {
   const fileSelection: Extract<MessageContentPart, { type: "file_selection" }> = {
