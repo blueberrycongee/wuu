@@ -76,6 +76,16 @@ function Fixture() {
   const [globalized, setGlobalized] = useState(params.has("globalized"));
   const [environmentOpen, setEnvironmentOpen] = useState(false);
   const [title, setTitle] = useState(titles[0]);
+  const titleApplication = useMemo(() => {
+    const base = application.getSnapshot();
+    const preview = createFixtureApplication({ tabs: {...base.tabs, activeTabId:"draft:sample-0", items:[{id:"draft:sample-0",kind:"draft",title,workspaceRoot:"/preview",project:false,draftText:"",hasAttachments:false}]},
+      conversationWorkspace: {...base.conversationWorkspace, primaryThreadId:undefined, threads:[]} });
+    return {...preview, invoke: ((action, input, options) => {
+      if (action === "draft.rename") { setTitle((input as {title:string}).title); return Promise.resolve(); }
+      if (action === "workspace.start-draft") return Promise.resolve();
+      return preview.invoke(action, input, options);
+    }) as typeof preview.invoke};
+  }, [application, title]);
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const dock = useRef<HTMLElement>(null);
   const [dockHeight, setDockHeight] = useState(0);
@@ -103,7 +113,7 @@ function Fixture() {
         </section></div><button className="nav-item"><Settings/><span>设置</span></button>
       </div></aside>
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
-        <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><ConversationTitleContent state={initialState} activeTitle={title} onStartNewThread={noop} onRenameTitle={setTitle} titleEditKey="sample-0"/></div>
+        <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><ConversationTitleContent application={titleApplication} slots={fixtureSlots} slotOwner="preview-fixture"/></div>
           <ConversationTitleActions state={initialState}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentOpen}
             onToggleEnvironmentPanel={() => setEnvironmentOpen(value => !value)}
