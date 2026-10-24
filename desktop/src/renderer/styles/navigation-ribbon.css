@@ -658,7 +658,16 @@
   flex: 1;
   flex-direction: column;
   gap: var(--sidebar-row-gap);
+}
+
+.sidebar-section-scroll {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--sidebar-row-gap);
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .sidebar-section-title {
@@ -728,6 +737,14 @@
   flex-direction: column;
   gap: var(--sidebar-row-gap);
   margin-top: var(--space-2);
+}
+
+.sidebar-section-group.sidebar-section-scroll {
+  flex: 1 1 0;
+}
+
+.sidebar-section-scroll > * {
+  flex-shrink: 0;
 }
 
 .sidebar-subsection-title {

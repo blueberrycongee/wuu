@@ -1041,6 +1041,12 @@
   }
 }
 
+/* Scrollports reach the pane edge; content keeps the shared row inset. */
+.sidebar-content :is(.sidebar-main, .sidebar-unread-view, .sidebar-section-scroll, .settings-nav) {
+  margin-inline: calc(-1 * var(--sidebar-content-pad-x));
+  padding-inline: var(--sidebar-content-pad-x);
+}
+
 .sidebar-main {
   display: flex;
   min-width: 0;

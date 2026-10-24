@@ -1974,7 +1974,7 @@ export function AppSidebar({
             })}
             {onOpenCatalogPlugin ? (
               <div
-                className="sidebar-section-group"
+                className="sidebar-section-group sidebar-section-scroll"
                 role="group"
                 aria-labelledby="extensions-enabled-heading"
               >
@@ -2010,28 +2010,30 @@ export function AppSidebar({
           <nav className="sidebar-section-navigation" aria-label={activePluginMain.definition.title}>
             <h2 className="sidebar-section-title">{extensionInventory?.find((record) =>
               record.provenance.plugin_id === activePluginMain.view.pluginId)?.name ?? activePluginMain.definition.title}</h2>
-            {pluginNavigationEntries.filter((entry) => entry.pluginId === activePluginMain.view.pluginId).map((entry) => (
-              <button
-                key={`${entry.pluginId}:${entry.id}`}
-                className="sidebar-section-item"
-                type="button"
-                data-wuu-component="plugin-context-navigation-item"
-                aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
-                onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
-              >
-                <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
-                <span className="sidebar-section-label">{entry.title}</span>
-              </button>
-            ))}
-            <PluginSlot
-              host={pluginHost}
-              id="sidebar.primary"
-              pluginId={activePluginMain.view.pluginId}
-              context={Object.freeze({
-                viewTypeId: activePluginMain.view.viewTypeId,
-                viewContext: activePluginMain.view.context,
-              })}
-            />
+            <div className="sidebar-section-scroll">
+              {pluginNavigationEntries.filter((entry) => entry.pluginId === activePluginMain.view.pluginId).map((entry) => (
+                <button
+                  key={`${entry.pluginId}:${entry.id}`}
+                  className="sidebar-section-item"
+                  type="button"
+                  data-wuu-component="plugin-context-navigation-item"
+                  aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
+                  onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
+                >
+                  <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
+                  <span className="sidebar-section-label">{entry.title}</span>
+                </button>
+              ))}
+              <PluginSlot
+                host={pluginHost}
+                id="sidebar.primary"
+                pluginId={activePluginMain.view.pluginId}
+                context={Object.freeze({
+                  viewTypeId: activePluginMain.view.viewTypeId,
+                  viewContext: activePluginMain.view.context,
+                })}
+              />
+            </div>
           </nav>
         ) : null}
         <div className="sidebar-conversation-section" style={{ display: conversationsActive ? "contents" : "none" }} inert={!conversationsActive}>
