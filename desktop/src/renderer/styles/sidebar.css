@@ -38,6 +38,7 @@
 }
 
 .app-shell {
+  --shell-right-control-inset: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
   display: grid;
   position: relative;
   isolation: isolate;
@@ -73,7 +74,7 @@
 .shell-right-sidebar-toggle {
   position: absolute;
   top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  right: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
+  right: var(--shell-right-control-inset);
   z-index: 151;
   -webkit-app-region: no-drag;
 }

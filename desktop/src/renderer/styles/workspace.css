@@ -66,13 +66,15 @@
  * provider renders it, including when the tools themselves are collapsed. */
 .app-shell:has(.workspace-tool-rail) {
   --workspace-tool-rail-width: calc(var(--control-size-toolbar) + var(--space-1) + 2px);
-  --workspace-tool-rail-reserve: calc(var(--workspace-tool-rail-width) + var(--space-2) * 2 + var(--scrollbar-width));
+  /* Center the wider rail on the window's right-panel toggle. */
+  --workspace-tool-rail-right: calc(var(--shell-right-control-inset) - (var(--workspace-tool-rail-width) - var(--control-size-toolbar)) / 2);
+  --workspace-tool-rail-reserve: calc(var(--workspace-tool-rail-right) - var(--conversation-pane-inset) + var(--workspace-tool-rail-width) + var(--space-2));
 }
 
 .workspace-tool-rail {
   position: absolute;
   top: calc(var(--workbench-top, 0px) + var(--canvas-titlebar-height) + var(--space-2));
-  right: calc(var(--conversation-pane-inset) + var(--scrollbar-width) + var(--space-2));
+  right: var(--workspace-tool-rail-right);
   z-index: 131;
   display: flex;
   flex-direction: column;
