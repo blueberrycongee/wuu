@@ -7,6 +7,20 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it.each(["send", "queue", "steer"] as const)("submits owned attachment bytes through %s and retains them on failure", async mode => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const send = vi.fn().mockRejectedValue(new Error("delivery failed"));
+    window.wuu = { startTurn: send, queueTurn: send, steerTurn: send } as unknown as WuuDesktopApi;
+    const thread = { id: "thread", cwd: context.cwd, preview: "", status: "in_progress", turns: [{ id: "active", status: "in_progress", items: [] }] } as never;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, activeSessionTabID: "thread:thread", sessionTabs: [
+      { id: "thread:thread", kind: "thread", threadID: "thread", context, title: "Thread", prompt: "", images: [], files: [{ id: "file", filename: "note.txt", media_type: "text/plain", data: "QQ==" }] },
+    ] });
+    await expect(controller.invoke("composer.submit", { mode })).rejects.toThrow("delivery failed");
+    const args = send.mock.calls[0];
+    expect(args[mode === "send" ? 3 : mode === "queue" ? 4 : 5]).toEqual([{ filename: "note.txt", media_type: "text/plain", data: "QQ==" }]);
+    expect(controller.getSnapshot().drafts.primary.fileIds).toEqual(["file"]);
+  });
+
   it("reselects source transport and retains latest draft while a workspace switch is pending", async () => {
     const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
     const target = { kind: "project" as const, project_id: "b", cwd: "/b" };

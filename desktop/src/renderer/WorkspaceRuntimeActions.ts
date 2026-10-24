@@ -26,6 +26,8 @@ import type { PendingViewSwitch } from "./ViewSwitchState";
 type SetAppState = (update: SetStateAction<AppState>) => void;
 
 export type WorkspaceRuntimeActionsDeps = {
+  onError?: (error: Error) => never;
+  confirmRemoval?: (projectId: string) => Promise<boolean>;
   getPendingViewSwitch: () => PendingViewSwitch | undefined;
   getAppState: () => AppState;
   setAppState: SetAppState;
@@ -62,6 +64,7 @@ export function createWorkspaceRuntimeActions(
   const loadRuntime = deps.loadRuntime ?? defaultLoadRuntime;
 
   function setStatus(status: string): void {
+    if (deps.onError) deps.onError(new Error(status));
     showErrorToast(status);
   }
 
@@ -380,11 +383,11 @@ export function createWorkspaceRuntimeActions(
     );
     if (
       !removedWorkspace ||
-      !(await confirmAction({
+      !(await (deps.confirmRemoval ? deps.confirmRemoval(projectId) : confirmAction({
         title: translateCurrent("workspace.removeTitle", { name: removedWorkspace.name }),
         message: translateCurrent("workspace.removeConfirm"),
         confirmLabel: translateCurrent("common.remove"),
-      }))
+      })))
     ) {
       return;
     }

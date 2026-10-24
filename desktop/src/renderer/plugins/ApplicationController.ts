@@ -4,7 +4,7 @@ import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { activeSessionTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, bindActiveSessionTabToThread, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, bindActiveSessionTabToThread, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -14,6 +14,10 @@ import { getActiveLocale, translateCurrent } from "../i18n";
 import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
+import { awaitComposerFiles, awaitComposerImages, createComposerMessage, inputFilesFromComposer, inputImagesFromComposer } from "../ComposerMessages";
+import { createSessionTabActions } from "../SessionTabActions";
+import { createThreadActivationActions } from "../ThreadActivationActions";
+import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
 
@@ -224,6 +228,78 @@ export class ApplicationController implements ApplicationServiceV1 {
     return draft;
   }
 
+  private navigationActions(signal?: AbortSignal) {
+    let restoredDraft: ComposerDraftState | undefined;
+    const isCurrent = (request: number) => !signal?.aborted && request === this.navigationRequest;
+    const common = {
+      getAppState: () => this.state,
+      getPendingViewSwitch: () => this.pendingNavigation && ({
+        kind: this.pendingNavigation.kind === "tab" ? "thread" as const : this.pendingNavigation.kind,
+        targetID: this.pendingNavigation.targetId, visible: true, contextSwitching: this.pendingNavigation.contextSwitching,
+      }),
+      getComposerDraftSnapshot: () => captureComposerDrafts(this.state, this.state.secondaryThread
+        ? { primary: this.composerDraftForPane("primary"), secondary: this.composerDraftForPane("secondary") }
+        : this.composerDraftForPane("primary")),
+      setAppState: (update: SetStateAction<AppState>) => {
+        signal?.throwIfAborted();
+        this.updateState(state => {
+          let next = typeof update === "function" ? update(state) : update;
+          if (restoredDraft) {
+            const draft = restoredDraft;
+            restoredDraft = undefined;
+            next = { ...next, sessionTabs: next.sessionTabs.map(tab => tab.id === next.activeSessionTabID && tab.kind !== "skills"
+              ? { ...tab, ...draft } : tab) };
+          }
+          return next;
+        });
+      },
+      restorePrimaryComposerDraft: (draft: ComposerDraftState) => { restoredDraft = draft; },
+      clearPrimaryComposerDraft: () => { restoredDraft = emptyComposerDraft(); },
+      // Split drafts already live in their owner tabs; accepted state changes
+      // remove the secondary pane without a second mutable composer store.
+      resetSplitComposerDrafts: () => {},
+      nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => createDraftSessionTab(`draft:${crypto.randomUUID()}`, context),
+      isDraftPending: (tabId: string) => this.pendingDraftAdmissions.has(tabId),
+      beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetId: string, contextSwitching = false) => {
+        signal?.throwIfAborted();
+        const requestId = ++this.navigationRequest;
+        this.pendingNavigation = Object.freeze({ kind, targetId, requestId, contextSwitching: contextSwitching || kind !== "thread" });
+        this.publish();
+        return requestId;
+      },
+      prepareThreadReveal: (request: number) => {
+        if (!isCurrent(request)) return false;
+        this.pendingNavigation = this.pendingNavigation && Object.freeze({ ...this.pendingNavigation, contentReady: true });
+        return true;
+      },
+      finishViewSwitch: (request: number) => {
+        if (!isCurrent(request)) return false;
+        this.pendingNavigation = undefined; this.publish(); return true;
+      },
+      cancelViewSwitch: () => { this.navigationRequest++; this.pendingNavigation = undefined; this.publish(); },
+      onError: (error: Error): never => { throw error; },
+    };
+    const threads = createThreadActivationActions({ ...common,
+      getActiveThreadID: () => activeThreadIDForState(this.state),
+      getSidebarThreads: () => this.state.threads,
+      getSidebarWorkspaceThreadsByWorkspaceID: () => ({}),
+      getRunningThreadIDs: () => new Set(this.state.threads.filter(isThreadRunning).map(thread => thread.id)),
+      isCurrentViewSwitchRequest: isCurrent,
+    });
+    const tabs = createSessionTabActions({ ...common, selectThread: threads.selectThread, selectContextThread: threads.selectContextThread });
+    const workspaces = createWorkspaceRuntimeActions({ ...common,
+      closeWorkspaceMenus: () => {},
+      confirmRemoval: async () => true,
+      restoreLoadedRuntimeComposerDraft: (loaded: Partial<AppState>, carry?: ComposerDraftState) => {
+        if (carry) { restoredDraft = carry; return; }
+        const next = withLoadedRuntimeSessionTab(this.state, loaded);
+        const tab = activeSessionTab(next);
+        restoredDraft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
+      },
+    });
+    return { threads, tabs, workspaces };
+  }
+
   private async selectTab(tab: SessionTab, signal?: AbortSignal): Promise<void> {
     const request = ++this.navigationRequest;
     const sourceContext = this.state.activeContext;
@@ -282,6 +358,50 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
     switch (action) {
+      case "workspace.retarget-draft": {
+        const { workspaceId } = input as ApplicationActionMapV1["workspace.retarget-draft"]["input"];
+        const { workspaces } = this.navigationActions(signal);
+        if (workspaceId) await workspaces.selectWorkspaceForNewThread(workspaceId);
+        else await workspaces.useNoProject(false);
+        return;
+      }
+      case "workspace.start-draft": {
+        const { workspaceId } = input as ApplicationActionMapV1["workspace.start-draft"]["input"];
+        const { workspaces } = this.navigationActions(signal);
+        const activated = await (workspaceId ? workspaces.startNewThreadInWorkspace(workspaceId) : workspaces.useNoProject(true));
+        return { activated, tabId: activated ? this.state.activeSessionTabID : undefined };
+      }
+      case "workspace.create": {
+        const { kind } = input as ApplicationActionMapV1["workspace.create"]["input"];
+        const { workspaces } = this.navigationActions(signal);
+        await (kind === "blank" ? workspaces.createBlankProject() : workspaces.chooseProjectFolder()); return;
+      }
+      case "workspace.remove": {
+        const { workspaceId } = input as ApplicationActionMapV1["workspace.remove"]["input"];
+        await this.navigationActions(signal).workspaces.removeProject(workspaceId); return;
+      }
+      case "workspace.relocate": {
+        const { workspaceId } = input as ApplicationActionMapV1["workspace.relocate"]["input"];
+        await this.navigationActions(signal).workspaces.relocateProject(workspaceId); return;
+      }
+      case "thread.activate": {
+        const { threadId, workspaceId } = input as ApplicationActionMapV1["thread.activate"]["input"];
+        const { threads } = this.navigationActions(signal);
+        await (workspaceId ? threads.selectWorkspaceThread(workspaceId, threadId) : threads.activateThread(threadId)); return;
+      }
+      case "draft.start": {
+        await this.navigationActions(signal).tabs.startNewThread();
+        return { tabId: this.state.activeSessionTabID };
+      }
+      case "tab.pop-out": {
+        const { tabId } = input as ApplicationActionMapV1["tab.pop-out"]["input"];
+        await this.navigationActions(signal).tabs.popOutSessionTab(tabId); return;
+      }
+      case "navigation.reveal-complete": {
+        const { requestId } = input as ApplicationActionMapV1["navigation.reveal-complete"]["input"];
+        if (requestId === this.navigationRequest) { this.pendingNavigation = undefined; this.publish(); }
+        return;
+      }
       case "composer.attach": {
         const { files } = input as ApplicationActionMapV1["composer.attach"]["input"];
         return Object.freeze({ attachments: this.draftResources.attach(files) });
@@ -431,11 +551,15 @@ export class ApplicationController implements ApplicationServiceV1 {
       }
       case "composer.set-draft": this.setDraft((input as ApplicationActionMapV1["composer.set-draft"]["input"]).text); return;
       case "composer.submit": {
-        if (this.pendingNavigation) throw new Error("Wait for navigation to finish before submitting");
+        if (this.pendingNavigation && !this.pendingNavigation.contentReady) throw new Error("Wait for navigation to finish before submitting");
         if (this.submitting) throw new Error("A composer submission is already pending");
-        const text = this.draft;
+        const draft = this.composerDraftForPane(this.state.secondaryThread ? this.state.activePane : "primary");
+        // Standalone shells can submit before their first tab has been created.
+        draft.prompt = this.draft;
+        const message = createComposerMessage(draft.prompt, draft.images, draft.files, undefined, draft.selections);
+        if (!message) throw new Error("The composer draft is empty");
+        const text = message.text;
         let draftRevision = this.draftRevision;
-        if (!text.trim()) throw new Error("The composer draft is empty");
         const mode = (input as ApplicationActionMapV1["composer.submit"]["input"]).mode ?? "send";
         let thread = activeThreadForState(this.state);
         if (thread?.read_only) throw new Error("The selected thread is read-only");
@@ -444,6 +568,9 @@ export class ApplicationController implements ApplicationServiceV1 {
         if (!thread && sourceTabId) this.pendingDraftAdmissions.add(sourceTabId);
         this.submitting = true; this.publish();
         try {
+          const images = message.images.length ? inputImagesFromComposer(await awaitComposerImages(message.images)) : undefined;
+          const files = message.files.length ? inputFilesFromComposer(await awaitComposerFiles(message.files)) : undefined;
+          signal?.throwIfAborted();
           if (!thread) {
             const created = await window.wuu.startThread(undefined, context);
             signal?.throwIfAborted();
@@ -463,19 +590,25 @@ export class ApplicationController implements ApplicationServiceV1 {
           }
           const clientId = crypto.randomUUID();
           signal?.throwIfAborted();
-          if (mode === "queue") await window.wuu.queueTurn(thread.id, text, undefined, clientId, undefined, thread.permission_mode, undefined, undefined, context);
+          if (mode === "queue") await window.wuu.queueTurn(thread.id, text, images, clientId, files, thread.permission_mode, undefined, message.contentParts, context);
           else if (mode === "steer") {
             const turn = thread.turns.findLast(turn => turn.status === "in_progress");
             if (!turn) throw new Error("There is no running turn to steer");
-            await window.wuu.steerTurn(thread.id, turn.id, text, undefined, clientId, undefined, undefined, undefined, context);
+            await window.wuu.steerTurn(thread.id, turn.id, text, images, clientId, files, undefined, message.contentParts, context);
           } else {
-            const result = await window.wuu.startTurn(thread.id, text, undefined, undefined, thread.permission_mode, undefined, undefined, context, clientId);
+            const result = await window.wuu.startTurn(thread.id, text, images, files, thread.permission_mode, undefined, message.contentParts, context, clientId);
             signal?.throwIfAborted();
             const threadId = thread.id;
             this.updateState(state => updateThreadByID(state, threadId, current => upsertTurn(current, result.turn)));
           }
           signal?.throwIfAborted();
-          if (this.draftRevision === draftRevision) this.setDraft("");
+          if (this.draftRevision === draftRevision) {
+            this.draft = "";
+            this.draftRevision++;
+            const sentThreadId = thread.id;
+            this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab =>
+              tab.kind === "thread" && tab.threadID === sentThreadId ? { ...tab, ...emptyComposerDraft() } : tab) }));
+          }
         } finally { this.pendingDraftAdmissions.delete(sourceTabId); this.submitting = false; this.publish(); }
         return;
       }

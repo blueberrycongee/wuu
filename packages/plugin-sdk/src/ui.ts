@@ -28,7 +28,7 @@ export interface ApplicationSnapshotV1 {
   readonly tabs: {
     readonly activeTabId: string;
     readonly items: readonly ApplicationTabV1[];
-    readonly pending?: { readonly kind: "tab" | "workspace" | "thread"; readonly targetId: string; readonly contextSwitching?: boolean };
+    readonly pending?: { readonly kind: "tab" | "workspace" | "thread" | "runtime"; readonly targetId: string; readonly requestId?: number; readonly contextSwitching?: boolean; readonly contentReady?: boolean };
   };
   readonly conversation: {
     readonly threadId?: string;
@@ -74,6 +74,16 @@ export interface ApplicationAppearanceV1 {
 
 /** Commands are scoped to the generation that captured this application handle. */
 export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1 {
+  "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
+  "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
+  "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };
+  /** Remove a workspace after the caller has confirmed the user's intent. */
+  "workspace.remove": { input: { readonly workspaceId: string }; result: void };
+  "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
+  "thread.activate": { input: { readonly threadId: string; readonly workspaceId?: string }; result: void };
+  "draft.start": { input: Record<string, never>; result: { readonly tabId: string } };
+  "tab.pop-out": { input: { readonly tabId: string }; result: void };
+  "navigation.reveal-complete": { input: { readonly requestId: number }; result: void };
   "tab.select": { input: { readonly tabId: string }; result: void };
   "tab.close": { input: { readonly tabId: string }; result: void };
   "tab.reorder": { input: { readonly tabId: string; readonly beforeTabId: string }; result: void };

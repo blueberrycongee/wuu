@@ -35,6 +35,7 @@ type SetAppState = (update: SetStateAction<AppState>) => void;
 type SidebarWorkspaceThreads = Record<string, Thread[] | undefined>;
 
 export type ThreadActivationActionsDeps = {
+  onError?: (error: Error) => never;
   getAppState: () => AppState;
   setAppState: SetAppState;
   getActiveThreadID: () => string | undefined;
@@ -78,6 +79,7 @@ export function createThreadActivationActions(
     deps.selectRuntimeContext ?? defaultSelectRuntimeContext;
 
   function setStatus(status: string): void {
+    if (deps.onError) deps.onError(new Error(status));
     showErrorToast(status);
   }
 
