@@ -35,6 +35,7 @@ type Operation = {
   message: QueuedComposerMessage;
   source: Exclude<SessionTab, { kind: "skills" }>;
   context: RuntimeContext;
+  capturedContext?: boolean;
   thread?: Thread;
   optimistic: Turn;
   previousTurnIDs: ReadonlySet<string>;
@@ -177,7 +178,7 @@ export class ApplicationSubmission {
         this.options.pending.removePendingComposerMessageByID(pendingKey, operation.message.id, "queue");
         return !exists;
       }
-      operation.context = resolveThreadRuntimeContext(operation.thread, this.options.getState().projects);
+      if (!operation.capturedContext) operation.context = resolveThreadRuntimeContext(operation.thread, this.options.getState().projects);
       return await this.deliverPending(operation, "queue", () => lane.stopVersion !== version || Boolean(admission?.stopped) || operation.stopped);
     } finally { release(); if (lane.tail === tail) { this.lanes.delete(key); if (admission?.thread) this.lanes.delete(admission.thread.id); } }
   }
@@ -472,12 +473,12 @@ export class ApplicationSubmission {
     } finally { release(); this.finishOperation(operation); }
   }
   private submitInternal(message: QueuedComposerMessage, thread: Thread, kind: "send" | "steer" | "background", prepareThread?: () => Promise<Thread>, context?: RuntimeContext): Promise<boolean> {
-    if (this.disposed || thread.read_only || !threadForTab(this.options.getState(), thread.id)) return Promise.resolve(false);
+    if (this.disposed || thread.read_only || kind !== "background" && !threadForTab(this.options.getState(), thread.id)) return Promise.resolve(false);
     const source = this.options.getState().sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id)
       ?? createThreadSessionTab(thread, context ?? resolveThreadRuntimeContext(thread, this.options.getState().projects));
     if (source.kind === "skills") return Promise.resolve(false);
     const operation = this.createOperation(message, source, thread);
-    if (context) operation.context = context;
+    if (context) { operation.context = { ...context }; operation.capturedContext = true; }
     return this.runInternal(operation, kind, prepareThread);
   }
   submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {

@@ -144,4 +144,21 @@ describe("application submission ownership",()=>{
     expect(window.wuu.startTurn).toHaveBeenCalledTimes(1);
   });
 
+  it("finishes an admitted background conversation after navigation removes it from loaded state",async()=>{
+    window.wuu={startTurn:vi.fn().mockResolvedValue({turn:{id:"background",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
+    const f=fixture();const current=f.getState();const elsewhere={kind:"no_project" as const,cwd:"/elsewhere"};
+    f.setState({...current,activeContext:elsewhere,sessionTabs:current.sessionTabs.map(tab=>({...tab,context:elsewhere}))});
+    expect(await f.submission.submitBackground({id:"captured",text:"page context",images:[],files:[]},thread(),context)).toBe(true);
+    expect(vi.mocked(window.wuu.startTurn).mock.calls[0][7]).toEqual(context);
+    expect(f.getState().activeContext).toEqual(elsewhere);expect(f.getState().activeSessionTabID).toBe("draft:a");
+    expect(f.getState().threads).toEqual([]);expect(f.getDraft("draft:a").prompt).toBe("hello");
+  });
+  it("keeps the explicitly captured background project context when queuing after navigation",async()=>{
+    const target={...thread(),status:"in_progress" as const,turns:[{id:"running",status:"in_progress" as const,items_view:"full" as const,items:[]}]};
+    window.wuu={queueTurn:vi.fn().mockResolvedValue({queued:{id:"queued"}})} as unknown as WuuDesktopApi;
+    const f=fixture(target);const captured={kind:"project" as const,project_id:"source-project",cwd:context.cwd};
+    expect(await f.submission.submitBackground({id:"queued",text:"captured",images:[],files:[]},target,captured)).toBe(true);
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][8]).toEqual(captured);
+  });
+
 });
