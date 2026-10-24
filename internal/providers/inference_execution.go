@@ -355,10 +355,33 @@ func ensureInferenceExecution(ctx context.Context, req ChatRequest, fallbackKind
 }
 
 // EnsureInferenceExecutionContext attaches the process-local execution
-// identity. Durable request hashing is intentionally deferred until an attempt
-// is prepared, after provider-specific request normalization has completed.
+// identity and registers it with the current receipt scope. An ended ticket
+// rejects registration before attempt preparation. Durable request hashing is
+// deferred until provider-specific request normalization has completed.
 func EnsureInferenceExecutionContext(ctx context.Context, req ChatRequest, fallbackKind InferenceOperationKind, fallbackProfile InferenceWorkloadProfile) (ChatRequest, error) {
-	return ensureInferenceExecution(ctx, req, fallbackKind, fallbackProfile)
+	req, err := ensureInferenceExecution(ctx, req, fallbackKind, fallbackProfile)
+	if err != nil || ctx == nil {
+		return req, err
+	}
+	ticket, ok := ctx.Value(modelReceiptContextKey{}).(*modelReceiptTicket)
+	if !ok {
+		return req, nil
+	}
+	scope := ticket.scope
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if ticket.ended || scope.aborted {
+		return req, ErrModelReceiptScopeClosed
+	}
+	// Ensure is repeated by wrappers and attempt preparation. Keep the actual
+	// execution once, including identities supplied before entering this scope.
+	for _, execution := range scope.executions {
+		if execution == req.Execution {
+			return req, nil
+		}
+	}
+	scope.executions = append(scope.executions, req.Execution)
+	return req, nil
 }
 
 func bindInferenceJournalContext(ctx context.Context, req ChatRequest) (ChatRequest, error) {

@@ -8,8 +8,8 @@ import (
 
 var ErrModelReceiptScopeClosed = errors.New("model receipt parent has completed")
 
-// ModelReceiptScope joins the producers and observers admitted by one model
-// invocation. Its owner controls cancellation, deadlines and authority release.
+// ModelReceiptScope joins an owner's model producers and receipt observers.
+// Its owner controls cancellation, deadlines and authority release.
 type ModelReceiptScope struct {
 	mu      sync.Mutex
 	root    *modelReceiptTicket
@@ -17,6 +17,8 @@ type ModelReceiptScope struct {
 	done    chan struct{}
 	err     error
 	aborted bool
+
+	executions []*InferenceExecution
 
 	observationCtx  context.Context
 	stopObservation context.CancelCauseFunc
@@ -132,4 +134,26 @@ func (s *ModelReceiptScope) Wait(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return errors.Join(s.err, waitErr)
+}
+
+// CheckpointSubmissions waits for receipt quiescence and persists each actual
+// execution's physical receipts in registration order. The owner must Seal
+// first and supply its shared cleanup context; this method owns no cancellation
+// policy. A required failure remains latched on its execution, while other
+// executions can still checkpoint within the remaining context budget.
+func (s *ModelReceiptScope) CheckpointSubmissions(ctx context.Context) error {
+	if err := s.Wait(ctx); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	executions := append([]*InferenceExecution(nil), s.executions...)
+	s.mu.Unlock()
+	var checkpointErr error
+	for _, execution := range executions {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(checkpointErr, err)
+		}
+		checkpointErr = errors.Join(checkpointErr, execution.CheckpointSubmissions(ctx))
+	}
+	return errors.Join(checkpointErr, ctx.Err())
 }
