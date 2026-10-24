@@ -1334,7 +1334,7 @@ func (s *Session) PluginExecutionSnapshots() []PluginExecutionSnapshot {
 }
 
 // snapshotMutableExecutionPackages detaches executable and lazy declarative paths
-// from the replaceable installed/development catalog. Callers serialize the copy with
+// from the replaceable installed/development/project catalog. Callers serialize the copy with
 // publication; the returned roots belong to the generation, not discovery.
 func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Plugin, []string, error) {
 	result := append([]pluginpkg.Plugin(nil), active...)
@@ -1346,7 +1346,7 @@ func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Pl
 		return nil, nil, err
 	}
 	for i, item := range active {
-		if item.Source != "dev" && item.Source != "user" {
+		if item.Source != "dev" && item.Source != "user" && item.Source != "project" {
 			continue
 		}
 		root, err := snapshotPluginPackage(item.Root)

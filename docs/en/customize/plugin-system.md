@@ -121,6 +121,8 @@ The selected package must already be enabled and trusted and must declare the re
 
 Composition versions 1 and 2 are independent of product CalVer and service versions. Version 1 retains inline profiles and module/service choices. Bundles and patches require version 2, so older hosts reject the configuration instead of ignoring overrides. To downgrade, first replace the layered configuration with its complete resolved `modules` and `services` using version 1; merely changing the version number is unsafe. Existing configurations without this section retain unique-provider discovery. A configuration that previously depended on first-registration precedence must add explicit selections. Normal startup ignores project overrides of `composition`, including case variants, because bindings can select execution and credential policies. Apply a changed configuration at generation preparation; retained executions keep their existing registry. Restoring a previous selection creates a new generation and does not undo completed effects or migrate provider data.
 
+Developers and running agents can use the public [`host.composition` service](plugin-compositions.md) to try an independent runtime, explicitly select it for a logical agent, and undo selection without publishing a global generation.
+
 A named runtime composition can also select the complete module set. For example, after installing and enabling both [service composition example packages](../../../examples/plugins/service-composition/README.md):
 
 ```json

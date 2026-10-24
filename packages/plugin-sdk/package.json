@@ -31,6 +31,8 @@
     "dist/process.d.ts",
     "dist/driver.js",
     "dist/driver.d.ts",
+    "dist/composition.js",
+    "dist/composition.d.ts",
     "dist/persistence.js",
     "dist/persistence.d.ts",
     "dist/providers.js",

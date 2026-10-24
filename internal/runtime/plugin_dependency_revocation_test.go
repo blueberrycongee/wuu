@@ -36,9 +36,20 @@ func TestDependencyRevocationReachesPinnedSkillCatalogs(t *testing.T) {
 	provider := testRuntimePlugin("provider")
 	bridge := testRuntimePlugin("skill-bridge")
 	bridge.Runtime, bridge.Source, bridge.Root = nil, "project", t.TempDir()
+	bridge.SchemaVersion = 1
 	bridge.Requires = []string{"provider"}
 	bridge.Hooks = map[string][]config.HookEntry{string(hooks.PreToolUse): {{Type: "command", Command: "must-not-run"}}}
 	writeSessionTestFile(t, filepath.Join(bridge.Root, "skills", "revocable.md"), "---\nname: revocable\ndescription: Revocable plugin guidance.\n---\nPlugin-owned body.\n")
+	manifest, err := json.Marshal(bridge.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(bridge.Root, "plugin.json")
+	writeSessionTestFile(t, manifestPath, string(manifest))
+	bridge, err = pluginpkg.LoadManifestWithOptions(manifestPath, pluginpkg.LoadOptions{Source: bridge.Source, Official: bridge.Official})
+	if err != nil {
+		t.Fatal(err)
+	}
 	consumer := testRuntimePlugin("consumer")
 	consumer.Requires = []string{"skill-bridge"}
 	packages := []pluginpkg.Plugin{provider, bridge, consumer}

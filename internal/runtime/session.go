@@ -74,7 +74,11 @@ type Options struct {
 	// 对话 scratch dir, agent homes), which stay keyed by their path.
 	WorkspaceID string
 	HomeDir     string
-	ConfigPath  string
+	// WuuHome selects an explicit state namespace without changing process environment.
+	WuuHome string
+	// DiscoveredPlugins supplies a captured catalog. A non-nil empty slice disables discovery.
+	DiscoveredPlugins *[]pluginpkg.Plugin
+	ConfigPath        string
 	// ConfigLoadMode records the source model that produced Config so later
 	// app-server reloads use the same inputs. The zero value is normal user
 	// config plus restricted project overlays.
@@ -423,9 +427,12 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	factories := withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, rootDir, cfg, configLoadMode)
 
-	wuuHome, err := statepath.Home(opts.HomeDir)
-	if err != nil {
-		return nil, fmt.Errorf("resolve wuu home: %w", err)
+	wuuHome := opts.WuuHome
+	if wuuHome == "" {
+		wuuHome, err = statepath.Home(opts.HomeDir)
+		if err != nil {
+			return nil, fmt.Errorf("resolve wuu home: %w", err)
+		}
 	}
 	startupPluginLease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(wuuHome)
 	if err != nil {
@@ -455,7 +462,12 @@ func NewSession(opts Options) (*Session, error) {
 		return nil, errors.New("plugin catalog is being published by another process")
 	}
 	defer catalogLease.Release()
-	discoveredPlugins := discoverPlugins(rootDir, wuuHome)
+	var discoveredPlugins []pluginpkg.Plugin
+	if opts.DiscoveredPlugins != nil {
+		discoveredPlugins = append([]pluginpkg.Plugin(nil), (*opts.DiscoveredPlugins)...)
+	} else {
+		discoveredPlugins = discoverPlugins(rootDir, wuuHome)
+	}
 	effectiveConfig := cfg
 	effectiveConfig.Composition = productComposition(cfg.Composition, opts.DesktopExecutionDefaults, activatedPlugins(cfg, discoveredPlugins), factories)
 	safeMode := opts.SafeMode || strings.TrimSpace(os.Getenv("WUU_SAFE_MODE")) == "1"
@@ -2229,22 +2241,28 @@ func toolkitContextBlockProvider(toolkit *tools.Toolkit) func() []wuucontext.Blo
 	return toolkit.ContextBlocks
 }
 
+var catwalkSetup sync.Once
+
 func setupCatwalk(cfg config.Config) {
-	catwalkCfg := providers.CatwalkSyncConfig{
-		CachePath: providers.DefaultCatwalkCachePath(),
-	}
-	if cfg.Agent.CatwalkAutoupdate {
-		catwalkCfg.Client = catwalk.NewWithURL(providers.DefaultCatwalkURL)
-	}
-	catwalkSync := providers.NewCatwalkSync(catwalkCfg)
-	providers.SetCatwalkSync(catwalkSync)
-	if cfg.Agent.CatwalkAutoupdate {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			_ = providers.RefreshCatwalkIndex(ctx)
-		}()
-	}
+	// The model catalog is process-wide. Child compositions must not replace
+	// its source or start refresh work owned by another session's configuration.
+	catwalkSetup.Do(func() {
+		catwalkCfg := providers.CatwalkSyncConfig{
+			CachePath: providers.DefaultCatwalkCachePath(),
+		}
+		if cfg.Agent.CatwalkAutoupdate {
+			catwalkCfg.Client = catwalk.NewWithURL(providers.DefaultCatwalkURL)
+		}
+		catwalkSync := providers.NewCatwalkSync(catwalkCfg)
+		providers.SetCatwalkSync(catwalkSync)
+		if cfg.Agent.CatwalkAutoupdate {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				_ = providers.RefreshCatwalkIndex(ctx)
+			}()
+		}
+	})
 }
 
 // bindPluginCompactionHooks keeps compaction on the same generation as the

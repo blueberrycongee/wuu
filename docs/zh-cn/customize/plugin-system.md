@@ -115,6 +115,8 @@ Generation 拥有的 `host.background` 任务与会话工作者的生命周期�
 
 组合版本 1 和 2 与产品 CalVer、服务版本相互独立。版本 1 保留内联 profile 和模块／服务选择；bundle 与补丁要求版本 2，旧宿主会拒绝配置，不会忽略覆盖。降级前须将分层配置替换为解析后的完整 `modules` 和 `services`，并使用版本 1；仅修改版本号是不安全的。未添加此配置的已有用户继续使用唯一提供者发现；以前依赖先注册者胜出的配置须补充显式选择。由于绑定能选择执行和凭据策略，正常启动忽略项目中的 `composition` 覆盖，包括大小写变体。配置变更在 generation 准备时应用，仍在执行的工作保留原注册表。恢复之前的选择会创建新的 generation，不会撤销已完成效果，也不会自动迁移提供者数据。
 
+开发者和运行中的 agent 可以通过公开的 [`host.composition` 服务](plugin-compositions.md)试跑独立运行时，显式为逻辑 agent 选择组合并撤销选择，无需发布全局 generation。
+
 具名运行时组合也可以选择完整的模块集合。例如，安装并启用两个[服务组合示例包](../../../examples/plugins/service-composition/README.md)后：
 
 ```json

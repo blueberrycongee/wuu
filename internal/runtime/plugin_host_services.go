@@ -24,24 +24,25 @@ import (
 // never accepts a caller-supplied plugin ID or absolute filesystem path:
 // ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
-	mu             sync.RWMutex
-	active         bool
-	open           bool
-	pluginID       string
-	subjectID      string
-	fingerprint    string
-	projectRoot    string
-	wuuHome        string
-	settings       map[string]pluginpkg.SettingDefinition
-	sessions       *session.Store
-	credentials    credentialstore.Store
-	settingsClient *pluginsettings.Client
-	turnRouter     *PluginSessionRouter
-	fileLocks      map[string]func()
-	lockContext    context.Context
-	lockCancel     context.CancelFunc
-	processMu      sync.Mutex
-	processes      map[string]*pluginProcess
+	mu                sync.RWMutex
+	active            bool
+	open              bool
+	pluginID          string
+	subjectID         string
+	fingerprint       string
+	projectRoot       string
+	wuuHome           string
+	settings          map[string]pluginpkg.SettingDefinition
+	sessions          *session.Store
+	credentials       credentialstore.Store
+	settingsClient    *pluginsettings.Client
+	turnRouter        *PluginSessionRouter
+	fileLocks         map[string]func()
+	lockContext       context.Context
+	lockCancel        context.CancelFunc
+	processMu         sync.Mutex
+	processes         map[string]*pluginProcess
+	closeCompositions func() error
 }
 
 func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, turnRouter *PluginSessionRouter) *pluginHostServices {
@@ -69,7 +70,14 @@ func (s *pluginHostServices) close() {
 	s.active = false
 	locks := s.fileLocks
 	s.fileLocks = make(map[string]func())
+	closeCompositions := s.closeCompositions
+	s.closeCompositions = nil
 	s.mu.Unlock()
+	if closeCompositions != nil {
+		if err := closeCompositions(); err != nil {
+			providers.DebugLogf("close plugin compositions: %v", err)
+		}
+	}
 	for _, release := range locks {
 		release()
 	}
@@ -409,6 +417,7 @@ type kernelHostServices struct {
 	state             *runtimeState
 	selectedServices  *runtimeServices
 	providers         map[string]nativeServiceRegistration
+	compositions      *compositionService
 }
 
 type nativeServiceRegistration struct {
@@ -418,6 +427,7 @@ type nativeServiceRegistration struct {
 
 func newKernelHostServices(generation func() uint64, executions executionUpdateRecorder) *kernelHostServices {
 	k := &kernelHostServices{services: make(map[string]*pluginHostServices), generation: generation, executions: executions, driverGateways: newDriverGatewayTable(), providers: make(map[string]nativeServiceRegistration)}
+	k.compositions = newCompositionService(k)
 	for _, registration := range k.serviceRegistrations() {
 		k.providers[registration.Descriptor.Name] = registration
 	}
@@ -445,6 +455,7 @@ func (k *kernelHostServices) bindUserQuestions(broker *pluginhost.UserQuestionBr
 }
 
 func (k *kernelHostServices) add(pluginID string, services *pluginHostServices) {
+	services.closeCompositions = func() error { return k.compositions.stopCaller(pluginID) }
 	k.mu.Lock()
 	k.services[pluginID] = services
 	k.mu.Unlock()
@@ -518,6 +529,7 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 		})
 	}
 	registrations = append(registrations,
+		nativeServiceRegistration{Descriptor: pluginhost.CompositionDescriptor(), Invoker: k.compositions},
 		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelInvokeDescriptor(),
 			Invoker:    &modelInvokeInvoker{parent: k, store: newModelInvocationStore()},
@@ -609,10 +621,11 @@ func (k *kernelHostServices) Close(context.Context) error {
 		services = append(services, service)
 	}
 	k.mu.Unlock()
+	err := k.compositions.close()
 	for _, service := range services {
 		service.close()
 	}
-	return nil
+	return err
 }
 
 type kernelServiceInvoker struct {
