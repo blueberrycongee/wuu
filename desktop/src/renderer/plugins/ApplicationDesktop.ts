@@ -20,7 +20,7 @@ export class ApplicationDesktop {
   private feedKey?: string;
   private readonly popOut: ApplicationDesktopControlsV1["popOut"];
 
-  constructor(private readonly host: {
+  constructor(private readonly host?: {
     getPetState(): { ready: boolean; feed: CodexPetFeed };
     jumpToThread(threadId: string): Promise<void>;
     submitPetText(text: string, target: ApplicationDesktopPetTargetV1): Promise<boolean>;
@@ -105,7 +105,7 @@ export class ApplicationDesktop {
 
   /** Called by the canonical host owner after state changes, never by a selected shell. */
   syncPet(): void {
-    if (this.disposed) return;
+    if (this.disposed || !this.host) return;
     const state = this.host.getPetState();
     if (state.ready && !this.petOff && this.available("onCodexPetCommand") && this.available("resolveCodexPetCommand")) {
       const epoch = ++this.petEpoch;
@@ -115,12 +115,12 @@ export class ApplicationDesktop {
   }
   private petCommand(command: CodexPetCommand): void {
     const captured = structuredClone(command);
-    if (captured.kind === "jump") { void this.host.jumpToThread(captured.thread_id).catch(() => {}); return; }
+    if (captured.kind === "jump") { void this.host!.jumpToThread(captured.thread_id).catch(() => {}); return; }
     if (this.petPending.has(captured.id)) return;
     this.petPending.add(captured.id);
     void Promise.resolve().then(() => {
       if (!this.petPending.has(captured.id)) return false;
-      return this.host.submitPetText(captured.text, captured.target);
+      return this.host!.submitPetText(captured.text, captured.target);
     }).catch(() => false).then(ok => this.settlePet(captured.id, ok));
   }
   private settlePet(id: string, ok: boolean): void {
@@ -148,6 +148,6 @@ export class ApplicationDesktop {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true; for (const retire of [...this.scopes]) retire();
-    this.stopPet(); this.publishFeed({ hints: [] });
+    if (this.host) { this.stopPet(); this.publishFeed({ hints: [] }); }
   }
 }

@@ -18,6 +18,14 @@ function setup(api: object = {}) {
 const flush = async () => { for (let index = 0; index < 12; index++) await Promise.resolve(); };
 
 describe("ApplicationDesktop generation and host lifecycle", () => {
+  it("owns standalone window controls without attaching or clearing the main-window pet feed", async () => {
+    const feed = vi.fn(async () => {}); const pet = vi.fn(); const close = vi.fn(async () => {});
+    window.wuu = { hostKind: "desktop", updateCodexPetFeed: feed, onCodexPetCommand: pet, windowClose: close } as unknown as typeof window.wuu;
+    const desktop = new ApplicationDesktop();
+    const scope = desktop.createScope(new AbortController().signal);
+    await scope.close!(); desktop.syncPet(); desktop.dispose(); await flush();
+    expect(close).toHaveBeenCalledOnce(); expect(feed).not.toHaveBeenCalled(); expect(pet).not.toHaveBeenCalled();
+  });
   it("preserves absent and explicitly unsupported capabilities without invoking them", async () => {
     const notification = vi.fn();
     const { desktop } = setup({ showSystemNotification: notification, unsupportedMethods: ["showSystemNotification"], hostKind: "web" });
