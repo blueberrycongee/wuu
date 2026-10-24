@@ -1,14 +1,13 @@
+import { useSettingsControls } from "../SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { SettingsRow } from "../SettingsRow";
-import { updateBackground } from "./preferences";
-import { processBackground } from "./image";
 import { useBackground } from "./useBackground";
-import { selectShellSkin } from "./ShellSkin";
 
 export function BackgroundSettings(): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
-  const { preferences, error: readError, loading } = useBackground();
+  const { preferences, error: readError, loading } = useBackground(controls);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<"image" | "save" | null>(null);
   const importController = useRef<AbortController | null>(null);
@@ -26,15 +25,15 @@ export function BackgroundSettings(): JSX.Element {
     setBusy(true); setError(null);
     let stage: "image" | "save" = "image";
     try {
-      const image = await processBackground(file, "import", signal);
+      const image = await controls.processBackground(file, "import", signal);
       if (signal.aborted) return;
       stage = "save";
-      await updateBackground(current => {
+      await controls.updateBackground(current => {
         // Opening IndexedDB can outlive this page; recheck before changing storage.
         if (signal.aborted) return current;
         return { image, imageID: crypto.randomUUID(), name: file.name };
       });
-      if (!signal.aborted) selectShellSkin("custom");
+      if (!signal.aborted) controls.selectShellSkin("custom");
     } catch {
       if (!signal.aborted) setError(stage);
     } finally {
@@ -51,7 +50,7 @@ export function BackgroundSettings(): JSX.Element {
         <input type="file" accept="image/png,image/jpeg,image/webp" aria-label={t("settings.backgroundChoose")} disabled={busy || loading}
           onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importImage(file); }} />
       </label>
-      {preferences && <button type="button" className="settings-button" disabled={busy} onClick={() => void save(() => updateBackground(() => null))}>{t("settings.backgroundRemove")}</button>}
+      {preferences && <button type="button" className="settings-button" disabled={busy} onClick={() => void save(() => controls.updateBackground(() => null))}>{t("settings.backgroundRemove")}</button>}
     </SettingsRow>
     {(error || readError) && <p role="alert">{t(error === "image" ? "settings.backgroundInvalid" : "settings.saveFailed")}</p>}
   </>;

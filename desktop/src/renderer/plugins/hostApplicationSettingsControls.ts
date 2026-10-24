@@ -1,3 +1,6 @@
+import { readBackground, updateBackground, observeBackground } from "../background/preferences";
+import { processBackground } from "../background/image";
+import { subscribeShellSkins, getShellSkins, selectShellSkin, loadSkinImage } from "../background/ShellSkin";
 import { connectionDisplayPreferences, connectionDisplaySnapshot, subscribeConnectionDisplay } from "../ConnectionDisplayPreferences";
 import { readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory } from "../DraftEngineMemory";
 import { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } from "../AppearancePreferences";
@@ -20,6 +23,8 @@ export function createApplicationSettingsControls(options: {
   host?: PluginHost;
   controller?: WorkbenchController;
 } = {}): ApplicationSettingsControlsV1 {
+  let skinSource: ReturnType<typeof getShellSkins> | undefined;
+  let skinView: ReturnType<ApplicationSettingsControlsV1["getShellSkins"]>;
   const host = () => options.host ?? desktopPluginHost;
   const diagnostics = new WeakMap<readonly unknown[], readonly SettingsControlsDiagnosticV1[]>();
   return {
@@ -56,6 +61,16 @@ export function createApplicationSettingsControls(options: {
     },
     connectionDisplay: Object.freeze({ ...connectionDisplayPreferences, subscribe: subscribeConnectionDisplay, getSnapshot: connectionDisplaySnapshot }),
     readDraftEngineMemory, writeDraftEngineMemory, clearDraftEngineMemory,
+    readBackground, updateBackground, observeBackground, processBackground,
+    subscribeShellSkins, selectShellSkin, loadSkinImage,
+    getShellSkins: () => {
+      const source = getShellSkins();
+      if (source !== skinSource) {
+        skinSource = source;
+        skinView = Object.freeze({ selected: source.selected, skins: Object.freeze(source.skins.map(skin => Object.freeze({ ...skin, light: Object.freeze({ ...skin.light }), dark: Object.freeze({ ...skin.dark }) }))) });
+      }
+      return skinView;
+    },
     initialMessageFlowFontSize: window.wuu?.initialMessageFlowFontSize ?? MESSAGE_FLOW_FONT_SIZE_RANGE.default,
     initialThemePreference: window.wuu?.initialThemePreference ?? "system",
     appearanceDefaults: Object.freeze({ ...appearanceDefaults }),

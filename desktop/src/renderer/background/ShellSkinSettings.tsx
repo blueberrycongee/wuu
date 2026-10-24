@@ -1,18 +1,18 @@
+import { useSettingsControls } from "../SettingsControlsContext";
 import { useEffect, useState, type CSSProperties } from "react";
-import { currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { useI18n } from "../i18n";
 import { SettingsGroup } from "../SettingsSection";
 import { BackgroundSettings } from "./BackgroundSettings";
 import { useBackground } from "./useBackground";
-import { processBackground } from "./image";
-import { selectShellSkin, useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
+import { useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
 
 function SkinCard({ skin, mode, selected, choose, title, image }: {
   skin?: AvailableShellSkin; mode: "light" | "dark"; selected: boolean; choose: () => void;
   title: string; image?: string;
 }): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
-  const loaded = useSkinImage(skin, mode);
+  const loaded = useSkinImage(skin, mode, controls.loadSkinImage);
   const variant = skin?.[mode];
   const url = loaded.url || image;
   const style: CSSProperties = {
@@ -32,29 +32,30 @@ function SkinCard({ skin, mode, selected, choose, title, image }: {
 }
 
 export function ShellSkinSettings(): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
-  const { skins, selected } = useShellSkins();
-  const { preferences } = useBackground();
-  const [mode, setMode] = useState(currentAppliedTheme);
+  const { skins, selected } = useShellSkins(controls);
+  const { preferences } = useBackground(controls);
+  const [mode, setMode] = useState(controls.currentAppliedTheme);
   const [image, setImage] = useState("");
   const [error, setError] = useState(false);
   useEffect(() => {
-    setMode(currentAppliedTheme());
-    return observeAppliedTheme(setMode);
+    setMode(controls.currentAppliedTheme());
+    return controls.observeAppliedTheme(setMode);
   }, []);
   useEffect(() => {
     if (!preferences) { setImage(""); return; }
     const controller = new AbortController();
     let url = "";
     setImage("");
-    void processBackground(preferences.image, mode, controller.signal).then(blob => {
+    void controls.processBackground(preferences.image, mode, controller.signal).then(blob => {
       if (controller.signal.aborted) return;
       url = URL.createObjectURL(blob); setImage(url);
     }).catch(() => {});
     return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
   }, [preferences?.image, mode]);
   const choose = (key: string) => {
-    try { selectShellSkin(key); setError(false); } catch { setError(true); }
+    try { controls.selectShellSkin(key); setError(false); } catch { setError(true); }
   };
   const unavailable = !["default", "custom"].includes(selected) && !skins.some(skin => skin.key === selected);
   return <>

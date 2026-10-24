@@ -74,6 +74,15 @@ export interface SettingsControlsDiagnosticV1 {
 }
 /** Public settings mechanisms. Operation results are caller-owned; snapshots are immutable. */
 export interface ApplicationSettingsControlsV1 {
+  readBackground(): Promise<SettingsBackgroundV1 | null>;
+  updateBackground(update: (current: SettingsBackgroundV1 | null) => SettingsBackgroundV1 | null): Promise<void>;
+  observeBackground(listener: () => void): () => void;
+  processBackground(image: Blob, purpose: "import" | "light" | "dark", signal?: AbortSignal): Promise<Blob>;
+  subscribeShellSkins(listener: () => void): () => void;
+  getShellSkins(): { readonly skins: readonly SettingsShellSkinV1[]; readonly selected: string };
+  selectShellSkin(key: string): void;
+  loadSkinImage(input: { id: string; fingerprint: string; path: string }): Promise<string>;
+
   readonly connectionDisplay: SettingsConnectionDisplayV1;
   readDraftEngineMemory(): SettingsDraftEngineMemoryV1 | undefined;
   writeDraftEngineMemory(memory: SettingsDraftEngineMemoryV1): void;
@@ -498,4 +507,25 @@ export interface SettingsDraftEngineMemoryV1 {
   effort: string;
   speed?: string;
   model_options?: Record<string, string>;
+}
+
+export interface SettingsBackgroundV1 { image: Blob; imageID: string; name: string; }
+export interface SettingsShellSkinV1 {
+ readonly id: string;
+ readonly name: string;
+ readonly key: string;
+ readonly pluginId: string;
+ readonly fingerprint: string;
+ readonly pluginName: string;
+ readonly light: SettingsSkinVariantV1;
+ readonly dark: SettingsSkinVariantV1;
+}
+export interface SettingsSkinVariantV1 {
+ readonly background: string;
+ readonly foreground: string;
+ readonly image?: string;
+ readonly position?: "center" | "top" | "bottom" | "left" | "right";
+ readonly overlay?: string;
+ readonly hover?: string;
+ readonly active?: string;
 }

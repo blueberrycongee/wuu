@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "../SettingsControlsContext";
+import { createApplicationSettingsControls } from "../plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -36,10 +38,10 @@ afterEach(() => {
 });
 
 async function mount() {
-  await act(async () => root.render(<BackgroundSettings />));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<BackgroundSettings />}</SettingsControlsProvider>));
 }
 async function remount() {
-  await act(async () => root.render(null));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{null}</SettingsControlsProvider>));
   await mount();
 }
 async function chooseImage() {
