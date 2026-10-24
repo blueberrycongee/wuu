@@ -15,6 +15,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     tabs: { navigationRevision: 0, activeTabId: 'thread:research-1', activePane: 'primary', primaryThreadId: 'research-1', canSubmit: true, items: [{ id: 'thread:research-1', kind: 'thread',
       title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
       threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
+    conversationDetails: [],
     conversationWorkspace: { activePane: "primary", threads: [] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{
       id: 'turn-1', status: 'completed', items: [

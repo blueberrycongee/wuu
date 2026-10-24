@@ -311,3 +311,96 @@ type ConversationParticipantSummaryData = {
     readonly avatar_image?: string;
     readonly busy?: boolean;
 };
+
+type ConversationThreadContextCompositionResultData = {
+    readonly thread_id: string;
+    readonly available: boolean;
+    readonly reason?: string;
+    readonly mode?: string;
+    readonly trace_path?: string;
+    readonly turn_id?: string;
+    readonly step_index?: number;
+    readonly provider?: string;
+    readonly model?: string;
+    readonly context_window_tokens?: number;
+    readonly input_limit_tokens?: number;
+    readonly usable_input_tokens?: number;
+    readonly compact_threshold_tokens?: number;
+    readonly prompt_tokens?: number;
+    readonly total_context_tokens?: number;
+    readonly retained_tokens?: number;
+    readonly input_tokens?: number;
+    readonly output_tokens?: number;
+    readonly cache_creation_tokens?: number;
+    readonly cache_read_tokens?: number;
+    readonly token_estimate_source?: string;
+    readonly message_count?: number;
+    readonly system_messages?: number;
+    readonly hidden_messages?: number;
+    readonly tool_count?: number;
+    readonly stable_prefix?: number;
+    readonly turn_prefix?: number;
+    readonly dynamic_context_bytes?: number;
+    readonly system_hash?: string;
+    readonly stable_prefix_hash?: string;
+    readonly turn_prefix_hash?: string;
+    readonly tool_surface_hash?: string;
+    readonly prompt_cache_key?: string;
+    readonly categories?: ReadonlyArray<ConversationContextCompositionCategoryData>;
+    readonly system_sections?: ReadonlyArray<ConversationContextCompositionSectionData>;
+    readonly block_kind_bytes?: Readonly<Record<string, number>>;
+    readonly segment_counts?: ConversationContextSegmentCountSummaryData;
+};
+type ConversationContextCompositionCategoryData = {
+    readonly id: string;
+    readonly label: string;
+    readonly description?: string;
+    readonly tone?: string;
+    readonly bytes?: number;
+    readonly tokens?: number;
+    readonly contributes: boolean;
+    readonly durable?: boolean;
+    readonly cache_scope?: string;
+    readonly request_only?: boolean;
+    readonly deferred?: boolean;
+};
+type ConversationContextCompositionSectionData = {
+    readonly key: string;
+    readonly static: boolean;
+    readonly bytes: number;
+    readonly tokens?: number;
+    readonly hash?: string;
+};
+type ConversationContextSegmentCountSummaryData = {
+    readonly lifecycle?: Readonly<Record<string, number>>;
+    readonly placement?: Readonly<Record<string, number>>;
+    readonly cache_policy?: Readonly<Record<string, number>>;
+};
+type ConversationInstructionsListResultData = {
+    readonly files: ReadonlyArray<ConversationInstructionFileData>;
+};
+type ConversationInstructionFileData = {
+    readonly path: string;
+    readonly name: string;
+    readonly source: string;
+    readonly scope: ConversationInstructionFileScopeData;
+    readonly bytes: number;
+    readonly content: string;
+};
+type ConversationInstructionFileScopeData = "global" | "project";
+
+export type ApplicationConversationDetailV1 = {
+  readonly id: string;
+  readonly threadID: string;
+  readonly title?: string;
+  readonly loading: boolean;
+  readonly error?: string;
+} & (
+  | { readonly kind: "context"; readonly afterTurnID?: string; readonly result?: ConversationThreadContextCompositionResultData }
+  | { readonly kind: "instructions"; readonly result?: ConversationInstructionsListResultData }
+);
+export interface ApplicationConversationDetailsActionMapV1 {
+  "conversation.open-context": { input: { readonly threadId: string }; result: { readonly entryId: string } };
+  "conversation.open-instructions": { input: { readonly threadId: string }; result: { readonly entryId: string } };
+  "conversation.dismiss-detail": { input: { readonly entryId: string }; result: void };
+}

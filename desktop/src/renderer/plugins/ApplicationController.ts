@@ -1,4 +1,4 @@
-import type { ApplicationConversationTextV1, ApplicationConversationTextTargetV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
+import type { ApplicationConversationDetailsActionMapV1, ApplicationConversationTextV1, ApplicationConversationTextTargetV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
 import type { ApplicationNavigationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-preview";
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
@@ -28,6 +28,7 @@ import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
+import { ApplicationConversationDetails, isApplicationConversationDetailsAction } from "./ApplicationConversationDetails";
 import { ApplicationCatalog } from "./ApplicationCatalog";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
@@ -100,6 +101,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private readonly pendingComposer: ReturnType<typeof createComposerPendingState>;
   private readonly applicationPreview: ApplicationPreview;
   private readonly applicationNavigation: ApplicationNavigation;
+  private readonly conversationDetails = new ApplicationConversationDetails({ getState: () => this.state, getThread: id => this.knownThread(id), changed: () => this.publish() });
   private settings = { open: false, pageId: "providers" };
   private preview: ApplicationSnapshotV1["preview"] = null;
   private theme = window.wuu?.initialThemePreference ?? "system";
@@ -217,6 +219,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       stopped = true;
       if (--this.consumers !== 0) return;
       this.lifetime?.abort();
+      this.conversationDetails.stop();
       this.previewContentOwner?.dispose();
       this.previewContentOwner = undefined;
       this.flushBackgroundEvents();
@@ -543,6 +546,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationConversationDetailsAction(action)) return this.conversationDetails.invoke(action,
+      input as ApplicationConversationDetailsActionMapV1[keyof ApplicationConversationDetailsActionMapV1]["input"], signal);
     if (isApplicationNavigationAction(action)) return this.applicationNavigation.invoke(action,
       input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
     if (isApplicationPreviewAction(action)) return this.applicationPreview.invoke(action,
@@ -1050,6 +1055,7 @@ export class ApplicationController implements ApplicationServiceV1 {
           project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      conversationDetails: this.conversationDetails.getSnapshot(),
       conversationWorkspace: Object.freeze({ primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
         threads: Object.freeze([...new Map([...state.threads, state.secondaryThread, state.thread].filter((item): item is Thread => Boolean(item))
           .map(item => [item.id, item])).values()].map(this.projectConversationThread)) }),
