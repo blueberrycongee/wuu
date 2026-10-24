@@ -22,6 +22,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: HostApplicationService = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    get environment() { return new ApplicationController().environment; },
     get artifacts() { return new ApplicationController().artifacts; },
     createDesktopScope: signal => new ApplicationDesktop().createScope(signal),
     webWorkspace: new ApplicationWebWorkspace(undefined, "linux", async () => {}),

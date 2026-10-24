@@ -1,3 +1,4 @@
+import { ApplicationEnvironment } from "./ApplicationEnvironment";
 import { readWorkspaceBrowserNavigation, subscribeWorkspaceBrowserNavigation } from "../WorkspaceBrowserNavigation";
 import { ENABLE_EMBEDDED_BROWSER } from "../FeatureFlags";
 import { isForegroundControlled } from "../BrowserVisibility";
@@ -80,6 +81,18 @@ export class ApplicationController implements HostApplicationService {
     return this.composerRuntimeOwner ??= new ApplicationComposerRuntime({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
+  }
+  private environmentOwner?: ApplicationEnvironment;
+  get environment(): ApplicationEnvironment {
+    return this.environmentOwner ??= new ApplicationEnvironment({
+      getSource: () => {
+        const root = workspacePanelContext(this.state.activeContext, activeThreadForState(this.state))?.cwd;
+        return { contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0, root]), root, status: this.state.gitStatus };
+      },
+      publishStatus: (gitStatus, ready) => this.updateState(state => ({ ...state, gitStatus, ...(ready ? { status: "ready" } : {}) })),
+      assertActive: () => this.lifetime?.signal.throwIfAborted(),
+      reportError: error => this.updateState(state => ({ ...state, status: String(error) })),
+    });
   }
   private artifactsOwner?: ApplicationArtifacts;
   get artifacts(): ApplicationArtifacts {
@@ -410,6 +423,7 @@ export class ApplicationController implements HostApplicationService {
     this.state = next;
     this.projectsOwner?.notifyChanged();
     this.onboardingOwner?.notifyChanged();
+    this.environmentOwner?.notifyChanged();
     this.syncActivities();
     this.pendingComposer.reconcilePendingComposerMessagesForState(next);
     this.rememberDraftResources();
@@ -467,6 +481,7 @@ export class ApplicationController implements HostApplicationService {
       this.composerRuntimeOwner = undefined;
       this.activityRequest++; this.activitySourceKey = undefined;
       this.browserOwner?.dispose(); this.browserOwner = undefined;
+      this.environmentOwner?.dispose(); this.environmentOwner = undefined;
       this.artifactsOwner = undefined;
       this.desktopOwner?.dispose(); this.desktopOwner = undefined;
       void this.webWorkspaceOwner?.dispose().catch(error => console.error("Web workspace cleanup failed", error));

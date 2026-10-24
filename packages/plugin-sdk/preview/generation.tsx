@@ -1,5 +1,5 @@
 import { scopeApplicationWebWorkspace } from '../dist/ui-web-workspace.js';
-import { scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
+import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
 import * as React from 'react';
 import type {
   ApplicationServiceV1, ApplicationShellDefinition, ApplicationShellRenderProps, Disposable,
@@ -62,6 +62,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
         contractVersion: 1,
         get desktop() { assertActive(); controller.signal.throwIfAborted(); return application.desktop; },
         webWorkspace: scopeApplicationWebWorkspace(() => application.webWorkspace, controller.signal, assertActive),
+        environment: scopeApplicationEnvironment(() => application.environment, controller.signal, assertActive),
         artifacts: scopeApplicationArtifacts(() => application.artifacts, controller.signal, assertActive),
         onboarding: scopeApplicationOnboarding(() => application.onboarding, controller.signal, assertActive),
         browser: scopeApplicationBrowser(() => application.browser, controller.signal, assertActive),

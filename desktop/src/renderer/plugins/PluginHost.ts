@@ -1,6 +1,6 @@
 import type { HostApplicationService } from "./HostApplicationService";
 import { scopeApplicationWebWorkspace } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
-import { scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
+import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1,
@@ -858,6 +858,7 @@ export class PluginHost {
       contractVersion: 1 as const,
       get desktop() { return desktop ??= service().createDesktopScope(state.lifetime.signal); },
       webWorkspace: scopeApplicationWebWorkspace(() => service().webWorkspace, state.lifetime.signal, () => this.assertActive(state)),
+      environment: scopeApplicationEnvironment(() => service().environment, state.lifetime.signal, () => this.assertActive(state)),
       artifacts: scopeApplicationArtifacts(() => service().artifacts, state.lifetime.signal, () => this.assertActive(state)),
       onboarding: scopeApplicationOnboarding(() => service().onboarding, state.lifetime.signal, () => this.assertActive(state)),
       browser: scopeApplicationBrowser(() => service().browser, state.lifetime.signal, () => this.assertActive(state)),

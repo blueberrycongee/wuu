@@ -1,3 +1,4 @@
+import type { ApplicationEnvironmentV1, EnvironmentCallOptionsV1 } from "./ui-environment.js";
 import type { ApplicationArtifactsV1, ArtifactCallOptionsV1 } from "./ui-artifacts.js";
 import type { ApplicationDesktopControlsV1 } from "./ui-desktop.js";
 import type { ApplicationWebWorkspaceV1 } from "./ui-web-workspace.js";
@@ -167,6 +168,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly environment: ApplicationEnvironmentV1;
   readonly artifacts: ApplicationArtifactsV1;
   readonly desktop: ApplicationDesktopControlsV1;
   readonly webWorkspace: ApplicationWebWorkspaceV1;
@@ -599,5 +601,33 @@ export function scopeApplicationArtifacts(source: () => ApplicationArtifactsV1,
     save: (resource, options) => invoke(signal => source().save(resource, { signal }), options),
     showItemMenu: (resource, options) => invoke(signal => source().showItemMenu(resource, { signal }), options),
     openFile: (resource, options) => invoke(signal => source().openFile(resource, { signal }), options),
+  });
+}
+
+/** Git operations observe the same worktree; each observer's queued refresh retains its lifetime. */
+export function scopeApplicationEnvironment(source: () => ApplicationEnvironmentV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationEnvironmentV1 {
+  const check = () => { assertActive(); signal.throwIfAborted(); };
+  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: EnvironmentCallOptionsV1) =>
+    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
+  return Object.freeze<ApplicationEnvironmentV1>({
+    getSnapshot: () => { check(); return source().getSnapshot(); },
+    subscribe: listener => {
+      check(); const stop = source().subscribe(() => { if (!signal.aborted) listener(); });
+      let stopped = false;
+      const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
+      signal.addEventListener("abort", dispose, { once: true }); if (signal.aborted) dispose(); return dispose;
+    },
+    checkoutBranch: (branch, options) => invoke(signal => source().checkoutBranch(branch, { signal }), options),
+    createAndCheckoutBranch: (branch, options) => invoke(signal => source().createAndCheckoutBranch(branch, { signal }), options),
+    commit: (input, options) => invoke(signal => source().commit(input, { signal }), options),
+    generateCommitMessage: (input, options) => invoke(signal => source().generateCommitMessage(input, { signal }), options),
+    createPullRequest: (input, options) => invoke(signal => source().createPullRequest(input, { signal }), options),
+    listChanges: (input, options) => invoke(signal => source().listChanges(input, { signal }), options),
+    readDiff: (input, options) => invoke(signal => source().readDiff(input, { signal }), options),
+    scheduleStatusRefresh: (delayMs, options) => {
+      check(); options?.signal?.throwIfAborted();
+      source().scheduleStatusRefresh(delayMs, { signal: options?.signal ? AbortSignal.any([signal, options.signal]) : signal });
+    },
   });
 }

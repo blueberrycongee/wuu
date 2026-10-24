@@ -17,6 +17,19 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("uses the active worktree for environment operations and publishes shared Git status", async () => {
+    const context = { kind: "project" as const, project_id: "project", cwd: "/project" };
+    const thread = { id: "worktree", cwd: "/worktree", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [] };
+    const status = { is_repo: true, branch: "next", dirty_count: 0 };
+    window.wuu = { checkoutGitBranch: vi.fn().mockResolvedValue(status) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread });
+    await controller.environment.checkoutBranch("next");
+    expect(window.wuu.checkoutGitBranch).toHaveBeenCalledExactlyOnceWith("next", "/worktree");
+    expect(controller.getState().gitStatus).toBe(status);
+    expect(controller.environment.getSnapshot().root).toBe("/worktree");
+    expect(controller.environment.getSnapshot().status?.branch).toBe("next");
+  });
+
   it("marks authoritative draft resets without treating ordinary input as a reset", async () => {
     window.wuu = {} as WuuDesktopApi;
     const context = { kind: "no_project" as const, cwd: "/fixture" };

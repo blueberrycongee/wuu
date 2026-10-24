@@ -61,6 +61,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    environment: { getSnapshot: () => ({ contextKey: "preview", capabilities: { review: false, checkout: false, createBranch: false, commit: false, pullRequest: false } }), subscribe: () => () => {}, checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable, generateCommitMessage: unavailable, createPullRequest: unavailable, listChanges: unavailable, readDiff: unavailable, scheduleStatusRefresh: () => {} },
     artifacts: { capabilities: { nativeItemMenu: false, save: false, remoteAttachment: false, remoteAttachmentPreview: false, remoteItem: false }, resolveSource: unavailable, acquireSource: unavailable, releaseSource: () => {}, readAttachment: unavailable, readItem: unavailable, readText: unavailable, save: unavailable, showItemMenu: unavailable, openFile: unavailable },
     desktop: { hostKind: "web", popOut: { kind: null, threadID: null, context: null }, capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false }, onVisibilityChange: () => () => {} },
     webWorkspace,
