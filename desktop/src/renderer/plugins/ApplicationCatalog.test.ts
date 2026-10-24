@@ -34,6 +34,12 @@ describe("ApplicationCatalog", () => {
   expect(await pending).toBeUndefined();
   expect(install).toHaveBeenCalledTimes(1);
  });
+ it("keeps an onboarding preset as one atomic update without replay after failure", async () => {
+  const updates = Object.freeze([{ id: "a", action: "enable" as const }, { id: "b", action: "disable" as const }]);
+  vi.mocked(window.wuu.updateExtensionPackage).mockRejectedValue(new Error("outcome unknown"));
+  await expect(host.update({ updates })).rejects.toThrow("outcome unknown");
+  expect(window.wuu.updateExtensionPackage).toHaveBeenCalledExactlyOnceWith({ updates });
+ });
  it("rejects stale reads and disposed generations without calling a successor", async () => {
   let finish!: (result: unknown) => void;
   list.mockReturnValue(new Promise(resolve => { finish = resolve; }));

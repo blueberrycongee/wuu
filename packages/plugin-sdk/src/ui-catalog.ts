@@ -211,11 +211,15 @@ export type CatalogSkillV1 = {
 };
 
 
-export interface CatalogPackageUpdateV1 {
+export type CatalogPackageUpdateV1 = {
  readonly id: string;
  readonly fingerprint?: string;
  readonly action: CatalogPackageActionV1;
-}
+ readonly updates?: never;
+} | {
+ readonly updates: readonly { readonly id: string; readonly fingerprint?: string; readonly action: "enable" | "disable" }[];
+ readonly id?: never; readonly fingerprint?: never; readonly action?: never;
+};
 export interface CatalogPackageResultV1 {
  readonly skills: CatalogSkillV1[];
  readonly extension_inventory: CatalogExtensionV1[];

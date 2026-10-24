@@ -59,7 +59,9 @@ export class ApplicationCatalog implements ApplicationCatalogV1 {
     return this.finish(source,options,true) ? immutable(result.skills) : undefined;
   }
   async update(input: CatalogPackageUpdateV1, options?: CatalogCallOptionsV1): Promise<void> {
-    const source=this.begin(options); await window.wuu.updateExtensionPackage({...input}); this.finish(source,options);
+    const source=this.begin(options);
+    await window.wuu.updateExtensionPackage(input.updates ? { updates: input.updates.map(update => ({ ...update })) } : { ...input });
+    this.finish(source,options);
   }
   async install(options?: CatalogCallOptionsV1): Promise<CatalogPackageResultV1 | undefined> {
     const source=this.begin(options); const result=await window.wuu.installPluginPackage();
