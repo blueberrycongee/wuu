@@ -68,7 +68,10 @@ func marshalWire(write func(io.Writer) error) (json.RawMessage, error) {
 	}
 	var encoded bytes.Buffer
 	encoded.Grow(int(size))
-	if err := write(&encoded); err != nil {
+	// Expose only io.Writer: JSON's bytes.Buffer specialization grows spare
+	// capacity on flush, even after this exact reservation. Bounded encoder
+	// chunks keep the output in the single buffer already allocated above.
+	if err := write(struct{ io.Writer }{&encoded}); err != nil {
 		return nil, err
 	}
 	return encoded.Bytes(), nil
