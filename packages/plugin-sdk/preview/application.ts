@@ -34,7 +34,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     composerRuntime: { owners: [] },
     composerPending: [],
     drafts: { activeTabId: 'thread:research-1', activePane: 'primary', split: false,
-      primary: { text: '', imageIds: [], fileIds: [], selections: [] }, secondary: { text: '', imageIds: [], fileIds: [], selections: [] }, attachments: [] },
+      primary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, secondary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, attachments: [] },
     settings: { contractVersion: 1, open: false, engineInventoryError: '', runningProviderNames: [], archivedThreads: [], runtimeSwitchPending: false, availablePages: [{ id: 'appearance', label: 'Appearance' }],
       providers: [{ id: 'preview', label: 'Synthetic preview data', configured: true }], plugins: [] },
     preview: null, previewWorkspace: { ownerTabId: "thread:research-1", conversationTitle: "Research", tabs: [], conversationSelected: false }, appearance: { theme: 'system', resolvedTheme: 'light', uiFontSize: 15, codeFontSize: 13 },

@@ -199,6 +199,7 @@ export class ApplicationController implements HostApplicationService {
   private revision = 0;
   private snapshot: ApplicationSnapshotV1;
   private draft = "";
+  private readonly draftRevisions = new Map<string, number>();
   private readonly draftResources = new ApplicationDraftResources(() => this.publish());
   private readonly applicationSettings: ApplicationSettings;
   private readonly sidebarCache: ReturnType<typeof createSidebarThreadCache>;
@@ -240,6 +241,7 @@ export class ApplicationController implements HostApplicationService {
         set: (draft, pane) => {
           const owner = this.composerDraftForPane(pane ?? this.state.activePane).ownerTabId;
           if (!owner) throw new Error("Draft owner is unavailable");
+          this.reviseDraft(owner);
           if (owner === this.state.activeSessionTabID) this.draft = draft.prompt;
           this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === owner && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
         },
@@ -285,6 +287,9 @@ export class ApplicationController implements HostApplicationService {
   private getSubmissionRuntime(ownerTabId: string) {
     return this.applicationComposerRuntime.getSubmissionRuntime(ownerTabId);
   }
+  private reviseDraft(ownerTabId: string): void {
+    this.draftRevisions.set(ownerTabId, (this.draftRevisions.get(ownerTabId) ?? 0) + 1);
+  }
   private getComposerDraft = (ownerTabId: string): ComposerDraftState => {
     const tab = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
     const draft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
@@ -292,6 +297,7 @@ export class ApplicationController implements HostApplicationService {
     return draft;
   };
   private setComposerDraft = (ownerTabId: string, draft: ComposerDraftState): void => {
+    this.reviseDraft(ownerTabId);
     if (ownerTabId === this.state.activeSessionTabID) this.draft = draft.prompt;
     this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
   };
@@ -341,6 +347,7 @@ export class ApplicationController implements HostApplicationService {
       restoreComposerDraftForThread: (id, draft) => {
         const tab = this.state.sessionTabs.find(tab => tab.id === id || tab.kind === "thread" && tab.threadID === id);
         if (!tab) return;
+        this.reviseDraft(tab.id);
         if (tab.id === this.state.activeSessionTabID) { this.draft = draft.prompt; }
         this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tab.id && item.kind !== "skills" ? { ...item, ...draft } : item) }));
       },
@@ -372,7 +379,7 @@ export class ApplicationController implements HostApplicationService {
   getSnapshot = (): ApplicationSnapshotV1 => this.snapshot;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
 
-  updateState = (update: SetStateAction<AppState>): void => {
+  updateState = (update: SetStateAction<AppState>, preserveDraftRevisions = false): void => {
     this.flushBackgroundEvents();
     // The live composer owns its text immediately. Persist it into its tab
     // before structural changes or navigation, without rerendering the default
@@ -394,6 +401,12 @@ export class ApplicationController implements HostApplicationService {
       this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";
 
     }
+    if (!preserveDraftRevisions) for (const tab of next.sessionTabs) {
+      const previous = current.sessionTabs.find(previous => previous.id === tab.id);
+      if (tab.kind !== "skills" && previous?.kind !== "skills" && previous
+        && (tab.prompt !== previous.prompt || tab.images !== previous.images || tab.files !== previous.files || tab.selections !== previous.selections)) this.reviseDraft(tab.id);
+    }
+    for (const id of this.draftRevisions.keys()) if (!next.sessionTabs.some(tab => tab.id === id)) this.draftRevisions.delete(id);
     this.state = next;
     this.projectsOwner?.notifyChanged();
     this.onboardingOwner?.notifyChanged();
@@ -535,12 +548,14 @@ export class ApplicationController implements HostApplicationService {
     if (events.length > 0) this.updateState(state => events.reduce(reduceServerEvent, state));
   }
 
-  setDraft(text: string): void {
-    if (text === this.draft) return;
+  setDraft(text: string, authoritative = true): void {
+    if (authoritative) this.reviseDraft(this.state.activeSessionTabID);
+    if (text === this.draft && !authoritative) return;
     this.draft = text;
     this.publish({ ...this.snapshot, composer: Object.freeze({ ...this.snapshot.composer, draftText: text }),
       drafts: Object.freeze({ ...this.snapshot.drafts,
-        [this.state.secondaryThread ? this.state.activePane : "primary"]: Object.freeze({ ...this.snapshot.drafts[this.state.secondaryThread ? this.state.activePane : "primary"], text }) }),
+        [this.state.secondaryThread ? this.state.activePane : "primary"]: Object.freeze({ ...this.snapshot.drafts[this.state.secondaryThread ? this.state.activePane : "primary"], text,
+          revision: this.draftRevisions.get(this.state.activeSessionTabID) ?? 0 }) }),
       tabs: Object.freeze({ ...this.snapshot.tabs, items: Object.freeze(this.snapshot.tabs.items.map(tab =>
         tab.id === this.state.activeSessionTabID ? Object.freeze({ ...tab, draftText: text }) : tab)) }) });
     this.reconcileSubmission();
@@ -1004,7 +1019,7 @@ export class ApplicationController implements HostApplicationService {
         const captured = captureComposerDrafts(this.state, secondary ? { primary, secondary } : primary);
         this.draft = captured.activeDraft.prompt;
 
-        this.updateState(state => persistComposerDrafts(state, captured));
+        this.updateState(state => persistComposerDrafts(state, captured), true);
         return;
       }
       case "tab.select": {
@@ -1144,10 +1159,10 @@ export class ApplicationController implements HostApplicationService {
       }
       case "composer.set-draft": {
         const { text, ownerTabId = this.state.activeSessionTabID } = input as ApplicationActionMapV1["composer.set-draft"]["input"];
-        if (ownerTabId === this.state.activeSessionTabID) this.setDraft(text);
+        if (ownerTabId === this.state.activeSessionTabID) this.setDraft(text, false);
         else {
           if (!this.state.sessionTabs.some(tab => tab.id === ownerTabId && tab.kind !== "skills")) throw new Error("Draft owner is unavailable");
-          this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, prompt: text } : tab) }));
+          this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, prompt: text } : tab) }), true);
         }
         return;
       }
@@ -1275,7 +1290,7 @@ export class ApplicationController implements HostApplicationService {
       composerRuntime: this.applicationComposerRuntime.getSnapshot(),
       composerPending,
       drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
-        primary: Object.freeze({ ...this.draftResources.project(primaryDraft), ownerTabId: primaryDraft.ownerTabId }), secondary: Object.freeze({ ...this.draftResources.project(secondaryDraft), ownerTabId: secondaryDraft.ownerTabId }),
+        primary: Object.freeze({ ...this.draftResources.project(primaryDraft), ownerTabId: primaryDraft.ownerTabId, revision: this.draftRevisions.get(primaryDraft.ownerTabId ?? "") ?? 0 }), secondary: Object.freeze({ ...this.draftResources.project(secondaryDraft), ownerTabId: secondaryDraft.ownerTabId, revision: this.draftRevisions.get(secondaryDraft.ownerTabId ?? "") ?? 0 }),
         attachments: Object.freeze([...attachmentIds].map(id => this.draftResources.describe(id))) }),
       settings: Object.freeze({ ...this.applicationSettings.getSnapshot(), contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),

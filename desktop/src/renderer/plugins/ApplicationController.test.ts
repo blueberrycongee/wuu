@@ -17,6 +17,23 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("marks authoritative draft resets without treating ordinary input as a reset", async () => {
+    window.wuu = {} as WuuDesktopApi;
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:revision",
+      sessionTabs: [{ id: "draft:revision", kind: "draft", context, title: "", createdAt: 1, prompt: "", images: [], files: [] }] });
+    const initial = controller.getSnapshot().drafts.primary.revision;
+    await controller.invoke("composer.set-draft", { ownerTabId: "draft:revision", text: "typing" });
+    controller.updateState(state => ({ ...state, status: "unrelated" }));
+    expect(controller.getSnapshot().drafts.primary.revision).toBe(initial);
+    controller.setDraft("");
+    const cleared = controller.getSnapshot().drafts.primary.revision;
+    expect(cleared).toBeGreaterThan(initial);
+    controller.setDraft("");
+    expect(controller.getSnapshot().drafts.primary.revision).toBeGreaterThan(cleared);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("");
+  });
+
   it("projects the active pane worktree and preserves focused preview tabs when opening URLs", async () => {
     const context = { kind: "project" as const, project_id: "project", cwd: "/project" };
     const thread = { id: "secondary", cwd: "/worktree", title: "Secondary", preview: "", created_at: "", updated_at: "version", model_provider: "fixture", model: "fixture", status: "idle" as const, turns: [] };

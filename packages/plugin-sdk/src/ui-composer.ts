@@ -36,12 +36,17 @@ export interface ApplicationComposerDraftV1 {
   readonly selections: readonly ApplicationResponseSelectionV1[];
 }
 
+export interface ApplicationComposerDraftSnapshotV1 extends ApplicationComposerDraftV1 {
+  /** Advances on authoritative resets/restores, including an unchanged empty string; ordinary input does not advance it. */
+  readonly revision: number;
+}
+
 export interface ApplicationDraftsSnapshotV1 {
   readonly activeTabId: string;
   readonly activePane: "primary" | "secondary";
   readonly split: boolean;
-  readonly primary: ApplicationComposerDraftV1;
-  readonly secondary: ApplicationComposerDraftV1;
+  readonly primary: ApplicationComposerDraftSnapshotV1;
+  readonly secondary: ApplicationComposerDraftSnapshotV1;
   readonly attachments: readonly ApplicationAttachmentV1[];
 }
 
