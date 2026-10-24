@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -478,45 +477,6 @@ func (a *StateAuthority) recoverPending(ctx context.Context, client *persistence
 	return a.writeRecord(record)
 }
 
-func (a *StateAuthority) readRecord() (*authorityRecord, error) {
-	raw, err := os.ReadFile(filepath.Join(a.dir, "head.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		if _, markerErr := os.Stat(filepath.Join(a.dir, "initialized")); markerErr == nil {
-			return nil, fmt.Errorf("%w: authority checkpoint was removed", persistence.ErrCorrupt)
-		} else if !errors.Is(markerErr, os.ErrNotExist) {
-			return nil, markerErr
-		}
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var envelope authorityEnvelope
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, persistence.ErrCorrupt
-	}
-	hash := sha256.Sum256(envelope.Payload)
-	if hex.EncodeToString(hash[:]) != envelope.Digest {
-		return nil, fmt.Errorf("%w: authority head checksum", persistence.ErrCorrupt)
-	}
-	var record authorityRecord
-	if err := json.Unmarshal(envelope.Payload, &record); err != nil || record.Version != 1 {
-		return nil, persistence.ErrCorrupt
-	}
-	for _, digest := range []string{record.Checkpoint.DocumentsDigest, record.Checkpoint.ReceiptsDigest} {
-		decoded, err := hex.DecodeString(digest)
-		if err != nil || len(decoded) != sha256.Size {
-			return nil, persistence.ErrCorrupt
-		}
-	}
-	if record.Checkpoint.Version != 1 {
-		return nil, persistence.ErrCorrupt
-	}
-	if pending := record.Pending; pending != nil && (pending.Before != record.Checkpoint || pending.After.Revision != pending.Before.Revision+1 || pending.Transaction.ExpectedRevision != pending.Before.Revision) {
-		return nil, persistence.ErrCorrupt
-	}
-	return &record, nil
-}
 func (a *StateAuthority) writeRecord(record *authorityRecord) error {
 	if err := securefs.WriteFileAtomicFunc(filepath.Join(a.dir, "head.json"), func(w io.Writer) error {
 		return writeAuthorityEnvelope(w, record)

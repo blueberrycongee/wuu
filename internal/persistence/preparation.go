@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/storelock"
@@ -30,29 +29,29 @@ func lockPreparedStore(ctx context.Context, dir string) (*storelock.Lock, error)
 }
 
 // Prepared access never creates a provider generation, repairs a journal or
-// writes a logical record. Full snapshots here are admission work, not a normal
-// bounded-read implementation. Every call observes fresh source data for probes.
-func preparedSnapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
+// writes a logical record. Read and export share the writer lock and binding
+// checks, while each call observes fresh source data for authority probes.
+func withPreparedBackend(ctx context.Context, dir, kind string, read func(backend) error) error {
 	lock, err := lockPreparedStore(ctx, dir)
 	if err != nil {
-		return Snapshot{}, err
+		return err
 	}
 	if lock == nil {
-		return Snapshot{Version: 1, Documents: []Document{}, Receipts: []CommitRecord{}}, nil
+		return nil
 	}
 	defer lock.Release()
 	selected, err := readBinding(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		if err := requireEmptyDirectory(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return Snapshot{}, fmt.Errorf("%w: prepared authority missing in nonempty store", ErrCorrupt)
+			return fmt.Errorf("%w: prepared authority missing in nonempty store", ErrCorrupt)
 		}
-		return Snapshot{Version: 1, Documents: []Document{}, Receipts: []CommitRecord{}}, nil
+		return nil
 	}
 	if err != nil {
-		return Snapshot{}, err
+		return err
 	}
 	if selected.Backend != kind {
-		return Snapshot{}, ErrMigrationRequired
+		return ErrMigrationRequired
 	}
 	name := "state.sqlite3"
 	if kind == "jsonl" {
@@ -61,17 +60,17 @@ func preparedSnapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
 	path := filepath.Join(dir, selected.Generation, name)
 	info, err := os.Stat(path)
 	if err != nil || info.Size() == 0 {
-		return Snapshot{}, fmt.Errorf("%w: prepared data file is missing or empty", ErrCorrupt)
+		return fmt.Errorf("%w: prepared data file is missing or empty", ErrCorrupt)
 	}
 	var source backend
 	if kind == "jsonl" {
 		file, err := os.Open(path)
 		if err != nil {
-			return Snapshot{}, err
+			return err
 		}
 		source, err = readJSONLFile(file, true)
 		if err != nil {
-			return Snapshot{}, err
+			return err
 		}
 	} else {
 		p := filepath.ToSlash(path)
@@ -85,45 +84,54 @@ func preparedSnapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
 		uri.RawQuery = query.Encode()
 		db, err := sql.Open("sqlite", uri.String())
 		if err != nil {
-			return Snapshot{}, err
+			return err
 		}
 		db.SetMaxOpenConns(1)
 		source = &sqliteBackend{db: db, path: path}
 	}
 	defer source.close()
-	snapshot, err := source.export(ctx)
-	if err != nil {
-		return Snapshot{}, err
+	if err := read(source); err != nil {
+		return err
 	}
 	current, err := readBinding(dir)
 	if err != nil {
-		return Snapshot{}, err
+		return err
 	}
 	if current != selected {
-		return Snapshot{}, ErrBindingChanged
+		return ErrBindingChanged
+	}
+	return nil
+}
+
+func preparedSnapshot(ctx context.Context, dir, kind string) (Snapshot, error) {
+	snapshot := Snapshot{Version: 1, Documents: []Document{}, Receipts: []CommitRecord{}}
+	err := withPreparedBackend(ctx, dir, kind, func(source backend) error {
+		var err error
+		snapshot, err = source.export(ctx)
+		return err
+	})
+	if err != nil {
+		return Snapshot{}, err
 	}
 	return snapshot, nil
 }
+
 func preparedView(ctx context.Context, dir, kind string, query Query) (View, error) {
 	if err := validateQuery(query); err != nil {
 		return View{}, err
 	}
-	snapshot, err := preparedSnapshot(ctx, dir, kind)
+	view := View{Documents: []Document{}}
+	err := withPreparedBackend(ctx, dir, kind, func(source backend) error {
+		var err error
+		view, err = source.read(ctx, query)
+		return err
+	})
 	if err != nil {
 		return View{}, err
 	}
-	if query.AtRevision != nil && *query.AtRevision != snapshot.Revision {
+	// A missing candidate has revision zero without a backend to enforce the pin.
+	if query.AtRevision != nil && *query.AtRevision != view.Revision {
 		return View{}, ErrConflict
 	}
-	view := View{Revision: snapshot.Revision, Documents: []Document{}}
-	for _, document := range snapshot.Documents {
-		if matchesQuery(document, query) {
-			view.Documents = append(view.Documents, document)
-		}
-	}
-	if query.Reverse {
-		slices.Reverse(view.Documents)
-	}
-	finishPage(&view, query)
 	return view, nil
 }
