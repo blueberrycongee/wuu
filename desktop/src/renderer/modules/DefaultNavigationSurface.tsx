@@ -37,6 +37,27 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   const invoke = useMemo(() => application.invoke.bind(application) as SidebarNavigationService["invoke"], [application]);
   const { t } = useI18n();
   const run = useCallback((operation: Promise<unknown>) => { void operation.catch(showErrorToast); }, []);
+  const interactionVersion = useRef(0);
+  useEffect(() => {
+    const changed = () => { interactionVersion.current++; };
+    document.addEventListener("pointerdown", changed, true);
+    document.addEventListener("keydown", changed, true);
+    return () => {
+      changed();
+      document.removeEventListener("pointerdown", changed, true);
+      document.removeEventListener("keydown", changed, true);
+    };
+  }, []);
+  const focusAfterNavigation = async (navigate: () => Promise<string | undefined>) => {
+    const origin = document.activeElement;
+    const version = interactionVersion.current;
+    const tabId = await navigate();
+    // Keep the initiating gesture's intent across the async workspace switch.
+    if (tabId && version === interactionVersion.current
+      && (document.activeElement === origin || document.activeElement === document.body)) {
+      await invoke("navigation.focus-composer", { tabId });
+    }
+  };
   const [archiveTip, setArchiveTip] = useState<{ thread: ThreadSummary; error?: string; forceRetryable?: boolean }>();
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
@@ -73,7 +94,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     const result = await application.invoke("workspace.start-draft", { workspaceId: workspace.id });
     if (result.activated) {
       await application.invoke("draft.set-project-mode", { project: true });
-      if (result.tabId) await invoke("navigation.focus-composer", { tabId: result.tabId });
+      return result.tabId;
     }
   };
   const archiveThread = async (thread: ThreadSummary, force = false) => {
@@ -96,7 +117,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     collapsedSidebarSectionIDs={collapsed} expandedSidebarSectionIDs={expanded} collapsedFolderIDs={collapsedFolders} setCollapsedFolderIDs={setCollapsedFolders}
     loadingWorkspaceThreadIDs={new Set(view.loadingWorkspaceIds)} workspaceThreadsByWorkspaceID={workspaceRows}
     workspaceMenuOpen={workspaceMenuOpen} workspaceMenuRef={workspaceMenuRef} searchOpen={view.searchOpen} sectionOrder={sectionOrder}
-    onStartNewThread={() => run(application.invoke("draft.start", {}).then(result => invoke("navigation.focus-composer", { tabId: result.tabId })))}
+    onStartNewThread={() => run(focusAfterNavigation(async () => (await application.invoke("draft.start", {})).tabId))}
     onOpenSkillsTab={() => run(application.invoke("settings.close", {}).then(() => application.invoke("navigation.show-section", { section: "catalog" })))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
     onSelectThread={threadId => run(application.invoke("thread.activate", { threadId }))}
@@ -110,10 +131,13 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onOpenWorkspaceFolder={() => run(application.invoke("workspace.create", { kind: "folder" }))}
     onToggleSidebarSectionCollapsed={toggleSection} onLoadWorkspaceThreads={workspace => invoke("navigation.load-workspace", { workspaceId: workspace.id })}
     onFocusWorkspace={workspaceSelectionEnabled ? workspaceId => run(invoke("navigation.focus-workspace", { workspaceId })) : undefined}
-    onStartNewThreadInWorkspace={workspaceId => run(application.invoke("workspace.start-draft", { workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId }).then(result => { if (result.activated && result.tabId) return invoke("navigation.focus-composer", { tabId: result.tabId }); }))}
+    onStartNewThreadInWorkspace={workspaceId => run(focusAfterNavigation(async () => {
+      const result = await application.invoke("workspace.start-draft", { workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId });
+      return result.activated ? result.tabId : undefined;
+    }))}
     onRemoveWorkspace={workspaceId => run((async () => { if (await confirmAction({ title: t("workspace.removeTitle", { name: view.workspaces.find(row => row.id === workspaceId)?.name ?? workspaceId }), message: t("workspace.removeConfirm"), confirmLabel: t("common.remove") })) await application.invoke("workspace.remove", { workspaceId }); })())}
     onRelocateWorkspace={workspaceId => run(application.invoke("workspace.relocate", { workspaceId }))}
-    onCreateProject={view.projectAgentEnabled ? workspaceId => run(createProject(workspaceId)) : undefined}
+    onCreateProject={view.projectAgentEnabled ? workspaceId => run(focusAfterNavigation(() => createProject(workspaceId))) : undefined}
     onAdoptIntoProject={view.projectAgentEnabled ? (projectId, threadId) => run(invoke("navigation.adopt-thread", { projectId, threadId })) : undefined}
     onReorderSections={next => { setOrder(next); localStorage.setItem("wuu.desktop.sidebarSectionOrder", JSON.stringify(next)); }}
     onOpenSettings={pageId => run(application.invoke("settings.open", { pageId }))}
