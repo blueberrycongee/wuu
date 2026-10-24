@@ -66,24 +66,55 @@ export interface StateSnapshot<Value = unknown> {
   readonly receipts: readonly (StateReceipt & { readonly digest: string })[];
 }
 
+/** Continue after the last actual document, ordered by UTF-8 namespace then key. */
+export interface StateDocumentCursor {
+  readonly namespace: string;
+  readonly key: string;
+}
+/** Page the existing export method; continuation and receipts require both pins. */
+export type StateExportPageRequest = {
+  /** Positive UTF-8 JSON byte target. One oversized record may exceed it. */
+  readonly target_bytes: number;
+  /** Positive maximum number of records in this page. */
+  readonly max_items: number;
+} & (
+  | { readonly section: "documents"; readonly after?: never; readonly at_revision?: never; readonly generation?: never }
+  | { readonly section: "documents"; readonly after?: StateDocumentCursor; readonly at_revision: StateRevision; readonly generation: string }
+  | { readonly section: "receipts"; readonly after?: { readonly revision: StateRevision }; readonly at_revision: StateRevision; readonly generation: string }
+);
+export interface StateExportPage<Value = unknown> {
+  readonly format: "page.v1";
+  readonly revision: StateRevision;
+  readonly generation: string;
+  readonly section: "documents" | "receipts";
+  readonly documents: readonly StateDocument<Value>[];
+  /** Strictly increasing revision order; the unused section is an empty array. */
+  readonly receipts: StateSnapshot<Value>["receipts"];
+  /** False requires at least one item. Build after from the last actual item. */
+  readonly done: boolean;
+}
+
 export function requireDocumentStore(): ServiceRequirement {
   return { name: DOCUMENT_STORE_SERVICE, major_version: 1, required: true };
 }
 
 /** Advertise optional maintenance only when the provider actually implements it. */
-export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean } = {}): ServiceDescriptor {
+export function documentStoreDescriptor(options: { compact?: boolean; import?: boolean; paged_export?: boolean } = {}): ServiceDescriptor {
   const methods = ["read", "commit", "export"];
   if (options.compact) methods.push("compact");
   if (options.import) methods.push("import");
   return {
     name: DOCUMENT_STORE_SERVICE,
     version: "1.0.0",
-    methods: methods.map((name) => ({
-      name,
-      input_schema: `state.documents.${name}.input.v1`,
-      output_schema: `state.documents.${name}.output.v1`,
-      ...(name === "read" || name === "export" ? { preparation: true } : {}),
-    })),
+    methods: methods.map((name) => {
+      const schemaVersion = name === "export" && options.paged_export === true ? 2 : 1;
+      return {
+        name,
+        input_schema: `state.documents.${name}.input.v${schemaVersion}`,
+        output_schema: `state.documents.${name}.output.v${schemaVersion}`,
+        ...(name === "read" || name === "export" ? { preparation: true } : {}),
+      };
+    }),
   };
 }
 
@@ -105,5 +136,7 @@ export function documentStore(host: RuntimeHost) {
     compact: () => call<StateCompaction>("compact", {}),
     import: <Value = unknown>(snapshot: StateSnapshot<Value>) => call<StateImportResult>("import", snapshot),
     export: <Value = unknown>() => call<StateSnapshot<Value>>("export", {}),
+    /** Requires export v2. Errors propagate without retry or full-export fallback. */
+    exportPage: <Value = unknown>(page: StateExportPageRequest) => call<StateExportPage<Value>>("export", { page }),
   };
 }

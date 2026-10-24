@@ -5,6 +5,7 @@ import {
   PLUGIN_SETTINGS_STORE_DESCRIPTOR, ARTIFACT_STORE_DESCRIPTOR, DATA_QUERY_DESCRIPTOR,
   MANAGED_SESSION_DESCRIPTOR, PROJECT_COORDINATION_DESCRIPTOR,
   documentStore, type StateImportResult, type StateCompaction, type RuntimeHost,
+  type StateExportPage, type StateExportPageRequest,
   type PluginGenerationApi, type DataLatestContextResult, type DataQueryResult, type DataAppendTurn, type DataAppendTurnResult,
   type ManagedSessionCreate, type CredentialCompareExchange, type ConfigSourceView,
   type ArtifactDeleteThreadRequest, type ArtifactDeleteThreadResult,
@@ -16,7 +17,13 @@ async function maintain(host: RuntimeHost) {
   const store = documentStore(host);
   const compacted: StateCompaction = await store.compact();
   const imported: StateImportResult = await store.import(await store.export());
-  return {compacted, imported};
+  const query: StateExportPageRequest = { section: 'documents', target_bytes: 1024, max_items: 2 };
+  const page: StateExportPage = await store.exportPage(query);
+  const receipts = await store.exportPage({
+    section: 'receipts', at_revision: page.revision, generation: page.generation,
+    target_bytes: 1024, max_items: 2,
+  });
+  return {compacted, imported, page, receipts};
 }
 void maintain;
 

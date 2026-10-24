@@ -91,6 +91,26 @@ Switching backend configuration alone is not a data transfer. Stop business cons
 
 For native directory administration, use `wuu state check/export/import/migrate` with explicit directories; see [the document-store commands](plugin-system.md). External providers must implement the corresponding service contract and transfer procedure rather than relying on native directory commands.
 
+### Paged export
+
+`store.export()` still sends `export {}` and returns the complete `StateSnapshot`. A provider that implements paging declares `documentStoreDescriptor({ paged_export: true })`. Only that opt-in changes the existing `export` method's input/output schema identifiers to `state.documents.export.input.v2` and `state.documents.export.output.v2`; the service stays `state.documents@1`. Other methods and legacy descriptors keep their v1 schemas. There is no separate wire method or automatic full-export fallback.
+
+Use `store.exportPage(request)` with the public `StateExportPageRequest` type. It sends `export { page: request }`:
+
+```ts
+const page = await documentStore(host).exportPage({
+  section: "documents", target_bytes: 1024 * 1024, max_items: 100,
+});
+```
+
+`StateExportPage` returns `{ format: "page.v1", revision, generation, section, documents, receipts, done }`. The unused section is an empty array. Documents sort by UTF-8 bytes of `(namespace, key)`; receipts sort by strictly increasing integer revision, represented as decimal strings. Never use JavaScript number conversion, locale collation or UTF-16 sorting for these cursors.
+
+Continue documents with `after: { namespace, key }` from the last actual document and pin `at_revision` and `generation` to the first page. After documents finish, export `section: "receipts"` with the same pins, continuing with `after: { revision }` from the last receipt. Both pins are required for every continuation and every receipts request; a pinned first document page must also supply them together. `done: false` requires at least one item and progress beyond the supplied cursor. Revision or generation changes invalidate the scan; discard partial results and restart the read against a consistent authority. The SDK does not retry errors.
+
+`target_bytes` and `max_items` are positive integers. The byte target covers the actual UTF-8 JSON page, including its envelope. A page with multiple items must fit; a single oversized record may exceed the soft target so paging does not impose a new document size limit. The external process transport's existing 64 MiB frame limit still applies: a record that cannot fit fails explicitly, without fallback. Host checkpoint scans request 32 MiB and 256 items per page by default.
+
+Consume pages incrementally instead of accumulating another full snapshot. Host checkpoint payload memory is `O(page + largest record)`, plus `O(receipt IDs)` metadata for validation. This is not a fixed RAM guarantee: JSONL cold replay of large existing frames remains a separate allocation boundary, and `export {}` still materializes the full snapshot. Transfer verification must cover both complete sections, including receipt digests; a page or import acknowledgement alone is insufficient.
+
 ## Credentials, configuration, settings, artifacts and index
 
 | Contract | Observable behavior |

@@ -91,6 +91,26 @@ export async function readNotes(host: RuntimeHost) {
 
 原生目录管理使用带显式目录的 `wuu state check/export/import/migrate`，见[文档存储命令](plugin-system.md)。外部提供者需要实现相应服务协议和迁移流程，不能依赖原生目录命令完成自身后端迁移。
 
+### 分页导出
+
+`store.export()` 仍发送 `export {}` 并返回完整 `StateSnapshot`。实现分页的提供者声明 `documentStoreDescriptor({ paged_export: true })`。只有显式启用才将原有 `export` 方法的输入/输出 schema 标识改为 `state.documents.export.input.v2` 和 `state.documents.export.output.v2`；服务仍为 `state.documents@1`。其他方法和旧 descriptor 保持 v1 schema。分页没有独立的线上方法，也不会自动回退为全量导出。
+
+使用公开 `StateExportPageRequest` 类型调用 `store.exportPage(request)`，线上请求为 `export { page: request }`：
+
+```ts
+const page = await documentStore(host).exportPage({
+  section: "documents", target_bytes: 1024 * 1024, max_items: 100,
+});
+```
+
+`StateExportPage` 返回 `{ format: "page.v1", revision, generation, section, documents, receipts, done }`。未使用的分段为空数组。文档按 `(namespace, key)` 的 UTF-8 字节顺序排列；回执按整数 revision 严格递增，revision 使用十进制字符串。游标不能转成 JavaScript number，也不能使用 locale 排序或 UTF-16 排序。
+
+文档续页从最后一条实际文档生成 `after: { namespace, key }`，并将 `at_revision` 和 `generation` 固定为第一页返回值。文档结束后，以相同绑定导出 `section: "receipts"`，从最后一条回执生成 `after: { revision }` 继续。所有续页和所有回执请求都必须同时提供这两个绑定；文档首页若指定绑定，也须成对提供。`done: false` 要求至少返回一项，并越过请求游标。revision 或 generation 变化使本次扫描失效；丢弃不完整结果，从一致的权威存储重新开始读取。SDK 不会重试错误。
+
+`target_bytes` 与 `max_items` 都是正整数。字节目标计算包含外层字段的实际 UTF-8 JSON 页。多项页必须满足目标；单条超大记录可以超过软目标，分页不会新增文档大小硬上限。外部进程传输现有的 64 MiB 帧限制仍然有效：单条记录无法放入帧时明确失败，不走回退路径。宿主 checkpoint 扫描默认请求每页 32 MiB、256 项。
+
+应逐页消费，而不是重新积累完整快照。宿主 checkpoint 的 payload 内存为 `O(页 + 最大记录)`，另需 `O(回执 ID)` 的校验元数据。这不代表固定 RAM 上限：JSONL 冷启动重放已有大帧仍有独立的内存分配边界，`export {}` 也仍会将完整快照载入内存。迁移核对必须覆盖两个分段的全部内容，包括回执摘要；单页结果或导入确认都不足以证明迁移完成。
+
 ## 凭据、配置、设置、产物与索引
 
 | 协议 | 可观察行为 |
