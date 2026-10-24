@@ -1,25 +1,26 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { WEB_WORKSPACE_RIBBON_ID, type WebWorkspaceApi, type WebWorkspaceState } from "../shared/webWorkspace";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { WEB_WORKSPACE_RIBBON_ID } from "../shared/webWorkspace";
+import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi, WebWorkspaceStateV1 as WebWorkspaceState } from "../../../packages/plugin-sdk/src/ui-web-workspace";
+import { useWebWorkspaceControls } from "./WebWorkspaceControlsContext";
 import { readNavigationRibbonPreferences, saveNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { showActionErrorToast } from "./Toast";
 
 /** One owner supports both a mounted ribbon and an application-owned navigation service. */
-export function createRibbonBrowserState() {
+export function createRibbonBrowserState(getControls: () => WebWorkspaceApi) {
   let state: WebWorkspaceState | undefined;
   const listeners = new Set<() => void>();
-  const api = () => (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace;
   const publish = (next: WebWorkspaceState) => { state = next; for (const listener of listeners) listener(); return next; };
   async function update(operation: (browser: WebWorkspaceApi) => Promise<WebWorkspaceState>) {
-    const browser = api();
-    if (!browser) throw new Error("Browser tabs are unavailable");
+    const browser = getControls();
+    if (!browser.capabilities.available) throw new Error("Browser tabs are unavailable");
     return publish(await operation(browser));
   }
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     start(onError: (error: unknown) => void) {
-      const browser = api();
-      if (!browser?.initializeTabs) return () => {};
+      const browser = getControls();
+      if (!browser.capabilities.available) return () => {};
       let disposed = false;
       let initializing = true;
       let latest: WebWorkspaceState | undefined;
@@ -57,7 +58,8 @@ export function createRibbonBrowserState() {
 }
 
 export function useRibbonBrowserTabs(enabled = true) {
-  const [owner] = useState(createRibbonBrowserState);
+  const controls = useWebWorkspaceControls();
+  const owner = useMemo(() => createRibbonBrowserState(() => controls), [controls]);
   const state = useSyncExternalStore(owner.subscribe, owner.getSnapshot);
   useEffect(() => enabled ? owner.start(showActionErrorToast) : undefined, [enabled, owner]);
   const operations = useMemo(() => {

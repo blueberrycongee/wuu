@@ -1,14 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
+import type { ApplicationWebWorkspaceV1, WebWorkspaceInitializationStateV1, WebWorkspaceStateV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
+import { createRibbonBrowserState } from "../RibbonBrowserState";
+import { readNavigationRibbonPreferences, saveNavigationRibbonPreferences } from "../NavigationRibbonPreferences";
 import { ApplicationNavigation } from "./ApplicationNavigation";
 
-function fixture() {
+afterEach(() => localStorage.clear());
+function webControls(values: Partial<ApplicationWebWorkspaceV1> = {}): ApplicationWebWorkspaceV1 {
+  return { capabilities: { available: true, windowInsets: true, nativeOverlays: true }, limits: { tabs: 1, zoomMin: 0.25, zoomMax: 3 }, ...values } as ApplicationWebWorkspaceV1;
+}
+function fixture(controls = webControls()) {
   let state: AppState = { ...initialState, threads: [{ id: "t", preview: "", cwd: "/one", model_provider: "p", model: "m", status: "idle", created_at: "", updated_at: "", turns: [], forked_from_id: "parent", pinned: true }] };
   const cache = { getSnapshot: () => ({ workspaceThreadsByWorkspaceID: {}, cachedScratchThreads: [], requestedWorkspaceThreadIDs: new Set<string>() }),
     loadWorkspaceThreads: vi.fn(), cacheSidebarThreads: vi.fn(), updateCachedSidebarThread: vi.fn(),
     patchCachedSidebarThread: vi.fn(), updateCachedSidebarThreadPinned: vi.fn(), removeCachedSidebarThread: vi.fn() };
   const mutations = { toggleThreadPinned: vi.fn(), archiveThread: vi.fn(), deleteThread: vi.fn() };
-  const navigation = new ApplicationNavigation({ getState: () => state,
+  const navigation = new ApplicationNavigation({ getWebWorkspace: () => controls, getState: () => state,
     updateState: update => { state = typeof update === "function" ? update(state) : update; }, changed: vi.fn(), getPendingDraftTabIds: () => [], sidebarCache: cache, mutationActions: () => mutations });
   return { navigation, cache, mutations, get: () => state };
 }
@@ -65,13 +72,15 @@ describe("public native navigation", () => {
   it("reopens through native history and reveals the authoritative current tab without selecting twice", async () => {
     const selectTab = vi.fn();
     const reopenTab = vi.fn().mockResolvedValue({ tabs: [{ id: "restored", title: "Restored", url: "https://example.com" }], activeTabId: "restored", canReopenTab: false });
-    window.wuu = { webWorkspace: {
+    window.wuu = {} as typeof window.wuu;
+    const controls = webControls({
       createTab: vi.fn().mockResolvedValue({ tabs: [{ id: "first", title: "First", url: "about:blank" }], activeTabId: "first", canReopenTab: true }),
       selectTab, reopenTab,
-    } } as unknown as typeof window.wuu;
-    const { navigation } = fixture();
+    });
+    const { navigation } = fixture(controls);
     await navigation.invoke("navigation.create-browser-tab", {});
     expect(navigation.getSnapshot().browser?.canReopenTab).toBe(true);
+    expect(navigation.getSnapshot().browser?.canCreate).toBe(false);
     await navigation.invoke("navigation.reopen-browser-tab", {});
     expect(reopenTab).toHaveBeenCalledTimes(1);
     expect(navigation.getSnapshot().activeWebsiteId).toBe("restored");
@@ -85,8 +94,8 @@ describe("public native navigation", () => {
   });
 
   it("preserves failed native reopen errors and does not reveal a missing browser", async () => {
-    window.wuu = { webWorkspace: { reopenTab: vi.fn().mockRejectedValue(new Error("native failure")) } } as unknown as typeof window.wuu;
-    const { navigation } = fixture();
+    window.wuu = {} as typeof window.wuu;
+    const { navigation } = fixture(webControls({ reopenTab: vi.fn().mockRejectedValue(new Error("native failure")) }));
     await navigation.invoke("navigation.reveal-browser", {});
     expect(navigation.getSnapshot().activeWebsiteId).toBeUndefined();
     await expect(navigation.invoke("navigation.reopen-browser-tab", {})).rejects.toThrow("native failure");
@@ -110,5 +119,39 @@ describe("public native navigation", () => {
     expect(navigation.getSnapshot().accountOpen).toBe(true);
     await navigation.invoke("navigation.show-account", { open: false });
     expect(navigation.getSnapshot().accountOpen).toBe(false);
+  });
+});
+
+
+describe("canonical injected ribbon owner", () => {
+  it("migrates once through the selected public service and keeps newer events over initialization", async () => {
+    window.wuu = undefined as unknown as typeof window.wuu;
+    saveNavigationRibbonPreferences({websites:[{id:"website:old",url:"https://example.com",title:"Old"}],order:["session:one","website:old","session:two"]});
+    let finish!: (value:WebWorkspaceInitializationStateV1)=>void;
+    let emit!: (value:WebWorkspaceStateV1)=>void;
+    const off=vi.fn();
+    const initializeTabs=vi.fn(()=>new Promise<WebWorkspaceInitializationStateV1>(resolve=>{finish=resolve;}));
+    const controls=webControls({initializeTabs,onState:listener=>{emit=listener;return off;}});
+    const owner=createRibbonBrowserState(()=>controls);
+    const changed=vi.fn(), onError=vi.fn(); owner.subscribe(changed);
+    const stop=owner.start(onError);
+    const initialized={id:"ribbon-browser",url:"https://example.com",title:"Old",loading:false,canGoBack:false,canGoForward:false,activeTabId:"child",tabs:[{id:"child",url:"https://example.com",title:"Child",loading:false,canGoBack:false,canGoForward:false,zoomFactor:1}],migratedTabGroups:{"website:old":["child"]}};
+    emit({...initialized,title:"Newer event"}); finish(initialized);
+    await vi.waitFor(()=>expect(owner.getSnapshot()?.title).toBe("Newer event"));
+    expect(initializeTabs).toHaveBeenCalledExactlyOnceWith([{id:"website:old",url:"https://example.com/",title:"Old"}]);
+    expect(readNavigationRibbonPreferences()).toMatchObject({order:["session:one","child","session:two"],browserTabsMigrated:true});
+    stop(); expect(off).toHaveBeenCalledTimes(1);
+    emit({...initialized,title:"after stop"}); expect(owner.getSnapshot()?.title).toBe("Newer event"); expect(onError).not.toHaveBeenCalled();
+  });
+  it("suppresses late stopped initialization without borrowing a global native fallback", async () => {
+    const fallback=vi.fn(); window.wuu={webWorkspace:{initializeTabs:fallback}} as unknown as typeof window.wuu;
+    let finish!: (value:WebWorkspaceInitializationStateV1)=>void;
+    const off=vi.fn(), onError=vi.fn();
+    const owner=createRibbonBrowserState(()=>webControls({initializeTabs:()=>new Promise(resolve=>{finish=resolve;}),onState:()=>off}));
+    const stop=owner.start(onError);stop();
+    finish({id:"ribbon-browser",url:"about:blank",title:"",loading:false,canGoBack:false,canGoForward:false});
+    await Promise.resolve();await Promise.resolve();
+    expect(owner.getSnapshot()).toBeUndefined();expect(off).toHaveBeenCalledTimes(1);expect(fallback).not.toHaveBeenCalled();
+    expect(readNavigationRibbonPreferences().browserTabsMigrated).toBeUndefined();
   });
 });

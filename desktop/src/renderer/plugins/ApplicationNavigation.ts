@@ -1,7 +1,7 @@
 import type { SetStateAction } from "react";
 import type { ApplicationNavigationActionMapV1 as Actions, ApplicationNavigationViewV1, NavigationReadonly } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { DesktopProject, Thread } from "../../shared/protocol";
-import { WEB_WORKSPACE_TAB_LIMIT } from "../../shared/webWorkspace";
+import type { ApplicationWebWorkspaceV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
 import { markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
 import { createRibbonBrowserState } from "../RibbonBrowserState";
 import { loadThreadListRefresh } from "../RuntimeLoadState";
@@ -32,7 +32,7 @@ function immutable<T>(value: T): NavigationReadonly<T> {
 /** Receives the controller's existing cache and mutation owner; never a second session registry. */
 export class ApplicationNavigation {
   private folders: { id: string; name: string }[] = [];
-  private readonly browser = createRibbonBrowserState();
+  private readonly browser: ReturnType<typeof createRibbonBrowserState>;
   private update: ApplicationNavigationViewV1["update"] = { kind: "unsupported" };
   private activeWebsiteId?: string;
   private searchOpen = false;
@@ -45,6 +45,7 @@ export class ApplicationNavigation {
   private runningThreadIds: ReadonlySet<string> = new Set();
   private folderQueue: Promise<unknown> = Promise.resolve();
   constructor(private readonly host: {
+    getWebWorkspace: () => ApplicationWebWorkspaceV1;
     getState: () => AppState;
     updateState: (update: SetStateAction<AppState>) => void;
     changed: () => void;
@@ -59,7 +60,7 @@ export class ApplicationNavigation {
     };
     getPendingDraftTabIds: () => readonly string[];
     mutationActions: () => Pick<ThreadMutationActions, "toggleThreadPinned" | "archiveThread" | "deleteThread">;
-  }) {}
+  }) { this.browser = createRibbonBrowserState(host.getWebWorkspace); }
 
   private threads(): Thread[] {
     const state = this.host.getState();
@@ -97,7 +98,7 @@ export class ApplicationNavigation {
       canRevealThread: hostSupports("revealSession"),
       canCreateWorkspace: hostSupports("createBlankProject"), canChooseWorkspace: hostSupports("chooseProjectFolder"),
       projectAgentEnabled: Boolean(state.initialized?.features?.project_agent), accountAvailable: ENABLE_ACCOUNT && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot"),
-      update: this.update, browser: browser && { tabs: browser.tabs ?? [], activeTabId: browser.activeTabId, canCreate: (browser.tabs?.length ?? 0) < WEB_WORKSPACE_TAB_LIMIT, canReopenTab: Boolean(browser.canReopenTab) },
+      update: this.update, browser: browser && { tabs: browser.tabs ?? [], activeTabId: browser.activeTabId, canCreate: (browser.tabs?.length ?? 0) < this.host.getWebWorkspace().limits.tabs, canReopenTab: Boolean(browser.canReopenTab) },
       activeWebsiteId: this.activeWebsiteId && browser?.tabs?.some(row => row.id === this.activeWebsiteId) ? this.activeWebsiteId : undefined,
       searchOpen: this.searchOpen, accountOpen: this.accountOpen, focusedWorkspaceId: this.focusedWorkspaceId, composerFocusRequest: this.composerFocusRequest,
     };
