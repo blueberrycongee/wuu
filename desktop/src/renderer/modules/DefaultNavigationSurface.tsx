@@ -118,7 +118,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     loadingWorkspaceThreadIDs={new Set(view.loadingWorkspaceIds)} workspaceThreadsByWorkspaceID={workspaceRows}
     workspaceMenuOpen={workspaceMenuOpen} workspaceMenuRef={workspaceMenuRef} searchOpen={view.searchOpen} sectionOrder={sectionOrder}
     onStartNewThread={() => run(focusAfterNavigation(async () => (await application.invoke("draft.start", {})).tabId))}
-    onOpenSkillsTab={() => run(application.invoke("settings.close", {}).then(() => application.invoke("navigation.show-section", { section: "catalog" })))}
+    onOpenSkillsTab={() => run(application.invoke("navigation.show-section", { section: "catalog" }))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
     onSelectThread={threadId => run(application.invoke("thread.activate", { threadId }))}
     onSelectWorkspaceThread={(workspaceId, threadId) => run(application.invoke("thread.activate", { threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId }))}

@@ -18,6 +18,20 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it.each(["conversations", "catalog"] as const)("leaves settings when navigating to %s without changing the draft", async section => {
+    const controller = new ApplicationController();
+    await controller.invoke("composer.set-draft", { text: "keep this draft" });
+    await controller.invoke("settings.open", { pageId: "providers" });
+    const snapshots: boolean[] = [];
+    const off = controller.subscribe(() => snapshots.push(controller.getSnapshot().settings.open));
+    try {
+      await controller.invoke("navigation.show-section", { section });
+      expect(controller.getSnapshot().navigation.section).toBe(section);
+      expect(controller.getSnapshot().settings).toMatchObject({ open: false, activePageId: "providers" });
+      expect(controller.getSnapshot().composer.draftText).toBe("keep this draft");
+      expect(snapshots).toEqual([false]);
+    } finally { off(); }
+  });
   it("requests the auxiliary panel again when an existing side conversation is reopened", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     const thread = { id: "main", cwd: context.cwd, preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [] };
