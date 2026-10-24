@@ -48,3 +48,30 @@ test('independent history commits batches atomically and forks detached records'
   await assert.rejects(call('LoadHistoryRecords', 'fork', true), error => error.code === 'session_not_found');
   provider.shutdown();
 });
+
+test('independent journal records transitions, rejects foreign handles and reconciles closed owners', {skip: !entry}, async () => {
+  const {createSessionProvider} = await import(pathToFileURL(entry));
+  const provider = createSessionProvider(); provider.initialize(); provider.activate();
+  const callAs = async (caller, method, ...args) => (await provider.invokeService({service: 'session.domain', method, params: {args}, caller})).values;
+  const call = (method, ...args) => callAs('owner', method, ...args);
+  const [handle] = await call('NewInferenceJournalRuntime', 'workspace');
+  await assert.rejects(callAs('foreign', 'Journal.Prune', handle.handle, '2026-01-01T00:00:00Z'), error => error.code === 'resource_unavailable');
+  const operation = {At: '2026-01-01T00:00:00Z', RequestHash: 'request', Workflow: {ID: 'workflow', StartedAt: '2026-01-01T00:00:00Z', Profile: 'foreground', Budget: {}}, Operation: {ID: 'operation', WorkflowID: 'workflow', Kind: 'chat', WorkloadProfile: 'foreground', AttemptLimit: 1, PayloadVersion: 1, ParentOperationID: ''}};
+  await call('Journal.PrepareOperation', handle.handle, 'thread', operation);
+  await assert.rejects(call('Journal.PrepareOperation', handle.handle, 'thread', {...operation, RequestHash: 'other'}), /conflict/);
+  await assert.rejects(call('Journal.PrepareAttempt', handle.handle, 'thread', {OperationID: 'absent', AttemptID: 'attempt', WorkflowID: 'workflow', Ordinal: 1}), /operation/);
+  await call('Journal.PrepareAttempt', handle.handle, 'thread', {OperationID: 'operation', AttemptID: 'attempt', WorkflowID: 'workflow', Ordinal: 1, At: '2026-01-01T00:00:00Z', RequestHash: 'request'});
+  await call('Journal.CompleteAttempt', handle.handle, 'thread', {OperationID: 'operation', AttemptID: 'attempt', At: '2026-01-01T00:00:01Z', Outcome: 'succeeded', Failure: {}});
+  await call('Journal.CompleteOperation', handle.handle, 'thread', {OperationID: 'operation', At: '2026-01-01T00:00:01Z', Outcome: 'succeeded', Failure: {}});
+  await call('Journal.CompleteWorkflow', handle.handle, 'thread', {WorkflowID: 'workflow', At: '2026-01-01T00:00:01Z', Outcome: 'succeeded'});
+  assert.equal((await call('Journal.Prune', handle.handle, '2026-02-01T00:00:00Z'))[0], 1);
+  await call('Journal.PrepareOperation', handle.handle, 'thread', operation);
+  await call('Journal.Close', handle.handle);
+  await assert.rejects(call('Journal.Prune', handle.handle, '2026-02-01T00:00:00Z'), error => error.code === 'resource_unavailable');
+  const [replacement] = await call('NewInferenceJournalRuntime', 'workspace');
+  const [reconciled] = await call('Journal.ReconcileOrphans', replacement.handle, '2026-02-01T00:00:00Z');
+  assert.equal(reconciled[0].OperationID, 'operation');
+  assert.equal(reconciled[0].Outcome, 'blocked');
+  assert.deepEqual((await call('Journal.ReconcileOrphans', replacement.handle, '2026-02-01T00:00:00Z'))[0], []);
+  provider.shutdown();
+});

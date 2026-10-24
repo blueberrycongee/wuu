@@ -4,6 +4,8 @@ import {
   type SessionDomainHistoryRecord as HistoryRecord,
 } from '@wuu/plugin-sdk';
 
+import {createJournal} from './journal.js';
+
 function checkedHistory(value: readonly HistoryRecord[]): HistoryRecord[] {
   if (!Array.isArray(value) || value.some(record => !record || typeof record.role !== 'string' || typeof record.content !== 'string')) throw new Error('invalid history record batch');
   if (value.some(record => record.expected_held_message_bytes !== undefined)) throw new RuntimeHostServiceError({code: 'method_not_found', message: 'held-message admission is not supported'});
@@ -16,6 +18,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
   const generations = new Map<string, Parameters<NonNullable<SessionDomainHandlers['WritePluginGenerationSnapshot']>>[0][1]>();
   const histories = new Map<string, readonly HistoryRecord[]>();
   let active = false;
+  const journal = createJournal();
   const requireSession = (id: string) => {
     const current = sessions.get(id);
     if (!current) throw new RuntimeHostServiceError({code: 'session_not_found', message: 'session not found'});
@@ -52,6 +55,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
     return batch.length ? [start, start + batch.length - 1] : [0, 0];
   };
   const handlers: SessionDomainHandlers = {
+    ...journal.handlers,
     CreateWithMetadata: ([id, cwd]) => {
       if (typeof cwd !== 'string') throw new Error('cwd is required');
       return [create({id, cwd})];
@@ -100,7 +104,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
       if (!active) throw new RuntimeHostServiceError({code: 'service_unavailable', message: 'session provider is not active'});
       return domain.invoke(request);
     },
-    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear();},
+    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear(); journal.close();},
   };
 }
 export default createSessionProvider();
