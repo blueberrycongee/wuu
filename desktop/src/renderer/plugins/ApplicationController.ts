@@ -1,3 +1,5 @@
+import { deriveActiveSessionHints } from "../activeSessionHint";
+import type { ApplicationDesktopPetTargetV1 } from "../../../../packages/plugin-sdk/src/ui-desktop";
 import { ApplicationComposerPresentation } from "./ApplicationComposerPresentation";
 import type { PluginHost } from "./PluginHost";
 import { ApplicationEnvironment } from "./ApplicationEnvironment";
@@ -33,7 +35,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
-import { workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
+import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
@@ -107,8 +109,47 @@ export class ApplicationController implements HostApplicationService {
     })).createScope(signal);
   }
   private desktopOwner?: ApplicationDesktop;
+  private get applicationDesktop(): ApplicationDesktop {
+    return this.desktopOwner ??= new ApplicationDesktop(window.wuu.popOutInit?.().kind ? undefined : {
+      getPetState: () => {
+        const state = this.state;
+        const unreadThreadIDs = new Set([state.thread, state.secondaryThread, ...state.threads]
+          .filter((thread): thread is Thread => Boolean(thread && isThreadUnread(thread, state.lastViewedTurnByThreadID[thread.id])))
+          .map(thread => thread.id));
+        const waitingThreadIDs = new Set(this.applicationConversationActions.getSnapshot().questions.filter(request => request.mode !== "offer").map(request => request.thread_id));
+        return { ready: Boolean(this.consumers && state.initialized && state.activeContext), feed: {
+          hints: deriveActiveSessionHints({ thread: state.thread, secondaryThread: state.secondaryThread, threads: state.threads, unreadThreadIDs, waitingThreadIDs }),
+          workspace: state.activeContext ? { context: state.activeContext, name: workspaceNameForContext(state.activeContext, state.projects) } : undefined,
+        } };
+      },
+      jumpToThread: async threadId => {
+        const signal = this.lifetime?.signal;
+        await this.applicationNavigation.invoke("navigation.show-native", {}, signal);
+        await this.invoke("thread.activate", { threadId }, { signal });
+      },
+      submitPetText: (text, target) => this.submitPetText(text, target),
+    });
+  }
   createDesktopScope(signal: AbortSignal) {
-    return (this.desktopOwner ??= new ApplicationDesktop()).createScope(signal);
+    return this.applicationDesktop.createScope(signal);
+  }
+  private async submitPetText(text: string, target: ApplicationDesktopPetTargetV1): Promise<boolean> {
+    const message = createComposerMessage(text, [], []);
+    if (!message || !this.consumers) return false;
+    const signal = this.lifetime!.signal;
+    if ("thread_id" in target) {
+      const thread = [this.state.thread, this.state.secondaryThread, ...this.state.threads].find(thread => thread?.id === target.thread_id);
+      return Boolean(thread && !thread.read_only && await this.applicationSubmission.submitBackground(message, thread, resolveThreadRuntimeContext(thread, this.state.projects)));
+    }
+    const { context, params } = await this.applicationComposerRuntime.getWorkspaceSubmissionRuntime(target.workspace);
+    signal.throwIfAborted();
+    const result = await window.wuu.startThread(params, context);
+    signal.throwIfAborted();
+    if (!result.thread) throw new Error("Background conversation creation returned no thread");
+    const thread = result.thread;
+    this.sidebarCache.cacheSidebarThreads([thread]);
+    this.updateState(state => ({ ...state, threads: upsertThread(state.threads, thread) }));
+    return this.applicationSubmission.submitBackground(message, thread, context);
   }
   private webWorkspaceOwner?: ApplicationWebWorkspace;
   get webWorkspace(): ApplicationWebWorkspace {
@@ -479,6 +520,7 @@ export class ApplicationController implements HostApplicationService {
         }));
       });
       if (restore) this.subscriptions.push(restore);
+      this.applicationDesktop.syncPet();
       void this.initialize().catch(error => this.updateState(state => ({ ...state, status: String(error instanceof Error ? error.message : error) })));
     }
     let stopped = false;
@@ -1286,6 +1328,7 @@ export class ApplicationController implements HostApplicationService {
   private publish(snapshot?: ApplicationSnapshotV1): void {
     this.revision++;
     this.snapshot = snapshot ? Object.freeze({ ...snapshot, revision: this.revision }) : this.project();
+    this.desktopOwner?.syncPet();
     for (const listener of this.listeners) listener();
   }
 

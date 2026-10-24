@@ -5,7 +5,7 @@ import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController";
 import { streamTextKey, streamTextStore } from "../StreamText";
 import { initialState, type AppState } from "../AppState";
-import type { WuuDesktopApi } from "../../shared/protocol";
+import type { CodexPetCommand, WuuDesktopApi } from "../../shared/protocol";
 
 const submissionInitialized = { provider: "fixture", model: "fixture", providers: [{ name: "fixture", type: "openai", model: "fixture", api_key_configured: true }] } as AppState["initialized"];
 async function settleSubmission(controller: ApplicationController, result: Awaited<ReturnType<ApplicationController["invoke"]>>) {
@@ -18,6 +18,40 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("keeps pet submission with the host and its captured workspace across UI retirement", async () => {
+    const context = { kind: "no_project" as const, cwd: "/captured" };
+    let command!: (value: CodexPetCommand) => void;
+    let engines!: (value: unknown) => void;
+    const off = vi.fn();
+    const thread = { id: "pet-thread", cwd: context.cwd, preview: "", model_provider: "", model: "", created_at: "", updated_at: "", status: "idle" as const, turns: [] };
+    const send = vi.fn().mockResolvedValue({ turn: { id: "pet-turn", status: "in_progress", items_view: "full", items: [] } });
+    const resolve = vi.fn();
+    const feed = vi.fn().mockResolvedValue(undefined);
+    window.wuu = { hostKind: "desktop", onCodexPetCommand: (listener: (value: CodexPetCommand) => void) => { command = listener; return off; }, resolveCodexPetCommand: resolve, updateCodexPetFeed: feed,
+      listEngines: vi.fn(() => new Promise(done => { engines = done; })), startThread: vi.fn().mockResolvedValue({ thread }), startTurn: send,
+      listAllThreads: vi.fn().mockResolvedValue({ threads: [] }), listProjects: vi.fn().mockResolvedValue({ projects: [] }), listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
+    } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context });
+    const stop = controller.start();
+    const ui = new AbortController(); controller.createDesktopScope(ui.signal);
+    try {
+      expect(command).toBeTypeOf("function");
+      command({ kind: "submit", id: "pet-command", text: "hello", target: { workspace: context } });
+      await vi.waitFor(() => expect(engines).toBeTypeOf("function"));
+      ui.abort();
+      controller.updateState(state => ({ ...state, activeContext: { kind: "no_project", cwd: "/next" } }));
+      engines({ engines: [], settings: { default_engine: "native" } });
+      await vi.waitFor(() => expect(resolve).toHaveBeenCalledExactlyOnceWith("pet-command", { ok: true }));
+      expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({ engine: "native", model: "", effort: "", permission_mode: "unconfined" }), context);
+      expect(send.mock.calls[0][7]).toEqual(context);
+      expect(controller.getState().activeContext?.cwd).toBe("/next");
+      expect(controller.getState().thread).toBeUndefined();
+      expect(off).not.toHaveBeenCalled();
+      expect(feed).toHaveBeenCalledWith(expect.objectContaining({ workspace: expect.objectContaining({ context }) }));
+    } finally { stop(); }
+    expect(off).toHaveBeenCalledOnce();
+  });
+
   it("keeps history retries and recovery sends bound to the requested conversation", async () => {
     const context = { kind: "no_project" as const, cwd: "/foreground" };
     const thread = { id: "background", cwd: "/background", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [], history_cursor: "page:one" };
