@@ -4,10 +4,8 @@ import type {
   ExtensionInventoryRecord,
   ExtensionPackageUpdateParams,
   SkillSummary,
-  WuuDesktopApi,
 } from "../../src/shared/protocol";
 import { SkillsCatalog } from "../../src/renderer/SkillsCatalog";
-import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
 import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
 import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
@@ -129,30 +127,9 @@ const skillContent = [
   ...Array.from({ length: long ? 6 : 1 }, () => skillSection),
 ].join("\n\n");
 
+const settings: Record<string, boolean | string | number> = {autosave: true, recall: "相关时", limit: 200};
 let skillLoadFailed = false;
 
-window.wuu = {
-  initialLanguagePreference: params.get("lang") === "en" ? "en-US" : "zh-CN",
-  initialThemePreference: params.get("theme") === "dark" ? "dark" : "light",
-  getThemePreference: async () => (params.get("theme") === "dark" ? "dark" : "light"),
-  setThemePreference: async () => undefined,
-  onThemePreferenceChange: () => () => undefined,
-  getMessageFlowFontSize: async () => Number(params.get("size")) || 14.5,
-  setMessageFlowFontSize: async () => undefined,
-  // `error` fails the first skill load, as a restarting core would.
-  listSkills: async () => {
-    if (params.has("error") && !skillLoadFailed) {
-      skillLoadFailed = true;
-      throw new Error("The Wuu core is restarting.");
-    }
-    return { skills: structuredClone(skills) };
-  },
-  readSkillContent: async () => ({ content: skillContent }),
-  getPluginSetting: async ({ key }: { key: string }) => ({ value: ({ autosave: true, recall: "相关时", limit: 200 } as Record<string, boolean | string | number>)[key] }),
-  setPluginSetting: async ({ value }: { value: boolean | string | number }) => ({ value }),
-  getPluginDiagnostics: async () => ({ diagnostics: [] }),
-  unsupportedMethods: [],
-} as unknown as WuuDesktopApi;
 
 startFocusModality();
 
@@ -163,28 +140,39 @@ function Fixture(): JSX.Element {
     document.documentElement.dataset.platform = "darwin";
     applyMessageFlowFontSize(Number(params.get("size")) || 14.5);
   }, []);
-  const application = useMemo(() => {
-  const update = async ({ id, action }: ExtensionPackageUpdateParams) => {
-    setPlugins((current) => current.map((item) => {
-      if (item.id !== id) return item;
-      if (action === "disable") return { ...item, enabled: false, runtime_state: "stopped" };
-      if (action === "enable") return { ...item, enabled: true, runtime_state: "active" };
-      if (action === "grant") return { ...item, approval_state: "granted", runtime_state: "active" };
-      if (action === "promote_update") return { ...item, pending_update: undefined };
-      return item;
-    }));
-  };
-  const snapshot = { contextKey: "extensions-preview", inventory: plugins,
-    capabilities: { install: true, update: true, remove: true } };
-  const catalog: ApplicationCatalogV1 = {
-    getSnapshot: () => snapshot,
-    listSkills: async () => (await window.wuu.listSkills()).skills,
-    readSkill: input => window.wuu.readSkillContent(input),
-    refresh: async () => structuredClone(skills), update,
-    install: async () => undefined, remove: async () => undefined,
-    loadIcon: async () => { throw new Error("File icons are not available in this preview"); },
-  };
-  return { ...createPreviewApplication(), catalog, settingsControls: createApplicationSettingsControls() };
+  const application = useMemo<ReturnType<typeof createPreviewApplication>>(() => {
+    const base = createPreviewApplication();
+    const noDiagnostics = Object.freeze([]);
+    const update = async ({ id, action }: ExtensionPackageUpdateParams) => {
+      setPlugins((current) => current.map((item) => {
+        if (item.id !== id) return item;
+        if (action === "disable") return { ...item, enabled: false, runtime_state: "stopped" };
+        if (action === "enable") return { ...item, enabled: true, runtime_state: "active" };
+        if (action === "grant") return { ...item, approval_state: "granted", runtime_state: "active" };
+        if (action === "promote_update") return { ...item, pending_update: undefined };
+        return item;
+      }));
+    };
+    const snapshot = { contextKey: "extensions-preview", inventory: plugins,
+      capabilities: { install: false, update: true, remove: false } };
+    const catalog: ApplicationCatalogV1 = {
+      ...base.catalog,
+      getSnapshot: () => snapshot,
+      listSkills: async () => {
+        if (params.has("error") && !skillLoadFailed) { skillLoadFailed = true; throw new Error("The Wuu core is restarting."); }
+        return structuredClone(skills);
+      },
+      listSkillsForThread: async ({threadId}) => ({contextKey:snapshot.contextKey, threadId, skills}),
+      readSkill: async () => ({content: skillContent}),
+      refresh: async () => structuredClone(skills), update,
+      loadIcon: async () => { throw new Error("File icons are not available in this preview"); },
+    };
+    return { ...base, catalog, settingsControls: {...base.settingsControls,
+      getConflicts: () => noDiagnostics, getDiagnostics: () => noDiagnostics,
+      getPluginSetting: async ({id, key}) => ({id, key, scope: "user", value: settings[key]}),
+      setPluginSetting: async ({id, key, value}) => ({id, key, scope: "user", value: settings[key] = value}),
+      getPluginDiagnostics: async ({id}) => ({id, diagnostics: []}),
+    } };
   }, [plugins]);
   return (
     <div className="scroll-region skills-scroll-region" style={{ height: "100vh" }}>
@@ -197,4 +185,4 @@ function Fixture(): JSX.Element {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<I18nProvider><WuuUIRoot><Fixture /></WuuUIRoot></I18nProvider>);
+createRoot(document.getElementById("root")!).render(<I18nProvider preferenceStore={{get: () => params.get("lang") === "en" ? "en-US" : "zh-CN", set: async () => {}, subscribe: () => () => {}}}><WuuUIRoot><Fixture /></WuuUIRoot></I18nProvider>);

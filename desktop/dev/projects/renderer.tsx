@@ -1,5 +1,5 @@
 // Isolated Projects preview: production sidebar, conversation views, title
-// controls and right-panel project views over a mocked window.wuu. No
+// controls and right-panel project views over synthetic public services. No
 // preload, credentials, or real workspace.
 // From desktop: ./node_modules/.bin/vite --config dev/projects/vite.config.ts,
 // then open http://127.0.0.1:5243/dev/projects/. Query parameters:
@@ -14,10 +14,11 @@ import { AppSidebar } from "../../src/renderer/AppSidebar";
 import { initialState, summarizeThreadsForSidebar, type AppState } from "../../src/renderer/AppState";
 import { ConversationTitleActions } from "../../src/renderer/ConversationShellRenderers";
 import { Composer } from "../../src/renderer/ComposerView";
-import { ConversationStatusCluster } from "../../src/renderer/ConversationStatusCluster";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
 import { ProjectActionsProvider } from "../../src/renderer/ProjectActions";
-import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
+import { createFixtureApplication, FixtureServices, fixtureSlots } from "../preview-services";
+import { createComposerDrawer } from "../../src/shared/ComposerDrawer";
+import * as React from "react";
 import type { ApplicationProjectsV1 } from "../../../packages/plugin-sdk/src/ui-projects";
 import type { ApplicationActionMapV1 } from "../../../packages/plugin-sdk/src/ui";
 import { ProjectStatusCapsule } from "../../src/renderer/ProjectViews";
@@ -26,7 +27,6 @@ import { TurnView } from "../../src/renderer/TurnView";
 import { WorkspaceRightPanel } from "../../src/renderer/WorkspacePanels";
 import { workspaceProjectViewTab, type WorkspaceViewTab } from "../../src/renderer/WorkspaceViewTabs";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
-import { desktopPluginHost } from "../../src/renderer/plugins/DesktopPluginRuntime";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { ListTodo } from "../../src/renderer/WuuIcons";
@@ -112,32 +112,18 @@ if (params.has("long-titles")) {
   }
 }
 
-Object.assign(window, {
-  wuu: {
-    listWorkspaceDirectory: async () => ({ root: "/preview", path: "", truncated: false, entries: [] }),
-  },
-});
-
-if (params.has("composer-accessories")) {
-  void desktopPluginHost.activateGeneration({
-    pluginId: "preview:task", generation: "one",
-    register(api) {
-      function TaskDrawer() {
-        const [expanded, setExpanded] = useState(false);
-        const Drawer = api.ui.ComposerDrawer;
-        return <Drawer expanded={expanded} onExpandedChange={setExpanded} toggleLabel="任务进度"
-          icon={<ListTodo />} summary={<span className="sample-task-title">Automation/protocol audit: verify the permission-mode merge path.</span>}>
-          <p className="sample-task-details">核对自动化、协议与权限的实际行为，记录可复现的差异。</p>
-        </Drawer>;
-      }
-      api.registerSlot("composer.above", { id: "tasks", render: () => <TaskDrawer /> });
-    },
-  });
+const Drawer = createComposerDrawer(React);
+function TaskDrawer() {
+  const [expanded, setExpanded] = useState(false);
+  return <Drawer expanded={expanded} onExpandedChange={setExpanded} toggleLabel="任务进度"
+    icon={<ListTodo />} summary={<span className="sample-task-title">Automation/protocol audit: verify the permission-mode merge path.</span>}>
+    <p className="sample-task-details">核对自动化、协议与权限的实际行为，记录可复现的差异。</p>
+  </Drawer>;
 }
 
 function PreviewComposer({ current, containerRef }: { current?: Thread; containerRef: Ref<HTMLElement> }) {
   const [prompt, setPrompt] = useState("");
-  return <Composer mainConversation containerRef={containerRef} prompt={prompt} setPrompt={setPrompt} files={[]} images={[]}
+  return <>{params.has("composer-accessories") ? <TaskDrawer /> : null}<Composer mainConversation containerRef={containerRef} prompt={prompt} setPrompt={setPrompt} files={[]} images={[]}
     queryHistorySessionID={current?.id}
     queuedMessages={params.has("queued") ? [{ id: "queue", text: "完成后整理差异清单。", files: [], images: [] }] : []}
     guideMessages={[]} running={params.has("composer-accessories")} status="" readOnly={false}
@@ -150,13 +136,13 @@ function PreviewComposer({ current, containerRef }: { current?: Thread; containe
     onSelectGitBranch={noop} onCreateWorkspace={noop} onOpenWorkspace={noop} onStartNewThread={noop}
     onOpenWorkspaceTool={noop} onPasteAttachmentFiles={noop} onRemoveFile={noop} onRemoveImage={noop}
     onRemoveQueuedMessage={noop} onRemoveGuideMessage={noop} onGuideQueuedMessage={noop}
-    onEditQueuedMessage={noop} onEditGuideMessage={noop} onSend={noop} onInterrupt={noop} />;
+    onEditQueuedMessage={noop} onEditGuideMessage={noop} onSend={noop} onInterrupt={noop} /></>;
 }
 
 function Conversation({ current }: { current: Thread }) {
   return <div className="conversation-width session-flow">
     {current.turns.filter(turn => turn.items.length).map(turn =>
-      <TurnView key={turn.id} turn={turn} onStreamFrame={noop} isLatestTurn cwd="/preview" />)}
+      <TurnView key={turn.id} threadID={current.id} turn={turn} onStreamFrame={noop} isLatestTurn cwd="/preview" />)}
   </div>;
 }
 
@@ -168,8 +154,7 @@ function Fixture() {
   const initialTabs: WorkspaceViewTab[] = params.get("panel") === "none" || empty ? [] : [
     workspaceProjectViewTab("project", "Search overhaul"),
   ];
-  const [tabs, setTabs] = useState(initialTabs);
-  const [activeTab, setActiveTab] = useState(initialTabs.at(-1)?.id);
+
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const dock = useRef<HTMLElement>(null);
   const [dockHeight, setDockHeight] = useState(0);
@@ -190,31 +175,28 @@ function Fixture() {
     activeContext: { kind: "project", project_id: workspace.id, cwd: workspace.path },
     lastViewedTurnByThreadID: Object.fromEntries(threads.map(item => [item.id, item.id === "latency" ? "" : item.latest_completed_turn_id ?? ""])),
   };
-  const openTab = (tab: WorkspaceViewTab) => {
-    setTabs(currentTabs => currentTabs.some(item => item.id === tab.id) ? currentTabs : [...currentTabs, tab]);
-    setActiveTab(tab.id);
-  };
   const application = useMemo(() => {
-    const base = createPreviewApplication();
-    const snapshot = { ...base.getSnapshot(), navigationWorkspace: { ...base.getSnapshot().navigationWorkspace,
-      threads: summarizeThreadsForSidebar(threads).map(thread => ({ ...thread,
-        turns: thread.turns.map(turn => ({ ...turn, started_at: turn.started_at ?? date, completed_at: turn.completed_at ?? undefined })),
-      })), projectAgentEnabled: true } };
+    const initial = createFixtureApplication();
+    const base = createFixtureApplication({previewWorkspace:{...initial.getSnapshot().previewWorkspace,
+      tabs: initialTabs, activeTabId: initialTabs.at(-1)?.id, ownerTabId:`thread:${active}`,
+      activeContext: state.activeContext, workspaceContext: state.activeContext,
+      conversationTitle: threads.find(item => item.id === active)?.title ?? "Projects"},
+      conversationWorkspace:{activePane:"primary", threads, turnStreamStatus:{}},
+      navigationWorkspace:{...initial.getSnapshot().navigationWorkspace,
+        threads: summarizeThreadsForSidebar(threads).map(thread => ({...thread,
+          turns:thread.turns.map(turn => ({...turn, started_at:turn.started_at ?? date, completed_at:turn.completed_at ?? undefined}))})), projectAgentEnabled:true}});
     const views = new Map<string, ReturnType<ApplicationProjectsV1["getSnapshot"]>>();
     const projects: ApplicationProjectsV1 = {
+      ...base.projects,
       getSnapshot: (projectId) => {
         if (!views.has(projectId)) views.set(projectId, { projectId, enabled: true, loading: false, error: "" });
         return views.get(projectId)!;
       },
-      subscribe: () => () => {}, refresh: async () => {}, control: async () => {}, releaseSession: async () => {},
     };
-    return { ...base, projects, getSnapshot: () => snapshot,
+    return { ...base, projects,
       invoke: async <Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]["input"]) => {
         if (action === "thread.activate") setActive((input as ApplicationActionMapV1["thread.activate"]["input"]).threadId);
-        else if (action === "preview.open-project") {
-          const target = input as ApplicationActionMapV1["preview.open-project"]["input"];
-          openTab(workspaceProjectViewTab(target.projectId, target.title));
-        } else if (action !== "navigation.show-native") return base.invoke(action, input);
+        else if (action !== "navigation.show-native") return base.invoke(action, input);
         return undefined as ApplicationActionMapV1[Action]["result"];
       },
     };
@@ -222,8 +204,8 @@ function Fixture() {
   const current = threads.find(item => item.id === active);
   const draft = view === "draft" || empty;
   const projectSessions = current?.source === "project" ? projectSessionsOf(current.id, threads) : [];
-  return <WuuUIRoot><ProjectActionsProvider application={application}>
-    <div className={`app-shell sample-shell${tabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh", "--workspace-right-panel-width": params.has("panel-width") ? `${Number(params.get("panel-width"))}px` : undefined } as CSSProperties}>
+  return <WuuUIRoot><FixtureServices application={application}><ProjectActionsProvider application={application}>
+    <div className={`app-shell sample-shell${initialTabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh", "--workspace-right-panel-width": params.has("panel-width") ? `${Number(params.get("panel-width"))}px` : undefined } as CSSProperties}>
       <AppSidebar
         initialized={Boolean(state.initialized)}
         activeContextKind={state.activeContext?.kind}
@@ -253,26 +235,21 @@ function Fixture() {
         <header className="titlebar"><div className="title-block"><span>{draft ? "新项目" : current?.title}</span></div>
           <ConversationTitleActions state={{ ...state, thread: draft ? undefined : current }}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
-            rightPanelOpen={tabs.length > 0} onToggleRightPanel={noop} />
+            rightPanelOpen={initialTabs.length > 0} onToggleRightPanel={noop} />
         </header>
         <div className={`scroll-region${draft ? " empty-scroll-region" : ""}`}>
           {draft ? <EmptyConversationHome title="新项目" /> : current ? <Conversation current={current} /> : null}
         </div>
         <PreviewComposer current={draft ? undefined : current} containerRef={dock} />
-        <ConversationStatusCluster host={desktopPluginHost} visible={!draft} threadId={current?.id} onOpenSession={setActive}
-          hostStatus={!draft && current && projectSessions.length > 0 ? <ProjectStatusCapsule project={current} sessions={projectSessions} /> : undefined}
-          todoUpdate={params.has("todo") ? { todos: [
-            { content: "重建搜索索引", status: "completed" },
-            { content: "给结果分页", status: "in_progress" },
-            { content: "测量搜索延迟", status: "pending" },
-          ] } : undefined} />
+        {!draft ? <div className="conversation-status-cluster">
+          {current && projectSessions.length > 0 ? <ProjectStatusCapsule project={current} sessions={projectSessions} /> : null}
+          {params.has("todo") ? <details className="conversation-status-todo"><summary className="conversation-status-capsule">任务进度 1 / 3</summary><ol><li>重建搜索索引 · 已完成</li><li>给结果分页 · 进行中</li><li>测量搜索延迟 · 待开始</li></ol></details> : null}
+        </div> : null}
       </main>
-      <WorkspaceRightPanel open={tabs.length > 0} present={tabs.length > 0} tabs={tabs} activeTabID={activeTab}
-        activeContext={state.activeContext} workspaceContext={state.activeContext} onSelectTab={setActiveTab} onOpenTool={noop}
-        onShowTools={() => setActiveTab(undefined)} onCloseTab={id => { setTabs(currentTabs => currentTabs.filter(tab => tab.id !== id)); setActiveTab(undefined); }}
-        onReorderTabs={noop} onOpenFile={noop} globalized={false} onToggleGlobalize={noop} />
+      <WorkspaceRightPanel application={application} slots={fixtureSlots} pane="primary"
+        open={initialTabs.length > 0} present={initialTabs.length > 0} globalized={false} onToggleGlobalize={noop} />
     </div>
-  </ProjectActionsProvider></WuuUIRoot>;
+  </ProjectActionsProvider></FixtureServices></WuuUIRoot>;
 }
 
 createRoot(document.getElementById("root")!).render(<I18nProvider><Fixture /></I18nProvider>);
