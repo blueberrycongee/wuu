@@ -4,7 +4,7 @@ import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { activeSessionTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -14,6 +14,7 @@ import { getActiveLocale, translateCurrent } from "../i18n";
 import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
+import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
 
 export interface ApplicationShellSelection {
@@ -33,6 +34,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private revision = 0;
   private snapshot: ApplicationSnapshotV1;
   private draft = "";
+  private readonly draftResources = new ApplicationDraftResources(() => this.publish());
   private draftRevision = 0;
   private settings = { open: false, pageId: "providers" };
   private preview: ApplicationSnapshotV1["preview"] = null;
@@ -53,6 +55,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
     const tab = activeSessionTab(this.state);
     this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";
+    this.rememberDraftResources();
     this.snapshot = this.project();
   }
 
@@ -84,6 +87,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.draftRevision++;
     }
     this.state = next;
+    this.rememberDraftResources();
     this.publish();
     for (const listener of this.stateListeners) listener();
   };
@@ -180,6 +184,8 @@ export class ApplicationController implements ApplicationServiceV1 {
     this.draft = text;
     this.draftRevision++;
     this.publish({ ...this.snapshot, composer: Object.freeze({ ...this.snapshot.composer, draftText: text }),
+      drafts: Object.freeze({ ...this.snapshot.drafts,
+        [this.state.secondaryThread ? this.state.activePane : "primary"]: Object.freeze({ ...this.snapshot.drafts[this.state.secondaryThread ? this.state.activePane : "primary"], text }) }),
       tabs: Object.freeze({ ...this.snapshot.tabs, items: Object.freeze(this.snapshot.tabs.items.map(tab =>
         tab.id === this.state.activeSessionTabID ? Object.freeze({ ...tab, draftText: text }) : tab)) }) });
   }
@@ -197,6 +203,24 @@ export class ApplicationController implements ApplicationServiceV1 {
         secondaryThread: undefined, activePane: "primary", running: isThreadRunning(thread),
       })
       : updateThreadByID(state, thread.id, () => thread));
+  }
+
+  private rememberDraftResources(): void {
+    for (const tab of this.state.sessionTabs) {
+      if (tab.kind === "skills") continue;
+      tab.images.forEach(image => this.draftResources.remember("image", image));
+      tab.files.forEach(file => this.draftResources.remember("file", file));
+    }
+  }
+
+  private composerDraftForPane(pane: "primary" | "secondary") {
+    const state = this.state;
+    const thread = pane === "primary" ? state.thread : state.secondaryThread;
+    const tab = state.secondaryThread && thread
+      ? state.sessionTabs.find(item => item.id === threadSessionTabID(thread.id)) : pane === "primary" ? activeSessionTab(state) : undefined;
+    const draft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
+    if (tab?.id === state.activeSessionTabID) draft.prompt = this.draft;
+    return draft;
   }
 
   private async selectTab(tab: SessionTab, signal?: AbortSignal): Promise<void> {
@@ -256,6 +280,27 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
     switch (action) {
+      case "composer.attach": {
+        const { files } = input as ApplicationActionMapV1["composer.attach"]["input"];
+        return Object.freeze({ attachments: this.draftResources.attach(files) });
+      }
+      case "composer.resolve-attachment":
+      case "composer.retry-attachment": {
+        const { attachmentId } = input as ApplicationActionMapV1["composer.resolve-attachment"]["input"];
+        return this.draftResources.resolve(attachmentId, action === "composer.retry-attachment");
+      }
+      case "composer.checkpoint": {
+        const checkpoint = input as ApplicationActionMapV1["composer.checkpoint"]["input"];
+        if (checkpoint.activeTabId !== this.state.activeSessionTabID) throw new Error("Draft owner changed");
+        const primary = this.draftResources.read(checkpoint.primary);
+        const secondary = checkpoint.secondary && this.draftResources.read(checkpoint.secondary);
+        if (Boolean(this.state.secondaryThread) !== Boolean(secondary)) throw new Error("Composer pane ownership changed");
+        const captured = captureComposerDrafts(this.state, secondary ? { primary, secondary } : primary);
+        this.draft = captured.activeDraft.prompt;
+        this.draftRevision++;
+        this.updateState(state => persistComposerDrafts(state, captured));
+        return;
+      }
       case "tab.select": {
         const { tabId } = input as ApplicationActionMapV1["tab.select"]["input"];
         const tab = this.state.sessionTabs.find(item => item.id === tabId);
@@ -312,7 +357,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         const { project } = input as ApplicationActionMapV1["draft.set-project-mode"]["input"];
         const tabId = this.state.activeSessionTabID;
         const tab = this.state.sessionTabs.find(item => item.id === tabId);
-        if (tab?.kind !== "draft") return;
+        if (tab?.kind !== "draft" || Boolean(tab.project) === project) return;
         if (project && tab.context.kind !== "project") throw new Error("Project drafts require a workspace");
         this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tabId ? { ...item, project: project ? true as const : undefined, title: project ? translateCurrent("projects.newProject")
           : item.title === translateCurrent("projects.newProject") ? translateCurrent("tabs.newConversation") : item.title } : item) })); return;
@@ -482,6 +527,9 @@ export class ApplicationController implements ApplicationServiceV1 {
     const locale = getActiveLocale();
     const running = isThreadRunning(thread);
     const status = initialized ? "connected" : state.status === "connecting" ? "connecting" : "error";
+    const primaryDraft = this.composerDraftForPane("primary");
+    const secondaryDraft = this.composerDraftForPane("secondary");
+    const attachmentIds = new Set([...primaryDraft.images, ...primaryDraft.files, ...secondaryDraft.images, ...secondaryDraft.files].map(item => item.id));
     const turns = (thread?.turns ?? []).map(turn => {
       const items = turn.items.map(item => {
         const key = streamTextKey(turn.id, item.id, "text");
@@ -514,6 +562,9 @@ export class ApplicationController implements ApplicationServiceV1 {
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),
         runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: this.submitting ? "Submitting" : undefined }),
+      drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
+        primary: this.draftResources.project(primaryDraft), secondary: this.draftResources.project(secondaryDraft),
+        attachments: Object.freeze([...attachmentIds].map(id => this.draftResources.describe(id))) }),
       settings: Object.freeze({ contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),

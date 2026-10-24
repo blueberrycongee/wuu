@@ -6,6 +6,39 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("keeps a custom project draft title when its mode is selected again", async () => {
+    const context = { kind: "project" as const, project_id: "workspace", cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "My project", project: true, createdAt: 1, prompt: "", images: [], files: [] },
+    ] });
+    await controller.invoke("draft.set-project-mode", { project: true });
+    expect(controller.getState().sessionTabs[0].title).toBe("My project");
+  });
+
+  it("keeps pending attachment ownership across draft navigation and rejects stale checkpoints", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "", images: [], files: [] },
+      { id: "draft:b", kind: "draft", context, title: "B", createdAt: 2, prompt: "", images: [], files: [] },
+    ] });
+    let finish!: (bytes: ArrayBuffer) => void;
+    const file = new File(["document"], "note.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: () => new Promise<ArrayBuffer>(resolve => { finish = resolve; }) });
+    const attached = await controller.invoke("composer.attach", { files: [file] });
+    const id = attached.attachments[0].id;
+    const draft = { text: "with file", imageIds: [], fileIds: [id], selections: [] };
+    await controller.invoke("composer.checkpoint", { activeTabId: "draft:a", primary: draft });
+    await controller.invoke("tab.select", { tabId: "draft:b" });
+    await expect(controller.invoke("composer.checkpoint", { activeTabId: "draft:a", primary: draft })).rejects.toThrow("Draft owner changed");
+    finish(new Uint8Array([65]).buffer);
+    const resolved = await controller.invoke("composer.resolve-attachment", { attachmentId: id });
+    expect(resolved).toMatchObject({ status: "ready", data: "QQ==" });
+    await controller.invoke("tab.select", { tabId: "draft:a" });
+    expect(controller.getSnapshot().drafts.primary.fileIds).toEqual([id]);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("with file");
+    expect(Object.isFrozen(controller.getSnapshot().drafts.attachments[0])).toBe(true);
+  });
+
   it("moves between draft tabs without dropping attachments or newer text", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const image = { id: "image", media_type: "image/png", data: "abc" };

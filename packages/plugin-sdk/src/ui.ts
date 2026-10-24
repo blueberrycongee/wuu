@@ -1,3 +1,4 @@
+import type { ApplicationComposerActionMapV1, ApplicationDraftsSnapshotV1 } from "./ui-composer.js";
 import type { ComponentType, ReactNode } from "react";
 import type {
   ComposerSnapshotV1, ComposerSubmissionModeV1, ConversationItemSnapshotV1,
@@ -37,6 +38,7 @@ export interface ApplicationSnapshotV1 {
     readonly error?: string;
   };
   readonly composer: ComposerSnapshotV1;
+  readonly drafts: ApplicationDraftsSnapshotV1;
   readonly settings: SettingsSnapshotV1 & { readonly open: boolean };
   readonly preview: FilePreviewSnapshotV1 | null;
   readonly appearance: ApplicationAppearanceV1;
@@ -71,7 +73,7 @@ export interface ApplicationAppearanceV1 {
 }
 
 /** Commands are scoped to the generation that captured this application handle. */
-export interface ApplicationActionMapV1 {
+export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1 {
   "tab.select": { input: { readonly tabId: string }; result: void };
   "tab.close": { input: { readonly tabId: string }; result: void };
   "tab.reorder": { input: { readonly tabId: string; readonly beforeTabId: string }; result: void };
