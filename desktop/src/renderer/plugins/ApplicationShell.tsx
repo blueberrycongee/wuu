@@ -1,4 +1,5 @@
 import { LegacyUIContributions } from "./LegacyUIContributions";
+import { RuntimeLoading } from "../LoadingViews";
 import * as React from "react";
 import type { UICompositionV1, UISlotProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginHost, RegisteredApplicationShell, RegisteredUIContribution } from "./PluginHost";
@@ -91,9 +92,8 @@ export function ApplicationShellOutlet({ host, binding, surfaceBindings = {} }: 
   const shells = React.useSyncExternalStore(listener => host.subscribe(listener), host.getApplicationShells, host.getApplicationShells);
   const selected = binding && shells.find(shell => shell.pluginId === binding.pluginId
     && shell.generation === binding.generation && shell.id === binding.id);
-  if (!selected) return <div className="application-recovery" role="alert">
-    {binding ? `Selected application shell is unavailable: ${binding.pluginId}/${binding.id}@${binding.generation}` : "No application shell is selected."}
-  </div>;
+  if (!selected) return <RuntimeLoading fullscreen onRetry={() => window.location.reload()}
+    status={binding ? `Selected application shell is unavailable: ${binding.pluginId}/${binding.id}@${binding.generation}` : "No application shell is selected."} />;
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>

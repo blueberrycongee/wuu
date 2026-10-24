@@ -4722,6 +4722,18 @@ pre {
   background: var(--paper);
 }
 
+/* The host owns this surface before any application shell can be loaded. */
+.application-recovery {
+  height: 100%;
+  overflow: auto;
+  padding: 32px 24px;
+  -webkit-app-region: drag;
+}
+
+.application-recovery .wuu-launch {
+  -webkit-app-region: no-drag;
+}
+
 .project-empty-content {
   display: grid;
   width: min(440px, calc(100% - 72px));
@@ -4746,6 +4758,50 @@ pre {
   display: grid;
   justify-items: center;
   gap: 24px;
+  width: min(400px, 100%);
+  padding: 16px;
+  text-align: center;
+  color: var(--ink);
+  font-size: var(--font-ui);
+}
+
+.wuu-launch-message {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  min-width: 0;
+  width: 100%;
+}
+
+.wuu-launch-title,
+.wuu-launch-description {
+  margin: 0;
+  line-height: var(--line-body);
+}
+
+.wuu-launch-description {
+  min-height: 3lh;
+  color: var(--ink-soft);
+}
+
+.wuu-launch-error {
+  margin: 0;
+  max-height: 35vh;
+  width: 100%;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font: inherit;
+  line-height: var(--line-body);
+  color: var(--ink-soft);
+  user-select: text;
+}
+
+@container style(--motion-reduced: 1) {
+  .wuu-launch .loading-rail::after {
+    animation: none;
+    width: 100%;
+  }
 }
 
 .wuu-launch-glass {
