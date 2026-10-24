@@ -214,10 +214,18 @@ export class ApplicationNavigation {
       case "navigation.refresh": {
         const requested = this.host.sidebarCache.getSnapshot();
         const folderRevision = this.folderRevision;
-        const [threads, folders] = await Promise.all([window.wuu.listAllThreads(), window.wuu.getSessionOrganization()]);
+        const [threads, folders] = await Promise.allSettled([
+          Promise.resolve().then(() => window.wuu.listAllThreads()),
+          Promise.resolve().then(() => window.wuu.getSessionOrganization()),
+        ]);
         signal?.throwIfAborted();
-        this.host.sidebarCache.cacheSidebarThreads(threads.threads, { projects: requested.workspaceThreadsByWorkspaceID, scratch: requested.cachedScratchThreads });
-        if (folderRevision === this.folderRevision) this.folders = folders.organization.folders.map(({ id, name }) => ({ id, name })); break;
+        // Organization and thread listings are independent; preserve each
+        // successful result while still surfacing a failed refresh to callers.
+        if (threads.status === "fulfilled") this.host.sidebarCache.cacheSidebarThreads(threads.value.threads, { projects: requested.workspaceThreadsByWorkspaceID, scratch: requested.cachedScratchThreads });
+        if (folders.status === "fulfilled" && folderRevision === this.folderRevision) this.folders = folders.value.organization.folders.map(({ id, name }) => ({ id, name }));
+        if (threads.status === "rejected") { this.host.changed(); throw threads.reason; }
+        if (folders.status === "rejected") { this.host.changed(); throw folders.reason; }
+        break;
       }
       case "navigation.load-workspace": {
         const { workspaceId } = input as Actions["navigation.load-workspace"]["input"];

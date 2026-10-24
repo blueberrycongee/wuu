@@ -116,6 +116,15 @@ describe("public navigation domain", () => {
     expect(h.get()).toBe(before);
     expect(h.cache.patchCachedSidebarThread).not.toHaveBeenCalled();
   });
+  it("publishes folders even when the independent thread refresh fails", async () => {
+    const h = fixture();
+    window.wuu = { listAllThreads: vi.fn().mockRejectedValue(new Error("threads offline")),
+      getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: [{ id: "folder", name: "Folder" }] } }),
+    } as unknown as typeof window.wuu;
+    await expect(h.navigation.invoke("navigation.refresh", {})).rejects.toThrow("threads offline");
+    expect(h.navigation.getSnapshot().folders).toEqual([{ id: "folder", name: "Folder" }]);
+    expect(h.cache.cacheSidebarThreads).not.toHaveBeenCalled();
+  });
   it("retains folder edits when an older catalog refresh completes", async () => {
     const h = fixture();
     let finish!: (value: unknown) => void;
