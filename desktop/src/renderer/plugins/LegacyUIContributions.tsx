@@ -230,6 +230,7 @@ function RenderPresenter({ record, props }: { record: RegisteredPresenter; props
 function presenterActions(props: LegacyUIContributionsProps, target: string, value: unknown): Record<string, (input?: unknown) => unknown> {
   if (target === "header.workspace") {
     const header = value as HeaderSnapshotV1;
+    const viewId = props.context.viewId;
     const selectedTab = (input: unknown) => {
       const id = (input as { tabId?: unknown } | undefined)?.tabId;
       const tab = header.tabs?.find(tab => tab.id === id);
@@ -237,6 +238,14 @@ function presenterActions(props: LegacyUIContributionsProps, target: string, val
       return tab;
     };
     return {
+      ...(header.canNavigateBack && typeof viewId === "string" ? {
+        [HEADER_ACTIONS.navigateBack]: () => {
+          if (props.application.getSnapshot().navigationWorkspace.activePluginView?.id !== viewId) {
+            throw new Error("Header view is no longer active");
+          }
+          return props.application.invoke("navigation.show-native", {});
+        },
+      } : {}),
       [HEADER_ACTIONS.selectTab]: input => {
         const tab = selectedTab(input);
         return tab.kind === "conversation" ? props.application.invoke("preview.show-conversation", {})

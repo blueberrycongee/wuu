@@ -81,6 +81,37 @@ describe("legacy contributions in declared public slots", () => {
     expect(invoke).toHaveBeenCalledOnce();
   });
 
+  it("routes a legacy header back action only while its captured view remains active", async () => {
+    const { application, register, mount, invoke } = await fixture("header.workspace", { viewId: "source-view",
+      snapshot: { contractVersion: 1, scope: "workspace", canNavigateBack: true } });
+    const baseline = application.getSnapshot();
+    let current: ApplicationSnapshotV1 = { ...baseline, navigationWorkspace: { ...baseline.navigationWorkspace,
+      activePluginView: { id: "source-view", pluginId: "extension", title: "Source", webPage: false, closable: true } } };
+    application.getSnapshot = () => current;
+    let captured!: PresentationHost;
+    await register(api => { api.registerPresenter({ id: "header", target: "header.workspace", render: props => {
+      captured = props.host;
+      return <button onClick={() => { void props.host.invoke("header.navigate-back"); }}>Go back</button>;
+    } }); });
+    mount();
+    expect(captured.actions).toContain("header.navigate-back");
+    await act(async () => { element.querySelector<HTMLButtonElement>("button")!.click(); });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("navigation.show-native", {}, { signal: expect.any(AbortSignal) });
+    current = { ...current, navigationWorkspace: { ...current.navigationWorkspace,
+      activePluginView: { id: "successor-view", pluginId: "extension", title: "Successor", webPage: false, closable: true } } };
+    await expect(captured.invoke("header.navigate-back")).rejects.toThrow("view");
+    expect(invoke).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ canNavigateBack: false, viewId: "source" }, { canNavigateBack: true, viewId: undefined }])(
+    "does not advertise an unavailable header back action (%j)", async ({ canNavigateBack, viewId }) => {
+      const { register, mount } = await fixture("header.workspace", { viewId,
+        snapshot: { contractVersion: 1, scope: "workspace", canNavigateBack } });
+      let captured!: PresentationHost;
+      await register(api => { api.registerPresenter({ id: "header", target: "header.workspace", render: props => { captured = props.host; return props.fallback; } }); });
+      mount(); expect(captured.actions).not.toContain("header.navigate-back");
+    });
+
   it("restores the supplied fallback after a presenter fails and recovers on reactivation", async () => {
     const { host, register, mount } = await fixture("header.workspace", { snapshot: { contractVersion: 1, scope: "workspace", tabs: [] } });
     const silence = vi.spyOn(console, "error").mockImplementation(() => {});
