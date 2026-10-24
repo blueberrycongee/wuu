@@ -82,6 +82,9 @@ func newNativeToolScopeExecutor(inner agent.ToolExecutor, host *pluginhost.Host,
 		actorID, _ = provider.ExecutionActor()
 	}
 	selected := newSelectedToolExecutor(host, scope, selectedToolIdentity{threadID: threadID, cwd: cwd, actorID: actorID})
+	if kit, ok := inner.(*tools.Toolkit); ok && !clone {
+		selected.refreshAuthority = kit.RefreshAuthorityFrom
+	}
 	selected.rebind = func(nextHost *pluginhost.Host, nextHooks *hooks.Dispatcher, nextThread, nextCWD string) *selectedToolExecutor {
 		return newNativeToolScopeExecutor(inner, nextHost, nextHooks, nextThread, nextCWD, true)
 	}

@@ -29,14 +29,15 @@ type selectedToolIdentity struct {
 type selectedToolCallKey struct{}
 
 type selectedToolExecutor struct {
-	client       *toolservice.Client
-	host         *pluginhost.Host
-	scope        *toolservice.Scope
-	identity     selectedToolIdentity
-	rebind       func(*pluginhost.Host, *hooks.Dispatcher, string, string) *selectedToolExecutor
-	mu           sync.Mutex
-	lifecycleErr error
-	results      map[string]toolservice.ExecutionResult
+	client           *toolservice.Client
+	host             *pluginhost.Host
+	scope            *toolservice.Scope
+	identity         selectedToolIdentity
+	rebind           func(*pluginhost.Host, *hooks.Dispatcher, string, string) *selectedToolExecutor
+	mu               sync.Mutex
+	lifecycleErr     error
+	refreshAuthority func(*tools.Toolkit)
+	results          map[string]toolservice.ExecutionResult
 }
 
 func newSelectedToolExecutor(host *pluginhost.Host, scope *toolservice.Scope, identities ...selectedToolIdentity) *selectedToolExecutor {
@@ -54,7 +55,10 @@ func newSelectedToolExecutor(host *pluginhost.Host, scope *toolservice.Scope, id
 				return nil, errors.New("selected tool execution requires host call identity")
 			}
 			var scopeErr error
-			ctx, scopeErr = bindHostProcessScope(ctx, e.identity.processScope, input)
+			e.mu.Lock()
+			processScope := e.identity.processScope
+			e.mu.Unlock()
+			ctx, scopeErr = bindHostProcessScope(ctx, processScope, input)
 			if scopeErr != nil {
 				return nil, scopeErr
 			}

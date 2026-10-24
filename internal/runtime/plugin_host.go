@@ -58,7 +58,7 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 	return host.Activate(ctx)
 }
 
-func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (*pluginhost.Host, *kernelHostServices, error) {
+func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
 	factories = append(append([]NativeProviderFactory(nil), factories...), compactionProviderFactory())
 	factoryIDs := make([]string, 0, len(factories))
 	for _, factory := range factories {
@@ -73,6 +73,16 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		return nil, nil, err
 	}
 	host := newPluginHostWithRequirements(plugins)
+	defer func() {
+		if prepareErr == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		closeErr := host.Close(ctx)
+		cancel()
+		prepareErr = &failedPreparation{cause: errors.Join(prepareErr, closeErr), drained: host.ShutdownDone()}
+		go func() { <-host.ShutdownDone(); registry.Close(context.Background()) }()
+	}()
 	var started []pluginhost.Client
 	var rendererServices []pluginhost.Client
 	kernel := newKernelHostServices(func() uint64 {
@@ -219,15 +229,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		err := host.Close(ctx)
-		select {
-		case <-host.ShutdownDone():
-			registry.Close(context.Background())
-		default:
-			go func() {
-				<-host.ShutdownDone()
-				registry.Close(context.Background())
-			}()
-		}
+
 		return err
 	}
 	for _, item := range plugins {
@@ -398,8 +400,11 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, defaultShellModule, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	available = append(available, stateServiceModules()...)
+	for _, module := range nativeRendererModules() {
+		available = append(available, module.ID)
+	}
 	for _, id := range nativeProviderIDs {
 		if !slices.Contains(available, id) {
 			available = append(available, id)

@@ -466,9 +466,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	}
 	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(effectiveConfig.Composition, s.SafeMode), s.DriverProfile, factories...)
 	if err != nil {
-		for _, root := range ownedRoots {
-			_ = os.RemoveAll(root)
-		}
+		releaseFailedSnapshots(err, ownedRoots)
 		return nil, err
 	}
 	kernel.bindModelSession(s, host)
@@ -476,24 +474,14 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	// Treat that exactly like startup failure for required replacements.
 	for _, status := range host.Statuses() {
 		if requiredRuntimes[status.ID] && status.State == pluginhost.StateFailed {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			closeErr := host.Close(ctx)
-			cancel()
-			for _, root := range ownedRoots {
-				_ = os.RemoveAll(root)
-			}
+			closeErr := (&PluginGeneration{host: host, ownedRoots: ownedRoots}).close()
 			return nil, pluginActivationError(status.ID, errors.New(status.Error), closeErr)
 		}
 	}
 	active = availablePluginPackages(active, host)
 	systemPrompts, compactions, err := buildPluginAgentCapabilities(context.Background(), host, s.ProviderName, s.Model, s.RootDir)
 	if err != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		closeErr := host.Close(ctx)
-		cancel()
-		for _, root := range ownedRoots {
-			_ = os.RemoveAll(root)
-		}
+		closeErr := (&PluginGeneration{host: host, ownedRoots: ownedRoots}).close()
 		return nil, errors.Join(err, closeErr)
 	}
 	pluginSkills := discoverPluginSkills(active)
@@ -558,6 +546,32 @@ func (s *Session) hydratePluginGeneration(generation *PluginGeneration) error {
 		generation.systemPrompt, generation.promptSections = result.Content, result.Sections
 	}
 	return nil
+}
+
+// Failed preparation transfers snapshot cleanup to the same host drain barrier.
+type failedPreparation struct {
+	cause   error
+	drained <-chan struct{}
+}
+
+func (e *failedPreparation) Error() string { return e.cause.Error() }
+func (e *failedPreparation) Unwrap() error { return e.cause }
+func releaseFailedSnapshots(err error, roots []string) {
+	remove := func() {
+		for _, root := range roots {
+			_ = os.RemoveAll(root)
+		}
+	}
+	var failed *failedPreparation
+	if errors.As(err, &failed) {
+		select {
+		case <-failed.drained:
+		default:
+			go func() { <-failed.drained; remove() }()
+			return
+		}
+	}
+	remove()
 }
 
 // PluginGenerationWasCommitted distinguishes post-commit activation failure

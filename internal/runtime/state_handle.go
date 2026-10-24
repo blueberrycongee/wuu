@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -171,9 +170,7 @@ func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
 	owned := true
 	defer func() {
 		if owned {
-			for _, root := range roots {
-				_ = os.RemoveAll(root)
-			}
+			releaseFailedSnapshots(err, roots)
 		}
 	}()
 	if err := catalog.Release(); err != nil {

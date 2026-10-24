@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -115,12 +117,14 @@ func TestExternalToolProviderUsesHostProcessWithoutToolkit(t *testing.T) {
 			if err := host.Activate(ctx); err != nil {
 				t.Fatal(err)
 			}
-			processScope := newHostProcessScope(host, tools.ProcessScopeConfig{Manager: manager, RootDir: root, ThreadID: "thread", ActorID: "actor", PermissionMode: "unconfined", Boundary: tools.UnconfinedBoundary()})
+			processConfig := tools.ProcessScopeConfig{Manager: manager, RootDir: root, ThreadID: "thread", ActorID: "actor"}
 			toolkitCreated := false
 			executor := newSelectedToolExecutor(host, toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
 				toolkitCreated = true
 				return toolservice.Backend{}, errors.New("must not initialize default toolkit")
-			}), selectedToolIdentity{threadID: "thread", actorID: "actor", cwd: root, processScope: processScope})
+			}), selectedToolIdentity{threadID: "thread", actorID: "actor", cwd: root})
+			runtime := &ThreadRuntime{PluginHost: host, StreamRunner: &agent.StreamRunner{Tools: executor}, processScopeConfig: processConfig}
+			runtime.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: "unconfined"}, false, nil)
 			turn := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: "thread", ExecutionID: "turn"})
 			result, err := executor.ExecuteResult(turn, providers.ToolCall{ID: "call", Name: "external_process", Arguments: `{"thread_id":"forged"}`})
 			if toolkitCreated {
