@@ -26,7 +26,7 @@ import (
 type InferenceJournal interface {
 	PrepareOperation(InferenceOperationJournalRecord) error
 	PrepareAttempt(InferenceAttemptJournalRecord) error
-	UpsertSubmission(InferenceSubmissionJournalRecord) error
+	UpsertSubmission(context.Context, InferenceSubmissionJournalRecord) error
 	MarkAttemptFirstEvent(operationID, attemptID, submissionID string, at time.Time) error
 	CompleteAttempt(InferenceAttemptTerminalRecord) error
 	PrepareRecoveryAttempt(context.Context, InferenceRecoveryAttemptJournalRecord) error

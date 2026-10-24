@@ -19,7 +19,7 @@ func (*workflowRecordingJournal) PrepareOperation(providers.InferenceOperationJo
 func (*workflowRecordingJournal) PrepareAttempt(providers.InferenceAttemptJournalRecord) error {
 	return nil
 }
-func (*workflowRecordingJournal) UpsertSubmission(providers.InferenceSubmissionJournalRecord) error {
+func (*workflowRecordingJournal) UpsertSubmission(context.Context, providers.InferenceSubmissionJournalRecord) error {
 	return nil
 }
 func (*workflowRecordingJournal) MarkAttemptFirstEvent(string, string, string, time.Time) error {

@@ -543,7 +543,7 @@ func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (Infere
 	}
 	e.nextSubmission = nextOrdinal
 	if e.journal != nil {
-		if err := e.journal.UpsertSubmission(journalSubmission(e.operation.ID, submission)); err != nil {
+		if err := e.journal.UpsertSubmission(context.Background(), journalSubmission(e.operation.ID, submission)); err != nil {
 			e.nextSubmission--
 			if !IsWorkflowBudgetError(err) {
 				e.journalErr = err
@@ -685,7 +685,7 @@ func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure Nor
 	if e.journal == nil {
 		return nil
 	}
-	if err := e.checkpointSubmissionsLocked(a.ID); err != nil {
+	if err := e.checkpointSubmissionsLocked(context.Background(), a.ID); err != nil {
 		return err
 	}
 	if err := e.journal.CompleteAttempt(InferenceAttemptTerminalRecord{
@@ -726,7 +726,7 @@ func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan Recov
 		if e.journal == nil {
 			return nil
 		}
-		if err := e.checkpointSubmissionsLocked(a.ID); err != nil {
+		if err := e.checkpointSubmissionsLocked(context.Background(), a.ID); err != nil {
 			return err
 		}
 		return e.journal.PrepareRecoveryAttempt(ctx, InferenceRecoveryAttemptJournalRecord{
@@ -772,7 +772,7 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 		return e.journalErr
 	}
 	if e.journal != nil {
-		if err := e.checkpointSubmissionsLocked(""); err != nil {
+		if err := e.checkpointSubmissionsLocked(context.Background(), ""); err != nil {
 			return err
 		}
 		if err := e.journal.CompleteOperation(InferenceOperationTerminalRecord{
@@ -795,14 +795,33 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 	return nil
 }
 
+// CheckpointSubmissions persists current physical receipts, including after
+// logical completion. The owner first joins the producers and observers, then
+// supplies its remaining cleanup deadline. This does not repeat logical
+// completion or retry a previously failed required write.
+func (e *InferenceExecution) CheckpointSubmissions(ctx context.Context) error {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.journalErr != nil {
+		return e.journalErr
+	}
+	if e.journal == nil {
+		return nil
+	}
+	return e.checkpointSubmissionsLocked(ctx, "")
+}
+
 // checkpointSubmissionsLocked persists the actual observations before a logical
 // transition. Empty attemptID covers the entire operation. The caller holds e.mu.
-func (e *InferenceExecution) checkpointSubmissionsLocked(attemptID string) error {
+func (e *InferenceExecution) checkpointSubmissionsLocked(ctx context.Context, attemptID string) error {
 	for _, submission := range e.submissions {
 		if attemptID != "" && submission.AttemptID != attemptID {
 			continue
 		}
-		if err := e.journal.UpsertSubmission(journalSubmission(e.operation.ID, snapshotSubmission(submission))); err != nil {
+		if err := e.journal.UpsertSubmission(ctx, journalSubmission(e.operation.ID, snapshotSubmission(submission))); err != nil {
 			// Cancellation of a required write is still a persistence failure;
 			// recovery must not discard it as ordinary caller cancellation.
 			e.journalErr = err
@@ -939,7 +958,7 @@ func (e *InferenceExecution) updateSubmission(id string, update func(*InferenceS
 				record := journalSubmission(operationID, submission)
 				if progress, ok := journal.(InferenceProgressJournal); ok {
 					progress.RecordSubmissionProgress(record)
-				} else if err := journal.UpsertSubmission(record); err != nil {
+				} else if err := journal.UpsertSubmission(context.Background(), record); err != nil {
 					e.noteJournalDegraded(err)
 				}
 			}

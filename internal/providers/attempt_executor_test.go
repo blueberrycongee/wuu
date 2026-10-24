@@ -36,7 +36,7 @@ func (j *recordingInferenceJournal) PrepareAttempt(InferenceAttemptJournalRecord
 	return j.failPrepare
 }
 
-func (j *recordingInferenceJournal) UpsertSubmission(record InferenceSubmissionJournalRecord) error {
+func (j *recordingInferenceJournal) UpsertSubmission(_ context.Context, record InferenceSubmissionJournalRecord) error {
 	j.record("submission:" + string(record.Outcome))
 	return j.failSubmission
 }

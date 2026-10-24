@@ -70,7 +70,7 @@ func (j *failAfterFirstSubmissionJournal) PrepareOperation(InferenceOperationJou
 func (j *failAfterFirstSubmissionJournal) PrepareAttempt(InferenceAttemptJournalRecord) error {
 	return nil
 }
-func (j *failAfterFirstSubmissionJournal) UpsertSubmission(InferenceSubmissionJournalRecord) error {
+func (j *failAfterFirstSubmissionJournal) UpsertSubmission(context.Context, InferenceSubmissionJournalRecord) error {
 	j.upserts++
 	if j.upserts == 1 {
 		return nil
@@ -140,9 +140,9 @@ type submissionCheckpointJournal struct {
 	upserts          int
 }
 
-func (j *submissionCheckpointJournal) UpsertSubmission(record InferenceSubmissionJournalRecord) error {
+func (j *submissionCheckpointJournal) UpsertSubmission(ctx context.Context, record InferenceSubmissionJournalRecord) error {
 	j.upserts++
-	if err := j.recordingInferenceJournal.UpsertSubmission(record); err != nil {
+	if err := j.recordingInferenceJournal.UpsertSubmission(ctx, record); err != nil {
 		return err
 	}
 	if j.submissions == nil {

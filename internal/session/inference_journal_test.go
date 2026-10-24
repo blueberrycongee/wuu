@@ -15,12 +15,128 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
+
+type finalReceiptCheckpointJournal struct{ providers.InferenceJournal }
+
+func (finalReceiptCheckpointJournal) RecordSubmissionProgress(providers.InferenceSubmissionJournalRecord) {
+}
+
+func TestFinalReceiptCheckpointPreservesDeadlineAndUncertainCommit(t *testing.T) {
+	for _, mode := range []string{"late-usage", "deadline", "lost-commit-response"} {
+		t.Run(mode, func(t *testing.T) {
+			service := persistence.NewService("test.receipt-documents", t.TempDir(), "jsonl")
+			if err := service.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer service.Close(context.Background())
+			var armed atomic.Bool
+			var checkpointCommits atomic.Int32
+			var ownerDeadline time.Time
+			lostResponse := errors.New("final receipt commit response lost")
+			documents := persistence.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+				params := pluginhost.ServiceInvokeParams{Method: method, Params: raw}
+				if armed.Load() && method == "commit" {
+					var transaction persistence.Transaction
+					if err := json.Unmarshal(raw, &transaction); err != nil {
+						return nil, err
+					}
+					for _, write := range transaction.Writes {
+						if write.Namespace != documentNamespace("inference_submissions") {
+							continue
+						}
+						checkpointCommits.Add(1)
+						if mode == "deadline" {
+							if deadline, ok := ctx.Deadline(); !ok || !deadline.Equal(ownerDeadline) {
+								return nil, errors.New("selected documents lost the owner checkpoint deadline")
+							}
+							<-ctx.Done()
+							return nil, ctx.Err()
+						}
+						if mode == "lost-commit-response" {
+							if _, err := service.InvokeService(ctx, params); err != nil {
+								return nil, err
+							}
+							return nil, lostResponse
+						}
+					}
+				}
+				return service.InvokeService(ctx, params)
+			})
+			store := NewStore(context.Background(), documents)
+			journalRuntime, err := store.NewInferenceJournalRuntime("receipt-checkpoint")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer journalRuntime.Close()
+			journal := finalReceiptCheckpointJournal{journalRuntime.ForOwner("receipt-owner")}
+			request, err := providers.EnsureInferenceAttemptContext(providers.WithInferenceJournal(context.Background(), journal), providers.ChatRequest{}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Transport: "http", RequestBytes: 400})
+			if err != nil {
+				t.Fatal(err)
+			}
+			submission.CompleteFailure(providers.NormalizeFailure(context.Canceled))
+			if err := request.Execution.Complete(providers.InferenceOutcomeCanceled, providers.NormalizeFailure(context.Canceled)); err != nil {
+				t.Fatal(err)
+			}
+			before := readSessionDocument[inferenceOperationDocument](t, store, "inference_operations", request.Operation.ID)
+			submission.ObserveUsage(&providers.TokenUsage{InputTokens: 13, OutputTokens: 5})
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			ownerDeadline, _ = ctx.Deadline()
+			armed.Store(true)
+			err = request.Execution.CheckpointSubmissions(ctx)
+			armed.Store(false)
+			if mode == "late-usage" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				want := lostResponse
+				if mode == "deadline" {
+					want = context.DeadlineExceeded
+				}
+				var uncertain *persistence.CommitError
+				if !errors.Is(err, want) || !errors.As(err, &uncertain) || request.Execution.JournalError() != err {
+					t.Fatalf("final checkpoint lost the original required failure: %v", err)
+				}
+				armed.Store(true)
+				if again := request.Execution.CheckpointSubmissions(context.Background()); again != err {
+					t.Fatalf("failed checkpoint was retried: %v -> %v", err, again)
+				}
+				armed.Store(false)
+			}
+			if checkpointCommits.Load() != 1 {
+				t.Fatalf("final checkpoint commits = %d, want one original transaction", checkpointCommits.Load())
+			}
+			after := readSessionDocument[inferenceOperationDocument](t, store, "inference_operations", request.Operation.ID)
+			if after.Status != before.Status || after.TerminalAt != before.TerminalAt {
+				t.Fatalf("receipt checkpoint changed logical terminal: before=%+v after=%+v", before, after)
+			}
+			receipt := readSessionDocument[providers.InferenceSubmissionJournalRecord](t, store, "inference_submissions", submission.ID)
+			if receipt.Outcome != providers.InferenceSubmissionFailed || receipt.FailureCategory != providers.FailureCanceled {
+				t.Fatalf("late usage invented a physical outcome: %+v", receipt)
+			}
+			if mode == "deadline" {
+				if receipt.ReportedUsage != nil {
+					t.Fatalf("expired checkpoint committed receipt: %+v", receipt)
+				}
+			} else if receipt.CostState != providers.InferenceCostKnown || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 13 || receipt.ReportedUsage.OutputTokens != 5 {
+				t.Fatalf("late receipt was not durably settled on the same submission: %+v", receipt)
+			}
+		})
+	}
+}
 
 func budgetedInferenceOperationRecord(
 	op providers.InferenceOperation,
@@ -76,7 +192,7 @@ func TestInferenceJournalPersistsMetadataOnlyLifecycle(t *testing.T) {
 			StartedAt: now.Add(3 * time.Millisecond), Outcome: providers.InferenceSubmissionInFlight,
 			CostState: providers.InferenceCostUnknownBillable,
 		}
-		if err := journal.UpsertSubmission(submission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), submission); err != nil {
 			t.Fatal(err)
 		}
 		if err := journal.MarkAttemptFirstEvent(op.ID, attemptID, submissionID, now.Add(4*time.Millisecond)); err != nil {
@@ -87,7 +203,7 @@ func TestInferenceJournalPersistsMetadataOnlyLifecycle(t *testing.T) {
 		submission.ReportedUsage = &providers.TokenUsage{InputTokens: 12, OutputTokens: 4, CacheReadTokens: 3}
 		submission.OutputBytes = 16
 		submission.CompletedAt = now.Add(5 * time.Millisecond)
-		if err := journal.UpsertSubmission(submission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), submission); err != nil {
 			t.Fatal(err)
 		}
 		if err := journal.CompleteAttempt(providers.InferenceAttemptTerminalRecord{
@@ -187,7 +303,7 @@ func TestInferenceJournalCoalescesStreamingProgressAndFlushesAtBarrier(t *testin
 			StartedAt: now, Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable,
 		}
 		// Pre-send durable checkpoint (synchronous).
-		if err := journal.UpsertSubmission(base); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), base); err != nil {
 			t.Fatal(err)
 		}
 
@@ -461,7 +577,7 @@ func TestInferenceJournalSettlesLateUsageAfterWorkflowCompletion(t *testing.T) {
 			OperationID: op.ID, AttemptID: attemptID, ID: op.ID + "-s1", Ordinal: 1, AttemptOrdinal: 1,
 			Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable, StartedAt: now,
 		}
-		if err := journal.UpsertSubmission(submission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), submission); err != nil {
 			t.Fatal(err)
 		}
 		if err := journal.CompleteAttempt(providers.InferenceAttemptTerminalRecord{
@@ -483,7 +599,7 @@ func TestInferenceJournalSettlesLateUsageAfterWorkflowCompletion(t *testing.T) {
 		submission.CostState = providers.InferenceCostKnown
 		submission.ReportedUsage = &providers.TokenUsage{InputTokens: 9, OutputTokens: 3}
 		submission.CompletedAt = now.Add(time.Second)
-		if err := journal.UpsertSubmission(submission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), submission); err != nil {
 			t.Fatalf("late usage settlement: %v", err)
 		}
 
@@ -562,14 +678,14 @@ func TestInferenceJournalEnforcesSharedReplayAndSubmissionBudget(t *testing.T) {
 		})
 		requireWorkflowBudgetDimension(t, err, providers.WorkflowBudgetSamePayloadReplays)
 
-		if err := journal.UpsertSubmission(providers.InferenceSubmissionJournalRecord{
+		if err := journal.UpsertSubmission(context.Background(), providers.InferenceSubmissionJournalRecord{
 			OperationID: first.ID, AttemptID: first.AttemptID(2), ID: first.ID + "-s1", Ordinal: 1, AttemptOrdinal: 2,
 			Provider: "test", Transport: "http", Outcome: providers.InferenceSubmissionInFlight,
 			CostState: providers.InferenceCostUnknownBillable, StartedAt: now,
 		}); err != nil {
 			t.Fatal(err)
 		}
-		err = journal.UpsertSubmission(providers.InferenceSubmissionJournalRecord{
+		err = journal.UpsertSubmission(context.Background(), providers.InferenceSubmissionJournalRecord{
 			OperationID: second.ID, AttemptID: secondAttempt, ID: second.ID + "-s1", Ordinal: 1, AttemptOrdinal: 1,
 			Provider: "test", Transport: "http", Outcome: providers.InferenceSubmissionInFlight,
 			CostState: providers.InferenceCostUnknownBillable, StartedAt: now,
@@ -623,7 +739,7 @@ func TestInferenceJournalReplayBudgetExemptsUnansweredNetworkFailure(t *testing.
 			}
 			if markFirstEvent {
 				submissionID := op.ID + "-s1"
-				if err := journal.UpsertSubmission(providers.InferenceSubmissionJournalRecord{
+				if err := journal.UpsertSubmission(context.Background(), providers.InferenceSubmissionJournalRecord{
 					OperationID: op.ID, AttemptID: attemptID, ID: submissionID, Ordinal: 1, AttemptOrdinal: 1,
 					Provider: "anthropic", Protocol: "messages", Transport: "http", Mode: "stream",
 					StartedAt: now, Outcome: providers.InferenceSubmissionInFlight,
@@ -835,25 +951,25 @@ func TestInferenceJournalCostConfidenceSettlementIsIdempotent(t *testing.T) {
 			OperationID: first.ID, AttemptID: firstAttempt, ID: first.ID + "-s1", Ordinal: 1, AttemptOrdinal: 1,
 			Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable, StartedAt: now,
 		}
-		if err := journal.UpsertSubmission(firstSubmission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), firstSubmission); err != nil {
 			t.Fatal(err)
 		}
 		secondSubmission := providers.InferenceSubmissionJournalRecord{
 			OperationID: second.ID, AttemptID: secondAttempt, ID: second.ID + "-s1", Ordinal: 1, AttemptOrdinal: 1,
 			Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable, StartedAt: now,
 		}
-		err = journal.UpsertSubmission(secondSubmission)
+		err = journal.UpsertSubmission(context.Background(), secondSubmission)
 		requireWorkflowBudgetDimension(t, err, providers.WorkflowBudgetUnknownBillable)
 
 		firstSubmission.CostState = providers.InferenceCostKnown
 		firstSubmission.ReportedUsage = &providers.TokenUsage{InputTokens: 10, OutputTokens: 4}
-		if err := journal.UpsertSubmission(firstSubmission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), firstSubmission); err != nil {
 			t.Fatal(err)
 		}
-		if err := journal.UpsertSubmission(firstSubmission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), firstSubmission); err != nil {
 			t.Fatalf("repeat known settlement: %v", err)
 		}
-		if err := journal.UpsertSubmission(secondSubmission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), secondSubmission); err != nil {
 			t.Fatalf("submission after known settlement: %v", err)
 		}
 
@@ -900,7 +1016,7 @@ func TestInferenceJournalHardUsageBudgetRequiresSettledCost(t *testing.T) {
 			Ordinal: 1, AttemptOrdinal: 1, Outcome: providers.InferenceSubmissionInFlight,
 			CostState: providers.InferenceCostUnknownBillable, StartedAt: now,
 		}
-		if err := journal.UpsertSubmission(submission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), submission); err != nil {
 			t.Fatal(err)
 		}
 
@@ -914,7 +1030,7 @@ func TestInferenceJournalHardUsageBudgetRequiresSettledCost(t *testing.T) {
 
 		submission.CostState = providers.InferenceCostKnown
 		submission.ReportedUsage = &providers.TokenUsage{InputTokens: 80, OutputTokens: 40}
-		if err := journal.UpsertSubmission(submission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), submission); err != nil {
 			t.Fatal(err)
 		}
 		err = journal.PrepareOperation(budgetedInferenceOperationRecord(second, workflowID, spec, secondHash, now))
@@ -971,7 +1087,7 @@ func TestInferenceJournalConcurrentLastSubmissionAdmission(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				results <- journal.UpsertSubmission(providers.InferenceSubmissionJournalRecord{
+				results <- journal.UpsertSubmission(context.Background(), providers.InferenceSubmissionJournalRecord{
 					OperationID: candidate.op.ID, AttemptID: candidate.attemptID,
 					ID: candidate.op.ID + "-s1", Ordinal: 1, AttemptOrdinal: 1,
 					Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable, StartedAt: now,
@@ -1149,7 +1265,7 @@ func TestInferenceJournalCrossProcessBudgetWorker(t *testing.T) {
 			AttemptID: candidate.AttemptID, Ordinal: 1, RequestHash: candidate.RequestHash,
 		})
 	case "submission":
-		err = journal.UpsertSubmission(providers.InferenceSubmissionJournalRecord{
+		err = journal.UpsertSubmission(context.Background(), providers.InferenceSubmissionJournalRecord{
 			OperationID: candidate.OperationID, AttemptID: candidate.AttemptID,
 			ID: candidate.OperationID + "-s1", Ordinal: 1, AttemptOrdinal: 1,
 			Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable,
@@ -1215,7 +1331,7 @@ func TestInferenceJournalCrashRecoveryMatrix(t *testing.T) {
 				continue
 			}
 			submissionID := op.ID + "-s1"
-			if err := journal.UpsertSubmission(providers.InferenceSubmissionJournalRecord{
+			if err := journal.UpsertSubmission(context.Background(), providers.InferenceSubmissionJournalRecord{
 				OperationID: op.ID, AttemptID: attemptID, ID: submissionID, Ordinal: 1, AttemptOrdinal: 1,
 				Provider: "test", Transport: "http", StartedAt: now.Add(2 * time.Millisecond),
 				Outcome: providers.InferenceSubmissionInFlight, CostState: providers.InferenceCostUnknownBillable,
@@ -1725,7 +1841,7 @@ func TestInferenceJournalSubmissionEvidenceIsMonotonic(t *testing.T) {
 			StartedAt: now, Outcome: providers.InferenceSubmissionSucceeded, CostState: providers.InferenceCostKnown,
 			ReportedUsage: &providers.TokenUsage{InputTokens: 20, OutputTokens: 8}, OutputBytes: 32, CompletedAt: now.Add(time.Second),
 		}
-		if err := journal.UpsertSubmission(base); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), base); err != nil {
 			t.Fatal(err)
 		}
 		stale := base
@@ -1734,7 +1850,7 @@ func TestInferenceJournalSubmissionEvidenceIsMonotonic(t *testing.T) {
 		stale.ReportedUsage = nil
 		stale.OutputBytes = 4
 		stale.CompletedAt = time.Time{}
-		if err := journal.UpsertSubmission(stale); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), stale); err != nil {
 			t.Fatal(err)
 		}
 		var outcome, cost string

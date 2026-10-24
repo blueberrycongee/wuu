@@ -216,9 +216,9 @@ func normalizeSubmissionDocument(record *providers.InferenceSubmissionJournalRec
 	}
 }
 
-func (j *documentInferenceJournal) UpsertSubmission(record providers.InferenceSubmissionJournalRecord) error {
+func (j *documentInferenceJournal) UpsertSubmission(ctx context.Context, record providers.InferenceSubmissionJournalRecord) error {
 	normalizeSubmissionDocument(&record)
-	return j.write("upsert inference submission", func(tx *persistence.Tx) error { return j.upsertSubmission(tx, record) })
+	return j.writeContext(ctx, "upsert inference submission", func(tx *persistence.Tx) error { return j.upsertSubmission(tx, record) })
 }
 
 func (j *documentInferenceJournal) upsertSubmission(tx *persistence.Tx, record providers.InferenceSubmissionJournalRecord) error {

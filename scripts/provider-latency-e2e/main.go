@@ -47,7 +47,7 @@ type measurement struct {
 
 func (*measurement) PrepareOperation(providers.InferenceOperationJournalRecord) error { return nil }
 func (*measurement) PrepareAttempt(providers.InferenceAttemptJournalRecord) error     { return nil }
-func (m *measurement) UpsertSubmission(r providers.InferenceSubmissionJournalRecord) error {
+func (m *measurement) UpsertSubmission(_ context.Context, r providers.InferenceSubmissionJournalRecord) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Submissions[r.ID] = true

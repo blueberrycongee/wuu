@@ -26,7 +26,7 @@ func (*managerTestJournal) PrepareOperation(providers.InferenceOperationJournalR
 	return nil
 }
 func (*managerTestJournal) PrepareAttempt(providers.InferenceAttemptJournalRecord) error { return nil }
-func (*managerTestJournal) UpsertSubmission(providers.InferenceSubmissionJournalRecord) error {
+func (*managerTestJournal) UpsertSubmission(context.Context, providers.InferenceSubmissionJournalRecord) error {
 	return nil
 }
 func (*managerTestJournal) MarkAttemptFirstEvent(string, string, string, time.Time) error { return nil }

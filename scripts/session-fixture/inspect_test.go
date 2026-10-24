@@ -79,7 +79,7 @@ func TestFixtureInspectionPreservesDurableReceiptsAndAccounting(t *testing.T) {
 			submission.CompletedAt = now.Add(time.Second)
 			submission.Outcome = providers.InferenceSubmissionSucceeded
 		}
-		if err := journal.UpsertSubmission(submission); err != nil {
+		if err := journal.UpsertSubmission(context.Background(), submission); err != nil {
 			t.Fatal(err)
 		}
 	}
