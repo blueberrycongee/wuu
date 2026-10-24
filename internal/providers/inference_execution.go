@@ -925,10 +925,10 @@ func (e *InferenceExecution) updateSubmission(id string, update func(*InferenceS
 			workflow := e.workflow
 			journal := e.journal
 			operationID := e.operation.ID
-			e.mu.Unlock()
 			if workflow != nil && workflow.spend != nil {
 				workflow.spend.SettleSubmission(submission)
 			}
+			e.mu.Unlock()
 			// A per-delta submission update is streaming cost telemetry, not a
 			// durability checkpoint. Hand it to the journal's async progress
 			// path when available so the write never blocks token delivery, and
