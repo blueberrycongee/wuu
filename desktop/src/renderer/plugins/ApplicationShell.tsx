@@ -1,3 +1,4 @@
+import { LegacyUIContributions } from "./LegacyUIContributions";
 import * as React from "react";
 import type { UICompositionV1, UISlotProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginHost, RegisteredApplicationShell, RegisteredUIContribution } from "./PluginHost";
@@ -16,23 +17,38 @@ function activationKey(activation: object): number {
   return key;
 }
 
+const SurfaceBindings = React.createContext<Readonly<Record<string, ApplicationShellBinding>>>({});
+
 const SlotAncestors = React.createContext<readonly string[]>([]);
 
 function compositionFor(host: PluginHost): UICompositionV1 {
+  const createViewHost = host.createLegacyViewHost.bind(host);
+  const renderLegacyWorkbench = host.renderLegacyWorkbench.bind(host);
   function Slot({ name, context = {}, fallback }: UISlotProps): React.ReactNode {
-    React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
+    const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
     const ancestors = React.useContext(SlotAncestors);
     if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${[...ancestors, name].join(" → ")}`);
     // A contribution cannot recreate a slot after its defining provider unloads.
-    if (!host.getUISlot(name)) return null;
-    const contributions = host.getUIContributions(name);
-    return <SlotAncestors.Provider value={[...ancestors, name]}>
-      {contributions.length === 0 ? fallback : contributions.map(contribution => {
+    const slot = host.getUISlot(name);
+    const bindings = React.useContext(SurfaceBindings);
+    if (!slot) return null;
+    let contributions = host.getUIContributions(name);
+    if (slot.service) {
+      const binding = bindings[slot.service];
+      // The graph selects a surface independently of the layout that renders it.
+      contributions = binding ? registered.filter(item => item.pluginId === binding.pluginId
+        && item.generation === binding.generation && item.id === binding.id) : [];
+      if (contributions.length !== 1) return <div role="alert">Selected UI surface is unavailable: {slot.service}</div>;
+    }
+    const content = contributions.length === 0 ? fallback : contributions.map(contribution => {
         return <ShellBoundary key={activationKey(contribution)}
           identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
           <Contribution host={host} contribution={contribution} slots={composition} context={context} />
         </ShellBoundary>;
-      })}
+      });
+    return <SlotAncestors.Provider value={[...ancestors, name]}>
+      {slot.service || slot.id === "workbench.layers" && contributions.length > 0 ? content : <LegacyUIContributions key={activationKey(slot)} host={host} semanticSlot={slot.id}
+        application={slot.application} context={context} fallback={content} createViewHost={createViewHost} renderLegacyWorkbench={renderLegacyWorkbench} />}
     </SlotAncestors.Provider>;
   }
   const composition: UICompositionV1 = Object.freeze({ Slot });
@@ -71,7 +87,7 @@ function SelectedShell({ host, shell }: { host: PluginHost; shell: RegisteredApp
 }
 
 /** The selected graph binding is authoritative; absence never chooses a local default. */
-export function ApplicationShellOutlet({ host, binding }: { host: PluginHost; binding: ApplicationShellBinding | null }): React.ReactNode {
+export function ApplicationShellOutlet({ host, binding, surfaceBindings = {} }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>> }): React.ReactNode {
   const shells = React.useSyncExternalStore(listener => host.subscribe(listener), host.getApplicationShells, host.getApplicationShells);
   const selected = binding && shells.find(shell => shell.pluginId === binding.pluginId
     && shell.generation === binding.generation && shell.id === binding.id);
@@ -81,6 +97,6 @@ export function ApplicationShellOutlet({ host, binding }: { host: PluginHost; bi
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>
-    <SelectedShell host={host} shell={selected} />
+    <SurfaceBindings.Provider value={surfaceBindings}><SelectedShell host={host} shell={selected} /></SurfaceBindings.Provider>
   </ShellBoundary>;
 }

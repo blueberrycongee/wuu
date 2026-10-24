@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChromeCapsuleModel, ChromeOverlayCommand } from "../shared/chromeOverlay";
+import type { ApplicationDesktopChromeCapsuleModelV1 as ChromeCapsuleModel, ApplicationDesktopChromeOverlayCommandV1 as ChromeOverlayCommand } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { captureVisiblePage, type PageContextApi, type PageContextSnapshot, type PageContextSource } from "../shared/pageContext";
 import type { RuntimeContext } from "../shared/protocol";
 import { useChromeOverlay } from "./ChromeOverlay";

@@ -18,7 +18,7 @@ export function authoringContract(api: PluginGenerationApi): void {
         if (event.currentTarget.value === "dark") void application.invoke("appearance.set", { theme: "dark" });
       }}><option value="dark">Dark</option></Select>
       <Checkbox label="Enabled" checked onChange={(event) => { void event.currentTarget.checked; }} />
-      <Button onClick={() => { void application.invoke("composer.submit", {}); }}>Send</Button>
+      <Button onClick={() => { void application.invoke("composer.submit", { ownerTabId: snapshot.tabs.activeTabId }); }}>Send</Button>
       <Slot name="research-workbench/evidence" context={{ threadId: snapshot.conversation.threadId }} />
     </Section>;
   }

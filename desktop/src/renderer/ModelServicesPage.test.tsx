@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
@@ -12,11 +14,11 @@ it("allows offline configured Grok model changes without promoting the connectio
   window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }) } as unknown as WuuDesktopApi;
   const onSave = vi.fn().mockResolvedValue(undefined);
   try {
-    await act(async () => root.render(<ModelServicesPage
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ModelServicesPage
       initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "local", model: "local-model", providers: [
         { name: "grok", type: "grok-build", model: "grok-4.5", api_key_configured: false, models: [{ id: "grok-4.5" }, { id: "grok-4.6" }] },
       ] }} running={false} runningProviderNames={new Set()} onSave={onSave}
-      onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />));
+      onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
     const model = container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model"][data-model="grok-4.6"]')!;
     expect(model).not.toBeNull();
@@ -44,7 +46,7 @@ it.each(["wuu-auth-store", "codex-cli", "codex-cli-readonly", "explicit", undefi
   const changed = vi.fn(); const save = vi.fn(); const login = vi.fn();
   window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }), useCodexCredentials: reuse, loadCodexModels: models, startChatGPTLogin: login } as unknown as WuuDesktopApi;
   try {
-    await act(async () => root.render(<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "saved-codex", model: "chosen-model", providers: [provider] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} onProvidersChanged={changed} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "saved-codex", model: "chosen-model", providers: [provider] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} onProvidersChanged={changed} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
     const action = container.querySelector<HTMLButtonElement>('[data-testid="settings-auth-method-local"]')!;
     expect(action.getAttribute("aria-pressed")).toBe("false");
@@ -72,7 +74,7 @@ it("keeps alias and display ordering separate from configuration identity and se
   const save = vi.fn();
   window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }) } as unknown as WuuDesktopApi;
   try {
-    await act(async () => root.render(<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "api-stable-id", model: "model-a", providers: [{ name: "api-stable-id", type: "openai", model: "model-a", api_key_configured: true, models: [{ id: "model-a", display_name: "A" }, { id: "model-b", display_name: "B" }] }] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />));
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/tmp/project", provider: "api-stable-id", model: "model-a", providers: [{ name: "api-stable-id", type: "openai", model: "model-a", api_key_configured: true, models: [{ id: "model-a", display_name: "A" }, { id: "model-b", display_name: "B" }] }] }} running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} />}</SettingsControlsProvider>));
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('.connection-title-edit button')!.click());
     const input = container.querySelector<HTMLInputElement>('.connection-title-form input')!;
@@ -86,4 +88,55 @@ it("keeps alias and display ordering separate from configuration identity and se
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-model"][data-model="model-b"]')!.click());
     expect(save.mock.calls[0].slice(0, 2)).toEqual(["api-stable-id", "model-b"]);
   } finally { act(() => root.unmount()); container.remove(); window.wuu = previous; localStorage.removeItem("wuu.connectionDisplay.v1"); }
+});
+
+it.each(["starting", "polling"])("stops xAI authorization when selected settings unmount during %s", async phase => {
+  vi.useFakeTimers();
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); const previous = window.wuu;
+  let started!: (value: Awaited<ReturnType<WuuDesktopApi["startXAILogin"]>>) => void;
+  let polled!: (value: Awaited<ReturnType<WuuDesktopApi["pollXAILogin"]>>) => void;
+  const start = { login_id:"owned-login", user_code:"CODE", verification_uri:"https://auth.example", expires_in:300, interval_ms:1000 };
+  const cancel=vi.fn().mockResolvedValue({ok:true}); const external=vi.fn().mockResolvedValue(undefined); const save=vi.fn();
+  const poll=vi.fn(()=>new Promise<Awaited<ReturnType<WuuDesktopApi["pollXAILogin"]>>>(resolve=>{polled=resolve;}));
+  window.wuu = {listEngines:vi.fn().mockResolvedValue({engines:[]}),startXAILogin:vi.fn(()=>new Promise(resolve=>{started=resolve;})),pollXAILogin:poll,cancelXAILogin:cancel,openExternal:external} as unknown as WuuDesktopApi;
+  let mounted=true;
+  try {
+    await act(async()=>root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><ModelServicesPage
+      initialized={{protocol_version:"test",workspace_root:"/tmp",provider:"xai",model:"grok",providers:[{name:"xai",type:"xai-subscription",model:"grok",api_key_configured:false}]}}
+      running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()}/></SettingsControlsProvider>));
+    await act(async()=>container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
+    await act(async()=>container.querySelector<HTMLButtonElement>('[data-testid="settings-xai-login"]')!.click());
+    if(phase==="polling") {
+      await act(async()=>started(start));
+      await act(async()=>vi.advanceTimersByTimeAsync(1000));
+      expect(poll).toHaveBeenCalledTimes(1);
+    }
+    await act(async()=>root.unmount()); mounted=false;
+    if(phase==="starting") await act(async()=>started(start));
+    else await act(async()=>polled({status:"pending",interval_ms:1000}));
+    await act(async()=>vi.advanceTimersByTimeAsync(5000));
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("owned-login");
+    expect(poll).toHaveBeenCalledTimes(phase==="polling"?1:0);
+    if(phase==="starting") expect(external).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  } finally {if(mounted)act(()=>root.unmount());container.remove();window.wuu=previous;vi.useRealTimers();}
+});
+
+it("does not load Codex models after credential admission outlives settings", async () => {
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); const previous = window.wuu;
+  const provider = { name: "saved-codex", type: "openai-codex", model: "chosen-model" };
+  let reused!: (value: unknown) => void;
+  const models = vi.fn(); const changed = vi.fn();
+  window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }), useCodexCredentials: vi.fn().mockReturnValue(new Promise(resolve => { reused = resolve; })), loadCodexModels: models } as unknown as WuuDesktopApi;
+  try {
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/fixture", provider: provider.name, model: provider.model, providers: [provider] }} running={false} runningProviderNames={new Set()} onSave={vi.fn()} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} onProvidersChanged={changed} /></SettingsControlsProvider>));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-auth-method-local"]')!.click());
+    act(() => root.render(null));
+    await act(async () => reused({ providers: [provider] }));
+    expect(models).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+  } finally { act(() => root.unmount()); container.remove(); window.wuu = previous; }
 });

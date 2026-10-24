@@ -19,13 +19,13 @@ export function effectiveModelSpeed(speed?: string, defaultSpeed?: string): stri
   return speed || defaultSpeed;
 }
 
-export function providerIsCodex(initialized: InitializeResult, providerName: string): boolean {
+export function providerIsCodex(initialized: Pick<InitializeResult, "providers">, providerName: string): boolean {
   const summary = initialized.providers?.find((provider) => provider.name === providerName);
   const type = (summary?.type ?? providerName).trim().toLowerCase().replaceAll("_", "-");
   return type === "openai-codex" || type === "codex-subscription" || type === "chatgpt-codex";
 }
 
-export function isCodexProvider(initialized: InitializeResult): boolean {
+export function isCodexProvider(initialized: Pick<InitializeResult, "provider" | "providers">): boolean {
   return providerIsCodex(initialized, initialized.provider);
 }
 

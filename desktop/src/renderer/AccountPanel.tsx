@@ -6,15 +6,22 @@ import { useI18n } from './i18n';
 import { defaultAccountServer } from './accountServer';
 import phoneBrandArtwork from '../../../assets/app-icon-source.png';
 
-export type AccountAction = 'status' | 'login' | 'register' | 'recover' | 'logout' | 'revoke' | 'password' | 'config' | 'github-start' | 'github-poll' | 'github-cancel';
-export type AccountDeviceView = { pub: string; account: string; name: string; role: 'host' | 'phone'; online: boolean; added_at: number };
-export type AccountView = { username?: string; server?: string; pub?: string; devices?: AccountDeviceView[]; recovery?: string; localLogoutOnly?: boolean; oauth_url?: string; github?: boolean; registration?: boolean; auth_method?: string; display_name?: string; unavailable?: boolean };
-export type AccountDriver = (action: AccountAction, input?: Record<string, string>) => Promise<AccountView>;
+import type { ApplicationAccountActionV1, ApplicationAccountDeviceV1, ApplicationAccountViewV1, ApplicationAccountDriverV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
+export type AccountAction = ApplicationAccountActionV1;
+export type AccountDeviceView = ApplicationAccountDeviceV1;
+export type AccountView = ApplicationAccountViewV1;
+export type AccountDriver = ApplicationAccountDriverV1;
 
 /** Shared account forms; each host owns credential storage and transport. */
-export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer, onPair, managementContent, onSignedIn, reserveAuthorization, presentation, active: panelActive = true }: { desktopConnectionFlow?: boolean; active?: boolean; presentation?: 'mobile'; driver: AccountDriver; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode; onSignedIn?: () => void; reserveAuthorization?: () => { open: (url: string) => Promise<void>; close: () => void } }): React.JSX.Element {
+export function AccountPanel({ desktopConnectionFlow = false, driver, openExternal, onComputer, onPair, managementContent, onSignedIn, reserveAuthorization, presentation, active: panelActive = true }: { desktopConnectionFlow?: boolean; active?: boolean; presentation?: 'mobile'; driver: AccountDriver; openExternal?: (url: string) => Promise<void>; onComputer?: (device: AccountDeviceView) => void; onPair?: () => void; managementContent?: ReactNode; onSignedIn?: () => void; reserveAuthorization?: () => { open: (url: string) => Promise<void>; close: () => void } }): React.JSX.Element {
  const { t } = useI18n();
  const epoch = useRef(0);
+ const lifetime = useRef(0);
+ useEffect(() => {
+  lifetime.current++;
+  setBusy(false);
+  return () => { lifetime.current++; epoch.current++; oauthEpoch.current++; };
+ }, [driver, panelActive]);
  const heading = useRef<HTMLHeadingElement>(null);
  const [justConnected, setJustConnected] = useState(false);
  const [account, setAccount] = useState<AccountView>({});
@@ -63,6 +70,7 @@ export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer
     if (result.username) {
      epoch.current++; setJustConnected(true); setOAuthURL(''); setAccount(result); setError(''); setPage('computers');
      window.dispatchEvent(new Event('wuu:account-changed')); onSignedIn?.();
+     if (!active || generation !== oauthEpoch.current) return;
      const next = await driver('status'); if (active) setAccount(next);
     }
    } catch(e) { if (active) setError(e instanceof Error ? e.message : String(e)); }
@@ -74,16 +82,16 @@ export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer
  }, [driver, oauthURL, panelActive]);
  const cancelGithub = async () => { epoch.current++; oauthEpoch.current++; setOAuthURL(''); setError(''); await driver('github-cancel'); };
  const startGithub = async () => {
-  let browser: ReturnType<NonNullable<typeof reserveAuthorization>> | undefined; setBusy(true); setError(''); epoch.current++; const generation = ++oauthEpoch.current;
+  let browser: ReturnType<NonNullable<typeof reserveAuthorization>> | undefined; setBusy(true); setError(''); epoch.current++; const generation = ++oauthEpoch.current; const owner = lifetime.current;
   try {
    browser = reserveAuthorization?.();
    const result = await driver('github-start', { server, name: deviceName });
-   if (generation !== oauthEpoch.current) { browser?.close(); return; }
+   if (owner !== lifetime.current || generation !== oauthEpoch.current) { browser?.close(); return; }
    if (!result.oauth_url) throw new Error('Missing authorization URL');
    setOAuthURL(result.oauth_url);
-   if (browser) await browser.open(result.oauth_url); else await window.wuu?.openExternal(result.oauth_url);
-  } catch(e) { browser?.close(); setError(e instanceof Error ? e.message : String(e)); }
-  finally { setBusy(false); }
+   if (browser) await browser.open(result.oauth_url); else await openExternal?.(result.oauth_url);
+  } catch(e) { browser?.close(); if (owner === lifetime.current) setError(e instanceof Error ? e.message : String(e)); }
+  finally { if (owner === lifetime.current) setBusy(false); }
  };
  useEffect(() => { if (panelActive) heading.current?.focus(); }, [page, mode, authPage, panelActive, account.username]);
  const back = () => {
@@ -105,15 +113,15 @@ export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer
   return () => window.removeEventListener('wuu:native-back', handler);
  }, [onComputer, account.username, page, mode, authPage, busy, oauthURL, panelActive]);
  const perform = async (action: AccountAction, input?: Record<string,string>) => {
-  if (busy) return; epoch.current++; setBusy(true); setError(''); setLocalLogoutOnly(false);
+  if (busy || !panelActive) return; const owner = lifetime.current; epoch.current++; setBusy(true); setError(''); setLocalLogoutOnly(false);
   try {
-   const result = await driver(action,input); if(result.recovery) setRecovery(result.recovery); else if(action === 'logout' || action === 'login') setRecovery('');
+   const result = await driver(action,input); if (owner !== lifetime.current) return; if(result.recovery) setRecovery(result.recovery); else if(action === 'logout' || action === 'login') setRecovery('');
    setLocalLogoutOnly(result.localLogoutOnly === true);
    if (action === 'login' || action === 'register' || action === 'logout') setJustConnected(action !== 'logout');
    if (action === 'login' || action === 'register' || action === 'logout') setPage('computers');
-   setPassword(''); setSecret(''); setMode('login'); setAuthPage('form'); const next = await driver('status'); setAccount(next); window.dispatchEvent(new Event('wuu:account-changed'));
+   setPassword(''); setSecret(''); setMode('login'); setAuthPage('form'); const next = await driver('status'); if (owner !== lifetime.current) return; setAccount(next); window.dispatchEvent(new Event('wuu:account-changed'));
    if (action === 'login' && next.username) onSignedIn?.();
-  } catch(e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
+  } catch(e) { if (owner === lifetime.current) setError(e instanceof Error ? e.message : String(e)); } finally { if (owner === lifetime.current) setBusy(false); }
  };
  const devices = account.devices ?? [];
  const computers = devices.filter(d => d.role === 'host').sort((a, b) => Number(b.online) - Number(a.online) || a.added_at - b.added_at);
@@ -128,7 +136,7 @@ export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer
  const pairAction = onPair && <button className="account-text-action" type="button" onClick={onPair}>{t('account.pairLink')}<ChevronRight size={18} aria-hidden="true" /></button>;
  const openConnection = () => { setConnectionDraft({ server, name: deviceName }); setAuthPage('connection'); };
  if (loading) return <section className="account-panel" aria-busy="true"><p role="status">{t('account.restoring')}</p></section>;
- if (desktopConnectionFlow && !account.username && authPage === 'intro' && !oauthURL) return <AccountConnectionOnboarding onContinue={openConnection} error={error} onError={setError} />;
+ if (desktopConnectionFlow && !account.username && authPage === 'intro' && !oauthURL) return <AccountConnectionOnboarding openExternal={openExternal} onContinue={openConnection} error={error} onError={setError} />;
  return <section className={`account-panel${presentation === 'mobile' ? ' account-mobile' : ''}${!account.username || mode === 'password' ? ' account-auth' : ''}${welcome ? ' account-welcome' : ''}`} aria-label={t(choosing ? 'account.computers' : 'account.label')}>
   <header className="account-page-header">
    {account.username && !choosing && (onComputer || mode === 'password') && <button className="account-back" type="button" aria-label={t(mode === 'password' ? 'account.manage' : 'account.computers')} disabled={busy} onClick={back}><ArrowLeft size={20} aria-hidden="true" /></button>}
@@ -144,7 +152,7 @@ export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer
   {account.unavailable && <p role="status">{t('account.directoryUnavailable')}</p>}
   {localLogoutOnly && <p role="status">{t('account.localLogout')}</p>}
   {recovery && <div role="status"><p>{t(presentation === 'mobile' ? 'account.recoveryCode' : 'account.saveRecovery')}</p><code style={{overflowWrap:'anywhere',userSelect:'all'}}>{recovery}</code><p><button type="button" onClick={() => { setRecovery(''); if (account.username) onSignedIn?.(); }}>{t('account.savedRecovery')}</button></p></div>}
-  {oauthURL ? <div className="account-oauth-pending"><p role="status">{t('account.githubWaiting')}</p><a href={oauthURL} target="_blank" rel="noreferrer" onClick={e => { if (reserveAuthorization) { e.preventDefault(); try { void reserveAuthorization().open(oauthURL).catch(e => setError(String(e))); } catch (e) { setError(String(e)); } } }}>{t('account.githubOpen')}</a><button type="button" onClick={() => void cancelGithub().catch(e => setError(String(e)))}>{t('common.cancel')}</button></div> : choosing ? <div className="account-computers">
+  {oauthURL ? <div className="account-oauth-pending"><p role="status">{t('account.githubWaiting')}</p><a href={oauthURL} target="_blank" rel="noreferrer" onClick={e => { if (reserveAuthorization) { e.preventDefault(); try { void reserveAuthorization().open(oauthURL).catch(e => setError(String(e))); } catch (e) { setError(String(e)); } } else if (openExternal) { e.preventDefault(); void openExternal(oauthURL).catch(cause => setError(String(cause))); } }}>{t('account.githubOpen')}</a><button type="button" onClick={() => void cancelGithub().catch(e => setError(String(e)))}>{t('common.cancel')}</button></div> : choosing ? <div className="account-computers">
    {computers.length === 0 ? <div className="account-empty"><Monitor size={32} aria-hidden="true" /><p>{t('account.noComputers')}</p>{pairAction}</div> : ([true, false] as const).map(online => {
     const group = computers.filter(d => d.online === online);
     if (!group.length) return null;
@@ -174,13 +182,14 @@ export function AccountPanel({ desktopConnectionFlow = false, driver, onComputer
   </> : !account.username && authPage === 'connection' ? <form onSubmit={async e => {
    e.preventDefault(); if (busy) return;
    const address = connectionDraft.server.trim();
-   setBusy(true); setError('');
+   setBusy(true); setError(''); const owner = lifetime.current;
    try {
     if (desktopConnectionFlow) await driver('config', { server: address });
+    if (owner !== lifetime.current) return;
     if (address !== server) { setPassword(''); setSecret(''); setUsername(''); }
     setServer(address); localStorage.setItem('wuu.account.server', address); setLegacy(false); setDeviceName(connectionDraft.name); setAuthPage('form');
-   } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-   finally { setBusy(false); }
+   } catch (cause) { if (owner === lifetime.current) setError(cause instanceof Error ? cause.message : String(cause)); }
+   finally { if (owner === lifetime.current) setBusy(false); }
   }}>
    {desktopConnectionFlow && <p className="account-flow-caption">{t('account.linkAddressHint')}</p>}
    <label>{t('account.server')}<input type="url" autoCapitalize="none" autoCorrect="off" placeholder="https://wuu.example.com" value={connectionDraft.server} required onChange={e => setConnectionDraft(current => ({ ...current, server: e.target.value }))}/></label>

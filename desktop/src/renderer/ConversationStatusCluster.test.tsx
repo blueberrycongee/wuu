@@ -1,3 +1,6 @@
+import { ApplicationComposerPresentation } from "./plugins/ApplicationComposerPresentation";
+import { initialState } from "./AppState";
+import type { Thread, TodoUpdate } from "../shared/protocol";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -7,6 +10,15 @@ import { readBrowserPiPHostLayout } from "./BrowserPiPHostReporter";
 import { I18nProvider } from "./i18n";
 import { HOVER_REVEAL_OPEN_DELAY_MS } from "./HoverReveal";
 import { PluginHost } from "./plugins/PluginHost";
+
+const services: ApplicationComposerPresentation[] = [];
+function applicationFor(host = new PluginHost({ react: React }), todoUpdate?: TodoUpdate) {
+  const thread: Thread = { id: "parent-session", preview: "", cwd: "/one", model_provider: "api", model: "model", status: "idle", created_at: "", updated_at: "",
+    turns: [{ id: "turn", status: "in_progress", items_view: "full", items: todoUpdate ? [{ id: "todo", type: "tool_call", display: { capability: "todo" }, arguments: JSON.stringify(todoUpdate) }] : [] }] };
+  const helper = new ApplicationComposerPresentation({ getState: () => ({ ...initialState, thread, threads: [thread] }), updateState: () => {}, subscribeState: () => () => {}, getPluginHost: () => host });
+  services.push(helper);
+  return { composerPresentation: helper.createScope(new AbortController().signal), invoke: vi.fn().mockResolvedValue(undefined) };
+}
 
 describe("ConversationStatusCluster", () => {
   let container: HTMLDivElement;
@@ -21,6 +33,7 @@ describe("ConversationStatusCluster", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    services.splice(0).forEach(service => service.dispose());
     vi.useRealTimers();
   });
 
@@ -30,11 +43,9 @@ describe("ConversationStatusCluster", () => {
     const before = readBrowserPiPHostLayout(document);
     act(() => root.render(
       <ConversationStatusCluster
-        host={new PluginHost({ react: React })}
+        application={applicationFor()}
         visible
         navigation={<button>Jump</button>}
-        todoUpdate={undefined}
-        onOpenSession={vi.fn()}
         clusterRef={(node) => {
           if (node) node.getBoundingClientRect = () => ({ left: 500, top: 550, width: 250, height: 30 }) as DOMRect;
         }}
@@ -65,11 +76,9 @@ describe("ConversationStatusCluster", () => {
 
     act(() => root.render(
       <ConversationStatusCluster
-        host={host}
+        application={applicationFor(host)}
         visible
         threadId="parent-session"
-        todoUpdate={undefined}
-        onOpenSession={vi.fn()}
       />,
     ));
 
@@ -87,6 +96,19 @@ describe("ConversationStatusCluster", () => {
     expect(overflow?.open).toBe(false);
   });
 
+  it("opens status sessions through the public split action and drops unloaded status", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "status", generation: "one", register: api => {
+      api.registerComposerStatusSource({ id: "agents", getSnapshot: () => [{ id: "child", label: "Open child", action: { kind: "open-session", sessionId: "child-session" } }], subscribe: () => () => {} });
+    } });
+    const application = applicationFor(host);
+    act(() => root.render(<ConversationStatusCluster application={application} visible threadId="parent-session" />));
+    await act(async () => container.querySelector<HTMLButtonElement>(".conversation-status-capsule")!.click());
+    expect(application.invoke).toHaveBeenCalledWith("conversation.open-split", { threadId: "child-session" });
+    act(() => host.unload("status"));
+    expect(container.querySelector(".conversation-status-cluster")).toBeNull();
+  });
+
   it("shows only the TODO items in the hover card", async () => {
     vi.useFakeTimers();
     const host = new PluginHost({ react: React });
@@ -94,18 +116,16 @@ describe("ConversationStatusCluster", () => {
     act(() => root.render(
       <I18nProvider>
         <ConversationStatusCluster
-          host={host}
-          visible
-          threadId="parent-session"
-          todoUpdate={{
+          application={applicationFor(host, {
             explanation: "Why the list changed.",
             todos: [
               { content: "Inspect the current task", status: "completed" },
               { content: "Keep the current task in view", status: "in_progress" },
               { content: "Write the follow-up", status: "pending" },
             ],
-          }}
-          onOpenSession={vi.fn()}
+          })}
+          visible
+          threadId="parent-session"
         />
       </I18nProvider>,
     ));

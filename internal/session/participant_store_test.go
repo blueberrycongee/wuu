@@ -9,7 +9,7 @@ import (
 )
 
 func TestParticipantCRUD(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		p := participant.Participant{
 			ID: participant.NewID(), Kind: participant.KindEphemeral,
 			Name: "Reviewer·auth", Role: "reviewer", Avatar: "🧐",
@@ -32,7 +32,7 @@ func TestParticipantCRUD(t *testing.T) {
 }
 
 func TestCompleteParticipantRunUpsertsMonotonicTerminalState(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		participantID := participant.NewID()
 		if err := store.UpsertParticipant(participant.Participant{
 			ID: participantID, Kind: participant.KindNamed, Name: "Run owner",
@@ -101,7 +101,7 @@ func TestCompleteParticipantRunUpsertsMonotonicTerminalState(t *testing.T) {
 }
 
 func TestNamedParticipantUniqueName(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		a := participant.Participant{ID: participant.NewID(), Kind: participant.KindNamed, Name: "Noel", Role: "reviewer"}
 		b := participant.Participant{ID: participant.NewID(), Kind: participant.KindNamed, Name: "Noel", Role: "qa"}
 		if err := store.UpsertParticipant(a); err != nil {
@@ -114,7 +114,7 @@ func TestNamedParticipantUniqueName(t *testing.T) {
 }
 
 func TestRetireParticipant(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		p := participant.Participant{
 			ID: participant.NewID(), Kind: participant.KindEphemeral,
 			Name: "Reviewer·auth", Role: "reviewer",
@@ -146,7 +146,7 @@ func TestRetireParticipant(t *testing.T) {
 // retired_at stamp (COALESCE) and succeeds, so cleanup callers can re-run
 // the protocol after a partial failure.
 func TestRetireParticipantIdempotent(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		p := participant.Participant{
 			ID: participant.NewID(), Kind: participant.KindNamed, Name: "Ivy",
 		}
@@ -175,7 +175,7 @@ func TestRetireParticipantIdempotent(t *testing.T) {
 }
 
 func TestRetireParticipantNotFound(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		err := store.RetireParticipant("prt-doesnotexist0000")
 		if !errors.Is(err, ErrParticipantNotFound) {
 			t.Errorf("RetireParticipant unknown ID = %v, want ErrParticipantNotFound", err)
@@ -184,7 +184,7 @@ func TestRetireParticipantNotFound(t *testing.T) {
 }
 
 func TestRetiredNamedParticipantFreesName(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		a := participant.Participant{ID: participant.NewID(), Kind: participant.KindNamed, Name: "Noel", Role: "reviewer"}
 		if err := store.UpsertParticipant(a); err != nil {
 			t.Fatal(err)
@@ -200,7 +200,7 @@ func TestRetiredNamedParticipantFreesName(t *testing.T) {
 }
 
 func TestFindRetiredParticipantByName(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, ok, err := store.FindRetiredParticipantByName(participant.KindNamed, "Noel"); err != nil || ok {
 			t.Fatalf("empty store: ok=%v err=%v, want no match", ok, err)
 		}
@@ -252,7 +252,7 @@ func TestFindRetiredParticipantByName(t *testing.T) {
 }
 
 func TestCountParticipantsByKindIncludesRetired(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if got, err := store.CountParticipantsByKind(participant.KindNamed); err != nil || got != 0 {
 			t.Fatalf("empty dir: count=%d err=%v", got, err)
 		}

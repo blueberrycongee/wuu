@@ -1,12 +1,10 @@
 import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
-import { AccountScreen } from "./AccountScreen";
+import { StandaloneAccountWindow } from "./StandaloneAccountWindow";
 import { DesktopApplicationRoot } from "./plugins/DesktopApplicationRoot";
 import { startAppearanceSync } from "./AppearancePreferences";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
-import { MacWindowControls } from "./MacWindowControls";
-import { LinuxWindowControls, startLinuxTitlebarMaximizeGesture } from "./LinuxWindowControls";
 import { applyPlatformStamp } from "./platform";
 import { startRendererVisibilitySync } from "./RendererVisibility";
 import { applyMeasuredScrollbarWidth, startScrollbarWidthSync } from "./ScrollbarMetrics";
@@ -33,7 +31,6 @@ startAppearanceSync();
 // Same story for data-platform: the preload stamps it pre-paint; this
 // covers boots whose preload was replaced (e2e mocks).
 applyPlatformStamp();
-startLinuxTitlebarMaximizeGesture();
 
 // Stamp the platform's real scrollbar gutter width before React renders so
 // the dock composer and the message flow are centered in the same visible
@@ -88,15 +85,14 @@ console.error = (...args: unknown[]): void => {
   }
 };
 
+const accountWindow = ENABLE_ACCOUNT && Boolean(window.wuu?.isAccountWindow);
+
 ReactDOM.createRoot(rendererRoot).render(
   <I18nProvider>
     <WuuUIRoot>
-      {ENABLE_ACCOUNT && window.wuu?.isAccountWindow && window.wuu.remoteAccount
-        ? <AccountScreen standalone driver={window.wuu.remoteAccount} onBack={() => { void window.wuu.closeAccountWindow?.(); }} />
+      {accountWindow
+        ? <StandaloneAccountWindow />
         : <DesktopApplicationRoot />}
-      {/* Native drag regions follow DOM order; caption exclusions must follow app titlebars. */}
-      <LinuxWindowControls />
-      <MacWindowControls />
       <ToastViewport />
       <ConfirmDialogHost />
     </WuuUIRoot>

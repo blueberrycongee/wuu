@@ -16,6 +16,7 @@ import type {
   WuuDesktopApi,
 } from "../../src/shared/protocol";
 import { SettingsView, type ArchivedSessionView, type SettingsPage } from "../../src/renderer/SettingsView";
+import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
 import { I18nProvider } from "../../src/renderer/i18n";
@@ -355,6 +356,7 @@ window.wuu = {
 startFocusModality();
 
 function Fixture(): JSX.Element {
+  const [application] = useState(() => ({ settingsControls: createApplicationSettingsControls() }));
   const shellRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState(initialized);
   const [engineInventory, setEngineInventory] = useState(engines);
@@ -433,6 +435,7 @@ function Fixture(): JSX.Element {
   return (
     <div style={{ height: "100vh" }}>
       <SettingsView
+        application={application}
         initialized={state}
         initialPage={(params.get("page") as SettingsPage | null) ?? undefined}
         running={false}

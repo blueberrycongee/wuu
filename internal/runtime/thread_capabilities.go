@@ -69,14 +69,10 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			s.releasePluginGeneration(generation)
 		}
 	}()
-	result := &ThreadRuntime{
+	result := &ThreadRuntime{SessionID: id,
 		Toolkit: kit, ActivityRegistry: s.ActivityRegistry,
 		Selection: selection, PluginGeneration: generation,
 		Documents: documents, Sessions: sessions, PluginHost: host,
-	}
-	if kit == nil {
-		retained = true
-		return result, nil
 	}
 
 	stateDir, err := s.executionStateDir()
@@ -91,6 +87,21 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 		}
 	}
 	artifactDir := statepath.SessionArtifactDir(stateDir, id)
+	if kit == nil {
+		manager, err := s.processManagerForThread(root, stateDir)
+		if err != nil {
+			return nil, err
+		}
+		result.ProcessManager = manager
+		result.processScopeConfig = tools.ProcessScopeConfig{Manager: manager, RootDir: root, StateDir: stateDir, SessionDir: artifactDir, ThreadID: id, ActorID: id, ActorPath: agentthread.RootPath, FileScopeRoots: workspaces.BoundaryRoots(root, wuuHome, artifactDir)}
+		result.processHooks = dispatcher
+		if host != nil {
+			result.CapabilityTools = newPluginAwareToolExecutor(nil, host, dispatcher, id, id, root)
+		}
+		result.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: selection.PermissionMode}, false, nil)
+		retained = true
+		return result, nil
+	}
 	kit.ConfigureExternalCapabilities()
 	ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: selection.PermissionMode})
 	kit.SetApproveForMe(false)
@@ -113,9 +124,8 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 			return err
 		})
 	}
-	// Only Toolkit owns the exported implementations. Generation-owned hooks
-	// remain active, but runtime plugin tools cannot intercept a capability name.
-	result.CapabilityTools = newPluginAwareToolExecutor(kit, nil, dispatcher, id, id, kit.RootDir())
+	// The selected registry owns the capability surface for external engines too.
+	result.CapabilityTools = newPluginAwareToolExecutor(kit, host, dispatcher, id, id, kit.RootDir())
 	retained = true
 	return result, nil
 }

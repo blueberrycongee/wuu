@@ -30,10 +30,12 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -46,9 +48,8 @@ import (
 // orchestration tools inside that worker can resolve relative child paths.
 type WorkerToolkitFactory func(rootDir string, wt WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error)
 
-// WorkerSystemPromptFactory builds the base prompt for a registered worker.
-// AgentControl still wraps it with the worker role and working-directory
-// instructions.
+// WorkerSystemPromptFactory returns the complete worker system prompt.
+// Empty output is authoritative; errors stop launch without a native fallback.
 type WorkerSystemPromptFactory func(rootDir string, wt WorkerType, meta agentthread.Metadata, isolation IsolationMode) (string, error)
 
 // ParticipantStore persists participant identities used by restored runs. It is
@@ -278,6 +279,7 @@ type Config struct {
 	InferenceJournal   providers.InferenceJournal
 	BeginModelReceipts agent.BeginModelReceiptsFunc
 	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
+	SelectedCompaction *compactionservice.Client
 	AcquireLoopDriver  loopdriver.AcquireFunc
 	OnSubagentStart    func(context.Context, string) error
 	OnSubagentStop     func(context.Context, string) error
@@ -322,6 +324,7 @@ func New(cfg Config) (*AgentControl, error) {
 		BeginModelReceipts:      cfg.BeginModelReceipts,
 		ToolLedgerFactory:       cfg.ToolLedgerFactory,
 		AcquireLoopDriver:       cfg.AcquireLoopDriver,
+		SelectedCompaction:      cfg.SelectedCompaction,
 		OnSubagentStart:         cfg.OnSubagentStart,
 		OnSubagentStop:          cfg.OnSubagentStop,
 	})
@@ -1272,7 +1275,7 @@ func (c *AgentControl) Spawn(ctx context.Context, req SpawnRequest) (spawnResult
 		}
 	}
 
-	// 4. Compose system prompt: type-specific role + working dir + base prompt.
+	// 4. Resolve the complete worker system prompt before launch.
 	sys, err := c.workerSystemPrompt(workerRoot, wt, threadMeta, isolation)
 	if err != nil {
 		c.settleSpawnLaunchFailure(workerID, fmt.Errorf("worker system prompt: %w", err))
@@ -2357,29 +2360,22 @@ func (c *AgentControl) registerRootThread() {
 }
 
 func (c *AgentControl) workerSystemPrompt(rootDir string, wt WorkerType, meta agentthread.Metadata, isolation IsolationMode) (string, error) {
+	if c != nil && c.workerPrompt != nil {
+		return c.workerPrompt(rootDir, wt, meta, isolation)
+	}
+	// Explicit embedded callers without a selected callback use native policy.
 	base := ""
 	if c != nil {
 		base = c.defaultSys
-	}
-	if c != nil && c.workerPrompt != nil {
-		customBase, err := c.workerPrompt(rootDir, wt, meta, isolation)
-		if err != nil {
-			return "", err
-		}
-		if strings.TrimSpace(customBase) != "" {
-			base = customBase
-		}
 	}
 	return composeWorkerSystemPrompt(base, wt, rootDir, isolation), nil
 }
 
 func withInitialSystemPrompt(history []providers.ChatMessage, systemPrompt string) []providers.ChatMessage {
-	sys := strings.TrimSpace(systemPrompt)
-	if sys == "" {
-		return providers.CloneChatMessages(history)
-	}
 	out := make([]providers.ChatMessage, 0, len(history)+1)
-	out = append(out, providers.ChatMessage{Role: "system", Content: sys})
+	if systemPrompt != "" {
+		out = append(out, providers.ChatMessage{Role: "system", Content: systemPrompt})
+	}
 	start := 0
 	for start < len(history) && strings.TrimSpace(history[start].Role) == "system" {
 		start++
@@ -5301,47 +5297,10 @@ func appendForkWorktreeReminder(prompt, workerRoot string, isolation IsolationMo
 // of the working directory and isolation mode, then appends the base
 // prompt (typically the main agent's instructions and skills).
 func composeWorkerSystemPrompt(base string, wt WorkerType, workerRoot string, isolation IsolationMode) string {
-	var b strings.Builder
-	b.WriteString(wt.SystemPrompt)
-	b.WriteString("\n\n")
-	if wt.Role != "" || wt.ContextScope != "" || wt.OutputSchema != "" || len(wt.SuccessCriteria) > 0 {
-		b.WriteString("## Role Contract\n")
-		if wt.Role != "" {
-			fmt.Fprintf(&b, "Role: %s\n", wt.Role)
-		}
-		if wt.ContextScope != "" {
-			fmt.Fprintf(&b, "Context scope: %s\n", wt.ContextScope)
-		}
-		if wt.OutputSchema != "" {
-			fmt.Fprintf(&b, "Output schema: %s\n", wt.OutputSchema)
-		}
-		if len(wt.SuccessCriteria) > 0 {
-			b.WriteString("Success criteria:\n")
-			for _, item := range wt.SuccessCriteria {
-				fmt.Fprintf(&b, "- %s\n", item)
-			}
-		}
-		b.WriteString("\n")
-	}
-	switch isolation {
-	case IsolationWorktree:
-		fmt.Fprintf(&b, "Your working directory is %s — an isolated worktree for this worker. ", workerRoot)
-		b.WriteString("Edits you make stay sandboxed; the orchestrator will inspect the worktree after you finish. ")
-	default: // inplace
-		fmt.Fprintf(&b, "Your working directory is %s — the SHARED parent repository. ", workerRoot)
-		b.WriteString("You are running inplace (no worktree isolation), so be especially careful: ")
-		b.WriteString("read-only operations are safe, but any file you modify is visible to the orchestrator and other workers immediately. ")
-	}
-	b.WriteString("All file paths in your tools resolve relative to this directory. ")
-	b.WriteString("Treat command execution as non-interactive when the active tool surface exposes it. Never rely on editors, pagers, password prompts, or confirmation dialogs. If command execution is unavailable under the active tool surface, report skipped command-based verification instead of inventing another path. Profile-specific tool-surface guidance tells you which command capability exists and how to use it. ")
-	b.WriteString("You cannot spawn or manage other agents from this worker. If the task seems to require additional delegation, report that need in your final handoff so the parent can decide and coordinate.\n")
-	if base != "" {
-		b.WriteString("\n---\n\n")
-		b.WriteString(base)
-		b.WriteString("\n\n---\n\n")
-		b.WriteString("Worker override: if any inherited text above describes the MAIN interactive agent as read-only, or says file changes / command execution must be delegated, ignore that text. It applies to the parent, not to you. If a tool is in your tool list, you may use it unless your task prompt explicitly forbids it.")
-	}
-	return b.String()
+	return promptservice.AssembleWorkerPrompt(base, workerRoot, promptservice.WorkerContext{
+		Type: wt.Name, Role: wt.Role, Prompt: wt.SystemPrompt, ContextScope: wt.ContextScope,
+		OutputSchema: wt.OutputSchema, SuccessCriteria: wt.SuccessCriteria, Isolation: string(isolation),
+	}).Content
 }
 
 // newAgentControlWorkerID generates a worker ID. Mirrors subagent's

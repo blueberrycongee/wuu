@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "./i18n";
-import { desktopPlatform } from "./platform";
+import type { ApplicationDesktopControlsV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import "./styles/mac-window-controls.css";
 
-/** Hover capsule for the macOS window controls. */
-export function MacWindowControls(): JSX.Element | null {
+/** Hover capsule for the macOS window controls. Retired scopes cancel pending native calls. */
+export function MacWindowControls({ desktop }: { desktop: ApplicationDesktopControlsV1 }): JSX.Element | null {
   const { t } = useI18n();
   const [revealed, setRevealed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -13,9 +13,9 @@ export function MacWindowControls(): JSX.Element | null {
   const capsule = useRef<HTMLDivElement>(null);
   const visible = useRef(false);
   const pointerInside = useRef(false);
-  const enabled = desktopPlatform() === "darwin" &&
-    (window.wuu?.hostKind ?? "desktop") === "desktop" &&
-    typeof window.wuu?.windowSetControls === "function";
+  const enabled = desktop.platform === "darwin" &&
+    desktop.hostKind === "desktop" &&
+    typeof desktop.setControls === "function";
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const clearLeave = () => { clearTimeout(leaveTimer.current); leaveTimer.current = undefined; };
   const scheduleHide = () => {
@@ -36,13 +36,13 @@ export function MacWindowControls(): JSX.Element | null {
   useEffect(() => {
     if (!enabled) return;
     let disposed = false;
-    void window.wuu?.windowIsFullScreen?.().then(
+    void desktop.isFullScreen?.().then(
       value => { if (!disposed) setFullscreen(value); },
       () => {},
     );
-    const dispose = window.wuu?.onWindowFullScreenChange?.(setFullscreen);
+    const dispose = desktop.onFullScreenChange?.(setFullscreen);
     return () => { disposed = true; dispose?.(); };
-  }, [enabled]);
+  }, [enabled, desktop]);
   useEffect(() => {
     if (!enabled) return;
     visible.current = revealed;
@@ -61,28 +61,28 @@ export function MacWindowControls(): JSX.Element | null {
       const position = JSON.stringify(state);
       if (position !== lastPosition) {
         lastPosition = position;
-        await window.wuu.windowSetControls!(state);
+        await desktop.setControls!(state);
       }
       if (!disposed && animating) {
-        frame = requestAnimationFrame(() => { void sync(); });
+        frame = requestAnimationFrame(() => { void sync().catch(() => {}); });
       }
     };
-    void sync();
+    void sync().catch(() => {});
     return () => { disposed = true; cancelAnimationFrame(frame); };
-  }, [enabled, revealed]);
+  }, [enabled, revealed, desktop]);
   useEffect(() => {
     if (!enabled) return;
-    return () => { void window.wuu.windowSetControls!({ visible: false, x: 0, y: 0 }); };
-  }, [enabled]);
+    return () => { void desktop.setControls!({ visible: false, x: 0, y: 0 }).catch(() => {}); };
+  }, [enabled, desktop]);
   useEffect(() => {
-    const readPointer = window.wuu?.windowPointerPosition;
+    const readPointer = desktop.pointerPosition;
     if (!enabled || !readPointer) return;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     // Native drag regions can leave DOM hover state stale after closing. Use
     // native coordinates for both entry and exit, including while hidden.
     const observe = async () => {
-      const position = await readPointer();
+      const position = await readPointer().catch(() => null);
       if (disposed) return;
       const bounds = chrome.current!.getBoundingClientRect();
       const pill = capsule.current!.getBoundingClientRect();
@@ -102,7 +102,7 @@ export function MacWindowControls(): JSX.Element | null {
     };
     void observe();
     return () => { disposed = true; clearTimeout(timer); };
-  }, [enabled]);
+  }, [enabled, desktop]);
   if (!enabled) return null;
 
   return (
@@ -112,17 +112,17 @@ export function MacWindowControls(): JSX.Element | null {
           <div className="mac-window-control-group" role="group" aria-label={t("shell.windowControls")}>
             <button type="button" className="mac-window-control mac-window-close"
               aria-label={t("shell.closeWindow")} title={t("shell.closeWindow")}
-              onClick={() => { void window.wuu.windowClose?.(); }}>
+              onClick={() => { void desktop.close?.().catch(() => {}); }}>
               <svg viewBox="0 0 10 10" aria-hidden="true"><path d="m3 3 4 4m0-4L3 7" /></svg>
             </button>
             <button type="button" className="mac-window-control mac-window-minimize"
               aria-label={t("shell.minimizeWindow")} title={t("shell.minimizeWindow")}
-              onClick={() => { void window.wuu.windowMinimize?.(); }}>
+              onClick={() => { void desktop.minimize?.().catch(() => {}); }}>
               <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 5h5" /></svg>
             </button>
             <button type="button" className="mac-window-control mac-window-fullscreen"
               aria-label={t("shell.exitFullScreen")} title={t("shell.exitFullScreen")}
-              onClick={() => { void window.wuu.windowToggleFullScreen?.(); }}>
+              onClick={() => { void desktop.toggleFullScreen?.().catch(() => {}); }}>
               <svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 5V2.5H5m0 5h2.5V5" /></svg>
             </button>
           </div>

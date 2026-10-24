@@ -1,11 +1,13 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
 
 export function ActivityPreviewPreferenceSection(): JSX.Element | null {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
-  const supported = Boolean(window.wuu?.getActivityPreviewAutoShow && window.wuu?.setActivityPreviewAutoShow);
+  const supported = settingsControls.capabilities.activityPreview;
   const [autoShow, setAutoShow] = useState<boolean>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -15,11 +17,11 @@ export function ActivityPreviewPreferenceSection(): JSX.Element | null {
     if (!supported) return;
     let active = true;
     const current = ++revision.current;
-    const unsubscribe = window.wuu.onActivityPreviewAutoShowChange?.(enabled => {
+    const unsubscribe = settingsControls.capabilities.activityPreviewChanges ? settingsControls.onActivityPreviewAutoShowChange(enabled => {
       revision.current += 1;
       setAutoShow(enabled);
-    });
-    void window.wuu.getActivityPreviewAutoShow!().then(enabled => {
+    }) : undefined;
+    void settingsControls.getActivityPreviewAutoShow!().then(enabled => {
       if (active && current === revision.current) setAutoShow(enabled);
     }).catch(reason => {
       if (active && current === revision.current) setError(reason instanceof Error ? reason.message : t("settings.saveFailed"));
@@ -35,7 +37,7 @@ export function ActivityPreviewPreferenceSection(): JSX.Element | null {
     setError("");
     revision.current += 1;
     try {
-      await window.wuu.setActivityPreviewAutoShow!(next);
+      await settingsControls.setActivityPreviewAutoShow!(next);
       setAutoShow(next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t("settings.saveFailed"));

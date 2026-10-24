@@ -14,7 +14,7 @@ type activityDocument struct {
 	Record    HistoryRecord
 }
 
-func (s *Store) LatestSubscriptionActivity(keys []SubscriptionActivityKey) (map[SubscriptionActivityKey]SubscriptionActivity, error) {
+func (s *documentStore) LatestSubscriptionActivity(keys []SubscriptionActivityKey) (map[SubscriptionActivityKey]SubscriptionActivity, error) {
 	out := make(map[SubscriptionActivityKey]SubscriptionActivity)
 	wanted := make([]SubscriptionActivityKey, 0, len(keys))
 	seen := make(map[SubscriptionActivityKey]struct{}, len(keys))
@@ -170,7 +170,7 @@ func subscriptionActivityDocuments(tx *persistence.Tx, wanted []SubscriptionActi
 	return out, nil
 }
 
-func (s *Store) ListTokenUsage() ([]TokenUsageRow, error) {
+func (s *documentStore) ListTokenUsage() ([]TokenUsageRow, error) {
 	var result []TokenUsageRow
 	err := s.transaction(func(tx *persistence.Tx) error {
 		rows, err := readDocumentRows[activityDocument](tx, "session_activity", "")

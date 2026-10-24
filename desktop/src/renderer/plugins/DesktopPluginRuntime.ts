@@ -12,7 +12,8 @@ import {
 } from "./PluginHost";
 import { settleOnAbort } from "./activation";
 import { getDesktopApplication } from "./ApplicationController";
-import { WorkbenchController } from "./Workbench";
+import type { LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
+import { DesktopWorkbench, type WorkbenchServices, WorkbenchController } from "./Workbench";
 import { PluginHostService, WorkbenchService, createDesktopCompositionRoot } from "./composition";
 
 interface DesktopPluginModule {
@@ -28,10 +29,31 @@ export interface DesktopPluginFailure {
 }
 
 export const desktopPluginHost = new PluginHost({
+  renderLegacyWorkbench: input => React.createElement(LegacyWorkbenchLayers, input),
+  createLegacyViewHost: identity => desktopWorkbenchController.createViewHostAPI({
+    id: identity.tabId ?? `renderer:${identity.pluginId}`,
+    pluginId: identity.pluginId, generation: identity.generation, viewTypeId: identity.viewTypeId ?? "renderer",
+    region: "primary", persistence: "session", context: { ...identity.context },
+  }),
   reportActivation: params => window.wuu.reportPluginDesktopActivation(params),
   react: React,
   application: {
     contractVersion: 1,
+    get environment() { return getDesktopApplication().environment; },
+    get artifacts() { return getDesktopApplication().artifacts; },
+    setPreviewVisibility: (open, signal) => getDesktopApplication().setPreviewVisibility(open, signal),
+    createComposerPresentationScope: (signal, getPluginHost) => getDesktopApplication().createComposerPresentationScope(signal, getPluginHost),
+    createDesktopScope: signal => getDesktopApplication().createDesktopScope(signal),
+    get webWorkspace() { return getDesktopApplication().webWorkspace; },
+    get onboarding() { return getDesktopApplication().onboarding; },
+    get browser() { return getDesktopApplication().browser; },
+    get fileSelection() { return getDesktopApplication().fileSelection; },
+    get projects() { return getDesktopApplication().projects; },
+    get terminals() { return getDesktopApplication().terminals; },
+    get catalog() { return getDesktopApplication().catalog; },
+    get previewContent() { return getDesktopApplication().previewContent; },
+    get conversationText() { return getDesktopApplication().conversationText; },
+    get settingsControls() { return getDesktopApplication().settingsControls; },
     getSnapshot: () => getDesktopApplication().getSnapshot(),
     subscribe: listener => getDesktopApplication().subscribe(listener),
     invoke: (action, input, options) => getDesktopApplication().invoke(action, input, options),
@@ -100,8 +122,36 @@ export const desktopPluginHost = new PluginHost({
 });
 export const desktopCompositionRoot = createDesktopCompositionRoot();
 void desktopCompositionRoot.plugin(PluginHostService, desktopPluginHost);
-export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost);
+const desktopWorkbenchServices: WorkbenchServices = {
+  getSetting: async (pluginId, generation, key) => {
+    if (!window.wuu?.getPluginSetting) throw new Error("Plugin settings service is unavailable");
+    return (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value;
+  },
+  getStorage: async (pluginId, generation, key, scope) => {
+    if (!window.wuu?.getPluginStorage) throw new Error("Plugin storage service is unavailable");
+    return (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value;
+  },
+  setStorage: async (pluginId, generation, key, value, scope) => {
+    if (!window.wuu?.setPluginStorage) throw new Error("Plugin storage service is unavailable");
+    await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope });
+  },
+};
+export const desktopWorkbenchController = new WorkbenchController(desktopPluginHost, desktopWorkbenchServices);
 void desktopCompositionRoot.plugin(WorkbenchService, desktopWorkbenchController);
+
+function LegacyWorkbenchLayers({ application, context }: LegacyWorkbenchRenderInput): React.ReactNode {
+  React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
+  const inventory = application.catalog.getSnapshot().inventory;
+  const services = React.useMemo<WorkbenchServices>(() => ({
+    ...desktopWorkbenchServices,
+    openSettings: () => { void application.invoke("settings.open", { pageId: "providers" }).catch(error => console.error("Plugin settings navigation failed", error)); },
+    disablePlugin: pluginId => application.catalog.update({ id: pluginId, action: "disable" }),
+    requestRegionVisible: region => { void application.invoke("navigation.reveal-region", { region }).catch(error => console.error("Plugin region reveal failed", error)); },
+  }), [application]);
+  React.useEffect(() => () => desktopWorkbenchController.updateServices(desktopWorkbenchServices), []);
+  return React.createElement(DesktopWorkbench, { host: desktopPluginHost, controller: desktopWorkbenchController,
+    inventory, services, settingsOnly: context.settingsOnly === true });
+}
 
 export class DesktopPluginRuntime {
   private readonly activeGenerations = new Map<string, string>();
@@ -404,5 +454,10 @@ function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {
   if (url === "wuu-builtin:default-shell") return import("./DefaultApplicationShell");
+  if (url === "wuu-builtin:default-settings") return import("../modules/DefaultSettingsSurface");
+  if (url === "wuu-builtin:default-navigation") return import("../modules/DefaultNavigationSurface");
+  if (url === "wuu-builtin:default-conversation") return import("../modules/DefaultConversationSurface");
+  if (url === "wuu-builtin:default-composer") return import("../modules/DefaultComposerSurface");
+  if (url === "wuu-builtin:default-preview") return import("../modules/DefaultPreviewSurface");
   return import(/* @vite-ignore */ url);
 }

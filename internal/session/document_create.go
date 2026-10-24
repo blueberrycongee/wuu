@@ -10,19 +10,19 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (s *Store) CreateInitialized(sess Session, records []HistoryRecord) (*Session, error) {
+func (s *documentStore) CreateInitialized(sess Session, records []HistoryRecord) (*Session, error) {
 	return s.createInitialized(sess, records, ContextSeed{}, SessionLaunchRecord{}, nil)
 }
 
-func (s *Store) CreateInitializedWithLaunch(sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord) (*Session, error) {
+func (s *documentStore) CreateInitializedWithLaunch(sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord) (*Session, error) {
 	return s.createInitialized(sess, records, seed, launch, nil)
 }
 
-func (s *Store) CreateInitializedWithInbox(sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input InboxMessage) (*Session, error) {
+func (s *documentStore) CreateInitializedWithInbox(sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input InboxMessage) (*Session, error) {
 	return s.createInitialized(sess, records, seed, launch, &input)
 }
 
-func (s *Store) createInitialized(sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input *InboxMessage) (*Session, error) {
+func (s *documentStore) createInitialized(sess Session, records []HistoryRecord, seed ContextSeed, launch SessionLaunchRecord, input *InboxMessage) (*Session, error) {
 	now := time.Now().UTC()
 	sess = normalizeNewSession(sess, now)
 	hasSeed := seed.Version != 0 || strings.TrimSpace(seed.Body) != ""
@@ -136,7 +136,7 @@ func (s *Store) createInitialized(sess Session, records []HistoryRecord, seed Co
 	return &result, nil
 }
 
-func (store *Store) Create(id ...string) (*Session, error) {
+func (store *documentStore) Create(id ...string) (*Session, error) {
 	sessID := ""
 	if len(id) > 0 {
 		sessID = id[0]
@@ -147,41 +147,41 @@ func (store *Store) Create(id ...string) (*Session, error) {
 // CreateWithMetadata initializes a new session with thread-level metadata.
 // The workspace identity is bound separately via SetWorkspaceID, so this
 // signature stays stable.
-func (store *Store) CreateWithMetadata(id, cwd string) (*Session, error) {
+func (store *documentStore) CreateWithMetadata(id, cwd string) (*Session, error) {
 	return store.createWithMetadata(id, cwd, ForkMetadata{}, ManagedMetadata{})
 }
 
-func (store *Store) CreateManagedWithMetadata(id, cwd string, managed ManagedMetadata) (*Session, error) {
+func (store *documentStore) CreateManagedWithMetadata(id, cwd string, managed ManagedMetadata) (*Session, error) {
 	return store.createWithMetadata(id, cwd, ForkMetadata{}, managed)
 }
 
 // CreateForkWithMetadata initializes a forked session with source metadata.
-func (store *Store) CreateForkWithMetadata(id, cwd string, fork ForkMetadata) (*Session, error) {
+func (store *documentStore) CreateForkWithMetadata(id, cwd string, fork ForkMetadata) (*Session, error) {
 	return store.createWithMetadata(id, cwd, fork, ManagedMetadata{})
 }
 
-func (store *Store) CreateManagedForkWithMetadata(id, cwd string, fork ForkMetadata, managed ManagedMetadata) (*Session, error) {
+func (store *documentStore) CreateManagedForkWithMetadata(id, cwd string, fork ForkMetadata, managed ManagedMetadata) (*Session, error) {
 	return store.createWithMetadata(id, cwd, fork, managed)
 }
 
 // CreateWithWorktree initializes a session bound to an isolated git worktree.
 // Fork metadata is empty for a conversation that starts in a new worktree.
-func (store *Store) CreateWithWorktree(id, cwd string, fork ForkMetadata, worktree WorktreeInfo) (*Session, error) {
+func (store *documentStore) CreateWithWorktree(id, cwd string, fork ForkMetadata, worktree WorktreeInfo) (*Session, error) {
 	return store.createWithMetadataAndWorktree(id, cwd, fork, worktree, ManagedMetadata{})
 }
 
 // CreateManagedWithWorktree initializes a plugin-owned session in an isolated
 // workspace while preserving the same ownership and idempotency metadata as
 // every other host.session.create call.
-func (store *Store) CreateManagedWithWorktree(id, cwd string, fork ForkMetadata, worktree WorktreeInfo, managed ManagedMetadata) (*Session, error) {
+func (store *documentStore) CreateManagedWithWorktree(id, cwd string, fork ForkMetadata, worktree WorktreeInfo, managed ManagedMetadata) (*Session, error) {
 	return store.createWithMetadataAndWorktree(id, cwd, fork, worktree, managed)
 }
 
-func (store *Store) createWithMetadata(id, cwd string, fork ForkMetadata, managed ManagedMetadata) (*Session, error) {
+func (store *documentStore) createWithMetadata(id, cwd string, fork ForkMetadata, managed ManagedMetadata) (*Session, error) {
 	return store.createWithMetadataAndWorktree(id, cwd, fork, WorktreeInfo{}, managed)
 }
 
-func (store *Store) createWithMetadataAndWorktree(id, cwd string, fork ForkMetadata, worktree WorktreeInfo, managed ManagedMetadata) (*Session, error) {
+func (store *documentStore) createWithMetadataAndWorktree(id, cwd string, fork ForkMetadata, worktree WorktreeInfo, managed ManagedMetadata) (*Session, error) {
 	sessID := NewID()
 	if strings.TrimSpace(id) != "" {
 		sessID = strings.TrimSpace(id)

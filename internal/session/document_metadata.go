@@ -9,7 +9,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (store *Store) UpdateIndex(id string, entries int, summary string) error {
+func (store *documentStore) UpdateIndex(id string, entries int, summary string) error {
 	now := time.Now().UTC()
 	_, err := store.updateMetadata(id, true, func(s *Session) {
 		s.Entries = entries
@@ -22,7 +22,7 @@ func (store *Store) UpdateIndex(id string, entries int, summary string) error {
 }
 
 // UpdateGeneratedTitle sets a title only when the session does not already have one.
-func (store *Store) UpdateGeneratedTitle(id string, title string) (Session, error) {
+func (store *documentStore) UpdateGeneratedTitle(id string, title string) (Session, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return Session{}, fmt.Errorf("title is required")
@@ -38,7 +38,7 @@ func (store *Store) UpdateGeneratedTitle(id string, title string) (Session, erro
 // UpdateGeneratedTitle, which only fills an empty title. The right-click
 // Rename menu uses UpdateTitle to overwrite both the auto-generated
 // preview and any prior user-edited title.
-func (store *Store) UpdateTitle(id string, title string) (Session, error) {
+func (store *documentStore) UpdateTitle(id string, title string) (Session, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return Session{}, fmt.Errorf("title is required")
@@ -50,7 +50,7 @@ func (store *Store) UpdateTitle(id string, title string) (Session, error) {
 
 // UpdateWorkspaceBinding persists the workspace used by a session after the
 // main agent explicitly moves the task into a linked worktree.
-func (store *Store) UpdateWorkspaceBinding(
+func (store *documentStore) UpdateWorkspaceBinding(
 	id, cwd, worktreePath, worktreeBaseHEAD, worktreeBaseRepo string,
 ) (Session, error) {
 	cwd = strings.TrimSpace(cwd)
@@ -66,7 +66,7 @@ func (store *Store) UpdateWorkspaceBinding(
 }
 
 // UpdatePinned marks a session as pinned or unpinned.
-func (store *Store) UpdatePinned(id string, pinned bool) (Session, error) {
+func (store *documentStore) UpdatePinned(id string, pinned bool) (Session, error) {
 	return store.updateSessionOrganization(id, nil, &pinned)
 }
 
@@ -75,7 +75,7 @@ func (store *Store) UpdatePinned(id string, pinned bool) (Session, error) {
 // thread listing follow the workspace across moves/renames. Set once at
 // creation for registered-project threads; left empty for location-anchored
 // scratch threads, which match by cwd.
-func (store *Store) SetWorkspaceID(id, workspaceID string) (Session, error) {
+func (store *documentStore) SetWorkspaceID(id, workspaceID string) (Session, error) {
 	return store.updateMetadata(id, false, func(s *Session) {
 		s.WorkspaceID = strings.TrimSpace(workspaceID)
 	})
@@ -84,7 +84,7 @@ func (store *Store) SetWorkspaceID(id, workspaceID string) (Session, error) {
 // SetProjectMembership moves an ordinary session into a project, or a
 // managed session back out: source and parentID carry the relation, and
 // instructions replace the session's create-time instructions.
-func (store *Store) SetProjectMembership(id, source, parentID, instructions string) (Session, error) {
+func (store *documentStore) SetProjectMembership(id, source, parentID, instructions string) (Session, error) {
 	return store.updateMetadata(id, false, func(s *Session) {
 		s.Source = strings.TrimSpace(source)
 		s.ParentID = strings.TrimSpace(parentID)
@@ -95,14 +95,14 @@ func (store *Store) SetProjectMembership(id, source, parentID, instructions stri
 	})
 }
 
-func (store *Store) SetSource(id, source string) (Session, error) {
+func (store *documentStore) SetSource(id, source string) (Session, error) {
 	return store.updateMetadata(id, false, func(s *Session) {
 		s.Source = strings.TrimSpace(source)
 	})
 }
 
 // SetRuntimeSelection persists the runtime defaults pinned to one conversation.
-func (store *Store) SetRuntimeSelection(id string, selection RuntimeSelection) (Session, error) {
+func (store *documentStore) SetRuntimeSelection(id string, selection RuntimeSelection) (Session, error) {
 	selection.Provider = strings.TrimSpace(selection.Provider)
 	selection.Model = strings.TrimSpace(selection.Model)
 	if selection.Provider == "" {
@@ -129,7 +129,7 @@ func (store *Store) SetRuntimeSelection(id string, selection RuntimeSelection) (
 
 // SetEngine explicitly binds the session to a known engine. Protocol engines
 // may persist an empty model to select the native default.
-func (store *Store) SetEngine(id, engineID string) (Session, error) {
+func (store *documentStore) SetEngine(id, engineID string) (Session, error) {
 	engineID = strings.TrimSpace(engineID)
 	if engineID == "" {
 		return Session{}, fmt.Errorf("engine id is required")
@@ -142,7 +142,7 @@ func (store *Store) SetEngine(id, engineID string) (Session, error) {
 // SetEngineRef stores the engine's native session reference for a thread
 // (for example a codex thread id). It is written once the engine creates the
 // native session and read back to resume it.
-func (store *Store) SetEngineRef(id, ref string) (Session, error) {
+func (store *documentStore) SetEngineRef(id, ref string) (Session, error) {
 	return store.updateMetadata(id, false, func(s *Session) {
 		s.EngineRef = strings.TrimSpace(ref)
 	})
@@ -150,7 +150,7 @@ func (store *Store) SetEngineRef(id, ref string) (Session, error) {
 
 // SetModelSelection preserves the pre-runtime-selection API for callers that
 // only know about model variants.
-func (store *Store) SetModelSelection(id, provider, model, variant string) (Session, error) {
+func (store *documentStore) SetModelSelection(id, provider, model, variant string) (Session, error) {
 	provider = strings.TrimSpace(provider)
 	model = strings.TrimSpace(model)
 	if provider == "" {
@@ -167,7 +167,7 @@ func (store *Store) SetModelSelection(id, provider, model, variant string) (Sess
 }
 
 // UpdateArchived marks a session as archived or active.
-func (store *Store) UpdateArchived(id string, archived bool) (Session, error) {
+func (store *documentStore) UpdateArchived(id string, archived bool) (Session, error) {
 	now := time.Now().UTC()
 	return store.updateMetadata(id, false, func(s *Session) {
 		if archived {
@@ -180,7 +180,7 @@ func (store *Store) UpdateArchived(id string, archived bool) (Session, error) {
 	})
 }
 
-func (store *Store) BindWorktree(id string, worktree WorktreeInfo) (Session, error) {
+func (store *documentStore) BindWorktree(id string, worktree WorktreeInfo) (Session, error) {
 	return store.updateMetadata(id, false, func(s *Session) {
 		s.WorktreePath = normalizeCWD(worktree.Path)
 		s.WorktreeBaseHEAD = strings.TrimSpace(worktree.BaseHEAD)
@@ -191,7 +191,7 @@ func (store *Store) BindWorktree(id string, worktree WorktreeInfo) (Session, err
 	})
 }
 
-func (store *Store) WorktreeInfoForSession(id string) (WorktreeInfo, bool, error) {
+func (store *documentStore) WorktreeInfoForSession(id string) (WorktreeInfo, bool, error) {
 	sess, ok, err := store.Find(id)
 	if err != nil || !ok {
 		return WorktreeInfo{}, false, err

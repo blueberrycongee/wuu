@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { WEB_WORKSPACE_ZOOM_MIN, WEB_WORKSPACE_ZOOM_MAX, WEB_WORKSPACE_TAB_LIMIT, type WebWorkspaceApi, type WebWorkspaceBounds, type WebWorkspaceCommand, type WebWorkspaceState } from "../shared/webWorkspace";
+import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi, WebWorkspaceBoundsV1 as WebWorkspaceBounds, WebWorkspaceCommandV1 as WebWorkspaceCommand, WebWorkspaceStateV1 as WebWorkspaceState } from "../../../packages/plugin-sdk/src/ui-web-workspace";
+import { useWebWorkspaceControls } from "./WebWorkspaceControlsContext";
 import { ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Ellipsis, Globe, Hand, RotateCw, Search, X } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { normalizeWebsiteURL } from "./NavigationRibbonPreferences";
@@ -31,7 +32,8 @@ export function WebWorkspacePanel({
   resizeWithWindow?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
-  const api = (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace;
+  const controls = useWebWorkspaceControls();
+  const api = controls.capabilities.available ? controls : undefined;
   const panelRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const pendingHides = useRef(new Map<string, number>());
@@ -230,8 +232,8 @@ export function WebWorkspacePanel({
   }, []);
 
   const changeZoom = useCallback((factor: number) => {
-    void update((browser, id) => browser.setZoom(id, Math.max(WEB_WORKSPACE_ZOOM_MIN, Math.min(WEB_WORKSPACE_ZOOM_MAX, Math.round(factor * 100) / 100))));
-  }, [update]);
+    void update((browser, id) => browser.setZoom(id, Math.max(controls.limits.zoomMin, Math.min(controls.limits.zoomMax, Math.round(factor * 100) / 100))));
+  }, [controls, update]);
 
   useLayoutEffect(() => {
     // Tabs share this host. Replacing its observer on tab selection would hide
@@ -267,7 +269,7 @@ export function WebWorkspacePanel({
     };
     // A development hot update can run against the preceding native process.
     // Keep rectangle reports until its matching preload has been restarted.
-    const stop = observeWebWorkspaceBounds(host, resizeWithWindow && api.supportsWindowInsets === true, (bounds) => {
+    const stop = observeWebWorkspaceBounds(host, resizeWithWindow && api.capabilities.windowInsets, (bounds) => {
       if (disposed) return;
       setOccluded(bounds === null || bounds.occluded === true);
       if (bounds && !bounds.occluded) { wasVisible = true; report(bounds); return; }
@@ -337,7 +339,7 @@ export function WebWorkspacePanel({
     if (!active || !site) return;
     const onKeyDown = (event: KeyboardEvent): void => {
       const key = event.key.toLowerCase();
-      const modifier = window.wuu.platform === "darwin" ? event.metaKey : event.ctrlKey;
+      const modifier = controls.platform === "darwin" ? event.metaKey : event.ctrlKey;
       const cycleTabs = key === "tab" && event.ctrlKey;
       if ((!modifier && !cycleTabs) || event.altKey || event.defaultPrevented) return;
       // Retained plugin pages may be inert behind another page. Only the visible
@@ -352,7 +354,7 @@ export function WebWorkspacePanel({
       else if (key === "0") action = () => changeZoom(1);
       else if (key === "=" || key === "+") action = () => changeZoom(zoomFactor + 0.1);
       else if (key === "-") action = () => changeZoom(zoomFactor - 0.1);
-      else if (tabs && key === "t") action = () => { if (pageTabs.length >= WEB_WORKSPACE_TAB_LIMIT) return; if (event.shiftKey) void update((browser, id) => browser.reopenTab(id)); else void addTab(); };
+      else if (tabs && key === "t") action = () => { if (pageTabs.length >= controls.limits.tabs) return; if (event.shiftKey) void update((browser, id) => browser.reopenTab(id)); else void addTab(); };
       else if (tabs && key === "w" && current?.activeTabId) action = () => { void update((browser, id) => browser.closeTab(id, current.activeTabId!)); };
       else if (tabs && pageTabs.length && (cycleTabs || /^[1-9]$/.test(key))) {
         const position = pageTabs.findIndex((tab) => tab.id === current?.activeTabId);
@@ -363,7 +365,7 @@ export function WebWorkspacePanel({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [active, site?.id, tabs, current?.activeTabId, pageTabs, focusAddress, openFind, run, update, addTab, changeZoom, zoomFactor]);
+  }, [controls, active, site?.id, tabs, current?.activeTabId, pageTabs, focusAddress, openFind, run, update, addTab, changeZoom, zoomFactor]);
 
   const changeAddress = (value: string): void => {
     addressEdited.current = true;
@@ -394,7 +396,7 @@ export function WebWorkspacePanel({
   const openExternal = (): void => {
     const url = normalizeWebsiteURL(currentURL);
     setMenuOpen(false);
-    if (url) void window.wuu.openExternal(url).catch((cause: unknown) => showActionErrorToast(rawErrorMessage(cause)));
+    if (url) void controls.openExternal(url).catch((cause: unknown) => showActionErrorToast(rawErrorMessage(cause)));
   };
 
   const openOptions = async (): Promise<void> => {
@@ -590,11 +592,10 @@ function observeWebWorkspaceBounds(host: HTMLElement, resizeWithWindow: boolean,
       right: window.innerWidth - bounds.x - bounds.width,
       bottom: window.innerHeight - bounds.y - bounds.height,
     } : bounds;
-    if (geometry) geometry.borderRadius = Number.parseFloat(getComputedStyle(host).borderBottomLeftRadius);
-    if (geometry && occluded) geometry.occluded = true;
+    const presented = geometry ? { ...geometry, borderRadius: Number.parseFloat(getComputedStyle(host).borderBottomLeftRadius), ...(occluded ? { occluded: true as const } : {}) } : null;
     // Page zoom changes the native scale even when CSS insets stay identical.
-    const key = JSON.stringify([geometry, window.devicePixelRatio]);
-    if (key !== last) { last = key; report(geometry); }
+    const key = JSON.stringify([presented, window.devicePixelRatio]);
+    if (key !== last) { last = key; report(presented); }
     for (const animation of movingAnimations) {
       const target = animation.effect instanceof KeyframeEffect ? animation.effect.target : null;
       if (!target?.isConnected || animation.timeline !== document.timeline

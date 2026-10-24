@@ -1,4 +1,4 @@
-import type { ProjectWork } from "../shared/protocol";
+import type { ApplicationProjectWorkV1 as ProjectWork } from "../../../packages/plugin-sdk/src/ui-projects";
 import { useProjectWork } from "./ProjectWork";
 import { isThreadExecuting } from "./AppState";
 import { useProjectActions, type ProjectThread } from "./ProjectActions";

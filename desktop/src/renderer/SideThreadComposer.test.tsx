@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SideThreadComposer } from "./SideThreadComposer";
+import { ApplicationSideThreadComposer, SideThreadComposer } from "./SideThreadComposer";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -111,4 +111,15 @@ describe("SideThreadComposer", () => {
     act(() => stop.click());
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it("routes readonly public side input through named application actions", () => {
+  const invoke = vi.fn().mockResolvedValue({ accepted: true });
+  act(() => {
+    root = createRoot(container);
+    root.render(<ApplicationSideThreadComposer snapshot={{ parentThreadId: "main", commands: [], turns: [], contextChatPending: [], entry: { open: true, summary: null, messages: [], draft: " hello ", streaming: false } }} invoke={invoke} />);
+  });
+  act(() => (container.querySelector('.composer-action-button[aria-label="发送"]') as HTMLButtonElement).click());
+  expect(invoke).toHaveBeenCalledWith("side.send", { parentThreadId: "main", text: "hello" });
 });

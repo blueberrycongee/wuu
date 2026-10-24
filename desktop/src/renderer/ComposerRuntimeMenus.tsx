@@ -1,4 +1,6 @@
-import { connectionDisplayPreferences, useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
+import { useComposerServices, useComposerConnectionDisplay } from "./ComposerServicesContext";
+import type { SettingsConnectionDisplayV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { chatGPTConnectionModels, isChatGPTProvider } from "./RuntimeHelpers";
 import { hostSupports } from "./HostCapabilities";
 import {
@@ -44,11 +46,9 @@ import {
 import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import type {
   CodexModelSummary,
-  DesktopProject,
   EngineInfo,
   EngineModelInfo,
   EnginePermissionModeInfo,
-  InitializeResult,
   PermissionSummary,
   ProviderModelSummary,
   ProviderSummary,
@@ -103,13 +103,14 @@ export type EngineOption = {
 // even when it just became unavailable, so the selection stays visible.
 function availableEngineOptions(
   engines: EngineInfo[] | undefined,
-  activeEngine: string
+  activeEngine: string,
+  display: Pick<SettingsConnectionDisplayV1, "label">
 ): EngineOption[] {
   const options: EngineOption[] = [{ id: "wuu", label: engineLabel("wuu") }];
   for (const engine of engines ?? []) {
     if (engine.id === "wuu") continue;
     if ((!engine.enabled || !engine.binary_ok) && engine.id !== activeEngine) continue;
-    options.push({ id: engine.id, label: connectionDisplayPreferences.label(`engine:${engine.id}`, engineLabel(engine.id, engine)) });
+    options.push({ id: engine.id, label: display.label(`engine:${engine.id}`, engineLabel(engine.id, engine)) });
   }
   if (activeEngine && activeEngine !== "wuu" && !options.some((option) => option.id === activeEngine)) {
     options.push({ id: activeEngine, label: engineLabel(activeEngine) });
@@ -281,7 +282,8 @@ function RuntimePanelSummary({
     if (!effortSaving) setPreviewEffort(selectedEffort);
   }, [selectedEffort, effortSaving]);
 
-  const engineName = connectionDisplayPreferences.label(`engine:${engineId}`, engineLabel(engine));
+  const display = useComposerConnectionDisplay();
+  const engineName = display.label(`engine:${engineId}`, engineLabel(engine));
   // A bound conversation cannot switch engines, so the engine is a label that
   // says why rather than a way into a list of choices it cannot take.
   const engineItem = engineLocked ? (
@@ -538,7 +540,7 @@ export function RuntimePicker({
   onSelectEffort,
   handoff
 }: {
-  initialized: InitializeResult;
+  initialized: ComposerConfiguration;
   state: CodexModelLoadState;
   openMenu: CodexRuntimeMenu;
   anchorRef: RefObject<HTMLDivElement | null>;
@@ -561,7 +563,7 @@ export function RuntimePicker({
   handoff?: HandoffRuntimePicker;
 }): JSX.Element {
   const { t } = useI18n();
-  const display = useConnectionDisplayPreferences();
+  const display = useComposerConnectionDisplay();
   const targetProvider = handoff?.provider ?? initialized.provider;
   const targetModel = handoff?.model ?? initialized.model;
   const targetVariant = handoff?.variant ?? (initialized.variant || initialized.effort || "");
@@ -583,7 +585,7 @@ export function RuntimePicker({
   const externalEngine = handoff ? "" : activeEngine && activeEngine !== "wuu" ? activeEngine : "";
   const engineOptions = handoff
     ? [{ id: "wuu", label: engineLabel("wuu") }]
-    : availableEngineOptions(engines, externalEngine);
+    : availableEngineOptions(engines, externalEngine, display);
   const selectedEngine = handoff ? "wuu" : externalEngine || "wuu";
   const externalEngineInfo = engines?.find((engine) => engine.id === externalEngine);
   const externalModelInfo = externalEngineInfo?.models?.find((model) => engineModel ? model.id === engineModel : model.is_default);
@@ -785,7 +787,7 @@ function EngineRuntimeMenu({
     setView("summary");
   };
 
-  const display = useConnectionDisplayPreferences();
+  const display = useComposerConnectionDisplay();
   const catalogModels = engine?.models ?? [];
   const models = display.visibleModels(`engine:${engine?.id}`, catalogModels, [selectedModel || catalogModels.find(model => model.is_default)?.id || ""]);
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -980,7 +982,7 @@ export function RuntimeModelMenu({
   width,
   autoFocus = false,
 }: {
-  initialized: InitializeResult;
+  initialized: ComposerConfiguration;
   state: CodexModelLoadState;
   selectedProvider: string;
   selectedModel: string;
@@ -1035,7 +1037,7 @@ export function RuntimeModelMenu({
     setView("summary");
   };
 
-  const display = useConnectionDisplayPreferences();
+  const display = useComposerConnectionDisplay();
   const providers = initialized.providers ?? [];
   const groups: RuntimeModelGroup[] = providers.map(provider => {
     const catalog = runtimeModelsForProvider(provider, state);
@@ -1835,7 +1837,7 @@ export function WorkspacePickerMenu({
   onOpenWorkspace,
   onKeyDown,
 }: {
-  projects: DesktopProject[];
+  projects: ComposerWorkspace[];
   activeContext?: RuntimeContext;
   query: string;
   setQuery: (value: string) => void;
@@ -1848,6 +1850,8 @@ export function WorkspacePickerMenu({
   const { t } = useI18n();
   const menuRef = useRef<HTMLDivElement>(null);
   useFloatingMenuFocus(menuRef);
+  const services = useComposerServices();
+  const capabilities = services?.view.workspaceCapabilities;
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filteredWorkspaces = normalizedQuery
     ? projects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedQuery) || project.path.toLocaleLowerCase().includes(normalizedQuery))
@@ -1868,7 +1872,7 @@ export function WorkspacePickerMenu({
       <div className="project-picker-list">
         {showConversation ? (
           <button type="button" role="menuitemradio" aria-checked={noProject}
-            disabled={!hostSupports("createBlankProject")} onClick={onSelectNoProject}>
+            disabled={!(capabilities?.create ?? hostSupports("createBlankProject"))} onClick={onSelectNoProject}>
             <MessageSquare />
             <span>{conversationLabel}</span>
             {noProject ? <Check /> : null}
@@ -1887,11 +1891,11 @@ export function WorkspacePickerMenu({
         {!showConversation && filteredWorkspaces.length === 0 ? <div className="project-picker-empty">{t("runtime.noMatchingWorkspaces")}</div> : null}
       </div>
       <div className="project-picker-divider" />
-      <button type="button" role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspace}>
+      <button type="button" role="menuitem" disabled={!(capabilities?.open ?? hostSupports("chooseProjectFolder"))} onClick={onOpenWorkspace}>
         <FolderOpen />
         <span>{t("runtime.openFolder")}</span>
       </button>
-      <button type="button" role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
+      <button type="button" role="menuitem" disabled={!(capabilities?.create ?? hostSupports("createBlankProject"))} onClick={onCreateWorkspace}>
         <FolderPlus />
         <span>{t("runtime.createBlankWorkspace")}</span>
       </button>

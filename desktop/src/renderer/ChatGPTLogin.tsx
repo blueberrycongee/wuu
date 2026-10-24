@@ -1,6 +1,6 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import type { ProviderSummary } from "../shared/protocol";
-import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 
 /** Authorization is owned by the host; tokens and authorization URLs never enter this view. */
@@ -13,6 +13,7 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
   onBusyChange?: (busy: boolean) => void;
   disabled?: boolean;
 }): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -27,7 +28,7 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
       const current = operation.current;
       operation.current = undefined;
       if (current?.timer) window.clearTimeout(current.timer);
-      if (current?.id) void window.wuu.cancelChatGPTLogin(current.id).catch(() => {});
+      if (current?.id) void settingsControls.cancelChatGPTLogin(current.id).catch(() => {});
     };
   }, []);
 
@@ -38,23 +39,23 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
   }
 
   async function start(): Promise<void> {
-    if (!hostSupports("startChatGPTLogin") || operation.current || busy || disabled) return;
+    if (!settingsControls.capabilities.chatGPTLogin || operation.current || busy || disabled) return;
     const current: { id?: string; timer?: number } = {};
     operation.current = current;
     setError("");
     setBusy(true);
     onBusyChange?.(true);
     try {
-      const login = await window.wuu.startChatGPTLogin(accountId, enablePlanUsage);
+      const login = await settingsControls.startChatGPTLogin(accountId, enablePlanUsage);
       current.id = login.login_id;
       if (operation.current !== current) {
-        await window.wuu.cancelChatGPTLogin(login.login_id);
+        await settingsControls.cancelChatGPTLogin(login.login_id);
         if (mounted.current && !operation.current) finish();
         return;
       }
       const poll = async (): Promise<void> => {
         try {
-          const result = await window.wuu.pollChatGPTLogin(login.login_id);
+          const result = await settingsControls.pollChatGPTLogin(login.login_id);
           if (operation.current !== current) return;
           if (result.status === "pending") {
             current.timer = window.setTimeout(() => void poll(), Math.max(250, login.interval_ms));
@@ -71,7 +72,7 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
         } catch (cause) {
           if (operation.current !== current) return;
           // Cancel the host operation when polling can no longer observe its result.
-          void window.wuu.cancelChatGPTLogin(login.login_id).catch(() => {});
+          void settingsControls.cancelChatGPTLogin(login.login_id).catch(() => {});
           finish();
           setError(cause instanceof Error ? cause.message : String(cause));
         }
@@ -90,14 +91,14 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
     if (current.timer) window.clearTimeout(current.timer);
     operation.current = undefined;
     if (current.id) {
-      try { await window.wuu.cancelChatGPTLogin(current.id); }
+      try { await settingsControls.cancelChatGPTLogin(current.id); }
       catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause)); }
       finally { if (mounted.current) finish(); }
     }
     // A start still awaiting admission cancels its returned ID before finishing.
   }
 
-  if (!hostSupports("startChatGPTLogin")) return <p className="settings-muted-line" role="status">{t("provider.chatgptDesktopLoginRequired")}</p>;
+  if (!settingsControls.capabilities.chatGPTLogin) return <p className="settings-muted-line" role="status">{t("provider.chatgptDesktopLoginRequired")}</p>;
 
   return <div className="settings-engine-auth" aria-busy={busy}>
     <div className="settings-engine-auth-actions">

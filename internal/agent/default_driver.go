@@ -184,13 +184,12 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			return buildFreshContext(messages, head, fixed, target, request.MediaInput)
+			return turn.CompactContext(ctx, messages, pluginprotocol.DriverCompactBudget{Window: &pluginprotocol.DriverContextWindow{HistoryHead: head, FixedTokens: fixed, TargetTokens: target}})
 		}
 		cfg.AcceptFreshContext = func(ctx context.Context, messages []providers.ChatMessage, head int) ([]providers.ChatMessage, int, error) {
 			committed, err := replaceContext(ctx, messages)
 			return committed.Messages, committed.ArchiveHead, err
 		}
-		cfg.BeforeRequestContext = withContextWindowGuidance(cfg.BeforeRequestContext)
 	}
 	report := func(observation pluginprotocol.DriverTurnObservation) {
 		if err := turn.ReportTurn(ctx, observation); err != nil {

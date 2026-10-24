@@ -14,7 +14,7 @@ import (
 // Diagnostic retention must not delete conversation, recovery checkpoints, or
 // recent exact receipt bytes; imported over-budget diagnostics are bounded too.
 func TestDocumentDiagnosticRetention(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateInitialized(Session{ID: "retention"}, []HistoryRecord{{Role: "user", Content: "retain forever"}}); err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +68,7 @@ func TestDocumentDiagnosticRetention(t *testing.T) {
 }
 
 func TestDocumentRedundantStoragePreservesProjection(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.Create("legacy-tools"); err != nil {
 			t.Fatal(err)
 		}

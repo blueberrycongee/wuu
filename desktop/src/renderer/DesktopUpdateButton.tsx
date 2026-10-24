@@ -1,3 +1,4 @@
+import type { SidebarNavigationService } from "./AppSidebar";
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { DesktopUpdateState } from "../shared/protocol";
 import { DesktopUpdateButtonSurface } from "./DesktopUpdateButtonSurface";
@@ -5,13 +6,15 @@ import { NativeRibbonFooterContext } from "./ChromeOverlay";
 import type { ChromeDesktopUpdate } from "../shared/chromeOverlay";
 import { useI18n } from "./i18n";
 
-export function DesktopUpdateButton(): React.JSX.Element | null {
+export function DesktopUpdateButton({ navigation }: { navigation?: SidebarNavigationService } = {}): React.JSX.Element | null {
   const { t } = useI18n();
   const nativeRibbon = useContext(NativeRibbonFooterContext);
-  const [state, setState] = useState<DesktopUpdateState>({ kind: "unsupported" });
+  const [legacyState, setState] = useState<DesktopUpdateState>({ kind: "unsupported" });
+  const state = navigation?.view.update ?? legacyState;
   const [pending, setPending] = useState(false);
   const [requestFailed, setRequestFailed] = useState(false);
   useEffect(() => {
+    if (navigation) return;
     const api = window.wuu;
     if (!api?.getDesktopUpdateState || !api.onDesktopUpdateChanged) return;
     let active = true;
@@ -25,7 +28,7 @@ export function DesktopUpdateButton(): React.JSX.Element | null {
       if (active && !receivedEvent) setState(next);
     }).catch(error => console.error("Could not read desktop update state", error));
     return () => { active = false; unsubscribe(); };
-  }, []);
+  }, [Boolean(navigation)]);
 
   const version = "version" in state ? state.version : "";
   const downloading = state.kind === "downloading";
@@ -43,7 +46,8 @@ export function DesktopUpdateButton(): React.JSX.Element | null {
     setPending(true);
     setRequestFailed(false);
     try {
-      if (state.kind === "ready") await window.wuu.restartDesktopUpdate!();
+      if (navigation) await navigation.invoke("navigation.install-update", {});
+      else if (state.kind === "ready") await window.wuu.restartDesktopUpdate!();
       else await window.wuu.downloadDesktopUpdate!();
     } catch (error) {
       console.error("Desktop update action failed", error);

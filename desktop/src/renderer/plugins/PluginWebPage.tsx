@@ -1,6 +1,7 @@
 import * as React from "react";
 import type { PluginUIWebPageProps } from "../../shared/workbench";
-import type { WebWorkspaceApi } from "../../shared/webWorkspace";
+import type { ApplicationWebWorkspaceV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
+import { WebWorkspaceControlsProvider } from "../WebWorkspaceControlsContext";
 import { WebWorkspacePanel } from "../WebWorkspace";
 
 /** Only views owning a native page need to survive ordinary tab switches. */
@@ -14,6 +15,7 @@ export function createPluginWebPage(
   react: typeof React,
   signal: AbortSignal,
   reportError: (error: unknown) => void,
+  controls: ApplicationWebWorkspaceV1,
 ): React.ComponentType<PluginUIWebPageProps> {
   const subscribe = (listener: () => void): (() => void) => {
     signal.addEventListener("abort", listener);
@@ -29,22 +31,17 @@ export function createPluginWebPage(
 
     react.useLayoutEffect(() => view?.retain(), [view?.retain]);
 
+    const [browser, setBrowser] = react.useState<ApplicationWebWorkspaceV1>();
     react.useEffect(() => {
-      const close = (): void => {
-        const browser = (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi })?.webWorkspace;
-        if (browser) void browser.close(id).catch(reportError);
-      };
-      signal.addEventListener("abort", close, { once: true });
-      if (signal.aborted) close();
-      return () => {
-        signal.removeEventListener("abort", close);
-        close();
-      };
-    }, [id]);
+      if (signal.aborted) return;
+      const owner = controls.fork();
+      setBrowser(owner);
+      return () => { void owner.dispose().catch(reportError); };
+    }, []);
 
-    return generationActive ? react.createElement(WebWorkspacePanel, {
-      site,
-      active: view?.active ?? true,
+    return generationActive && browser ? react.createElement(WebWorkspaceControlsProvider, {
+      controls: browser,
+      children: react.createElement(WebWorkspacePanel, { site, active: view?.active ?? true }),
     }) : null;
   };
 }

@@ -179,9 +179,10 @@ func KernelDriverCheckpointDescriptor() ServiceDescriptor {
 }
 
 var (
-	serviceNamePattern    = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$`)
-	serviceMethodPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)*$`)
-	serviceSchemaPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z0-9-]+)+$`)
+	serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$`)
+	// Method names are case-sensitive API identifiers, unlike service namespaces.
+	serviceMethodPattern  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)*$`)
+	serviceSchemaPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[A-Za-z0-9-]+)+$`)
 	serviceVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 )
 
@@ -297,7 +298,7 @@ func ValidateServiceDescriptor(descriptor ServiceDescriptor) error {
 	for _, method := range descriptor.Methods {
 		methodName := strings.TrimSpace(method.Name)
 		if !serviceMethodPattern.MatchString(methodName) {
-			return fmt.Errorf("service %s: method name %q must be a lowercase identifier", name, method.Name)
+			return fmt.Errorf("service %s: method name %q must be a case-sensitive identifier with optional dotted segments", name, method.Name)
 		}
 		if _, exists := seen[methodName]; exists {
 			return fmt.Errorf("service %s: duplicate method %q", name, methodName)

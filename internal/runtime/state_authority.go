@@ -25,6 +25,8 @@ import (
 // StateAuthority owns the host's durable head independently of replaceable
 // storage. One instance decorates one generation's selected invoker. Registry
 // dispatch still owns permissions, provider identity and callback lifetimes.
+// Its fence also protects complete checkpoint traversals, so waiters use their
+// caller's cancellation budget rather than the short ordinary-transaction limit.
 type StateAuthority struct {
 	dir, id                             string
 	mu                                  sync.Mutex
@@ -254,7 +256,7 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 	if locked != nil && locked.dir == a.dir {
 		return a.dispatch(ctx, client, locked, params)
 	}
-	lock, err := storelock.AcquireContext(ctx, a.dir)
+	lock, err := storelock.AcquireUntilCanceled(ctx, a.dir)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +314,7 @@ func (a *StateAuthority) readPrepared(ctx context.Context, client *persistence.C
 			return nil, err
 		}
 	}
-	lock, err := storelock.AcquireContext(ctx, a.dir)
+	lock, err := storelock.AcquireUntilCanceled(ctx, a.dir)
 	if err != nil {
 		return nil, err
 	}
@@ -594,7 +596,7 @@ func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client
 	if a.exportCapabilityErr != nil {
 		return 0, a.exportCapabilityErr
 	}
-	lock, err := storelock.AcquireContext(ctx, a.dir)
+	lock, err := storelock.AcquireUntilCanceled(ctx, a.dir)
 	if err != nil {
 		return 0, err
 	}
@@ -631,7 +633,7 @@ func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client
 	if err != nil {
 		return 0, err
 	}
-	lock, err = storelock.AcquireContext(ctx, a.dir)
+	lock, err = storelock.AcquireUntilCanceled(ctx, a.dir)
 	if err != nil {
 		return 0, err
 	}
@@ -654,7 +656,7 @@ func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client
 	return checkpoint.Revision, nil
 }
 func (a *StateAuthority) activate(ctx context.Context, client *persistence.Client) (persistence.Revision, error) {
-	lock, err := storelock.AcquireContext(ctx, a.dir)
+	lock, err := storelock.AcquireUntilCanceled(ctx, a.dir)
 	if err != nil {
 		return 0, err
 	}
@@ -701,7 +703,7 @@ func (a *StateAuthority) activate(ctx context.Context, client *persistence.Clien
 			if err != nil {
 				return 0, err
 			}
-			lock, err = storelock.AcquireContext(ctx, a.dir)
+			lock, err = storelock.AcquireUntilCanceled(ctx, a.dir)
 			if err != nil {
 				return 0, err
 			}
@@ -967,7 +969,7 @@ func (a *StateAuthority) serveProbe(ctx context.Context, request authorityReques
 		lease.Release()
 		return
 	}
-	lock, err := storelock.AcquireContext(ctx, a.dir)
+	lock, err := storelock.AcquireUntilCanceled(ctx, a.dir)
 	if err != nil {
 		return
 	}

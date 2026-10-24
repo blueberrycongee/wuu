@@ -1,12 +1,15 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
+import { ConversationTurnIdentityProvider } from "./ConversationControlsContext";
+import type { ReactNode } from "react";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot as createReactRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { ArtifactPreview, collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
 import { ArtifactPreviewContext, ArtifactThreadContext } from "./ArtifactPreviewContext";
 import type { ThreadItem, Turn } from "../shared/protocol";
-const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
-vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
-vi.mock("./plugins/Workbench", () => ({WorkbenchContentRenderer:({fallback}:{fallback:React.ReactNode})=>fallback}));
+const { openPreview, renderArtifactSlot } = vi.hoisted(() => ({ openPreview: vi.fn(), renderArtifactSlot: vi.fn(({fallback}: {fallback?: React.ReactNode}) => fallback) }));
 vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key, formatNumber:(value:number)=>String(value)})}));
 vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview})}));
 
@@ -286,4 +289,25 @@ it("renders deferred tool-result images as loadable attachments instead of unava
     expect(window.wuu.readRemoteAttachment).toHaveBeenCalledWith("thread:source");
     expect(container.querySelector("img")?.src).toBe("data:image/png;base64,aW1hZ2U=");
   } finally {act(()=>root.unmount());container.remove();window.wuu=prior;}
+});
+
+function createRoot(container: HTMLElement) {
+  const root = createReactRoot(container);
+  let artifacts: ApplicationArtifacts;
+  return {render: (children: ReactNode) => {
+    artifacts ??= new ApplicationArtifacts(window.wuu ?? {}, {resolveResourceURL: ({source, cwd}) => `wuu-file://local/${btoa(`${cwd}/${source}`).replace(/=/g, "")}`, openFile: async () => {}});
+    root.render(<ConversationControlsTestProvider composition={{Slot: renderArtifactSlot}}><ConversationTurnIdentityProvider threadId="source-thread" turnId="source-turn"><ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider></ConversationTurnIdentityProvider></ConversationControlsTestProvider>);
+  }, unmount: () => root.unmount()};
+}
+
+it("routes artifact presentation through the public slot with source identity only", async () => {
+  const artifact = collectTurnArtifacts({items: [presentedImage("part", "snapshot")]})[0];
+  const container = document.createElement("div"), root = createRoot(container);
+  renderArtifactSlot.mockClear();
+  try {
+    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={[artifact]} inspectionExpanded />));
+    expect(renderArtifactSlot).toHaveBeenCalled();
+    expect(renderArtifactSlot.mock.calls[0][0]).toMatchObject({name:"wuu.default-conversation/conversation.artifact", context:{threadId:"source-thread",turnId:"source-turn",itemId:"part",partId:artifact.id,variant:"inline"}});
+    expect(Object.keys((renderArtifactSlot.mock.calls[0][0] as unknown as {context: object}).context).sort()).toEqual(["itemId","partId","threadId","turnId","variant"]);
+  } finally {act(() => root.unmount());}
 });

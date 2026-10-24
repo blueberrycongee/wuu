@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { type ChangeEvent, type KeyboardEvent, useEffect, useState } from "react";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
@@ -47,21 +48,22 @@ export function applyMessageFlowFontSize(size: MessageFlowFontSize): void {
 
 /**
  * Settings row body for the user-facing message-stream reading size:
- * a compact numeric field. Reads and persists through `window.wuu`
- * directly and applies the choice on commit (blur / Enter), so an
+ * a compact numeric field. Reads and persists through the selected settings
+ * service and applies the choice on commit (blur / Enter), so an
  * in-progress edit does not spam persistence or clamp mid-keystroke.
  */
 export function MessageFlowFontSizeControl(): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const [size, setSize] = useState<MessageFlowFontSize>(() =>
-    clampSize(window.wuu?.initialMessageFlowFontSize),
+    clampSize(settingsControls.initialMessageFlowFontSize),
   );
   const [draft, setDraft] = useState(() => formatSize(size));
 
   useEffect(() => {
     let cancelled = false;
-    void window.wuu
-      ?.getMessageFlowFontSize?.()
+    void settingsControls
+      .getMessageFlowFontSize?.()
       .then((stored) => {
         if (cancelled) {
           return;
@@ -80,8 +82,8 @@ export function MessageFlowFontSizeControl(): JSX.Element {
 
   function persist(next: MessageFlowFontSize): void {
     setSize(next);
-    applyMessageFlowFontSize(next);
-    void window.wuu?.setMessageFlowFontSize?.(next).catch(() => {
+    settingsControls.applyMessageFlowFontSize(next);
+    void settingsControls.setMessageFlowFontSize?.(next).catch(() => {
       // Persistence failure leaves the applied size for this window;
       // the next launch falls back to the stored value.
     });

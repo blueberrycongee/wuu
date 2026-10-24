@@ -1,14 +1,24 @@
+import type { ApplicationWebWorkspaceV1 } from '../dist/ui-web-workspace.js';
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from '../dist/index.js';
 
 export function createPreviewApplication(initial?: ApplicationSnapshotV1): ApplicationServiceV1 {
+  const composerStatus = Object.freeze({ items: Object.freeze([]) });
   let sequence = 1;
   let state: ApplicationSnapshotV1 = initial ?? {
     contractVersion: 1, revision: 0, phase: 'ready', connection: { status: 'connected' }, locale: 'en',
     workspaces: { activeWorkspaceId: 'research', workspaces: [{ id: 'research', name: 'Research', root: '/preview/research', available: true }] },
-    navigation: { contractVersion: 1, activeNodeId: 'research-1', nodes: [
+    navigation: { contractVersion: 1, section: 'conversations', catalogSection: 'plugins', catalogPluginId: '', activeNodeId: 'research-1', nodes: [
       { id: 'research', kind: 'project', label: 'Research' },
       { id: 'research-1', kind: 'thread', label: 'Compare the evidence', parentId: 'research', active: true },
     ] },
+    navigationWorkspace: { initialized: true, threads: [], workspaces: [], loadingWorkspaceIds: [], lastViewedTurnByThreadId: {}, pendingConversations: [],
+      folders: [], plugins: [], destinations: [], canRevealThread: false, canCreateWorkspace: false, canChooseWorkspace: false, projectAgentEnabled: false,
+      accountAvailable: false, update: { kind: 'unsupported' }, searchOpen: false, accountOpen: false },
+    tabs: { navigationRevision: 0, activeTabId: 'thread:research-1', activePane: 'primary', primaryThreadId: 'research-1', canSubmit: true, items: [{ id: 'thread:research-1', kind: 'thread',
+      title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
+      threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
+    conversationDetails: [],
+    conversationWorkspace: { turnStreamStatus: {}, activePane: "primary", threads: [] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{
       id: 'turn-1', status: 'completed', items: [
         { contractVersion: 1, id: 'user-1', kind: 'user-message', text: 'Which approach has the strongest evidence?' },
@@ -17,9 +27,18 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
         items: [{ id: 'search-1', kind: 'tool-activity', status: 'completed', toolName: 'Search sources', displayLabel: 'Reviewed 3 sources' }] },
     }] },
     composer: { contractVersion: 1, threadId: 'research-1', draftText: '', running: false, availableSubmissionModes: ['send'], model: { id: 'preview', label: 'Preview fixture' }, permission: { id: 'standard', label: 'Standard' } },
-    settings: { contractVersion: 1, open: false, availablePages: [{ id: 'appearance', label: 'Appearance' }],
+    activities: [],
+    sideConversation: { commands: [], turns: [], contextChatPending: [] },
+    search: { query: "", composing: false, loading: false, results: [] },
+    conversationActions: { questions: [], pendingQuestionIds: [], compactingThreadIds: [], handoffThreadIds: [] },
+    submission: { operations: [], pendingCreations: [], failedDraftTabIds: [], stopRequests: [] },
+    composerRuntime: { owners: [] },
+    composerPending: [],
+    drafts: { recoveryNotices: [], activeTabId: 'thread:research-1', activePane: 'primary', split: false,
+      primary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, secondary: { revision: 0, text: '', imageIds: [], fileIds: [], selections: [] }, attachments: [] },
+    settings: { contractVersion: 1, open: false, engineInventoryError: '', runningProviderNames: [], archivedThreads: [], runtimeSwitchPending: false, availablePages: [{ id: 'appearance', label: 'Appearance' }],
       providers: [{ id: 'preview', label: 'Synthetic preview data', configured: true }], plugins: [] },
-    preview: null, appearance: { theme: 'system', resolvedTheme: 'light', uiFontSize: 15, codeFontSize: 13 },
+    preview: null, previewWorkspace: { ownerTabId: "thread:research-1", conversationTitle: "Research", tabs: [], conversationSelected: false }, appearance: { theme: 'system', resolvedTheme: 'light', uiFontSize: 15, codeFontSize: 13 },
     status: { contractVersion: 1, items: [{ id: 'ready', label: 'Preview fixture', kind: 'info' }] },
   };
   if (state.contractVersion !== 1) throw new Error('Preview state requires ApplicationSnapshotV1 contractVersion 1.');
@@ -29,8 +48,157 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     state = { ...state, ...change, revision: state.revision + 1 };
     for (const listener of listeners) listener();
   };
+  const unavailable = (): never => { throw new Error("Settings controls are unavailable in the synthetic preview"); };
+  const webWorkspace: ApplicationWebWorkspaceV1 = {
+    platform: "preview", capabilities: { available: false, windowInsets: false, nativeOverlays: false }, limits: { tabs: 0, zoomMin: 1, zoomMax: 1 },
+    fork: () => webWorkspace, dispose: async () => {}, openExternal: unavailable,
+    open: unavailable, capture: unavailable, initializeTabs: unavailable, close: unavailable,
+    command: unavailable, createTab: unavailable, selectTab: unavailable, closeTab: unavailable, reopenTab: unavailable,
+    setTabPinned: unavailable, setTabMuted: unavailable, reorderTabs: unavailable, find: unavailable, stopFind: unavailable, setZoom: unavailable,
+    reportBounds: unavailable, reportPopover: unavailable, showTooltip: unavailable, showOptions: unavailable, dismissOptions: unavailable,
+    setShortcutTarget: unavailable, listDownloads: unavailable, downloadCommand: unavailable,
+    onPopoverDismiss: () => () => {}, onState: () => () => {}, onReveal: () => () => {}, onFocusAddress: () => () => {}, onFocusFind: () => () => {}, onDownloads: () => () => {},
+    library: { getState: unavailable, setBookmark: unavailable, removeHistory: unavailable, clearHistory: unavailable, onState: () => () => {} },
+  };
+  const environment: ReturnType<ApplicationServiceV1["environment"]["getSnapshot"]> = { actionBusy: false, contextKey: "preview", capabilities: { review: false, checkout: false, createBranch: false, commit: false, pullRequest: false } };
+  const onboarding: ReturnType<ApplicationServiceV1["onboarding"]["getSnapshot"]> = { revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } };
+  const catalog: ReturnType<ApplicationServiceV1["catalog"]["getSnapshot"]> = { contextKey: "preview", inventory: [], capabilities: { install: false, update: false, remove: false } };
+  const fileSelections = new Map<string, ReturnType<ApplicationServiceV1["fileSelection"]["getSnapshot"]>>();
+  const projects = new Map<string, ReturnType<ApplicationServiceV1["projects"]["getSnapshot"]>>();
+  // These disabled services never publish changes; external-store reads must retain identity.
+  const empty = Object.freeze([]);
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    environment: { getSnapshot: () => environment, subscribe: () => () => {}, checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable, generateCommitMessage: unavailable, createPullRequest: unavailable, listChanges: unavailable, readDiff: unavailable, scheduleStatusRefresh: () => {} },
+    artifacts: { capabilities: { nativeItemMenu: false, save: false, remoteAttachment: false, remoteAttachmentPreview: false, remoteItem: false }, resolveSource: unavailable, acquireSource: unavailable, releaseSource: () => {}, readAttachment: unavailable, readItem: unavailable, readText: unavailable, save: unavailable, showItemMenu: unavailable, openFile: unavailable },
+    composerPresentation: { setRuntimeMenu: unavailable, getStatusSnapshot: () => composerStatus, subscribeStatus: () => () => {}, getSnapshot: unavailable, subscribe: () => () => {}, getCommands: () => empty, executeCommand: unavailable,
+      getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: () => empty,
+      getTelemetry: () => ({ tokensPerSecond: 0, source: "none", inputTokens: 0, outputTokens: 0 }), subscribeTelemetry: () => () => {} },
+    desktop: { hostKind: "web", popOut: { kind: null, threadID: null, context: null }, capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false }, onVisibilityChange: () => () => {} },
+    webWorkspace,
+    onboarding: { getSnapshot: () => onboarding, subscribe: () => () => {}, checkpoint: unavailable, run: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
+    browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openURL: unavailable, openExternal: unavailable, consumeNavigation: unavailable },
+    fileSelection: { getSnapshot: ({ ownerTabId }) => {
+      let snapshot = fileSelections.get(ownerTabId);
+      if (!snapshot) {
+        snapshot = { ownerTabId, interactionOwnerKey: "preview", enabled: false, canAskSide: false, comments: empty };
+        fileSelections.set(ownerTabId, snapshot);
+      }
+      return snapshot;
+    }, subscribe: () => () => {},
+      quote: unavailable, comment: unavailable, removeComment: unavailable, edit: unavailable, openPdf: unavailable, openFile: unavailable, askSide: unavailable },
+    projects: { getSnapshot: projectId => {
+      let snapshot = projects.get(projectId);
+      if (!snapshot) {
+        snapshot = { projectId, enabled: false, loading: false, error: "" };
+        projects.set(projectId, snapshot);
+      }
+      return snapshot;
+    }, subscribe: () => () => {}, refresh: unavailable, control: unavailable, releaseSession: unavailable },
+    terminals: {
+      capabilities: Object.freeze({ createTerminal: false }),
+      start: unavailable, write: unavailable, resize: unavailable, stop: unavailable, onEvent: () => () => {},
+      listManaged: unavailable, readManaged: unavailable, writeManaged: unavailable, resizeManaged: unavailable, stopManaged: unavailable,
+    },
+    catalog: { getSnapshot: () => catalog,
+      listSkillsForThread: unavailable, listSkills: async () => [], readSkill: unavailable, refresh: unavailable, update: unavailable, install: unavailable, remove: unavailable, loadIcon: unavailable },
+    previewContent: { resolveResourceURL: unavailable, openFile: unavailable, capabilities: Object.freeze({ nativeItemMenu: false, revealItem: false, exportFile: false }),
+      listDirectory: unavailable, readFile: unavailable, revealItem: unavailable, showItemMenu: unavailable, exportFile: unavailable },
+    conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
+    settingsControls: {
+      connectionDisplay: { subscribe: () => () => {}, getSnapshot: () => "", get: () => ({ modelOrder: [], hiddenModels: [] }),
+        label: (_key, fallback) => fallback, orderModels: (_key, models) => [...models], visibleModels: (_key, models) => [...models],
+        setAlias: unavailable, setModelOrder: unavailable, moveModel: unavailable, setModelVisible: unavailable },
+      initialMessageFlowFontSize: 15, initialThemePreference: "system",
+      appearanceDefaults: Object.freeze({ messageStyle: "bubble", codeSize: 13, uiFont: "", contentFont: "", codeFont: "", fontSmoothing: "system", motion: "system" }),
+      readBackground: unavailable,
+      loadSkinImage: unavailable,
+      listLocalFonts: unavailable,
+      getSystemPermissions: unavailable,
+      requestSystemPermission: unavailable,
+      closeSystemPermissionGuide: unavailable,
+      getMessageFlowFontSize: unavailable,
+      setMessageFlowFontSize: unavailable,
+      getThemePreference: unavailable,
+      setThemePreference: unavailable,
+      getActivityPreviewAutoShow: unavailable,
+      setActivityPreviewAutoShow: unavailable,
+      getAppContextState: unavailable,
+      updateAppContextSettings: unavailable,
+      setAppContextShortcutRecording: unavailable,
+      listChatGPTAccounts: unavailable,
+      signOutChatGPTAccount: unavailable,
+      startChatGPTLogin: unavailable,
+      pollChatGPTLogin: unavailable,
+      cancelChatGPTLogin: unavailable,
+      listEngineAuthMethods: unavailable,
+      authenticateEngine: unavailable,
+      cancelEngineAuth: unavailable,
+      getShellSkins: unavailable,
+      selectShellSkin: unavailable,
+      readDraftEngineMemory: unavailable,
+      writeDraftEngineMemory: unavailable,
+      clearDraftEngineMemory: unavailable,
+      currentAppliedTheme: unavailable,
+      availableExtensionThemes: unavailable,
+      selectedExtensionThemeKey: unavailable,
+      selectExtensionTheme: unavailable,
+      readAppearance: unavailable,
+      saveAppearance: unavailable,
+      applyMessageFlowFontSize: unavailable,
+      applyThemePreference: unavailable,
+      updateSystemPermissionGuide: unavailable,
+      updateBackground: unavailable,
+      processBackground: unavailable,
+      observeBackground: () => () => {},
+      subscribeShellSkins: () => () => {},
+      observeAppliedTheme: () => () => {},
+      observeContentThemeSelection: () => () => {},
+      observeAppearance: () => () => {},
+      onSystemPermissionGuideChanged: () => () => {},
+      onThemePreferenceChange: () => () => {},
+      onActivityPreviewAutoShowChange: () => () => {},
+      onAppContextChanged: () => () => {},
+      discardAppContextSnapshot: unavailable,
+      loadPluginIconURL: unavailable,
+      capabilities: Object.freeze({ systemPermissions: false, permissionGuide: false, permissionGuideUpdate: false, permissionGuideClose: false, themeChanges: false, activityPreview: false, activityPreviewChanges: false, appContext: false, appContextChanges: false, appContextRecording: false, chatGPTLogin: false, engineLogin: false, browser: false, browserReload: false, browserOptions: false, remote: false, build: false, catalog: false, engines: false, pets: false, diagnostics: false }),
+      subscribe: () => () => {}, subscribeRemote: () => () => {}, getPages: () => empty, getConflicts: () => empty, getDiagnostics: () => empty,
+      renderPage: unavailable, renderPresentation: unavailable,
+      chooseConflict: unavailable,
+      getBuildInfo: unavailable,
+      useCodexCredentials: unavailable,
+      loadCodexModels: unavailable,
+      refreshModelCatalog: unavailable,
+      listCatalogProviders: unavailable,
+      listEngines: unavailable,
+      getPluginSetting: unavailable,
+      setPluginSetting: unavailable,
+      getPluginDiagnostics: unavailable,
+      listMCPServers: unavailable,
+      connectMCPServer: unavailable,
+      disconnectMCPServer: unavailable,
+      refreshMCPServer: unavailable,
+      startMCPAuth: unavailable,
+      finishMCPAuth: unavailable,
+      removeMCPAuth: unavailable,
+      listChatGPTModels: unavailable,
+      startXAILogin: unavailable,
+      pollXAILogin: unavailable,
+      cancelXAILogin: unavailable,
+      listBrowserProfiles: unavailable,
+      importBrowserCookies: unavailable,
+      listBrowserExtensions: unavailable,
+      addBrowserExtension: unavailable,
+      setBrowserExtensionEnabled: unavailable,
+      reloadBrowserExtension: unavailable,
+      openBrowserExtensionOptions: unavailable,
+      removeBrowserExtension: unavailable,
+      getRemoteControlSnapshot: unavailable,
+      setRemoteHostEnabled: unavailable,
+      startRemotePairing: unavailable,
+      removeRemoteDevice: unavailable,
+      openExternal: unavailable,
+    },
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async invoke<Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]['input'], options?: { signal?: AbortSignal }) {
@@ -72,7 +240,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
             { contractVersion: 1 as const, id: `${id}-answer`, kind: 'assistant-message' as const, text: 'Preview response: your message reached the public action adapter. No model request was sent.' },
           ] }];
           histories.set(state.conversation.threadId, turns);
-          update({ conversation: { ...state.conversation, turns }, composer: { ...state.composer, draftText: '', running: false } }); break;
+          update({ conversation: { ...state.conversation, turns }, composer: { ...state.composer, draftText: '', running: false } }); return { accepted: true, threadId: state.conversation.threadId } as ApplicationActionMapV1[Action]['result'];
         }
         case 'composer.stop': update({ composer: { ...state.composer, running: false } }); break;
         case 'composer.configure': throw new Error('Model, runtime and permission configuration require a product application adapter.');

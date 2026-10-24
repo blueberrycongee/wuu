@@ -1,5 +1,5 @@
 import { validPdfSelectionReference } from "./PdfSelection";
-import { useRef, useState, type MutableRefObject } from "react";
+import { useRef, useState, useSyncExternalStore, type MutableRefObject } from "react";
 import type {
   MessageContentPart,
   ServerEvent,
@@ -298,27 +298,40 @@ type ComposerPendingStateOptions = {
   ) => Promise<boolean>;
 };
 
-export function useComposerPendingState({
+export function useComposerPendingState(options: ComposerPendingStateOptions): ComposerPendingStateController {
+  const latest = useRef(options);
+  latest.current = options;
+  const [owner] = useState(() => createComposerPendingState({
+    getAppState: () => latest.current.getAppState(),
+    getComposerDraftForThread: id => latest.current.getComposerDraftForThread(id),
+    restoreComposerDraftForThread: (id, draft) => latest.current.restoreComposerDraftForThread(id, draft),
+    preserveFailedComposerMessage: (id, message) => latest.current.preserveFailedComposerMessage(id, message),
+    setStatus: status => latest.current.setStatus(status),
+  }));
+  useSyncExternalStore(owner.subscribe, () => owner.pendingComposerMessagesByThread);
+  return owner;
+}
+
+/** Host-owned queue state does not depend on a mounted composer. */
+export function createComposerPendingState({
   getAppState,
   getComposerDraftForThread,
   restoreComposerDraftForThread,
   preserveFailedComposerMessage,
   setStatus,
-}: ComposerPendingStateOptions): ComposerPendingStateController {
-  const [pendingComposerMessagesByThread, setPendingComposerMessagesByThread] =
-    useState<PendingComposerMessagesByThread>({});
-  const pendingComposerMessagesByThreadRef =
-    useRef<PendingComposerMessagesByThread>({});
+}: Omit<ComposerPendingStateOptions, "sendComposerMessageToThread">): ComposerPendingStateController & { subscribe: (listener: () => void) => () => void } {
+  const listeners = new Set<() => void>();
+  const pendingComposerMessagesByThreadRef = { current: {} as PendingComposerMessagesByThread };
   // Accepted queue input held by this client when a Core process exited. The
   // new Core has no memory of it, so its resume snapshot must not erase the
   // only remaining copy.
-  const heldAcrossCoreExitRef = useRef<Record<string, QueuedComposerMessage[]>>({});
+  const heldAcrossCoreExitRef = { current: {} as Record<string, QueuedComposerMessage[]> };
 
   function setPendingComposerMessagesByThreadNow(
     messagesByThread: PendingComposerMessagesByThread,
   ): void {
     pendingComposerMessagesByThreadRef.current = messagesByThread;
-    setPendingComposerMessagesByThread(messagesByThread);
+    for (const listener of listeners) listener();
   }
 
   function updateThreadPendingComposerMessages(
@@ -904,12 +917,13 @@ export function useComposerPendingState({
   }
 
   return {
-    pendingComposerMessagesByThread,
+    subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    get pendingComposerMessagesByThread() { return pendingComposerMessagesByThreadRef.current; },
     pendingComposerMessagesByThreadRef,
     setPendingComposerMessagesByThreadNow,
     pendingComposerMessagesForThread: (threadID) =>
       pendingComposerMessagesForThread(
-        pendingComposerMessagesByThread,
+        pendingComposerMessagesByThreadRef.current,
         threadID,
       ),
     updateThreadPendingComposerMessages,

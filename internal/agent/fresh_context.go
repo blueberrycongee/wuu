@@ -3,26 +3,23 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/workingnotes"
 )
 
 const (
-	FreshContextTargetTokens = 50_000
-	// Reserve space for provider and extension request transforms.
-	freshContextTransformReserveTokens = 4_000
-	freshContextReminderTokens         = 16_000
-	newContextToolName                 = "new_context"
+	FreshContextTargetTokens   = compactionservice.FreshContextTargetTokens
+	freshContextReminderTokens = 16_000
+	newContextToolName         = "new_context"
 )
 
 var (
-	ErrFreshContextTooLarge   = errors.New("fresh context cannot fit the target budget")
-	ErrFreshContextNotSmaller = errors.New("fresh context would not shrink active history")
+	ErrFreshContextTooLarge   = compactionservice.ErrFreshContextTooLarge
+	ErrFreshContextNotSmaller = compactionservice.ErrFreshContextNotSmaller
 )
 
 // ContextWindowProvider opts into summary-free resets. The host supplies working
@@ -53,70 +50,12 @@ type FreshContextBuilder func(context.Context, []providers.ChatMessage, int, int
 // BYOK models get an explicit recovery address and, when it fits, the latest user
 // instruction. Working notes remain in persistent storage and are read on demand.
 func buildFreshContext(messages []providers.ChatMessage, historyHeadSeq, fixedTokens, targetTokens int, policies ...providers.MediaInputPolicy) ([]providers.ChatMessage, error) {
-	if targetTokens <= 0 {
-		targetTokens = FreshContextTargetTokens
+	var media providers.MediaInputPolicy
+	if len(policies) > 0 {
+		media = policies[0]
 	}
-	fixedTokens = max(0, fixedTokens)
-	var task *providers.ChatMessage
-	for index := len(messages) - 1; index >= 0; index-- {
-		if strings.EqualFold(messages[index].Role, "user") && !messages[index].Hidden {
-			task = &messages[index]
-			break
-		}
-	}
-	recovery := fmt.Sprintf("[Context window]\nThe previous active transcript is archived through History Seq %d. Files, processes and other environment state are unchanged. Read your persistent working notes with notes. Recover missing decisions, progress and tool outcomes with history_search and history_read before repeating actions. Start at Seq %d if no useful note exists.", historyHeadSeq, max(1, historyHeadSeq-24))
-	if task != nil && task.Seq > 0 {
-		recovery += fmt.Sprintf(" The latest user instruction is at Seq %d.", task.Seq)
-	}
-	request := acceptedNewContextRequest(messages)
-	if request != nil && request.Checkpoint != nil {
-		recovery += " A saved checkpoint read is supplied in wuu_context_checkpoint. Call notes with those arguments directly (through tools in run_code when PTC is enabled); discovery is unnecessary. If the collection revision changed, reread the same path without the stale revision and reconcile the current note before continuing."
-	}
-	replacement := append(freshContextSystemPrefix(messages), providers.ChatMessage{
-		Role: "system", Content: recovery, Hidden: true, Origin: "internal", Cause: "fresh_context",
-	})
-	if request != nil && request.Checkpoint != nil {
-		// Keep model-authored note addresses as data, not system instructions.
-		read, _ := json.Marshal(map[string]any{
-			"tool": "notes",
-			"arguments": map[string]any{
-				"action": "read", "path": request.Checkpoint.Path, "revision": request.Checkpoint.Revision,
-			},
-		})
-		replacement = append(replacement, providers.ChatMessage{
-			Role: "user", Name: "wuu_context_checkpoint", Content: string(read),
-			Hidden: true, Origin: "internal", Cause: "fresh_context",
-		})
-	}
-	budget := targetTokens - fixedTokens - min(freshContextTransformReserveTokens, targetTokens/10)
-	if estimateFreshContextMessages(replacement, policies...) > budget {
-		return nil, ErrFreshContextTooLarge
-	}
-	if task != nil {
-		candidate := append(providers.CloneChatMessages(replacement), providers.CloneChatMessage(*task))
-		if estimateFreshContextMessages(candidate, policies...) <= budget && estimateFreshContextMessages(candidate, policies...) < estimateFreshContextMessages(messages, policies...) {
-			replacement = candidate
-		} else {
-			// A recovery address cannot substitute for required native evidence.
-			for _, image := range task.Images {
-				if image.Required {
-					return nil, ErrFreshContextTooLarge
-				}
-			}
-			for _, file := range task.Files {
-				if file.Required {
-					return nil, ErrFreshContextTooLarge
-				}
-			}
-		}
-	}
-	if estimateFreshContextMessages(replacement, policies...) >= estimateFreshContextMessages(messages, policies...) {
-		return nil, ErrFreshContextNotSmaller
-	}
-	if err := providers.ValidateToolCallHistory(replacement); err != nil {
-		return nil, fmt.Errorf("fresh context has invalid tool-call history: %w", err)
-	}
-	return replacement, nil
+	out, err := compactionservice.BuildWindow(compactionservice.WindowRequest{Messages: messages, HistoryHead: historyHeadSeq, FixedTokens: fixedTokens, TargetTokens: targetTokens, MediaInput: media})
+	return out.Messages, err
 }
 
 func freshContextSystemPrefix(messages []providers.ChatMessage) []providers.ChatMessage {
@@ -181,9 +120,7 @@ func withContextWindowGuidance(base func() []ContextSegment) func() []ContextSeg
 		if base != nil {
 			segments = append(segments, base()...)
 		}
-		segments = append(segments, RequestOnlyContextMessages([]providers.ChatMessage{
-			contextWindowReminder(`For work spanning context windows or a requested handoff, keep a concise notes checkpoint: goal, constraints, key decisions, verified progress, remaining work and file or History Seq references. Update it for meaningful changes and before new_context, then pass its path and the latest notes collection revision as checkpoint; routine activity or a final reply alone does not require an update. After a reset, read the supplied checkpoint directly and recover missing evidence before acting. Use history_read for known Seq addresses, otherwise history_search.`),
-		})...)
+		segments = append(segments, RequestOnlyContextMessages(compactionservice.Describe(compactionservice.DescribeRequest{}).Guidance)...)
 		return segments
 	}
 }

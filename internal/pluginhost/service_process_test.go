@@ -70,6 +70,40 @@ func TestServiceRegistryRoutesBetweenProcessesAndConvergesAfterClose(t *testing.
 	}
 }
 
+func TestProcessNegotiatesCaseSensitiveSessionDomainMethods(t *testing.T) {
+	provider := startServiceProcess(t, "session-provider", "session-provider", nil)
+	consumer := &fakeServiceProcess{id: "session-consumer", state: StateActive, required: []ServiceRequirement{{Name: "session.domain", MajorVersion: 1, Required: true}}}
+	host := New(provider, consumer)
+	registry, conflicts := BuildServiceRegistry(provider, consumer)
+	host.AttachServiceRegistry(registry, conflicts)
+	defer host.Close(context.Background())
+	if len(conflicts) != 0 {
+		t.Fatalf("registration rejected descriptor: %+v", conflicts)
+	}
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"ReadControl", "Journal.Close"} {
+		raw, err := registry.Call(context.Background(), consumer.id, ServiceCallParams{Service: "session.domain", Method: method, Params: json.RawMessage(`{"args":[]}`)})
+		if err != nil {
+			t.Fatalf("negotiated %s: %v", method, err)
+		}
+		var got struct {
+			Method string `json:"method"`
+			Caller string `json:"caller"`
+		}
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Method != method || got.Caller != consumer.id {
+			t.Fatalf("identity changed across process: %+v", got)
+		}
+	}
+	if _, err := registry.Call(context.Background(), consumer.id, ServiceCallParams{Service: "session.domain", Method: "readControl"}); err == nil {
+		t.Fatal("method routing silently normalized case")
+	}
+}
+
 func TestProcessServicePreservesProviderErrorsWithoutRegistry(t *testing.T) {
 	for _, code := range []string{"invalid_request", "state_conflict", "state_operation_conflict", "state_io_error", "provider_specific_failure", ""} {
 		name := code
@@ -203,7 +237,12 @@ func runServiceProcessHelper(role string) {
 				ProtocolVersion:  CapabilityProtocolVersion,
 				LifecycleVersion: RuntimeLifecycleVersion,
 			}
-			if role == "provider" {
+			if role == "session-provider" {
+				result.ProvidedServices = []ServiceDescriptor{{Name: "session.domain", Version: "1.0.0", Methods: []ServiceMethodDescriptor{
+					{Name: "ReadControl", InputSchema: "session.domain.ReadControl.input.v1", OutputSchema: "session.domain.ReadControl.output.v1"},
+					{Name: "Journal.Close", InputSchema: "session.domain.Journal.Close.input.v1", OutputSchema: "session.domain.Journal.Close.output.v1", Cleanup: true},
+				}}}
+			} else if role == "provider" {
 				result.ProvidedServices = []ServiceDescriptor{{
 					Name: "search.provider", Version: "1.0.0",
 					Methods: []ServiceMethodDescriptor{{Name: "query", InputSchema: "search.query.request.v1", OutputSchema: "search.query.response.v1"}},
@@ -216,6 +255,14 @@ func runServiceProcessHelper(role string) {
 		case "prepare", "activate":
 			writeServiceHelperResult(encoder, request.ID, struct{}{})
 		case ServiceInvokeMethod:
+			if role == "session-provider" {
+				var params ServiceInvokeParams
+				if json.Unmarshal(request.Params, &params) != nil {
+					os.Exit(13)
+				}
+				writeServiceHelperResult(encoder, request.ID, map[string]string{"method": params.Method, "caller": params.Caller})
+				continue
+			}
 			serviceCalls++
 			var params ServiceInvokeParams
 			if role != "provider" || json.Unmarshal(request.Params, &params) != nil || params.Service != "search.provider" || params.Method != "query" {

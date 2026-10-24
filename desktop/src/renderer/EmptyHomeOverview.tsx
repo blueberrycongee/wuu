@@ -1,3 +1,4 @@
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import { type CSSProperties, memo, useEffect, useLayoutEffect, useState } from "react";
 import type { UsageOverviewResponse } from "../shared/protocol";
 import { useI18n } from "./i18n";
@@ -22,7 +23,7 @@ type HeatmapWeek = {
  * greeting mascot's idle play. Memoized because the home re-renders while the
  * user types a draft.
  */
-export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element | null {
+export const EmptyHomeOverview = memo(function EmptyHomeOverview({ application }: { application: ApplicationServiceV1 }): JSX.Element | null {
   const { locale, t, formatNumber } = useI18n();
   const [usage, setUsage] = useState<UsageOverviewResponse>();
   const [card, setCard] = useState<HTMLElement | null>(null);
@@ -53,25 +54,21 @@ export const EmptyHomeOverview = memo(function EmptyHomeOverview(): JSX.Element 
   }, [card]);
 
   useEffect(() => {
-    const api = window.wuu as Partial<typeof window.wuu>;
-    if (typeof api.getUsageOverview !== "function") {
-      return;
-    }
     let cancelled = false;
-    void api
-      .getUsageOverview({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
+    const request = new AbortController();
+    void application.invoke("conversation.read-usage", { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, { signal: request.signal })
       .then((response) => {
         if (!cancelled) {
-          setUsage(response);
+          setUsage(structuredClone(response) as UsageOverviewResponse);
         }
       })
       // The settings usage page reports load failures; here the greeting
       // simply stays on its own.
       .catch(() => undefined);
     return () => {
-      cancelled = true;
+      cancelled = true; request.abort();
     };
-  }, []);
+  }, [application]);
 
   if (!usage) {
     return null;

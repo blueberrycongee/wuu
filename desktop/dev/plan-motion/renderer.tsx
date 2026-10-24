@@ -3,7 +3,8 @@ import * as React from "react";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ConversationStatusCluster } from "../../src/renderer/ConversationStatusCluster";
-import { PluginHost } from "../../src/renderer/plugins/PluginHost";
+import { createFixtureApplication } from "../preview-services";
+import type { ApplicationComposerStatusSnapshotV1 } from "../../../packages/plugin-sdk/src/ui-composer-presentation";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import "../../src/renderer/styles.css";
@@ -13,7 +14,7 @@ const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") || "light";
 document.documentElement.dataset.appearanceMotion = params.get("motion") || "full";
 applyMessageFlowFontSize(Number(params.get("size")) || 14);
-const host = new PluginHost({ react: React });
+const baseApplication = createFixtureApplication();
 const short = ["梳理当前界面的交互", "加入任务推进动效", "检查键盘与减少动态效果", "验证并整理结果"];
 const long = [
   "梳理当前界面的交互，包括很长的任务描述、中文与 English 混排时的换行和标记对齐。",
@@ -25,6 +26,10 @@ function Fixture() {
   const [completed, setCompleted] = useState(1);
   const [empty, setEmpty] = useState(false);
   const content = params.has("long") ? long : short;
+  const status: ApplicationComposerStatusSnapshotV1 = { items: [], todoUpdate: { todos: empty ? [] : content.map((text, index) => ({
+    content: text, status: index < completed ? "completed" : index === completed ? "in_progress" : "pending",
+  })) } };
+  const application = { ...baseApplication, composerPresentation: { ...baseApplication.composerPresentation, getStatusSnapshot: () => status } };
   return (
     <main className="plan-preview">
       <header>
@@ -38,14 +43,10 @@ function Fixture() {
           <p>完成一步后，进度环向前推进，行内圆环收成勾号。</p>
         </div>
         <ConversationStatusCluster
-          host={host} visible threadId="plan-preview"
+          application={application} visible threadId="plan-preview"
           hostStatus={params.has("crowded") ? <div className="conversation-status-capsule"><span className="conversation-status-label">项目进行中</span></div> : undefined}
           navigation={params.has("crowded") ? <button className="jump-to-latest-pill" aria-label="回到最新">↓</button> : undefined}
-          todoUpdate={{ todos: empty ? [] : content.map((text, index) => ({
-            content: text,
-            status: index < completed ? "completed" : index === completed ? "in_progress" : "pending",
-          })) }}
-          onOpenSession={() => {}}
+
         />
         <div className="plan-preview-composer">继续处理这个计划…<span>↑</span></div>
       </section>

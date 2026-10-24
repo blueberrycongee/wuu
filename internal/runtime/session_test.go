@@ -416,7 +416,7 @@ func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 		hooks.SessionEnd:   {{Command: command("end")}},
 	}))
 	root, home := t.TempDir(), t.TempDir()
-	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
 	state, err := OpenState(context.Background(), StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err != nil {
 		t.Fatal(err)
@@ -1164,7 +1164,7 @@ func TestSessionDisabledSkillsStayDisabledAcrossRoots(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"default_provider":"test","providers":{"test":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key_env":"TEST_WUU_KEY","model":"gpt-test"}},"skills":{"enabled":false}}`), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg, SafeMode: true})
+	rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2980,7 +2980,10 @@ func TestSessionRefreshSystemPromptUpdatesRunnerPrompt(t *testing.T) {
 		Toolkit:      kit,
 	}
 
-	prompt := rt.RefreshSystemPrompt("openai", "gpt-5-codex")
+	prompt, err := rt.RefreshSystemPrompt("openai", "gpt-5-codex")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if !strings.Contains(prompt, "[Tool surface: openai_codex]") {
 		t.Fatalf("refreshed prompt missing openai_codex tool surface:\n%s", prompt)

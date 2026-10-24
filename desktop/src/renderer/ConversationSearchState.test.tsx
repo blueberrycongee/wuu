@@ -2,7 +2,8 @@ import { act, createElement, type KeyboardEvent as ReactKeyboardEvent } from "re
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RuntimeContext, ThreadSearchResult, ThreadSearchResultItem } from "../shared/protocol";
-import type { AppState } from "./AppState";
+import { initialState, type AppState } from "./AppState";
+import { ApplicationSearch } from "./plugins/ApplicationSearch";
 import { useConversationSearch } from "./ConversationSearchState";
 
 let root: Root;
@@ -19,7 +20,7 @@ function result(id: string): ThreadSearchResultItem {
   } };
 }
 
-function setup() {
+function setup(controlled?: { open: boolean }) {
   vi.useFakeTimers();
   const pending: { resolve: (value: ThreadSearchResult) => void; reject: (error: Error) => void }[] = [];
   const searchThreads = vi.fn(() => new Promise<ThreadSearchResult>((resolve, reject) => {
@@ -30,18 +31,30 @@ function setup() {
   } });
   const activeContext: RuntimeContext = { kind: "no_project", cwd: "/workspace" };
   const onSelectThread = vi.fn();
+  const onOpenChange = vi.fn();
   const cacheThreads = vi.fn();
+  let state: AppState = { ...initialState, activeContext };
+  const listeners = new Set<() => void>();
+  const publish = () => { snapshot = { search: search.getSnapshot() }; listeners.forEach(listener => listener()); };
+  const search = new ApplicationSearch({ getState: () => state,
+    updateState: update => { state = typeof update === "function" ? update(state) : update; },
+    subscribeState: () => () => {}, changed: publish, cacheThreads,
+    activateThread: async id => { onSelectThread(id); }, getNavigation: () => ({ revision: 0, pending: false }) });
+  let snapshot = { search: search.getSnapshot() };
+  const application = { getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    invoke: search.invoke.bind(search) };
   let api: ReturnType<typeof useConversationSearch>;
   function Harness() {
-    api = useConversationSearch({ activeContext,
-      getAppState: () => ({ activeContext } as AppState),
-      cacheThreads, onOpen: () => {}, onSelectThread });
+    api = useConversationSearch({ application, open: controlled?.open, onOpenChange,
+      onOpen: () => {}, onSelect: () => {} });
     return null;
   }
   root = createRoot(document.createElement("div"));
   act(() => root.render(createElement(Harness)));
-  act(() => api.toggleConversationSearch());
-  return { get api() { return api; }, pending, searchThreads, cacheThreads, onSelectThread };
+  if (!controlled) act(() => api.toggleConversationSearch());
+  return { get api() { return api; }, pending, searchThreads, cacheThreads, onSelectThread, onOpenChange,
+    setOpen: (open: boolean) => { if (controlled) controlled.open = open; act(() => root.render(createElement(Harness))); } };
 }
 
 async function advance(ms: number) {
@@ -65,7 +78,7 @@ it("debounces typing and discards responses arriving inside the next debounce wi
   await act(async () => h.pending[1].resolve({ results: [fresh] }));
   act(() => {
     h.api.setConversationSearchQuery("other");
-    h.api.selectConversationSearchResult(fresh);
+    h.api.selectConversationSearchResult(h.api.conversationSearchResults[0]);
   });
   expect(h.onSelectThread).not.toHaveBeenCalled();
   act(() => h.api.clearConversationSearchQuery());
@@ -90,8 +103,8 @@ it("waits for IME commit and does not interpret candidate confirmation as select
   expect(h.searchThreads).toHaveBeenLastCalledWith("中文", 100);
   const match = result("中文");
   await act(async () => h.pending[1].resolve({ results: [match] }));
-  act(() => h.api.selectConversationSearchResult(match));
-  expect(h.onSelectThread).toHaveBeenCalledWith(match, "中文");
+  await act(async () => h.api.selectConversationSearchResult(h.api.conversationSearchResults[0]));
+  expect(h.onSelectThread).toHaveBeenCalledWith("中文");
 });
 
 it("ignores stale errors and responses after closing", async () => {
@@ -132,10 +145,21 @@ it("returns focus to where it was when dismissed, but not when a result is chose
 
   await openFrom();
   await act(async () => h.pending.at(-1)!.resolve({ results: [match] }));
-  act(() => h.api.selectConversationSearchResult(h.api.conversationSearchResults[0]));
-  expect(h.onSelectThread).toHaveBeenCalledWith(match, "");
+  await act(async () => h.api.selectConversationSearchResult(h.api.conversationSearchResults[0]));
+  expect(h.onSelectThread).toHaveBeenCalledWith("recent");
   // The chosen conversation takes focus next; the composer it left does not.
   expect(document.activeElement).not.toBe(composer);
   composer.remove();
   input.remove();
+});
+
+it("follows the selected navigation visibility and publishes keyboard dismissal", () => {
+  const h = setup({ open: false });
+  expect(h.api.conversationSearch.open).toBe(false);
+  h.setOpen(true);
+  expect(h.api.conversationSearch.open).toBe(true);
+  act(() => h.api.closeConversationSearch({ immediate: true }));
+  expect(h.onOpenChange).toHaveBeenCalledWith(false);
+  h.setOpen(false);
+  expect(h.api.conversationSearch.open).toBe(false);
 });

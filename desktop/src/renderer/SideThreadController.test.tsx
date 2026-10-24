@@ -471,3 +471,34 @@ describe("useSideThreadController", () => {
   });
 
 });
+
+describe("side owner lifecycle fences", () => {
+  it("does not resurrect a reset from a late open or send", async () => {
+    const { SideThreadOwner } = await import("./SideThreadController");
+    const opened = deferred<{ summary: SideThreadSummary }>();
+    const sent = deferred<SideThreadSendResult>();
+    const { ipc } = makeIPC({ openSideThread: vi.fn(() => opened.promise), sendSideThreadMessage: vi.fn(() => sent.promise) });
+    const owner = new SideThreadOwner({ activeThreadId: "main-1", activeContext: context, ipc });
+    const stop = owner.start();
+    const opening = owner.open();
+    const sending = owner.sendMessage("question");
+    await owner.reset();
+    opened.resolve({ summary: summary() });
+    sent.resolve({ summary: summary(), user_message_id: "user-1" });
+    await Promise.all([opening, sending]);
+    expect(owner.getSnapshot().byThread["main-1"]).toMatchObject({ summary: null, messages: [], streaming: false });
+    expect(ipc.getSideThreadHistory).not.toHaveBeenCalled();
+    stop();
+  });
+  it("drops open completion after disposal", async () => {
+    const { SideThreadOwner } = await import("./SideThreadController");
+    const opened = deferred<{ summary: SideThreadSummary }>();
+    const { ipc } = makeIPC({ openSideThread: vi.fn(() => opened.promise) });
+    const owner = new SideThreadOwner({ activeThreadId: "main-1", activeContext: context, ipc });
+    const stop = owner.start();
+    const opening = owner.open(); stop();
+    opened.resolve({ summary: summary() }); await opening;
+    expect(owner.getSnapshot().byThread["main-1"].summary).toBeNull();
+    expect(ipc.getSideThreadHistory).not.toHaveBeenCalled();
+  });
+});

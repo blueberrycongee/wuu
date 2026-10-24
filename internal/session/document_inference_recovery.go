@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +14,18 @@ import (
 // reconstructs or sends a model request. A live process retains its ownership
 // even if its heartbeat was delayed by a blocked disk or a paused debugger.
 func (r *InferenceJournalRuntime) ReconcileOrphans(now time.Time) ([]InferenceCrashRecovery, error) {
+	if r != nil && r.lazy != nil {
+		runtime, err := r.lazy.resolve(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		return runtime.ReconcileOrphans(now)
+	}
+	if r != nil && r.remote != nil {
+		var out []InferenceCrashRecovery
+		err := r.remote.invoke("ReconcileOrphans", []any{now}, []any{&out})
+		return out, err
+	}
 	if r == nil {
 		return nil, nil
 	}
@@ -159,6 +172,18 @@ func (r *InferenceJournalRuntime) ReconcileOrphans(now time.Time) ([]InferenceCr
 }
 
 func (r *InferenceJournalRuntime) Prune(now time.Time) (int64, error) {
+	if r != nil && r.lazy != nil {
+		runtime, err := r.lazy.resolve(context.Background())
+		if err != nil {
+			return 0, err
+		}
+		return runtime.Prune(now)
+	}
+	if r != nil && r.remote != nil {
+		var out int64
+		err := r.remote.invoke("Prune", []any{now}, []any{&out})
+		return out, err
+	}
 	if r == nil {
 		return 0, nil
 	}

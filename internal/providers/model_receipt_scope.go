@@ -47,6 +47,17 @@ func ModelReceiptScopeFromContext(ctx context.Context) *ModelReceiptScope {
 	return nil
 }
 
+// WithModelReceiptAdmission preserves the caller's receipt ticket when a
+// durable resource supplies its own execution identity. Settlement may use a
+// new ticket after logical completion; copying it grants no execution authority
+// and cannot revive an ended ticket. An unscoped caller keeps the bound ticket.
+func WithModelReceiptAdmission(ctx, caller context.Context) context.Context {
+	if ticket, ok := caller.Value(modelReceiptContextKey{}).(*modelReceiptTicket); ok {
+		return context.WithValue(ctx, modelReceiptContextKey{}, ticket)
+	}
+	return ctx
+}
+
 // BeginModelReceipt registers work before it starts and returns its child
 // context and idempotent completion function. Complete only after all producer
 // cleanup and accepted receipt observations have ended. Pass an error only for

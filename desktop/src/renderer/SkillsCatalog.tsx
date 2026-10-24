@@ -1,4 +1,3 @@
-import { hostSupports } from "./HostCapabilities";
 import {
   AlertCircle,
   AlertTriangle,
@@ -15,17 +14,13 @@ import {
 } from "./WuuIcons";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
 import { SkillsIcon } from "./SkillsIcon";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type {
-  AppLocale,
-  ExtensionInventoryRecord,
-  ExtensionPackageAction,
-  ExtensionPackageUpdateParams,
-  PluginPackageInstallResult,
-  PluginPackageRemoveResult,
-  RuntimeContext,
-  SkillSummary,
-} from "../shared/protocol";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import type { AppLocale } from "../shared/protocol";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationCatalogV1, CatalogExtensionV1 as ExtensionInventoryRecord,
+ CatalogPackageActionV1 as ExtensionPackageAction, CatalogSkillV1 as SkillSummary } from "../../../packages/plugin-sdk/src/ui-catalog";
+import { composerSkillPrompt } from "./ComposerSlashCommands";
+
 import { CatalogSearchField } from "./CatalogSearchField";
 import { CapabilityMark, skillCapability } from "./CapabilityMark";
 import { confirmAction } from "./ConfirmDialog";
@@ -34,6 +29,7 @@ import { translateCurrent, useI18n } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 import { Modal } from "./Modal";
 import { PluginIcon } from "./PublicIcon";
+import { SettingsControlsProvider } from "./SettingsControlsContext";
 import { PluginSettingsEditor } from "./PluginSettingsEditor";
 import { RichContent } from "./RichContent";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
@@ -77,39 +73,35 @@ function showExtensionMutationError(error: unknown, fallback: string): void {
 
 export type SkillsCatalogSection = "plugins" | "skills";
 
-export function SkillsCatalog({
+const CatalogContext = createContext<ApplicationCatalogV1 | null>(null);
+function useCatalog(): ApplicationCatalogV1 {
+ const catalog = useContext(CatalogContext);
+ if (!catalog) throw new Error("Catalog application binding is required");
+ return catalog;
+}
+
+export function SkillsCatalog(props: SkillsCatalogProps): JSX.Element {
+ return <SettingsControlsProvider controls={props.application.settingsControls}><CatalogContext.Provider value={props.application.catalog}><SkillsCatalogView {...props} /></CatalogContext.Provider></SettingsControlsProvider>;
+}
+type SkillsCatalogProps = {
+ application: ApplicationServiceV1 & {readonly catalog:ApplicationCatalogV1};
+ active?:boolean; section?:SkillsCatalogSection; onSectionChange?:(section:SkillsCatalogSection)=>void;
+ selectedPluginID?:string; onSelectPlugin?:(id:string)=>void; openPluginRequest?:{id:string;request:number};
+};
+
+function SkillsCatalogView({
   active = true,
   section,
   onSectionChange,
   selectedPluginID: selectedPluginIDProp,
   onSelectPlugin,
-  activeContext,
-  extensionInventory = [],
-  onTrySkill,
-  onRefreshCatalog,
-  onUpdateExtensionPackage,
-  onInstallPluginPackage,
-  onRemovePluginPackage,
+  application,
   openPluginRequest,
-}: {
-  active?: boolean;
-  section?: SkillsCatalogSection;
-  onSectionChange?: (section: SkillsCatalogSection) => void;
-  selectedPluginID?: string;
-  onSelectPlugin?: (id: string) => void;
-  activeContext?: RuntimeContext;
-  extensionInventory?: ExtensionInventoryRecord[];
-  onTrySkill?: (skill: SkillSummary) => void;
-  onRefreshCatalog?: () => Promise<SkillSummary[] | undefined>;
-  onUpdateExtensionPackage?: (
-    update: ExtensionPackageUpdateParams,
-  ) => Promise<void>;
-  onInstallPluginPackage?: () => Promise<PluginPackageInstallResult | undefined>;
-  onRemovePluginPackage?: (
-    id: string,
-  ) => Promise<PluginPackageRemoveResult | undefined>;
-  openPluginRequest?: { id: string; request: number };
-}): JSX.Element {
+}: SkillsCatalogProps): JSX.Element {
+  const catalog = application.catalog;
+  const catalogSnapshot = useSyncExternalStore(listener => application.subscribe(listener), () => catalog.getSnapshot(), () => catalog.getSnapshot());
+  const extensionInventory = catalogSnapshot.inventory;
+  const capabilities = catalogSnapshot.capabilities;
   const { locale, t } = useI18n();
   const [state, setState] = useState<LoadState>(initialLoadState);
   const [filter, setFilter] = useState("");
@@ -144,7 +136,7 @@ export function SkillsCatalog({
     setPreviewSkill(null);
     setPackageActionMenu(null);
   }, [active]);
-  const contextKey = activeContext ? runtimeContextKey(activeContext) : "";
+  const contextKey = catalogSnapshot.contextKey;
   const contextKeyRef = useRef(contextKey);
   contextKeyRef.current = contextKey;
 
@@ -161,14 +153,14 @@ export function SkillsCatalog({
       }
       setState((current) => ({ ...current, loading: true, error: "" }));
       try {
-        const [skillsResult] = await Promise.all([window.wuu.listSkills()]);
+        const skillsResult = await catalog.listSkills();
         if (cancelled) {
           return;
         }
         setState({
           loading: false,
           error: "",
-          skills: skillsResult.skills,
+          skills: [...skillsResult],
         });
       } catch (error) {
         if (cancelled) {
@@ -184,7 +176,7 @@ export function SkillsCatalog({
         });
       }
     }
-  }, [contextKey, locale]);
+  }, [catalog, contextKey, locale]);
 
   const visibleSkills = useMemo(() => {
     const query = filter.trim().toLowerCase();
@@ -246,21 +238,33 @@ export function SkillsCatalog({
   const pluginName = (id: string) =>
     plugins.find((record) => (record.provenance.plugin_id ?? record.id) === id)?.name ?? id;
 
+  async function trySkill(skill: SkillSummary): Promise<void> {
+    if (!catalog.getSnapshot().contextKey) return;
+    const { activeTabId, navigationRevision } = application.getSnapshot().tabs;
+    try {
+      await application.invoke("draft.start-with-content", {
+        text: composerSkillPrompt(skill),
+        sourceTabId: activeTabId,
+        navigationRevision,
+      });
+    } catch (error) {
+      showErrorToast(error, translateCurrent("skills.loadFailed"));
+    }
+  }
+
   async function refreshSkills(): Promise<void> {
     if (state.loading || packageMutation) return;
     const requestedContextKey = contextKey;
     setState((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const skills = onRefreshCatalog
-        ? await onRefreshCatalog()
-        : (await window.wuu.listSkills()).skills;
+      const skills = await catalog.refresh();
       if (!skills || contextKeyRef.current !== requestedContextKey) {
         return;
       }
       setState({
         loading: false,
         error: "",
-        skills,
+        skills: [...skills],
       });
     } catch (error) {
       if (contextKeyRef.current !== requestedContextKey) {
@@ -275,7 +279,7 @@ export function SkillsCatalog({
   }
 
   async function updateExtensionPackage(record: ExtensionInventoryRecord, action: ExtensionPackageAction): Promise<void> {
-    if (!onUpdateExtensionPackage || mutationInFlight.current) {
+    if (!capabilities.update || mutationInFlight.current) {
       return;
     }
     mutationInFlight.current = true;
@@ -285,7 +289,7 @@ export function SkillsCatalog({
         action === "promote_update" || action === "reject_update"
           ? record.pending_update?.fingerprint
           : record.fingerprint;
-      await onUpdateExtensionPackage({ id: record.id, fingerprint, action });
+      await catalog.update({ id: record.id, fingerprint, action });
     } catch (error) {
       showExtensionMutationError(error, translateCurrent("skills.pluginUpdateFailed"));
     } finally {
@@ -306,14 +310,14 @@ export function SkillsCatalog({
   }
 
   async function installPluginPackage(): Promise<void> {
-    if (!onInstallPluginPackage || mutationInFlight.current) {
+    if (!capabilities.install || mutationInFlight.current) {
       return;
     }
     const requestedContextKey = contextKey;
     mutationInFlight.current = true;
     setPackageMutation("install");
     try {
-      const result = await onInstallPluginPackage();
+      const result = await catalog.install();
       if (!result || contextKeyRef.current !== requestedContextKey) {
         return;
       }
@@ -341,7 +345,7 @@ export function SkillsCatalog({
 
   async function removePluginPackage(record: ExtensionInventoryRecord): Promise<void> {
     const pluginID = record.provenance.plugin_id;
-    if (!onRemovePluginPackage || !pluginID || mutationInFlight.current) {
+    if (!capabilities.remove || !pluginID || mutationInFlight.current) {
       return;
     }
     const confirmed = await confirmAction({
@@ -357,7 +361,7 @@ export function SkillsCatalog({
     mutationInFlight.current = true;
     setPackageMutation(`${record.id}:remove`);
     try {
-      const result = await onRemovePluginPackage(pluginID);
+      const result = await catalog.remove(pluginID);
       if (!result || contextKeyRef.current !== requestedContextKey) {
         return;
       }
@@ -375,14 +379,14 @@ export function SkillsCatalog({
   function extensionPackageMenuItems(record: ExtensionInventoryRecord): ThreadContextMenuItem[] {
     const secondaryAction = extensionPackageSecondaryAction(record);
     const items: ThreadContextMenuItem[] = [];
-    if (onUpdateExtensionPackage && secondaryAction) {
+    if (capabilities.update && secondaryAction) {
       items.push({
         label: extensionPackageActionLabel(record, secondaryAction, t),
         disabled: Boolean(packageMutation),
         onSelect: () => updateExtensionPackage(record, secondaryAction),
       });
     }
-    if (onRemovePluginPackage && isRemovableUserPlugin(record)) {
+    if (capabilities.remove && isRemovableUserPlugin(record)) {
       if (items.length > 0) items.push({ separator: true });
       items.push({
         label: packageMutation === `${record.id}:remove`
@@ -419,8 +423,9 @@ export function SkillsCatalog({
           pluginName={pluginName}
           packageMutation={packageMutation}
           reloading={state.loading}
-          canUpdate={Boolean(onUpdateExtensionPackage)}
-          canRemove={Boolean(onRemovePluginPackage)}
+          canUpdate={capabilities.update}
+          canRemove={capabilities.remove}
+          canInstall={capabilities.install}
           onBack={() => {
             // Coming back is entering the catalog again: rows regroup by state.
             setListedPlacement(new Map());
@@ -442,7 +447,7 @@ export function SkillsCatalog({
             onTry={() => {
               const skill = previewSkill;
               setPreviewSkill(null);
-              onTrySkill?.(skill);
+              void trySkill(skill);
             }}
           />
         ) : null}
@@ -486,8 +491,8 @@ export function SkillsCatalog({
         <button
           className="settings-button"
           type="button"
-          disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
-          data-mutation-blocked={(Boolean(packageMutation) && hostSupports("installPluginPackage")) || undefined}
+          disabled={Boolean(packageMutation) || !capabilities.install}
+          data-mutation-blocked={(Boolean(packageMutation) && capabilities.install) || undefined}
           onClick={() => void installPluginPackage()}
         >
           <PackagePlus className="icon" aria-hidden="true" />
@@ -557,7 +562,7 @@ export function SkillsCatalog({
                 toggleDisabled={Boolean(packageMutation)}
                 toggleBusy={packageMutation.startsWith(`${record.id}:`)}
                 onOpen={() => setSelectedPluginID(record.id)}
-                onToggle={onUpdateExtensionPackage ? () => togglePlugin(record) : undefined}
+                onToggle={capabilities.update ? () => togglePlugin(record) : undefined}
               />
             ))}
           </SettingsGroup>
@@ -583,7 +588,7 @@ export function SkillsCatalog({
           onTry={() => {
             const skill = previewSkill;
             setPreviewSkill(null);
-            onTrySkill?.(skill);
+            void trySkill(skill);
           }}
         />
       ) : null}
@@ -778,6 +783,7 @@ function PluginDetailPage({
   reloading,
   canUpdate,
   canRemove,
+  canInstall,
   onBack,
   onToggle,
   onPrimaryAction,
@@ -792,6 +798,7 @@ function PluginDetailPage({
   reloading: boolean;
   canUpdate: boolean;
   canRemove: boolean;
+  canInstall: boolean;
   onBack: () => void;
   onToggle: () => void;
   onPrimaryAction: (action: ExtensionPackageAction) => void;
@@ -882,7 +889,7 @@ function PluginDetailPage({
               className="settings-button settings-button-ghost settings-icon-button extension-package-more"
               aria-label={t("skills.pluginMoreActions", { name: record.name })}
               aria-haspopup="menu"
-              disabled={Boolean(packageMutation) || !hostSupports("installPluginPackage")}
+              disabled={Boolean(packageMutation) || !canInstall}
               onClick={(event) => onMoreActions(event.currentTarget)}
             >
               <MoreHorizontal className="icon" aria-hidden="true" />
@@ -981,9 +988,11 @@ function PluginMark({ record, className = "catalog-row-mark" }: {
   record: ExtensionInventoryRecord;
   className?: string;
 }): JSX.Element {
+  const catalog = useCatalog();
+  const loadIcon = useMemo(() => (id:string, fingerprint:string, path:string) => catalog.loadIcon(id,fingerprint,path), [catalog]);
   return (
     <span className={className} aria-hidden="true">
-      <PluginIcon icon={record.icon} pluginId={record.id} fingerprint={record.fingerprint ?? ""} />
+      <PluginIcon loadIcon={loadIcon} icon={record.icon} pluginId={record.id} fingerprint={record.fingerprint ?? ""} />
     </span>
   );
 }
@@ -1144,6 +1153,7 @@ function SkillPreviewDialog({
   onTry: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const catalog = useCatalog();
   const [contentState, setContentState] = useState<SkillContentState>({
     loading: true,
     error: "",
@@ -1153,7 +1163,7 @@ function SkillPreviewDialog({
   useEffect(() => {
     let cancelled = false;
     setContentState({ loading: true, error: "", content: "" });
-    void window.wuu.readSkillContent({ name: skill.name, source: skill.source })
+    void catalog.readSkill({ name: skill.name, source: skill.source })
       .then((result) => {
         if (!cancelled) {
           setContentState({ loading: false, error: "", content: stripFrontmatter(result.content) });
@@ -1171,7 +1181,7 @@ function SkillPreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [skill.name, skill.source]);
+  }, [catalog, skill.name, skill.source]);
 
   return (
     // The mark, the name and close share one row like the Model services
@@ -1249,8 +1259,4 @@ function sourceRank(source: string): number {
     default:
       return 3;
   }
-}
-
-function runtimeContextKey(context: RuntimeContext): string {
-  return context.kind === "project" ? `project:${context.project_id}` : `no_project:${context.cwd}`;
 }

@@ -32,8 +32,7 @@ import { UserQuestionCard } from "./UserQuestionCard";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { latestAgentMessageLocation } from "./TurnViewHelpers";
 import type { HistoryMessageEditState } from "./ConversationHistoryActions";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import { PluginConversationCards } from "./plugins/PluginConversationCards";
+import { useConversationControls } from "./ConversationControlsContext";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
 import {
   markSessionSwitch,
@@ -348,11 +347,7 @@ const CachedConversationPane = memo(function CachedConversationPane({
                 <>
                   {entriesAfterMissingTurn.map(renderContextEntry)}
                   {threadInstructionCards}
-                  <PluginConversationCards
-                    host={desktopPluginHost}
-                    threadId={thread.id}
-                    onStreamFrame={onStreamFrame}
-                  />
+                  <ConversationCards threadId={thread.id} onStreamFrame={onStreamFrame} />
                   {pendingQuestion && !turnIDs.has(pendingQuestion.request.turn_id)
                     ? renderPendingQuestionCard(false)
                     : null}
@@ -540,3 +535,17 @@ const PaneTurnView = memo(function PaneTurnView({
     />
   );
 });
+
+
+function ConversationCards({ threadId, onStreamFrame }: { threadId: string; onStreamFrame: () => void }): JSX.Element {
+  const { slots, slotOwner } = useConversationControls();
+  const element = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const node = element.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => { if (node.childElementCount > 0) onStreamFrame(); });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [onStreamFrame]);
+  return <div ref={element}><slots.Slot name={`${slotOwner}/conversation.cards`} context={{ threadId }} /></div>;
+}

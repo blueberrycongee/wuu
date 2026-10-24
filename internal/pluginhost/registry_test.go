@@ -724,3 +724,82 @@ func TestHostCallServiceUsesDeclaredConsumer(t *testing.T) {
 		t.Fatal("retired native caller dispatched work")
 	}
 }
+
+// Tool authority must originate in the native dispatch, never request JSON or
+// an ordinary downstream service callback. It ends with this exact invocation.
+func TestHostCallToolServiceDelegatesOnlySelectedInvocation(t *testing.T) {
+	provider := &fakeServiceProcess{id: "tools", state: StateActive, provided: []ServiceDescriptor{{
+		Name: "agent.tools", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "execute"}},
+	}}, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}
+	search := &fakeServiceProcess{id: "search", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}
+	consumer := &fakeServiceProcess{id: "dispatcher", state: StateActive, required: []ServiceRequirement{{Name: "agent.tools", MajorVersion: 1, Required: true}}}
+	stranger := &fakeServiceProcess{id: "stranger", state: StateActive}
+	host := New(provider, search, consumer, stranger)
+	registry, conflicts := BuildServiceRegistry(provider, search, consumer, stranger)
+	host.AttachServiceRegistry(registry, conflicts)
+	registry.Activate()
+	input := ToolExecuteInput{SessionID: "session", ThreadID: "thread", TurnID: "turn", ActorID: "actor", CallID: "call", Tool: "echo", CWD: "/project"}
+	var callbackID string
+	var callbackContext context.Context
+	search.invoke = func(_ context.Context, p ServiceInvokeParams) (json.RawMessage, error) {
+		if _, err := host.ResolveToolExecution(search.ID(), p.ExecutionID); err == nil || err.Code != "invalid_execution_scope" {
+			t.Fatalf("ordinary downstream callback acquired tool authority: %v", err)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	provider.invoke = func(ctx context.Context, p ServiceInvokeParams) (json.RawMessage, error) {
+		scope, err := host.ResolveToolExecution(provider.ID(), p.ExecutionID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		callbackID, callbackContext = p.ExecutionID, ctx
+		if p.Caller != consumer.ID() || p.CallerScope == nil || p.CallerScope.ID == p.ExecutionID ||
+			scope.ThreadID != input.ThreadID || scope.TurnID != input.TurnID || scope.CallID != input.CallID ||
+			scope.ActorID != input.ActorID || scope.CWD != input.CWD || scope.Tool != input.Tool || scope.SessionID != input.SessionID {
+			t.Fatalf("dispatch identity differs from host input: %+v, caller=%+v", scope, p.CallerScope)
+		}
+		if _, err := host.ResolveToolExecution(stranger.ID(), p.ExecutionID); err == nil || err.Code != "service_not_authorized" {
+			t.Fatalf("another provider acquired this callback: %v", err)
+		}
+		result, callErr := registry.Call(ctx, provider.ID(), ServiceCallParams{Service: "search.provider", Method: "query", ExecutionID: p.ExecutionID})
+		if callErr != nil {
+			return nil, callErr
+		}
+		return result, nil
+	}
+	if _, err := host.CallToolService(context.Background(), stranger.ID(), "agent.tools", "execute", nil, input); err == nil || err.Code != "service_not_authorized" {
+		t.Fatalf("undeclared consumer dispatched a tool service: %v", err)
+	}
+	forged := json.RawMessage(`{"thread_id":"other","actor_id":"other","execution_id":"forged","caller_scope":{"kind":"tool"}}`)
+	if _, err := host.CallToolService(context.Background(), consumer.ID(), "agent.tools", "execute", forged, input); err != nil {
+		t.Fatal(err)
+	}
+	if callbackContext.Err() == nil || len(host.ExecutionSnapshots()) != 0 {
+		t.Fatal("tool service execution outlived its invocation")
+	}
+	if _, err := host.ResolveToolExecution(provider.ID(), callbackID); err == nil || err.Code != "execution_not_found" {
+		t.Fatalf("completed callback retained authority: %v", err)
+	}
+	provider.invoke = func(_ context.Context, p ServiceInvokeParams) (json.RawMessage, error) {
+		if _, err := host.ResolveToolExecution(provider.ID(), p.ExecutionID); err == nil || err.Code != "invalid_execution_scope" {
+			t.Fatalf("ordinary service payload forged tool authority: %v", err)
+		}
+		return json.RawMessage(`{}`), nil
+	}
+	if _, err := host.CallService(context.Background(), consumer.ID(), "agent.tools", "execute", forged); err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	count := len(provider.invokeCalls)
+	if _, err := host.CallToolService(cancelled, consumer.ID(), "agent.tools", "execute", nil, input); err == nil || err.Code != "request_cancelled" {
+		t.Fatalf("cancelled dispatch = %v", err)
+	}
+	consumer.state = StateStopped
+	if _, err := host.CallToolService(context.Background(), consumer.ID(), "agent.tools", "execute", nil, input); err == nil || err.Code != "service_unavailable" {
+		t.Fatalf("stopped consumer dispatched: %v", err)
+	}
+	if len(provider.invokeCalls) != count {
+		t.Fatal("cancelled or stopped consumer reached provider")
+	}
+}

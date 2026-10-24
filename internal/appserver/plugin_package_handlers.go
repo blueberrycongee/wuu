@@ -675,8 +675,9 @@ func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetada
 // failures still publish it and retain their actionable response error.
 func (s *Server) writePluginGenerationResponse(req Request, result any, activationErr error, finish func() error) error {
 	inventory, skills := s.currentExtensionState()
+	shell, surfaces := s.rt.ApplicationBindings()
 	publication := PluginInventoryChangedNotification{
-		ApplicationShell: s.rt.ApplicationShellBinding(), ExtensionInventory: inventory, Skills: skills,
+		ApplicationShell: shell, ApplicationSurfaces: surfaces, ExtensionInventory: inventory, Skills: skills,
 	}
 	activationErr = errors.Join(activationErr, finish())
 	publication.Epoch = s.pluginGenerationEpoch.Load()

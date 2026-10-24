@@ -1,5 +1,6 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { ConnectionTitle } from "./ConnectionTitle";
-import { useConnectionDisplayPreferences } from "./ConnectionDisplayPreferences";
+import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { GrokLogin } from "./GrokLogin";
 import {
   type FormEvent as ReactFormEvent,
@@ -46,7 +47,6 @@ import { CatalogSearchField } from "./CatalogSearchField";
 import { EngineSettingsSection } from "./EngineSettingsSection";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
-import { hostSupports } from "./HostCapabilities";
 import { isTouchWebShell } from "./ComposerFocus";
 import { Modal } from "./Modal";
 import { ConnectionPage } from "./ConnectionPage";
@@ -292,16 +292,17 @@ function AccountMethods({ selected, disabled, onSelect }: { selected: AccountMet
 type CatalogState = { providers?: CatalogProviderSummary[]; failed: boolean };
 
 export function useCatalogProviders(version: number, snapshot?: CatalogProviderSummary[]): CatalogState {
+  const controls = useSettingsControls();
   const [state, setState] = useState<CatalogState>({ failed: false });
   useEffect(() => {
     if (snapshot) return;
     // Older hosts do not include the directory in initialization.
-    if (!hostSupports("listCatalogProviders") || typeof window.wuu?.listCatalogProviders !== "function") {
+    if (!controls.capabilities.catalog) {
       setState({ failed: true });
       return;
     }
     let active = true;
-    void window.wuu.listCatalogProviders().then(
+    void controls.listCatalogProviders().then(
       (result) => { if (active) setState({ providers: result.providers, failed: false }); },
       () => { if (active) setState({ failed: true }); },
     );
@@ -323,11 +324,12 @@ export function ModelServicesPage({
   onProvidersChanged,
   onProviderModelsChanged,
 }: ModelServicesPageProps): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const providers = initialized?.providers ?? [];
-  const displayPreferences = useConnectionDisplayPreferences();
+  const displayPreferences = useSettingsConnectionDisplay();
   const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
   const [quotaSnapshot, setQuotaSnapshot] = useState<EngineListResult>();
   const [quotaLoading, setQuotaLoading] = useState(false);
@@ -339,10 +341,10 @@ export function ModelServicesPage({
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (!ENABLE_SUBSCRIPTIONS || !hostSupports("listEngines")) return;
+    if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) return;
     let active = true;
     setQuotaLoading(true);
-    void window.wuu.listEngines({ include_quota: true }).then(snapshot => {
+    void controls.listEngines({ include_quota: true }).then(snapshot => {
       if (active) { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }
     }, () => { if (active) setQuotaFailed(true); })
       .finally(() => { if (active) setQuotaLoading(false); });
@@ -451,7 +453,7 @@ export function ModelServicesPage({
           setOpenService(""); setAdding(true);
         }}
         onRefreshConnection={async () => {
-          const result = await window.wuu.refreshModelCatalog();
+          const result = await controls.refreshModelCatalog();
           const refreshed = result.providers.find(item => item.name === detailProvider.name
             && item.type === detailProvider.type && item.base_url === detailProvider.base_url);
           if (!refreshed?.api_key_configured) throw new Error("Login is not available to this connection");
@@ -627,7 +629,7 @@ function ServicesOverview({
 }): JSX.Element {
   const { t } = useI18n();
   const summaryID = useId();
-  const display = useConnectionDisplayPreferences();
+  const display = useSettingsConnectionDisplay();
 
   return (
     <>
@@ -703,7 +705,7 @@ export function DefaultModelRows({
 }): JSX.Element {
   const { t } = useI18n();
   const providers = initialized?.providers ?? [];
-  const displayPreferences = useConnectionDisplayPreferences();
+  const displayPreferences = useSettingsConnectionDisplay();
   const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
   const [error, setError] = useState("");
   const [pending, setPending] = useState<{ provider: string; model: string; variant: string } | null>(null);
@@ -840,6 +842,8 @@ function ServiceDetail({
   onSave: SaveProvider;
   onRemove: (options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   const [liveModels, setLiveModels] = useState<ProviderModelSummary[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -876,12 +880,12 @@ function ServiceDetail({
     setBusy(true);
     try {
       await action();
-      return true;
+      return !lifetime.current.signal.aborted;
     } catch (saveError) {
-      setError(errorMessage(saveError, t));
+      if (!lifetime.current.signal.aborted) setError(errorMessage(saveError, t));
       return false;
     } finally {
-      setBusy(false);
+      if (!lifetime.current.signal.aborted) setBusy(false);
     }
   }
 
@@ -892,7 +896,7 @@ function ServiceDetail({
     setModelsLoading(false);
     if (configuredProvider.auth_status !== "connected") return;
     setModelsLoading(true);
-    void window.wuu.listChatGPTModels(configuredProvider.chatgpt_account_id).then(result => {
+    void controls.listChatGPTModels(configuredProvider.chatgpt_account_id).then(result => {
       if (!active) return;
       const models = result.providers?.find(item => item.name === configuredProvider.name)?.models ?? result.models.map(item => ({ id: item.id, display_name: item.name, account_descriptor: item.account_descriptor, capabilities: item.capabilities, behavior: item.behavior }));
       setLiveModels(models);
@@ -938,15 +942,17 @@ function ServiceDetail({
           onSelect={method => {
             if (method === "local" && isCodexType(provider.type)) {
               void run(async () => {
-                const reused = await window.wuu.useCodexCredentials(provider.name);
+                const reused = await controls.useCodexCredentials(provider.name);
+                lifetime.current.signal.throwIfAborted();
                 onProvidersChanged?.(reused.providers);
-                const checked = await window.wuu.loadCodexModels(provider.name);
+                const checked = await controls.loadCodexModels(provider.name);
+                lifetime.current.signal.throwIfAborted();
                 onProvidersChanged?.(checked.providers);
               });
             } else onChooseMethod(method);
           }} />
         {direct || usingLocalCodex || provider.codex_credential_source ? <small className="connection-auth-source" data-auth-source={authSource}>{t(authSourceLabel[authSource])}</small> : null}
-        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const result = await window.wuu.loadCodexModels(provider.name); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
+        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const result = await controls.loadCodexModels(provider.name); lifetime.current.signal.throwIfAborted(); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
       </> : null}
         {isGrokBuildType(provider.type) ? <GrokLogin disabled={running || busy} onBusyChange={setAuthBusy} onAuthenticated={onRefreshConnection} onReuseLocal={onRefreshConnection} /> : null}
       {!isGrokBuildType(provider.type) ? <SettingsSection title={t("provider.connectionSection")}>
@@ -1047,6 +1053,8 @@ function ConnectionRows({
   onSave: (connection: RuntimeConnectionUpdate) => Promise<boolean>;
   onRun: (action: () => Promise<void>) => Promise<boolean>;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   if (isXAISubscriptionType(provider.type)) {
     return (
@@ -1077,7 +1085,8 @@ function ConnectionRows({
         </SettingsRow> : null}
         {!ENABLE_SUBSCRIPTIONS ? <SettingsRow title={t("settings.codexUseLocal")}>
           <button type="button" className="settings-button" disabled={disabled} onClick={() => void onRun(async () => {
-            await window.wuu.useCodexCredentials(provider.name);
+            await controls.useCodexCredentials(provider.name);
+            lifetime.current.signal.throwIfAborted();
             await onSave({});
           })}>{t("settings.codexUseLocal")}</button>
         </SettingsRow> : null}
@@ -1237,6 +1246,8 @@ function XAILoginRow({
   onRun: (action: () => Promise<void>) => Promise<boolean>;
   onSignedIn: () => Promise<boolean>;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const authorization = useAuthorizationLifetime();
   const { t } = useI18n();
   const [code, setCode] = useState("");
   return (
@@ -1249,11 +1260,12 @@ function XAILoginRow({
         type="button"
         className="settings-button"
         disabled={disabled || Boolean(code)}
+        data-testid="settings-xai-login"
         onClick={() => void onRun(async () => {
           try {
-            await runXAILogin(setCode, t);
+            await runXAILogin(controls, setCode, t, authorization.current.signal);
           } finally {
-            setCode("");
+            if (!authorization.current.signal.aborted) setCode("");
           }
           await onSignedIn();
         })}
@@ -1264,24 +1276,55 @@ function XAILoginRow({
   );
 }
 
-async function runXAILogin(onCode: (code: string) => void, t: Translate): Promise<void> {
-  const start = await window.wuu.startXAILogin();
-  onCode(start.user_code);
-  const url = start.verification_uri_complete || start.verification_uri;
-  if (url) await window.wuu.openExternal(url);
-  const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
-  let interval = Math.max(1000, start.interval_ms || 5000);
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
-    const poll = await window.wuu.pollXAILogin(start.login_id);
-    if (poll.status === "pending") {
-      interval = Math.max(1000, poll.interval_ms || interval);
-      continue;
+function useAuthorizationLifetime(): React.MutableRefObject<AbortController> {
+  const lifetime = useRef(new AbortController());
+  useEffect(() => {
+    lifetime.current = new AbortController();
+    return () => lifetime.current.abort();
+  }, []);
+  return lifetime;
+}
+
+async function runXAILogin(controls: import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1, onCode: (code: string) => void, t: Translate, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  const start = await controls.startXAILogin();
+  let cancellation: Promise<{ error?: unknown }> | undefined;
+  const cancel = () => {
+    cancellation ??= controls.cancelXAILogin(start.login_id).then(() => ({}), error => ({ error }));
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) cancel();
+    signal.throwIfAborted();
+    onCode(start.user_code);
+    const url = start.verification_uri_complete || start.verification_uri;
+    if (url) await controls.openExternal(url);
+    signal.throwIfAborted();
+    const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
+    let interval = Math.max(1000, start.interval_ms || 5000);
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve, reject) => {
+        const aborted = () => { clearTimeout(timer); signal.removeEventListener("abort", aborted); reject(signal.reason); };
+        const timer = setTimeout(() => { signal.removeEventListener("abort", aborted); resolve(); }, interval);
+        signal.addEventListener("abort", aborted, { once: true });
+        if (signal.aborted) aborted();
+      });
+      signal.throwIfAborted();
+      const poll = await controls.pollXAILogin(start.login_id);
+      signal.throwIfAborted();
+      if (poll.status === "pending") {
+        interval = Math.max(1000, poll.interval_ms || interval);
+        continue;
+      }
+      if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
+      return;
     }
-    if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
-    return;
+    throw new Error(t("error.oauthFailed"));
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    const cancelled = await cancellation;
+    if (cancelled && "error" in cancelled) throw cancelled.error;
   }
-  throw new Error(t("error.oauthFailed"));
 }
 
 function ModelChoices({
@@ -1309,7 +1352,7 @@ function ModelChoices({
   const [modelMenu, setModelMenu] = useState<{ model: ProviderModelSummary; x: number; y: number } | null>(null);
   const [replacement, setReplacement] = useState("");
   const [removeError, setRemoveError] = useState("");
-  const preferences = useConnectionDisplayPreferences();
+  const preferences = useSettingsConnectionDisplay();
   const preferenceKey = `provider:${provider.name}`;
   const models = preferences.orderModels(preferenceKey, providerModels(provider));
   const [preferenceError, setPreferenceError] = useState("");
@@ -1697,6 +1740,8 @@ function ConnectServiceDialog({
   onSave: SaveProvider;
   onConnected: (name: string) => void;
 }): JSX.Element {
+  const controls = useSettingsControls();
+  const authorization = useAuthorizationLifetime();
   const { t } = useI18n();
   const fieldID = useId();
   const catalogProvider = target.kind === "catalog" ? target.provider : undefined;
@@ -1724,7 +1769,7 @@ function ConnectServiceDialog({
   useEffect(() => {
     if (!catalogProvider) return;
     let active = true;
-    void window.wuu.listCatalogProviders(catalogProvider.id).then(
+    void controls.listCatalogProviders(catalogProvider.id).then(
       (result) => { if (active) setModels(result.providers[0]?.models ?? []); },
       () => { if (active) setModels([]); },
     );
@@ -1748,7 +1793,8 @@ function ConnectServiceDialog({
     setError("");
     setPending(true);
     try {
-      if (subscriptionType === "xai-subscription") await runXAILogin(setLoginCode, t);
+      if (subscriptionType === "xai-subscription") await runXAILogin(controls, setLoginCode, t, authorization.current.signal);
+      authorization.current.signal.throwIfAborted();
       const connection: RuntimeConnectionUpdate = {
         ...(existingCodex ? {} : { type: subscriptionType ?? protocol, create_provider: true }),
         keep_selection: !makeDefault,
@@ -1756,14 +1802,14 @@ function ConnectServiceDialog({
         ...(needsKey ? { api_key: apiKey.trim() } : {}),
         ...(subscriptionType === "openai-codex" ? { reuse_codex_credentials: true } : {}),
       };
-      if (existingCodex) await window.wuu.useCodexCredentials(existingCodex.name);
+      if (existingCodex) await controls.useCodexCredentials(existingCodex.name);
+      authorization.current.signal.throwIfAborted();
       await onSave(name.trim(), model.trim(), undefined, connection);
-      onConnected(name.trim());
+      if (!authorization.current.signal.aborted) onConnected(name.trim());
     } catch (saveError) {
-      setError(errorMessage(saveError, t));
+      if (!authorization.current.signal.aborted) setError(errorMessage(saveError, t));
     } finally {
-      setLoginCode("");
-      setPending(false);
+      if (!authorization.current.signal.aborted) { setLoginCode(""); setPending(false); }
     }
   }
 

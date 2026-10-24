@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -87,14 +88,20 @@ func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected Thr
 		var toolExecutor agent.ToolExecutor = newPluginAwareToolExecutor(kit, s.PluginHost, s.HookDispatcher, id, "", root)
 		runner.Tools = toolExecutor
 
-		surface := kit.ActiveSurface()
-		promptParts := []string{systemPrompt, strings.TrimSpace(surface.SystemFragment)}
-		if catalog, err := deferredToolCatalogPromptForToolkit(kit); err != nil {
-			return nil, err
-		} else {
-			promptParts = append(promptParts, strings.TrimSpace(catalog))
+		surface, surfaceErr := selectedToolSurface(context.Background(), toolExecutor)
+		if surfaceErr != nil {
+			return nil, surfaceErr
 		}
+		promptParts := []string{systemPrompt, strings.TrimSpace(surface.SystemFragment)}
+		promptParts = append(promptParts, strings.TrimSpace(surface.DeferredToolCatalog))
 		runner.SystemPrompt = joinNonEmptyPromptParts(promptParts...)
+	} else if s.PluginHost != nil && s.StreamRunner.Tools != nil {
+		runner.Tools = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", root)
+		surface, err := selectedToolSurface(context.Background(), runner.Tools)
+		if err != nil {
+			return nil, err
+		}
+		runner.SystemPrompt = joinNonEmptyPromptParts(systemPrompt, surface.SystemFragment, surface.DeferredToolCatalog)
 	} else {
 		runner.Tools = nil
 		runner.SystemPrompt = systemPrompt

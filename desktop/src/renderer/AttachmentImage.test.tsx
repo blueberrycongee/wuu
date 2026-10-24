@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot as createReactRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { AttachmentImage } from "./AttachmentImage";
 import { inputImagesFromComposer } from "./ComposerMessages";
@@ -43,4 +46,26 @@ it("requests a thumbnail near the viewport and downloads the original only when 
     await act(async () => container.querySelector("img")!.click());
     expect(open).toHaveBeenCalledWith("data:image/png;base64,b3JpZ2luYWw=", container.querySelector("img"));
   } finally { act(() => root.unmount()); container.remove(); window.wuu = prior; vi.unstubAllGlobals(); }
+});
+
+function createRoot(container: HTMLElement) {
+  const root = createReactRoot(container);
+  const artifacts = new ApplicationArtifacts(window.wuu ?? {}, {resolveResourceURL: () => undefined, openFile: async () => {}});
+  return {...root, render: (children: ReactNode) => root.render(<ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider>), unmount: () => root.unmount()};
+}
+
+it("does not open an original whose attachment was replaced while reading", async () => {
+  const prior = window.wuu;
+  let finish!: (data: string) => void;
+  const read = vi.fn(() => new Promise<string>(resolve => {finish = resolve;}));
+  window.wuu = {readRemoteAttachment: read} as unknown as typeof window.wuu;
+  const container = document.createElement("div"), root = createRoot(container), open = vi.fn();
+  try {
+    await act(async () => root.render(<AttachmentImage image={{media_type:"image/png", data:"", remote_ref:"first"}} label="First" onOpen={open} />));
+    act(() => container.querySelector("button")!.click());
+    await act(async () => root.render(<AttachmentImage image={{media_type:"image/png", data:"", remote_ref:"second"}} label="Second" onOpen={open} />));
+    await act(async () => finish("b2xk"));
+    expect(open).not.toHaveBeenCalled();
+    expect(container.textContent).toBe("Second");
+  } finally {act(() => root.unmount());window.wuu = prior;}
 });

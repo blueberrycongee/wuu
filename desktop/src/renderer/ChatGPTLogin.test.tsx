@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -19,7 +21,7 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
-  act(() => root!.render(<ChatGPTLogin onAuthenticated={authenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ChatGPTLogin onAuthenticated={authenticated} />}</SettingsControlsProvider>));
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -83,7 +85,7 @@ it("retains a successful-login advisory in the owner when the account control re
     const [notice, setNotice] = useState("");
     return <><ChatGPTLogin key={account} onAuthenticated={setAccount} onAdvisory={setNotice} /><p role="status">{notice}</p></>;
   }
-  act(() => root!.render(<AccountOwner />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<AccountOwner />}</SettingsControlsProvider>));
   poll.mockResolvedValue({ status: "success", account_id: "account-a", error: "Account connected; catalog temporarily unavailable" });
   await act(async () => button("chatgpt-login-start").click());
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
@@ -94,7 +96,7 @@ it("retains a successful-login advisory in the owner when the account control re
 it("does not offer host-local login when the browser adapter excludes it", async () => {
   vi.stubGlobal("wuu", { startChatGPTLogin: start, pollChatGPTLogin: poll, cancelChatGPTLogin: cancel,
     unsupportedMethods: ["startChatGPTLogin", "pollChatGPTLogin", "cancelChatGPTLogin"] });
-  act(() => root!.render(<ChatGPTLogin onAuthenticated={authenticated} />));
+  act(() => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ChatGPTLogin onAuthenticated={authenticated} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-testid="chatgpt-login-start"]')).toBeNull();
   expect(container.querySelector('[role="status"]')).not.toBeNull();
   expect(start).not.toHaveBeenCalled();

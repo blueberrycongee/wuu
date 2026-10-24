@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -1200,4 +1201,47 @@ type handoffBriefPlanningProvider struct {
 func (p handoffBriefPlanningProvider) PlanHandoffBrief(_ context.Context, model string, _ []providers.ChatMessage, _ agent.CompactionNote, _, _ string, _ int) (agent.CompactionNotePlan, error) {
 	p.plan(model)
 	return agent.CompactionNotePlan{Prompt: "write the brief", MaxBytes: 24000}, nil
+}
+
+func TestHandoffPreservesSelectedUnlimitedPlan(t *testing.T) {
+	body := strings.Repeat("x", 25*1024)
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse(body)})
+	attempts := 0
+	rt.StreamRunner.SelectedCompaction = compactionservice.NewClient(func(_ context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		switch method {
+		case "describe":
+			return json.Marshal(compactionservice.Policy{Key: "external", Guidance: []providers.ChatMessage{}})
+		case "handoff":
+			return json.Marshal(compactionservice.HandoffPlan{Prompt: "selected plan", MaxBytes: 0})
+		case "note-attempt":
+			attempts++
+			var in compactionservice.NoteAttemptRequest
+			if err := json.Unmarshal(raw, &in); err != nil {
+				return nil, err
+			}
+			if in.Plan.MaxBytes != 0 {
+				t.Errorf("host changed selected limit to %d", in.Plan.MaxBytes)
+			}
+			return json.Marshal(compactionservice.NoteAttemptPlan{Invoke: true, Messages: []providers.ChatMessage{{Role: "user", Content: "selected inference"}}, Prompt: "selected inference", MaxBytes: 0})
+		default:
+			t.Fatalf("unexpected policy method %s", method)
+			return nil, nil
+		}
+	})
+	if _, err := rt.Sessions.CreateWithMetadata("source", rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Sessions.AppendHistoryRecords("source", []session.HistoryRecord{{Role: "user", Content: "source"}}); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := rt.RetainState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer binding.Close()
+	srv := &Server{rt: rt}
+	result, err := srv.prepareHandoffSeed(binding, context.Background(), pluginhost.SessionCreateParams{ContextSource: pluginhost.SessionContextSourceSeed, Seed: &pluginhost.SessionContextSeed{Source: pluginhost.SessionHistorySnapshot{SessionID: "source"}}})
+	if err != nil || result.Seed.Body != body || attempts != 1 {
+		t.Fatalf("selected unlimited handoff rejected: bytes=%d attempts=%d err=%v", len(result.Seed.Body), attempts, err)
+	}
 }

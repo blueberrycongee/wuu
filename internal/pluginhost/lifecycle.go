@@ -124,7 +124,8 @@ func (h *Host) activateClient(ctx context.Context, client Client, dependencies [
 
 func (h *Host) closeClient(ctx context.Context, client Client) error {
 	lifetime := h.lifetimes[client.ID()]
-	lifetime.closeCtx = ctx
+	// Close is a completion barrier even when the initiating waiter expired.
+	lifetime.closeCtx = context.WithValue(context.WithoutCancel(ctx), serviceCleanupKey{}, true)
 	lifetime.owner.Dispose()
 	delete(h.lifetimes, client.ID())
 	return lifetime.closeErr

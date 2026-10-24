@@ -35,6 +35,7 @@ type SetAppState = (update: SetStateAction<AppState>) => void;
 type SidebarWorkspaceThreads = Record<string, Thread[] | undefined>;
 
 export type ThreadActivationActionsDeps = {
+  onError?: (error: Error) => never;
   getAppState: () => AppState;
   setAppState: SetAppState;
   getActiveThreadID: () => string | undefined;
@@ -65,7 +66,7 @@ export type ThreadActivationActions = {
   selectContextThread: (context: RuntimeContext, threadID: string) => Promise<void>;
   selectWorkspaceThread: (workspaceID: string, threadID: string) => Promise<void>;
   activateThread: (threadID: string) => Promise<void>;
-  selectChildAgent: (agent: Agent) => Promise<void>;
+  selectChildAgent: (agent: Pick<Agent, "id">) => Promise<void>;
 };
 
 export function createThreadActivationActions(
@@ -78,6 +79,7 @@ export function createThreadActivationActions(
     deps.selectRuntimeContext ?? defaultSelectRuntimeContext;
 
   function setStatus(status: string): void {
+    if (deps.onError) deps.onError(new Error(status));
     showErrorToast(status);
   }
 
@@ -417,7 +419,7 @@ export function createThreadActivationActions(
     await selectThread(threadID);
   }
 
-  async function selectChildAgent(agent: Agent): Promise<void> {
+  async function selectChildAgent(agent: Pick<Agent, "id">): Promise<void> {
     const currentState = deps.getAppState();
     if (!currentState.activeContext) {
       return;

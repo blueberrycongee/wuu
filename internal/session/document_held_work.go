@@ -26,7 +26,7 @@ func nextHeldPosition(tx *persistence.Tx, sessionID string) (int, error) {
 	return position, err
 }
 
-func (s *Store) ReplaceHeldUserWork(sessionID string, entries []HeldUserWork) error {
+func (s *documentStore) ReplaceHeldUserWork(sessionID string, entries []HeldUserWork) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return errors.New("session_id is required")
@@ -57,7 +57,7 @@ func (s *Store) ReplaceHeldUserWork(sessionID string, entries []HeldUserWork) er
 	})
 }
 
-func (s *Store) LoadHeldUserWork(sessionID string) ([]HeldUserWork, error) {
+func (s *documentStore) LoadHeldUserWork(sessionID string) ([]HeldUserWork, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil, errors.New("session_id is required")
@@ -87,7 +87,7 @@ func (s *Store) LoadHeldUserWork(sessionID string) ([]HeldUserWork, error) {
 	return result, err
 }
 
-func (s *Store) DeleteHeldUserWork(sessionID, id string) (bool, error) {
+func (s *documentStore) DeleteHeldUserWork(sessionID, id string) (bool, error) {
 	sessionID, id = strings.TrimSpace(sessionID), strings.TrimSpace(id)
 	if sessionID == "" || id == "" {
 		return false, errors.New("session_id and id are required")
@@ -121,7 +121,7 @@ func (s *Store) DeleteHeldUserWork(sessionID, id string) (bool, error) {
 	return removed, err
 }
 
-func (s *Store) AcceptHeldUserWork(sessionID string, entry HeldUserWork) (bool, error) {
+func (s *documentStore) AcceptHeldUserWork(sessionID string, entry HeldUserWork) (bool, error) {
 	if err := validateHeldUserWork(entry); err != nil {
 		return false, err
 	}
@@ -174,7 +174,7 @@ func heldPayloadMatches(current HeldUserWork, expected HeldUserWork) bool {
 	return current.Origin == expected.Origin && bytes.Equal(current.MessageJSON, expected.MessageJSON) && bytes.Equal(current.RuntimeJSON, expected.RuntimeJSON)
 }
 
-func (s *Store) UpdateHeldUserWork(sessionID string, entry, expected HeldUserWork) (bool, error) {
+func (s *documentStore) UpdateHeldUserWork(sessionID string, entry, expected HeldUserWork) (bool, error) {
 	if err := validateHeldUserWork(entry); err != nil {
 		return false, err
 	}
@@ -196,7 +196,7 @@ func (s *Store) UpdateHeldUserWork(sessionID string, entry, expected HeldUserWor
 	return changed, err
 }
 
-func (s *Store) CancelHeldUserWork(sessionID, id, origin string) (bool, error) {
+func (s *documentStore) CancelHeldUserWork(sessionID, id, origin string) (bool, error) {
 	var removed bool
 	err := s.transaction(func(tx *persistence.Tx) error {
 		removed = false
@@ -247,7 +247,7 @@ func consumeHeldWorkDocument(tx *persistence.Tx, sessionID string, record Histor
 	return tx.Put(documentNamespace("held_user_work"), heldWorkKey(sessionID, record.ClientID), row)
 }
 
-func (s *Store) HasHeldUserWorkReceipt(sessionID, id string) (bool, error) {
+func (s *documentStore) HasHeldUserWorkReceipt(sessionID, id string) (bool, error) {
 	var found bool
 	err := s.transaction(func(tx *persistence.Tx) error {
 		var row heldWorkDocument
@@ -258,7 +258,7 @@ func (s *Store) HasHeldUserWorkReceipt(sessionID, id string) (bool, error) {
 	return found, err
 }
 
-func (s *Store) ClaimHeldUserWork(sessionID string, entry HeldUserWork) error {
+func (s *documentStore) ClaimHeldUserWork(sessionID string, entry HeldUserWork) error {
 	if err := validateHeldUserWork(entry); err != nil {
 		return err
 	}
@@ -276,7 +276,7 @@ func (s *Store) ClaimHeldUserWork(sessionID string, entry HeldUserWork) error {
 	})
 }
 
-func (s *Store) ReleaseHeldUserWork(sessionID, id string) error {
+func (s *documentStore) ReleaseHeldUserWork(sessionID, id string) error {
 	return s.transaction(func(tx *persistence.Tx) error {
 		var row heldWorkDocument
 		found, err := tx.Get(documentNamespace("held_user_work"), heldWorkKey(sessionID, id), &row)

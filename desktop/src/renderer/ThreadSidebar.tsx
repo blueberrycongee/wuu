@@ -1092,9 +1092,9 @@ function ThreadRows({
             },
             {
               label: revealInFileManagerLabel(),
-              disabled: !hostSupports("revealSession"),
+              disabled: !organization?.revealThread && !hostSupports("revealSession"),
               onSelect: () => {
-                void window.wuu.revealSession(contextMenu.thread.id);
+                void (organization?.revealThread ? organization.revealThread(contextMenu.thread.id) : window.wuu.revealSession(contextMenu.thread.id));
               },
             },
             {

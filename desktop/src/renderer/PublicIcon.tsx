@@ -88,7 +88,9 @@ export function PluginIcon({
   pluginId,
   fingerprint,
   className,
+  loadIcon = loadPluginIconURL,
 }: {
+  loadIcon?: typeof loadPluginIconURL;
   icon?: ExtensionIconDescriptor;
   pluginId: string;
   fingerprint: string;
@@ -99,6 +101,7 @@ export function PluginIcon({
   }
   return (
     <PluginAssetIcon
+      loadIcon={loadIcon}
       icon={icon}
       pluginId={pluginId}
       fingerprint={fingerprint}
@@ -112,7 +115,9 @@ function PluginAssetIcon({
   pluginId,
   fingerprint,
   className,
+  loadIcon = loadPluginIconURL,
 }: {
+  loadIcon?: typeof loadPluginIconURL;
   icon: Exclude<ExtensionIconDescriptor, { name: string }>;
   pluginId: string;
   fingerprint: string;
@@ -125,7 +130,7 @@ function PluginAssetIcon({
 
   useEffect(() => {
     let active = true;
-    Promise.all(paths.map((path) => loadPluginIconURL(pluginId, fingerprint, path)))
+    Promise.all(paths.map((path) => loadIcon(pluginId, fingerprint, path)))
       .then((loaded) => {
         if (active) setURLs(loaded);
       })
@@ -133,7 +138,7 @@ function PluginAssetIcon({
         if (active) setURLs([]);
       });
     return () => { active = false; };
-  }, [pluginId, fingerprint, paths.join("\u0000")]);
+  }, [pluginId, fingerprint, paths.join("\u0000"), loadIcon]);
 
   if (urls.length !== paths.length) {
     return <PublicIcon className={className} />;

@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import type { ProviderSummary } from "../shared/protocol";
 import { ChatGPTLogin } from "./ChatGPTLogin";
@@ -11,6 +12,7 @@ export function ChatGPTAccountRows({ provider, disabled, onProvidersChanged, onR
   onRefresh: () => void;
   onBusyChange?: (busy: boolean) => void;
 }): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
@@ -22,7 +24,7 @@ export function ChatGPTAccountRows({ provider, disabled, onProvidersChanged, onR
   useEffect(() => {
     let active = true;
     setAccountLabel("");
-    void window.wuu.listChatGPTAccounts().then(result => {
+    void settingsControls.listChatGPTAccounts().then(result => {
       if (active) setAccountLabel(result.accounts.find(account => account.id === accountId)?.email ?? "");
     }, cause => { if (active) setError(String(cause)); });
     return () => { active = false; };
@@ -32,7 +34,7 @@ export function ChatGPTAccountRows({ provider, disabled, onProvidersChanged, onR
     signingOut.current = true;
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await window.wuu.signOutChatGPTAccount(accountId);
+      const result = await settingsControls.signOutChatGPTAccount(accountId);
       onProvidersChanged?.(result.providers);
       setNotice(t(result.revocation_confirmed ? "provider.chatgptSignedOut" : "provider.chatgptLocalSignOut"));
     } catch (cause) { setError(String(cause)); }
@@ -43,7 +45,7 @@ export function ChatGPTAccountRows({ provider, disabled, onProvidersChanged, onR
     <ChatGPTLogin onAdvisory={setNotice} accountId={accountId} enablePlanUsage={provider.auth_status === "permission_required"} disabled={disabled || busy} onBusyChange={setBusy} onProvidersChanged={onProvidersChanged} onAuthenticated={() => { setNotice(""); onRefresh(); }} />
     <SettingsRow title={t("provider.chatgptAccountId")}><span className="settings-row-control-value model-service-value">{accountId}</span></SettingsRow>
     <SettingsRow title={t("provider.modelsSection")}><button type="button" className="settings-button" disabled={disabled || busy || provider.auth_status !== "connected"} onClick={onRefresh}>{t("provider.chatgptRefreshModels")}</button></SettingsRow>
-    <SettingsRow title={t("provider.accountUsage")} description={t("provider.chatgptUsageHint")}><button type="button" className="settings-button" onClick={() => void window.wuu.openExternal("https://chatgpt.com/settings/usage").catch(cause => setError(String(cause)))}>{t("provider.chatgptManageUsage")}</button></SettingsRow>
+    <SettingsRow title={t("provider.accountUsage")} description={t("provider.chatgptUsageHint")}><button type="button" className="settings-button" onClick={() => void settingsControls.openExternal("https://chatgpt.com/settings/usage").catch(cause => setError(String(cause)))}>{t("provider.chatgptManageUsage")}</button></SettingsRow>
     <SettingsRow title={t("provider.chatgptSignOut")}><button type="button" className="settings-button" disabled={disabled || busy || !accountId} onClick={() => void signOut()}>{t("provider.chatgptSignOut")}</button></SettingsRow>
     {notice ? <p className="settings-muted-line" role="status">{notice}</p> : null}
     {error ? <p className="settings-error" role="alert">{error}</p> : null}

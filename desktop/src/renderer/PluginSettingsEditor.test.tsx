@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -128,7 +130,7 @@ describe("PluginSettingsEditor", () => {
     expect(container.querySelector(".plugin-settings-editor")).toBeNull();
     expect(getPluginDiagnostics).not.toHaveBeenCalled();
 
-    await act(async () => root?.render(<PluginSettingsEditor plugin={{ ...pluginRecord(), enabled: false }} />));
+    await act(async () => root?.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><PluginSettingsEditor plugin={{ ...pluginRecord(), enabled: false }} /></SettingsControlsProvider>));
     expect(container.querySelector(".plugin-settings-editor")).toBeNull();
     expect(getPluginDiagnostics).not.toHaveBeenCalled();
   });
@@ -140,7 +142,7 @@ describe("PluginSettingsEditor", () => {
     await renderEditor({ ...pluginRecord(), approval_state: "pending", enabled: false });
     expect(getPluginDiagnostics).not.toHaveBeenCalled();
 
-    await act(async () => root?.render(<PluginSettingsEditor plugin={pluginRecord()} />));
+    await act(async () => root?.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><PluginSettingsEditor plugin={pluginRecord()} /></SettingsControlsProvider>));
     expect(getPluginDiagnostics).toHaveBeenCalledOnce();
     expect(container.textContent).not.toContain("desktop plugin is not approved and enabled");
   });
@@ -254,7 +256,7 @@ function installAPI(overrides: Partial<WuuDesktopApi> = {}): void {
 async function renderEditor(plugin: ExtensionInventoryRecord): Promise<void> {
   await act(async () => {
     root = createRoot(container);
-    root.render(<PluginSettingsEditor plugin={plugin} />);
+    root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<PluginSettingsEditor plugin={plugin} />}</SettingsControlsProvider>);
   });
 }
 

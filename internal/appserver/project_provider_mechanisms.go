@@ -6,7 +6,6 @@ import (
 	"errors"
 	"sync/atomic"
 
-	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -84,7 +83,7 @@ func (m *managedSessionMechanisms) Close(context.Context) error {
 	return nil
 }
 func (m *managedSessionMechanisms) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: persistence.ServiceName, MajorVersion: 1, Required: true}}
+	return []pluginhost.ServiceRequirement{{Name: session.ServiceName, MajorVersion: 1, Required: true}}
 }
 func (m *managedSessionMechanisms) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: ManagedSessionService, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
@@ -269,14 +268,13 @@ func (p *ProjectCoordinationProvider) interruptManagedSession(ctx context.Contex
 // Each consumer owns its client identity and dependency lifetime even though all
 // clients address the same selected physical state provider.
 func projectProviderStore(registry *pluginhost.ServiceRegistry, consumer string) *session.Store {
-	documents := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
-		raw, err := registry.Call(ctx, consumer, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: params, ExecutionID: projectExecutionID(ctx)})
+	return session.NewClient(context.Background(), func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+		raw, err := registry.Call(ctx, consumer, pluginhost.ServiceCallParams{Service: session.ServiceName, Method: method, Params: params, ExecutionID: projectExecutionID(ctx)})
 		if err != nil {
 			return nil, err
 		}
 		return raw, nil
 	})
-	return session.NewStore(context.Background(), documents)
 }
 
 type projectExecutionContextKey struct{}

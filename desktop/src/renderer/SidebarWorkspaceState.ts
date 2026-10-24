@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type Dispatch,
   type SetStateAction,
 } from "react";
@@ -249,6 +250,209 @@ export function threadsForWorkspace(
   );
 }
 
+type SidebarThreadCacheSnapshot = {
+  workspaceThreadsByWorkspaceID: Record<string, Thread[]>;
+  cachedScratchThreads: Thread[];
+  requestedWorkspaceThreadIDs: ReadonlySet<string>;
+};
+
+/** Shared cache ownership is independent of navigation module mounts. */
+export function createSidebarThreadCache(getProjects: () => DesktopProject[], setStatus: (status: string) => void) {
+  let workspaceThreadsByWorkspaceID: Record<string, Thread[]> = {};
+  let cachedScratchThreads: Thread[] = [];
+  let requestedWorkspaceThreadIDs: ReadonlySet<string> = new Set();
+  let snapshot: SidebarThreadCacheSnapshot = { workspaceThreadsByWorkspaceID, cachedScratchThreads, requestedWorkspaceThreadIDs };
+  const listeners = new Set<() => void>();
+  const loadingWorkspaceThreadIDsRef = { current: new Set<string>() };
+  function changed(): void {
+    snapshot = { workspaceThreadsByWorkspaceID, cachedScratchThreads, requestedWorkspaceThreadIDs };
+    for (const listener of listeners) listener();
+  }
+  function setWorkspaceThreadsByWorkspaceID(update: (current: Record<string, Thread[]>) => Record<string, Thread[]>): void {
+    const next = update(workspaceThreadsByWorkspaceID);
+    if (next === workspaceThreadsByWorkspaceID) return;
+    workspaceThreadsByWorkspaceID = next;
+    changed();
+  }
+  function setCachedScratchThreads(update: (current: Thread[]) => Thread[]): void {
+    const next = update(cachedScratchThreads);
+    if (next === cachedScratchThreads) return;
+    cachedScratchThreads = next;
+    changed();
+  }
+  function setRequestedWorkspaceThreadIDs(next: ReadonlySet<string>): void {
+    requestedWorkspaceThreadIDs = next;
+    changed();
+  }
+  async function loadWorkspaceThreads(project: DesktopProject): Promise<void> {
+    if (loadingWorkspaceThreadIDsRef.current.has(project.id)) {
+      return;
+    }
+    loadingWorkspaceThreadIDsRef.current.add(project.id);
+    setRequestedWorkspaceThreadIDs(new Set(loadingWorkspaceThreadIDsRef.current));
+    const requested = workspaceThreadsByWorkspaceID[project.id];
+    try {
+      const listed = await window.wuu.listThreads(project.path);
+      setWorkspaceThreadsByWorkspaceID((current) => ({
+        ...current,
+        [project.id]: threadsForWorkspace(
+          reconcileSidebarThreadList(requested, current[project.id], listed.threads),
+          project,
+        ),
+      }));
+    } catch (error) {
+      setStatus(desktopApiErrorMessage(error, translateCurrent("workspace.threadsLoadFailed")));
+    } finally {
+      loadingWorkspaceThreadIDsRef.current.delete(project.id);
+      setRequestedWorkspaceThreadIDs(new Set(loadingWorkspaceThreadIDsRef.current));
+    }
+  }
+
+  function cacheSidebarThreads(
+    incoming: Thread[],
+    requested?: { projects: Record<string, Thread[]>; scratch: Thread[] },
+  ): void {
+    const projects = getProjects();
+    const scratchThreads = incoming.filter((thread) => isScratchThread(thread, projects));
+    if (scratchThreads.length > 0 || requested) {
+      setCachedScratchThreads((current) =>
+        mergeSidebarThreadSnapshots(current, requested
+          ? reconcileSidebarThreadList(requested.scratch, current, scratchThreads)
+          : scratchThreads),
+      );
+    }
+    setWorkspaceThreadsByWorkspaceID((current) => {
+      let next = current;
+      for (const project of projects) {
+        const workspaceThreads = threadsForWorkspace(incoming, project);
+        if (workspaceThreads.length === 0 && !requested) {
+          continue;
+        }
+        const reconciled = requested
+          ? reconcileSidebarThreadList(requested.projects[project.id], current[project.id], workspaceThreads)
+          : workspaceThreads;
+        if (workspaceThreads.length === 0 && reconciled.length === 0 && current[project.id] === undefined) {
+          continue;
+        }
+        if (next === current) {
+          next = { ...current };
+        }
+        next[project.id] = mergeSidebarThreadSnapshots(
+          current[project.id],
+          reconciled,
+        );
+      }
+      return next;
+    });
+  }
+
+  function updateCachedSidebarThread(thread: Thread): void {
+    cacheSidebarThreads([thread]);
+  }
+
+  function patchCachedSidebarThread(threadID: string, update: (thread: Thread) => Thread): void {
+    const patch = (threads: Thread[]): Thread[] => {
+      let changed = false;
+      const next = threads.map((thread) => {
+        if (thread.id !== threadID) return thread;
+        const updated = update(thread);
+        changed ||= updated !== thread;
+        return updated;
+      });
+      return changed ? sortThreads(next) : threads;
+    };
+    setCachedScratchThreads(patch);
+    setWorkspaceThreadsByWorkspaceID((current) => {
+      let changed = false;
+      const next: Record<string, Thread[]> = {};
+      for (const [workspaceID, workspaceThreads] of Object.entries(current)) {
+        const patched = patch(workspaceThreads);
+        if (patched !== workspaceThreads) {
+          changed = true;
+        }
+        next[workspaceID] = patched;
+      }
+      return changed ? next : current;
+    });
+  }
+
+  function updateCachedSidebarThreadPinned(threadID: string, pinned: boolean): void {
+    patchCachedSidebarThread(threadID, (thread) => thread.pinned === pinned
+      ? thread : { ...thread, pinned });
+  }
+
+  function removeCachedSidebarThread(threadID: string): void {
+    setCachedScratchThreads((current) =>
+      current.filter((thread) => thread.id !== threadID),
+    );
+    setWorkspaceThreadsByWorkspaceID((current) => {
+      let changed = false;
+      const next: Record<string, Thread[]> = {};
+      for (const [workspaceID, workspaceThreads] of Object.entries(current)) {
+        const filtered = workspaceThreads.filter((thread) => thread.id !== threadID);
+        if (filtered.length !== workspaceThreads.length) {
+          changed = true;
+        }
+        next[workspaceID] = filtered;
+      }
+      return changed ? next : current;
+    });
+  }
+
+  function syncSidebarServerEvent(event: ServerEvent): void {
+    if (
+      event.kind !== "notification" ||
+      !SIDEBAR_THREAD_LIFECYCLE_METHODS.has(event.message.method)
+    ) {
+      return;
+    }
+    const params = event.message.params;
+    const record = isRecord(params) ? params : undefined;
+    const incomingThread = threadFromRecord(recordValue(record, "thread"));
+    if (incomingThread) {
+      updateCachedSidebarThread(incomingThread);
+      return;
+    }
+    const threadID = typeof record?.thread_id === "string" ? record.thread_id : undefined;
+    if (!threadID) {
+      return;
+    }
+    const applyEvent = (current: Thread[]): Thread[] => {
+      if (!current.some((thread) => thread.id === threadID)) {
+        return current;
+      }
+      const next = reduceNotification(
+        {
+          ...initialState,
+          activeContext: { kind: "no_project", cwd: event.workdir },
+          threads: current,
+        },
+        event.message,
+      ).threads;
+      return next === current ? current : next;
+    };
+    setCachedScratchThreads(applyEvent);
+    setWorkspaceThreadsByWorkspaceID((current) => {
+      let changed = false;
+      const next: Record<string, Thread[]> = {};
+      for (const [workspaceID, workspaceThreads] of Object.entries(current)) {
+        const synced = applyEvent(workspaceThreads);
+        changed ||= synced !== workspaceThreads;
+        next[workspaceID] = synced;
+      }
+      return changed ? next : current;
+    });
+  }
+
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    setWorkspaceThreadsByWorkspaceID, setCachedScratchThreads,
+    loadWorkspaceThreads, cacheSidebarThreads, updateCachedSidebarThread, patchCachedSidebarThread,
+    updateCachedSidebarThreadPinned, removeCachedSidebarThread, syncSidebarServerEvent,
+  };
+}
+
 export function useSidebarWorkspaceState({
   projects,
   threads,
@@ -268,12 +472,12 @@ export function useSidebarWorkspaceState({
     useState<Set<string>>(initialCollapsedSidebarSectionIDs);
   const [expandedSidebarSectionIDs, setExpandedSidebarSectionIDs] =
     useState<Set<string>>(initialExpandedSidebarSectionIDs);
-  const [workspaceThreadsByWorkspaceID, setWorkspaceThreadsByWorkspaceID] = useState<
-    Record<string, Thread[]>
-  >({});
-  const [cachedScratchThreads, setCachedScratchThreads] = useState<Thread[]>(
-    [],
-  );
+  const latest = useRef({ projects, setStatus });
+  latest.current = { projects, setStatus };
+  const [cache] = useState(() => createSidebarThreadCache(() => latest.current.projects, status => latest.current.setStatus(status)));
+  const { workspaceThreadsByWorkspaceID, cachedScratchThreads, requestedWorkspaceThreadIDs } = useSyncExternalStore(cache.subscribe, cache.getSnapshot);
+  const { setWorkspaceThreadsByWorkspaceID, setCachedScratchThreads, loadWorkspaceThreads, cacheSidebarThreads,
+    updateCachedSidebarThread, patchCachedSidebarThread, updateCachedSidebarThreadPinned, removeCachedSidebarThread, syncSidebarServerEvent } = cache;
   const [sidebarSectionOrder, setSidebarSectionOrder] = useState<string[]>(
     () =>
       reconcileSidebarSectionOrder(
@@ -281,8 +485,6 @@ export function useSidebarWorkspaceState({
         [],
       ),
   );
-  const loadingWorkspaceThreadIDsRef = useRef(new Set<string>());
-  const [requestedWorkspaceThreadIDs, setRequestedWorkspaceThreadIDs] = useState<ReadonlySet<string>>(new Set());
   const workspaceIDs = projects.map((project) => project.id);
   const workspaceIdentityRevision = JSON.stringify(workspaceIDs);
   const projectsByID = useMemo(
@@ -506,165 +708,6 @@ export function useSidebarWorkspaceState({
     workspaceThreadsByWorkspaceID,
     projects,
   ]);
-
-  async function loadWorkspaceThreads(project: DesktopProject): Promise<void> {
-    if (loadingWorkspaceThreadIDsRef.current.has(project.id)) {
-      return;
-    }
-    loadingWorkspaceThreadIDsRef.current.add(project.id);
-    setRequestedWorkspaceThreadIDs(new Set(loadingWorkspaceThreadIDsRef.current));
-    const requested = workspaceThreadsByWorkspaceID[project.id];
-    try {
-      const listed = await window.wuu.listThreads(project.path);
-      setWorkspaceThreadsByWorkspaceID((current) => ({
-        ...current,
-        [project.id]: threadsForWorkspace(
-          reconcileSidebarThreadList(requested, current[project.id], listed.threads),
-          project,
-        ),
-      }));
-    } catch (error) {
-      setStatus(desktopApiErrorMessage(error, translateCurrent("workspace.threadsLoadFailed")));
-    } finally {
-      loadingWorkspaceThreadIDsRef.current.delete(project.id);
-      setRequestedWorkspaceThreadIDs(new Set(loadingWorkspaceThreadIDsRef.current));
-    }
-  }
-
-  function cacheSidebarThreads(
-    incoming: Thread[],
-    requested?: { projects: Record<string, Thread[]>; scratch: Thread[] },
-  ): void {
-    const scratchThreads = incoming.filter((thread) => isScratchThread(thread, projects));
-    if (scratchThreads.length > 0 || requested) {
-      setCachedScratchThreads((current) =>
-        mergeSidebarThreadSnapshots(current, requested
-          ? reconcileSidebarThreadList(requested.scratch, current, scratchThreads)
-          : scratchThreads),
-      );
-    }
-    setWorkspaceThreadsByWorkspaceID((current) => {
-      let next = current;
-      for (const project of projects) {
-        const workspaceThreads = threadsForWorkspace(incoming, project);
-        if (workspaceThreads.length === 0 && !requested) {
-          continue;
-        }
-        const reconciled = requested
-          ? reconcileSidebarThreadList(requested.projects[project.id], current[project.id], workspaceThreads)
-          : workspaceThreads;
-        if (workspaceThreads.length === 0 && reconciled.length === 0 && current[project.id] === undefined) {
-          continue;
-        }
-        if (next === current) {
-          next = { ...current };
-        }
-        next[project.id] = mergeSidebarThreadSnapshots(
-          current[project.id],
-          reconciled,
-        );
-      }
-      return next;
-    });
-  }
-
-  function updateCachedSidebarThread(thread: Thread): void {
-    cacheSidebarThreads([thread]);
-  }
-
-  function patchCachedSidebarThread(threadID: string, update: (thread: Thread) => Thread): void {
-    const patch = (threads: Thread[]): Thread[] => {
-      let changed = false;
-      const next = threads.map((thread) => {
-        if (thread.id !== threadID) return thread;
-        const updated = update(thread);
-        changed ||= updated !== thread;
-        return updated;
-      });
-      return changed ? sortThreads(next) : threads;
-    };
-    setCachedScratchThreads(patch);
-    setWorkspaceThreadsByWorkspaceID((current) => {
-      let changed = false;
-      const next: Record<string, Thread[]> = {};
-      for (const [workspaceID, workspaceThreads] of Object.entries(current)) {
-        const patched = patch(workspaceThreads);
-        if (patched !== workspaceThreads) {
-          changed = true;
-        }
-        next[workspaceID] = patched;
-      }
-      return changed ? next : current;
-    });
-  }
-
-  function updateCachedSidebarThreadPinned(threadID: string, pinned: boolean): void {
-    patchCachedSidebarThread(threadID, (thread) => thread.pinned === pinned
-      ? thread : { ...thread, pinned });
-  }
-
-  function removeCachedSidebarThread(threadID: string): void {
-    setCachedScratchThreads((current) =>
-      current.filter((thread) => thread.id !== threadID),
-    );
-    setWorkspaceThreadsByWorkspaceID((current) => {
-      let changed = false;
-      const next: Record<string, Thread[]> = {};
-      for (const [workspaceID, workspaceThreads] of Object.entries(current)) {
-        const filtered = workspaceThreads.filter((thread) => thread.id !== threadID);
-        if (filtered.length !== workspaceThreads.length) {
-          changed = true;
-        }
-        next[workspaceID] = filtered;
-      }
-      return changed ? next : current;
-    });
-  }
-
-  function syncSidebarServerEvent(event: ServerEvent): void {
-    if (
-      event.kind !== "notification" ||
-      !SIDEBAR_THREAD_LIFECYCLE_METHODS.has(event.message.method)
-    ) {
-      return;
-    }
-    const params = event.message.params;
-    const record = isRecord(params) ? params : undefined;
-    const incomingThread = threadFromRecord(recordValue(record, "thread"));
-    if (incomingThread) {
-      updateCachedSidebarThread(incomingThread);
-      return;
-    }
-    const threadID = typeof record?.thread_id === "string" ? record.thread_id : undefined;
-    if (!threadID) {
-      return;
-    }
-    const applyEvent = (current: Thread[]): Thread[] => {
-      if (!current.some((thread) => thread.id === threadID)) {
-        return current;
-      }
-      const next = reduceNotification(
-        {
-          ...initialState,
-          activeContext: { kind: "no_project", cwd: event.workdir },
-          threads: current,
-        },
-        event.message,
-      ).threads;
-      return next === current ? current : next;
-    };
-    setCachedScratchThreads(applyEvent);
-    setWorkspaceThreadsByWorkspaceID((current) => {
-      let changed = false;
-      const next: Record<string, Thread[]> = {};
-      for (const [workspaceID, workspaceThreads] of Object.entries(current)) {
-        const synced = applyEvent(workspaceThreads);
-        changed ||= synced !== workspaceThreads;
-        next[workspaceID] = synced;
-      }
-      return changed ? next : current;
-    });
-  }
 
   function toggleSidebarSectionCollapsed(sectionID: string): void {
     // The pinned section is a pure manual sidebar section:

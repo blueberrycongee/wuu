@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
@@ -8,7 +10,7 @@ afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.unstubAllG
 async function mount(api: object, onAuthenticated = vi.fn().mockResolvedValue(undefined)) {
   vi.stubGlobal("wuu", api);
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root!.render(<GrokLogin onAuthenticated={onAuthenticated} />));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<GrokLogin onAuthenticated={onAuthenticated} />}</SettingsControlsProvider>));
   return onAuthenticated;
 }
 it("starts only the fixed local login on explicit click and refreshes after success", async () => {
@@ -62,7 +64,7 @@ it("releases parent busy state when successful refresh removes the login action"
     return <><button data-testid="back" disabled={busy}>Back</button>{visible ? <GrokLogin onBusyChange={setBusy} onAuthenticated={async () => { setVisible(false); await refreshing; }} /> : null}</>;
   }
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root!.render(<Parent />));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<Parent />}</SettingsControlsProvider>));
   await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="grok-login-start"]')!.click());
   expect(container.querySelector('[data-testid="grok-login-start"]')).toBeNull();
   expect(container.querySelector<HTMLButtonElement>('[data-testid="back"]')!.disabled).toBe(false);
@@ -83,7 +85,7 @@ it("checks existing local authentication without launching a browser login and k
   const reuse = vi.fn().mockRejectedValueOnce(new Error("missing local session")).mockResolvedValue(undefined);
   vi.stubGlobal("wuu", { authenticateEngine: authenticate, cancelEngineAuth: vi.fn() });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root!.render(<GrokLogin onAuthenticated={vi.fn()} onReuseLocal={reuse} />));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<GrokLogin onAuthenticated={vi.fn()} onReuseLocal={reuse} />}</SettingsControlsProvider>));
   const local = container.querySelector<HTMLButtonElement>('[data-testid="grok-login-local"]');
   expect(local).not.toBeNull();
   await act(async () => local!.click());

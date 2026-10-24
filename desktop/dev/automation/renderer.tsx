@@ -1,9 +1,10 @@
+import { createFixtureApplication, fixtureSlots } from "../preview-services";
 import * as React from "react";
 import { SettingsRow } from "../../src/renderer/SettingsRow";
 import { SelectMenu } from "../../src/renderer/SelectMenu";
 import { createRoot } from "react-dom/client";
 import { PluginHost, type PluginGenerationApi } from "../../src/renderer/plugins/PluginHost";
-import { DesktopWorkbench, PluginViewContent, WorkbenchController } from "../../src/renderer/plugins/Workbench";
+import { DesktopWorkbench, PluginViewContent, WorkbenchController, visibleWorkbenchView } from "../../src/renderer/plugins/Workbench";
 import { AppBackground } from "../../src/renderer/background/AppBackground";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
 import { startFocusModality } from "../../src/renderer/FocusModality";
@@ -81,17 +82,38 @@ const noop = () => {};
 function Titlebar() {
   const [rightPanelOpen, setRightPanelOpen] = React.useState(false);
   const pluginPageVisible = usePrimaryPluginViewCover(controller);
+  const [title, setTitle] = React.useState("检查自动化插件的执行与恢复流程");
+  const workbench = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  const application = React.useMemo(() => {
+    const base = createFixtureApplication();
+    const snapshot = base.getSnapshot();
+    const active = visibleWorkbenchView(workbench, "primary");
+    const view = active?.view;
+    const preview = createFixtureApplication({
+      tabs: {...snapshot.tabs, activeTabId:"draft:automation",items:[{id:"draft:automation",kind:"draft",title,workspaceRoot:workspace.root,project:false,draftText:"",hasAttachments:false}]},
+      conversationWorkspace: {...snapshot.conversationWorkspace,primaryThreadId:undefined,threads:[]},
+      navigationWorkspace: {...snapshot.navigationWorkspace, activeContextKind:"project",selectedWorkspaceId:workspace.id,
+        activePluginView:view ? {id:view.id,pluginId:view.pluginId,title:active.definition.title,webPage:workbench.webPageViewIds.includes(view.id),closable:!host.getNavigationEntries().some(entry => entry.pluginId === view.pluginId && entry.view === view.viewTypeId) || workbench.views.filter(item => item.region === "primary" && item.pluginId === view.pluginId && item.viewTypeId === view.viewTypeId).length > 1} : undefined},
+    });
+    return {...preview, invoke: ((action, input, options) => {
+      if (action === "navigation.show-native") { controller.deactivateRegion("primary"); return Promise.resolve(); }
+      if (action === "navigation.close-plugin") return controller.closeView((input as {viewId:string}).viewId);
+      if (action === "draft.rename") { setTitle((input as {title:string}).title); return Promise.resolve(); }
+      if (action === "workspace.start-draft") return Promise.resolve();
+      return preview.invoke(action, input, options);
+    }) as typeof preview.invoke};
+  }, [workbench, title]);
   const state = { ...initialState, activeContext: { kind: "project" as const, project_id: "wuu", cwd: workspace.root } };
   return <header className="titlebar">
-    <div className="title-block"><ConversationTitleContent state={state} activeTitle="检查自动化插件的执行与恢复流程" onStartNewThread={noop} pluginHost={host} workbenchController={controller} /></div>
-    <ConversationTitleActions state={state} pluginPageVisible={pluginPageVisible}
+    <div className="title-block"><ConversationTitleContent application={application} slots={fixtureSlots} slotOwner="preview-fixture" /></div>
+    <ConversationTitleActions thread={state.activePane === "secondary" ? state.secondaryThread : state.thread} pluginPageVisible={pluginPageVisible}
       environmentToggleRef={React.createRef()} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
       rightPanelOpen={rightPanelOpen} onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)} />
   </header>;
 }
 function Sidebar() {
   return <AppSidebar
-    state={initialState} sidebarWorkspaces={[]} pinnedThreads={[]}
+    initialized activeSessionTabID={initialState.activeSessionTabID} lastViewedTurnByThreadID={{}} sidebarWorkspaces={[]} pinnedThreads={[]}
     collapsedSidebarSectionIDs={new Set()} collapsedFolderIDs={new Set()} setCollapsedFolderIDs={noop}
     expandedSidebarSectionIDs={new Set()} workspaceThreadsByWorkspaceID={{}}
     workspaceMenuOpen={false} workspaceMenuRef={React.createRef()} searchOpen={false} sectionOrder={[]}

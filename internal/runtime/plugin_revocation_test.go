@@ -185,8 +185,8 @@ func (c *cleanupGenerationClient) InvokeService(context.Context, pluginhost.Serv
 	return json.RawMessage(`{}`), nil
 }
 func (c *cleanupGenerationClient) Close(ctx context.Context) error {
-	if len(c.host.Statuses()) != 0 {
-		return errors.New("contributions still registered during cleanup")
+	if _, err := c.host.CallService(context.Background(), c.id, "cleanup.state", "save", json.RawMessage(`{}`)); err == nil {
+		return errors.New("ordinary admission remained open during cleanup")
 	}
 	_, err := c.registry.Call(ctx, c.id, pluginhost.ServiceCallParams{Service: "cleanup.state", Method: "save"})
 	if err != nil {

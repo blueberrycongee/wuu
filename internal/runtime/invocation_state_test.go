@@ -999,13 +999,15 @@ func TestStateConcurrentReleaseReportsFinalClose(t *testing.T) {
 }
 
 func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) {
-	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
 	original, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer original.Close()
-	parentCtx, parent := providers.NewModelReceiptScope(context.Background())
+	admittedCtx, cancelAdmission := context.WithCancel(WithInvocationState(context.Background(), original))
+	defer cancelAdmission()
+	parentCtx, parent := providers.NewModelReceiptScope(admittedCtx)
 	parent.Seal()
 	ctx, complete, err := original.BeginModelReceipts(parentCtx)
 	if err != nil {
@@ -1014,14 +1016,41 @@ func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) 
 	if providers.ModelReceiptScopeFromContext(ctx) == parent {
 		t.Fatal("independent captured-state work inherited its expired parent scope")
 	}
+	cancelAdmission()
+	original.Generation.modelMu.Lock()
+	var completionContext context.Context
+	for owner := range original.Generation.modelOwners {
+		completionContext = owner.completionCtx
+	}
+	original.Generation.modelMu.Unlock()
+	if completionContext == nil || completionContext.Err() != nil {
+		t.Fatal("caller cancellation revoked receipt completion")
+	}
+	retained, err := RetainInvocationState(completionContext)
+	if err != nil {
+		t.Fatalf("receipt completion lost admitted invocation authority: %v", err)
+	}
+	if err := retained.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := original.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := original.Documents.Read(ctx, persistence.Query{Namespace: "receipt-test"}); err != nil {
+	retained, err = RetainInvocationState(completionContext)
+	if err != nil {
+		t.Fatalf("receipt owner depended on the caller's released capture: %v", err)
+	}
+	if err := retained.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := original.Documents.Read(completionContext, persistence.Query{Namespace: "receipt-test"}); err != nil {
 		t.Fatalf("receipt owner did not retain its captured authority: %v", err)
 	}
 	if err := complete(); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := RetainInvocationState(completionContext); err == nil {
+		t.Fatal("finished receipt context admitted new state work")
 	}
 	if _, err := original.Documents.Read(context.Background(), persistence.Query{Namespace: "receipt-test"}); err == nil {
 		t.Fatal("completed receipt owner retained its authority")
@@ -1039,8 +1068,117 @@ func TestStateModelReceiptsRetainAuthorityAndReplaceExpiredParent(t *testing.T) 
 	}
 }
 
+type settlementAdmissionJournal struct {
+	providers.InferenceJournal
+	writes int
+	final  bool
+}
+
+func (j *settlementAdmissionJournal) UpsertSubmission(ctx context.Context, record providers.InferenceSubmissionJournalRecord) error {
+	if j.final {
+		_, end, err := providers.BeginModelReceipt(ctx)
+		if err != nil {
+			return err
+		}
+		defer end(nil)
+		held, err := RetainInvocationState(ctx)
+		if err != nil {
+			return err
+		}
+		defer held.Close()
+	}
+	j.writes++
+	return j.InferenceJournal.UpsertSubmission(ctx, record)
+}
+
+func TestReceiptSettlementCheckpointsWithLiveAdmission(t *testing.T) {
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
+	state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx, complete, err := state.BeginModelReceipts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := &settlementAdmissionJournal{InferenceJournal: shutdownCheckpointJournal{state.InferenceJournalRuntime.ForOwner("settlement")}}
+	request, err := providers.EnsureInferenceAttemptContext(providers.WithInferenceJournal(ctx, journal), providers.ChatRequest{Model: "fixture", Messages: []providers.ChatMessage{{Role: "user", Content: "fixture"}}}, providers.InferenceOperationAgentRound, providers.InferenceProfileInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Transport: "http", Mode: "stream"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	submission.CompleteFailure(providers.NormalizedFailure{Category: providers.FailureCanceled})
+	if err := request.Attempt.Complete(providers.InferenceOutcomeCanceled, providers.NormalizedFailure{Category: providers.FailureCanceled}); err != nil {
+		t.Fatal(err)
+	}
+	if err := request.Execution.Complete(providers.InferenceOutcomeCanceled, providers.NormalizedFailure{Category: providers.FailureCanceled}); err != nil {
+		t.Fatal(err)
+	}
+	before := journal.writes
+	journal.final = true
+	if err := complete(); err != nil {
+		t.Fatalf("final settlement failed: %v", err)
+	}
+	if journal.writes != before+1 {
+		t.Fatalf("final submission checkpoint writes = %d, want %d", journal.writes, before+1)
+	}
+}
+
+// ProcessClient admits external requests through BeginModelReceipt.
+func TestReceiptSettlementRetainsAuthorityUntilExternalRequestDrains(t *testing.T) {
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
+	state, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx, complete, err := state.BeginModelReceipts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var owner *modelInvocationOwner
+	state.Generation.modelMu.Lock()
+	for candidate := range state.Generation.modelOwners {
+		owner = candidate
+	}
+	state.Generation.modelMu.Unlock()
+	owner.receipts.Seal()
+	if _, _, err := providers.BeginModelReceipt(ctx); !errors.Is(err, providers.ErrModelReceiptScopeClosed) {
+		t.Fatalf("sealed turn admitted work: %v", err)
+	}
+	settlementCtx, end, err := providers.BeginModelReceipt(owner.completionCtx)
+	if err != nil {
+		t.Fatalf("external settlement rejected before dispatch: %v", err)
+	}
+	defer end(nil)
+	owner.abort(context.DeadlineExceeded)
+	if err := complete(); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("settlement timeout lost: %v", err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	held, err := RetainInvocationState(settlementCtx)
+	if err != nil {
+		t.Fatalf("pending settlement lost generation authority: %v", err)
+	}
+	_ = held.Close()
+	end(nil)
+	state.Generation.modelInvocations.Wait()
+	if _, err := RetainInvocationState(settlementCtx); err == nil {
+		t.Fatal("completed settlement retained generation authority")
+	}
+	if _, _, err := providers.BeginModelReceipt(owner.completionCtx); !errors.Is(err, providers.ErrModelReceiptScopeClosed) {
+		t.Fatalf("completed settlement admitted work: %v", err)
+	}
+}
+
 func TestInvocationStateRetainsOriginalAuthority(t *testing.T) {
-	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "wuu.session.default"}
 	original, err := OpenState(context.Background(), StateOptions{RootDir: t.TempDir(), HomeDir: t.TempDir(), Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
 	if err != nil {
 		t.Fatal(err)
@@ -1172,7 +1310,7 @@ func TestKernelInvocationReleasesStateAfterCallbackUnlock(t *testing.T) {
 
 func TestOpenStateBindsNativeInvocationState(t *testing.T) {
 	var retain func() (*State, error)
-	modules := []string{sessionStateConsumer, persistence.JSONLModule, "example.consumer"}
+	modules := []string{sessionStateConsumer, persistence.JSONLModule, "example.consumer", "wuu.session.default"}
 	state, err := OpenState(context.Background(), StateOptions{
 		RootDir: t.TempDir(), HomeDir: t.TempDir(),
 		Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}},

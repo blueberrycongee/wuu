@@ -497,6 +497,7 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   readonly react: HostReact;
   /** Host-owned primitives that inherit the active Wuu theme and spacing rhythm. */
   readonly ui: PluginUIKit;
+  /** Installation identity used for authenticated host calls; UI slots use manifestId. */
   readonly pluginId: string;
   readonly generation: string;
   /** Aborted when staging fails, is superseded, or this generation is disposed. */
@@ -2707,3 +2708,38 @@ export * from "./model.js";
 
 export * from "./providers.js";
 export * from "./coordination.js";
+
+export * from "./tool-service.js";
+
+export * from "./session-service.js";
+
+export * from "./ui-composer.js";
+export * from "./prompt-service.js";
+export * from "./compaction-service.js";
+export * from "./application-settings.js";
+export * from "./ui-preview.js";
+
+export * from "./title-service.js";
+export * from "./ui-settings-controls.js";
+export * from "./ui-navigation.js";
+export * from "./ui-conversation-actions.js";
+export * from "./ui-preview-content.js";
+export * from "./ui-catalog.js";
+export * from "./ui-conversation.js";
+export * from "./ui-composer-runtime.js";
+export * from "./ui-environment.js";
+export * from "./ui-submission.js";
+export * from "./ui-search.js";
+export * from "./ui-terminals.js";
+export * from "./ui-browser.js";
+export * from "./ui-desktop.js";
+export * from "./ui-projects.js";
+export * from "./ui-file-selection.js";
+export * from "./ui-side-conversation.js";
+export * from "./ui-onboarding.js";
+
+export * from "./ui-web-workspace.js";
+
+export * from "./ui-artifacts.js";
+
+export * from "./ui-composer-presentation.js";

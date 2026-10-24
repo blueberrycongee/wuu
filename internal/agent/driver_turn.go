@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
@@ -27,6 +28,7 @@ type streamTurnGateway struct {
 	historyRewritten        bool
 	onEvent                 StreamCallback
 	client                  providers.StreamClient
+	policy                  *compactionservice.Policy
 	ready                   bool
 	closed                  bool
 	complete                bool
@@ -95,6 +97,13 @@ func (g *streamTurnGateway) prepare(ctx context.Context) error {
 	if g.ready {
 		return nil
 	}
+	if g.runner.SelectedCompaction != nil {
+		policy, err := g.runner.SelectedCompaction.Describe(ctx, g.runner.compactionDescription())
+		if err != nil {
+			return err
+		}
+		g.policy = &policy
+	}
 	recovered, err := g.runner.pendingToolResultMessages(ctx, g.input.Messages)
 	if err != nil {
 		return fmt.Errorf("recover pending tool results: %w", err)
@@ -127,9 +136,13 @@ func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest
 	if model == "" {
 		model = r.Model
 	}
+	definitions, err := toolDefinitions(ctx, r.Tools)
+	if err != nil {
+		return providers.ChatRequest{}, err
+	}
 	return providers.ChatRequest{
 		Provider: r.ProviderName, Model: model,
-		Messages: providers.CloneChatMessages(g.activeHistory), Tools: toolDefinitions(r.Tools),
+		Messages: providers.CloneChatMessages(g.activeHistory), Tools: definitions,
 		Temperature: r.Temperature, Effort: r.Effort,
 		ProviderOptions:             providers.CloneRequestObject(r.ProviderOptions),
 		MediaInput:                  providers.ResolveMediaInput(g.client, r.MediaInput, r.ProviderOptions),

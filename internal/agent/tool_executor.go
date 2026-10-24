@@ -13,11 +13,19 @@ type ToolExecutor interface {
 	Execute(ctx context.Context, call providers.ToolCall) (string, error)
 }
 
-func toolDefinitions(executor ToolExecutor) []providers.ToolDefinition {
+// ContextualToolDefinitions preserves selected registry failures before model I/O.
+type ContextualToolDefinitions interface {
+	DefinitionsContext(context.Context) ([]providers.ToolDefinition, error)
+}
+
+func toolDefinitions(ctx context.Context, executor ToolExecutor) ([]providers.ToolDefinition, error) {
 	if executor == nil {
-		return nil
+		return nil, nil
 	}
-	return executor.Definitions()
+	if contextual, ok := executor.(ContextualToolDefinitions); ok {
+		return contextual.DefinitionsContext(ctx)
+	}
+	return executor.Definitions(), nil
 }
 
 type RichToolExecutor interface {

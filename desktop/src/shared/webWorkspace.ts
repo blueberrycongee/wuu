@@ -82,6 +82,7 @@ export type WebWorkspaceApi = {
   capture: (id: string) => Promise<string | null>;
   showTooltip: (token: string, hint: WebWorkspaceTooltip | null) => Promise<void>;
   /** Native popup keeps the live page composited; null means dismissed. */
+  dismissOptions: (id: string) => Promise<void>;
   showOptions: (id: string, request: WebWorkspaceMenuRequest) => Promise<WebWorkspaceMenuAction | null>;
   /** CSS-pixel geometry; occluded retains capture geometry, while null hides the destination. */
   reportBounds: (id: string, bounds: WebWorkspaceBounds | null) => Promise<void>;

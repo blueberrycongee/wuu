@@ -1,17 +1,20 @@
+import type { SidebarNavigationService } from "./AppSidebar";
+import { useMemo } from "react";
 import { useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { PhoneNavigationContext } from './PhoneNavigationContext';
 import { SidebarAccountPanel, SidebarAccountTrigger } from "./SidebarAccountParts";
-import { chromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
-import type { ChromeAccountAction, ChromeAccountPanel, ChromeAccountTrigger, ChromeOverlayRect } from "../shared/chromeOverlay";
+import { useChromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
+import type { ApplicationDesktopChromeAccountActionV1 as ChromeAccountAction, ApplicationDesktopChromeAccountPanelV1 as ChromeAccountPanel, ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect } from "../../../packages/plugin-sdk/src/ui-desktop";
 import type { AccountView } from "./AccountPanel";
-import { hostSupports } from "./HostCapabilities";
+import { useDesktopControls } from "./DesktopControlsContext";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
 import { useRetainHoverOwner } from "./HoverReveal";
 import { useI18n } from "./i18n";
 import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
 import "./SidebarAccountMenu.css";
 
-export function SidebarAccountMenu({ disabled, localOnly = false, matchTriggerWidth = true, onOpenSettings, onOpenAccount }: {
+export function SidebarAccountMenu({ navigation, disabled, localOnly = false, matchTriggerWidth = true, onOpenSettings, onOpenAccount }: {
+  navigation?: SidebarNavigationService;
   disabled: boolean;
   localOnly?: boolean;
   matchTriggerWidth?: boolean;
@@ -19,11 +22,12 @@ export function SidebarAccountMenu({ disabled, localOnly = false, matchTriggerWi
   onOpenSettings: (page: "providers" | "usage") => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const desktop = useDesktopControls();
   const phoneNavigation = useContext(PhoneNavigationContext);
   const nativeRibbon = useContext(NativeRibbonFooterContext);
   const [nativeAnchor, setNativeAnchor] = useState<ChromeOverlayRect | null>(null);
   const [nativeBounds, setNativeBounds] = useState<ChromeOverlayRect | null>(null);
-  const useNative = Boolean(chromeOverlayApi());
+  const useNative = Boolean(useChromeOverlayApi());
   const id = useId();
   const anchor = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
@@ -35,8 +39,9 @@ export function SidebarAccountMenu({ disabled, localOnly = false, matchTriggerWi
   const [error, setError] = useState("");
   const [notice, setNotice] = useState(false);
   const accountEnabled = ENABLE_ACCOUNT && !localOnly;
-  const driver = accountEnabled && hostSupports("remoteAccount") && hostSupports("getRemoteControlSnapshot")
-    ? window.wuu?.remoteAccount : undefined;
+  const driver = useMemo(() => navigation
+    ? (accountEnabled && navigation.view.accountAvailable ? async (action: "status" | "logout") => navigation.invoke(action === "status" ? "navigation.account-status" : "navigation.account-logout", {}) : undefined)
+    : (accountEnabled ? desktop.account : undefined), [accountEnabled, desktop.account, navigation?.view.accountAvailable, navigation?.invoke]);
 
   useEffect(() => {
     if (!driver || disabled) return;

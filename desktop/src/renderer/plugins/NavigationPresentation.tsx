@@ -14,6 +14,7 @@ export interface NavigationSourceNode extends NavigationNodeV1 {
 }
 
 export interface NavigationPresentationProps {
+  readonly publicSurface?: boolean;
   readonly nodes: readonly NavigationSourceNode[];
   readonly fallback: ReactNode;
   readonly onPointerEnter?: PointerEventHandler<HTMLElement>;
@@ -103,6 +104,7 @@ export function createNavigationModel(
 }
 
 export function NavigationPresentation({
+  publicSurface = false,
   nodes,
   fallback,
   onPointerEnter,
@@ -123,7 +125,7 @@ export function NavigationPresentation({
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
     >
-      <PluginPresentation
+      {publicSurface ? fallback : <PluginPresentation
         host={desktopPluginHost}
         controller={desktopWorkbenchController}
         target="navigation.primary"
@@ -131,7 +133,7 @@ export function NavigationPresentation({
         fallback={fallback}
         actions={model.actions}
         dispatchAction={dispatchAction}
-      />
+      />}
     </aside>
   );
 }

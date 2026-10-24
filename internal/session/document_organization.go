@@ -10,7 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (s *Store) ListOrganization() (SessionOrganization, error) {
+func (s *documentStore) ListOrganization() (SessionOrganization, error) {
 	var folders []OrganizationGroup
 	err := s.transaction(func(tx *persistence.Tx) error {
 		var err error
@@ -30,7 +30,7 @@ func (s *Store) ListOrganization() (SessionOrganization, error) {
 	return SessionOrganization{Folders: folders}, err
 }
 
-func (s *Store) CreateFolder(name string) (OrganizationGroup, error) {
+func (s *documentStore) CreateFolder(name string) (OrganizationGroup, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return OrganizationGroup{}, errors.New("group name is required")
@@ -53,7 +53,7 @@ func (s *Store) CreateFolder(name string) (OrganizationGroup, error) {
 	return group, err
 }
 
-func (s *Store) RenameFolder(id, name string) (OrganizationGroup, error) {
+func (s *documentStore) RenameFolder(id, name string) (OrganizationGroup, error) {
 	id, name = strings.TrimSpace(id), strings.TrimSpace(name)
 	if id == "" || name == "" {
 		return OrganizationGroup{}, errors.New("group id and name are required")
@@ -74,7 +74,7 @@ func (s *Store) RenameFolder(id, name string) (OrganizationGroup, error) {
 	return group, err
 }
 
-func (s *Store) DeleteFolder(id string) error {
+func (s *documentStore) DeleteFolder(id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return errors.New("group id is required")
@@ -99,7 +99,7 @@ func (s *Store) DeleteFolder(id string) error {
 	})
 }
 
-func (s *Store) ReorderFolders(ids []string) error {
+func (s *documentStore) ReorderFolders(ids []string) error {
 	now := time.Now().UTC()
 	return s.transaction(func(tx *persistence.Tx) error {
 		rows, err := readDocumentRows[OrganizationGroup](tx, "session_folders", "")
@@ -133,11 +133,11 @@ func (s *Store) ReorderFolders(ids []string) error {
 	})
 }
 
-func (s *Store) UpdateOrganization(id string, folderID *string) (Session, error) {
+func (s *documentStore) UpdateOrganization(id string, folderID *string) (Session, error) {
 	return s.updateSessionOrganization(id, folderID, nil)
 }
 
-func (s *Store) updateSessionOrganization(id string, folderID *string, pinned *bool) (Session, error) {
+func (s *documentStore) updateSessionOrganization(id string, folderID *string, pinned *bool) (Session, error) {
 	id = strings.TrimSpace(id)
 	var result Session
 	now := time.Now().UTC()

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -11,6 +12,11 @@ import (
 )
 
 const defaultShellModule = "wuu.default-shell"
+const defaultSettingsModule = "wuu.default-settings"
+const defaultNavigationModule = "wuu.default-navigation"
+const defaultConversationModule = "wuu.default-conversation"
+const defaultPreviewModule = "wuu.default-preview"
+const defaultComposerModule = "wuu.default-composer"
 
 // ApplicationShellBinding identifies the renderer contribution selected by the
 // same service registry as native and process implementations. Nil disables it.
@@ -34,7 +40,22 @@ func applicationShellDescriptor() pluginhost.ServiceDescriptor {
 func nativeRendererModules() []RendererModule {
 	return []RendererModule{{ID: defaultShellModule, SubjectID: defaultShellModule,
 		Fingerprint: "ui-shell-v1:" + version.Info().Version + ":" + version.Info().Commit,
-		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}}}
+		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}},
+		{ID: defaultSettingsModule, SubjectID: defaultSettingsModule,
+			Fingerprint: "ui-settings-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-settings", Services: []pluginhost.ServiceDescriptor{{Name: "ui.settings", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.settings.describe.input.v1", OutputSchema: "ui.settings.describe.output.v1"}}}}},
+		{ID: defaultNavigationModule, SubjectID: defaultNavigationModule,
+			Fingerprint: "ui-navigation-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-navigation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.navigation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.navigation.describe.input.v1", OutputSchema: "ui.navigation.describe.output.v1"}}}}},
+		{ID: defaultConversationModule, SubjectID: defaultConversationModule,
+			Fingerprint: "ui-conversation-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-conversation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.conversation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.conversation.describe.input.v1", OutputSchema: "ui.conversation.describe.output.v1"}}}}},
+		{ID: defaultComposerModule, SubjectID: defaultComposerModule,
+			Fingerprint: "ui-composer-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-composer", Services: []pluginhost.ServiceDescriptor{{Name: "ui.composer", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.composer.describe.input.v1", OutputSchema: "ui.composer.describe.output.v1"}}}}},
+		{ID: defaultPreviewModule, SubjectID: defaultPreviewModule,
+			Fingerprint: "ui-preview-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-preview", Services: []pluginhost.ServiceDescriptor{{Name: "ui.preview", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.preview.describe.input.v1", OutputSchema: "ui.preview.describe.output.v1"}}}}}}
 }
 
 // rendererServiceClient adds a renderer transport to a package's graph node.
@@ -86,7 +107,14 @@ func (r *rendererServiceClient) Close(context.Context) error {
 	return nil
 }
 func (r *rendererServiceClient) InvokeService(_ context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
-	if params.Service != "ui.shell" || params.Method != "describe" {
+	declared := false
+	for _, service := range r.module.Services {
+		if service.Name == params.Service {
+			declared = true
+			break
+		}
+	}
+	if !declared || params.Method != "describe" {
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "renderer service method is unavailable"}
 	}
 	return json.Marshal(ApplicationShellBinding{PluginID: r.module.SubjectID, Generation: r.module.Fingerprint, ProviderID: params.Service})
@@ -117,26 +145,26 @@ func (s *Session) NativeRendererModules() []RendererModule {
 }
 
 func (s *Session) ApplicationShellBinding() *ApplicationShellBinding {
+	shell, _ := s.ApplicationBindings()
+	return shell
+}
+
+// ApplicationBindings captures shell and independently selected surfaces from
+// one generation. Discoverable packages never override the committed graph.
+func (s *Session) ApplicationBindings() (*ApplicationShellBinding, map[string]ApplicationShellBinding) {
+	surfaces := make(map[string]ApplicationShellBinding)
 	if s == nil {
-		return nil
+		return nil, surfaces
 	}
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
 	if s.PluginHost == nil || s.PluginHost.ServiceRegistry() == nil {
-		return nil
+		return nil, surfaces
 	}
-	provider, exists := s.PluginHost.ServiceRegistry().ProviderPluginID("ui.shell", 1)
-	if !exists {
-		return nil
-	}
-	active := false
+	registry := s.PluginHost.ServiceRegistry()
+	active := make(map[string]bool)
 	for _, status := range s.PluginHost.Statuses() {
-		if status.ID == provider && status.State == pluginhost.StateActive {
-			active = true
-		}
-	}
-	if !active {
-		return nil
+		active[status.ID] = status.State == pluginhost.StateActive
 	}
 	modules := nativeRendererModules()
 	for _, item := range s.ActivePlugins {
@@ -144,10 +172,26 @@ func (s *Session) ApplicationShellBinding() *ApplicationShellBinding {
 			modules = append(modules, rendererModule(item))
 		}
 	}
+	var shell *ApplicationShellBinding
 	for _, module := range modules {
-		if module.ID == provider {
-			return &ApplicationShellBinding{PluginID: module.SubjectID, Generation: module.Fingerprint, ProviderID: "ui.shell"}
+		if !active[module.ID] {
+			continue
+		}
+		for _, service := range module.Services {
+			if !strings.HasPrefix(service.Name, "ui.") {
+				continue
+			}
+			provider, exists := registry.ProviderPluginID(service.Name, 1)
+			if !exists || provider != module.ID {
+				continue
+			}
+			binding := ApplicationShellBinding{PluginID: module.SubjectID, Generation: module.Fingerprint, ProviderID: service.Name}
+			if service.Name == "ui.shell" {
+				shell = &binding
+			} else {
+				surfaces[service.Name] = binding
+			}
 		}
 	}
-	return nil
+	return shell, surfaces
 }

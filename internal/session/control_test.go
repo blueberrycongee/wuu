@@ -6,7 +6,7 @@ import (
 )
 
 func TestControlFencesTakeoverAndDoesNotTransferOwnership(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("existing", "/project"); err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func TestControlFencesTakeoverAndDoesNotTransferOwnership(t *testing.T) {
 }
 
 func TestControlledInputIsNotPersistedAfterTakeover(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("session", "/project"); err != nil {
 			t.Fatal(err)
 		}

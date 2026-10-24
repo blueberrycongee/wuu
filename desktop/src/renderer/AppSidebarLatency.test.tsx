@@ -54,7 +54,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -200,7 +200,7 @@ describe("sidebar click latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 

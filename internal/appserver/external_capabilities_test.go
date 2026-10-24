@@ -115,7 +115,7 @@ func newExternalReceiptFixture(t *testing.T, event hooks.Event, fail bool) (*run
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 	store := filepath.Join(root, "documents")
 	provider := &externalReceiptDocuments{Service: persistence.NewService("test.external-documents", store, "jsonl"), fail: fail, closed: make(chan struct{}), logicalDone: make(chan struct{})}
-	modules := []string{"wuu.session-state", provider.ID(), runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule, runtime.DataQueryModule}
+	modules := []string{"wuu.session-state", provider.ID(), runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, runtime.ArtifactModule, runtime.DataQueryModule, "wuu.session.default"}
 	binding, err := runtime.OpenState(context.Background(), runtime.StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}, NativeProviders: []runtime.NativeProviderFactory{{ID: provider.ID(), Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}}})
 	if err != nil {
 		t.Fatal(err)

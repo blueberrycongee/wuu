@@ -1,9 +1,12 @@
-import type { ThreadItem } from "../../shared/protocol";
+import type { ApplicationConversationThreadV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
+import { streamTextKey, streamTextStore } from "../StreamText";
+import type { Thread, ThreadItem, Turn } from "../../shared/protocol";
 import type {
   AttachmentDescriptorV1, ConversationItemSnapshotV1, ConversationProcessItemV1,
   ConversationProcessKindV1, ConversationProcessSnapshotV1, ConversationProcessStatusV1,
 } from "../../shared/workbench";
 import { toolDisplayLabel } from "../ToolActivityHelpers";
+import { createImmutableSnapshotProjector } from "./ImmutableSnapshot";
 type ConversationItemKindV1 = ConversationItemSnapshotV1["kind"];
 
 export function toConversationItemSnapshot(
@@ -123,4 +126,40 @@ function processKind(items: readonly ConversationProcessItemV1[]): ConversationP
   const hasTools = items.some((item) => item.kind === "tool-activity");
   if (hasReasoning && hasTools) return "mixed";
   return hasReasoning ? "reasoning" : "tool-group";
+}
+
+/** Cache display copies while their source and live field values remain unchanged. */
+export function createConversationThreadProjector() {
+  // Protocol records are immutable JSON values in the host store. Detach their
+  // containers, but retain immutable strings and unchanged subtrees: serializing
+  // a whole history also duplicates large tool results and inline attachments.
+  const immutable = createImmutableSnapshotProjector();
+  const items = new WeakMap<ThreadItem, { values: (string | undefined)[]; view: ThreadItem }>();
+  const turns = new WeakMap<Turn, Turn>();
+  const threads = new WeakMap<Thread, ApplicationConversationThreadV1>();
+  return (thread: Thread): ApplicationConversationThreadV1 => {
+    const projectedTurns = thread.turns.map(turn => {
+      const projectedItems = turn.items.map(item => {
+        const values = (["text", "arguments", "result"] as const).map(field => {
+          const key = streamTextKey(turn.id, item.id, field);
+          return streamTextStore.has(key) ? streamTextStore.get(key) : item[field];
+        });
+        const previous = items.get(item);
+        if (previous && values.every((value, index) => value === previous.values[index])) return previous.view;
+        const view = Object.freeze({ ...immutable(item), text: values[0], arguments: values[1], result: values[2] });
+        items.set(item, { values, view });
+        return view;
+      });
+      const previous = turns.get(turn);
+      if (previous && projectedItems.every((item, index) => item === previous.items[index])) return previous;
+      const view = Object.freeze({ ...immutable(turn), items: Object.freeze(projectedItems) }) as Turn;
+      turns.set(turn, view);
+      return view;
+    });
+    const previous = threads.get(thread);
+    if (previous && projectedTurns.every((turn, index) => turn === previous.turns[index])) return previous;
+    const view = Object.freeze({ ...immutable(thread), turns: Object.freeze(projectedTurns) });
+    threads.set(thread, view);
+    return view;
+  };
 }

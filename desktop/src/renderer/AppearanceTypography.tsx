@@ -1,14 +1,15 @@
+import { useSettingsControls } from "./SettingsControlsContext";
+import type { SettingsAppearanceV1 as AppearancePreferences } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { useEffect, useState } from "react";
 import { useI18n } from "./i18n";
-import { appearanceDefaults, observeAppearance, readAppearance, saveAppearance, type AppearancePreferences } from "./AppearancePreferences";
 import { MessageFlowFontSizeControl } from "./MessageFlowFontSizeSection";
 import { SelectMenu } from "./SelectMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
-import { isMonospaceFont, listLocalFonts } from "./LocalFonts";
-import { desktopPlatform } from "./platform";
 
 export function AppearanceTypography({ section = "text" }: { section?: "text" | "motion" }): JSX.Element {
+  const controls = useSettingsControls();
+  const { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } = controls;
   const { t } = useI18n();
   const [preferences, setPreferences] = useState(readAppearance);
   const [sizeDraft, setSizeDraft] = useState(() => String(readAppearance().codeSize));
@@ -21,9 +22,9 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     if (fontStatus === "loading" || fontStatus === "ready") return;
     setFontStatus("loading");
     try {
-      const names = await listLocalFonts();
-      setLocalFonts(names);
-      setMonoFonts(names.filter(isMonospaceFont));
+      const fonts = await controls.listLocalFonts();
+      setLocalFonts(fonts.names);
+      setMonoFonts(fonts.monospace);
       setFontStatus("ready");
     } catch { setFontStatus("error"); }
   }
@@ -102,7 +103,7 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
           onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
       </SettingsRow>
     </SettingsGroup>
-    {desktopPlatform() === "darwin" && <SettingsGroup>
+    {controls.capabilities.platform === "darwin" && <SettingsGroup>
       <SettingsRow title={t("settings.fontSmoothing")} hint={t("settings.fontSmoothingHint")}>
         <SelectMenu ariaLabel={t("settings.fontSmoothing")} value={preferences.fontSmoothing}
           onChange={(value) => update({ fontSmoothing: value as AppearancePreferences["fontSmoothing"] })}

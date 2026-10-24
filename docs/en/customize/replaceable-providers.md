@@ -1,6 +1,6 @@
 # Replaceable providers
 
-Wuu selects storage, permission policy, coordination and application-shell implementations through the same versioned service graph. Native modules and process plugins declare the same service descriptors and dependencies. Selecting a provider does not migrate its data or grant a caller another module's authority.
+Wuu selects session, tool, agent-policy, storage, permission, coordination and application-shell implementations through the same versioned service graph. Native modules and process plugins declare the same service descriptors and dependencies. Selecting a provider does not migrate its data or grant a caller another module's authority.
 
 Use [product composition](plugin-system.md#services-and-executions) to select modules and bindings, [runtime authoring](plugin-authoring.md) to implement a process plugin, and the [UI SDK](ui-sdk.md) for a renderer shell. All TypeScript names below are exported from `@wuu/plugin-sdk`; source-checkout imports are unnecessary.
 
@@ -8,6 +8,11 @@ Use [product composition](plugin-system.md#services-and-executions) to select mo
 
 | Service | Supplied implementation | Public author entry |
 | --- | --- | --- |
+| `session.domain@1` | `wuu.session.default` | `sessionDomain`, `sessionDomainProvider`, `sessionDomainDescriptor` |
+| `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
+| `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
+| `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
+| `agent.compaction@1` | `wuu.compaction.default` | `compactionService`, `COMPACTION_SERVICE_DESCRIPTOR` |
 | `state.documents@1` | `wuu.state.sqlite`, `wuu.state.jsonl` | `documentStore`, `documentStoreDescriptor`, `StateQuery` |
 | `state.credentials@1` | `wuu.credentials.os`, `wuu.credentials.file` | `credentialStore`, `CREDENTIAL_STORE_DESCRIPTOR` |
 | `state.config@1` | `wuu.config.local` | `configurationStore`, `CONFIG_SOURCE_DESCRIPTOR` |
@@ -26,6 +31,42 @@ The low-level state services are for implementations and admitted consumers. Ord
 The host retains execution admission, cancellation, lifecycle order, OS locks, permissions enforcement, managed-session creation and transport. The selected permission provider decides allow/deny; an allow decision does not disable native sandbox enforcement. Coordination providers own role policy, instructions, work transitions and scheduling. A shell owns layout and presentation while application actions remain host services. Disabling a provider stops its behavior; a failed selection does not silently activate the native implementation.
 
 Renderer consumers declare `desktop.required_services` and call `api.invokeService({ service, method, params }, options)`. The host chooses the provider from that consumer's dependency and binds plugin identity, generation and execution. Options carry workspace selection and cancellation. `invokeRuntime` remains an opaque request to the same plugin's runtime; it does not select a service implementation. Keeping a UI consumer independently selectable from its business provider lets the same UI use a replacement without starting the old provider's behavior.
+
+## Session, tool and agent policy providers
+
+`session.domain@1` replaces session-domain operations, including metadata, history, control and recovery transitions, membership admission and inference-journal resources. `state.documents@1` only replaces document storage; selecting it alone leaves the session algorithms in place. The native session provider owns those algorithms and uses the selected document store. An external session provider implements the public operations itself; the host does not run the native algorithms after a missing method or failed call.
+
+Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispatch their typed argument/value arrays. `sessionDomain(host).call(method, args)` is the bound consumer. Preserve the exported record field names, including Go-style casing where specified. Journal handles belong to the authenticated caller and provider generation. `session_outcome_unknown` requires durable inspection before replay; it is not proof that a mutation failed. OS locks and execution identity remain host mechanisms, while the provider owns atomic membership and domain decisions.
+
+`agent.tools@1` replaces the registry and execution pipeline. `list` supplies definitions, discovery catalog and tool-surface facts; `resolve` supplies availability and metadata; `execute` runs the selected implementation. `freeze`, `unfreeze`, `prepare` and `finalize` preserve per-turn surface and result behavior. Contributing a tool is a different operation: contributions enter the selected registry's policy. The native provider initializes its Toolkit only when selected; external selection must not initialize a hidden native Toolkit or merge its catalog. Use `toolService(host)` and `TOOL_SERVICE_DESCRIPTOR`, with authenticated host gateways for OS effects.
+
+`agent.prompt@1` owns complete main/worker system-prompt content and section metadata. `promptService(host).assemble(request)` supplies environment, instructions, skills, selected tool-surface facts and explicit contributions. Worker requests also carry role, isolation and identity facts in `worker`. The provider chooses wording and order; consumers must not prepend a native base, append worker policy, or replace an empty result with inherited instructions. Errors stop the request. Conversation titles use the independently selected `session.title` service below. Plugin-command side-conversation prompts remain separate from the main/worker contract; replacing `agent.prompt` alone does not replace either behavior.
+
+`agent.compaction@1` owns context policy through `describe`, `compact`, `window`, `handoff`, `note-plan`, `compact-note`, `recover` and `note-attempt`. Use `compactionService(host)` and `COMPACTION_SERVICE_DESCRIPTOR`. Carry the captured policy key when required. Note preparation, cadence, retries and complete inference messages belong to the selected policy; host code validates history, commits checkpoints, accounts usage and supplies admitted model transport. Recovery calls the same selected service, never an implicit native alternative. A handoff byte limit of zero means no policy byte cap; model and transport limits still apply. Legacy compaction capabilities are an explicit behavior of the native provider, not a second selection path for external providers.
+
+These contracts keep the Go host and public SDK. Authors implement a process plugin through the ordinary service declarations and callback-bound `RuntimeHost`; they do not need a replacement kernel, private source imports or privileged native APIs.
+
+## Conversation title policy
+
+`session.title@1` is an optional dependency of the session execution consumer. The shipped `wuu.title.default` module supplies native title policy. Omitting the service disables automatic title generation and explicit regeneration; failure of a selected provider is reported without selecting a native fallback. Title selection is independent of `agent.prompt`.
+
+Use `TITLE_SERVICE_DESCRIPTOR` to implement `plan` and `resolve`, and `titleService(host)` from `@wuu/plugin-sdk` to call the captured binding. `plan` receives `TitlePlanRequest`: model metadata, host-projected `human_messages`, current title and summary, read-only/ephemeral/parent facts, and `force`/`persist`. These facts do not grant authority. Its `TitlePlan` result chooses one action:
+
+| Action | Result and behavior |
+| --- | --- |
+| `skip` | Optional `reason`; no inference or title write. |
+| `complete` | A nonempty `title`; no model runtime is required and no native title cleanup or length policy is applied. |
+| `infer` | Complete `messages` using public `ModelMessageV1`, plus optional `temperature`; the host invokes the selected model transport. |
+
+Message fields use the public model wire (`role`, `content`, `reasoning_content`, and other declared fields), not serialized Go record names. An explicit zero temperature is preserved and overrides the configured sampling default; model capability restrictions still take precedence. After successful inference, `resolve({ text })` returns `{ title }`. The SDK helper `titleService(host).resolve(text)` returns that string. An empty resolved title skips persistence. Providers own eligibility, source selection, prompt wording, sampling policy and output cleanup; replacing the native provider replaces that business policy.
+
+The host retains authenticated inputs, duplicate-job suppression, the captured generation, model receipt accounting, atomic generated-title updates and notifications. A receipt failure prevents saving or delivering the generated title. Generated-title updates do not overwrite a title already present, including a concurrent manual rename. A successful SDK call is not evidence that automatic triggering, cancellation and retained-generation cleanup have all passed product acceptance; verify those paths separately.
+
+## Product profiles and renderer bindings
+
+Composition version 2 includes `headless` and `desktop` profiles. Both use the `wuu.base` bundle; desktop adds `wuu.desktop`, including the supplied shell and settings renderer. Explicit configuration takes precedence over inferred product defaults. Profiles apply ordered bundles, then explicit module/service choices and patches. An explicit empty module set stays empty. Including a package does not grant trust or bypass admission; dependencies still need a valid selection. See [product composition](plugin-system.md#services-and-executions) for the configuration format.
+
+A shell owns layout; a required surface has its own selected service binding. A shell's service-backed slot resolves that binding by plugin, generation and contribution identity, independently of the shell's slot namespace. Missing selected shells or required surfaces report unavailability instead of rendering a native substitute. Generic optional slots can still have a declared fallback. Use public `ApplicationGenerationAPI` views/actions and the [UI SDK](ui-sdk.md), not private application state. Selecting another shell does not by itself prove every business effect or surface has moved behind an independent provider.
 
 ## Use the callback's binding
 
@@ -52,6 +93,8 @@ export async function replaceSource(host: RuntimeHost, source: string) {
 ```
 
 The helpers make one call and preserve errors, including `RuntimeHostServiceError.code`. They add no retry or fallback. `service_unavailable`, cancellation and revocation do not authorize calls through a newer generation. Existing retained work completes against its captured graph; removing a module revokes it across retained generations. Providers remain available while dependent cleanup drains. Ordinary read/write methods are not general-purpose cleanup methods; the lifecycle owner admits required shutdown persistence.
+
+A shutdown deadline bounds the caller's wait, not the lifetime of unfinished cleanup. Keep provider dependencies, registry bindings and package resources retained until cleanup actually finishes; report timeout or pending cleanup explicitly. A timed-out close does not authorize releasing those dependencies or establish that all old effects have stopped. Verify cancellation, delayed cleanup and revocation through the actual product entry point.
 
 Only config `read` and plugin-settings `read` / `read-state` advertise preparation reads. They may validate a candidate without durable writes; the registry still checks preparation admission. Other listed state methods require active admission.
 
@@ -196,3 +239,20 @@ The [coordination dispatcher](../../../internal/appserver/project_provider.go) a
 The SDK supports text submission through `ManagedSessionTextMessage`. Its `Role`, `Content`, `ClientID`, and provenance keys preserve the current Go wire casing; `display_content` has an explicit JSON tag. `ManagedSessionInbox` likewise uses `ClientID`, `SessionID`, `Content`, `Wake`, and `Controls`. Do not substitute model-request snake_case message types. Control revisions fence takeover and release, while execution IDs come from the host-authenticated callback.
 
 These contracts describe callable behavior. SDK package tests and the synthetic UI preview do not establish full product migration, real inference, or native macOS UI acceptance. Validate a replacement against the actual selected product graph and retain repeatable evidence before relying on it.
+
+## Verify a replacement in the product
+
+Verify the capability you intend to replace through its actual consumer. Selecting a document store demonstrates storage replacement; it does not establish replacement of session creation, history or recovery policy. Registering an additional tool demonstrates tool contribution; it does not establish replacement of tool selection or dispatch. Rendering another shell demonstrates shell selection; it does not establish independent replacement of each surface inside that shell.
+
+Use synthetic data and record the selected provider, entry point, observed result and repeatable command or artifact. Cover these cases before relying on the replacement:
+
+| Case | Observable result |
+| --- | --- |
+| Select the replacement | The product operation reaches that provider and returns its result. The previous implementation does not perform the same operation. |
+| Remove or fail the selected provider | The consumer reports the unavailable dependency or original error; it does not continue through a native fallback. |
+| Change composition during active work | Admitted work keeps its captured binding. New work uses the newly admitted graph; revocation remains effective for retained generations. |
+| Cancel and dispose | Waiting stops, dependent cleanup finishes before its provider resources are released, and disposed subscriptions or timers stop producing effects. |
+| Supply another owner's identity in request data | Domain fields do not change authenticated caller authority. |
+| Replace a stateful provider | The explicit transfer preserves the required data and receipts; a failed preparation leaves the active composition intact. |
+
+Run the checks through every product entry point you ship. A direct SDK client test can verify request encoding and error propagation, but cannot show that a desktop or headless consumer actually routes through that client. Keep those results separate from real inference and native UI acceptance.

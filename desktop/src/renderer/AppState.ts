@@ -208,8 +208,8 @@ export type ThreadSummary = Omit<
 
 type ThreadRunningCandidate = {
   status: Thread["status"];
-  turns?: TurnAnswerReadyCandidate[];
-  child_agents?: Array<Pick<Agent, "status" | "nested_running_count">>;
+  turns?: readonly TurnAnswerReadyCandidate[];
+  child_agents?: ReadonlyArray<Pick<Agent, "status" | "nested_running_count">>;
 };
 
 type TurnAnswerReadyCandidate = Pick<Turn, "status"> &
@@ -2904,7 +2904,7 @@ export function agentRunning(
 }
 
 function activeTurnForThread<T extends Pick<Turn, "status">>(
-  thread: { turns?: T[] } | undefined,
+  thread: { turns?: readonly T[] } | undefined,
 ): T | undefined {
   const turns = thread?.turns;
   if (!turns) {
@@ -2936,7 +2936,7 @@ function turnIsAnswerReady(
 }
 
 function activeTurnIsAnswerReady(
-  thread: { turns?: TurnAnswerReadyCandidate[] } | undefined,
+  thread: { turns?: readonly TurnAnswerReadyCandidate[] } | undefined,
 ): boolean {
   return turnIsAnswerReady(activeTurnForThread(thread));
 }

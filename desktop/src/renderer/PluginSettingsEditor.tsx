@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { isTouchWebShell } from "./ComposerFocus";
 import { useEffect, useId, useState, useSyncExternalStore } from "react";
 import type {
@@ -8,8 +9,7 @@ import type {
 import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
 import { AlertCircle, AlertTriangle } from "./WuuIcons";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import type { PluginContributionConflict, PluginGenerationDiagnostic } from "./plugins/PluginHost";
+import type { SettingsControlsConflictV1 as PluginContributionConflict, SettingsControlsDiagnosticV1 as PluginGenerationDiagnostic } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 
 type SettingValue = boolean | string | number;
 const EMPTY_DIAGNOSTICS: readonly PluginGenerationDiagnostic[] = Object.freeze([]);
@@ -21,18 +21,19 @@ export function PluginSettingsEditor({
   plugin: ExtensionInventoryRecord;
   title?: string;
 }): JSX.Element | null {
+  const controls = useSettingsControls();
   const { t } = useI18n();
   const settings = plugin.contributions?.settings ?? [];
   const approved = plugin.approval_state === "official" || plugin.approval_state === "granted";
   const fingerprint = plugin.fingerprint;
   const conflicts = useSyncExternalStore(
-    (listener) => desktopPluginHost.subscribe(listener),
-    () => desktopPluginHost.getConflicts(),
-    () => desktopPluginHost.getConflicts(),
+    (listener) => controls.subscribe(listener),
+    () => controls.getConflicts(),
+    () => controls.getConflicts(),
   ).filter((conflict) => conflict.candidates.some((candidate) => candidate.pluginId === plugin.id));
   const rendererDiagnostics = useSyncExternalStore(
-    (listener) => desktopPluginHost.subscribe(listener),
-    () => fingerprint ? desktopPluginHost.getGenerationDiagnostics(plugin.id, fingerprint) : EMPTY_DIAGNOSTICS,
+    (listener) => controls.subscribe(listener),
+    () => fingerprint ? controls.getDiagnostics(plugin.id, fingerprint) : EMPTY_DIAGNOSTICS,
     () => EMPTY_DIAGNOSTICS,
   ).filter((diagnostic) => diagnostic.kind === "render");
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<readonly PluginContributionDiagnostic[]>([]);
@@ -40,14 +41,14 @@ export function PluginSettingsEditor({
 
   useEffect(() => {
     let cancelled = false;
-    if (!approved || plugin.enabled === false || !fingerprint || !window.wuu.getPluginDiagnostics) {
+    if (!approved || plugin.enabled === false || !fingerprint || !controls.capabilities.diagnostics) {
       setRuntimeDiagnostics([]);
       setRuntimeDiagnosticError("");
       return;
     }
     setRuntimeDiagnostics([]);
     setRuntimeDiagnosticError("");
-    void window.wuu.getPluginDiagnostics({ id: plugin.id, fingerprint }).then((result) => {
+    void controls.getPluginDiagnostics({ id: plugin.id, fingerprint }).then((result) => {
       if (!cancelled) setRuntimeDiagnostics(result.diagnostics);
     }).catch((loadError: unknown) => {
       if (!cancelled) setRuntimeDiagnosticError(errorMessage(loadError, t("skills.pluginDiagnosticsFailed")));
@@ -103,6 +104,7 @@ export function PluginSettingsEditor({
 }
 
 function PluginConflictControl({ conflict }: { conflict: PluginContributionConflict }): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -115,8 +117,7 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
     setSaving(true);
     setError("");
     try {
-      const preferences = await window.wuu.setPluginConflictPreference(conflict.key, pluginId);
-      desktopPluginHost.setConflictPreferences(preferences);
+      await controls.chooseConflict(conflict.key, pluginId);
     } catch (saveError) {
       setError(errorMessage(saveError, t("skills.pluginConflictSaveFailed")));
     } finally {
@@ -177,6 +178,7 @@ function PluginSecretControl({ pluginId, fingerprint, setting }: {
   fingerprint: string;
   setting: ExtensionSettingDescriptor;
 }): JSX.Element {
+  const controls = useSettingsControls();
   const { t } = useI18n();
   const controlId = useId();
   const [draft, setDraft] = useState("");
@@ -190,7 +192,7 @@ function PluginSecretControl({ pluginId, fingerprint, setting }: {
     let cancelled = false;
     setDraft("");
     setLoading(true);
-    void window.wuu.getPluginSetting(params).then((result) => {
+    void controls.getPluginSetting(params).then((result) => {
       if (!cancelled) setConfigured(result.configured === true);
     }).catch((failure: unknown) => {
       if (!cancelled) setError(errorMessage(failure, t("skills.pluginSettingLoadFailed")));
@@ -207,7 +209,7 @@ function PluginSecretControl({ pluginId, fingerprint, setting }: {
     // Never retain a submitted token for display, retry or ordinary settings.
     setDraft("");
     try {
-      const result = await window.wuu.setPluginSetting({ ...params, value });
+      const result = await controls.setPluginSetting({ ...params, value });
       setConfigured(result.configured === true);
     } catch (failure) {
       setError(errorMessage(failure, t("skills.pluginSettingSaveFailed")));
@@ -252,6 +254,7 @@ function PluginSettingControl({
   fingerprint: string;
   setting: ExtensionSettingDescriptor;
 }): JSX.Element {
+  const controls = useSettingsControls();
   const { locale, t } = useI18n();
   const controlId = useId();
   const [draft, setDraft] = useState<SettingValue>(setting.default);
@@ -272,7 +275,7 @@ function PluginSettingControl({
       setLoading(true);
       setError("");
       try {
-        const result = await window.wuu.getPluginSetting({
+        const result = await controls.getPluginSetting({
           id: pluginId,
           fingerprint,
           key: setting.id,
@@ -297,7 +300,7 @@ function PluginSettingControl({
     setError("");
     setSaved(false);
     try {
-      const result = await window.wuu.setPluginSetting({
+      const result = await controls.setPluginSetting({
         id: pluginId,
         fingerprint,
         key: setting.id,
@@ -320,7 +323,7 @@ function PluginSettingControl({
     }
     setLoading(true);
     setError("");
-    void window.wuu
+    void controls
       .getPluginSetting({ id: pluginId, fingerprint, key: setting.id })
       .then((result) => {
         setDraft(result.value);

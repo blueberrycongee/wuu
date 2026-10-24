@@ -3,7 +3,7 @@ package session
 import "testing"
 
 func TestCompareAndSwapCompactionNoteRejectsStaleWriter(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("note-cas", t.TempDir()); err != nil {
 			t.Fatalf("create session: %v", err)
 		}

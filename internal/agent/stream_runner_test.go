@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -515,27 +516,55 @@ func TestStreamRunnerModelReceiptAdmissionRejectsEffects(t *testing.T) {
 }
 
 func TestStreamRunnerNoteCompactionReusesReceiptOwner(t *testing.T) {
-	registry := NewCompactionRegistry()
-	registry.Register(replacementNoteProvider{})
-	client := &streamOnlyNoteClient{}
-	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", CompactionRegistry: registry, CompactionNoteStore: &cancellationNoteStore{}, ForceInitialCompact: true, CompactOnly: true}
-	var scope *providers.ModelReceiptScope
-	begins, finishes := 0, 0
-	runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
-		begins++
-		ctx, scope = providers.NewModelReceiptScope(ctx)
-		return ctx, func() error { finishes++; scope.Seal(); return scope.Wait(context.Background()) }, nil
-	}
-	runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
-		if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
-			return errors.New("compaction lost the turn receipt owner")
+	for _, selected := range []bool{false, true} {
+		registry := NewCompactionRegistry()
+		registry.Register(replacementNoteProvider{})
+		client := &streamOnlyNoteClient{}
+		runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", CompactionRegistry: registry, CompactionNoteStore: &cancellationNoteStore{}, ForceInitialCompact: true, CompactOnly: true}
+		if selected {
+			runner.SelectedCompaction = compactionservice.NewClient(func(_ context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+				switch method {
+				case "describe":
+					return json.Marshal(compactionservice.Policy{Key: "external-note", NotesEnabled: true, Guidance: []providers.ChatMessage{}})
+				case "note-plan":
+					var in compactionservice.NoteRequest
+					if err := json.Unmarshal(raw, &in); err != nil {
+						t.Fatal(err)
+					}
+					return json.Marshal(compactionservice.NotePlan{Messages: in.Messages, CoveredMessages: len(in.Messages), Due: true, Prompt: "external checkpoint", MaxBytes: 1000})
+				case "note-attempt":
+					var in compactionservice.NoteAttemptRequest
+					if err := json.Unmarshal(raw, &in); err != nil {
+						t.Fatal(err)
+					}
+					return json.Marshal(compactionservice.NoteAttemptPlan{Invoke: true, Messages: append(in.Messages, providers.ChatMessage{Role: "user", Content: in.Plan.Prompt}), Prompt: in.Plan.Prompt, MaxBytes: in.Plan.MaxBytes})
+				case "compact-note":
+					return json.Marshal(compactionservice.NoteReplacement{Messages: []providers.ChatMessage{{Role: "user", Content: "checkpoint"}}, CoveredMessages: 1})
+				default:
+					t.Fatalf("unexpected selected note operation %s", method)
+					return nil, nil
+				}
+			})
 		}
-		return nil
-	}
-	history := []providers.ChatMessage{{Role: "user", Content: strings.Repeat("older request ", 100)}, {Role: "assistant", Content: strings.Repeat("older response ", 100)}}
-	result, err := runner.RunWithCallback(context.Background(), history, nil)
-	if err != nil || !result.HistoryRewritten || client.streamCalls != 1 || begins != 1 || finishes != 1 {
-		t.Fatalf("compaction did not share one turn owner: rewritten=%v streams=%d admissions=%d completions=%d err=%v", result.HistoryRewritten, client.streamCalls, begins, finishes, err)
+
+		var scope *providers.ModelReceiptScope
+		begins, finishes := 0, 0
+		runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
+			begins++
+			ctx, scope = providers.NewModelReceiptScope(ctx)
+			return ctx, func() error { finishes++; scope.Seal(); return scope.Wait(context.Background()) }, nil
+		}
+		runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
+			if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
+				return errors.New("compaction lost the turn receipt owner")
+			}
+			return nil
+		}
+		history := []providers.ChatMessage{{Role: "user", Content: strings.Repeat("older request ", 100)}, {Role: "assistant", Content: strings.Repeat("older response ", 100)}}
+		result, err := runner.RunWithCallback(context.Background(), history, nil)
+		if err != nil || !result.HistoryRewritten || client.streamCalls != 1 || begins != 1 || finishes != 1 {
+			t.Fatalf("compaction did not share one turn owner: rewritten=%v streams=%d admissions=%d completions=%d err=%v", result.HistoryRewritten, client.streamCalls, begins, finishes, err)
+		}
 	}
 }
 

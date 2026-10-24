@@ -16,7 +16,9 @@ import {
   PROCESS_SUMMARY_COUNT_MAX_WAIT_MS,
 } from "./ProcessSummary";
 import type { ThreadItem } from "../shared/protocol";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+let composition: UICompositionV1 = { Slot: ({ fallback }) => <>{fallback}</> };
 import { modelMascotAccessory } from "./WuuMascot";
 import { translateCurrent as t } from "./i18n";
 import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
@@ -202,14 +204,14 @@ function render(
   document.body.appendChild(container);
   root = createRoot(container);
   act(() => {
-    root!.render(<ProcessSurface {...props} /> as ReactElement);
+    root!.render(<ConversationControlsTestProvider composition={composition}><ProcessSurface {...props} /></ConversationControlsTestProvider>);
   });
   return { container };
 }
 
 function rerender(props: SurfaceProps): void {
   act(() => {
-    root!.render(<ProcessSurface {...props} /> as ReactElement);
+    root!.render(<ConversationControlsTestProvider composition={composition}><ProcessSurface {...props} /></ConversationControlsTestProvider>);
   });
 }
 
@@ -239,9 +241,7 @@ function setProcessFoldOpen(
 
 afterEach(() => {
   unmount();
-  desktopPluginHost.unload("test:tool-activity-presenter");
-  desktopPluginHost.unload("test:process-wrapper");
-  desktopPluginHost.unload("test:process-replacement");
+  composition = { Slot: ({ fallback }) => <>{fallback}</> };
 });
 
 describe("ProcessSurface", () => {
@@ -260,94 +260,17 @@ describe("ProcessSurface", () => {
     expect(onOpenURL).toHaveBeenCalledWith("http://app.local:3000", undefined);
   });
 
-  it("nests the single-tool presenter inside the complete process boundary", async () => {
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "test:tool-activity-presenter",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({
-          id: "read",
-          key: "activity.read",
-          render: () => <span data-tool-presenter-root>tool</span>,
-        });
-      },
-    });
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "test:process-wrapper",
-      generation: "one",
-      register(api) {
-        api.registerPresenter({
-          id: "wrapper",
-          target: "conversation.process",
-          key: "tool-group",
-          mode: "wrap",
-          render: ({ fallback }) => <section data-process-wrapper>{fallback}</section>,
-        });
-      },
-    });
-    const item = makeReadFile("tool-1", "a.ts");
-    item.display = { capability: "activity.read" };
-    const { container } = render({ processItems: [item], streaming: false });
-
-    expect(container.querySelector("[data-process-wrapper] [data-tool-presenter-root]")).not.toBeNull();
-
-    await act(async () => desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "test:process-replacement",
-      generation: "one",
-      register(api) {
-        api.registerPresenter({
-          id: "replacement",
-          target: "conversation.process",
-          key: "tool-group",
-          render: () => <strong data-process-replacement>process</strong>,
-        });
-      },
-    }));
-
-    expect(container.querySelector("[data-process-wrapper] [data-process-replacement]")?.textContent).toBe("process");
-    expect(container.querySelector("[data-tool-presenter-root]")).toBeNull();
-  });
-
-  it("lets a matching presenter replace the complete single-tool surface root", async () => {
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "test:tool-activity-presenter",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({
-          id: "read",
-          key: "activity.read",
-          render: ({ activity }) => (
-            <section data-tool-presenter-root>{activity.toolName}</section>
-          ),
-        });
-      },
-    });
-    const item = makeReadFile("tool-1", "a.ts");
-    item.display = { capability: "activity.read" };
-    const { container } = render({ processItems: [item], streaming: false });
-
-    expect(container.querySelector("section[data-tool-presenter-root]")?.textContent).toBe("read_file");
+  it("lets the public process slot replace the complete single-tool surface", () => {
+    composition = { Slot: ({ name, fallback }) => name.endsWith("/conversation.process") ? <section data-process-replacement>process</section> : <>{fallback}</> };
+    const { container } = render({ processItems: [makeReadFile("tool-1", "a.ts")], streaming: false });
+    expect(container.querySelector("[data-process-replacement]")?.textContent).toBe("process");
     expect(container.querySelector(".process-surface")).toBeNull();
   });
 
-  it("dispatches matching presenter rows in an expanded multi-tool timeline", async () => {
-    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
-      pluginId: "test:tool-activity-presenter",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({
-          id: "read",
-          key: "activity.read",
-          render: ({ activity }) => <div data-timeline-presenter={activity.id} />,
-        });
-      },
-    });
-    const presented = makeReadFile("tool-1", "a.ts");
-    presented.display = { capability: "activity.read" };
-    const native = makeReadFile("tool-2", "b.ts");
-    const { container } = render({ processItems: [presented, native], streaming: false });
+  it("dispatches public tool slots in an expanded multi-tool timeline", () => {
+    composition = { Slot: ({ name, context, fallback }) => name.endsWith("/conversation.tool-activity") && context?.itemId === "tool-1" ? <div data-timeline-presenter="tool-1" /> : <>{fallback}</> };
+    const { container } = render({ processItems: [makeReadFile("tool-1", "a.ts"), makeReadFile("tool-2", "b.ts")], streaming: false });
     setProcessFoldOpen(container.querySelector("details"), true);
-
     expect(container.querySelector("[data-timeline-presenter=tool-1]")).toBeTruthy();
     expect(container.querySelectorAll(".activity-timeline-item")).toHaveLength(1);
   });
@@ -966,9 +889,9 @@ describe("ProcessSurface", () => {
         act(() => {
           root!.render(
             (
-              <ConversationRenderActivityProvider active={active}>
+              <ConversationControlsTestProvider composition={composition}><ConversationRenderActivityProvider active={active}>
                 <ProcessSurface processItems={makeSearches(count)} streaming />
-              </ConversationRenderActivityProvider>
+              </ConversationRenderActivityProvider></ConversationControlsTestProvider>
             ) as ReactElement,
           );
         });

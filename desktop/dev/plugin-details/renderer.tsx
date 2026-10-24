@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../../src/shared/protocol";
+import type { ExtensionInventoryRecord, SkillSummary } from "../../src/shared/protocol";
 import { SkillsCatalog } from "../../src/renderer/SkillsCatalog";
+import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
+import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
@@ -40,28 +42,39 @@ const plugin: ExtensionInventoryRecord = {
 const skills: SkillSummary[] = minimal ? [] : [{
   name: "reading-notes", description: "整理材料并提取关键观点。", source: "plugin:preview.reading", user_invocable: true, disable_model_invoke: false,
 }];
-window.wuu = {
-  initialLanguagePreference: params.get("locale") === "en" ? "en-US" : "zh-CN",
-  listSkills: async () => ({ skills }),
-  getPluginDiagnostics: async () => ({ diagnostics: [] }),
-  getPluginSetting: async ({ key }: { key: string }) => ({ value: settings[key] }),
-  setPluginSetting: async ({ key, value }: { key: string; value: boolean | string | number }) => ({ value: settings[key] = value }),
-  readSkillContent: async () => ({ content: "# Reading notes\n\nSummarize the material and keep links to its sources." }),
-} as unknown as WuuDesktopApi;
 document.documentElement.dataset.theme = params.get("theme") ?? "light";
 applyMessageFlowFontSize(Number(params.get("size")) || 15);
 startFocusModality();
 
 function Fixture(): JSX.Element {
   const [record, setRecord] = useState(plugin);
+  const application = useMemo<ReturnType<typeof createPreviewApplication>>(() => {
+    const base = createPreviewApplication();
+    const noDiagnostics = Object.freeze([]);
+    const snapshot = { contextKey: "plugin-details-preview", inventory: [record],
+      capabilities: { install: false, update: true, remove: false } };
+    const catalog: ApplicationCatalogV1 = {
+      ...base.catalog,
+      getSnapshot: () => snapshot, listSkills: async () => skills,
+      listSkillsForThread: async ({threadId}) => ({contextKey:snapshot.contextKey, threadId, skills}),
+      readSkill: async () => ({content: "# Reading notes\n\nSummarize the material and keep links to its sources."}),
+      update: async ({ action }) => setRecord(current => ({ ...current, enabled: action !== "disable", approval_state: "granted", state: "granted" })),
+      refresh: async () => { setRecord(current => ({ ...current, runtime_state: "active", last_error: undefined })); return skills; },
+      loadIcon: async () => { throw new Error("File icons are not available in this preview"); },
+    };
+    return { ...base, catalog, settingsControls: {...base.settingsControls,
+      getConflicts: () => noDiagnostics, getDiagnostics: () => noDiagnostics,
+      getPluginSetting: async ({id, key}) => ({id, key, scope: "user", value: settings[key]}),
+      setPluginSetting: async ({id, key, value}) => ({id, key, scope: "user", value: settings[key] = value}),
+      getPluginDiagnostics: async ({id}) => ({id, diagnostics: []}),
+    } };
+  }, [record]);
   return <main className="skills-scroll-region" style={{ height: "100vh", overflow: "auto" }}>
     <SkillsCatalog
-      extensionInventory={[record]}
+      application={application}
       openPluginRequest={{ id: record.id, request: 1 }}
-      onUpdateExtensionPackage={async ({ action }) => setRecord(current => ({ ...current, enabled: action !== "disable", approval_state: "granted", state: "granted" }))}
-      onRefreshCatalog={async () => { setRecord(current => ({ ...current, runtime_state: "active", last_error: undefined })); return skills; }}
     />
   </main>;
 }
 
-createRoot(document.getElementById("root")!).render(<I18nProvider><WuuUIRoot><Fixture /></WuuUIRoot></I18nProvider>);
+createRoot(document.getElementById("root")!).render(<I18nProvider preferenceStore={{get: () => params.get("locale") === "en" ? "en-US" : "zh-CN", set: async () => {}, subscribe: () => () => {}}}><WuuUIRoot><Fixture /></WuuUIRoot></I18nProvider>);

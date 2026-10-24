@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
@@ -16,7 +18,7 @@ it("requires an account-bound model before saving and preserves the returned ord
     listChatGPTModels: models,
   });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root!.render(<ChatGPTConnectionDialog providers={[]} running={false} defaultOn={false} onSave={save} onClose={vi.fn()} onConnected={vi.fn()} />));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ChatGPTConnectionDialog providers={[]} running={false} defaultOn={false} onSave={save} onClose={vi.fn()} onConnected={vi.fn()} />}</SettingsControlsProvider>));
   const connect = () => document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!;
   expect(connect().disabled).toBe(true);
   expect(models).toHaveBeenCalledWith("account-a");
@@ -38,7 +40,7 @@ it("keeps inline connection setup in the page and starts login only after the ex
   container = document.createElement("div"); document.body.append(container);
   const outside = document.createElement("button"); container.append(outside); outside.focus();
   const mount = document.createElement("div"); container.append(mount); root = createRoot(mount);
-  await act(async () => root!.render(<ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={vi.fn()} onClose={close} onConnected={vi.fn()} />));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={vi.fn()} onClose={close} onConnected={vi.fn()} />}</SettingsControlsProvider>));
   const page = mount.querySelector<HTMLElement>('[role="region"]')!;
   expect(page).not.toBeNull();
   const labelledBy = page.getAttribute("aria-labelledby");
@@ -54,7 +56,7 @@ it("keeps inline connection setup in the page and starts login only after the ex
   expect(login.disabled).toBe(true);
   await act(async () => page.querySelector<HTMLButtonElement>('[data-testid="settings-connection-back"]')!.click());
   expect(close).toHaveBeenCalledOnce();
-  await act(async () => root!.render(null));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{null}</SettingsControlsProvider>));
   expect(cancelLogin).toHaveBeenCalledExactlyOnceWith("login-a");
 });
 
@@ -68,7 +70,7 @@ it("locks inline navigation during a save and restores it with the error if savi
     listChatGPTModels: vi.fn().mockResolvedValue({ models: [{ id: "model-a", name: "Model A" }] }),
   });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root!.render(<ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={true} onSave={save} onClose={close} onConnected={connected} />));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={true} onSave={save} onClose={close} onConnected={connected} />}</SettingsControlsProvider>));
   const connect = container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!;
   const back = container.querySelector<HTMLButtonElement>('[data-testid="settings-connection-back"]')!;
   const form = container.querySelector<HTMLFormElement>("form")!;
@@ -98,7 +100,7 @@ it("keeps existing web accounts usable without instructions for an unavailable l
     listChatGPTModels: vi.fn().mockResolvedValue({ models: [{ id: "web-model", name: "Fixture model" }] }),
   });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root!.render(<ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={save} onClose={vi.fn()} onConnected={vi.fn()} />));
+  await act(async () => root!.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<ChatGPTConnectionDialog inline providers={[]} running={false} defaultOn={false} onSave={save} onClose={vi.fn()} onConnected={vi.fn()} />}</SettingsControlsProvider>));
   expect(container.querySelector('[data-testid="chatgpt-login-start"]')).toBeNull();
   expect(container.textContent).not.toContain(translateCurrent("provider.chatgptAddAccountHint"));
   const connect = container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-connect"]')!;

@@ -1,3 +1,4 @@
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { beforeEach, describe, expect, it } from "vitest";
 import { connectionDisplayPreferences } from "./ConnectionDisplayPreferences";
 import { subscriptionSources } from "./SubscriptionSources";
@@ -25,11 +26,11 @@ describe("local connection display preferences", () => {
   });
 
   it("keeps subscription catalog order independent of the configured model", () => {
-    const source = subscriptionSources(undefined, [{ name: "work", type: "openai-codex", model: "b", models: [{ id: "a" }, { id: "b" }] }])[0];
+    const source = subscriptionSources(createApplicationSettingsControls(), undefined, [{ name: "work", type: "openai-codex", model: "b", models: [{ id: "a" }, { id: "b" }] }])[0];
     expect(source.models.map(model => model.id)).toEqual(["a", "b"]);
     expect(source.selectedModel).toBe("b");
     connectionDisplayPreferences.setModelOrder("provider:work", ["b", "a"]);
-    const reordered = subscriptionSources(undefined, [source.provider!])[0];
+    const reordered = subscriptionSources(createApplicationSettingsControls(), undefined, [source.provider!])[0];
     expect(reordered.models.map(model => model.id)).toEqual(["b", "a"]);
     expect(reordered.selectedModel).toBe("b");
   });
@@ -41,7 +42,7 @@ describe("local connection display preferences", () => {
     const models = [{ id: "a", is_default: true }, { id: "b" }];
     expect(connectionDisplayPreferences.visibleModels(key, models).map(m => m.id)).toEqual(["b"]);
     expect(connectionDisplayPreferences.visibleModels(key, models, ["a"]).map(m => m.id)).toEqual(["b", "a"]);
-    const source = subscriptionSources({ engines: [{ id: "codex", enabled: true, binary_ok: true, models }] }, [])[0];
+    const source = subscriptionSources(createApplicationSettingsControls(), { engines: [{ id: "codex", enabled: true, binary_ok: true, models }] }, [])[0];
     expect(source.selectedModel).toBe("a");
     expect(source.models.map(m => m.id)).toEqual(["b", "a"]);
   });

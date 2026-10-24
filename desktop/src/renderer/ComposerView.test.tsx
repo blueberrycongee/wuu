@@ -4103,3 +4103,18 @@ describe("composer drag and drop", () => {
     expect(container.querySelector(".split-composer-shell-drop-active")).toBeNull();
   });
 });
+
+it("retains a draft while public admission is pending and allows retry after rejection", async () => {
+  let settle!: (accepted: boolean) => void;
+  const onSend = vi.fn(() => new Promise<boolean>(resolve => { settle = resolve; }));
+  renderComposer({ prompt: "Keep this draft", onSend });
+  const pressEnter = () => container.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  act(() => { pressEnter(); pressEnter(); });
+  expect(onSend).toHaveBeenCalledTimes(1);
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Keep this draft");
+  await act(async () => { settle(false); });
+  act(pressEnter);
+  expect(onSend).toHaveBeenCalledTimes(2);
+  await act(async () => { settle(true); });
+  expect(container.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("");
+});

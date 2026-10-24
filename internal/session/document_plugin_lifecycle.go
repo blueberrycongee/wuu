@@ -10,7 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (s *Store) PutPluginTurnLifecycleOutbox(pluginID, requestID string, payload json.RawMessage) error {
+func (s *documentStore) PutPluginTurnLifecycleOutbox(pluginID, requestID string, payload json.RawMessage) error {
 	pluginID, requestID = strings.TrimSpace(pluginID), strings.TrimSpace(requestID)
 	if pluginID == "" || requestID == "" {
 		return errors.New("plugin lifecycle outbox requires plugin_id and request_id")
@@ -36,7 +36,7 @@ func (s *Store) PutPluginTurnLifecycleOutbox(pluginID, requestID string, payload
 	})
 }
 
-func (s *Store) DeletePluginTurnLifecycleOutbox(pluginID, requestID string) error {
+func (s *documentStore) DeletePluginTurnLifecycleOutbox(pluginID, requestID string) error {
 	pluginID, requestID = strings.TrimSpace(pluginID), strings.TrimSpace(requestID)
 	if pluginID == "" || requestID == "" {
 		return errors.New("plugin lifecycle outbox requires plugin_id and request_id")
@@ -46,7 +46,7 @@ func (s *Store) DeletePluginTurnLifecycleOutbox(pluginID, requestID string) erro
 	})
 }
 
-func (s *Store) DeletePluginTurnLifecycleOutboxForPlugin(pluginID string) error {
+func (s *documentStore) DeletePluginTurnLifecycleOutboxForPlugin(pluginID string) error {
 	pluginID = strings.TrimSpace(pluginID)
 	if pluginID == "" {
 		return errors.New("plugin lifecycle outbox requires plugin_id")
@@ -61,7 +61,7 @@ func (s *Store) DeletePluginTurnLifecycleOutboxForPlugin(pluginID string) error 
 	})
 }
 
-func (s *Store) ListPluginTurnLifecycleOutbox() ([]PluginTurnLifecycleOutboxEntry, error) {
+func (s *documentStore) ListPluginTurnLifecycleOutbox() ([]PluginTurnLifecycleOutboxEntry, error) {
 	var result []PluginTurnLifecycleOutboxEntry
 	err := s.transaction(func(tx *persistence.Tx) error {
 		var err error
@@ -80,7 +80,7 @@ func (s *Store) ListPluginTurnLifecycleOutbox() ([]PluginTurnLifecycleOutboxEntr
 	return result, err
 }
 
-func (s *Store) FindPluginTurnLifecycle(pluginID, requestID, sessionID, turnID string) (PluginTurnLifecycleEntry, bool, error) {
+func (s *documentStore) FindPluginTurnLifecycle(pluginID, requestID, sessionID, turnID string) (PluginTurnLifecycleEntry, bool, error) {
 	pluginID, requestID = strings.TrimSpace(pluginID), strings.TrimSpace(requestID)
 	sessionID, turnID = strings.TrimSpace(sessionID), strings.TrimSpace(turnID)
 	var result PluginTurnLifecycleEntry
@@ -104,7 +104,7 @@ func (s *Store) FindPluginTurnLifecycle(pluginID, requestID, sessionID, turnID s
 	return result, found, err
 }
 
-func (s *Store) WritePluginGenerationSnapshot(sessionID string, snapshot PluginGenerationSnapshot) error {
+func (s *documentStore) WritePluginGenerationSnapshot(sessionID string, snapshot PluginGenerationSnapshot) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return errors.New("session_id is required")
@@ -117,7 +117,7 @@ func (s *Store) WritePluginGenerationSnapshot(sessionID string, snapshot PluginG
 	})
 }
 
-func (s *Store) ReadPluginGenerationSnapshot(sessionID string) (PluginGenerationSnapshot, bool, error) {
+func (s *documentStore) ReadPluginGenerationSnapshot(sessionID string) (PluginGenerationSnapshot, bool, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return PluginGenerationSnapshot{}, false, errors.New("session_id is required")
@@ -132,7 +132,7 @@ func (s *Store) ReadPluginGenerationSnapshot(sessionID string) (PluginGeneration
 	return result.Normalize(), found, err
 }
 
-func (s *Store) LoadRequestContextCheckpoint(sessionID string) (json.RawMessage, error) {
+func (s *documentStore) LoadRequestContextCheckpoint(sessionID string) (json.RawMessage, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	var result json.RawMessage
 	err := s.transaction(func(tx *persistence.Tx) error {
@@ -146,7 +146,7 @@ func (s *Store) LoadRequestContextCheckpoint(sessionID string) (json.RawMessage,
 	return result, err
 }
 
-func (s *Store) SaveRequestContextCheckpoint(sessionID string, payload json.RawMessage) error {
+func (s *documentStore) SaveRequestContextCheckpoint(sessionID string, payload json.RawMessage) error {
 	if !json.Valid(payload) {
 		return errors.New("request context checkpoint must be valid JSON")
 	}

@@ -2878,8 +2878,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	reviewIntent := &nativeReviewIntent{}
 	reviewIntent.append(history)
-	if threadRuntime != nil && threadRuntime.Toolkit != nil {
-		runtime.ConfigureToolkitPermissions(threadRuntime.Toolkit, turnPermissions)
+	if threadRuntime != nil {
 		th.mu.Lock()
 		approveForMe := th.ApproveForMe && approvefor.EnabledForMode(turnPermissions.Mode)
 		th.mu.Unlock()
@@ -2889,7 +2888,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		}
 		// External engines own inference. Keep review-required actions blocked
 		// rather than silently invoking the workspace's unrelated Wuu model.
-		applyApproveForMeToToolkit(threadRuntime.Toolkit, approveForMe, reviewer)
+		threadRuntime.ConfigureExecutionPermissions(turnPermissions, approveForMe, reviewer)
 	}
 	// Resolve the real runtime context ceiling for the active provider/model
 	// so turn/usage notifications can drive a "已用 / 总数" meter in the UI.

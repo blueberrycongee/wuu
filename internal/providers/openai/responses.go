@@ -401,6 +401,9 @@ func mergeResponsesProviderOptions(object map[string]any, options map[string]any
 			mergeProviderOptionValue(object, key, value)
 		}
 	}
+	if !temperatureSupported(options) {
+		delete(object, "temperature")
+	}
 }
 
 func responsesProviderOptionUnsupported(key string) bool {

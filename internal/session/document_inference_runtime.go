@@ -16,12 +16,15 @@ import (
 // InferenceJournalRuntime holds one generation's authority for its lifetime.
 // Its owner releases the provider only after Close drains admitted journal work.
 type InferenceJournalRuntime struct {
-	store                             *Store
+	lazy                              *lazyInferenceRuntime
+	remote                            *remoteJournalRuntime
+	store                             *documentStore
 	workspaceScope, runtimeID         string
 	stop, heartbeatDone, progressDone chan struct{}
 	closeOnce                         sync.Once
 	lifecycleMu                       sync.Mutex
 	closing                           bool
+	cleanupContext                    context.Context
 	activeWG                          sync.WaitGroup
 	closeErr                          error
 	progressMu                        sync.Mutex
@@ -47,11 +50,12 @@ type documentSubmissionProgress struct {
 }
 
 type documentInferenceJournal struct {
+	ctx     context.Context
 	runtime *InferenceJournalRuntime
 	ownerID string
 }
 
-func (s *Store) NewInferenceJournalRuntime(workspaceScope string) (*InferenceJournalRuntime, error) {
+func (s *documentStore) NewInferenceJournalRuntime(workspaceScope string) (*InferenceJournalRuntime, error) {
 	workspaceScope = journalText(workspaceScope, 512)
 	if workspaceScope == "" {
 		return nil, errors.New("inference journal workspace scope is required")
@@ -102,6 +106,9 @@ func (r *InferenceJournalRuntime) RuntimeID() string {
 	if r == nil {
 		return ""
 	}
+	if r.lazy != nil {
+		return r.lazy.runtimeID()
+	}
 	return r.runtimeID
 }
 
@@ -134,25 +141,49 @@ func (r *InferenceJournalRuntime) heartbeat(tx *persistence.Tx, stamp int64, clo
 	return tx.Put(documentNamespace("inference_journal_runtimes"), r.runtimeID, record)
 }
 
-func (r *InferenceJournalRuntime) Close() error {
+func (r *InferenceJournalRuntime) Close() error { return r.closeContext(context.Background()) }
+
+// CloseContext retains authenticated cleanup authority while draining the runtime.
+func (r *InferenceJournalRuntime) CloseContext(ctx context.Context) error { return r.closeContext(ctx) }
+
+func (r *InferenceJournalRuntime) closeContext(ctx context.Context) error {
+	if r != nil && r.lazy != nil {
+		return r.lazy.close(ctx)
+	}
+	if r != nil && r.remote != nil {
+		r.closeOnce.Do(func() {
+			r.lifecycleMu.Lock()
+			r.closing = true
+			r.lifecycleMu.Unlock()
+			r.closeErr = r.remote.store.WithContext(context.WithoutCancel(ctx)).invoke("Journal.Close", []any{r.remote.handle}, []any{})
+		})
+		return r.closeErr
+	}
 	if r == nil {
 		return nil
 	}
 	r.closeOnce.Do(func() {
 		r.lifecycleMu.Lock()
 		r.closing = true
+		r.cleanupContext = context.WithoutCancel(ctx)
 		r.lifecycleMu.Unlock()
 		r.activeWG.Wait()
 		close(r.stop)
 		<-r.heartbeatDone
 		<-r.progressDone
 		stamp := time.Now().UTC().UnixMilli()
-		r.closeErr = r.store.transaction(func(tx *persistence.Tx) error { return r.heartbeat(tx, stamp, true) })
+		r.closeErr = r.store.WithContext(r.cleanupContext).transaction(func(tx *persistence.Tx) error { return r.heartbeat(tx, stamp, true) })
 	})
 	return r.closeErr
 }
 
 func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJournal {
+	if r != nil && r.lazy != nil {
+		return &lazyInferenceJournal{runtime: r.lazy, owner: ownerID, ctx: context.Background()}
+	}
+	if r != nil && r.remote != nil {
+		return &remoteInferenceJournal{runtime: r.remote, owner: ownerID, ctx: context.Background()}
+	}
 	if r == nil {
 		return nil
 	}
@@ -163,8 +194,19 @@ func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJo
 	return &documentInferenceJournal{runtime: r, ownerID: ownerID}
 }
 
+// WithContext returns a per-operation binding without changing the runtime.
+func (j *documentInferenceJournal) WithContext(ctx context.Context) providers.InferenceJournal {
+	clone := *j
+	clone.ctx = context.WithoutCancel(ctx)
+	return &clone
+}
+
 func (j *documentInferenceJournal) write(action string, body func(*persistence.Tx) error) error {
-	return j.writeContext(context.Background(), action, body)
+	ctx := j.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return j.writeContext(ctx, action, body)
 }
 
 func (j *documentInferenceJournal) writeContext(ctx context.Context, action string, body func(*persistence.Tx) error) error {
@@ -174,6 +216,7 @@ func (j *documentInferenceJournal) writeContext(ctx context.Context, action stri
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = journalCallContext(ctx, j.ctx)
 	done, err := j.runtime.beginUse()
 	if err != nil {
 		return fmt.Errorf("%s: %w", action, err)
@@ -247,7 +290,13 @@ func (r *InferenceJournalRuntime) flushSubmissionProgress(allowClosing bool) {
 		return
 	}
 	stamp := time.Now().UTC().UnixMilli()
-	err := r.store.transaction(func(tx *persistence.Tx) error {
+	ctx := context.Background()
+	if allowClosing {
+		r.lifecycleMu.Lock()
+		ctx = r.cleanupContext
+		r.lifecycleMu.Unlock()
+	}
+	err := r.store.WithContext(ctx).transaction(func(tx *persistence.Tx) error {
 		if err := r.heartbeat(tx, stamp, false); err != nil {
 			return err
 		}

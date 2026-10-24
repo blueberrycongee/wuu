@@ -1,7 +1,8 @@
-import { createRef } from "react";
+import { createRef, useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import type { GitStatusResult, InitializeResult } from "../../src/shared/protocol";
 import { EnvironmentPanel } from "../../src/renderer/EnvironmentPanel";
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import "../../src/renderer/styles.css";
@@ -62,6 +63,14 @@ function Card({
   pluginSections?: JSX.Element;
   branch?: string;
 }): JSX.Element {
+  const environment = useMemo<ApplicationEnvironmentV1>(() => {
+    const snapshot = { actionBusy: false, contextKey: "environment-preview", root: "/repo", status: { ...git, branch },
+      capabilities: { review: false, checkout: true, createBranch: true, commit: false, pullRequest: false } };
+    const unavailable = async (): Promise<never> => { throw new Error("Git mutations are unavailable in this visual preview"); };
+    return { getSnapshot: () => snapshot, subscribe: () => () => {},
+      listChanges: unavailable, readDiff: unavailable, checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable,
+      generateCommitMessage: unavailable, createPullRequest: unavailable, scheduleStatusRefresh: () => {} };
+  }, [branch]);
   return (
     <figure className="environment-panel-preview-card">
       <figcaption>{label}</figcaption>
@@ -69,16 +78,13 @@ function Card({
         <EnvironmentPanel
           panelRef={createRef<HTMLDivElement>()}
           motionState="open"
-          initialized={initialized}
-          gitStatus={{ ...git, branch }}
+          environment={environment}
           activeMenu={null}
           running={false}
           pullRequestDisabledReason="先创建功能分支"
           pluginSections={pluginSections}
           onSetActiveMenu={() => {}}
           onClose={() => {}}
-          onSelectBranch={() => {}}
-          onCreateBranch={() => Promise.resolve()}
           onOpenReview={() => {}}
           onOpenCommit={() => {}}
           onOpenPullRequest={() => {}}

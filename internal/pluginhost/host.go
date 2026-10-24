@@ -71,6 +71,8 @@ type Host struct {
 	lifecycleRoot       *cordis.Context
 	lifetimes           map[string]*clientLifetime
 	closed              bool
+	shutdown            *hostShutdown
+	shutdownDone        chan struct{}
 	preparationErr      error
 	mu                  sync.RWMutex
 	clients             []Client
@@ -94,7 +96,7 @@ type ContributionDiagnostic struct {
 }
 
 func New(clients ...Client) *Host {
-	host := &Host{tools: make(map[string]RegisteredTool), diagnostics: make(map[string]map[string]string), executions: NewExecutionTracker()}
+	host := &Host{tools: make(map[string]RegisteredTool), diagnostics: make(map[string]map[string]string), executions: NewExecutionTracker(), shutdownDone: make(chan struct{})}
 	for _, client := range clients {
 		host.addLocked(client)
 	}
@@ -176,7 +178,7 @@ func (h *Host) ServiceRegistry() *ServiceRegistry {
 }
 
 func (h *Host) addLocked(client Client) {
-	if client == nil {
+	if client == nil || h.shutdown != nil {
 		return
 	}
 	h.clients = append(h.clients, client)
@@ -654,10 +656,31 @@ func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (
 // bounded by ctx and retirement of the consumer. Domain IDs belong in params;
 // they never confer execution authority.
 func (h *Host) CallService(ctx context.Context, consumer, service, method string, params json.RawMessage) (json.RawMessage, *HostServiceError) {
+	return h.callService(ctx, consumer, service, method, params, nil)
+}
+
+// CallToolService delegates one native tool dispatch to its selected service.
+// Input must come from the host's admitted execution, not provider request data.
+// The selected callback receives its own tool identity; ordinary downstream
+// service calls do not inherit that authority.
+func (h *Host) CallToolService(ctx context.Context, consumer, service, method string, params json.RawMessage, input ToolExecuteInput) (json.RawMessage, *HostServiceError) {
+	return h.callService(ctx, consumer, service, method, params, &input)
+}
+
+func (h *Host) callService(ctx context.Context, consumer, service, method string, params json.RawMessage, toolScope *ToolExecuteInput) (json.RawMessage, *HostServiceError) {
 	if h == nil {
 		return nil, &HostServiceError{Code: "service_unavailable", Message: "service host is unavailable"}
 	}
 	h.mu.RLock()
+	if toolScope == nil && InShutdownCleanup(ctx) && h.serviceRegistry != nil {
+		registry := h.serviceRegistry
+		h.mu.RUnlock()
+		return registry.Call(ctx, consumer, ServiceCallParams{Service: service, Method: method, Params: params})
+	}
+	if h.shutdown != nil {
+		h.mu.RUnlock()
+		return nil, &HostServiceError{Code: "generation_closed", Message: "plugin generation is closing"}
+	}
 	var admitted bool
 	for _, client := range h.clients {
 		if client.ID() == consumer && client.Status().State == StateActive {
@@ -670,12 +693,16 @@ func (h *Host) CallService(ctx context.Context, consumer, service, method string
 		h.mu.RUnlock()
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service consumer %q is not active", consumer)}
 	}
-	executionID, executionCtx := h.executions.begin(consumer, ctx, ToolExecuteInput{}, false)
+	input := ToolExecuteInput{}
+	if toolScope != nil {
+		input = *toolScope
+	}
+	executionID, executionCtx := h.executions.begin(consumer, ctx, input, toolScope != nil)
 	h.mu.RUnlock()
 	defer h.executions.End(executionID)
-	return registry.Call(executionCtx, consumer, ServiceCallParams{
+	return registry.call(executionCtx, consumer, ServiceCallParams{
 		Service: service, Method: method, Params: params, ExecutionID: executionID,
-	})
+	}, toolScope)
 }
 
 // ExecutionSnapshots returns the host's live execution table for diagnostics.
@@ -695,7 +722,10 @@ func (h *Host) Prepare(ctx context.Context) error {
 }
 
 func (h *Host) prepare(ctx context.Context) (err error) {
-	if h.closed {
+	h.mu.RLock()
+	closing := h.shutdown != nil
+	h.mu.RUnlock()
+	if h.closed || closing {
 		return errors.New("plugin generation is closed")
 	}
 	if h.preparationErr != nil {
@@ -797,42 +827,108 @@ func (h *Host) Close(ctx context.Context) error {
 // CloseWithOutcomes shuts clients down in reverse dependency order and reports one
 // structured outcome per client instead of collapsing everything into a
 // single joined error.
+type hostShutdown struct {
+	clients  []Client
+	outcomes []ClientShutdownOutcome
+}
+
+// ShutdownDone closes only when consumers, their dependencies and the owning
+// lifecycle graph have actually finished cleanup. A Close deadline does not
+// close this channel. Generation owners must retain registry and package roots
+// until this barrier closes.
+func (h *Host) ShutdownDone() <-chan struct{} {
+	if h == nil {
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.shutdownDone == nil {
+		h.shutdownDone = make(chan struct{})
+	}
+	return h.shutdownDone
+}
+
 func (h *Host) CloseWithOutcomes(ctx context.Context) []ClientShutdownOutcome {
 	if h == nil {
 		return nil
 	}
+	h.mu.Lock()
+	if h.shutdownDone == nil {
+		h.shutdownDone = make(chan struct{})
+	}
+	done := h.shutdownDone
+	start := h.shutdown == nil
+	if start {
+		h.shutdown = &hostShutdown{clients: h.orderedClientsLocked()}
+		h.tools = nil
+		h.toolOrder = nil
+		h.capabilities = nil
+	}
+	shutdown, registry := h.shutdown, h.serviceRegistry
+	h.mu.Unlock()
+	if start {
+		// Seal every incoming edge before cancellation snapshots or callbacks.
+		for _, client := range shutdown.clients {
+			registry.stopProviderAdmission(client.ID())
+		}
+		h.StopBackground()
+		h.CancelExecutions(&UserQuestionError{Code: "generation_closed", Message: "plugin generation retired"})
+		go h.finishShutdown(context.WithoutCancel(ctx), shutdown, done)
+	}
+	select {
+	case <-done:
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+		return append([]ClientShutdownOutcome(nil), shutdown.outcomes...)
+	case <-ctx.Done():
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+		outcomes := append([]ClientShutdownOutcome(nil), shutdown.outcomes...)
+		completed := make(map[string]bool, len(outcomes))
+		for _, outcome := range outcomes {
+			completed[outcome.PluginID] = true
+		}
+		for i := len(shutdown.clients) - 1; i >= 0; i-- {
+			id := shutdown.clients[i].ID()
+			if !completed[id] {
+				outcomes = append(outcomes, ClientShutdownOutcome{PluginID: id, Err: ctx.Err()})
+			}
+		}
+		if len(outcomes) == 0 {
+			outcomes = append(outcomes, ClientShutdownOutcome{Err: ctx.Err()})
+		}
+		return outcomes
+	}
+}
+func (h *Host) finishShutdown(ctx context.Context, shutdown *hostShutdown, done chan struct{}) {
 	h.lifecycleMu.Lock()
 	defer h.lifecycleMu.Unlock()
-	if h.closed {
-		return nil
-	}
-	h.StopBackground()
-	if err := h.ownClients(h.orderedClients()); err != nil {
-		return []ClientShutdownOutcome{{Err: err}}
-	}
+	defer close(done)
 	h.closed = true
+	// A concurrent single-plugin retirement may have finished while this worker
+	// waited for the lifecycle lock. Never recreate or close its lifetime twice.
 	h.mu.Lock()
-	clients := h.orderedClientsLocked()
-	registry := h.serviceRegistry
-	h.clients = nil
-	h.tools = nil
-	h.toolOrder = nil
-	h.capabilities = nil
+	shutdown.clients = h.orderedClientsLocked()
 	h.mu.Unlock()
-
-	// Revoke admission before taking the cancellation snapshot so no dispatch
-	// can register an execution after that snapshot and escape cancellation.
-	for _, client := range clients {
-		registry.stopProviderAdmission(client.ID())
+	if err := h.ownClients(shutdown.clients); err != nil {
+		h.mu.Lock()
+		shutdown.outcomes = append(shutdown.outcomes, ClientShutdownOutcome{Err: err})
+		h.mu.Unlock()
+		return
 	}
-	h.CancelExecutions(&UserQuestionError{Code: "generation_closed", Message: "plugin generation retired"})
-
-	outcomes := make([]ClientShutdownOutcome, 0, len(clients))
-	for i := len(clients) - 1; i >= 0; i-- {
-		outcomes = append(outcomes, ClientShutdownOutcome{PluginID: clients[i].ID(), Err: h.closeClient(ctx, clients[i])})
+	for i := len(shutdown.clients) - 1; i >= 0; i-- {
+		client := shutdown.clients[i]
+		outcome := ClientShutdownOutcome{PluginID: client.ID(), Err: h.closeClient(ctx, client)}
+		h.mu.Lock()
+		shutdown.outcomes = append(shutdown.outcomes, outcome)
+		h.mu.Unlock()
 	}
 	h.lifecycleRoot.Fiber().Dispose()
-	return outcomes
+	h.mu.Lock()
+	h.clients = nil
+	h.mu.Unlock()
 }
 
 func (h *Host) availablePublicToolName(pluginID, localID string) string {

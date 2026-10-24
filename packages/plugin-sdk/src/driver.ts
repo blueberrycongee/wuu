@@ -178,6 +178,13 @@ export interface DriverCompactBudget {
   readonly last_successful_tokens: number;
   readonly failed_request_tokens: number;
   readonly target_total_tokens: number;
+  /** Request a fresh-context proposal from the selected policy. */
+  readonly window?: DriverContextWindow;
+}
+export interface DriverContextWindow {
+  readonly history_head: number;
+  readonly fixed_tokens: number;
+  readonly target_tokens: number;
 }
 export interface DriverRequestContextSummary {
   /** The resource supplies the execution's step index. */
@@ -297,7 +304,7 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
     observe: async (observation: DriverTurnObservation): Promise<void> => {
       await call("observe", { observation });
     },
-    /** Propose a summary using the selected compaction provider. The driver
+    /** Propose replacement context using the selected compaction provider. The driver
      * validates and explicitly commits the result with replaceContext(). */
     compact: async (messages: readonly DriverMessage[], budget: DriverCompactBudget): Promise<readonly DriverMessage[]> => {
       const result = await call<{ readonly messages: readonly DriverMessage[]; readonly failure?: DriverFailure }>("compact", { messages, budget });

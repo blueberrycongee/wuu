@@ -46,7 +46,7 @@ func sessionOrderKey(sess Session) string {
 // RebuildSessionIndexes explicitly upgrades pre-index document stores. The
 // index and its version marker publish atomically with the captured revision.
 // Ordinary reads never fall back to a complete session scan.
-func (s *Store) RebuildSessionIndexes() error {
+func (s *documentStore) RebuildSessionIndexes() error {
 	return s.transaction(func(tx *persistence.Tx) error {
 		var version int
 		found, err := tx.Get(documentNamespace("session_indexes"), "listing", &version)
@@ -85,7 +85,7 @@ func sessionListMatches(cwd, workspaceID string) func(Session) bool {
 	}
 }
 
-func (s *Store) ListPage(query SessionListQuery) (SessionListPage, error) {
+func (s *documentStore) ListPage(query SessionListQuery) (SessionListPage, error) {
 	if query.Cursor != nil && query.Cursor.Key == "" {
 		return SessionListPage{}, fmt.Errorf("%w: session page cursor key is required", persistence.ErrInvalid)
 	}
@@ -100,7 +100,7 @@ func (s *Store) ListPage(query SessionListQuery) (SessionListPage, error) {
 	}
 }
 
-func (s *Store) readSessionListPage(limit int, cursor *SessionListCursor, matches func(Session) bool) (SessionListPage, error) {
+func (s *documentStore) readSessionListPage(limit int, cursor *SessionListCursor, matches func(Session) bool) (SessionListPage, error) {
 	var result SessionListPage
 	versionQuery := persistence.Query{Namespace: documentNamespace("session_indexes"), Keys: []string{"listing"}}
 	if cursor != nil {

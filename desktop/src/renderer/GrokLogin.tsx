@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "./i18n";
 
@@ -9,6 +10,7 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
   onBusyChange?: (busy: boolean) => void;
   onReuseLocal?: () => void | Promise<void>;
 }): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const [state, setState] = useState<"idle" | "running" | "checking" | "done" | "failed" | "local-failed">("idle");
   const operation = useRef<{ cancelled: boolean; processDone: boolean } | undefined>(undefined);
@@ -20,14 +22,14 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
       if (operation.current) {
         const current = operation.current;
         operation.current = undefined;
-        if (!current.processDone) void window.wuu.cancelEngineAuth("grok").catch(() => {});
+        if (!current.processDone) void settingsControls.cancelEngineAuth("grok").catch(() => {});
         onBusyChange?.(false);
       }
     };
   }, []);
 
   async function start(local = false): Promise<void> {
-    if (disabled || operation.current || window.wuu.hostKind === "web") return;
+    if (disabled || operation.current || !settingsControls.capabilities.engineLogin) return;
     const current = { cancelled: false, processDone: local };
     operation.current = current;
     setState(local ? "checking" : "running"); onBusyChange?.(true);
@@ -37,7 +39,7 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
         if (mounted.current && operation.current === current) setState("idle");
         return;
       }
-      const result = await window.wuu.authenticateEngine("grok", "local-cli");
+      const result = await settingsControls.authenticateEngine("grok", "local-cli");
       current.processDone = true;
       if (!mounted.current || operation.current !== current || current.cancelled) return;
       if (!result.authenticated) throw new Error("Login incomplete");
@@ -58,7 +60,7 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
     if (!current) return;
     current.cancelled = true;
     try {
-      await window.wuu.cancelEngineAuth("grok");
+      await settingsControls.cancelEngineAuth("grok");
       if (mounted.current && operation.current === current) {
         operation.current = undefined;
         setState("idle"); onBusyChange?.(false);
@@ -68,7 +70,7 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
       if (mounted.current) setState("failed");
     }
   }
-  if (window.wuu.hostKind === "web") return <span className="settings-muted-line">{t("provider.grokDesktopLogin")}</span>;
+  if (!settingsControls.capabilities.engineLogin) return <span className="settings-muted-line">{t("provider.grokDesktopLogin")}</span>;
   const busy = Boolean(operation.current);
   return <span className="connection-login" aria-busy={busy}>
     <button type="button" className="settings-button settings-button-primary" data-testid="grok-login-start" disabled={disabled || busy} onClick={() => void start()}>{t("provider.authSignIn")}</button>

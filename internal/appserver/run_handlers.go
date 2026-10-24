@@ -90,6 +90,9 @@ func (s *Server) handleRunStart(ctx context.Context, req Request) error {
 	if err != nil {
 		return s.writeRunError(req.ID, "invalid_params", err)
 	}
+	if err := binding.InferenceJournalRuntime.Ensure(ctx); err != nil {
+		return s.writeRunError(req.ID, "internal_error", err)
+	}
 	prompt := params.Prompt
 	if validator != nil {
 		prompt = validator.InitialPrompt(prompt)

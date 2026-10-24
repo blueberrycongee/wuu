@@ -8,7 +8,7 @@ import (
 // Work persistence must reject concurrent overwrites, preserve replay identity,
 // and fence already-admitted input after corrections or stops, including reopen.
 func TestProjectWorkRevisionAndReplay(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		_, err := store.CreateInitialized(Session{ID: "project"}, nil)
 		if err != nil {
 			t.Fatal(err)

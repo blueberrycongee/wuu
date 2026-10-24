@@ -134,7 +134,7 @@ func (s *Server) handleGitCommitMessage(req Request) error {
 // surrounding quotes, then keeps the message as returned (subject plus
 // optional body). Returns "" when nothing usable remains.
 func cleanGeneratedCommitMessage(text string) string {
-	text = stripThinkBlocks(text)
+	text = providers.StripThinkingText(text)
 	lines := strings.Split(text, "\n")
 	kept := make([]string, 0, len(lines))
 	for _, line := range lines {

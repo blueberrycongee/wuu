@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import type { GitChangeFile, GitFileDiffResult, GitStatusResult } from "../../src/shared/protocol";
 import { I18nProvider } from "../../src/renderer/i18n";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
+import { ApplicationEnvironment } from "../../src/renderer/plugins/ApplicationEnvironment";
 import { WorkspaceReviewPanel } from "../../src/renderer/WorkspaceReviewPanels";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
@@ -114,13 +115,17 @@ Object.defineProperty(window, "wuu", {
   },
 });
 
+const environment = new ApplicationEnvironment({
+  getSource: () => ({ contextKey: "review-preview", root: "/repo", status: gitStatus }),
+  publishStatus: () => {}, assertActive: () => {}, reportError: console.error,
+});
 const width = Number(query.get("width")) || 760;
 
 createRoot(document.getElementById("root")!).render(
   <I18nProvider>
     <WuuUIRoot>
       <div className="review-preview-host" style={{ width }}>
-        <WorkspaceReviewPanel gitStatus={gitStatus} workspaceRoot="/repo" onOpenFile={(path) => console.info("open", path)} />
+        <WorkspaceReviewPanel environment={environment} onOpenFile={(path) => console.info("open", path)} />
       </div>
     </WuuUIRoot>
   </I18nProvider>,

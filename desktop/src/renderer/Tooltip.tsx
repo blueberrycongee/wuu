@@ -35,7 +35,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { WebWorkspaceApi } from "../shared/webWorkspace";
+import { useOptionalWebWorkspaceControls } from "./WebWorkspaceControlsContext";
 import { HOVER_REVEAL_OPEN_DELAY_MS, useHoverReveal, useRetainHoverOwner } from "./HoverReveal";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 
@@ -82,8 +82,8 @@ export function Tooltip({
   const { revealed, anchorHandlers } = useHoverReveal<true>({ disabled: inactive, propagateEscape });
   const open = revealed !== null;
   const token = useId();
-  const browser = (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi })?.webWorkspace;
-  const nativeHint = native && Boolean(browser?.showTooltip);
+  const browser = useOptionalWebWorkspaceControls();
+  const nativeHint = native && Boolean(browser?.capabilities.nativeOverlays);
   useRetainHoverOwner(open);
 
   // Measure and place the layer against the trigger. The layer mounts

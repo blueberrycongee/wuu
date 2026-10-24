@@ -1,3 +1,5 @@
+import { createFixtureApplication } from "../preview-services";
+import type { ApplicationComposerStatusSnapshotV1 } from "../../../packages/plugin-sdk/src/ui-composer-presentation";
 import { createRoot } from "react-dom/client";
 import type { ThreadItem } from "../../src/shared/protocol";
 import type { InspectorTodoItemSnapshotV1 } from "../../src/shared/workbench";
@@ -51,6 +53,10 @@ const items = [
 
 await desktopPluginHost.activateGeneration({ pluginId: "todo", generation: "preview", register: activate });
 
+const baseApplication = createFixtureApplication();
+const status: ApplicationComposerStatusSnapshotV1 = { items: [], todoUpdate: { todos } };
+const application = { ...baseApplication, composerPresentation: { ...baseApplication.composerPresentation, getStatusSnapshot: () => status } };
+
 createRoot(document.getElementById("root")!).render(
   <I18nProvider>
     <main className="conversation-pane" style={{ padding: 24, height: "100vh", overflow: "auto" }}>
@@ -68,10 +74,8 @@ createRoot(document.getElementById("root")!).render(
         </div>
         <div style={{ position: "fixed", bottom: 24, left: 24, right: 24 }}>
           <ConversationStatusCluster
-            host={desktopPluginHost}
+            application={application}
             visible
-            todoUpdate={{ todos }}
-            onOpenSession={() => {}}
           />
         </div>
       </div>

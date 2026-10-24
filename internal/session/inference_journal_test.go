@@ -70,7 +70,7 @@ func TestFinalReceiptCheckpointPreservesDeadlineAndUncertainCommit(t *testing.T)
 				}
 				return service.InvokeService(ctx, params)
 			})
-			store := NewStore(context.Background(), documents)
+			store := newDocumentStore(context.Background(), documents)
 			journalRuntime, err := store.NewInferenceJournalRuntime("receipt-checkpoint")
 			if err != nil {
 				t.Fatal(err)
@@ -165,7 +165,7 @@ func requireWorkflowBudgetDimension(t *testing.T, err error, dimension providers
 }
 
 func TestInferenceJournalPersistsMetadataOnlyLifecycle(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-test")
 		if err != nil {
 			t.Fatal(err)
@@ -264,14 +264,14 @@ func TestInferenceJournalPersistsMetadataOnlyLifecycle(t *testing.T) {
 	})
 }
 
-func readInferenceSubmissionProgress(t *testing.T, store *Store, submissionID string) (outputBytes int, outcome, costState string) {
+func readInferenceSubmissionProgress(t *testing.T, store *documentStore, submissionID string) (outputBytes int, outcome, costState string) {
 	t.Helper()
 	record := readSessionDocument[providers.InferenceSubmissionJournalRecord](t, store, "inference_submissions", submissionID)
 	return record.OutputBytes, string(record.Outcome), string(record.CostState)
 }
 
 func TestInferenceJournalCoalescesStreamingProgressAndFlushesAtBarrier(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-progress")
 		if err != nil {
 			t.Fatal(err)
@@ -366,7 +366,7 @@ func TestInferenceJournalPreservesTerminalBeforeDelayedProgress(t *testing.T) {
 			name = "succeeded"
 		}
 		t.Run(name, func(t *testing.T) {
-			forEachSessionStore(t, func(t *testing.T, store *Store) {
+			forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 				runtime, err := store.NewInferenceJournalRuntime("workspace-delayed-progress")
 				if err != nil {
 					t.Fatal(err)
@@ -448,7 +448,7 @@ func TestInferenceJournalPreservesTerminalBeforeDelayedProgress(t *testing.T) {
 func TestInferenceJournalPendingProgressRejectsMismatchedEvidence(t *testing.T) {
 	for _, mismatch := range []string{"owner", "metadata", "terminal-outcome"} {
 		t.Run(mismatch, func(t *testing.T) {
-			forEachSessionStore(t, func(t *testing.T, store *Store) {
+			forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 				runtime, err := store.NewInferenceJournalRuntime("workspace-progress-identity")
 				if err != nil {
 					t.Fatal(err)
@@ -503,7 +503,7 @@ func TestInferenceJournalPendingProgressRejectsMismatchedEvidence(t *testing.T) 
 }
 
 func TestInferenceJournalCompletesWorkflowOnlyAfterOperationsAreTerminal(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-workflow-terminal")
 		if err != nil {
 			t.Fatal(err)
@@ -553,7 +553,7 @@ func TestInferenceJournalCompletesWorkflowOnlyAfterOperationsAreTerminal(t *test
 }
 
 func TestInferenceJournalSettlesLateUsageAfterWorkflowCompletion(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-late-usage")
 		if err != nil {
 			t.Fatal(err)
@@ -617,7 +617,7 @@ func TestInferenceJournalSettlesLateUsageAfterWorkflowCompletion(t *testing.T) {
 }
 
 func TestInferenceJournalEnforcesSharedReplayAndSubmissionBudget(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-budget")
 		if err != nil {
 			t.Fatal(err)
@@ -712,7 +712,7 @@ func TestInferenceJournalEnforcesSharedReplayAndSubmissionBudget(t *testing.T) {
 }
 
 func TestInferenceJournalReplayBudgetExemptsUnansweredNetworkFailure(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-replay-exemption")
 		if err != nil {
 			t.Fatal(err)
@@ -806,7 +806,7 @@ func TestInferenceJournalReplayBudgetExemptsUnansweredNetworkFailure(t *testing.
 }
 
 func TestInferenceJournalPersistsFailureMessage(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-failure-message")
 		if err != nil {
 			t.Fatal(err)
@@ -858,7 +858,7 @@ func TestInferenceJournalPersistsFailureMessage(t *testing.T) {
 }
 
 func TestInferenceJournalRecoveryAttemptAdmissionRollsBackAtomically(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-recovery-atomic")
 		if err != nil {
 			t.Fatal(err)
@@ -916,7 +916,7 @@ func TestInferenceJournalRecoveryAttemptAdmissionRollsBackAtomically(t *testing.
 }
 
 func TestInferenceJournalCostConfidenceSettlementIsIdempotent(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-cost")
 		if err != nil {
 			t.Fatal(err)
@@ -986,7 +986,7 @@ func TestInferenceJournalCostConfidenceSettlementIsIdempotent(t *testing.T) {
 }
 
 func TestInferenceJournalHardUsageBudgetRequiresSettledCost(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-hard-usage")
 		if err != nil {
 			t.Fatal(err)
@@ -1049,7 +1049,7 @@ func TestInferenceJournalHardUsageBudgetRequiresSettledCost(t *testing.T) {
 }
 
 func TestInferenceJournalConcurrentLastSubmissionAdmission(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-concurrent-budget")
 		if err != nil {
 			t.Fatal(err)
@@ -1125,7 +1125,7 @@ type inferenceJournalProcessCandidate struct {
 }
 
 func TestInferenceJournalCrossProcessLastBudgetAdmission(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		for _, action := range []string{"attempt", "submission"} {
 			t.Run(action, func(t *testing.T) {
 				dir := t.TempDir()
@@ -1254,7 +1254,7 @@ func TestInferenceJournalCrossProcessBudgetWorker(t *testing.T) {
 	}
 	defer documents.Close()
 	runtime := &InferenceJournalRuntime{
-		store: NewStore(context.Background(), documents), workspaceScope: candidate.Scope, runtimeID: candidate.RuntimeID,
+		store: newDocumentStore(context.Background(), documents), workspaceScope: candidate.Scope, runtimeID: candidate.RuntimeID,
 	}
 	journal := &documentInferenceJournal{runtime: runtime, ownerID: candidate.OwnerID}
 	err = nil
@@ -1287,7 +1287,7 @@ func TestInferenceJournalCrossProcessBudgetWorker(t *testing.T) {
 }
 
 func TestInferenceJournalCrashRecoveryMatrix(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		oldRuntime, err := store.NewInferenceJournalRuntime("workspace-recovery")
 		if err != nil {
 			t.Fatal(err)
@@ -1425,7 +1425,7 @@ func TestInferenceJournalCrashRecoveryMatrix(t *testing.T) {
 }
 
 func TestInferenceJournalReconcilesCrashBetweenOperationAndWorkflowCompletion(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		oldRuntime, err := store.NewInferenceJournalRuntime("workspace-workflow-crash-window")
 		if err != nil {
 			t.Fatal(err)
@@ -1468,7 +1468,7 @@ func TestInferenceJournalReconcilesCrashBetweenOperationAndWorkflowCompletion(t 
 }
 
 func TestInferenceJournalReconcileDoesNotTreatRecoveredFailureAsWorkflowFailure(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		oldRuntime, err := store.NewInferenceJournalRuntime("workspace-recovered-failure-window")
 		if err != nil {
 			t.Fatal(err)
@@ -1515,7 +1515,7 @@ func TestInferenceJournalReconcileDoesNotTreatRecoveredFailureAsWorkflowFailure(
 }
 
 func TestInferenceJournalRejectsMetadataMutation(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-test")
 		if err != nil {
 			t.Fatal(err)
@@ -1540,7 +1540,7 @@ func TestInferenceJournalRejectsMetadataMutation(t *testing.T) {
 }
 
 func TestInferenceJournalEnforcesOperationParentConstraints(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-parent-constraints")
 		if err != nil {
 			t.Fatal(err)
@@ -1707,7 +1707,7 @@ INSERT INTO inference_submissions (
 		t.Fatal(err)
 	}
 
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		for pass := 0; pass < 2; pass++ {
 			result, err := MigrateLegacySQLite(context.Background(), dir, store.documents, NewLegacyInferenceConverter())
 			if err != nil || result.AlreadyMigrated != (pass == 1) {
@@ -1726,7 +1726,7 @@ INSERT INTO inference_submissions (
 }
 
 func TestInferenceJournalDoesNotRecoverLiveRuntime(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		first, err := store.NewInferenceJournalRuntime("workspace-live")
 		if err != nil {
 			t.Fatal(err)
@@ -1760,7 +1760,7 @@ func TestInferenceJournalDoesNotRecoverLiveRuntime(t *testing.T) {
 }
 
 func TestInferenceJournalRecoversTerminalRetryCheckpoint(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		oldRuntime, err := store.NewInferenceJournalRuntime("workspace-checkpoint")
 		if err != nil {
 			t.Fatal(err)
@@ -1818,7 +1818,7 @@ func TestInferenceJournalRecoversTerminalRetryCheckpoint(t *testing.T) {
 }
 
 func TestInferenceJournalSubmissionEvidenceIsMonotonic(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-monotonic")
 		if err != nil {
 			t.Fatal(err)
@@ -1870,7 +1870,7 @@ func TestInferenceJournalSubmissionEvidenceIsMonotonic(t *testing.T) {
 }
 
 func TestInferenceJournalEnforcesOwnerAndDigestBoundaries(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-owner")
 		if err != nil {
 			t.Fatal(err)
@@ -1907,7 +1907,7 @@ func TestInferenceJournalEnforcesOwnerAndDigestBoundaries(t *testing.T) {
 }
 
 func TestInferenceJournalPrunesOnlyOldTerminalOperations(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-prune")
 		if err != nil {
 			t.Fatal(err)
@@ -1996,9 +1996,9 @@ func crashInferenceRuntimeForTest(t *testing.T, runtime *InferenceJournalRuntime
 }
 
 func TestInferenceRecoveryAndPruningUseBoundedScopeReads(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		authority := &boundedInferenceDocuments{Documents: store.documents}
-		selected := NewStore(context.Background(), authority)
+		selected := newDocumentStore(context.Background(), authority)
 		runtime, err := selected.NewInferenceJournalRuntime("bounded-scope")
 		if err != nil {
 			t.Fatal(err)

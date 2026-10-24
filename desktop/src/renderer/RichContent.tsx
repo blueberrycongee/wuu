@@ -1,5 +1,7 @@
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
-import { hostSupports } from "./HostCapabilities";
+import { useOptionalPreviewContent } from "./PreviewContentContext";
+import { useBrowserControls } from "./BrowserControlsContext";
+import { imageTarget, resolvePreviewResourceURL } from "./PreviewResourceURL";
 import { Children, createContext, useContext, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Github, Globe2, Mail } from "./WuuIcons";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
@@ -20,6 +22,7 @@ import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import {
   formatWorkspaceFileTarget,
   parseLinkTarget,
+  resolveWorkspaceFileTarget,
   type WorkspaceFileLinkTarget,
 } from "./LinkTargets";
 import { MessageCopyButton } from "./MessageActions";
@@ -27,9 +30,6 @@ import { copyToClipboard, ThreadContextMenu } from "./ThreadContextMenu";
 import { useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import {
-  openExternalURL,
-  prefersSystemBrowser,
-  useWorkspaceBrowserOpen,
   workspaceBrowserClickModifiers,
 } from "./WorkspaceBrowserOpen";
 import { observeAppearance } from "./AppearancePreferences";
@@ -48,6 +48,9 @@ const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkMathDelimiters, rema
 type RichContentProps = {
   text?: string;
   cwd?: string;
+  /** Workspace-relative path of the source document, used to resolve file links. */
+  documentPath?: string;
+  /** Legacy caller signature; public link actions are supplied by the service providers. */
   onOpenFile?: (path: string) => void;
   onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
   /**
@@ -149,11 +152,17 @@ function mermaidRenderKey(typography: ReturnType<typeof diagramTypography>, code
   return JSON.stringify([typography.fontFamily, typography.fontSize, codeToRender]);
 }
 
-const IMAGE_FILE_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i;
 
-export const RichContent = memo(function RichContent({
+export const RichContent = memo(function RichContent(props: RichContentProps): JSX.Element {
+  const preview = useOptionalPreviewContent();
+  if (preview) return <div className="rich-content"><MarkdownContent {...props} text={props.text ?? ""} /></div>;
+  return <LegacyRichContent {...props} />;
+});
+
+function LegacyRichContent({
   text = "",
   cwd,
+  documentPath,
   onOpenFile,
   onOpenURL,
   allowRawHtml = false,
@@ -168,6 +177,7 @@ export const RichContent = memo(function RichContent({
       <MarkdownContent
         text={text}
         cwd={cwd}
+        documentPath={documentPath}
         onOpenFile={onOpenFile}
         onOpenURL={onOpenURL}
         allowRawHtml={allowRawHtml}
@@ -185,14 +195,13 @@ export const RichContent = memo(function RichContent({
       fallback={fallback}
     />
   );
-});
+}
 
 function MarkdownContentView({
   text,
   cwd,
+  documentPath,
   renderText,
-  onOpenFile,
-  onOpenURL,
   renderMermaid = true,
   mermaidStreaming = false,
   allowRawHtml = false,
@@ -202,6 +211,7 @@ function MarkdownContentView({
 }: {
   text: string;
   cwd?: string;
+  documentPath?: string;
   renderText?: RichTextRenderer;
   onOpenFile?: (path: string) => void;
   onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
@@ -215,9 +225,10 @@ function MarkdownContentView({
   /** Rendered after the last code line when a code block ends the source. */
   codeCursor?: ReactNode;
 }): JSX.Element {
+  const publicFiles = Boolean(useOptionalPreviewContent());
   const components = useMemo(
-    () => markdownComponents(cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping),
-    [cwd, renderText, renderMermaid, onOpenFile, onOpenURL, sourceMapping]
+    () => markdownComponents(cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath),
+    [cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath]
   );
   const source = documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text;
   const sourceEnd = source.trimEnd().length;
@@ -260,9 +271,9 @@ function markdownComponents(
   cwd: string | undefined,
   renderText: RichTextRenderer | undefined,
   renderMermaid: boolean,
-  onOpenFile: ((path: string) => void) | undefined,
-  onOpenURL: ((url: string, event?: ReactMouseEvent<HTMLElement>) => void) | undefined,
   sourceMapping: boolean,
+  publicFiles: boolean,
+  documentPath?: string,
 ): Components {
   const richTextOptions: RichTextRenderOptions = {
     renderText,
@@ -324,7 +335,7 @@ function markdownComponents(
       if (href === PENDING_STREAM_LINK) return <span>{inner}</span>;
       const target = parseLinkTarget(href);
       if (target.kind === "workspace-file") {
-        if (!onOpenFile) {
+        if (!publicFiles) {
           return <span>{inner}</span>;
         }
         return (
@@ -332,13 +343,12 @@ function markdownComponents(
             key={`a-${formatWorkspaceFileTarget(target)}`}
             display={inner}
             cwd={cwd}
-            target={target}
-            onOpenFile={onOpenFile}
+            target={documentPath ? resolveWorkspaceFileTarget(documentPath, target) : target}
           />
         );
       }
       if (target.kind === "external") {
-        return <RichWebLink href={target.url} title={title} onOpenURL={onOpenURL}>{inner}</RichWebLink>;
+        return <RichWebLink href={target.url} title={title}>{inner}</RichWebLink>;
       }
       if (target.kind === "anchor") {
         return <RichAnchorLink id={target.id} title={title}>{inner}</RichAnchorLink>;
@@ -620,16 +630,20 @@ function markdownNodeText(node: ReactNode): string {
 function RichFileLink({
   display,
   cwd,
-  target,
-  onOpenFile
+  target
 }: {
   display: ReactNode;
   cwd?: string;
   target: WorkspaceFileLinkTarget;
-  onOpenFile: (path: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const preview = useOptionalPreviewContent();
+  const [error, setError] = useState<string>();
   const reference = formatWorkspaceFileTarget(target);
+  const openFile = (): void => {
+    if (!preview || !cwd) { setError("Workspace file navigation unavailable"); return; }
+    void preview.service.openFile({ root: cwd, path: reference }).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+  };
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const path = target.path;
   const normalizedPath = path.replace(/\\/g, "/");
@@ -646,7 +660,7 @@ function RichFileLink({
         <button
           type="button"
           className="rich-link rich-file-link"
-          onClick={() => onOpenFile(reference)}
+          onClick={openFile}
           onContextMenu={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -656,21 +670,22 @@ function RichFileLink({
           <span className="rich-link-label">{display}</span>
         </button>
       </Tooltip>
+      {error ? <span role="alert">{error}</span> : null}
       {contextMenu ? (
         <ThreadContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={closeContextMenu}
           items={[
-            { label: t("workspace.files.openFile"), onSelect: () => onOpenFile(reference) },
+            { label: t("workspace.files.openFile"), onSelect: openFile },
             { separator: true },
             { label: t("workspace.files.copyPath"), onSelect: () => copyToClipboard(absolutePath) },
             { label: t("workspace.files.copyRelativePath"), onSelect: () => copyToClipboard(path) },
             { label: t("workspace.files.copyFileName"), onSelect: () => copyToClipboard(fileName) },
-            ...(hostSupports("revealWorkspaceItem")
+            ...(preview?.service.capabilities.revealItem
               ? [{ separator: true } as const, {
                   label: t("workspace.files.revealInFileManager"),
-                  onSelect: () => window.wuu.revealWorkspaceItem(absolutePath),
+                  onSelect: () => preview.service.revealItem({ root: cwd ?? "", path: absolutePath }),
                 }]
               : []),
           ]}
@@ -716,33 +731,25 @@ function RichWebLink({
   href,
   title,
   children,
-  onOpenURL,
 }: {
   href: string;
   title?: string;
   children: ReactNode;
-  onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
 }): JSX.Element {
   const { t } = useI18n();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
-  const openWorkspaceURL = useWorkspaceBrowserOpen((url, modifiers) => {
-    if (prefersSystemBrowser(modifiers) || !onOpenURL) {
-      openExternalURL(url);
-      return;
-    }
-    onOpenURL(url);
-  });
+  const browser = useBrowserControls();
+  const [error, setError] = useState<string>();
+  const open = (external: boolean, modifiers?: ReturnType<typeof workspaceBrowserClickModifiers>): void => {
+    if (!browser) { setError(t("workspace.browser.previewUnavailable")); return; }
+    setError(undefined);
+    void (external ? browser.openExternal(href) : browser.openURL({ url: href, modifiers }))
+      .catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+  };
   const openLink = (event: ReactMouseEvent<HTMLAnchorElement>): void => {
-    if (event.button > 1) {
-      return;
-    }
+    if (event.button > 1) return;
     event.preventDefault();
-    const modifiers = workspaceBrowserClickModifiers(event);
-    if (onOpenURL && !prefersSystemBrowser(modifiers)) {
-      onOpenURL(href);
-      return;
-    }
-    openWorkspaceURL(href, modifiers);
+    open(false, workspaceBrowserClickModifiers(event));
   };
   const closeContextMenu = (): void => setContextMenu(null);
   return (
@@ -766,14 +773,15 @@ function RichWebLink({
           </span>
         </a>
       </Tooltip>
+      {error ? <span role="alert">{error}</span> : null}
       {contextMenu ? (
         <ThreadContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           onClose={closeContextMenu}
           items={[
-            { label: t("rich.openLinkInWorkspace"), onSelect: () => openWorkspaceURL(href) },
-            { label: t("rich.openLinkExternal"), onSelect: () => openExternalURL(href) },
+            { label: t("rich.openLinkInWorkspace"), onSelect: () => open(false) },
+            { label: t("rich.openLinkExternal"), onSelect: () => open(true) },
           ]}
         />
       ) : null}
@@ -1025,12 +1033,14 @@ function RichImage({
   inline?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
-  const resolvedSource = resolveImageSource(source, cwd);
+  const preview = useOptionalPreviewContent();
+  const resolvedSource = preview ? preview.service.resolveResourceURL({ source, cwd }) : resolvePreviewResourceURL(source, cwd);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const { openPreview } = useImagePreview();
   const titleText = imageTarget(source);
-  const register = useImagePreviewRegistration(failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
+  const register = useImagePreviewRegistration(!resolvedSource || failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
   const handleActivate = (origin: HTMLElement): void => {
+    if (!resolvedSource) return;
     openPreview({ src: resolvedSource, alt, title: titleText }, origin);
   };
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLImageElement>): void => {
@@ -1039,7 +1049,7 @@ function RichImage({
       handleActivate(event.currentTarget);
     }
   };
-  const image = failedSource === resolvedSource ? (
+  const image = !resolvedSource || failedSource === resolvedSource ? (
     <span className="rich-image rich-image-unavailable" role="img" aria-label={t("imagePreview.loadFailed")}>
       {t("imagePreview.loadFailed")}
     </span>
@@ -1058,7 +1068,7 @@ function RichImage({
         }
         onClick={event => handleActivate(event.currentTarget)}
         onKeyDown={handleKeyDown}
-        onError={() => setFailedSource(resolvedSource)}
+        onError={() => setFailedSource(resolvedSource ?? null)}
       />
     </Tooltip>
   );
@@ -1070,121 +1080,6 @@ function RichImage({
       {image}
     </figure>
   );
-}
-
-function stripWrappers(value: string): string {
-  const pairs: Array<[string, string]> = [
-    ["`", "`"],
-    ['"', '"'],
-    ["'", "'"],
-    ["<", ">"]
-  ];
-  for (const [open, close] of pairs) {
-    if (value.startsWith(open) && value.endsWith(close)) {
-      return value.slice(open.length, -close.length).trim();
-    }
-  }
-  return value;
-}
-
-export function resolveImageSource(rawSource: string, cwd: string | undefined): string {
-  const source = imageTarget(rawSource);
-  const renderableWuuFileURL = renderableBrowserFileURLFromWuuFile(source);
-  if (renderableWuuFileURL) {
-    return renderableWuuFileURL;
-  }
-  if (isWebImageSource(source)) {
-    return source;
-  }
-  if (source.startsWith("file://")) {
-    return renderableFileURL(fileURLPath(source));
-  }
-  if (source.startsWith("~/")) {
-    return renderableFileURL(resolveHomePath(cwd, source));
-  }
-  if (source.startsWith("/") || source.startsWith("./") || source.startsWith("../")) {
-    return renderableFileURL(source.startsWith("/") ? source : resolveRelativePath(cwd, source));
-  }
-  if (cwd && IMAGE_FILE_PATTERN.test(source)) {
-    return renderableFileURL(resolveRelativePath(cwd, source));
-  }
-  return source;
-}
-
-export function imageTarget(rawSource: string): string {
-  let source = stripWrappers(rawSource.trim());
-  if (source.startsWith("<") && source.endsWith(">")) {
-    return source.slice(1, -1).trim();
-  }
-  const titleMatch = source.match(/^(.*?)(?:\s+["'][^"']*["'])$/);
-  if (titleMatch) {
-    source = titleMatch[1].trim();
-  }
-  return source;
-}
-
-function isWebImageSource(source: string): boolean {
-  return /^(https?:|data:image\/|blob:|wuu-file:)/i.test(source);
-}
-
-function fileURLPath(source: string): string {
-  try {
-    return decodeURIComponent(new URL(source).pathname);
-  } catch {
-    return source.replace(/^file:\/\//, "");
-  }
-}
-
-function resolveRelativePath(cwd: string | undefined, relativePath: string): string {
-  const base = cwd ?? "/";
-  const parts = `${base}/${relativePath}`.split("/");
-  const stack: string[] = [];
-  for (const part of parts) {
-    if (!part || part === ".") {
-      continue;
-    }
-    if (part === "..") {
-      stack.pop();
-      continue;
-    }
-    stack.push(part);
-  }
-  return `/${stack.join("/")}`;
-}
-
-function resolveHomePath(cwd: string | undefined, path: string): string {
-  const homePath = cwd?.match(/^\/Users\/[^/]+/)?.[0] ?? "";
-  return `${homePath}/${path.slice(2)}`;
-}
-
-function renderableFileURL(filePath: string): string {
-  const encodedPath = base64URL(filePath);
-  return window.wuuRenderableFileURL?.(encodedPath) ?? `wuu-file://local/${encodedPath}`;
-}
-
-function renderableBrowserFileURLFromWuuFile(source: string): string | undefined {
-  if (!/^wuu-file:/i.test(source)) {
-    return undefined;
-  }
-  try {
-    const url = new URL(source);
-    if (url.hostname !== "local") {
-      return undefined;
-    }
-    const encodedPath = url.pathname.replace(/^\/+/, "");
-    return encodedPath ? window.wuuRenderableFileURL?.(encodedPath) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function base64URL(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) {
-    binary += String.fromCharCode(byte);
-  }
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function MermaidDiagram({ code: source }: { code: string }): JSX.Element {

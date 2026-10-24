@@ -99,11 +99,11 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div />,
 }));
 
-import { App } from "./App";
+import { createDefaultTestHost, createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
 import * as applicationState from "./plugins/ApplicationController";
-import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { TestApplicationShellOutlet as ApplicationShellOutlet } from "./test-support/DefaultApplication";
 import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
 import { DesktopPluginRuntime } from "./plugins/DesktopPluginRuntime";
 import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
@@ -362,7 +362,7 @@ async function renderApp(
   installWuuApi({ withThread, ...options });
   await act(async () => {
     root = createRoot(container);
-    root.render(<App />);
+    root.render(await createDefaultApplicationTestView());
   });
   await flushAsync();
 }
@@ -420,7 +420,8 @@ async function enterCommand(
 async function holdShellReplacement(stage: "bridge" | "register") {
   const controller = new applicationState.ApplicationController();
   vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
-  const host = new PluginHost({ react: React, application: controller });
+  const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
   let replacing = false;
   let release!: () => void, started!: () => void;
   const ready = new Promise<void>(resolve => { started = resolve; });
@@ -443,7 +444,7 @@ async function holdShellReplacement(stage: "bridge" | "register") {
   await runtime.sync([shell]);
   await act(async () => {
     root = createRoot(container);
-    root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
+    root.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
   });
   await flushAsync();
   replacing = true;
@@ -538,7 +539,8 @@ describe("main composer focus continuity", () => {
         .find(button => button.textContent?.includes("Alternative fixture model"));
       expect(alternative).toBeDefined();
       await act(async () => alternative!.click());
-      expect(controller.getState().initialized?.model).toBe("gpt-alternative");
+      const runtime = controller.getSnapshot().composerRuntime;
+      expect(runtime.owners.find(owner => owner.ownerTabId === runtime.activeOwnerTabId)?.selection.model).toBe("gpt-alternative");
       expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Alternative fixture model");
       await click(".codex-runtime-trigger");
       expect(document.querySelector(".runtime-panel")).toBeNull();
@@ -820,7 +822,7 @@ describe("main composer focus continuity", () => {
       provider: "fake",
       model: "fake-model",
       effort: "high",
-      speed: undefined,
+      speed: "",
     }, workspace);
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });
@@ -850,7 +852,7 @@ describe("main composer focus continuity", () => {
     window.wuu.listEngines = vi.fn().mockRejectedValue(new Error("engine discovery unavailable"));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("true");
@@ -863,6 +865,16 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
       engine: "wuu", provider: "fake", model: "fake-model",
     }), { kind: "no_project", cwd: scratchCwd });
+  });
+
+  it("honors a public composer focus request for the current draft", async () => {
+    await renderApp(false);
+    const trigger = document.createElement("button");
+    container.append(trigger);
+    trigger.focus();
+    const application = applicationState.getDesktopApplication();
+    await act(async () => application.invoke("navigation.focus-composer", { tabId: application.getSnapshot().tabs.activeTabId }));
+    await waitForMainComposerFocus("dock");
   });
 
   it("keeps the new workspace sendable when an older engine settings save finishes", async () => {
@@ -887,7 +899,7 @@ describe("main composer focus continuity", () => {
     }));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -896,6 +908,7 @@ describe("main composer focus continuity", () => {
     await vi.waitFor(async () => {
       await flushAsync();
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+      expect(container.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
     });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-status"]')!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-enabled"]')!.click());
@@ -1064,7 +1077,9 @@ describe("main composer focus continuity", () => {
       provider: "fake",
       model: "fake-model",
       effort: "high",
+      speed: "",
       permission_mode: "standard",
+      approve_for_me: false,
     }, { kind: "no_project", cwd: scratchCwd });
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });

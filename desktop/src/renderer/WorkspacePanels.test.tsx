@@ -8,7 +8,8 @@ import {
   WORKSPACE_FILE_TREE_DEFAULT_WIDTH,
   WORKSPACE_FILE_TREE_MAX_WIDTH,
   WORKSPACE_FILE_TREE_MIN_WIDTH,
-  WorkspaceRightPanel,
+  WorkspaceRightPanel as PublicWorkspaceRightPanel,
+  type WorkspacePanelView,
 } from "./WorkspacePanels";
 import type { RuntimeContext } from "../shared/protocol";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
@@ -22,9 +23,10 @@ import {
 } from "./WorkspaceViewTabs";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 import { confirmAction } from "./ConfirmDialog";
-import type { HeaderSnapshotV1, PresentationHost } from "../shared/workbench";
-import { PluginHost } from "./plugins/PluginHost";
-import { WorkbenchController } from "./plugins/Workbench";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
+import type { HeaderSnapshotV1 } from "../shared/workbench";
+import type { UICompositionV1, UISlotProps } from "../../../packages/plugin-sdk/src/ui";
 
 vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
 
@@ -177,6 +179,93 @@ function makeSelection(path: string): TurnFileDiffSelection {
   };
 }
 
+
+type PanelFixtureProps = {
+  open: boolean;
+  covered?: boolean;
+  present: boolean;
+  prewarm?: boolean;
+  tabs: WorkspaceViewTab[];
+  activeTabID: string | undefined;
+  activeFileTabID?: string;
+  // activeContext is the pinned project/no_project context — used for the
+  // browser tab (its "current project" hint text, not a filesystem root).
+  // workspaceContext follows the active thread's own cwd (e.g. a worktree
+  // fork) when it differs from activeContext, and roots the file tree and
+  // terminal; see workspacePanelContext in AppState.ts.
+  activeContext?: RuntimeContext;
+  workspaceContext?: RuntimeContext;
+  terminalThread?: import("../shared/protocol").Thread;
+  gitStatus?: import("../shared/protocol").GitStatusResult;
+  selectedFilePath?: string;
+  onSelectTab: (id: string) => void;
+  onOpenTool: (view: WorkspacePanelView) => void;
+  onShowTools: () => void;
+  onCloseTab: (id: string) => void;
+  onDirtyFileTabsChange?: (dirty: boolean) => void;
+  onReorderTabs: (activeID: string, overID: string) => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
+  globalized: boolean;
+  conversationTab?: { title: string; active: boolean; onSelect: () => void };
+  sideThreadContent?: React.ReactNode;
+  sideThreadRunning?: boolean;
+  // Globalize-sheet phase from App's phase machine; drives the data-sheet
+  // attribute that promotes the panel to a full-window sheet in CSS.
+  sheetPhase?: "docked" | "arming" | "open" | "exiting" | "docking";
+  onToggleGlobalize: () => void;
+  canExitGlobalized?: boolean;
+  browserActivity?: import("../shared/protocol").ActivitySession;
+  browserDockTarget?: import("../shared/protocol").BrowserDockTarget;
+  browserOverlaySuppressed?: boolean;
+  onBrowserUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
+  focusedComposer?: React.ReactNode;
+  fileRefreshKey?: string;
+} & { slots?: UICompositionV1 };
+function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
+  const previewContent = React.useMemo(() => new ApplicationPreviewContent(window.wuu, {
+    openFile: ({ root, path }) => {
+      const tab = props.tabs.find(tab => tab.kind === "file" && tab.context.cwd === root);
+      const context = tab?.kind === "file" ? tab.context : props.workspaceContext;
+      props.onOpenFile(path, context);
+    },
+  }), [props.onOpenFile, props.tabs, props.workspaceContext]);
+  const artifacts = React.useMemo(() => new ApplicationArtifacts(window.wuu, previewContent), [previewContent]);
+  React.useEffect(() => () => previewContent.dispose(), [previewContent]);
+  const snapshot = {
+    connection: { status: "connected" },
+    previewWorkspace: { ownerTabId: "draft:one", tabs: props.tabs, activeTabId: props.activeTabID, activeFileTabId: props.activeFileTabID,
+      conversationSelected: Boolean(props.conversationTab?.active), conversationTitle: props.conversationTab?.title ?? "Conversation",
+      activeContext: props.activeContext, workspaceContext: props.workspaceContext, threadId: props.terminalThread?.id,
+      fileRefreshKey: props.fileRefreshKey, browserActivity: props.browserActivity, browserDockTarget: props.browserDockTarget },
+    conversationWorkspace: { threads: props.terminalThread ? [props.terminalThread] : [], activePane: "primary" },
+    navigationWorkspace: { threads: [], projectAgentEnabled: false },
+    sideConversation: { turns: [], commands: [], contextChatPending: [] },
+  };
+  const selection = { enabled: false, interactionOwnerKey: "draft:one", comments: [] };
+  const application = {
+    getSnapshot: () => snapshot, subscribe: () => () => {},
+    invoke: async (action: string, input: { tabId: string; overTabId: string; toolId: WorkspacePanelView; path: string; context: RuntimeContext }) => {
+      if (action === "preview.focus-tab") props.onSelectTab(input.tabId);
+      if (action === "preview.close-tab") props.onCloseTab(input.tabId);
+      if (action === "preview.reorder-tab") props.onReorderTabs(input.tabId, input.overTabId);
+      if (action === "preview.open-tool") props.onOpenTool(input.toolId);
+      if (action === "preview.new-tab") props.onShowTools();
+      if (action === "preview.open-file") props.onOpenFile(input.path, input.context);
+      if (action === "preview.show-conversation") props.conversationTab?.onSelect();
+    },
+    previewContent, artifacts,
+    fileSelection: { getSnapshot: () => selection, subscribe: () => () => {} },
+    catalog: { loadIcon: vi.fn() }, settingsControls: {}, environment: {}, terminals: {}, browser: {}, projects: {},
+  } as unknown as Parameters<typeof PublicWorkspaceRightPanel>[0]["application"];
+  const slots = props.slots ?? { Slot: ({name, fallback}: UISlotProps) => <>{name.endsWith("/application.composer") ? props.focusedComposer : fallback}</> };
+  return <PublicWorkspaceRightPanel application={application} slots={slots}
+    open={props.open} covered={props.covered} present={props.present} prewarm={props.prewarm}
+    globalized={props.globalized} sheetPhase={props.sheetPhase} onToggleGlobalize={props.onToggleGlobalize}
+    canExitGlobalized={props.canExitGlobalized} browserOverlaySuppressed={props.browserOverlaySuppressed}
+    onDirtyFileTabsChange={props.onDirtyFileTabsChange} conversationTabVisible={Boolean(props.conversationTab)}
+    documentComposer={Boolean(props.focusedComposer)} pane="primary" />;
+}
+
 function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
   return {
     open: true,
@@ -197,71 +286,33 @@ function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
 vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
 
 describe("WorkspaceRightPanel", () => {
-  it("exposes plugin workspace View actions as auxiliary commands", async () => {
-    const pluginHost = new PluginHost({ react: React });
-    const workbenchController = new WorkbenchController(pluginHost);
-    const execute = vi.fn();
-    await pluginHost.activateGeneration({ pluginId: "workspace-actions", generation: "one", register(api) {
-      api.registerViewType({ id: "workspace.view", title: "Workspace view", render: () => <div>Workspace plugin body</div> });
-      api.registerCommand({ id: "workspace.refresh", title: "Refresh workspace view", placements: ["view.title"], execute });
-    } });
+  it("renders an installed workspace view through the supplied public slot", () => {
     const tab = workspacePluginViewTab({ id: "workspace", pluginId: "workspace-actions", generation: "one", view: "workspace.view", title: "Workspace view" });
-    mount(<WorkspaceRightPanel {...baseProps()} tabs={[tab]} activeTabID={tab.id} pluginHost={pluginHost} workbenchController={workbenchController} />);
-    const action = container!.querySelector<HTMLButtonElement>('button[aria-label="Refresh workspace view"]')!;
-    expect(action).not.toBeNull();
-    await act(async () => action.click());
-    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ target: "view.title", region: "auxiliary", viewTypeId: "workspace.view" }));
-    workbenchController.dispose();
+    const contexts: unknown[] = [];
+    const slots = { Slot: ({ name, context, fallback }: UISlotProps) => {
+      if (!name.endsWith("/workspace.view")) return <>{fallback}</>;
+      contexts.push(context);
+      return <div>Workspace plugin body</div>;
+    } };
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[tab]} activeTabID={tab.id} slots={slots} />);
+    expect(container!.textContent).toContain("Workspace plugin body");
+    expect(contexts.at(-1)).toEqual({ pluginId: "workspace-actions", generation: "one", viewTypeId: "workspace.view", tabId: tab.id, region: "workspace" });
   });
 
-  it("replaces its owned tabbar boundary with a live workspace header presenter", async () => {
-    const pluginHost = new PluginHost({ react: React });
-    const workbenchController = new WorkbenchController(pluginHost);
+  it("replaces its tabbar with the public workspace header slot", () => {
     const snapshots: HeaderSnapshotV1[] = [];
-    let presentationHost: PresentationHost | undefined;
-    await pluginHost.activateGeneration({ pluginId: "workspace-header", generation: "one", register(api) {
-      api.registerPresenter({ id: "workspace", target: "header.workspace", render: (props) => {
-        snapshots.push(props.snapshot as HeaderSnapshotV1);
-        presentationHost = props.host;
-        return <div data-workspace-header>{(props.snapshot as HeaderSnapshotV1).title}</div>;
-      } });
-    } });
+    const slots = { Slot: ({ name, context, fallback }: UISlotProps) => {
+      if (!name.endsWith("/header.workspace")) return <>{fallback}</>;
+      snapshots.push(context!.snapshot as HeaderSnapshotV1);
+      return <div data-workspace-header>{snapshots.at(-1)!.title}</div>;
+    } };
     const context: RuntimeContext = { kind: "project", project_id: "project-1", cwd: "/repo/project" };
     const tab = workspaceFileViewTab({ context, path: "src/main.ts" });
-    const onSelectTab = vi.fn();
-    const onCloseTab = vi.fn();
-
-    mount(
-      <WorkspaceRightPanel
-        {...baseProps()}
-        tabs={[tab]}
-        activeTabID={tab.id}
-        activeFileTabID={tab.id}
-        workspaceContext={context}
-        onSelectTab={onSelectTab}
-        onCloseTab={onCloseTab}
-        pluginHost={pluginHost}
-        workbenchController={workbenchController}
-      />,
-    );
-
-    const tabbar = container?.querySelector(".workspace-panel-tabbar");
-    expect(tabbar?.firstElementChild?.hasAttribute("data-workspace-header")).toBe(true);
-    expect(tabbar?.querySelector(".workspace-panel-tabs")).toBeNull();
-    expect(snapshots.at(-1)).toMatchObject({
-      contractVersion: 1,
-      scope: "workspace",
-      title: "main.ts",
-      subtitle: "src/main.ts",
-      activeTabId: tab.id,
-      tabs: [{ id: tab.id, title: "main.ts", subtitle: "src/main.ts", kind: "file" }],
-    });
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[tab]} activeTabID={tab.id} activeFileTabID={tab.id} workspaceContext={context} slots={slots} />);
+    expect(container!.querySelector(".workspace-panel-tabs")).toBeNull();
+    expect(snapshots.at(-1)).toMatchObject({ contractVersion: 1, scope: "workspace", title: "main.ts", activeTabId: tab.id,
+      tabs: [{id: tab.id, title: "main.ts", kind: "file"}] });
     expect("context" in (snapshots.at(-1)?.tabs?.[0] ?? {})).toBe(false);
-
-    await act(async () => presentationHost?.invoke("header.select-tab", { tabId: tab.id }));
-    await act(async () => presentationHost?.invoke("header.close-tab", { tabId: tab.id }));
-    expect(onSelectTab).toHaveBeenCalledWith(tab.id);
-    expect(onCloseTab).toHaveBeenCalledWith(tab.id);
   });
 
   it("prewarms the hidden lightweight body during idle time", () => {

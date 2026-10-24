@@ -85,3 +85,40 @@ func TestRendererConsumerWithoutProvidedServicesJoinsGraph(t *testing.T) {
 		})
 	}
 }
+
+// Surface selection is independent of the shell and excludes unselected or
+// stopped providers even when their renderer package remains discoverable.
+func TestRendererSurfacesUseSelectedGraph(t *testing.T) {
+	ctx := context.Background()
+	descriptor := pluginhost.ServiceDescriptor{Name: "ui.navigation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.navigation.describe.input.v1", OutputSchema: "ui.navigation.describe.output.v1"}}}
+	plugins := []pluginpkg.Plugin{}
+	for _, id := range []string{"first", "selected"} {
+		plugins = append(plugins, pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: id, Desktop: &pluginpkg.DesktopSpec{Entry: "desktop.mjs", Services: []pluginhost.ServiceDescriptor{descriptor}}}, SubjectID: "plugin:user:" + id, Fingerprint: id + "-generation"})
+	}
+	modules := []string{defaultShellModule, "first", "selected"}
+	selection := &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: descriptor.Name, Major: 1, Provider: "selected"}}}
+	host, _, err := buildPluginHost(plugins, t.TempDir(), "test", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(ctx)
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{PluginHost: host, ActivePlugins: plugins}
+	shell, surfaces := s.ApplicationBindings()
+	if shell == nil || shell.PluginID != defaultShellModule {
+		t.Fatalf("shell: %+v", shell)
+	}
+	binding, found := surfaces[descriptor.Name]
+	if !found || len(surfaces) != 1 || binding.PluginID != "plugin:user:selected" || binding.Generation != "selected-generation" || binding.ProviderID != descriptor.Name {
+		t.Fatalf("surface bindings: %+v", surfaces)
+	}
+	if err := host.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	shell, surfaces = s.ApplicationBindings()
+	if shell != nil || len(surfaces) != 0 {
+		t.Fatalf("stopped composition remained selectable: %+v %+v", shell, surfaces)
+	}
+}

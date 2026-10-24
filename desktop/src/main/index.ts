@@ -3044,6 +3044,8 @@ app.whenReady().then(async () => {
     webWorkspaceHost.open(webWorkspaceSender(event), destination));
   ipcMain.handle("wuu:web-workspace-tooltip", (event, token: string, hint: WebWorkspaceTooltip | null) =>
     nativeTooltip.show(webWorkspaceSender(event), token, hint));
+  ipcMain.handle("wuu:web-workspace-options-dismiss", (event, id: string) =>
+    webWorkspaceHost.dismissOptions(webWorkspaceSender(event), id));
   ipcMain.handle("wuu:web-workspace-options", (event, id: string, request: WebWorkspaceMenuRequest) =>
     webWorkspaceHost.showOptions(webWorkspaceSender(event), id, request));
   ipcMain.handle("wuu:web-workspace-popover", (event, token: string, bounds: WebWorkspacePopoverBounds | null) =>

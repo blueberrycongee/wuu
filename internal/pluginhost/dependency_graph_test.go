@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -214,5 +215,76 @@ func TestProviderRetirementClosesDependentBeforeResource(t *testing.T) {
 	}
 	if !reflect.DeepEqual(closed, []string{"consumer", "provider"}) {
 		t.Fatalf("cleanup order = %v", closed)
+	}
+}
+
+func TestShutdownDeadlineRetainsDependencyUntilConsumerActuallyCloses(t *testing.T) {
+	entered, resume := make(chan struct{}), make(chan struct{})
+	var consumerCloses, providerCloses atomic.Int32
+	var persisted atomic.Bool
+	failure := errors.New("synthetic consumer cleanup report")
+	provider := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "storage", state: StateActive, provided: []ServiceDescriptor{searchService("1.0.0")}}}
+	consumer := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "consumer", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}}
+	outside := &dependencyClient{fakeServiceProcess: &fakeServiceProcess{id: "outside", state: StateActive, required: []ServiceRequirement{{Name: "search.provider", MajorVersion: 1, Required: true}}}}
+	host := New(consumer, provider)
+	registry, conflicts := BuildServiceRegistry(consumer, provider, outside)
+	host.AttachServiceRegistry(registry, conflicts)
+	registry.Activate()
+	provider.invoke = func(ctx context.Context, _ ServiceInvokeParams) (json.RawMessage, error) {
+		if providerCloses.Load() != 0 {
+			return nil, errors.New("dependency already closed")
+		}
+		if !InShutdownCleanup(ctx) {
+			return nil, errors.New("cleanup authentication lost")
+		}
+		persisted.Store(true)
+		return json.RawMessage(`{}`), nil
+	}
+	provider.close = func(context.Context) error { providerCloses.Add(1); return nil }
+	consumer.close = func(ctx context.Context) error {
+		consumerCloses.Add(1)
+		close(entered)
+		<-resume
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := host.CallService(ctx, consumer.id, "search.provider", "query", json.RawMessage(`{}`)); err != nil {
+			return err
+		}
+		return failure
+	}
+	done := host.ShutdownDone()
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- host.Close(ctx) }()
+	<-entered
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("deadline was not returned: %v", err)
+	}
+	if providerCloses.Load() != 0 {
+		t.Fatal("provider closed while consumer still flushing")
+	}
+	select {
+	case <-done:
+		t.Fatal("drain barrier closed before consumer finished")
+	default:
+	}
+	if _, err := host.CallService(context.Background(), consumer.id, "search.provider", "query", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("normal host admission remained open")
+	}
+	if _, err := registry.Call(context.Background(), outside.id, ServiceCallParams{Service: "search.provider", Method: "query"}); err == nil {
+		t.Fatal("normal registry admission remained open")
+	}
+	close(resume)
+	if err := host.Close(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("final cleanup error lost: %v", err)
+	}
+	<-done
+	if !persisted.Load() || consumerCloses.Load() != 1 || providerCloses.Load() != 1 {
+		t.Fatalf("cleanup ordering/count: persisted=%v consumer=%d provider=%d", persisted.Load(), consumerCloses.Load(), providerCloses.Load())
+	}
+	if err := host.Close(context.Background()); !errors.Is(err, failure) || consumerCloses.Load() != 1 || providerCloses.Load() != 1 {
+		t.Fatalf("repeat Close did not observe same cleanup: %v", err)
 	}
 }

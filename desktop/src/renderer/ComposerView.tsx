@@ -1,4 +1,7 @@
-import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions } from "./ComposerInlineCompletion";
+import { useComposerServices } from "./ComposerServicesContext";
+import type { ApplicationComposerContributionV1 } from "../../../packages/plugin-sdk/src/ui-composer-presentation";
+import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
+import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions, type ComposerInlineSource } from "./ComposerInlineCompletion";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import { effectiveModelSpeed } from "./RuntimeHelpers";
@@ -34,10 +37,8 @@ import {
   useSyncExternalStore
 } from "react";
 import type {
-  DesktopProject,
   EngineInfo,
   GitStatusResult,
-  InitializeResult,
   MessageContentPart,
   ResponseSelection,
   RuntimeContext,
@@ -122,6 +123,7 @@ import type { TurnContextUsage } from "./AppState";
 import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
 const MemoizedComposerPluginSlot = memo(PluginSlot);
+const emptyComposerContributions: readonly ApplicationComposerContributionV1[] = Object.freeze([]);
 const MemoizedComposerPluginToolbar = memo(ComposerPluginToolbar);
 
 type ExpandedComposerDrawer = "pending" | null;
@@ -286,17 +288,17 @@ export function Composer({
   status: string;
   disabledReason?: string;
   readOnly: boolean;
-  initialized?: InitializeResult;
+  initialized?: ComposerConfiguration;
   gitStatus?: GitStatusResult;
   branchPickerDisabled?: boolean;
   onCreateGitBranch?: (branch: string) => Promise<void>;
   onOpenGitWorktree?: (path: string) => Promise<void>;
   worktree?: ComposerWorktreeControl;
-  projects: DesktopProject[];
+  projects: ComposerWorkspace[];
   activeContext?: RuntimeContext;
   /** The conversation's runtime can differ from the workspace shown by controls. */
   inlineCompletionWorkspace?: RuntimeContext;
-  activeWorkspace?: DesktopProject;
+  activeWorkspace?: ComposerWorkspace;
   compactDisabledReason?: string;
   sideThreadDisabledReason?: string;
   handoffDisabledReason?: string;
@@ -354,9 +356,9 @@ export function Composer({
   onGuideQueuedMessage: (id: string) => void;
   onEditQueuedMessage: (id: string) => void;
   onEditGuideMessage: (id: string) => void;
-  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
-  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
-  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void;
+  onSend: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
+  onSteer?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
+  onQueue?: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>;
   onInterrupt: () => void;
   telemetryTurnID?: string;
   tokensPerSecond?: number;
@@ -415,6 +417,7 @@ export function Composer({
   // interval where two gestures can still read the same rendered draft, while
   // allowing a real input change (even to the same eventual text) to re-arm it.
   const submittedDraftSignatureRef = useRef<string | null>(null);
+  useEffect(() => () => { submittedDraftSignatureRef.current = null; }, [queryHistorySessionID]);
   const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
     setLastPromptRevision(promptRevision);
@@ -445,6 +448,8 @@ export function Composer({
     setLocalPrompt(value);
     commitPrompt(value);
   }
+  const services = useComposerServices();
+  const catalog = services?.catalog;
   const statusText = composerStatusText(status);
   const className = `composer-wrap ${
     variant === "hero"
@@ -626,14 +631,16 @@ export function Composer({
   const handoffPanelWidth = handoffMode ? runtimePanelWidth() : 0;
   const slashQuery = slashDraft?.query ?? "";
   const slashSkillContextKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
-  const slashSkillCountKey = initialized?.extension_trust?.main_session?.skills?.count ?? 0;
+  const slashSkillCountKey = services?.view.skillRevision ?? initialized?.extension_trust?.main_session?.skills?.count ?? 0;
   const slashSkillInventory = initialized?.extension_inventory;
   const slashRuntimeReady = Boolean(activeContext && initialized);
   const subscribePluginHost = useCallback(
-    (listener: () => void) => pluginHost.subscribe(listener),
-    [pluginHost],
+    (listener: () => void) => services ? services.presentation.subscribe(listener) : pluginHost.subscribe(listener),
+    [pluginHost, services],
   );
-  const getPluginCommands = useCallback(() => pluginHost.getCommands(), [pluginHost]);
+  const getPluginCommands = useCallback(() => services ? services.presentation.getCommands() : pluginHost.getCommands(), [pluginHost, services]);
+  const getAboveContributions = useCallback(() => services?.presentation.getContributions("composer.above") ?? emptyComposerContributions, [services]);
+  const aboveContributions = useSyncExternalStore(subscribePluginHost, getAboveContributions, getAboveContributions);
   const registeredPluginCommands = useSyncExternalStore(
     subscribePluginHost,
     getPluginCommands,
@@ -725,9 +732,9 @@ export function Composer({
 
     async function loadSlashSkills(): Promise<void> {
       try {
-        const result = await window.wuu.listSkills(skillThreadID ? { thread_id: skillThreadID } : undefined);
+        const result = catalog ? await catalog.listSkillsForThread({ threadId: skillThreadID }) : await window.wuu.listSkills(skillThreadID ? { thread_id: skillThreadID } : undefined);
         if (!cancelled) {
-          setSlashSkills(result.skills);
+          setSlashSkills(structuredClone(result.skills) as SkillSummary[]);
         }
       } catch {
         if (!cancelled) {
@@ -735,7 +742,7 @@ export function Composer({
         }
       }
     }
-  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, slashSkillInventory, textOnly, skillThreadID]);
+  }, [readOnly, slashRuntimeReady, slashSkillContextKey, slashSkillCountKey, slashSkillInventory, textOnly, skillThreadID, catalog]);
 
   function focusComposerSoon(): void {
     focusComposerTextarea(textareaRef.current);
@@ -763,7 +770,7 @@ export function Composer({
   }
 
   function submitComposerWith(
-    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void,
+    onSubmit: (promptOverride?: string, contentParts?: MessageContentPart[]) => boolean | void | Promise<boolean | void>,
     promptOverride = prompt,
     mode: ComposerSubmissionModeV1 = "send",
   ): void {
@@ -799,15 +806,26 @@ export function Composer({
     const contentParts = collapsedContentPartsForPrompt(promptOverride);
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : promptOverride;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
-    const accepted = contentParts
-      ? onSubmit(canonicalPrompt, contentParts)
-      : onSubmit(promptOverride);
-    if (accepted === false) return;
-    inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
     submittedDraftSignatureRef.current = draftSignature;
-    optimisticPromptQueueRef.current.length = 0;
-    setLocalPrompt("");
-    setSubmissionClearRevision((current) => current + 1);
+    const finish = (accepted: boolean | void): void => {
+      if (submittedDraftSignatureRef.current !== draftSignature) return;
+      if (accepted === false) {
+        submittedDraftSignatureRef.current = null;
+        return;
+      }
+      inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
+      optimisticPromptQueueRef.current.length = 0;
+      setLocalPrompt("");
+      setSubmissionClearRevision((current) => current + 1);
+    };
+    try {
+      const accepted = contentParts ? onSubmit(canonicalPrompt, contentParts) : onSubmit(promptOverride);
+      if (accepted instanceof Promise) void accepted.then(finish, () => finish(false));
+      else finish(accepted);
+    } catch (error) {
+      finish(false);
+      throw error;
+    }
     // Restore focus within the user action so software keyboards can open.
     // An already-focused editor must not blur/refocus or scroll on send.
     const textarea = textareaRef.current;
@@ -988,6 +1006,10 @@ export function Composer({
         onOpenInstructions();
         break;
       case "plugin": {
+        if (services) {
+          void services.presentation.executeCommand({ ownerTabId: services.ownerTabId, pluginId: command.pluginId!, id: command.pluginCommandId!, args: draft?.args ?? "" }).catch((error: unknown) => console.error("Plugin slash command failed", error));
+          break;
+        }
         const pluginCommand = pluginHost.getCommands().find((candidate) =>
           candidate.pluginId === command.pluginId
           && candidate.id === command.pluginCommandId);
@@ -1147,7 +1169,7 @@ export function Composer({
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
       <div className="composer-above-input">
-        <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />
+        {services ? aboveContributions.map(contribution => <contribution.View key={contribution.key} context={{ ownerTabId: services.ownerTabId, variant, mainConversation, running, readOnly, hasDraft, attachmentCount: files.length + images.length }} />) : <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />}
       </div>
       <div className="composer-shell">
         {slashMenuOpen ? (
@@ -1353,7 +1375,7 @@ export function Composer({
               submissionClearRevision={submissionClearRevision}
               placeholder={composerPlaceholder}
               disabled={readOnly}
-              pluginHost={pluginHost}
+              pluginHost={services?.presentation ?? pluginHost}
               inlineCompletionKind={inlineCompletionKind}
               workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
               workspaceRoot={inlineCompletionWorkspace?.cwd}
@@ -1645,7 +1667,7 @@ export function Composer({
   return (
     <>
       {attachmentPickers}
-      <ComposerPresentation
+      {services ? nativeComposer : <ComposerPresentation
         enabled={mainConversation}
         fallback={nativeComposer}
         draftText={prompt}
@@ -1670,7 +1692,7 @@ export function Composer({
         onRemoveImage={onRemoveImage}
         onSubmit={submitDraft}
         onStop={onInterrupt}
-      />
+      />}
     </>
   );
 }
@@ -1681,7 +1703,7 @@ type ComposerTextareaProps = {
   submissionClearRevision: number;
   placeholder: string;
   disabled: boolean;
-  pluginHost: PluginHost;
+  pluginHost: ComposerInlineSource;
   inlineCompletionKind: ComposerInlineCompletionContext["kind"];
   inlineCompletionEnabled: boolean;
   inlineCompletionContextKey: string;
@@ -1868,7 +1890,7 @@ function composerRuntimeContextKey(context: RuntimeContext): string {
   return context.kind === "project" ? `project:${context.project_id}` : `no_project:${context.cwd}`;
 }
 
-function heroWorkspacePillLabel(activeContext: RuntimeContext | undefined, activeWorkspace: DesktopProject | undefined): string {
+function heroWorkspacePillLabel(activeContext: RuntimeContext | undefined, activeWorkspace: ComposerWorkspace | undefined): string {
   if (activeContext?.kind === "project") {
     return activeWorkspace?.name ?? translate("composer.currentWorkspace");
   }

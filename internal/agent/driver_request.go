@@ -76,6 +76,11 @@ func (g *streamTurnGateway) ReadRequestContext(ctx context.Context) ([]loopdrive
 		return nil, err
 	}
 	segments := append(requestContextSegments(g.runner.BeforeRequestContext), g.postToolContext...)
+	if g.policy != nil {
+		segments = append(segments, RequestOnlyContextMessages(g.policy.Guidance)...)
+	} else if g.runner.contextWindowProvider() != nil && g.runner.ArchiveHistory != nil {
+		segments = append(segments, withContextWindowGuidance(nil)()...)
+	}
 	result := slices.Clone(segments)
 	for i := range result {
 		result[i].Messages = providers.CloneChatMessages(result[i].Messages)

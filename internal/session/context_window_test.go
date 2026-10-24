@@ -6,7 +6,7 @@ import (
 )
 
 func TestContextWindowRestartAndLateFork(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		const id = "context-restart"
 		if _, err := store.CreateWithMetadata(id, "/project"); err != nil {
 			t.Fatal(err)

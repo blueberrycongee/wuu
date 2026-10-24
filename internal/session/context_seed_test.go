@@ -6,7 +6,7 @@ import (
 )
 
 func TestCreateInitializedWithLaunchPersistsSeedWithoutSourceHistory(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("source", t.TempDir()); err != nil {
 			t.Fatalf("create source: %v", err)
 		}

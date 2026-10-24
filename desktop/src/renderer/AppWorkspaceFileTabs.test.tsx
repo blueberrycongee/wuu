@@ -41,7 +41,7 @@ vi.mock("./JumpToLatestPill", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as composerMessages from "./ComposerMessages";
 import * as artifactComposer from "./ArtifactComposerFile";
@@ -286,7 +286,7 @@ describe("workspace file tabs", () => {
       size_bytes: 16, mtime_ms: 1000, sha256: "a".repeat(64), binary: false, truncated: false,
       text: `# ${path} contents`,
     }));
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await typeMainPrompt("draft shared with the full-page preview");
     const history = (direction: "back" | "forward") => {
@@ -358,7 +358,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     const select = async (title: string) => {
@@ -410,7 +410,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     const link = container.querySelector<HTMLAnchorElement>('a[href="https://example.com/history"]')!;
@@ -449,7 +449,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     const composer = container.querySelector<HTMLTextAreaElement>(".composer textarea")!;
@@ -478,7 +478,7 @@ describe("workspace file tabs", () => {
   async function openSelectionDocument(): Promise<void> {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")?.click());
@@ -729,7 +729,7 @@ describe("workspace file tabs", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
     const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
-    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), restart: vi.fn() } });
+    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), result: attachment, restart: vi.fn() } });
     try {
       const input = openComposerAttachmentPicker(container.querySelector("[data-main-conversation-composer]")!);
       Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF"], attachment.filename, { type: attachment.media_type })] });
@@ -796,7 +796,7 @@ describe("workspace file tabs", () => {
       { id: "retry-file-2", filename: "资料.txt", media_type: "text/plain", data: "Y29udGV4dA==" },
     ];
     const imageEncode = vi.spyOn(composerMessages, "composerImagePlaceholder")
-      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image), preparation: { filename: "reference.png", promise: Promise.resolve(image), restart: vi.fn() } });
+      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image), preparation: { filename: "reference.png", promise: Promise.resolve(image), result: image, restart: vi.fn() } });
     const fileRead = deferred<void>();
     const encodings: Promise<composerMessages.ComposerFile>[] = [];
     const prepareFile = composerMessages.composerFilePlaceholder;
@@ -952,7 +952,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
     const snapshotFile = { id: "pdf-context", filename: "report.pdf", media_type: "application/pdf", data: "JVBERg==" };
     const attach = vi.spyOn(artifactComposer, "createArtifactComposerFile").mockReturnValue(snapshotFile);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const card = Array.from(container.querySelectorAll<HTMLButtonElement>(".turn-edit-summary-overview"))
       .find(button => button.textContent?.includes("report.pdf"));
@@ -1015,7 +1015,7 @@ describe("workspace file tabs", () => {
   it("hands the live draft to the right preview and back without tagging a hidden file", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     await typeMainPrompt("Keep this unfinished request");
@@ -1049,7 +1049,7 @@ describe("workspace file tabs", () => {
   it("opens a document beside the active conversation instead of replacing it", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1188,7 +1188,7 @@ describe("workspace file tabs", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1228,7 +1228,7 @@ describe("workspace file tabs", () => {
     setInnerWidth(674);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1255,7 +1255,7 @@ describe("workspace file tabs", () => {
     setInnerWidth(1000);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 

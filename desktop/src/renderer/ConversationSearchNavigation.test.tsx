@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { Thread, ThreadItem } from "../shared/protocol";
 import { initialState } from "./AppState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
+import { ApplicationSearch } from "./plugins/ApplicationSearch";
 import { ApplicationController } from "./plugins/ApplicationController";
 
 const { jump, cancelJump, unscopedJump, showErrorToast } = vi.hoisted(() => {
@@ -35,19 +36,28 @@ function setup(items?: ThreadItem[], options?: { deferActivation?: boolean; star
   const read = vi.fn(() => new Promise<ThreadItem>((resolve, reject) => pending.push({ resolve, reject })));
   window.wuu = { readRemoteItem: read } as unknown as typeof window.wuu;
   const activation: Array<() => void> = [];
-  const application = new ApplicationController({ ...initialState, thread: options?.startElsewhere ? { ...thread, id: "source" } : thread, threads: [thread] });
-  let navigate: ReturnType<typeof useConversationSearchNavigation>;
+  const application = new ApplicationController({ ...initialState, activeContext: { kind: "no_project", cwd: "/project" }, thread: options?.startElsewhere ? { ...thread, id: "source" } : thread, threads: [thread] });
+  let revision = 0;
+  const listeners = new Set<() => void>();
+  const search = new ApplicationSearch({ getState: application.getState, updateState: application.updateState,
+    subscribeState: application.subscribeState, changed: () => { snapshot = { search: search.getSnapshot() }; listeners.forEach(listener => listener()); },
+    cacheThreads: () => {}, getNavigation: () => ({ revision, pending: false }),
+    activateThread: async () => { revision++; if (options?.deferActivation) await new Promise<void>(resolve => activation.push(resolve)); } });
+  let snapshot = { search: search.getSnapshot() };
+  const publicApplication = { getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    invoke: search.invoke.bind(search) };
+  search.start();
+  window.wuu.searchThreads = vi.fn(async () => ({ results: [{ thread, message_seq: 7 }] }));
   let generation = 0;
   let readingIntent = 0;
   function Harness() {
     const state = useSyncExternalStore(application.subscribeState, application.getState);
-    const props = {
-      thread: state.thread, target: state.conversationSearchTarget, switching: false,
-      activateThread: () => options?.deferActivation ? new Promise<void>(resolve => activation.push(resolve)) : Promise.resolve(),
+    useConversationSearchNavigation({ application: publicApplication,
+      thread: state.thread, switching: false,
       captureConversationScrollIntent: () => { const captured = readingIntent; return () => captured === readingIntent; },
-      jumpToConversationMessage: jump, setAppState: application.updateState,
-    };
-    navigate = useConversationSearchNavigation(props);
+      jumpToConversationMessage: jump,
+    });
     return null;
   }
   root = createRoot(document.createElement("div"));
@@ -55,8 +65,8 @@ function setup(items?: ThreadItem[], options?: { deferActivation?: boolean; star
   return {
     item, thread, read, pending, activation,
     get state() { return application.getState(); },
-    select: (query = "late needle") => act(async () => navigate({ thread, message_seq: 7, snippet: query }, query)),
-    leave: () => act(() => { readingIntent++; application.updateState(current => ({ ...current, thread: { ...thread, id: "other" } })); }),
+    select: (query = "late needle") => act(async () => { await search.invoke("search.run", { query }); void search.invoke("search.locate", { resultId: search.getSnapshot().results[0].resultId }); }),
+    leave: () => act(() => { readingIntent++; revision++; application.updateState(current => ({ ...current, thread: { ...thread, id: "other" } })); }),
     install: (thread: Thread) => application.updateState(current => ({ ...current, thread })),
     remount: () => act(() => root.render(<Harness key={++generation} />)),
     readerInput: () => { readingIntent++; },
@@ -81,14 +91,11 @@ it("retains a cross-workspace search through shell remount, paging and full-cont
   expect(jump).toHaveBeenCalledOnce();
 });
 
-it("resumes hydration in the new shell without accepting the disposed shell's response", async () => {
+it("retains the same host hydration across shell replacement", async () => {
   const h = setup(); await h.select(); h.remount();
-  expect(h.read).toHaveBeenCalledTimes(2);
-  await act(async () => h.pending[0].resolve({ ...h.item, remote_content_ref: undefined, text: "obsolete late needle" }));
-  expect(h.state.thread?.turns[0].items[0]).toEqual(h.item);
-  expect(jump).not.toHaveBeenCalled();
+  expect(h.read).toHaveBeenCalledOnce();
   const full = { ...h.item, remote_content_ref: undefined, text: "current late needle" };
-  await act(async () => h.pending[1].resolve(full));
+  await act(async () => h.pending[0].resolve(full));
   expect(jump).toHaveBeenCalledExactlyOnceWith("old-turn", full, "late needle");
 });
 
@@ -108,7 +115,7 @@ it("does not revive a search after newer reader input rejected its late content"
   await act(async () => h.pending[0].resolve({ ...h.item, remote_content_ref: undefined, text: "late needle" }));
   h.remount();
   expect(h.read).toHaveBeenCalledOnce();
-  expect(h.state.thread?.turns[0].items[0]).toEqual(h.item);
+  expect(h.state.thread?.turns[0].items[0].text).toBe("late needle");
   expect(jump).not.toHaveBeenCalled();
 });
 

@@ -14,7 +14,7 @@ type sessionTestDocuments struct {
 	backend string
 }
 
-func readSessionDocument[T any](t *testing.T, store *Store, table, id string) T {
+func readSessionDocument[T any](t *testing.T, store *documentStore, table, id string) T {
 	t.Helper()
 	var value T
 	err := store.transaction(func(tx *persistence.Tx) error {
@@ -28,7 +28,7 @@ func readSessionDocument[T any](t *testing.T, store *Store, table, id string) T 
 	return value
 }
 
-func restartSessionStore(t *testing.T, store *Store) {
+func restartSessionStore(t *testing.T, store *documentStore) {
 	t.Helper()
 	documents := store.documents.(*sessionTestDocuments)
 	if err := documents.Close(); err != nil {
@@ -41,7 +41,7 @@ func restartSessionStore(t *testing.T, store *Store) {
 	documents.Store = reopened
 }
 
-func forEachSessionStore(t *testing.T, run func(*testing.T, *Store)) {
+func forEachSessionStore(t *testing.T, run func(*testing.T, *documentStore)) {
 	t.Helper()
 	for _, backend := range []string{"sqlite", "jsonl"} {
 		t.Run(backend, func(t *testing.T) {
@@ -56,7 +56,7 @@ func forEachSessionStore(t *testing.T, run func(*testing.T, *Store)) {
 					t.Error(err)
 				}
 			})
-			run(t, NewStore(context.Background(), documents))
+			run(t, newDocumentStore(context.Background(), documents))
 		})
 	}
 }
@@ -70,7 +70,7 @@ func TestDocumentSessionRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := NewStore(ctx, documents)
+	store := newDocumentStore(ctx, documents)
 	created, err := store.CreateInitialized(Session{ID: "one", CWD: "/workspace"}, []HistoryRecord{{Role: "user", Content: "first"}})
 	if err != nil || created.ID != "one" {
 		t.Fatalf("create: %+v, %v", created, err)
@@ -112,7 +112,7 @@ func TestDocumentSessionRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer documents.Close()
-	store = NewStore(ctx, documents)
+	store = newDocumentStore(ctx, documents)
 	restored, found, err := store.Find("one")
 	if err != nil || !found || restored.Title != "Review" || restored.TitleRevision != 1 {
 		t.Fatalf("restored metadata: %+v, %v, %v", restored, found, err)
@@ -138,4 +138,15 @@ func TestDocumentSessionRecovery(t *testing.T) {
 	if _, found, err := store.Find("one"); err != nil || found {
 		t.Fatalf("deleted session returned: %v, %v", found, err)
 	}
+}
+
+// Native-domain tests use the same host admission mechanism as selected clients.
+func (s *documentStore) TryAcquireThreadExecutionLease(dir, id string) (*DocumentThreadExecutionLease, bool, error) {
+	return NewStore(s.ctx, s.documents).TryAcquireThreadExecutionLease(dir, id)
+}
+func (s *documentStore) TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id string, limit int) (*DocumentThreadExecutionLease, bool, error) {
+	return NewStore(s.ctx, s.documents).TryAcquireThreadExecutionLeaseWithProjectLimit(dir, id, limit)
+}
+func (s *documentStore) RequestThreadExecutionReset(dir, id string) (bool, error) {
+	return NewStore(s.ctx, s.documents).RequestThreadExecutionReset(dir, id)
 }

@@ -48,7 +48,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { initialState } from "./AppState";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
 import { getDesktopApplication } from "./plugins/ApplicationController";
@@ -245,6 +245,9 @@ describe("对话 (scratch) sidebar thread selection", () => {
       ],
     })) };
     installWuuApi([thread]);
+    window.wuu.searchThreads = vi.fn().mockResolvedValue({
+      results: [{ thread, message_seq: 5, snippet: "historical needle" }],
+    });
     // jsdom has no Range geometry; keep the real match and reveal behavior.
     let viewport: HTMLElement | null = null;
     const matchBounds = () => new DOMRect(0, 500 - (viewport?.scrollTop ?? 0), 10, 10);
@@ -259,12 +262,15 @@ describe("对话 (scratch) sidebar thread selection", () => {
     // its pending message address without replaying it from an init snapshot.
     application.updateState({ ...initialState, initialized: initialized(SCRATCH_CWD_B),
       activeContext: { kind: "no_project", cwd: SCRATCH_CWD_B }, threads: [thread], thread,
-      conversationSearchTarget: { id: "pending-search", ready: true, query: "historical needle",
-        result: { thread, message_seq: 5, snippet: "historical needle" } },
     });
+    await application.invoke("search.run", { query: "historical needle" });
+    await application.invoke("search.locate", {
+      resultId: application.getSnapshot().search.results[0].resultId,
+    });
+    expect(application.getSnapshot().search.target?.phase).toBe("ready");
     await act(async () => {
       root = createRoot(container);
-      root.render(<App application={application} />);
+      root.render(await createDefaultApplicationTestView(application));
     });
     viewport = container.querySelector<HTMLElement>(".scroll-region")!;
     Object.defineProperties(viewport, {
@@ -281,6 +287,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
     expect(match?.classList.contains("user-message-jump-flash")).toBe(true);
     expect(matchBounds().top).toBeGreaterThanOrEqual(0);
     expect(matchBounds().bottom).toBeLessThanOrEqual(viewport.clientHeight);
+    expect(application.getSnapshot().search.target).toBeUndefined();
     expect(application.getState().conversationSearchTarget).toBeUndefined();
   });
 
@@ -289,7 +296,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -347,7 +354,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 

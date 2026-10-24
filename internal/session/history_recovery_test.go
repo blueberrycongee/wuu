@@ -6,7 +6,7 @@ import (
 )
 
 func TestHistoryRecoveryReadsAndSearchesPhysicalTranscript(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("thread-history-recovery", t.TempDir()); err != nil {
 			t.Fatalf("create session: %v", err)
 		}
@@ -54,7 +54,7 @@ func TestHistoryRecoveryReadsAndSearchesPhysicalTranscript(t *testing.T) {
 }
 
 func TestHistoryReadSnapshotIgnoresLaterAppends(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("source", t.TempDir()); err != nil {
 			t.Fatalf("create session: %v", err)
 		}
@@ -87,7 +87,7 @@ func TestHistoryReadSnapshotIgnoresLaterAppends(t *testing.T) {
 }
 
 func TestHistorySearchSnapshotDoesNotSeeLaterMatches(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		if _, err := store.CreateWithMetadata("source", t.TempDir()); err != nil {
 			t.Fatalf("create session: %v", err)
 		}
@@ -128,7 +128,7 @@ func TestHistoryCursorRoundTrip(t *testing.T) {
 }
 
 func TestHistoryReadMissingSessionIsUnavailable(t *testing.T) {
-	forEachSessionStore(t, func(t *testing.T, store *Store) {
+	forEachSessionStore(t, func(t *testing.T, store *documentStore) {
 		_, err := store.ReadHistoryQuery(HistoryReadQuery{SessionID: "missing", StartSeq: 1, Limit: 10})
 		if !errors.Is(err, ErrSessionNotFound) {
 			t.Fatalf("error = %v, want session not found", err)

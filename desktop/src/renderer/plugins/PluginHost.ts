@@ -1,3 +1,7 @@
+import type { LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
+import type { HostApplicationService } from "./HostApplicationService";
+import { scopeApplicationWebWorkspace } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
+import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1,
@@ -29,6 +33,7 @@ import type {
   ViewPlacementContribution,
   ViewPlacementRegion,
   ViewTypeDefinition,
+  ViewHostAPI,
 } from "../../shared/workbench";
 import { createPluginUIKit, VIEW_PLACEMENT_REGIONS } from "../../shared/workbench";
 import {
@@ -403,6 +408,7 @@ export interface RegisteredApplicationShell extends ApplicationShellDefinition {
 }
 
 export interface RegisteredUISlot extends UISlotDefinition {
+  readonly application: ApplicationServiceV1;
   readonly pluginId: string;
   readonly generation: string;
   readonly name: string;
@@ -414,9 +420,19 @@ export interface RegisteredUIContribution extends UIContributionDefinition {
   readonly application: ApplicationServiceV1;
 }
 
+export interface LegacyViewHostIdentity {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly viewTypeId?: string;
+  readonly tabId?: string;
+  readonly context?: Readonly<Record<string, unknown>>;
+}
+
 export interface PluginHostOptions {
+  renderLegacyWorkbench?: (input: LegacyWorkbenchRenderInput) => React.ReactNode;
+  createLegacyViewHost?: (identity: LegacyViewHostIdentity) => ViewHostAPI;
   reportActivation?: (report: PluginDesktopActivationParams) => Promise<void>;
-  application?: ApplicationServiceV1;
+  application?: HostApplicationService;
   /** Inject the renderer's existing React runtime; the host never supplies another copy. */
   react: typeof React;
   /** Internal startup budget override for deterministic host and renderer checks. */
@@ -626,7 +642,9 @@ export class PluginGenerationSupersededError extends Error {
 export class PluginHost {
   readonly react: typeof React;
   private readonly ui: Omit<PluginUIKit, "WebPage">;
-  private readonly application?: ApplicationServiceV1;
+  private readonly application?: HostApplicationService;
+  private readonly legacyWorkbenchRenderer?: PluginHostOptions["renderLegacyWorkbench"];
+  private readonly legacyViewHostFactory?: PluginHostOptions["createLegacyViewHost"];
   private applicationShells: readonly RegisteredApplicationShell[] = Object.freeze([]);
   private uiSlotSnapshot: readonly RegisteredUISlot[] = Object.freeze([]);
   private uiContributionSnapshot: readonly RegisteredUIContribution[] = Object.freeze([]);
@@ -684,6 +702,8 @@ export class PluginHost {
     }
     this.reportActivation = options.reportActivation;
     this.application = options.application;
+    this.legacyViewHostFactory = options.createLegacyViewHost;
+    this.legacyWorkbenchRenderer = options.renderLegacyWorkbench;
     this.react = options.react;
     this.ui = createPluginUIKit(options.react);
     this.styleContainer = options.styleContainer;
@@ -823,6 +843,30 @@ export class PluginHost {
 
   getApplicationShells = (): readonly RegisteredApplicationShell[] => this.applicationShells;
 
+  renderLegacyWorkbench(input: LegacyWorkbenchRenderInput): React.ReactNode {
+    if (!this.legacyWorkbenchRenderer) throw new Error("Legacy workbench host is unavailable");
+    return this.legacyWorkbenchRenderer(input);
+  }
+
+  createLegacyViewHost(identity: LegacyViewHostIdentity): ViewHostAPI {
+    const activation = this.getGenerationActivation(identity.pluginId, identity.generation);
+    const check = () => {
+      if (!activation || this.getGenerationActivation(identity.pluginId, identity.generation) !== activation) throw new Error("Legacy view generation is retired");
+    };
+    check();
+    if (!this.legacyViewHostFactory) throw new Error("Legacy view host is unavailable");
+    const source = this.legacyViewHostFactory(identity);
+    const invoke = async <T,>(operation: () => Promise<T>): Promise<T> => { check(); const result = await operation(); check(); return result; };
+    return Object.freeze({ ...source,
+      getStorage: (key, scope) => invoke(() => source.getStorage(key, scope)),
+      setStorage: (key, value, scope) => invoke(() => source.setStorage(key, value, scope)),
+      getSetting: key => invoke(() => source.getSetting(key)),
+      executeCommand: (id, input) => invoke(() => source.executeCommand(id, input)),
+      openView: (id, options) => invoke(() => source.openView(id, options)),
+      closeView: () => invoke(() => source.closeView()),
+    } satisfies ViewHostAPI);
+  }
+
   getUISlot(name: string): RegisteredUISlot | undefined {
     return this.uiSlotSnapshot.find(slot => slot.name === name);
   }
@@ -837,7 +881,7 @@ export class PluginHost {
     const generations = [...this.activeGenerations.values()].filter(state => state.pluginId !== staging.pluginId);
     generations.push(staging);
     for (const state of generations) for (const slot of state.uiSlots) {
-      if (slot.removed || slot.definition.cardinality !== "one") continue;
+      if (slot.removed || slot.definition.cardinality !== "one" || slot.definition.service) continue;
       const contributions = generations.flatMap(candidate => candidate.uiContributions)
         .filter(item => !item.removed && item.definition.target === slot.definition.name);
       if (contributions.length > 1) throw new Error(`UI slot conflict: ${slot.definition.name}`);
@@ -845,13 +889,30 @@ export class PluginHost {
   }
 
   private createApplicationService(state: GenerationState): ApplicationServiceV1 {
-    const service = (): ApplicationServiceV1 => {
+    let desktop: ApplicationServiceV1["desktop"] | undefined;
+    let composerPresentation: ApplicationServiceV1["composerPresentation"] | undefined;
+    const getPluginHost = () => this;
+    const service = (): HostApplicationService => {
       this.assertActive(state);
       if (!this.application) throw new Error("Application service is unavailable");
       return this.application;
     };
     return Object.freeze({
       contractVersion: 1 as const,
+      get composerPresentation() { return composerPresentation ??= service().createComposerPresentationScope(state.lifetime.signal, getPluginHost); },
+      get desktop() { return desktop ??= service().createDesktopScope(state.lifetime.signal); },
+      webWorkspace: scopeApplicationWebWorkspace(() => service().webWorkspace, state.lifetime.signal, () => this.assertActive(state)),
+      environment: scopeApplicationEnvironment(() => service().environment, state.lifetime.signal, () => this.assertActive(state)),
+      artifacts: scopeApplicationArtifacts(() => service().artifacts, state.lifetime.signal, () => this.assertActive(state)),
+      onboarding: scopeApplicationOnboarding(() => service().onboarding, state.lifetime.signal, () => this.assertActive(state)),
+      browser: scopeApplicationBrowser(() => service().browser, state.lifetime.signal, () => this.assertActive(state)),
+      fileSelection: scopeApplicationFileSelection(() => service().fileSelection, state.lifetime.signal, () => this.assertActive(state)),
+      projects: scopeApplicationProjects(() => service().projects, state.lifetime.signal, () => this.assertActive(state)),
+      terminals: scopeApplicationTerminals(() => service().terminals, state.lifetime.signal, () => this.assertActive(state)),
+      catalog: scopeApplicationCatalog(() => service().catalog, state.lifetime.signal, () => this.assertActive(state)),
+      previewContent: scopeApplicationPreviewContent(() => service().previewContent, state.lifetime.signal, () => this.assertActive(state)),
+      conversationText: scopeApplicationConversationText(() => service().conversationText, state.lifetime.signal, () => this.assertActive(state)),
+      settingsControls: scopeApplicationSettingsControls(() => service().settingsControls, state.lifetime.signal, () => this.assertActive(state)),
       getSnapshot: () => service().getSnapshot(),
       subscribe: (listener: () => void) => {
         const unsubscribe = service().subscribe(() => {
@@ -867,6 +928,10 @@ export class PluginHost {
         const application = service();
         const signal = options?.signal ? AbortSignal.any([state.lifetime.signal, options.signal]) : state.lifetime.signal;
         signal.throwIfAborted();
+        if (action === "preview.set-visibility") {
+          application.setPreviewVisibility((input as ApplicationActionMapV1["preview.set-visibility"]["input"]).open, state.lifetime.signal);
+          return undefined as ApplicationActionMapV1[Action]["result"];
+        }
         const result = await application.invoke(action, input, { signal });
         this.assertActive(state);
         signal.throwIfAborted();
@@ -1231,9 +1296,13 @@ export class PluginHost {
         const id = this.claimRegistrationId(state, "ui-slot", definition.id);
         if (id.includes("/")) throw new Error("UI slot id must be local to its owner");
         if (definition.cardinality !== "one" && definition.cardinality !== "many") throw new Error("Invalid UI slot cardinality");
+        if (definition.service !== undefined) {
+          requireNonEmpty(definition.service, "UI surface service");
+          if (definition.cardinality !== "one") throw new Error("Selected UI surfaces require cardinality one");
+        }
         const record: UISlotRecord = {
           pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
-          definition: Object.freeze({ ...definition, id, name: `${state.manifestId}/${id}`, pluginId: state.pluginId, generation: state.generation }),
+          definition: Object.freeze({ ...definition, id, name: `${state.manifestId}/${id}`, pluginId: state.pluginId, generation: state.generation, application }),
         };
         state.uiSlots.push(record);
         return this.ownRecord(state, record);
@@ -1260,9 +1329,10 @@ export class PluginHost {
             message: `Plugin web page cleanup failed: ${errorMessage(error)}`,
             cause: error,
           });
-        }),
+        }, application.webWorkspace),
       }),
       pluginId: state.pluginId,
+      manifestId: state.manifestId,
       generation: state.generation,
       signal: state.lifetime.signal,
       invokeRuntime: (method: string, input?: unknown, options?: PluginRuntimeInvokeOptions) => invokeRequest(method, input, options),

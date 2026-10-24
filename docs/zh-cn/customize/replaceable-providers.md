@@ -1,6 +1,6 @@
 # 可替换提供者
 
-Wuu 通过同一张带版本的服务图选择存储、权限策略、协调和应用外壳实现。原生模块与进程插件声明相同的服务描述及依赖。选择提供者不会自动迁移数据，也不会授予调用方其他模块的权限。
+Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、存储、权限、协调和应用外壳实现。原生模块与进程插件声明相同的服务描述及依赖。选择提供者不会自动迁移数据，也不会授予调用方其他模块的权限。
 
 模块和绑定配置见[产品组合](plugin-system.md)，进程实现见[运行时编写指南](plugin-authoring.md)，渲染器外壳见 [UI SDK](ui-sdk.md)。下文的 TypeScript 名称均由 `@wuu/plugin-sdk` 导出，无需导入源码仓库内部路径。
 
@@ -8,6 +8,11 @@ Wuu 通过同一张带版本的服务图选择存储、权限策略、协调和�
 
 | 服务 | 随产品提供的实现 | 作者入口 |
 | --- | --- | --- |
+| `session.domain@1` | `wuu.session.default` | `sessionDomain`, `sessionDomainProvider`, `sessionDomainDescriptor` |
+| `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
+| `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
+| `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
+| `agent.compaction@1` | `wuu.compaction.default` | `compactionService`, `COMPACTION_SERVICE_DESCRIPTOR` |
 | `state.documents@1` | `wuu.state.sqlite`、`wuu.state.jsonl` | `documentStore`、`documentStoreDescriptor`、`StateQuery` |
 | `state.credentials@1` | `wuu.credentials.os`、`wuu.credentials.file` | `credentialStore`、`CREDENTIAL_STORE_DESCRIPTOR` |
 | `state.config@1` | `wuu.config.local` | `configurationStore`、`CONFIG_SOURCE_DESCRIPTOR` |
@@ -26,6 +31,42 @@ Wuu 通过同一张带版本的服务图选择存储、权限策略、协调和�
 宿主保留执行准入、取消、生命周期顺序、OS 锁、权限执行、托管会话创建和传输。所选权限提供者决定允许或拒绝；允许结果不会关闭原生沙箱约束。协调提供者拥有角色策略、指令、工作状态转换和调度。外壳拥有布局与展示，应用动作仍由宿主提供。禁用提供者会停止其行为；所选实现失败不会悄悄启用原生替代品。
 
 渲染器消费者声明 `desktop.required_services`，通过 `api.invokeService({ service, method, params }, options)` 调用。宿主根据该消费者的依赖选择提供者，并绑定插件身份、generation 和 execution。Options 携带工作区选择和取消。`invokeRuntime` 仍是不透明地请求同一插件的运行时，不负责选择服务实现。将 UI 消费者与业务提供者保持为可独立选择的模块，才能让同一 UI 使用替代实现而不启动旧提供者的行为。
+
+## 会话、工具与 agent 策略提供者
+
+`session.domain@1` 替换会话领域操作，包括元数据、历史、控制与恢复转换、成员准入和推理日志资源。`state.documents@1` 只替换文档存储；单独选择它不会替换会话算法。原生会话提供者拥有这些算法并使用所选文档存储。外部会话提供者自行实现公共操作；缺少方法或调用失败后，宿主不会代为运行原生算法。
+
+使用 `sessionDomainProvider(handlers)` 声明已实现的方法，并分发类型化参数数组和结果数组；`sessionDomain(host).call(method, args)` 是绑定消费者。保留导出记录的字段名，包括明确规定的 Go 大小写。日志句柄属于认证调用者及提供者 generation。遇到 `session_outcome_unknown`，应先检查持久结果再决定是否重试，不能把它当作写入失败的证明。OS 锁和执行身份仍由宿主负责，原子成员变更与领域决策由提供者负责。
+
+`agent.tools@1` 替换工具注册表和执行流程。`list` 提供定义、发现目录和工具面事实，`resolve` 提供可用性与元数据，`execute` 执行所选实现；`freeze`、`unfreeze`、`prepare` 和 `finalize` 保持回合内的工具面与结果行为。贡献工具是另一种操作：贡献内容进入所选注册表的策略。原生提供者仅在被选中时初始化 Toolkit；外部选择不能隐式初始化原生 Toolkit 或合并其目录。通过 `toolService(host)`、`TOOL_SERVICE_DESCRIPTOR` 及认证宿主网关实现工具与 OS 操作。
+
+`agent.prompt@1` 拥有主会话和 worker 的完整系统提示词及分段元数据。`promptService(host).assemble(request)` 接收环境、指令、技能、所选工具面事实和显式贡献；worker 请求还在 `worker` 中携带角色、隔离方式与身份事实。提供者决定措辞和顺序，消费者不能添加原生基础提示词、追加 worker 策略，或把空结果替换为继承指令。错误应阻止请求。会话标题使用下述独立选择的 `session.title` 服务。插件命令的侧边对话提示词仍独立于主会话/worker 契约；只替换 `agent.prompt` 不会替换这两种行为。
+
+`agent.compaction@1` 通过 `describe`、`compact`、`window`、`handoff`、`note-plan`、`compact-note`、`recover` 和 `note-attempt` 拥有上下文策略。使用 `compactionService(host)` 与 `COMPACTION_SERVICE_DESCRIPTOR`，在要求时携带捕获的策略 key。笔记准备、触发间隔、重试和完整推理消息由所选策略负责；宿主负责历史校验、checkpoint 提交、用量记账及已获准入的模型传输。恢复调用同一个所选服务，不隐式切换到原生替代品。handoff 的字节上限为零表示策略不设字节上限，模型和传输限制仍然有效。旧压缩 capability 是原生提供者的显式兼容行为，不是外部提供者的第二条选择路径。
+
+这些契约保留 Go 宿主和公共 SDK。作者通过普通服务声明及回调绑定的 `RuntimeHost` 实现进程插件，无须替换内核、导入私有源码或使用特权原生 API。
+
+## 会话标题策略
+
+`session.title@1` 是会话执行消费者的可选依赖，随产品提供的 `wuu.title.default` 模块实现原生标题策略。不选择该服务会禁用自动标题生成和显式重新生成；所选提供者失败时报告错误，不选择原生 fallback。标题服务独立于 `agent.prompt` 选择。
+
+使用 `TITLE_SERVICE_DESCRIPTOR` 实现 `plan` 和 `resolve`，通过 `@wuu/plugin-sdk` 的 `titleService(host)` 调用捕获的绑定。`plan` 接收 `TitlePlanRequest`：模型元数据、宿主投影的 `human_messages`、现有标题与摘要、只读/临时/父会话事实，以及 `force`/`persist`。这些事实不授予权限。返回的 `TitlePlan` 选择以下一种动作：
+
+| 动作 | 结果与行为 |
+| --- | --- |
+| `skip` | 可选 `reason`；不执行推理或写入标题。 |
+| `complete` | 返回非空 `title`；不要求模型运行时，不应用原生标题清理或长度策略。 |
+| `infer` | 返回使用公共 `ModelMessageV1` 的完整 `messages` 和可选 `temperature`；宿主调用所选模型传输。 |
+
+消息字段使用公共模型 wire（`role`、`content`、`reasoning_content` 等已声明字段），不使用 Go 记录序列化名称。显式零温度会被保留并覆盖配置的采样默认值，模型能力限制仍优先。推理成功后，`resolve({ text })` 返回 `{ title }`；SDK helper `titleService(host).resolve(text)` 直接返回字符串。解析后的标题为空时跳过持久化。提供者拥有触发条件、来源选择、提示词措辞、采样策略和输出清理；替换原生提供者即替换这些业务策略。
+
+宿主保留认证输入、重复任务抑制、捕获的 generation、模型回执记账、原子生成标题更新及通知。回执失败会阻止保存或交付生成的标题。生成标题更新不会覆盖已有标题，包括并发的手动重命名。SDK 调用成功不能证明自动触发、取消和保留 generation 的清理均已通过产品验收，应分别验证这些路径。
+
+## 产品 profile 与渲染器绑定
+
+组合配置版本 2 包含 `headless` 和 `desktop` profile。两者均使用 `wuu.base` bundle；desktop 再加入包含默认外壳及设置渲染器的 `wuu.desktop`。显式配置优先于推导出的产品默认值。Profile 按顺序应用 bundle，再应用显式模块、服务选择及 patch。显式空模块集合保持为空。纳入包不会授予信任或绕过准入，依赖仍需有效选择。配置格式见[产品组合](plugin-system.md)。
+
+外壳拥有布局，必需的界面区域拥有独立的所选服务绑定。外壳中绑定服务的 slot 按插件、generation 和贡献身份解析所选内容，不依赖外壳自己的 slot 命名空间。所选外壳或必需区域缺失时，应报告不可用，不能渲染原生替代品。通用可选 slot 仍可声明 fallback。使用公共 `ApplicationGenerationAPI` 视图、动作和 [UI SDK](ui-sdk.md)，不要依赖私有应用状态。选择另一个外壳本身不能证明所有业务副作用或界面区域都已迁入独立提供者。
 
 ## 使用当前回调的绑定
 
@@ -54,6 +95,8 @@ export async function replaceSource(host: RuntimeHost, source: string) {
 这些帮助函数只发起一次调用，保留错误及 `RuntimeHostServiceError.code`，不增加重试或后备逻辑。`service_unavailable`、取消和撤销都不授权改走新 generation。已保留的工作继续使用捕获的服务图；移除模块会跨保留 generation 撤销它。依赖方清理结束前，提供者保持可用。普通读写方法不是通用清理接口；关闭期间所需的持久化准入由共享生命周期所有者负责。
 
 只有配置的 `read` 与插件设置的 `read` / `read-state` 声明准备阶段读取，用于不产生持久写入的候选验证；注册表仍检查真实的准备准入。其余上述状态方法要求活动执行准入。
+
+关闭 deadline 限制调用者的等待时间，不代表未完成清理的生命周期结束。应保留提供者依赖、注册表绑定和包资源，直到实际清理完成，并明确报告超时或仍待完成的清理。关闭超时不允许提前释放这些依赖，也不能证明旧行为已经全部停止。应通过实际产品入口验证取消、延迟清理和撤销。
 
 ## 有界文档查询与持久化结果
 
@@ -196,3 +239,20 @@ export async function recordTurn(host: RuntimeHost, batch: DataAppendTurn) {
 SDK 通过 `ManagedSessionTextMessage` 支持文本提交。其 `Role`、`Content`、`ClientID` 和来源字段保留当前 Go wire 大小写，`display_content` 则有显式 JSON 标签。`ManagedSessionInbox` 同样使用 `ClientID`、`SessionID`、`Content`、`Wake` 和 `Controls`。不要替换为模型请求的 snake_case 消息类型。Control revision 阻止接管或释放后的旧指令执行，execution ID 来自宿主认证的回调。
 
 这些协议说明可调用行为。SDK 包测试和合成 UI 预览不能证明完整产品迁移、真实推理或 macOS 原生界面验收。依赖替换实现前，应在真实选定的产品服务图中验证，并保留可重复检查的证据。
+
+## 在产品中验证替换
+
+通过实际消费者验证要替换的能力。选中一个文档存储只能证明存储替换，不能证明会话创建、历史或恢复策略已被替换。注册额外工具只能证明工具贡献，不能证明工具选择或分发已被替换。渲染另一个 shell 只能证明 shell 选择，不能证明其中每个界面区域都能独立替换。
+
+使用合成数据，记录选中的提供者、调用入口、实际结果和可重复执行的命令或产物。依赖替换实现前，覆盖以下情况：
+
+| 情况 | 可观察结果 |
+| --- | --- |
+| 选中替换实现 | 产品操作到达该提供者并返回其结果；原实现不再执行同一个操作。 |
+| 移除选中提供者，或让其失败 | 消费者报告依赖不可用或原始错误，不通过原生 fallback 继续执行。 |
+| 活跃工作期间改变组合 | 已获准入的工作保留捕获的绑定；新工作使用新获准入的服务图，撤销对保留的 generation 仍然有效。 |
+| 取消与释放 | 停止等待，在释放提供者资源之前完成依赖方清理；已释放的订阅或计时器不再产生效果。 |
+| 在请求数据中填写其他所有者身份 | 领域字段不会改变认证调用者的权限。 |
+| 替换有状态提供者 | 显式迁移保留所需数据和回执；准备失败保留当前活跃组合。 |
+
+对实际交付的每个产品入口执行检查。直接调用 SDK 客户端可以验证请求编码和错误传播，却不能证明桌面或无界面消费者实际经过了该客户端。将这些结果与真实推理、原生界面验收分开记录。

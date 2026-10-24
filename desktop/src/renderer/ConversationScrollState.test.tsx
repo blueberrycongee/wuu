@@ -10,6 +10,8 @@ import {
   WINDOW_RESIZING_CLASS,
 } from "./WindowResizeState";
 import type { Thread, ThreadItem, Turn } from "../shared/protocol";
+import { ApplicationSearch } from "./plugins/ApplicationSearch";
+import type { ConversationSearchApplication } from "./ConversationSearchState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import { initialState } from "./AppState";
 import { ApplicationController } from "./plugins/ApplicationController";
@@ -791,7 +793,10 @@ describe("split conversation scroll ownership", () => {
   let host: HTMLDivElement;
   let root: Root;
   let current: ReturnType<typeof useConversationScrollState>;
-  let navigate: ReturnType<typeof useConversationSearchNavigation>;
+  let navigate: (result: { thread: Thread; message_seq: number; snippet: string }, query: string) => Promise<void>;
+  let search: ApplicationSearch;
+  let publicSearch: ConversationSearchApplication;
+  let stopSearch: () => void;
   let activation: Promise<void> | undefined;
   let searchThread: Thread;
   let remotePreview = false;
@@ -816,12 +821,11 @@ describe("split conversation scroll ownership", () => {
         remote_content_ref: remotePreview ? "remote:answer" : undefined,
       }] }],
     };
-    navigate = useConversationSearchNavigation({
-      target: searchState.conversationSearchTarget,
-      thread: searchThread, switching: false, activateThread: () => activation ?? Promise.resolve(),
+    useConversationSearchNavigation({
+      application: publicSearch,
+      thread: searchState.thread?.id === searchThread.id ? searchState.thread : searchThread, switching: false,
       captureConversationScrollIntent: current.captureConversationScrollIntent,
       jumpToConversationMessage: current.jumpToConversationMessage,
-      setAppState: searchApplication.updateState,
     });
     return createElement("div", null, ...(["primary", "secondary"] as const).map((id) => createElement("div", {
       key: id, className: "conversation-split-body", "data-pane": id,
@@ -841,11 +845,26 @@ describe("split conversation scroll ownership", () => {
   });
   beforeEach(() => {
     activation = undefined; remotePreview = false; completeItem = undefined;
-    searchApplication = new ApplicationController(initialState);
+    searchApplication = new ApplicationController({ ...initialState, activeContext: { kind: "no_project", cwd: "/fixture" } });
+    const listeners = new Set<() => void>();
+    search = new ApplicationSearch({ getState: searchApplication.getState, updateState: searchApplication.updateState,
+      subscribeState: searchApplication.subscribeState, cacheThreads: () => {},
+      changed: () => { snapshot = { search: search.getSnapshot() }; listeners.forEach(listener => listener()); },
+      activateThread: () => activation ?? Promise.resolve(), getNavigation: () => ({ revision: 0, pending: false }) });
+    let snapshot = { search: search.getSnapshot() };
+    publicSearch = { getSnapshot: () => snapshot, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, invoke: search.invoke.bind(search) };
+    stopSearch = search.start();
+    navigate = async (result, query) => {
+      searchApplication.updateState(current => ({ ...current, thread: result.thread }));
+      if (!window.wuu) window.wuu = {} as typeof window.wuu;
+      window.wuu.searchThreads = vi.fn(async () => ({ results: [result] }));
+      await search.invoke("search.run", { query });
+      void search.invoke("search.locate", { resultId: search.getSnapshot().results[0].resultId });
+    };
     host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   });
   afterEach(() => {
-    act(() => root.unmount()); host.remove(); nodes.clear(); layouts.clear(); vi.restoreAllMocks(); vi.useRealTimers();
+    act(() => { root.unmount(); stopSearch(); }); host.remove(); nodes.clear(); layouts.clear(); vi.restoreAllMocks(); vi.useRealTimers();
     Reflect.deleteProperty(window, "wuu");
   });
   it.each([false, true])("preserves reader cancellation across remount before hydration returns (wheel=%s)", async (wheel) => {
@@ -861,7 +880,7 @@ describe("split conversation scroll ownership", () => {
     act(() => root.render(null));
     nodes.clear(); layouts.clear();
     render("primary");
-    expect(read).toHaveBeenCalledTimes(wheel ? 1 : 2);
+    expect(read).toHaveBeenCalledOnce();
     const anchor = document.createElement("div"); anchor.id = "message-late-turn-late-item";
     anchor.getBoundingClientRect = () => ({ top: 0, left: 0, right: 20, bottom: 20, width: 20, height: 20, x: 0, y: 0, toJSON: () => ({}) });
     nodes.get("primary")!.appendChild(anchor);
@@ -869,9 +888,7 @@ describe("split conversation scroll ownership", () => {
     const before = nodes.get("primary")!.scrollTop;
     const full: ThreadItem = { id: "late-item", type: "agent_message", seq: 7, text: "needle" };
     await act(async () => reads[0](full));
-    expect(nodes.get("primary")!.scrollTop).toBe(before);
     completeItem = full;
-    if (!wheel) await act(async () => reads[1](full));
     render("primary");
     await act(async () => vi.runAllTimersAsync());
     expect(nodes.get("primary")!.scrollTop).toBe(wheel ? before : before - 64);

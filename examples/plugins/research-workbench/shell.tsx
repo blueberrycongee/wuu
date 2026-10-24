@@ -40,6 +40,7 @@ export function activate(api: PluginGenerationApi): void {
     const [mode, setMode] = React.useState<'send' | 'queue' | 'steer'>('send');
     const perform = (operation: Promise<unknown>) => { setError(''); void operation.catch((cause: unknown) => { if (!api.signal.aborted) setError(cause instanceof Error ? cause.message : String(cause)); }); };
     const thread = state.conversation;
+    const ownerTabId = state.drafts[state.drafts.activePane].ownerTabId ?? state.tabs.activeTabId;
     const nodes = state.navigation.nodes.filter((node) => node.kind === 'thread' && node.label.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
     const turnsEnd = React.useRef<HTMLDivElement>(null);
     const timeline = React.useRef<HTMLDivElement>(null);
@@ -96,12 +97,12 @@ export function activate(api: PluginGenerationApi): void {
                 {turn.process && <details className="research-process"><summary>Activity · {turn.process.status}</summary><ul>{turn.process.items.map((item) => <li key={item.id}>{item.displayLabel ?? item.toolName ?? item.text ?? item.kind} · {item.status}{item.error && <p role="alert">{item.error}</p>}</li>)}</ul></details>}
               </article>)}<div ref={turnsEnd} />
             </div>
-            <form className="research-composer" onSubmit={(event) => { event.preventDefault(); perform(application.invoke('composer.submit', { mode })); }}>
-              <TextArea label="Message" placeholder="Ask a question or follow up…" value={state.composer.draftText ?? ''} disabled={state.composer.readOnly} onChange={(event) => perform(application.invoke('composer.set-draft', { text: event.currentTarget.value }))} />
+            <form className="research-composer" onSubmit={(event) => { event.preventDefault(); if (ownerTabId) perform(application.invoke('composer.submit', { mode, ownerTabId })); }}>
+              <TextArea label="Message" placeholder="Ask a question or follow up…" value={state.composer.draftText ?? ''} disabled={state.composer.readOnly || !ownerTabId} onChange={(event) => perform(application.invoke('composer.set-draft', { text: event.currentTarget.value, ownerTabId }))} />
               <div className="research-composer-actions"><small>{state.composer.model?.label ?? 'No model'} · {state.composer.permission?.label ?? 'Default permissions'}</small>
                 {(state.composer.availableSubmissionModes?.length ?? 0) > 1 && <Select label="Delivery" value={mode} onChange={(event) => setMode(event.currentTarget.value as typeof mode)}>{state.composer.availableSubmissionModes?.map((value) => <option key={value} value={value}>{value}</option>)}</Select>}
                 {state.composer.running && <Button type="button" onClick={() => perform(application.invoke('composer.stop', {}))}>Stop</Button>}
-                <Button variant="primary" type="submit" disabled={state.composer.readOnly || !thread.threadId || !state.composer.draftText?.trim()}>{mode === 'queue' ? 'Queue' : mode === 'steer' ? 'Steer' : 'Send'}</Button>
+                <Button variant="primary" type="submit" disabled={state.composer.readOnly || !ownerTabId || !state.composer.draftText?.trim()}>{mode === 'queue' ? 'Queue' : mode === 'steer' ? 'Steer' : 'Send'}</Button>
               </div>{state.composer.disabledReason && <small>{state.composer.disabledReason}</small>}
             </form>
           </>}

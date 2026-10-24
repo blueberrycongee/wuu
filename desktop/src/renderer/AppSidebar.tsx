@@ -1,3 +1,7 @@
+import { showErrorToast } from "./Toast";
+import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { SessionOrganizationController } from "./SessionOrganization";
 import { hostSupports } from "./HostCapabilities";
 import { SidebarAccountMenu } from "./SidebarAccountMenu";
 import { DesktopUpdateButton } from "./DesktopUpdateButton";
@@ -55,14 +59,13 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useDropAnimation, useSortableTransition } from "./SortableMotion";
-import type { DesktopProject } from "../shared/protocol";
+import type { DesktopProject, ExtensionInventoryRecord } from "../shared/protocol";
 import {
   isScratchThread,
   threadBelongsToWorkspace,
   isThreadExecuting,
   isThreadUnread,
   sidebarThreadSortTime,
-  type AppState,
   type ThreadSummary,
 } from "./AppState";
 import { SCRATCH_PSEUDO_PROJECT_ID } from "./AppState";
@@ -423,8 +426,21 @@ export function reconcileSidebarSectionOrder(
 // single import without a circular type dependency. SidebarSection
 // also exports the hook SidebarSection uses to read the handle.
 
+export interface SidebarNavigationService {
+  view: ApplicationNavigationViewV1;
+  invoke<A extends keyof ApplicationNavigationActionMapV1>(action: A, input: ApplicationNavigationActionMapV1[A]["input"], options?: { readonly signal?: AbortSignal }): Promise<ApplicationNavigationActionMapV1[A]["result"]>;
+  slots: UICompositionV1;
+  organization: SessionOrganizationController;
+}
+
 export function AppSidebar({
-  state,
+  navigation,
+  initialized,
+  activeContextKind,
+  activeSessionTabID,
+  selectedWorkspaceID,
+  extensionInventory,
+  lastViewedTurnByThreadID,
   sidebarWorkspaces,
   activeWorkspaceID,
   pinnedThreads,
@@ -478,7 +494,7 @@ export function AppSidebar({
   sidebarVisible = true,
   sidebarCollapsed = false,
   onShowConversations,
-  catalogActive,
+  catalogActive = false,
   settingsActive = false,
   onLeaveSettings,
   onRibbonPresenceChange,
@@ -495,12 +511,18 @@ export function AppSidebar({
   onMuteTab,
   onReorderTabs,
 }: {
-  state: AppState;
+  // Remove legacy host access when the remaining direct AppSidebar callers use the selected surface.
+  navigation?: SidebarNavigationService;
+  initialized: boolean;
+  activeContextKind?: "project" | "no_project";
+  activeSessionTabID: string;
+  selectedWorkspaceID?: string;
+  extensionInventory?: readonly ExtensionInventoryRecord[];
+  lastViewedTurnByThreadID: Readonly<Record<string, string>>;
   // The sidebar renders scratch conversations through the same WorkspaceList
   // path as real projects, so App.tsx prepends a synthetic DesktopProject
-  // (id = SCRATCH_PSEUDO_PROJECT_ID) into this array. The original
-  // state.projects list is unchanged; sidebarWorkspaces is what the sidebar
-  // actually shows.
+  // (id = SCRATCH_PSEUDO_PROJECT_ID) into this array. The workspace registry
+  // stays unchanged; sidebarWorkspaces is what the sidebar actually shows.
   sidebarWorkspaces: DesktopProject[];
   pendingConversations?: readonly PendingConversation[];
   onSelectPendingConversation?: (id: string) => void;
@@ -604,7 +626,7 @@ export function AppSidebar({
     for (const thread of pinnedThreads) byID.set(thread.id, thread);
     return [...byID.values()];
   }, [pinnedThreads, workspaceThreadsByWorkspaceID]);
-  const organization = useSessionOrganization(organizationSourceThreads);
+  const organization = useSessionOrganization(organizationSourceThreads, navigation?.organization);
   const [pinnedItems, setPinnedItems] = useState<SidebarPinnedItem[]>(
     loadSidebarPinnedItems,
   );
@@ -639,35 +661,39 @@ export function AppSidebar({
     folderDragThreadID
       && (folderDragThread?.pinned || organization.folderByThreadID[folderDragThreadID]),
   );
-  const hasRuntimeContext = Boolean(state.activeContext);
+  const hasRuntimeContext = activeContextKind !== undefined;
   // The scratch pseudo project is "active" when the runtime context is in
   // no-project mode (i.e. the user is viewing a scratch conversation).
   // Active state is passed into WorkspaceList so the row highlights even though
-  // it has no DesktopProject entry in state.projects.
-  const sidebarScratchPseudoActive = state.activeContext?.kind === "no_project";
+  // it has no DesktopProject entry in the workspace registry.
+  const sidebarScratchPseudoActive = activeContextKind === "no_project";
   const declaredPluginNavigationEntries = useSyncExternalStore(
-    (listener) => pluginHost.subscribe(listener),
-    () => pluginHost.getNavigationEntries(),
-    () => pluginHost.getNavigationEntries(),
+    (listener) => navigation ? () => {} : pluginHost.subscribe(listener),
+    () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
+    () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
   );
   const workbenchSnapshot = useSyncExternalStore(
-    workbenchController.subscribe,
-    workbenchController.getSnapshot,
-    workbenchController.getSnapshot,
+    navigation ? () => () => {} : workbenchController.subscribe,
+    () => navigation ? null : workbenchController.getSnapshot(),
+    () => navigation ? null : workbenchController.getSnapshot(),
   );
-  const activePluginMain = visibleWorkbenchView(workbenchSnapshot, "primary");
+  const publicActive = navigation?.view.activePluginView;
+  const activePluginMain = navigation ? (publicActive && { view: { id: publicActive.id, pluginId: publicActive.pluginId, viewTypeId: publicActive.viewTypeId, context: publicActive.context }, definition: { title: publicActive.title } }) : visibleWorkbenchView(workbenchSnapshot!, "primary");
   const activePluginMainView = activePluginMain?.view;
-  const pluginCatalogActive = !settingsActive && !activeWebsiteId && !activePluginMainView && (catalogActive ?? state.sessionTabs.some(
-    (tab) => tab.id === state.activeSessionTabID && tab.kind === "skills",
-  ));
+  const pluginCatalogActive = !settingsActive && !activeWebsiteId && !activePluginMainView && catalogActive;
   const conversationsActive = !settingsActive && !activeWebsiteId && !activePluginMainView && !pluginCatalogActive;
   const activeThreadID = conversationsActive ? nativeActiveThreadID : undefined;
   const pluginNavigationEntries = useMemo(
-    () => primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot),
-    [declaredPluginNavigationEntries, workbenchSnapshot],
+    () => navigation ? navigation.view.destinations : primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot!),
+    [declaredPluginNavigationEntries, workbenchSnapshot, navigation],
   );
   const extensionCatalog = useMemo(() => {
-    const records = state.initialized?.extension_inventory ?? [];
+    if (navigation) return {
+      pluginCount: navigation.view.plugins.filter(row => row.kind === "plugin").length,
+      skillCount: navigation.view.plugins.filter(row => row.kind === "skill").length,
+      enabledPlugins: navigation.view.plugins.filter(row => row.kind === "plugin" && row.enabled).map(row => ({ ...row, provenance: { plugin_id: row.pluginId } })).sort((left, right) => left.name.localeCompare(right.name, locale)),
+    };
+    const records = extensionInventory ?? [];
     const plugins = records.filter((record) => record.kind === "plugin");
     return {
       pluginCount: plugins.length,
@@ -676,11 +702,11 @@ export function AppSidebar({
         .filter((record) => pluginToggle(record).on)
         .sort((left, right) => left.name.localeCompare(right.name, locale)),
     };
-  }, [locale, state.initialized?.extension_inventory]);
+  }, [locale, extensionInventory, navigation]);
   const activateNative = useCallback((action: () => void): void => {
-    workbenchController.deactivateRegion("primary");
-    action();
-  }, [workbenchController]);
+    if (navigation) void navigation.invoke("navigation.show-native", {}).then(action).catch(showErrorToast);
+    else { workbenchController.deactivateRegion("primary"); action(); }
+  }, [workbenchController, navigation]);
   const onSelectThread = useCallback((id: string) => {
     activateNative(() => selectNativeThread(id));
   }, [activateNative, selectNativeThread]);
@@ -689,6 +715,7 @@ export function AppSidebar({
   }, [activateNative, selectNativeWorkspaceThread]);
   const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string, instanceId?: string): void => {
     onLeaveSettings?.();
+    if (navigation) { void navigation.invoke("navigation.open-plugin", { pluginId, viewTypeId, instanceId }).catch(showErrorToast); return; }
     if (instanceId) {
       workbenchController.activateView(instanceId);
       return;
@@ -698,7 +725,7 @@ export function AppSidebar({
       persistence: "durable",
       reveal: true,
     }).catch(() => workbenchController.deactivateRegion("primary"));
-  }, [workbenchController, onLeaveSettings]);
+  }, [workbenchController, onLeaveSettings, navigation]);
 
   // Drag-and-drop reorder wiring for the reorderable sections. The 6px
   // activation distance lets plain clicks on the header (collapse toggle)
@@ -1106,7 +1133,7 @@ export function AppSidebar({
   const pinnedHasUnread = pinnedRows.some((thread) =>
     sidebarThreadUnread(
       thread,
-      state.lastViewedTurnByThreadID,
+      lastViewedTurnByThreadID,
     ),
   );
   const allSidebarThreads = useMemo(() => {
@@ -1126,36 +1153,36 @@ export function AppSidebar({
       organizationSourceThreads,
       activeThreadID,
       pendingThreadID,
-      state.lastViewedTurnByThreadID,
+      lastViewedTurnByThreadID,
       attentionStickyIDsRef.current,
     ));
   }, [
     activeThreadID,
     organizationSourceThreads,
     pendingThreadID,
-    state.lastViewedTurnByThreadID,
+    lastViewedTurnByThreadID,
     unreadViewOpen,
   ]);
   const attentionThreads = useMemo(() => partitionAttentionThreads(
     organizationSourceThreads,
     activeThreadID,
     pendingThreadID,
-    state.lastViewedTurnByThreadID,
+    lastViewedTurnByThreadID,
     attentionStickyIDs,
   ), [
     activeThreadID,
     attentionStickyIDs,
     organizationSourceThreads,
     pendingThreadID,
-    state.lastViewedTurnByThreadID,
+    lastViewedTurnByThreadID,
   ]);
   const runningThreads = attentionThreads.running;
   const unreadThreads = attentionThreads.unread;
   const recentThreads = attentionThreads.recent;
   const attentionCount = runningThreads.length + unreadThreads.length;
   const projectIndex = useMemo(
-    () => projectDirectory(allSidebarThreads, state.lastViewedTurnByThreadID, activeThreadID),
-    [activeThreadID, allSidebarThreads, state.lastViewedTurnByThreadID],
+    () => projectDirectory(allSidebarThreads, lastViewedTurnByThreadID, activeThreadID),
+    [activeThreadID, allSidebarThreads, lastViewedTurnByThreadID],
   );
   const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
     (id) => (id !== "projects" || onCreateProject || projectIndex.projects.length > 0)
@@ -1173,7 +1200,7 @@ export function AppSidebar({
   [allSidebarThreads, projectIndex]);
   const { threads: recentConversations, interactionProps: conversationInteractionProps } =
     useSidebarConversationActivity(
-      conversationCandidates, activeThreadID, pendingThreadID, state.lastViewedTurnByThreadID,
+      conversationCandidates, activeThreadID, pendingThreadID, lastViewedTurnByThreadID,
     );
   const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
@@ -1206,14 +1233,14 @@ export function AppSidebar({
       threadsByWorkspaceID,
       sessionsByProjectID: projectIndex.sessionsByProjectID,
       activeThreadID,
-      lastViewedTurnByThreadID: state.lastViewedTurnByThreadID,
+      lastViewedTurnByThreadID: lastViewedTurnByThreadID,
     };
   }, [
     activeThreadID,
     allSidebarThreads,
     projectIndex,
     sidebarWorkspaces,
-    state.lastViewedTurnByThreadID,
+    lastViewedTurnByThreadID,
     workspaceThreadsByWorkspaceID,
   ]);
   const folderThreadsByID = useMemo(() => {
@@ -1441,7 +1468,7 @@ export function AppSidebar({
     const folderHasRunning = folderThreads.some((thread) => isThreadExecuting(thread));
     const folderHasUnread = folderThreads.some((thread) => sidebarThreadUnread(
       thread,
-      state.lastViewedTurnByThreadID,
+      lastViewedTurnByThreadID,
     ));
     return (
       <SortableSidebarSection
@@ -1489,7 +1516,7 @@ export function AppSidebar({
               projectSummaries={projectIndex.summaries}
               activeID={activeThreadID}
               pendingThreadID={pendingThreadID}
-              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+              lastViewedTurnByThreadID={lastViewedTurnByThreadID}
               onSelect={onSelectThread}
               onTogglePinned={onTogglePinned}
               onArchive={onArchiveThread}
@@ -1530,16 +1557,16 @@ export function AppSidebar({
           pendingConversations={pendingConversations.filter((pending) => pending.context.kind === "project"
             ? pending.context.project_id === project.id
             : isScratchPseudo)}
-          activeSessionTabID={state.activeSessionTabID}
+          activeSessionTabID={activeSessionTabID}
           onSelectPendingConversation={onSelectPendingConversation}
-          activeID={activeWorkspaceID ?? state.activeProjectId}
+          activeID={activeWorkspaceID ?? selectedWorkspaceID}
           pendingWorkspaceID={pendingWorkspaceID}
           expandedSidebarSectionIDs={expandedSidebarSectionIDs}
           loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
           threadsByWorkspaceID={visibleWorkspaceThreadsByWorkspaceID}
           activeThreadID={activeThreadID}
           pendingThreadID={pendingThreadID}
-          lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+          lastViewedTurnByThreadID={lastViewedTurnByThreadID}
           scratchPseudoWorkspaceID={SCRATCH_PSEUDO_PROJECT_ID}
           scratchPseudoActive={sidebarScratchPseudoActive}
           onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
@@ -1642,7 +1669,7 @@ export function AppSidebar({
             thread,
             "section:projects",
             activeThreadID,
-            state.lastViewedTurnByThreadID,
+            lastViewedTurnByThreadID,
             () => onSelectThread(thread.id),
             () => toggleThreadPinned(thread),
             1,
@@ -1670,7 +1697,7 @@ export function AppSidebar({
               thread,
               "section:pinned",
               activeThreadID,
-              state.lastViewedTurnByThreadID,
+              lastViewedTurnByThreadID,
               () => onSelectThread(thread.id),
               () => toggleThreadPinned(thread),
               1,
@@ -1700,7 +1727,7 @@ export function AppSidebar({
           running: threads.some((thread) => isThreadExecuting(thread)),
           unread: threads.some((thread) => sidebarThreadUnread(
             thread,
-            state.lastViewedTurnByThreadID,
+            lastViewedTurnByThreadID,
           )),
           disabled: project ? onFocusWorkspace === undefined : undefined,
           onActivate: project && onFocusWorkspace
@@ -1712,7 +1739,7 @@ export function AppSidebar({
             thread,
             parentID,
             activeThreadID,
-            state.lastViewedTurnByThreadID,
+            lastViewedTurnByThreadID,
             () => project
               ? onSelectWorkspaceThread(project.id, thread.id)
               : onSelectThread(thread.id),
@@ -1737,7 +1764,7 @@ export function AppSidebar({
           running: folderThreads.some((thread) => isThreadExecuting(thread)),
           unread: folderThreads.some((thread) => sidebarThreadUnread(
             thread,
-            state.lastViewedTurnByThreadID,
+            lastViewedTurnByThreadID,
           )),
         });
         for (const thread of folderThreads) {
@@ -1745,7 +1772,7 @@ export function AppSidebar({
             thread,
             parentID,
             activeThreadID,
-            state.lastViewedTurnByThreadID,
+            lastViewedTurnByThreadID,
             () => onSelectThread(thread.id),
             () => toggleThreadPinned(thread),
           ));
@@ -1769,7 +1796,7 @@ export function AppSidebar({
         const isScratch = workspaceID === SCRATCH_PSEUDO_PROJECT_ID;
         const workspaceActive = (isScratch
           ? sidebarScratchPseudoActive
-          : workspaceID === (activeWorkspaceID ?? state.activeProjectId)) &&
+          : workspaceID === (activeWorkspaceID ?? selectedWorkspaceID)) &&
           !threads.some((thread) => thread.id === activeThreadID);
         functionalGroupNodes.workspace.push({
           id: `project:${workspaceID}`,
@@ -1781,7 +1808,7 @@ export function AppSidebar({
           active: workspaceActive,
           unread: threads.some((thread) => isThreadUnread(
             thread,
-            state.lastViewedTurnByThreadID[thread.id],
+            lastViewedTurnByThreadID[thread.id],
           )),
           running: threads.some((thread) => isThreadExecuting(thread)),
           disabled: onFocusWorkspace === undefined,
@@ -1793,7 +1820,7 @@ export function AppSidebar({
           if (pending.context.kind === "project" ? pending.context.project_id !== workspaceID : !isScratch) continue;
           functionalGroupNodes.workspace.push({
             id: pending.id, kind: "thread", parentId: `project:${workspaceID}`, depth: 2,
-            label: pending.title, running: true, active: pending.id === state.activeSessionTabID,
+            label: pending.title, running: true, active: pending.id === activeSessionTabID,
             onActivate: () => onSelectPendingConversation?.(pending.id),
           });
         }
@@ -1802,7 +1829,7 @@ export function AppSidebar({
             thread,
             `project:${workspaceID}`,
             activeThreadID,
-            state.lastViewedTurnByThreadID,
+            lastViewedTurnByThreadID,
             () => onSelectWorkspaceThread(workspaceID, thread.id),
             () => toggleThreadPinned(thread),
           ));
@@ -1818,7 +1845,7 @@ export function AppSidebar({
       });
       for (const thread of recentConversations) {
         nodes.push({
-          ...threadNavigationNode(thread, "section:recent", activeThreadID, state.lastViewedTurnByThreadID,
+          ...threadNavigationNode(thread, "section:recent", activeThreadID, lastViewedTurnByThreadID,
             () => onSelectThread(thread.id), () => toggleThreadPinned(thread), 1),
           id: `recent-thread:${thread.id}`,
         });
@@ -1830,12 +1857,12 @@ export function AppSidebar({
       kind: "command",
       label: t("sidebar.settings"),
       icon: "settings",
-      disabled: !state.initialized,
+      disabled: !initialized,
       onActivate: () => activateNative(onOpenSettings),
     });
     return Object.freeze(nodes);
   }, [
-    pendingConversations, onSelectPendingConversation, state.activeSessionTabID, pluginNavigationNodes,
+    pendingConversations, onSelectPendingConversation, activeSessionTabID, pluginNavigationNodes,
     activateNative, activeWorkspaceID, activeThreadID,
     hasPinnedRows,
     onOpenSettings,
@@ -1845,7 +1872,7 @@ export function AppSidebar({
     projectRows, projectIndex, recentConversations, visibleWorkspaceThreadsByWorkspaceID,
     folderThreadsByID, visibleFunctionalGroupOrder, organization.folders, pinnedFolderIDs,
     sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
-    state.activeProjectId, state.initialized, state.lastViewedTurnByThreadID, t,
+    selectedWorkspaceID, initialized, lastViewedTurnByThreadID, t,
   ]);
 
   const [ribbonPluginIcons, setRibbonPluginIcons] = useState<Record<string, RibbonIconModel>>({});
@@ -1857,17 +1884,18 @@ export function AppSidebar({
       if (!source.icon || "name" in source.icon) return [source.id, { kind: "public", name: source.icon?.name }] as const;
       const paths = "path" in source.icon && source.icon.path ? [source.icon.path] : [source.icon.light!, source.icon.dark!];
       try {
-        const urls = await Promise.all(paths.map(path => loadPluginIconURL(source.id, source.fingerprint, path)));
+        const urls = await Promise.all(paths.map(path => navigation ? navigation.invoke("navigation.load-icon", { pluginId: source.id, fingerprint: source.fingerprint, path }) : loadPluginIconURL(source.id, source.fingerprint, path)));
         return [source.id, { kind: "image", light: urls[0], dark: urls[1] }] as const;
       } catch { return [source.id, { kind: "public" }] as const; }
     })).then(entries => { if (active) setRibbonPluginIcons(Object.fromEntries(entries)); });
     return () => { active = false; };
-  }, [ribbonIconSources]);
+  }, [ribbonIconSources, navigation?.invoke]);
 
   const nativeSidebar = (
     <>
       <HoverRevealScopeContext.Provider value={null}>
       <NavigationRibbon
+        onOpenExternal={navigation ? url => navigation.invoke("navigation.open-external", { url }) : undefined}
         ribbonRef={ribbonRef}
         onExpandedChange={onRibbonExpandedChange}
         websites={websites}
@@ -1900,7 +1928,7 @@ export function AppSidebar({
           ...pluginNavigationEntries.map((entry) => ({
             id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
             title: entry.title,
-            icon: <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
+            icon: <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
             nativeIcon: ribbonPluginIcons[entry.pluginId] ?? { kind: "public" as const },
             active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
             component: "plugin-navigation-item",
@@ -1909,11 +1937,12 @@ export function AppSidebar({
           })),
         ]}
         footer={<>
-          <DesktopUpdateButton />
+          <DesktopUpdateButton navigation={navigation} />
           <SidebarAccountMenu
+            navigation={navigation}
             key={sidebarCollapsed ? "collapsed" : "docked"}
             matchTriggerWidth={false}
-            disabled={!state.initialized}
+            disabled={!initialized}
             onOpenAccount={onOpenAccount ? () => activateNative(onOpenAccount) : undefined}
             onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
           />
@@ -1961,6 +1990,7 @@ export function AppSidebar({
                       onClick={() => onOpenCatalogPlugin(record.id)}
                     >
                       <PluginIcon
+                        loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined}
                         icon={record.icon}
                         pluginId={record.provenance.plugin_id ?? record.id}
                         fingerprint={record.fingerprint ?? ""}
@@ -1976,9 +2006,9 @@ export function AppSidebar({
               </div>
             ) : null}
           </nav>
-        ) : activePluginMain && !settingsActive && !workbenchSnapshot.webPageViewIds.includes(activePluginMain.view.id) ? (
+        ) : activePluginMain && !settingsActive && !(navigation ? publicActive?.webPage : workbenchSnapshot!.webPageViewIds.includes(activePluginMain.view.id)) ? (
           <nav className="sidebar-section-navigation" aria-label={activePluginMain.definition.title}>
-            <h2 className="sidebar-section-title">{state.initialized?.extension_inventory?.find((record) =>
+            <h2 className="sidebar-section-title">{extensionInventory?.find((record) =>
               record.provenance.plugin_id === activePluginMain.view.pluginId)?.name ?? activePluginMain.definition.title}</h2>
             {pluginNavigationEntries.filter((entry) => entry.pluginId === activePluginMain.view.pluginId).map((entry) => (
               <button
@@ -1989,7 +2019,7 @@ export function AppSidebar({
                 aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
                 onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
               >
-                <PluginIcon icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
+                <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
                 <span className="sidebar-section-label">{entry.title}</span>
               </button>
             ))}
@@ -2160,7 +2190,7 @@ export function AppSidebar({
                         projectSummaries={projectIndex.summaries}
                         activeID={activeThreadID}
                         pendingThreadID={pendingThreadID}
-                        lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+                        lastViewedTurnByThreadID={lastViewedTurnByThreadID}
                         onSelect={onSelectThread}
                         onTogglePinned={onTogglePinned}
                         onArchive={onArchiveThread}
@@ -2244,7 +2274,7 @@ export function AppSidebar({
                                 projectSummaries={projectIndex.summaries}
                                 activeID={activeThreadID}
                                 pendingThreadID={pendingThreadID}
-                                lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+                                lastViewedTurnByThreadID={lastViewedTurnByThreadID}
                                 onSelect={onSelectThread}
                                 onTogglePinned={onTogglePinned}
                                 onArchive={onArchiveThread}
@@ -2394,11 +2424,11 @@ export function AppSidebar({
                           flip
                         >
                           <div className="project-add-menu" role="menu" ref={addWorkspaceMenuRef}>
-                            <button role="menuitem" disabled={!hostSupports("createBlankProject")} onClick={onCreateWorkspace}>
+                            <button role="menuitem" disabled={!(navigation ? navigation.view.canCreateWorkspace : hostSupports("createBlankProject"))} onClick={onCreateWorkspace}>
                               <FolderPlus className="icon-xl" />
                               <span>{t("sidebar.newBlankWorkspace")}</span>
                             </button>
-                            <button role="menuitem" disabled={!hostSupports("chooseProjectFolder")} onClick={onOpenWorkspaceFolder}>
+                            <button role="menuitem" disabled={!(navigation ? navigation.view.canChooseWorkspace : hostSupports("chooseProjectFolder"))} onClick={onOpenWorkspaceFolder}>
                               <FolderOpen className="icon-xl" />
                               <span>{t("sidebar.useExistingFolder")}</span>
                             </button>
@@ -2491,7 +2521,7 @@ export function AppSidebar({
                         threads={recentConversations}
                         activeID={activeThreadID}
                         pendingThreadID={pendingThreadID}
-                        lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+                        lastViewedTurnByThreadID={lastViewedTurnByThreadID}
                         onSelect={onSelectThread}
                         onTogglePinned={onTogglePinned}
                         onArchive={onArchiveThread}
@@ -2524,23 +2554,23 @@ export function AppSidebar({
             </DragOverlay>
           </DndContext>
         </div>
-        <PluginSlot
+        {navigation ? <navigation.slots.Slot name="wuu.default-navigation/sidebar.primary" /> : <PluginSlot
           host={pluginHost}
           id="sidebar.primary"
           context={Object.freeze({
-            initialized: Boolean(state.initialized),
+            initialized: Boolean(initialized),
             hasActiveThread: activeThreadID !== undefined,
             workspaceCount: sidebarWorkspaces.length,
           })}
-        />
+        />}
           </>
         )}
         <div className="sidebar-settings">
-          <PluginSlot
+          {navigation ? <navigation.slots.Slot name="wuu.default-navigation/sidebar.footer" /> : <PluginSlot
             host={pluginHost}
             id="sidebar.footer"
-            context={Object.freeze({ initialized: Boolean(state.initialized) })}
-          />
+            context={Object.freeze({ initialized: Boolean(initialized) })}
+          />}
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu
@@ -2603,12 +2633,13 @@ export function AppSidebar({
     </>
   );
   const organizedSidebar = (
-    <SessionOrganizationProvider value={organizationActions}>
+    <SessionOrganizationProvider value={{ ...organizationActions, revealThread: navigation?.view.canRevealThread ? threadId => navigation.invoke("navigation.reveal-thread", { threadId }) : undefined }}>
       <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
     </SessionOrganizationProvider>
   );
   return (
     <NavigationPresentation
+      publicSurface={Boolean(navigation)}
       nodes={[
         ...primaryNavigationNodes,
         ...navigationNodes,

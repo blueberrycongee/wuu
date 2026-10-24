@@ -11,7 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
 
-func (s *Store) UpsertParticipant(person participant.Participant) error {
+func (s *documentStore) UpsertParticipant(person participant.Participant) error {
 	now := time.Now().UTC()
 	if person.CreatedAt.IsZero() {
 		person.CreatedAt = now
@@ -44,7 +44,7 @@ func (s *Store) UpsertParticipant(person participant.Participant) error {
 	})
 }
 
-func (s *Store) UpsertParticipantRun(run ParticipantRun) error {
+func (s *documentStore) UpsertParticipantRun(run ParticipantRun) error {
 	run.ParticipantID = strings.TrimSpace(run.ParticipantID)
 	if run.ParticipantID == "" {
 		return errors.New("participant_id is required")
@@ -85,7 +85,7 @@ func (s *Store) UpsertParticipantRun(run ParticipantRun) error {
 	})
 }
 
-func (s *Store) CompleteParticipantRun(participantID, agentID, outcome, summary string) error {
+func (s *documentStore) CompleteParticipantRun(participantID, agentID, outcome, summary string) error {
 	participantID, agentID = strings.TrimSpace(participantID), strings.TrimSpace(agentID)
 	outcome, summary = strings.TrimSpace(outcome), strings.TrimSpace(summary)
 	if participantID == "" {
@@ -127,7 +127,7 @@ func (s *Store) CompleteParticipantRun(participantID, agentID, outcome, summary 
 	})
 }
 
-func (s *Store) ListParticipantRuns(participantID string, limit int) ([]ParticipantRun, error) {
+func (s *documentStore) ListParticipantRuns(participantID string, limit int) ([]ParticipantRun, error) {
 	participantID = strings.TrimSpace(participantID)
 	if participantID == "" {
 		return nil, errors.New("participant_id is required")
@@ -158,7 +158,7 @@ func (s *Store) ListParticipantRuns(participantID string, limit int) ([]Particip
 	return result, err
 }
 
-func (s *Store) GetParticipant(id string) (participant.Participant, error) {
+func (s *documentStore) GetParticipant(id string) (participant.Participant, error) {
 	var result participant.Participant
 	err := s.transaction(func(tx *persistence.Tx) error {
 		found, err := tx.Get(documentNamespace("participants"), strings.TrimSpace(id), &result)
@@ -173,7 +173,7 @@ func (s *Store) GetParticipant(id string) (participant.Participant, error) {
 	return result, err
 }
 
-func (s *Store) ListParticipants(kind participant.Kind) ([]participant.Participant, error) {
+func (s *documentStore) ListParticipants(kind participant.Kind) ([]participant.Participant, error) {
 	var result []participant.Participant
 	err := s.transaction(func(tx *persistence.Tx) error {
 		rows, err := readDocumentRows[participant.Participant](tx, "participants", "")
@@ -192,7 +192,7 @@ func (s *Store) ListParticipants(kind participant.Kind) ([]participant.Participa
 	return result, err
 }
 
-func (s *Store) CountParticipantsByKind(kind participant.Kind) (int, error) {
+func (s *documentStore) CountParticipantsByKind(kind participant.Kind) (int, error) {
 	if kind == "" {
 		return 0, errors.New("kind is required")
 	}
@@ -213,7 +213,7 @@ func (s *Store) CountParticipantsByKind(kind participant.Kind) (int, error) {
 	return count, err
 }
 
-func (s *Store) RetireParticipant(id string) error {
+func (s *documentStore) RetireParticipant(id string) error {
 	id = strings.TrimSpace(id)
 	now := time.Now().UTC()
 	return s.transaction(func(tx *persistence.Tx) error {
@@ -233,7 +233,7 @@ func (s *Store) RetireParticipant(id string) error {
 	})
 }
 
-func (s *Store) FindRetiredParticipantByName(kind participant.Kind, name string) (participant.Participant, bool, error) {
+func (s *documentStore) FindRetiredParticipantByName(kind participant.Kind, name string) (participant.Participant, bool, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return participant.Participant{}, false, errors.New("name is required")
