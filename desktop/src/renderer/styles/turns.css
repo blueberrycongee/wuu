@@ -126,17 +126,16 @@
  * Turns around the viewport (`data-near`, see ConversationRenderWindow) render
  * before Chromium's own relevance check catches up with a large scroll, which
  * would otherwise paint the landing turns blank. The live turn always renders.
- * Hovered, focused and persistent-action turns render because
- * content-visibility implies paint containment, which would clip the overlays
- * below the bubble.
+ * Hovered and focused turns render because content-visibility implies paint
+ * containment, which would clip user-action overlays below the bubble.
+ * Persistent answer actions stay in flow and do not need this exception.
  */
 .turn:not([data-sized]),
 .turn[data-near],
 .turn[data-turn-status="in_progress"],
 .conversation-width .turn[data-latest-turn="true"],
 .turn:hover,
-.turn:focus-within,
-.turn:has(.agent-actions-persistent) {
+.turn:focus-within {
   content-visibility: visible;
 }
 
@@ -148,7 +147,7 @@
 /* A live window or panel drag rewraps every rendered turn on each frame. For
  * the drag, turns kept rendered only for being near or live may skip when
  * off-screen, with their remembered height, and wrap once at the final width. */
-.window-resizing .turn:is([data-near], [data-turn-status="in_progress"], [data-latest-turn="true"]):not(:hover, :focus-within, :has(.agent-actions-persistent)) {
+.window-resizing .turn:is([data-near], [data-turn-status="in_progress"], [data-latest-turn="true"]):not(:hover, :focus-within) {
   content-visibility: auto;
 }
 

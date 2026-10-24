@@ -95,6 +95,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep action buttons visible on historical assistant answers. Sent-message actions still appear on hover or keyboard focus.
+
 - Prioritize the selected workspace at desktop startup. Recover the last explicitly opened conversation when possible; if historical recovery fails, keep its catalog entry and open a usable draft with the failure reason. Legacy cleanup advances in durable batches, completed imports no longer reread retired databases, and document providers can supply incremental checkpoints instead of repeatedly exporting all history during startup.
 
 - Group onboarding choices in shared cards and show the companion beside workspace selection. Long workspace lists scroll within the card while selection tools and navigation actions remain visible; narrow windows give the list the full width.

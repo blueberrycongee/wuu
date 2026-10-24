@@ -388,7 +388,7 @@ function BuiltInThreadItemView({
       const actionsVisible = forkVisible || hasPluginActions;
       const actionsPersistent =
         actionsVisible &&
-        (item.id === latestAgentMessageID || finalItemCompletedBeforeTurn);
+        (!isProcessText || item.id === latestAgentMessageID);
       // Without contributed actions, reserve space only for final answers.
       // Live commentary must not gain an empty answer-action gap.
       const reserveActionSlot = hasPluginActions || (!isProcessText &&

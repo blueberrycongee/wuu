@@ -684,7 +684,7 @@ describe("ThreadItemView", () => {
     expect(container?.querySelector(".agent-block-with-action-slot")).toBeNull();
   });
 
-  it("keeps historical answer actions hover-revealed rather than persistent", () => {
+  it("keeps historical answer actions persistent", () => {
     render({
       item: makeFinalAnswer("completed"),
       turnStatus: "completed",
@@ -693,10 +693,10 @@ describe("ThreadItemView", () => {
       streaming: false,
     });
 
-    expect(actionBar().dataset.wuuPlacement).toBe("overlay");
+    expect(actionBar().dataset.wuuPlacement).toBe("persistent");
     const block = container?.querySelector(".agent-block");
-    expect(block?.classList.contains("agent-actions-overlay")).toBe(true);
-    expect(block?.classList.contains("agent-actions-persistent")).toBe(false);
+    expect(block?.classList.contains("agent-actions-overlay")).toBe(false);
+    expect(block?.classList.contains("agent-actions-persistent")).toBe(true);
   });
 
   it("leaves host stream ownership intact after rendering the settled answer", async () => {
