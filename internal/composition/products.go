@@ -33,6 +33,6 @@ func productCatalog() (map[string]Profile, map[string]Bundle) {
 			"headless": {Bundles: []string{"wuu.base"}},
 		}, map[string]Bundle{
 			"wuu.base":    {Patches: []Patch{{Modules: base}}},
-			"wuu.desktop": {Patches: []Patch{{Modules: map[string]bool{"wuu.default-shell": true}}}},
+			"wuu.desktop": {Patches: []Patch{{Modules: map[string]bool{"wuu.default-shell": true, "wuu.default-settings": true}}}},
 		}
 }

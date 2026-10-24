@@ -404,5 +404,6 @@ function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {
   if (url === "wuu-builtin:default-shell") return import("./DefaultApplicationShell");
+  if (url === "wuu-builtin:default-settings") return import("../modules/DefaultSettingsSurface");
   return import(/* @vite-ignore */ url);
 }

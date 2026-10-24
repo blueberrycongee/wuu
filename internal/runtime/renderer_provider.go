@@ -12,6 +12,7 @@ import (
 )
 
 const defaultShellModule = "wuu.default-shell"
+const defaultSettingsModule = "wuu.default-settings"
 
 // ApplicationShellBinding identifies the renderer contribution selected by the
 // same service registry as native and process implementations. Nil disables it.
@@ -35,7 +36,10 @@ func applicationShellDescriptor() pluginhost.ServiceDescriptor {
 func nativeRendererModules() []RendererModule {
 	return []RendererModule{{ID: defaultShellModule, SubjectID: defaultShellModule,
 		Fingerprint: "ui-shell-v1:" + version.Info().Version + ":" + version.Info().Commit,
-		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}}}
+		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}},
+		{ID: defaultSettingsModule, SubjectID: defaultSettingsModule,
+			Fingerprint: "ui-settings-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-settings", Services: []pluginhost.ServiceDescriptor{{Name: "ui.settings", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.settings.describe.input.v1", OutputSchema: "ui.settings.describe.output.v1"}}}}}}
 }
 
 // rendererServiceClient adds a renderer transport to a package's graph node.

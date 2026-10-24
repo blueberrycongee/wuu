@@ -170,3 +170,29 @@ func TestPolicyProviderReplacementAcrossProductLayers(t *testing.T) {
 		})
 	}
 }
+
+func TestDesktopSettingsCanBeRemovedWithoutShellRemoval(t *testing.T) {
+	desktop, err := DefaultConfig("desktop").Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !desktop.Includes("wuu.default-settings") {
+		t.Fatal("desktop has no settings provider")
+	}
+	headless, err := DefaultConfig("headless").Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headless.Includes("wuu.default-settings") {
+		t.Fatal("headless activated a settings renderer")
+	}
+	cfg := DefaultConfig("desktop")
+	cfg.Patches = []Patch{{Modules: map[string]bool{"wuu.default-settings": false, "example.settings": true}, Services: []Binding{{Service: "ui.settings", Major: 1, Provider: "example.settings"}}}}
+	resolved, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Includes("wuu.default-settings") || !resolved.Includes("wuu.default-shell") || !resolved.Includes("example.settings") {
+		t.Fatal("settings replacement changed shell selection")
+	}
+}
