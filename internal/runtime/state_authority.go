@@ -30,6 +30,7 @@ type StateAuthority struct {
 	mu                                  sync.Mutex
 	preflightMu                         sync.Mutex
 	provider                            pluginhost.ServiceInvoker
+	exportCapabilityErr                 error
 	documents                           persistence.Documents
 	prepared, admitted, closing, closed bool
 	preparedCheckpoint                  persistence.Checkpoint
@@ -92,6 +93,22 @@ type authorityInvoker struct {
 
 func (a *StateAuthority) Wrap(provider pluginhost.ServiceInvoker) pluginhost.ServiceInvoker {
 	a.provider = provider
+	a.exportCapabilityErr = fmt.Errorf("%w: provider %s requires paged export v2", persistence.ErrMigrationRequired, provider.ID())
+	if declared, ok := provider.(interface {
+		ProvidedServices() []pluginhost.ServiceDescriptor
+	}); ok {
+		for _, service := range declared.ProvidedServices() {
+			major, valid := pluginhost.ServiceVersionMajor(service.Version)
+			if service.Name != persistence.ServiceName || !valid || major != 1 {
+				continue
+			}
+			for _, method := range service.Methods {
+				if method.Name == "export" && method.InputSchema == persistence.ExportInputSchema && method.OutputSchema == persistence.ExportOutputSchema && method.Preparation {
+					a.exportCapabilityErr = nil
+				}
+			}
+		}
+	}
 	return &authorityInvoker{ServiceInvoker: provider, authority: a}
 }
 func (w *authorityInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
@@ -205,7 +222,11 @@ func (a *StateAuthority) invoke(ctx context.Context, params pluginhost.ServiceIn
 		}
 		return json.Marshal(persistence.View{Revision: revision, Documents: []persistence.Document{}})
 	}
-	if params.Method == "export" || params.Method == "compact" {
+	if params.Method == "export" {
+		if _, err := persistence.DecodeExportRequest(params.Params); err != nil {
+			return nil, err
+		}
+	} else if params.Method == "compact" {
 		if err := decodeAuthorityRequest(params.Params, new(struct{})); err != nil {
 			return nil, err
 		}
@@ -272,8 +293,24 @@ func (a *StateAuthority) admitActiveCall(ctx context.Context, client *persistenc
 func (a *StateAuthority) readPrepared(ctx context.Context, client *persistence.Client, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	a.preflightMu.Lock()
 	defer a.preflightMu.Unlock()
-	if _, err := a.prepare(ctx, client); err != nil {
-		return nil, err
+	var query *persistence.ExportQuery
+	if params.Method == "export" {
+		var err error
+		query, err = persistence.DecodeExportRequest(params.Params)
+		if err != nil {
+			return nil, err
+		}
+	}
+	a.mu.Lock()
+	prepared := a.prepared
+	a.mu.Unlock()
+	// Verify once before a prepared traversal. Its continuation pages are only
+	// bounded reads pinned to the verified revision and provider generation;
+	// the collecting caller validates the complete checkpoint before admission.
+	if query == nil || !prepared || query.Section == "documents" && query.After == nil {
+		if _, err := a.prepare(ctx, client); err != nil {
+			return nil, err
+		}
 	}
 	lock, err := storelock.AcquireContext(ctx, a.dir)
 	if err != nil {
@@ -284,9 +321,21 @@ func (a *StateAuthority) readPrepared(ctx context.Context, client *persistence.C
 	if err != nil {
 		return nil, err
 	}
-	checkpoint, err := preparedAuthorityCheckpoint(ctx, client, record)
-	if err != nil {
-		return nil, err
+	var checkpoint persistence.Checkpoint
+	if query == nil {
+		checkpoint, err = preparedAuthorityCheckpoint(ctx, client, record)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		a.mu.Lock()
+		checkpoint = a.preparedCheckpoint
+		a.mu.Unlock()
+		if record != nil {
+			if record.Pending == nil || checkpoint != record.Pending.After {
+				checkpoint = record.Checkpoint
+			}
+		}
 	}
 	return readAuthority(ctx, client, checkpoint, params)
 }
@@ -362,6 +411,23 @@ func readAuthority(ctx context.Context, client *persistence.Client, checkpoint p
 			return nil, persistence.ErrBindingChanged
 		}
 		return json.Marshal(view)
+	}
+	query, err := persistence.DecodeExportRequest(params.Params)
+	if err != nil {
+		return nil, err
+	}
+	if query != nil {
+		if query.AtRevision != nil && *query.AtRevision != checkpoint.Revision {
+			return nil, persistence.ErrConflict
+		}
+		page, encoded, err := client.ExportPageEncoded(ctx, *query)
+		if err != nil {
+			return nil, err
+		}
+		if page.Revision != checkpoint.Revision {
+			return nil, persistence.ErrBindingChanged
+		}
+		return encoded, nil
 	}
 	snapshot, err := client.Export(ctx)
 	if err != nil {
@@ -525,6 +591,9 @@ func (a *StateAuthority) markPrepared(checkpoint persistence.Checkpoint, epoch s
 	a.mu.Unlock()
 }
 func (a *StateAuthority) prepare(ctx context.Context, client *persistence.Client) (persistence.Revision, error) {
+	if a.exportCapabilityErr != nil {
+		return 0, a.exportCapabilityErr
+	}
 	lock, err := storelock.AcquireContext(ctx, a.dir)
 	if err != nil {
 		return 0, err

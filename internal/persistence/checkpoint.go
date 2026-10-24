@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Checkpoint commits to all documents and the complete ordered receipt history.
@@ -22,8 +23,10 @@ type Checkpoint struct {
 	ReceiptsDigest  string   `json:"receipts_digest"`
 }
 
-type SnapshotReader interface {
-	Export(context.Context) (Snapshot, error)
+// CheckpointReader returns pages whose actual wire encoding obeys the requested
+// budget. Client validates the received bytes; native stores budget while reading.
+type CheckpointReader interface {
+	ExportPage(context.Context, ExportQuery) (ExportPage, error)
 }
 
 // SnapshotCheckpoint validates the snapshot before hashing its contents. Each
@@ -49,20 +52,75 @@ func SnapshotCheckpoint(snapshot Snapshot) (Checkpoint, error) {
 	return Checkpoint{Version: 1, Revision: snapshot.Revision, DocumentsDigest: hex.EncodeToString(documents[:]), ReceiptsDigest: hex.EncodeToString(receipts[:])}, nil
 }
 
-// CaptureCheckpoint performs a full export for admission, explicit transfer or
-// recovery. It must not be placed on an ordinary read/write path.
-func CaptureCheckpoint(ctx context.Context, source SnapshotReader) (Checkpoint, error) {
-	if client, ok := source.(*Client); ok {
-		return client.captureCheckpoint(ctx)
+// CaptureCheckpoint reads every document and receipt through bounded export
+// pages. Payload memory is proportional to a page plus the largest record;
+// receipt-ID metadata remains proportional to the complete receipt history.
+// Admission and recovery must still hold their existing writer/authority fence.
+func CaptureCheckpoint(ctx context.Context, source CheckpointReader) (Checkpoint, error) {
+	query := ExportQuery{Section: "documents", TargetBytes: DefaultExportTargetBytes, MaxItems: DefaultExportMaxItems}
+	var revision Revision
+	var documents [sha256.Size]byte
+	receipts := sha256.Sum256([]byte("wuu.state.receipts.v1"))
+	var lastDocument *ExportCursor
+	var receiptCount Revision
+	ids := make(map[string]bool)
+	for _, section := range []string{"documents", "receipts"} {
+		query.Section = section
+		query.After = nil
+		for {
+			if err := ctx.Err(); err != nil {
+				return Checkpoint{}, err
+			}
+			page, err := source.ExportPage(ctx, query)
+			if err != nil {
+				return Checkpoint{}, err
+			}
+			if err := validateExportPage(page, query); err != nil {
+				return Checkpoint{}, err
+			}
+			if query.AtRevision == nil {
+				revision = page.Revision
+				query.AtRevision = &revision
+				query.Generation = page.Generation
+			}
+			for _, d := range page.Documents {
+				if strings.TrimSpace(d.Namespace) == "" || d.Key == "" || !json.Valid(d.Value) {
+					return Checkpoint{}, fmt.Errorf("%w: invalid export document", ErrCorrupt)
+				}
+				if lastDocument != nil && (d.Namespace < lastDocument.Namespace || d.Namespace == lastDocument.Namespace && d.Key <= lastDocument.Key) {
+					return Checkpoint{}, fmt.Errorf("%w: export documents are duplicated or out of order", ErrCorrupt)
+				}
+				digest, err := checkpointDocumentHash(d)
+				if err != nil {
+					return Checkpoint{}, err
+				}
+				xorDigest(&documents, digest)
+				lastDocument = &ExportCursor{Namespace: d.Namespace, Key: d.Key}
+				query.After = lastDocument
+			}
+			for _, r := range page.Receipts {
+				digest, err := hex.DecodeString(r.Digest)
+				if r.ID == "" || ids[r.ID] || receiptCount >= revision || r.Revision != receiptCount+1 || err != nil || len(digest) != sha256.Size {
+					return Checkpoint{}, fmt.Errorf("%w: invalid export receipt sequence", ErrCorrupt)
+				}
+				ids[r.ID] = true
+				receiptCount++
+				receipts = checkpointReceiptHash(receipts, r)
+				after := r.Revision
+				query.After = &ExportCursor{Revision: &after}
+			}
+			if page.Done {
+				break
+			}
+		}
 	}
-	snapshot, err := source.Export(ctx)
-	if err != nil {
-		return Checkpoint{}, err
+	if receiptCount != revision {
+		return Checkpoint{}, fmt.Errorf("%w: export is missing receipts", ErrCorrupt)
 	}
-	return SnapshotCheckpoint(snapshot)
+	return Checkpoint{Version: 1, Revision: revision, DocumentsDigest: hex.EncodeToString(documents[:]), ReceiptsDigest: hex.EncodeToString(receipts[:])}, nil
 }
 
-func VerifyCheckpoint(ctx context.Context, source SnapshotReader, expected Checkpoint) error {
+func VerifyCheckpoint(ctx context.Context, source CheckpointReader, expected Checkpoint) error {
 	if _, _, err := decodeCheckpoint(expected); err != nil {
 		return err
 	}

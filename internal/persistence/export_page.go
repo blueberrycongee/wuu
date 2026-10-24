@@ -174,7 +174,7 @@ func (s *Store) ExportPage(ctx context.Context, q ExportQuery) (ExportPage, erro
 	return s.backend.exportPage(ctx, q, s.binding.Generation)
 }
 
-func validateExportPage(page ExportPage, q ExportQuery, encodedBytes int) error {
+func validateExportPage(page ExportPage, q ExportQuery) error {
 	if page.Format != "page.v1" || page.Generation == "" || page.Section != q.Section || page.Documents == nil || page.Receipts == nil {
 		return fmt.Errorf("%w: invalid export page envelope", ErrCorrupt)
 	}
@@ -185,7 +185,7 @@ func validateExportPage(page ExportPage, q ExportQuery, encodedBytes int) error 
 		return ErrConflict
 	}
 	count := len(page.Documents) + len(page.Receipts)
-	if count > q.MaxItems || encodedBytes > q.TargetBytes && count != 1 || count == 0 && !page.Done {
+	if count > q.MaxItems || count == 0 && !page.Done {
 		return fmt.Errorf("%w: export page exceeds bounds or makes no progress", ErrCorrupt)
 	}
 	if q.Section == "documents" && len(page.Receipts) != 0 || q.Section == "receipts" && len(page.Documents) != 0 {

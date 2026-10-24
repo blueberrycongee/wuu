@@ -69,24 +69,13 @@ func TestClientCheckpointMatchesExport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(expected)
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := 0
-	client := NewClient(func(_ context.Context, method string, request json.RawMessage) (json.RawMessage, error) {
-		calls++
-		if method != "export" || string(request) != "{}" {
-			t.Fatal("checkpoint bypassed selected export")
-		}
-		return raw, nil
-	})
+	client, calls := testCheckpointClient(t, expected, nil)
 	got, err := CaptureCheckpoint(context.Background(), client)
-	if err != nil || got != want || calls != 1 {
-		t.Fatalf("checkpoint mismatch: %#v / %#v, calls %d, err %v", got, want, calls, err)
+	if err != nil || got != want || *calls != 2 {
+		t.Fatalf("checkpoint mismatch: %#v / %#v, calls %d, err %v", got, want, *calls, err)
 	}
 	expected.Revision = 1
-	raw, _ = json.Marshal(expected)
+	client, _ = testCheckpointClient(t, expected, nil)
 	if _, err := CaptureCheckpoint(context.Background(), client); !errors.Is(err, ErrCorrupt) {
 		t.Fatalf("missing receipts accepted: %v", err)
 	}

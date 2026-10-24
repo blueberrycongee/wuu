@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -869,7 +871,9 @@ func (c *ProcessClient) rejectHostService(id, code, message string) error {
 }
 
 func (c *ProcessClient) writeHostServiceResult(response HostServiceResult) error {
-	payload, err := json.Marshal(response)
+	// Preserve bounded raw results inside the RPC envelope. HTML and JavaScript
+	// escaping can otherwise expand an already valid provider page.
+	payload, err := jsonv2.Marshal(response, json.DefaultOptionsV1(), jsontext.EscapeForHTML(false), jsontext.EscapeForJS(false))
 	if err != nil {
 		return fmt.Errorf("encode host service result: %w", err)
 	}

@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -133,16 +134,57 @@ func (c *Client) invokeEncoded(ctx context.Context, method string, raw json.RawM
 	return nil
 }
 
-func (c *Client) captureCheckpoint(ctx context.Context) (Checkpoint, error) {
-	raw, err := c.callEncoded(ctx, "export", json.RawMessage(`{}`))
+// ExportPage returns owned values through the same captured binding as Read.
+// The wire decoder requires every page envelope field; a legacy full Snapshot
+// or a missing terminal marker cannot be mistaken for a partial page.
+func (c *Client) ExportPage(ctx context.Context, query ExportQuery) (ExportPage, error) {
+	page, _, err := c.exportPage(ctx, query)
+	return page, err
+}
+
+// ExportPageEncoded also returns the owned, validated provider encoding. Host
+// wrappers forward it unchanged: canonical checkpoint hashing must not expand
+// HTML escapes in a page that already fits the caller's actual wire budget.
+func (c *Client) ExportPageEncoded(ctx context.Context, query ExportQuery) (ExportPage, json.RawMessage, error) {
+	page, raw, err := c.exportPage(ctx, query)
+	return page, bytes.Clone(raw), err
+}
+
+func (c *Client) exportPage(ctx context.Context, query ExportQuery) (ExportPage, json.RawMessage, error) {
+	if err := validateExportQuery(query); err != nil {
+		return ExportPage{}, nil, err
+	}
+	request, err := json.Marshal(struct {
+		Page ExportQuery `json:"page"`
+	}{query})
 	if err != nil {
-		return Checkpoint{}, err
+		return ExportPage{}, nil, err
 	}
-	// Borrow only while validating this response. Public Export still returns
-	// independent values that survive callback buffer reuse and caller mutation.
-	var snapshot Snapshot
-	if err := decodeBorrowedValues(raw, &snapshot, false); err != nil {
-		return Checkpoint{}, fmt.Errorf("decode %s.export result: %w", ServiceName, err)
+	raw, err := c.callEncoded(ctx, "export", request)
+	if err != nil {
+		return ExportPage{}, nil, err
 	}
-	return SnapshotCheckpoint(snapshot)
+	var wire struct {
+		Format     string          `json:"format"`
+		Revision   *Revision       `json:"revision,string"`
+		Generation string          `json:"generation"`
+		Section    string          `json:"section"`
+		Documents  *[]Document     `json:"documents"`
+		Receipts   *[]CommitRecord `json:"receipts"`
+		Done       *bool           `json:"done"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		return ExportPage{}, nil, fmt.Errorf("%w: decode export page: %v", ErrCorrupt, err)
+	}
+	if wire.Revision == nil || wire.Documents == nil || wire.Receipts == nil || wire.Done == nil {
+		return ExportPage{}, nil, fmt.Errorf("%w: export page is missing required fields", ErrCorrupt)
+	}
+	page := ExportPage{Format: wire.Format, Revision: *wire.Revision, Generation: wire.Generation, Section: wire.Section, Documents: *wire.Documents, Receipts: *wire.Receipts, Done: *wire.Done}
+	if len(raw) > query.TargetBytes && len(page.Documents)+len(page.Receipts) != 1 {
+		return ExportPage{}, nil, fmt.Errorf("%w: export page exceeds the actual wire budget", ErrCorrupt)
+	}
+	if err := validateExportPage(page, query); err != nil {
+		return ExportPage{}, nil, err
+	}
+	return page, raw, nil
 }
