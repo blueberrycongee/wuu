@@ -678,10 +678,16 @@ export class ApplicationController implements ApplicationServiceV1 {
             this.updateState(state => updateThreadByID(state, threadId, current => upsertTurn(current, result.turn)));
           }
           signal?.throwIfAborted();
-          if (this.draftRevision === draftRevision) {
-            this.draft = "";
-            this.draftRevision++;
-            const sentThreadId = thread.id;
+          const sentThreadId = thread.id;
+          const owner = this.state.sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === sentThreadId);
+          const activeOwner = owner?.id === this.state.activeSessionTabID;
+          const unchangedOwner = owner && owner.kind !== "skills"
+            && (activeOwner ? this.draft : owner.prompt) === draft.prompt
+            && owner.images.map(image => image.id).join("\0") === draft.images.map(image => image.id).join("\0")
+            && owner.files.map(file => file.id).join("\0") === draft.files.map(file => file.id).join("\0")
+            && JSON.stringify(owner.selections ?? []) === JSON.stringify(draft.selections ?? []);
+          if (unchangedOwner || !owner && this.draftRevision === draftRevision) {
+            if (activeOwner || !owner) { this.draft = ""; this.draftRevision++; }
             this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab =>
               tab.kind === "thread" && tab.threadID === sentThreadId ? { ...tab, ...emptyComposerDraft() } : tab) }));
           }

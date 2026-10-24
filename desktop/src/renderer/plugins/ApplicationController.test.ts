@@ -107,6 +107,7 @@ describe("shared application state", () => {
     await sending;
     expect(controller.getSnapshot().tabs.activeTabId).toBe(next.tabId);
     expect(controller.getSnapshot().composer.draftText).toBe("next");
+    expect(controller.getSnapshot().tabs.items.find(tab => tab.threadId === "created")?.draftText).toBe("");
   });
 
   it("keeps a custom project draft title when its mode is selected again", async () => {
