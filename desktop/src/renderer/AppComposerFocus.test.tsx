@@ -365,6 +365,13 @@ async function renderApp(
     root.render(await createDefaultApplicationTestView());
   });
   await flushAsync();
+  if (withThread) {
+    const source = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find(button => button.textContent?.trim() === "focus continuity");
+    expect(source).toBeDefined();
+    await act(async () => { source!.click(); });
+    await flushAsync();
+  }
 }
 
 function mainComposer(variant: "dock"): HTMLTextAreaElement {
@@ -1248,8 +1255,7 @@ describe("main composer focus continuity", () => {
     expect(skillsSection).toBeDefined();
     await act(async () => { skillsSection!.click(); });
     await flushAsync();
-    // Workbench retains the composer under the catalog rather than unmounting it.
-    expect(mainComposer("dock").closest('[data-native-section="catalog"]')).not.toBeNull();
+    expect(container.querySelector('[data-main-conversation-composer]')).toBeNull();
     expect(container.querySelector(".catalog-section-pane")?.hasAttribute("hidden")).toBe(false);
     expect(container.querySelector(".scroll-region")?.hasAttribute("inert")).toBe(true);
     await act(async () => { rejectSend(new Error("deferred send failed")); });
@@ -1287,8 +1293,7 @@ describe("main composer focus continuity", () => {
     expect(skillsSection).toBeDefined();
     await act(async () => { skillsSection!.click(); });
     await flushAsync();
-    // Workbench retains the composer under the catalog rather than unmounting it.
-    expect(mainComposer("dock").closest('[data-native-section="catalog"]')).not.toBeNull();
+    expect(container.querySelector('[data-main-conversation-composer]')).toBeNull();
     expect(container.querySelector(".catalog-section-pane")?.hasAttribute("hidden")).toBe(false);
     expect(container.querySelector(".scroll-region")?.hasAttribute("inert")).toBe(true);
     await act(async () => { acknowledge({ ok: true }); });

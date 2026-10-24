@@ -1993,7 +1993,7 @@ export function App({ application, slots, shellPluginId }: {
           onSplitSeparatorDoubleClick: resetSplitPercent,
         }} />
 
-        {initialized && !splitConversation && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", containerRef: dockComposerRef }} /> : null}
+        {mainConversationDockVisible ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", containerRef: dockComposerRef }} /> : null}
 
 
         <ConversationStatusCluster

@@ -45,7 +45,11 @@ const until = (fn, arg) => win.webContents.executeJavaScript(`new Promise((resol
   check();
 })`);
 const capture = async name => {
-  await evaluate(async () => { await document.fonts.ready; await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); });
+  await evaluate(async () => {
+    await document.fonts.ready;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
+  });
   fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
 };
 async function selectPlugin(record) {
@@ -69,16 +73,46 @@ async function run() {
   const automation = initialized.extension_inventory.filter(record => ["automation", "automation-client"].includes(record.provenance.plugin_id));
   assert.equal(automation.length, 2);
   assert.equal(new Set(automation.map(record => record.name)).size, 2, "Automation client and scheduler must be distinguishable");
+  const draft = "Keep this unsent draft\nwhile browsing plugins and skills.";
+  await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));
+  win.focus();
+  await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').focus());
+  await win.webContents.insertText(draft);
+  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').value), draft);
   await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
   await until(() => document.querySelector(".sidebar-plugin-shortcut"));
+  await until(() => document.querySelector('.catalog-refresh:not(:disabled)'));
+  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Plugin management must not mount the conversation composer");
+  await capture("plugin-list-without-composer");
   for (const record of [...modules, ...automation]) {
     await selectPlugin(record);
+    assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Plugin details must not mount the conversation composer");
     const result = await evaluate(record => window.wuu.getPluginDiagnostics({ id: record.id, fingerprint: record.fingerprint }), record);
     assert.equal(result.id, record.id);
     assert.deepEqual(result.diagnostics, []);
     await capture(record.provenance.plugin_id);
     assert.equal(await evaluate(() => Boolean(document.querySelector('.plugin-page [role="alert"]'))), false, "Healthy plugin details must not show a diagnostic error");
   }
+  await evaluate(async () => {
+    await window.wuu.setThemePreference("dark");
+    document.documentElement.style.setProperty("--conversation-message-font-size", "20px");
+  });
+  win.setSize(800, 900);
+  await evaluate(() => document.querySelector('.sidebar-section-navigation > button:nth-of-type(2)').click());
+  await until(() => document.querySelector('[data-tab="skills"][aria-selected="true"]'));
+  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Skill management must not mount the conversation composer");
+  await capture("skills-dark-narrow-large-without-composer");
+  await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
+  await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));
+  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').value), draft, "Returning to chat must restore the entire unsent draft");
+  await capture("chat-draft-restored");
+  await evaluate(async () => {
+    await window.wuu.setThemePreference("light");
+    document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
+  });
+  win.setSize(1280, 900);
+  await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
+  await until(() => document.querySelector(".sidebar-plugin-shortcut"));
   const composer = modules.find(record => record.provenance.plugin_id === "wuu.default-composer");
   const stale = await evaluate(async record => {
     try { await window.wuu.getPluginDiagnostics({ id: record.id, fingerprint: "stale" }); return false; } catch { return true; }
@@ -92,7 +126,7 @@ async function run() {
   await selectPlugin(composer);
   await until(() => document.querySelector(".plugin-page")?.textContent.includes("Visible renderer diagnostic fixture"));
   await capture("renderer-failure-visible");
-  fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, modules: modules.map(({ id, name }) => ({ id, name })), automation: automation.map(({ id, name }) => ({ id, name })), scope: "Real IPC diagnostics for all built-in UI modules and automation plugins; stale identity rejected; renderer failure visible in plugin details" }, null, 2));
+  fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, modules: modules.map(({ id, name }) => ({ id, name })), automation: automation.map(({ id, name }) => ({ id, name })), scope: "Plugin list, plugin details and skill management omit the composer; multiline draft survives navigation back to chat; light/wide/default and dark/narrow/large font; real IPC diagnostics, stale identity rejected and renderer failure visible" }, null, 2));
   clearTimeout(timeout);
   app.quit();
 }
