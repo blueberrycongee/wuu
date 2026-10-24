@@ -261,6 +261,8 @@ export class ApplicationSubmission {
       const originalTitle = thread.title;
       if (customTitle) thread = { ...thread, title: customTitle };
       operation.thread = thread;
+      // State publication may synchronously reconcile owners during binding.
+      operation.view = { ...operation.view, threadId: thread.id };
       if (!target) {
         this.admissions.set(thread.id, operation); this.admissions.delete(key);
         const lane = this.lanes.get(key);

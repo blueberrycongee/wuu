@@ -10,13 +10,13 @@ function deferred<T>() { let resolve!: (value:T) => void; let reject!: (error:Er
   const promise = new Promise<T>((yes,no) => { resolve=yes; reject=no; }); return {promise,resolve,reject}; }
 const context = {kind:"no_project" as const,cwd:"/fixture"};
 const thread = (id="created"):Thread => ({id,cwd:context.cwd,preview:"",status:"idle",model_provider:"fixture",model:"fixture",created_at:"",updated_at:"",turns:[]});
-function fixture(existing?:Thread) {
+function fixture(existing?:Thread, reconcileOnUpdate = false) {
   let state:AppState={...initialState,activeContext:context,initialized:{provider:"fixture",model:"fixture"} as AppState["initialized"],thread:existing,threads:existing?[existing]:[],activeSessionTabID:existing?`thread:${existing.id}`:"draft:a",
     sessionTabs:existing?[{id:`thread:${existing.id}`,kind:"thread",threadID:existing.id,context,title:"Fixture",prompt:"hello",images:[],files:[]}]:[{id:"draft:a",kind:"draft",context,title:"",createdAt:1,prompt:"hello",images:[],files:[]}]};
   const getDraft=(id:string)=>{const tab=state.sessionTabs.find(tab=>tab.id===id);return tab?cloneSessionTabDraft(tab):emptyComposerDraft();};
   const setDraft=(id:string,draft:ReturnType<typeof emptyComposerDraft>)=>{state={...state,sessionTabs:state.sessionTabs.map(tab=>tab.id===id&&tab.kind!=="skills"?{...tab,...draft}:tab)};};
   const pending=createComposerPendingState({getAppState:()=>state,getComposerDraftForThread:getDraft,restoreComposerDraftForThread:setDraft,preserveFailedComposerMessage:vi.fn(),setStatus:vi.fn()});
-  const submission=new ApplicationSubmission({getState:()=>state,updateState:update=>{state=update(state);},changed:vi.fn(),isNavigationPending:()=>false,pending,resources:new ApplicationDraftResources(()=>{}),getDraft,setDraft,
+  const submission=new ApplicationSubmission({getState:()=>state,updateState:update=>{state=update(state);if(reconcileOnUpdate) submission.reconcile();},changed:vi.fn(),isNavigationPending:()=>false,pending,resources:new ApplicationDraftResources(()=>{}),getDraft,setDraft,
     getRuntime:()=>({pending:false,params:{engine:"fixture",model:"",effort:"",permission_mode:"unconfined"}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
   return {submission,pending,getState:()=>state,setState:(next:AppState)=>{state=next;},getDraft};
 }
@@ -133,6 +133,15 @@ describe("application submission ownership",()=>{
     starting.resolve({turn:{id:"first",status:"in_progress",items_view:"full",items:[]}});
     expect(await first).toBe(true);expect(await second).toBe(true);expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
     expect(f.getDraft("thread:created").prompt).toBe("hello");
+  });
+
+  it("retains the completion receipt when controller reconciliation runs during draft-to-thread binding",async()=>{
+    window.wuu={startThread:vi.fn().mockResolvedValue({thread:thread()}),startTurn:vi.fn().mockResolvedValue({turn:{id:"accepted",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
+    const f=fixture(undefined,true);const result=f.submission.submit({ownerTabId:"draft:a"});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations.find(operation=>operation.operationID===result.operationID)).toMatchObject({phase:"completed",threadId:"created"}));
+    expect(f.getState().activeSessionTabID).toBe("thread:created");
+    expect(f.submission.getSnapshot().pendingCreations).toHaveLength(0);
+    expect(window.wuu.startTurn).toHaveBeenCalledTimes(1);
   });
 
 });
