@@ -231,8 +231,8 @@
   --ribbon-brand-size: calc(var(--sidebar-ribbon-compact-width, 52px) - var(--ribbon-inline-inset) * 2);
   --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
   /* Every destination shares one row gap; the footer owns the wider break. */
-  --ribbon-row-gap: var(--space-2);
-  --ribbon-group-gap: var(--space-3);
+  --ribbon-row-gap: var(--space-4);
+  --ribbon-group-gap: var(--space-6);
   --ribbon-inline-inset: var(--space-2);
   --sidebar-ribbon-icon-size: calc(var(--icon-size-xl) + 2px);
   position: absolute;
@@ -305,6 +305,8 @@
 .sidebar-ribbon-main {
   flex: 1;
   overflow: hidden auto;
+  /* The header already leaves one inline inset below the brand artwork. */
+  padding-top: calc(var(--ribbon-row-gap) - var(--ribbon-inline-inset));
   /* The footer owns the single group break below the scrolling destinations. */
   padding-bottom: 0;
 }
