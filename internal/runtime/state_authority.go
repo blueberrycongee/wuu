@@ -388,6 +388,12 @@ func authorityRevision(ctx context.Context, documents persistence.Documents, rev
 	return nil
 }
 func (a *StateAuthority) commit(ctx context.Context, client *persistence.Client, record *authorityRecord, tx persistence.Transaction, encoded json.RawMessage) (persistence.Receipt, error) {
+	if encoded != nil {
+		match := authorityWireMatch{remaining: encoded}
+		if err := persistence.WriteTransactionJSON(&match, tx); err != nil || len(match.remaining) != 0 {
+			encoded = nil
+		}
+	}
 	commit := func() (persistence.Receipt, error) {
 		if encoded != nil {
 			return client.CommitEncoded(ctx, encoded)

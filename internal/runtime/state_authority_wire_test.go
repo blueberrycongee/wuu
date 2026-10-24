@@ -57,11 +57,11 @@ func TestStateAuthorityCommitWireAdmission(t *testing.T) {
 				if err := json.Unmarshal(p.Params, &got); err != nil {
 					t.Fatal(err)
 				}
-				// RawMessage whitespace may be normalized, but its document is unchanged.
-				gotJSON, _ := json.Marshal(got)
 				expectedJSON, _ := json.Marshal(expected)
-				if string(gotJSON) != string(expectedJSON) {
-					t.Fatal("forwarded intent changed")
+				// External providers consume the canonical SDK field names.
+				// Host-compatible aliases must not leak across that boundary.
+				if string(p.Params) != string(expectedJSON) {
+					t.Fatal("provider received noncanonical transaction fields or values")
 				}
 				record, err := f.gate.readRecord()
 				if err != nil {
