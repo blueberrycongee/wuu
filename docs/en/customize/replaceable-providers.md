@@ -196,3 +196,20 @@ The [coordination dispatcher](../../../internal/appserver/project_provider.go) a
 The SDK supports text submission through `ManagedSessionTextMessage`. Its `Role`, `Content`, `ClientID`, and provenance keys preserve the current Go wire casing; `display_content` has an explicit JSON tag. `ManagedSessionInbox` likewise uses `ClientID`, `SessionID`, `Content`, `Wake`, and `Controls`. Do not substitute model-request snake_case message types. Control revisions fence takeover and release, while execution IDs come from the host-authenticated callback.
 
 These contracts describe callable behavior. SDK package tests and the synthetic UI preview do not establish full product migration, real inference, or native macOS UI acceptance. Validate a replacement against the actual selected product graph and retain repeatable evidence before relying on it.
+
+## Verify a replacement in the product
+
+Verify the capability you intend to replace through its actual consumer. Selecting a document store demonstrates storage replacement; it does not establish replacement of session creation, history or recovery policy. Registering an additional tool demonstrates tool contribution; it does not establish replacement of tool selection or dispatch. Rendering another shell demonstrates shell selection; it does not establish independent replacement of each surface inside that shell.
+
+Use synthetic data and record the selected provider, entry point, observed result and repeatable command or artifact. Cover these cases before relying on the replacement:
+
+| Case | Observable result |
+| --- | --- |
+| Select the replacement | The product operation reaches that provider and returns its result. The previous implementation does not perform the same operation. |
+| Remove or fail the selected provider | The consumer reports the unavailable dependency or original error; it does not continue through a native fallback. |
+| Change composition during active work | Admitted work keeps its captured binding. New work uses the newly admitted graph; revocation remains effective for retained generations. |
+| Cancel and dispose | Waiting stops, dependent cleanup finishes before its provider resources are released, and disposed subscriptions or timers stop producing effects. |
+| Supply another owner's identity in request data | Domain fields do not change authenticated caller authority. |
+| Replace a stateful provider | The explicit transfer preserves the required data and receipts; a failed preparation leaves the active composition intact. |
+
+Run the checks through every product entry point you ship. A direct SDK client test can verify request encoding and error propagation, but cannot show that a desktop or headless consumer actually routes through that client. Keep those results separate from real inference and native UI acceptance.
