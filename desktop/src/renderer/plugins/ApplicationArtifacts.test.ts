@@ -50,3 +50,11 @@ it("keeps remote item identity and rejects a result after cancellation", async (
   await expect(pending).rejects.toMatchObject({name: "AbortError"});
   expect(read).toHaveBeenCalledWith("thread:original/item");
 });
+
+it("saves the original managed document instead of its inline preview text", async () => {
+  const save = vi.fn().mockResolvedValue(undefined);
+  const service = new ApplicationArtifacts({saveArtifactFile: save}, preview);
+  const uri = "wuu-artifact://workspace/thread/artifact/report.pdf?sha256=hash";
+  await service.save({...resource, uri, sha256: "hash", threadId: "thread", text: "truncated preview"});
+  expect(save).toHaveBeenCalledWith("report.pdf", uri);
+});

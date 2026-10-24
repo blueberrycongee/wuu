@@ -88,8 +88,8 @@ export class ApplicationArtifacts implements ApplicationArtifactsV1 {
     if (resource.uri?.startsWith("wuu-artifact:") && resource.threadId) this.verifyManaged(resource);
     // Native save intentionally rejects blob URLs. Inline bytes keep their
     // original content in a protocol already verified by the existing handler.
-    let source = resource.data ? `data:${resource.mimeType};base64,${resource.data}`
-      : resource.text !== undefined ? `data:${resource.mimeType};charset=utf-8,${encodeURIComponent(resource.text)}` : this.resolveSource(resource);
+    let source = this.resolveSource(resource) ?? (resource.data ? `data:${resource.mimeType};base64,${resource.data}`
+      : resource.text !== undefined ? `data:${resource.mimeType};charset=utf-8,${encodeURIComponent(resource.text)}` : undefined);
     if (!source && resource.remoteRef) source = `data:${resource.mimeType};base64,${await this.readAttachment({ remoteRef: resource.remoteRef }, options)}`;
     if (!source) throw new Error("Artifact source unavailable");
     options?.signal?.throwIfAborted();
