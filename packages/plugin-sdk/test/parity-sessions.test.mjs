@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 const entry = process.env.WUU_PARITY_SESSIONS_ENTRY;
-test('independent session metadata owns CRUD and rejects unsupported history', { skip: !entry }, async () => {
+test('independent session metadata owns CRUD and rejects unsupported rewrites', { skip: !entry }, async () => {
   const { createSessionProvider } = await import(pathToFileURL(entry));
   const provider = createSessionProvider('author-session');
   const call = (method, ...args) => provider.invokeService({service: 'session.domain', method, params: {args}, caller: 'acceptance'}).values;
@@ -22,9 +22,29 @@ test('independent session metadata owns CRUD and rejects unsupported history', {
   assert.equal(call('Find', 'thread-one')[0].title, 'New title');
   assert.ok(call('UpdateArchived', 'thread-one', true)[0].archived_at);
   assert.equal(call('UpdateArchived', 'thread-one', false)[0].archived_at, undefined);
-  assert.throws(() => call('AppendHistoryRecord', 'thread-one', {}), error => error.code === 'method_not_found');
+  assert.throws(() => call('RewriteHistoryRecordsForEngineEdit', 'thread-one', {}), error => error.code === 'method_not_found');
   assert.equal(call('Delete', 'thread-one')[0].id, 'thread-one');
   assert.equal(call('Find', 'thread-one')[1], false);
   provider.shutdown();
   assert.throws(() => call('List', 0), error => error.code === 'service_unavailable');
+});
+
+test('independent history commits batches atomically and forks detached records', { skip: !entry }, async () => {
+  const { createSessionProvider } = await import(pathToFileURL(entry));
+  const provider = createSessionProvider(); provider.initialize(); provider.activate();
+  const call = (method, ...args) => provider.invokeService({service: 'session.domain', method, params: {args}, caller: 'acceptance'}).values;
+  call('CreateWithMetadata', 'source', '/synthetic');
+  assert.deepEqual(call('AppendHistoryRecordsReturningRange', 'source', [{role: 'user', content: 'question'}, {role: 'assistant', content: 'answer'}]), [1, 2]);
+  assert.throws(() => call('AppendHistoryRecords', 'source', [{role: 'user', content: 'uncommitted'}, {role: 'assistant', content: 42}]), /history record/);
+  const [source] = call('LoadProviderHistorySnapshot', 'source');
+  assert.equal(source.HeadSeq, 2);
+  assert.deepEqual(source.Records.map(record => record.seq), [1, 2]);
+  call('CreateInitialized', {id: 'fork', cwd: '/synthetic', forked_from_id: 'source'}, source.Records);
+  call('AppendHistoryRecord', 'source', {role: 'assistant', content: 'later'});
+  assert.deepEqual(call('LoadHistoryRecords', 'fork', true)[0].map(record => record.content), ['question', 'answer']);
+  assert.throws(() => call('CreateInitialized', {id: 'invalid', cwd: '/synthetic'}, [{role: 'user', content: 42}]), /history record/);
+  assert.equal(call('Find', 'invalid')[1], false);
+  call('Delete', 'fork');
+  assert.throws(() => call('LoadHistoryRecords', 'fork', true), error => error.code === 'session_not_found');
+  provider.shutdown();
 });
