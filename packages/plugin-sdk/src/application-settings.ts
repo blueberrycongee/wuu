@@ -7,6 +7,8 @@ export interface ApplicationSettingsConfigurationV1 {
  readonly protocol_version: string;
  readonly provider: string;
  readonly model: string;
+ readonly effort?: string;
+ readonly variant?: string;
  readonly workspace_root: string;
  readonly core?: SettingsReadonly<ApplicationSettingsCoreBuildInfoV1>;
  readonly providers?: SettingsReadonly<ApplicationSettingsProviderSummaryV1[]>;

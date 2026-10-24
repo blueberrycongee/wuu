@@ -60,7 +60,7 @@ export class ApplicationSettings {
       this.configurationSource = initialized;
       this.configuration = initialized && immutable({
       protocol_version: initialized.protocol_version, provider: initialized.provider,
-      model: initialized.model, workspace_root: initialized.workspace_root, core: initialized.core,
+      model: initialized.model, effort: initialized.effort, variant: initialized.variant, workspace_root: initialized.workspace_root, core: initialized.core,
       providers: initialized.providers, catalog_providers: initialized.catalog_providers,
       model_aliases: initialized.model_aliases, project_models: initialized.project_models,
       advanced_settings: initialized.advanced_settings, general_settings: initialized.general_settings,

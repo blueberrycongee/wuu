@@ -5,7 +5,7 @@ import { ApplicationSettings } from "./ApplicationSettings";
 function fixture() {
   let state: AppState = { ...initialState,
     activeContext: { kind: "project", project_id: "one", cwd: "/one" },
-    initialized: { protocol_version: "test", workspace_root: "/one", provider: "first", model: "old",
+    initialized: { protocol_version: "test", workspace_root: "/one", provider: "first", model: "old", effort: "high", variant: "fast",
       providers: [{ name: "first", type: "openai", model: "old", models: [{ id: "old" }] }] },
   };
   const settings = new ApplicationSettings({ getState: () => state,
@@ -23,6 +23,7 @@ describe("application settings operations", () => {
     expect(Object.isFrozen(view.configuration?.providers?.[0].models)).toBe(true);
     expect(() => { (view.configuration!.providers![0].models as unknown as unknown[]).push({}); }).toThrow();
     expect(h.get().initialized?.providers?.[0].models).toHaveLength(1);
+    expect(view.configuration).toMatchObject({ effort: "high", variant: "fast" });
   });
 
   it("retains the public settings view across unrelated stream updates", () => {
