@@ -5,6 +5,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -15,7 +16,7 @@ const DefaultModule = "wuu.tools.default"
 
 func Descriptor() pluginhost.ServiceDescriptor {
 	methods := make([]pluginhost.ServiceMethodDescriptor, 0, 3)
-	for _, name := range []string{"list", "resolve", "execute", "freeze", "unfreeze"} {
+	for _, name := range []string{"list", "resolve", "execute", "freeze", "unfreeze", "prepare"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1"})
 	}
 	return pluginhost.ServiceDescriptor{Name: ServiceName, Version: "1.0.0", Methods: methods}
@@ -72,4 +73,15 @@ type ExecutionResult struct {
 	Result            toolresult.Result                  `json:"result"`
 	DiscoveredTools   []providers.LoadableToolDefinition `json:"discovered_tools,omitempty"`
 	AdditionalContext string                             `json:"additional_context,omitempty"`
+}
+
+// PrepareRequest carries read-only model history at the model-step boundary.
+type PrepareRequest struct {
+	History []pluginprotocol.ModelMessageV1 `json:"history"`
+}
+
+// PrepareResult messages are appended to ordinary history; an empty array means
+// the selected provider has no additions. Missing/null messages are invalid.
+type PrepareResult struct {
+	Messages []pluginprotocol.ModelMessageV1 `json:"messages"`
 }

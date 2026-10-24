@@ -10,7 +10,10 @@ import (
 	"sync"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -184,17 +187,25 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		return nil, &pluginhost.HostServiceError{Code: "service_not_found", Message: "unknown tool service"}
 	}
 	switch p.Method {
-	case "list", "resolve", "execute", "freeze", "unfreeze":
+	case "list", "resolve", "execute", "freeze", "unfreeze", "prepare":
 	default:
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown tool service method"}
 	}
 	var input CallRequest
+	var preparation PrepareRequest
 	if p.Method == "resolve" || p.Method == "execute" {
 		if err := decode(p.Params, &input); err != nil {
 			return nil, err
 		}
 		if input.Call.Name == "" {
 			return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "tool name is required"}
+		}
+	} else if p.Method == "prepare" {
+		if err := decode(p.Params, &preparation); err != nil {
+			return nil, err
+		}
+		if preparation.History == nil {
+			return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "prepare requires a history array"}
 		}
 	} else if err := decode(p.Params, &struct{}{}); err != nil {
 		return nil, err
@@ -206,6 +217,22 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	executor := backend.Executor
 	var result any
 	switch p.Method {
+	case "prepare":
+		prepared := PrepareResult{Messages: []pluginprotocol.ModelMessageV1{}}
+		if preparer, ok := executor.(agent.ModelStepPreparer); ok {
+			history := make([]providers.ChatMessage, 0, len(preparation.History))
+			for _, message := range preparation.History {
+				history = append(history, modelwire.ChatMessageFromWire(message))
+			}
+			messages, prepareErr := preparer.PrepareModelStep(ctx, history)
+			if prepareErr != nil {
+				return nil, prepareErr
+			}
+			for _, message := range messages {
+				prepared.Messages = append(prepared.Messages, modelwire.ChatMessageToWire(message))
+			}
+		}
+		result = prepared
 	case "freeze", "unfreeze":
 		if freezer, ok := executor.(interface {
 			FreezeToolSurface()

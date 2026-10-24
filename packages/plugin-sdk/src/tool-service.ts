@@ -1,3 +1,4 @@
+import type { ModelMessageV1 } from './model.js';
 import type { RuntimeHost, ServiceDescriptor, ToolResult } from './index.js';
 
 /** Selected registry and execution pipeline, independent of tool contributions. */
@@ -5,7 +6,7 @@ export const TOOL_SERVICE = 'agent.tools';
 export const TOOL_SERVICE_DESCRIPTOR: ServiceDescriptor = {
   name: TOOL_SERVICE,
   version: '1.0.0',
-  methods: ['list', 'resolve', 'execute', 'freeze', 'unfreeze'].map(name => ({
+  methods: ['list', 'resolve', 'execute', 'freeze', 'unfreeze', 'prepare'].map(name => ({
     name,
     input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
     output_schema: `${TOOL_SERVICE}.${name}.output.v1`,
@@ -69,6 +70,11 @@ export interface ToolServiceCall {
   kind?: string;
   display?: ToolServiceDisplay;
 }
+/** Read-only history at a model-step boundary. Returned messages are appended
+ * to ordinary history; providers own refresh and duplicate-suppression policy.
+ */
+export interface ToolServicePrepareRequest { history: readonly ModelMessageV1[] }
+export interface ToolServicePrepareResult { messages: ModelMessageV1[] }
 export interface ToolServiceCallRequest { call: ToolServiceCall }
 export interface ToolServiceMetadata {
   orchestrator: boolean;
@@ -97,6 +103,7 @@ export function toolService(host: RuntimeHost) {
     host.call('host.service.call', { service: TOOL_SERVICE, method, params }) as Promise<T>;
   return {
     list: () => call<ToolServiceList>('list', {}),
+    prepare: (input: ToolServicePrepareRequest) => call<ToolServicePrepareResult>('prepare', input),
     freeze: () => call<Record<string, never>>('freeze', {}),
     unfreeze: () => call<Record<string, never>>('unfreeze', {}),
     resolve: (input: ToolServiceCallRequest) => call<ToolServiceResolution>('resolve', input),

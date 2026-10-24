@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/blueberrycongee/wuu/internal/modelwire"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -111,4 +113,29 @@ func (c *Client) Freeze(ctx context.Context) error {
 func (c *Client) Unfreeze(ctx context.Context) error {
 	_, err := c.invoke(ctx, "unfreeze", struct{}{})
 	return err
+}
+
+// Prepare invokes only the captured selected provider. It does not refresh a
+// native catalog when an external provider fails or omits this method.
+func (c *Client) Prepare(ctx context.Context, history []providers.ChatMessage) ([]providers.ChatMessage, error) {
+	request := PrepareRequest{History: make([]pluginprotocol.ModelMessageV1, 0, len(history))}
+	for _, message := range history {
+		request.History = append(request.History, modelwire.ChatMessageToWire(message))
+	}
+	raw, err := c.invoke(ctx, "prepare", request)
+	if err != nil {
+		return nil, err
+	}
+	var response PrepareResult
+	if err = json.Unmarshal(raw, &response); err != nil {
+		return nil, err
+	}
+	if response.Messages == nil {
+		return nil, fmt.Errorf("%s.prepare: missing messages array", ServiceName)
+	}
+	messages := make([]providers.ChatMessage, 0, len(response.Messages))
+	for _, message := range response.Messages {
+		messages = append(messages, modelwire.ChatMessageFromWire(message))
+	}
+	return messages, nil
 }

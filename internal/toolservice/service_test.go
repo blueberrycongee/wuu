@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -267,5 +268,78 @@ func TestCloseRetainsCleanupFailureAcrossRepeatedCalls(t *testing.T) {
 	}
 	if second := native.Close(context.Background()); second == nil || second.Error() != first.Error() {
 		t.Fatalf("cleanup outcome changed: %v / %v", first, second)
+	}
+}
+
+func TestPreparePreservesNativeSkillAdmission(t *testing.T) {
+	kit, err := tools.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	kit.SetSkillsWithAvailability([]skills.Skill{{Name: "original", Description: "original skill"}}, nil)
+	kit.SetSkillRefresh(func(context.Context, bool) ([]skills.Skill, error) {
+		return []skills.Skill{{Name: "replacement", Description: "replacement skill"}}, nil
+	})
+	native := NewService()
+	ctx := context.Background()
+	if err := native.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer native.Close(ctx)
+	scope := NewScope(func(context.Context) (Backend, error) { return Backend{Executor: kit, Toolkit: kit}, nil })
+	ctx = WithScope(ctx, scope)
+	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		return native.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
+	})
+	messages, err := client.Prepare(ctx, nil)
+	if err != nil || len(messages) != 1 {
+		t.Fatalf("prepare: %+v %v", messages, err)
+	}
+	if !messages[0].Hidden || !messages[0].ReadOnly || messages[0].Origin != "runtime" || messages[0].Cause != "skill_catalog" {
+		t.Fatalf("lost admission metadata: %+v", messages[0])
+	}
+	repeated, err := client.Prepare(ctx, messages)
+	if err != nil || len(repeated) != 0 {
+		t.Fatalf("history did not suppress duplicate: %+v %v", repeated, err)
+	}
+	emptyScope := NewScope(func(context.Context) (Backend, error) { return Backend{Executor: &shutdownProbe{}}, nil })
+	if messages, err := client.Prepare(WithScope(context.Background(), emptyScope), nil); err != nil || messages == nil || len(messages) != 0 {
+		t.Fatalf("optional preparer must return explicit empty messages: %+v %v", messages, err)
+	}
+}
+
+func TestPrepareUsesSelectedProviderAndRejectsIncompleteResponse(t *testing.T) {
+	history := []providers.ChatMessage{{Role: "user", Content: "input", Hidden: true, ReadOnly: true, Origin: "runtime", Cause: "skill_catalog"}}
+	client := NewClient(func(_ context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		if method != "prepare" {
+			t.Fatalf("unexpected method: %s", method)
+		}
+		var request struct {
+			History []map[string]any `json:"history"`
+		}
+		if err := json.Unmarshal(raw, &request); err != nil {
+			t.Fatal(err)
+		}
+		if len(request.History) != 1 || request.History[0]["cause"] != "skill_catalog" || request.History[0]["read_only"] != true {
+			t.Fatalf("history wire: %s", raw)
+		}
+		return json.RawMessage(`{"messages":[{"role":"user","content":"external-owned context","hidden":true,"origin":"plugin","cause":"refresh"}]}`), nil
+	})
+	messages, err := client.Prepare(context.Background(), history)
+	if err != nil || len(messages) != 1 || messages[0].Content != "external-owned context" || !messages[0].Hidden || messages[0].Origin != "plugin" {
+		t.Fatalf("external prepare: %+v %v", messages, err)
+	}
+	for _, raw := range []string{`{}`, `{"messages":null}`} {
+		client = NewClient(func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+			return json.RawMessage(raw), nil
+		})
+		if _, err := client.Prepare(context.Background(), history); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+	sentinel := errors.New("selected prepare unavailable")
+	client = NewClient(func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return nil, sentinel })
+	if _, err := client.Prepare(context.Background(), history); !errors.Is(err, sentinel) {
+		t.Fatalf("lost selected error: %v", err)
 	}
 }
