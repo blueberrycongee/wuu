@@ -90,12 +90,12 @@ func (c *Client) invoke(ctx context.Context, method string, request, response an
 	return c.invokeEncoded(ctx, method, raw, response)
 }
 
-func (c *Client) invokeEncoded(ctx context.Context, method string, raw json.RawMessage, response any) error {
+func (c *Client) callEncoded(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
 	raw, err := c.call(ctx, method, raw)
 	if err != nil {
 		var serviceErr *pluginhost.HostServiceError
 		if !errors.As(err, &serviceErr) {
-			return err
+			return nil, err
 		}
 		var cause error
 		switch serviceErr.Code {
@@ -117,17 +117,32 @@ func (c *Client) invokeEncoded(ctx context.Context, method string, raw json.RawM
 				cause = context.Canceled
 			}
 		}
-		return errors.Join(cause, err)
+		return nil, errors.Join(cause, err)
 	}
-	if snapshot, ok := response.(*Snapshot); ok {
-		// Export owns the response bytes. Borrow its values instead of copying the
-		// entire database once more during startup checkpoint verification.
-		err = decodeBorrowedValues(raw, snapshot, false)
-	} else {
-		err = json.Unmarshal(raw, response)
-	}
+	return raw, nil
+}
+
+func (c *Client) invokeEncoded(ctx context.Context, method string, raw json.RawMessage, response any) error {
+	raw, err := c.callEncoded(ctx, method, raw)
 	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(raw, response); err != nil {
 		return fmt.Errorf("decode %s.%s result: %w", ServiceName, method, err)
 	}
 	return nil
+}
+
+func (c *Client) captureCheckpoint(ctx context.Context) (Checkpoint, error) {
+	raw, err := c.callEncoded(ctx, "export", json.RawMessage(`{}`))
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	// Borrow only while validating this response. Public Export still returns
+	// independent values that survive callback buffer reuse and caller mutation.
+	var snapshot Snapshot
+	if err := decodeBorrowedValues(raw, &snapshot, false); err != nil {
+		return Checkpoint{}, fmt.Errorf("decode %s.export result: %w", ServiceName, err)
+	}
+	return SnapshotCheckpoint(snapshot)
 }

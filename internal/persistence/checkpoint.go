@@ -52,6 +52,9 @@ func SnapshotCheckpoint(snapshot Snapshot) (Checkpoint, error) {
 // CaptureCheckpoint performs a full export for admission, explicit transfer or
 // recovery. It must not be placed on an ordinary read/write path.
 func CaptureCheckpoint(ctx context.Context, source SnapshotReader) (Checkpoint, error) {
+	if client, ok := source.(*Client); ok {
+		return client.captureCheckpoint(ctx)
+	}
 	snapshot, err := source.Export(ctx)
 	if err != nil {
 		return Checkpoint{}, err

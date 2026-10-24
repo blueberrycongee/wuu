@@ -30,7 +30,7 @@ func decodeBorrowedValues(raw json.RawMessage, target any, rejectUnknown bool) e
 		end := dec.InputOffset()
 		// ReadValue's buffer expires on the next read. Offset into the original
 		// immutable bytes instead, which remain alive through these slices.
-		*value = raw[end-int64(len(encoded)) : end]
+		*value = raw[end-int64(len(encoded)) : end : end]
 		return nil
 	})
 	if err := jsonv2.UnmarshalDecode(decoder, target, json.DefaultOptionsV1(), jsonv2.RejectUnknownMembers(rejectUnknown), jsonv2.WithUnmarshalers(values)); err != nil {

@@ -46,3 +46,48 @@ func TestSnapshotClientWireCompatibility(t *testing.T) {
 		t.Fatalf("lost transport error: %v", err)
 	}
 }
+
+func TestSnapshotExportOwnsReturnedValues(t *testing.T) {
+	raw := json.RawMessage(`{"version":1,"revision":"0","documents":[{"namespace":"n","key":"a","value":"original"},{"namespace":"n","key":"b","value":"second"}],"receipts":[]}`)
+	client := NewClient(func(context.Context, string, json.RawMessage) (json.RawMessage, error) { return raw, nil })
+	snapshot, err := client.Export(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The completed callback may reuse its response storage for a later call.
+	for i := range raw {
+		raw[i] = ' '
+	}
+	if string(snapshot.Documents[0].Value) != `"original"` || string(snapshot.Documents[1].Value) != `"second"` {
+		t.Fatal("returned snapshot still aliases callback storage")
+	}
+}
+
+func TestClientCheckpointMatchesExport(t *testing.T) {
+	expected := Snapshot{Version: 1, Documents: []Document{{Namespace: "n", Key: "key", Value: json.RawMessage(`{"big":9007199254740993,"html":"<>&"}`)}}, Receipts: []CommitRecord{}}
+	want, err := SnapshotCheckpoint(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	client := NewClient(func(_ context.Context, method string, request json.RawMessage) (json.RawMessage, error) {
+		calls++
+		if method != "export" || string(request) != "{}" {
+			t.Fatal("checkpoint bypassed selected export")
+		}
+		return raw, nil
+	})
+	got, err := CaptureCheckpoint(context.Background(), client)
+	if err != nil || got != want || calls != 1 {
+		t.Fatalf("checkpoint mismatch: %#v / %#v, calls %d, err %v", got, want, calls, err)
+	}
+	expected.Revision = 1
+	raw, _ = json.Marshal(expected)
+	if _, err := CaptureCheckpoint(context.Background(), client); !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("missing receipts accepted: %v", err)
+	}
+}
