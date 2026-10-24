@@ -141,6 +141,85 @@ jobs:
           go build -p 2 -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=v$(cat VERSION)" -o desktop/build/bin/wuu-core ./cmd/wuu
           cd desktop
           node_modules/.bin/electron-vite build
+      - name: Build independent public SDK shell packages
+        id: shell-author
+        if: ${{ !cancelled() && inputs.layout_matrix == 'full' && steps.build.outcome == 'success' }}
+        timeout-minutes: 3
+        env:
+          WUU_REPLACEABLE_AUTHOR_TEMP: ${{ runner.temp }}
+          WUU_SHELL_EVIDENCE: ${{ runner.temp }}/wuu-replaceable-shells
+        run: |
+          mkdir -p "$WUU_SHELL_EVIDENCE/author"
+          git rev-parse HEAD > "$WUU_SHELL_EVIDENCE/source-commit.txt"
+          git status --porcelain > "$WUU_SHELL_EVIDENCE/source-status.txt"
+          git ls-files -z cmd internal pkg plugins packages desktop/src desktop/electron.vite.config.ts desktop/package.json desktop/package-lock.json desktop/scripts/replaceable-architecture-shells-e2e.cjs scripts/replaceable-architecture-author.mjs examples/plugins/research-workbench examples/plugins/research-evidence .github/workflows/workbench-acceptance.yml go.mod go.sum VERSION | sort -z | xargs -0 sha256sum > "$WUU_SHELL_EVIDENCE/source-sha256.txt"
+          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > "$WUU_SHELL_EVIDENCE/build-sha256.txt"
+          sha256sum desktop/build/bin/wuu-core >> "$WUU_SHELL_EVIDENCE/build-sha256.txt"
+          npm ci --prefix packages/plugin-sdk --no-audit --no-fund
+          author_status=0
+          node scripts/replaceable-architecture-author.mjs || author_status=$?
+          for evidence_file in .tmp/replaceable-architecture/author/run-*/report.json .tmp/replaceable-architecture/author/run-*/verification.log; do
+            if [ -f "$evidence_file" ]; then cp "$evidence_file" "$WUU_SHELL_EVIDENCE/author/"; fi
+          done
+          if [ "$author_status" -ne 0 ]; then exit "$author_status"; fi
+          node - <<'NODE'
+          const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
+          const root = path.resolve('.tmp/replaceable-architecture/author');
+          const runs = fs.readdirSync(root).filter(name => name.startsWith('run-'));
+          assert.equal(runs.length, 1, 'Fresh checkout has exactly one independent author run');
+          const run = path.join(root, runs[0]), report = JSON.parse(fs.readFileSync(path.join(run, 'report.json')));
+          assert.equal(report.status, 'passed');
+          assert.equal(report.acceptanceCommit, process.env.GITHUB_SHA);
+          assert.deepEqual(report.packages.map(item => item.id).sort(), ['research-evidence', 'research-workbench']);
+          for (const item of report.packages) {
+            assert.equal(item.status, 'passed');
+            fs.copyFileSync(path.join(item.project, 'package-lock.json'), path.join(process.env.WUU_SHELL_EVIDENCE, 'author', `${item.id}-package-lock.json`));
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `packages=${path.join(run, 'packages')}\n`);
+          NODE
+      - name: Verify complete hot and cold public SDK shells
+        if: ${{ !cancelled() && inputs.layout_matrix == 'full' && steps.shell-author.outcome == 'success' }}
+        timeout-minutes: 7
+        env:
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+          WUU_REPLACEABLE_PACKAGES: ${{ steps.shell-author.outputs.packages }}
+          WUU_SHELL_EVIDENCE: ${{ runner.temp }}/wuu-replaceable-shells
+        run: |
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' dbus-run-session -- bash <<'SHELLS' 2>&1 | tee "$WUU_SHELL_EVIDENCE/run.log"
+          set -uo pipefail
+          openbox --sm-disable > "$WUU_SHELL_EVIDENCE/window-manager.log" 2>&1 &
+          wm=$!
+          trap 'kill "$wm" 2>/dev/null || true' EXIT
+          timeout 5s bash -c 'until [[ "$(xprop -root _NET_SUPPORTING_WM_CHECK)" == *"window id # 0x"* ]]; do sleep 0.05; done' || exit 1
+          result=0
+          for scenario in hot-shell-replacement cold-research; do
+            if [ "$scenario" = hot-shell-replacement ]; then unset WUU_REPLACEABLE_SHELL_SCENARIO;
+            else export WUU_REPLACEABLE_SHELL_SCENARIO="$scenario"; fi
+            export WUU_REPLACEABLE_UI_OUTPUT="$WUU_SHELL_EVIDENCE/$scenario"
+            mkdir -p "$WUU_REPLACEABLE_UI_OUTPUT"
+            scenario_status=0
+            timeout --signal=TERM --kill-after=10s 180s desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/replaceable-architecture-shells-e2e.cjs 2>&1 | tee "$WUU_REPLACEABLE_UI_OUTPUT/run.log" || scenario_status=$?
+            printf '%s\n' "$scenario_status" > "$WUU_REPLACEABLE_UI_OUTPUT/exit-code.txt"
+            if [ "$scenario_status" -ne 0 ]; then result=1; fi
+            node - <<'NODE' || result=1
+          const assert = require('node:assert/strict'), fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync(`${process.env.WUU_REPLACEABLE_UI_OUTPUT}/report.json`));
+          assert.equal(report.status, 'passed');
+          assert.equal(report.source, process.env.WUU_E2E_SOURCE_COMMIT);
+          assert.equal(report.scenario, process.env.WUU_REPLACEABLE_SHELL_SCENARIO || 'hot-shell-replacement');
+          NODE
+          done
+          exit "$result"
+          SHELLS
+      - name: Upload independent shell evidence
+        if: ${{ always() && inputs.layout_matrix == 'full' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: replaceable-shells-${{ github.sha }}
+          path: ${{ runner.temp }}/wuu-replaceable-shells/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Diagnose sidebar divider motion interruption
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         timeout-minutes: 2
@@ -339,85 +418,6 @@ jobs:
           timeout --signal=TERM --kill-after=10s 90s node plugins/notion-workspace/scripts/api-e2e.mjs 2>&1 | tee "$WUU_NOTION_E2E_OUTPUT/run.log" || result=$?
           if [ -f .tmp/notion-workspace-e2e/report.json ]; then cp .tmp/notion-workspace-e2e/report.json "$WUU_NOTION_E2E_OUTPUT/report.json"; fi
           exit "$result"
-      - name: Build independent public SDK shell packages
-        id: shell-author
-        if: ${{ !cancelled() && inputs.layout_matrix == 'full' && steps.build.outcome == 'success' }}
-        timeout-minutes: 3
-        env:
-          WUU_REPLACEABLE_AUTHOR_TEMP: ${{ runner.temp }}
-          WUU_SHELL_EVIDENCE: ${{ runner.temp }}/wuu-replaceable-shells
-        run: |
-          mkdir -p "$WUU_SHELL_EVIDENCE/author"
-          git rev-parse HEAD > "$WUU_SHELL_EVIDENCE/source-commit.txt"
-          git status --porcelain > "$WUU_SHELL_EVIDENCE/source-status.txt"
-          git ls-files -z cmd internal pkg plugins packages desktop/src desktop/electron.vite.config.ts desktop/package.json desktop/package-lock.json desktop/scripts/replaceable-architecture-shells-e2e.cjs scripts/replaceable-architecture-author.mjs examples/plugins/research-workbench examples/plugins/research-evidence .github/workflows/workbench-acceptance.yml go.mod go.sum VERSION | sort -z | xargs -0 sha256sum > "$WUU_SHELL_EVIDENCE/source-sha256.txt"
-          find desktop/out -type f -print0 | sort -z | xargs -0 sha256sum > "$WUU_SHELL_EVIDENCE/build-sha256.txt"
-          sha256sum desktop/build/bin/wuu-core >> "$WUU_SHELL_EVIDENCE/build-sha256.txt"
-          npm ci --prefix packages/plugin-sdk --no-audit --no-fund
-          author_status=0
-          node scripts/replaceable-architecture-author.mjs || author_status=$?
-          for evidence_file in .tmp/replaceable-architecture/author/run-*/report.json .tmp/replaceable-architecture/author/run-*/verification.log; do
-            if [ -f "$evidence_file" ]; then cp "$evidence_file" "$WUU_SHELL_EVIDENCE/author/"; fi
-          done
-          if [ "$author_status" -ne 0 ]; then exit "$author_status"; fi
-          node - <<'NODE'
-          const assert = require('node:assert/strict'), fs = require('node:fs'), path = require('node:path');
-          const root = path.resolve('.tmp/replaceable-architecture/author');
-          const runs = fs.readdirSync(root).filter(name => name.startsWith('run-'));
-          assert.equal(runs.length, 1, 'Fresh checkout has exactly one independent author run');
-          const run = path.join(root, runs[0]), report = JSON.parse(fs.readFileSync(path.join(run, 'report.json')));
-          assert.equal(report.status, 'passed');
-          assert.equal(report.acceptanceCommit, process.env.GITHUB_SHA);
-          assert.deepEqual(report.packages.map(item => item.id).sort(), ['research-evidence', 'research-workbench']);
-          for (const item of report.packages) {
-            assert.equal(item.status, 'passed');
-            fs.copyFileSync(path.join(item.project, 'package-lock.json'), path.join(process.env.WUU_SHELL_EVIDENCE, 'author', `${item.id}-package-lock.json`));
-          }
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `packages=${path.join(run, 'packages')}\n`);
-          NODE
-      - name: Verify complete hot and cold public SDK shells
-        if: ${{ !cancelled() && inputs.layout_matrix == 'full' && steps.shell-author.outcome == 'success' }}
-        timeout-minutes: 7
-        env:
-          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
-          WUU_REPLACEABLE_PACKAGES: ${{ steps.shell-author.outputs.packages }}
-          WUU_SHELL_EVIDENCE: ${{ runner.temp }}/wuu-replaceable-shells
-        run: |
-          set -o pipefail
-          xvfb-run --auto-servernum --server-args='-screen 0 1600x1000x24 -nolisten tcp' dbus-run-session -- bash <<'SHELLS' 2>&1 | tee "$WUU_SHELL_EVIDENCE/run.log"
-          set -uo pipefail
-          openbox --sm-disable > "$WUU_SHELL_EVIDENCE/window-manager.log" 2>&1 &
-          wm=$!
-          trap 'kill "$wm" 2>/dev/null || true' EXIT
-          timeout 5s bash -c 'until [[ "$(xprop -root _NET_SUPPORTING_WM_CHECK)" == *"window id # 0x"* ]]; do sleep 0.05; done' || exit 1
-          result=0
-          for scenario in hot-shell-replacement cold-research; do
-            if [ "$scenario" = hot-shell-replacement ]; then unset WUU_REPLACEABLE_SHELL_SCENARIO;
-            else export WUU_REPLACEABLE_SHELL_SCENARIO="$scenario"; fi
-            export WUU_REPLACEABLE_UI_OUTPUT="$WUU_SHELL_EVIDENCE/$scenario"
-            mkdir -p "$WUU_REPLACEABLE_UI_OUTPUT"
-            scenario_status=0
-            timeout --signal=TERM --kill-after=10s 180s desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/replaceable-architecture-shells-e2e.cjs 2>&1 | tee "$WUU_REPLACEABLE_UI_OUTPUT/run.log" || scenario_status=$?
-            printf '%s\n' "$scenario_status" > "$WUU_REPLACEABLE_UI_OUTPUT/exit-code.txt"
-            if [ "$scenario_status" -ne 0 ]; then result=1; fi
-            node - <<'NODE' || result=1
-          const assert = require('node:assert/strict'), fs = require('node:fs');
-          const report = JSON.parse(fs.readFileSync(`${process.env.WUU_REPLACEABLE_UI_OUTPUT}/report.json`));
-          assert.equal(report.status, 'passed');
-          assert.equal(report.source, process.env.WUU_E2E_SOURCE_COMMIT);
-          assert.equal(report.scenario, process.env.WUU_REPLACEABLE_SHELL_SCENARIO || 'hot-shell-replacement');
-          NODE
-          done
-          exit "$result"
-          SHELLS
-      - name: Upload independent shell evidence
-        if: ${{ always() && inputs.layout_matrix == 'full' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: replaceable-shells-${{ github.sha }}
-          path: ${{ runner.temp }}/wuu-replaceable-shells/
-          if-no-files-found: warn
-          retention-days: 14
       - name: Summarize checked journeys
         if: always()
         env:
