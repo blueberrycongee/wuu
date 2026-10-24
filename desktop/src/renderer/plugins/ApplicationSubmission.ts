@@ -247,7 +247,10 @@ export class ApplicationSubmission {
         if (runtime.worktree) params = { ...params, workspace: "worktree", ...(runtime.worktree.startBranch ? { base_revision: runtime.worktree.startBranch } : {}) };
         if (projectDraft && context.kind === "project") {
           const line = message.text.split("\n").find(line => line.trim())?.trim().replace(/\s+/g, " ") ?? "";
-          params = { ...runtime.params, engine: "wuu", workspace_id: context.project_id, cwd: context.cwd,
+          // Project coordinators use the server's default permission policy,
+          // not the ordinary workspace composer's permission selection.
+          params = { engine: "wuu", provider: runtime.params.provider, model: runtime.params.model,
+            effort: runtime.params.effort, speed: runtime.params.speed, workspace_id: context.project_id, cwd: context.cwd,
             project: { name: customDraftConversationTitle(source.kind === "draft" ? source.title : undefined, t("projects.newProject")) || (line.length > 48 ? `${line.slice(0, 47)}…` : line) } };
         }
         const creating = window.wuu.startThread(params, context).then(async result => {

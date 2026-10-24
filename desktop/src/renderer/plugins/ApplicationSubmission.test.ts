@@ -4,13 +4,13 @@ import { initialState, cloneSessionTabDraft, emptyComposerDraft, type AppState }
 import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { createComposerPendingState } from "../ComposerPendingState";
 import { createSidebarThreadCache } from "../SidebarWorkspaceState";
-import type { Thread, WuuDesktopApi } from "../../shared/protocol";
+import type { Thread, ThreadStartParams, WuuDesktopApi } from "../../shared/protocol";
 
 function deferred<T>() { let resolve!: (value:T) => void; let reject!: (error:Error) => void;
   const promise = new Promise<T>((yes,no) => { resolve=yes; reject=no; }); return {promise,resolve,reject}; }
 const context = {kind:"no_project" as const,cwd:"/fixture"};
 const thread = (id="created"):Thread => ({id,cwd:context.cwd,preview:"",status:"idle",model_provider:"fixture",model:"fixture",created_at:"",updated_at:"",turns:[]});
-function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture") {
+function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture", runtimeParams: Partial<ThreadStartParams> = {}) {
   let state:AppState={...initialState,activeContext:context,initialized:{provider:"fixture",model:"fixture"} as AppState["initialized"],thread:existing,threads:existing?[existing]:[],activeSessionTabID:existing?`thread:${existing.id}`:"draft:a",
     sessionTabs:existing?[{id:`thread:${existing.id}`,kind:"thread",threadID:existing.id,context,title:"Fixture",prompt:"hello",images:[],files:[]}]:[{id:"draft:a",kind:"draft",context,title:"",createdAt:1,prompt:"hello",images:[],files:[]}]};
   const getDraft=(id:string)=>{const tab=state.sessionTabs.find(tab=>tab.id===id);return tab?cloneSessionTabDraft(tab):emptyComposerDraft();};
@@ -19,13 +19,30 @@ function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture"
   const changed=vi.fn();
   const resources=new ApplicationDraftResources(()=>{});
   const submission=new ApplicationSubmission({getState:()=>state,updateState:update=>{state=update(state);if(reconcileOnUpdate) submission.reconcile();},changed,isNavigationPending:()=>false,pending,resources,getDraft,setDraft,
-    getRuntime:()=>({pending:false,params:{engine,model:"",effort:"",permission_mode:"unconfined"}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
+    getRuntime:()=>({pending:false,params:{engine,model:"",effort:"",permission_mode:"unconfined",...runtimeParams}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
   return {submission,pending,changed,resources,getState:()=>state,setState:(next:AppState)=>{state=next;},getDraft};
 }
 
 // Escaped contracts: one creation owner, cancellation before/after admission,
 // source-bound adoption, ordered queue handoff, and uncertain delivery recovery.
 describe("application submission ownership",()=>{
+  it.each([false, true])("preserves creation permission policy for project=%s",async(project)=>{
+    const created={...thread(),permission_mode:"standard"};
+    window.wuu={startThread:vi.fn().mockResolvedValue({thread:created}),startTurn:vi.fn().mockResolvedValue({turn:{id:"accepted",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
+    const f=fixture(undefined,false,"fixture",{provider:"chosen",model:"chosen-model",effort:"high",speed:"",permission_mode:"read_only",approve_for_me:true});
+    const workspace={kind:"project" as const,project_id:"workspace",cwd:"/workspace"};
+    const state=f.getState();
+    f.setState({...state,activeContext:workspace,initialized:{...state.initialized!,features:{project_agent:true}},sessionTabs:state.sessionTabs.map(tab=>tab.kind==="draft"?{...tab,context:workspace,project}:tab)});
+    expect(f.submission.submit({ownerTabId:"draft:a"}).accepted).toBe(true);
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+    const params=vi.mocked(window.wuu.startThread).mock.calls[0][0]!;
+    expect(params).toMatchObject({provider:"chosen",model:"chosen-model",effort:"high"});
+    if(project){
+      expect(params).toMatchObject({engine:"wuu",workspace_id:"workspace",cwd:"/workspace",project:{name:"hello"}});
+      expect(params).not.toHaveProperty("permission_mode");
+      expect(params).not.toHaveProperty("approve_for_me");
+    }else expect(params).toMatchObject({permission_mode:"read_only",approve_for_me:true});
+  });
   it.each([false, true])("settles an admitted result after disposal without publishing to the ended owner (failure=%s)",async(failed)=>{
     const starting=deferred<{turn:Thread["turns"][number]}>();
     window.wuu={startTurn:vi.fn(()=>starting.promise)} as unknown as WuuDesktopApi;
