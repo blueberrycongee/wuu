@@ -1,3 +1,4 @@
+import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-preview";
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
@@ -19,6 +20,7 @@ import { awaitComposerFiles, awaitComposerImages, createComposerMessage, inputFi
 import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
+import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
@@ -43,6 +45,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private readonly draftResources = new ApplicationDraftResources(() => this.publish());
   private draftRevision = 0;
   private readonly applicationSettings: ApplicationSettings;
+  private readonly applicationPreview: ApplicationPreview;
   private settings = { open: false, pageId: "providers" };
   private preview: ApplicationSnapshotV1["preview"] = null;
   private theme = window.wuu?.initialThemePreference ?? "system";
@@ -63,6 +66,8 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   constructor(state?: AppState) {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
+    this.applicationPreview = new ApplicationPreview({ getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
+      .filter((thread): thread is Thread => Boolean(thread)), changed: () => this.publish() });
     this.applicationSettings = new ApplicationSettings({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady) });
     const tab = activeSessionTab(this.state);
@@ -401,6 +406,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationPreviewAction(action)) return this.applicationPreview.invoke(action,
+      input as ApplicationPreviewActionMapV1[keyof ApplicationPreviewActionMapV1]["input"]);
     if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
       input as ApplicationSettingsActionMapV1[keyof ApplicationSettingsActionMapV1]["input"], signal);
     switch (action) {
@@ -793,7 +800,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       settings: Object.freeze({ ...this.applicationSettings.getSnapshot(), contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),
-      preview: this.preview,
+      preview: this.preview, previewWorkspace: this.applicationPreview.getSnapshot(),
       appearance: Object.freeze({ theme: this.theme, resolvedTheme: currentAppliedTheme(), uiFontSize: Number.parseFloat(document.documentElement.style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default, codeFontSize: readAppearance().codeSize }),
       locale, status: Object.freeze({ contractVersion: 1, items: Object.freeze([Object.freeze({ id: "connection", label: state.status, kind: status === "error" ? "error" as const : "info" as const })]) }),
     });
