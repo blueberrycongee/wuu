@@ -23,6 +23,10 @@ import (
 // StreamCallback receives streaming events for live clients.
 type StreamCallback func(event providers.StreamEvent)
 
+// BeginModelReceipts admits one independent model run. Its completion function
+// synchronously joins bounded receipt cleanup before the caller releases state.
+type BeginModelReceiptsFunc func(context.Context) (context.Context, func() error, error)
+
 const maxConsecutiveProactiveCompactFailures = 3
 
 // StreamRunner binds a selected driver to one execution and its model, tool,
@@ -173,7 +177,8 @@ type StreamRunner struct {
 	InferenceWorkloadProfile providers.InferenceWorkloadProfile
 	// InferenceJournal is the durable write-ahead sink shared by every model
 	// round and nested compaction owned by this runner.
-	InferenceJournal providers.InferenceJournal
+	InferenceJournal   providers.InferenceJournal
+	BeginModelReceipts BeginModelReceiptsFunc
 	// LoopDriver owns turn policy while the runner remains the kernel gateway
 	// for provider, tool-ledger, history, and streaming invariants. Callers
 	// must select a driver explicitly or supply AcquireLoopDriver. Durable
@@ -322,6 +327,11 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 			return LoopResult{}, fmt.Errorf("bind loop driver: %w", err)
 		}
 	}
+	ctx, finishReceipts, err := beginModelReceipts(ctx, r.BeginModelReceipts)
+	if err != nil {
+		return LoopResult{}, err
+	}
+	defer func() { runErr = errors.Join(runErr, finishReceipts()) }()
 	var instance loopdriver.Instance
 	if resume != nil {
 		instance, err = driver.Resume(ctx, execution, input, *resume)
@@ -390,6 +400,13 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 type streamDriverGateway struct {
 	*streamTurnGateway
 	lastCheckpoint *loopdriver.Checkpoint
+}
+
+func beginModelReceipts(ctx context.Context, begin BeginModelReceiptsFunc) (context.Context, func() error, error) {
+	if begin == nil {
+		return ctx, func() error { return nil }, nil
+	}
+	return begin(ctx)
 }
 
 func (gateway *streamDriverGateway) WriteCheckpoint(ctx context.Context, checkpoint loopdriver.Checkpoint) error {
@@ -645,7 +662,19 @@ func (r *StreamRunner) requestModel() string {
 // and request-only context can change the prefix; cache reuse must be measured,
 // not assumed. Tool calls in the response are rejected and never executed.
 func (r *StreamRunner) CompactionNoteFork() CompactionNoteFork {
-	return r.compactionNoteFork(nil)
+	fork := r.compactionNoteFork(nil)
+	var begin BeginModelReceiptsFunc
+	if r != nil {
+		begin = r.BeginModelReceipts
+	}
+	return func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (result CompactionNoteForkResult, runErr error) {
+		ctx, finishReceipts, err := beginModelReceipts(ctx, begin)
+		if err != nil {
+			return CompactionNoteForkResult{}, err
+		}
+		defer func() { runErr = errors.Join(runErr, finishReceipts()) }()
+		return fork(ctx, history, plan)
+	}
 }
 
 func (r *StreamRunner) compactionNoteFork(retained *RetainedRequestContextState) CompactionNoteFork {

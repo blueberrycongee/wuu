@@ -419,6 +419,126 @@ func TestStreamRunner_AfterTurnRunsAfterSuccess(t *testing.T) {
 	}
 }
 
+func TestStreamRunnerModelReceiptCompletion(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled-%t", canceled), func(t *testing.T) {
+			deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			completionErr := errors.New("receipt checkpoint failed")
+			client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "accepted output"}, {Type: providers.EventDone}}}
+			journal := &workflowRecordingJournal{}
+			tools := &driverStreamingTools{}
+			runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", Tools: tools, InferenceJournal: journal}
+			begins, finishes := 0, 0
+			for turn := 1; turn <= 2; turn++ {
+				ctx, cancel := context.WithCancel(deadline)
+				defer cancel()
+				tools.unfrozen.Store(false)
+				entered := make(chan struct{})
+				var scope *providers.ModelReceiptScope
+				var endReceipt func(error)
+				runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
+					begins++
+					ctx, scope = providers.NewModelReceiptScope(ctx)
+					return ctx, func() error {
+						finishes++
+						if !tools.unfrozen.Load() || len(journal.completed) != turn {
+							return errors.New("receipt completion preceded gateway or workflow cleanup")
+						}
+						scope.Seal()
+						close(entered)
+						return errors.Join(scope.Wait(deadline), completionErr)
+					}, nil
+				}
+				runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
+					if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
+						return errors.New("model request lost its receipt owner")
+					}
+					var err error
+					_, endReceipt, err = providers.BeginModelReceipt(ctx)
+					return err
+				}
+				type outcome struct {
+					result LoopResult
+					err    error
+				}
+				done := make(chan outcome, 1)
+				go func() {
+					result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "work"}}, func(event providers.StreamEvent) {
+						if canceled && event.Type == providers.EventContentDelta {
+							cancel()
+						}
+					})
+					done <- outcome{result, err}
+				}()
+				select {
+				case <-entered:
+				case result := <-done:
+					t.Fatalf("turn returned before receipt completion: %+v", result)
+				case <-deadline.Done():
+					t.Fatal("turn never reached receipt completion")
+				}
+				select {
+				case result := <-done:
+					t.Fatalf("turn released pending receipt: %+v", result)
+				default:
+				}
+				endReceipt(nil)
+				select {
+				case result := <-done:
+					if !errors.Is(result.err, completionErr) || errors.Is(result.err, context.Canceled) != canceled || result.result.Content != "accepted output" {
+						t.Fatalf("completion lost errors or partial output: %+v", result)
+					}
+				case <-deadline.Done():
+					t.Fatal("turn did not finish after receipt release")
+				}
+				if begins != turn || finishes != turn {
+					t.Fatalf("turn %d: admissions=%d completions=%d", turn, begins, finishes)
+				}
+			}
+		})
+	}
+}
+
+func TestStreamRunnerModelReceiptAdmissionRejectsEffects(t *testing.T) {
+	client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "unexpected"}, {Type: providers.EventDone}}}
+	admissionErr := errors.New("generation stopped")
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+		return ctx, nil, admissionErr
+	}}
+	if _, err := runner.Run(context.Background(), "work"); !errors.Is(err, admissionErr) || len(client.requests) != 0 {
+		t.Fatalf("rejected owner admitted model work: requests=%d err=%v", len(client.requests), err)
+	}
+	if _, err := runner.CompactionNoteFork()(context.Background(), nil, CompactionNotePlan{Prompt: "brief"}); !errors.Is(err, admissionErr) || len(client.requests) != 0 {
+		t.Fatalf("rejected fork admitted model work: requests=%d err=%v", len(client.requests), err)
+	}
+}
+
+func TestStreamRunnerNoteCompactionReusesReceiptOwner(t *testing.T) {
+	registry := NewCompactionRegistry()
+	registry.Register(replacementNoteProvider{})
+	client := &streamOnlyNoteClient{}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", CompactionRegistry: registry, CompactionNoteStore: &cancellationNoteStore{}, ForceInitialCompact: true, CompactOnly: true}
+	var scope *providers.ModelReceiptScope
+	begins, finishes := 0, 0
+	runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
+		begins++
+		ctx, scope = providers.NewModelReceiptScope(ctx)
+		return ctx, func() error { finishes++; scope.Seal(); return scope.Wait(context.Background()) }, nil
+	}
+	runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
+		if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
+			return errors.New("compaction lost the turn receipt owner")
+		}
+		return nil
+	}
+	history := []providers.ChatMessage{{Role: "user", Content: strings.Repeat("older request ", 100)}, {Role: "assistant", Content: strings.Repeat("older response ", 100)}}
+	result, err := runner.RunWithCallback(context.Background(), history, nil)
+	if err != nil || !result.HistoryRewritten || client.streamCalls != 1 || begins != 1 || finishes != 1 {
+		t.Fatalf("compaction did not share one turn owner: rewritten=%v streams=%d admissions=%d completions=%d err=%v", result.HistoryRewritten, client.streamCalls, begins, finishes, err)
+	}
+}
+
 func TestStreamRunner_AfterTurnDoesNotRunAfterSetupError(t *testing.T) {
 	called := false
 	runner := &StreamRunner{

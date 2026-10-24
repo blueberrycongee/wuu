@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -128,5 +129,71 @@ func TestNoteOutputDoesNotRetryUnrelatedFailures(t *testing.T) {
 	})
 	if _, err := fork(context.Background(), nil, CompactionNotePlan{MaxBytes: 48}); !errors.Is(err, failure) || calls != 1 {
 		t.Fatalf("output repair multiplied unrelated retries: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestNoteOutputRetriesShareReceiptCompletion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := &noteOutputClient{outputs: []noteOutput{{"truncated", providers.FinishReasonLength}, {"complete", providers.FinishReasonStop}}}
+	completionErr := errors.New("final receipt failed")
+	entered, release := make(chan struct{}), make(chan struct{})
+	begins, finishes := 0, 0
+	var scope *providers.ModelReceiptScope
+	runner := &StreamRunner{Client: client, Model: "test"}
+	runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
+		begins++
+		ctx, scope = providers.NewModelReceiptScope(ctx)
+		return ctx, func() error {
+			finishes++
+			scope.Seal()
+			close(entered)
+			select {
+			case <-release:
+				return errors.Join(scope.Wait(ctx), completionErr)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}, nil
+	}
+	runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
+		if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
+			return errors.New("note attempt lost its receipt owner")
+		}
+		return nil
+	}
+	fork := runner.CompactionNoteFork()
+	if begins != 0 {
+		t.Fatal("unused fork admitted receipt work")
+	}
+	type outcome struct {
+		result CompactionNoteForkResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := fork(ctx, nil, CompactionNotePlan{Prompt: "brief", MaxBytes: 100})
+		done <- outcome{result, err}
+	}()
+	select {
+	case <-entered:
+	case result := <-done:
+		t.Fatalf("fork skipped receipt completion: %+v", result)
+	case <-ctx.Done():
+		t.Fatal("fork never reached completion")
+	}
+	select {
+	case result := <-done:
+		t.Fatalf("fork returned before receipt completion: %+v", result)
+	default:
+	}
+	close(release)
+	select {
+	case result := <-done:
+		if !errors.Is(result.err, completionErr) || result.result.Markdown != "complete" || result.result.Usage == nil || result.result.Usage.InputTokens != 200 || len(client.requests) != 2 || begins != 1 || finishes != 1 {
+			t.Fatalf("fork lost retry results or shared completion: result=%+v calls=%d admissions=%d completions=%d err=%v", result.result, len(client.requests), begins, finishes, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("fork did not finish after receipt release")
 	}
 }

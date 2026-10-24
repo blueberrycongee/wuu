@@ -376,6 +376,83 @@ func TestSpawnStartsWorkflowIndependentFromParentAgent(t *testing.T) {
 	}
 }
 
+type receiptWorkerClient struct {
+	fakeClient
+	scopes chan *providers.ModelReceiptScope
+}
+
+func (c *receiptWorkerClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	c.scopes <- providers.ModelReceiptScopeFromContext(ctx)
+	return c.fakeClient.StreamChat(ctx, req)
+}
+
+func TestWorkerModelReceiptsSurviveInheritedClosedParent(t *testing.T) {
+	for _, restored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restored-%t", restored), func(t *testing.T) {
+			deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			ctx, parent := providers.NewModelReceiptScope(deadline)
+			parent.Seal()
+			ctx = context.WithoutCancel(ctx)
+			client := &receiptWorkerClient{fakeClient: fakeClient{response: providers.ChatResponse{Content: "worker done"}}, scopes: make(chan *providers.ModelReceiptScope, 2)}
+			var begins, finishes atomic.Int32
+			mgr := NewManagerWithOptions(client, "test", ManagerOptions{
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+				BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+					begins.Add(1)
+					if providers.ModelReceiptScopeFromContext(ctx) != parent {
+						return ctx, nil, errors.New("worker admission lost caller context")
+					}
+					ctx, scope := providers.NewModelReceiptScope(ctx)
+					return ctx, func() error { finishes.Add(1); scope.Seal(); return scope.Wait(deadline) }, nil
+				},
+			})
+			// Updating model defaults must not erase generation-owned receipt admission.
+			mgr.UpdateDefaults(nil, "updated", ManagerOptions{})
+			selected := &WorkerRuntime{Model: "selected", Client: client}
+			var sa *SubAgent
+			var err error
+			if restored {
+				sa, err = mgr.Restore(RestoreOptions{Run: PersistedRun{ID: "restored-worker", Model: "test", Status: StatusCompleted, Messages: []providers.ChatMessage{{Role: "user", Content: "earlier task"}}}, Toolkit: fakeToolkit{}, WorkerRuntime: selected})
+				if err == nil {
+					_, err = mgr.Followup(ctx, sa.ID, "resume")
+				}
+			} else {
+				sa, err = mgr.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, WorkerRuntime: selected})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var previous *providers.ModelReceiptScope
+			for turn := int32(1); turn <= 2; turn++ {
+				snapshot, err := mgr.Wait(deadline, sa.ID)
+				if err != nil || snapshot.Status != StatusCompleted || begins.Load() != turn || finishes.Load() != turn {
+					t.Fatalf("worker receipt lifecycle failed: status=%s admissions=%d completions=%d err=%v workerErr=%s", snapshot.Status, begins.Load(), finishes.Load(), err, snapshot.Error)
+				}
+				select {
+				case scope := <-client.scopes:
+					if scope == nil || scope == parent || scope == previous {
+						t.Fatal("worker model reused inherited or previous receipt scope")
+					}
+					select {
+					case <-scope.Done():
+					default:
+						t.Fatal("worker finished before receipt completion")
+					}
+					previous = scope
+				default:
+					t.Fatal("worker did not call its selected model")
+				}
+				if turn == 1 {
+					if _, err := mgr.Followup(ctx, sa.ID, "continue"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestSpawn_UsesManagerDefaultRequestOptions(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "all done"}}
 	mgr := NewManagerWithOptions(client, "worker-api-model", ManagerOptions{
@@ -653,7 +730,14 @@ func TestRunTurn_EmptyOutputNudgeRecoversFinalSummary(t *testing.T) {
 		{Content: "", StopReason: "end_turn"},
 		{Content: "final summary after nudge", StopReason: "end_turn"},
 	}}
-	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
+	var admissions, completions atomic.Int32
+	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+			admissions.Add(1)
+			return ctx, func() error { completions.Add(1); return nil }, nil
+		},
+	})
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{Type: "worker", Prompt: "do thing", Toolkit: fakeToolkit{}})
 	if err != nil {
 		t.Fatal(err)
@@ -670,6 +754,9 @@ func TestRunTurn_EmptyOutputNudgeRecoversFinalSummary(t *testing.T) {
 	}
 	if client.callCount() != 2 {
 		t.Fatalf("expected exactly one main turn plus one nudge turn, got %d model calls", client.callCount())
+	}
+	if admissions.Load() != 2 || completions.Load() != 2 {
+		t.Fatalf("nudge reused prior receipt lifecycle: admissions=%d completions=%d", admissions.Load(), completions.Load())
 	}
 }
 

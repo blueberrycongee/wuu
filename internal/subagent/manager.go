@@ -40,6 +40,7 @@ type Manager struct {
 	defaultKeepRecent      int
 	defaultDisableCompact  bool
 	defaultJournal         providers.InferenceJournal
+	BeginModelReceipts     agent.BeginModelReceiptsFunc
 	toolLedgerFactory      func(string) (*toolledger.Ledger, error)
 
 	mu        sync.Mutex
@@ -84,8 +85,9 @@ type ManagerOptions struct {
 	DisableAutoCompact      bool
 	// InferenceJournal is an infrastructure dependency fixed at manager
 	// construction. UpdateDefaults intentionally does not replace it.
-	InferenceJournal  providers.InferenceJournal
-	ToolLedgerFactory func(ownerID string) (*toolledger.Ledger, error)
+	InferenceJournal   providers.InferenceJournal
+	BeginModelReceipts agent.BeginModelReceiptsFunc
+	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
 	// AcquireLoopDriver is required for execution. Missing configuration
 	// rejects the turn before lifecycle hooks, inference, or tool calls.
 	AcquireLoopDriver loopdriver.AcquireFunc
@@ -94,21 +96,22 @@ type ManagerOptions struct {
 }
 
 type managerDefaults struct {
-	client            providers.StreamClient
-	providerName      string
-	model             string
-	effort            string
-	options           map[string]any
-	contextWindow     int
-	maxInputTokens    int
-	outputReserve     int
-	compactTokens     int
-	compactPct        float64
-	temperature       float64
-	keepRecent        int
-	disableCompact    bool
-	journal           providers.InferenceJournal
-	toolLedgerFactory func(string) (*toolledger.Ledger, error)
+	client             providers.StreamClient
+	providerName       string
+	model              string
+	effort             string
+	options            map[string]any
+	contextWindow      int
+	maxInputTokens     int
+	outputReserve      int
+	compactTokens      int
+	compactPct         float64
+	temperature        float64
+	keepRecent         int
+	disableCompact     bool
+	journal            providers.InferenceJournal
+	BeginModelReceipts agent.BeginModelReceiptsFunc
+	toolLedgerFactory  func(string) (*toolledger.Ledger, error)
 }
 
 type toolContextBlockProvider interface {
@@ -139,6 +142,7 @@ func NewManagerWithOptions(client providers.StreamClient, defaultModel string, o
 		defaultKeepRecent:      opts.CompactKeepRecentTokens,
 		defaultDisableCompact:  opts.DisableAutoCompact,
 		defaultJournal:         opts.InferenceJournal,
+		BeginModelReceipts:     opts.BeginModelReceipts,
 		toolLedgerFactory:      opts.ToolLedgerFactory,
 		acquireLoopDriver:      opts.AcquireLoopDriver,
 		onSubagentStart:        opts.OnSubagentStart,
@@ -180,21 +184,22 @@ func (m *Manager) defaultsSnapshot() managerDefaults {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return managerDefaults{
-		client:            m.client,
-		providerName:      m.defaultProviderName,
-		model:             m.defaultModel,
-		effort:            m.defaultEffort,
-		options:           provideroptions.Clone(m.defaultProviderOptions),
-		contextWindow:     m.defaultContextWindow,
-		maxInputTokens:    m.defaultMaxInputTokens,
-		outputReserve:     m.defaultOutputReserve,
-		compactTokens:     m.defaultCompactTokens,
-		temperature:       m.defaultTemperature,
-		compactPct:        m.defaultCompactPct,
-		keepRecent:        m.defaultKeepRecent,
-		disableCompact:    m.defaultDisableCompact,
-		journal:           m.defaultJournal,
-		toolLedgerFactory: m.toolLedgerFactory,
+		client:             m.client,
+		providerName:       m.defaultProviderName,
+		model:              m.defaultModel,
+		effort:             m.defaultEffort,
+		options:            provideroptions.Clone(m.defaultProviderOptions),
+		contextWindow:      m.defaultContextWindow,
+		maxInputTokens:     m.defaultMaxInputTokens,
+		outputReserve:      m.defaultOutputReserve,
+		compactTokens:      m.defaultCompactTokens,
+		temperature:        m.defaultTemperature,
+		compactPct:         m.defaultCompactPct,
+		keepRecent:         m.defaultKeepRecent,
+		disableCompact:     m.defaultDisableCompact,
+		journal:            m.defaultJournal,
+		BeginModelReceipts: m.BeginModelReceipts,
+		toolLedgerFactory:  m.toolLedgerFactory,
 	}
 }
 
@@ -396,21 +401,22 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 	runtimeDefaults := defaults
 	if runtime != nil {
 		runtimeDefaults = managerDefaults{
-			client:            client,
-			providerName:      providerName,
-			model:             model,
-			effort:            strings.TrimSpace(runtime.Effort),
-			options:           provideroptions.Clone(runtime.ProviderOptions),
-			contextWindow:     runtime.ContextWindow,
-			maxInputTokens:    runtime.MaxInputTokens,
-			outputReserve:     runtime.OutputReserveTokens,
-			compactTokens:     runtime.CompactThresholdTokens,
-			compactPct:        runtime.CompactThresholdPct,
-			temperature:       runtime.Temperature,
-			keepRecent:        runtime.CompactKeepRecentTokens,
-			disableCompact:    runtime.DisableAutoCompact,
-			journal:           defaults.journal,
-			toolLedgerFactory: defaults.toolLedgerFactory,
+			client:             client,
+			providerName:       providerName,
+			model:              model,
+			effort:             strings.TrimSpace(runtime.Effort),
+			options:            provideroptions.Clone(runtime.ProviderOptions),
+			contextWindow:      runtime.ContextWindow,
+			maxInputTokens:     runtime.MaxInputTokens,
+			outputReserve:      runtime.OutputReserveTokens,
+			compactTokens:      runtime.CompactThresholdTokens,
+			compactPct:         runtime.CompactThresholdPct,
+			temperature:        runtime.Temperature,
+			keepRecent:         runtime.CompactKeepRecentTokens,
+			disableCompact:     runtime.DisableAutoCompact,
+			journal:            defaults.journal,
+			BeginModelReceipts: defaults.BeginModelReceipts,
+			toolLedgerFactory:  defaults.toolLedgerFactory,
 		}
 	}
 
@@ -580,6 +586,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		InferenceOperationKind:   providers.InferenceOperationAgentRound,
 		InferenceWorkloadProfile: providers.InferenceProfileBackgroundAgent,
 		InferenceJournal:         defaults.journal,
+		BeginModelReceipts:       defaults.BeginModelReceipts,
 		OnUsage:                  onUsage,
 		OnTokenUsage:             onTokenUsage,
 	}
@@ -1218,21 +1225,22 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 	runtimeDefaults := defaults
 	if runtime != nil {
 		runtimeDefaults = managerDefaults{
-			client:            client,
-			providerName:      providerName,
-			model:             model,
-			effort:            strings.TrimSpace(runtime.Effort),
-			options:           provideroptions.Clone(runtime.ProviderOptions),
-			contextWindow:     runtime.ContextWindow,
-			maxInputTokens:    runtime.MaxInputTokens,
-			outputReserve:     runtime.OutputReserveTokens,
-			compactTokens:     runtime.CompactThresholdTokens,
-			compactPct:        runtime.CompactThresholdPct,
-			temperature:       runtime.Temperature,
-			keepRecent:        runtime.CompactKeepRecentTokens,
-			disableCompact:    runtime.DisableAutoCompact,
-			journal:           defaults.journal,
-			toolLedgerFactory: defaults.toolLedgerFactory,
+			client:             client,
+			providerName:       providerName,
+			model:              model,
+			effort:             strings.TrimSpace(runtime.Effort),
+			options:            provideroptions.Clone(runtime.ProviderOptions),
+			contextWindow:      runtime.ContextWindow,
+			maxInputTokens:     runtime.MaxInputTokens,
+			outputReserve:      runtime.OutputReserveTokens,
+			compactTokens:      runtime.CompactThresholdTokens,
+			compactPct:         runtime.CompactThresholdPct,
+			temperature:        runtime.Temperature,
+			keepRecent:         runtime.CompactKeepRecentTokens,
+			disableCompact:     runtime.DisableAutoCompact,
+			journal:            defaults.journal,
+			BeginModelReceipts: defaults.BeginModelReceipts,
+			toolLedgerFactory:  defaults.toolLedgerFactory,
 		}
 	}
 

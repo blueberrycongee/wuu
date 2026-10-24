@@ -319,6 +319,33 @@ func TestSpawn_SyncHappyPath(t *testing.T) {
 	}
 }
 
+func TestSpawnModelReceiptAdmissionFailure(t *testing.T) {
+	admissionErr := errors.New("selected generation stopped")
+	client := &recordingClient{resp: providers.ChatResponse{Content: "must not run"}}
+	c, err := New(Config{
+		AcquireLoopDriver:  loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) { return ctx, nil, admissionErr },
+		Client:             client, DefaultModel: "test", ParentRepo: t.TempDir(),
+		WorkerFactory: func(string, WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) { return fakeToolkit{}, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { stopAndCloseAgentControlForTest(t, c) })
+	res, err := c.Spawn(context.Background(), SpawnRequest{Type: DefaultSubagentType, TaskName: "receipt_admission", Prompt: "work", Synchronous: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "failed" || !strings.Contains(res.Error, admissionErr.Error()) {
+		t.Fatalf("owner rejection lost through worker config: %+v", res)
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.last.Model != "" {
+		t.Fatalf("rejected worker called model: %+v", client.last)
+	}
+}
+
 func TestSpawn_RegistersThreadMetadata(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir)
