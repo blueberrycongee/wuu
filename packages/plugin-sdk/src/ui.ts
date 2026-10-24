@@ -1,3 +1,4 @@
+import type { ApplicationComposerRuntimeActionMapV1, ApplicationComposerRuntimeViewV1 } from "./ui-composer-runtime.js";
 import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
 import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1 } from "./ui-preview-content.js";
 import type { ApplicationConversationDetailsActionMapV1, ApplicationConversationDetailV1, ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
@@ -53,6 +54,7 @@ export interface ApplicationSnapshotV1 {
     readonly error?: string;
   };
   readonly composer: ComposerSnapshotV1;
+  readonly composerRuntime: ApplicationComposerRuntimeViewV1;
   readonly drafts: ApplicationDraftsSnapshotV1;
   readonly composerPending: readonly ApplicationPendingComposerThreadV1[];
   readonly settings: SettingsSnapshotV1 & ApplicationSettingsViewV1 & { readonly open: boolean };
@@ -90,7 +92,7 @@ export interface ApplicationAppearanceV1 {
 }
 
 /** Commands are scoped to the generation that captured this application handle. */
-export interface ApplicationActionMapV1 extends ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
+export interface ApplicationActionMapV1 extends ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
   "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };

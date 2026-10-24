@@ -132,6 +132,22 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().drafts.primary.text).toBe("skill prompt");
   });
 
+  it("routes runtime choices through the same per-draft owner across navigation", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a",
+      initialized: { protocol_version: "test", workspace_root: context.cwd, provider: "api", model: "a", permissions: { mode: "standard" },
+        providers: [{ name: "api", type: "openai", model: "a", models: [{ id: "a" }, { id: "b" }] }] },
+      sessionTabs: ["a", "b"].map(id => ({ id: `draft:${id}`, kind: "draft" as const, context, title: id, createdAt: 1, prompt: "", images: [], files: [] })),
+    });
+    await controller.invoke("composer.choose-runtime", { ownerTabId: "draft:a", selection: { kind: "provider-model", provider: "api", model: "b" } });
+    expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === "draft:a")?.selection.model).toBe("b");
+    await controller.invoke("tab.select", { tabId: "draft:b" });
+    expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === "draft:b")?.selection.model).toBe("a");
+    await controller.invoke("tab.select", { tabId: "draft:a" });
+    expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === "draft:a")?.selection.model).toBe("b");
+    expect(controller.getState().initialized?.model).toBe("a");
+  });
+
   it("admits files into their source draft before returning and releases closed draft resources", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [

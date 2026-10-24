@@ -1,3 +1,4 @@
+import type { ApplicationComposerRuntimeActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-composer-runtime";
 import type { ApplicationConversationDetailsActionMapV1, ApplicationConversationTextV1, ApplicationConversationTextTargetV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
 import type { ApplicationNavigationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-preview";
@@ -28,6 +29,7 @@ import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
+import { ApplicationComposerRuntime, isApplicationComposerRuntimeAction } from "./ApplicationComposerRuntime";
 import { ApplicationConversationDetails, isApplicationConversationDetailsAction } from "./ApplicationConversationDetails";
 import { ApplicationCatalog } from "./ApplicationCatalog";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
@@ -51,6 +53,12 @@ export class ApplicationController implements ApplicationServiceV1 {
       inventory: this.state.initialized?.extension_inventory ?? [] }),
     assertActive: () => this.lifetime?.signal.throwIfAborted(),
   });
+  private composerRuntimeOwner?: ApplicationComposerRuntime;
+  private get applicationComposerRuntime(): ApplicationComposerRuntime {
+    return this.composerRuntimeOwner ??= new ApplicationComposerRuntime({ getState: () => this.state, updateState: this.updateState,
+      changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
+      isOwnerPending: ownerTabId => this.submitting.has(ownerTabId), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
+  }
   private previewContentOwner?: ApplicationPreviewContent;
   get previewContent(): ApplicationPreviewContent { return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu); }
   readonly settingsControls = createApplicationSettingsControls();
@@ -220,6 +228,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       if (--this.consumers !== 0) return;
       this.lifetime?.abort();
       this.conversationDetails.stop();
+      this.composerRuntimeOwner?.dispose();
+      this.composerRuntimeOwner = undefined;
       this.previewContentOwner?.dispose();
       this.previewContentOwner = undefined;
       this.flushBackgroundEvents();
@@ -546,6 +556,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationComposerRuntimeAction(action)) return this.applicationComposerRuntime.invoke(action,
+      input as ApplicationComposerRuntimeActionMapV1[keyof ApplicationComposerRuntimeActionMapV1]["input"], signal);
     if (isApplicationConversationDetailsAction(action)) return this.conversationDetails.invoke(action,
       input as ApplicationConversationDetailsActionMapV1[keyof ApplicationConversationDetailsActionMapV1]["input"], signal);
     if (isApplicationNavigationAction(action)) return this.applicationNavigation.invoke(action,
@@ -1063,6 +1075,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),
         runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: this.submitting.has(state.activeSessionTabID) ? "Submitting" : undefined }),
+      composerRuntime: this.applicationComposerRuntime.getSnapshot(),
       composerPending,
       drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
         primary: Object.freeze({ ...this.draftResources.project(primaryDraft), ownerTabId: primaryDraft.ownerTabId }), secondary: Object.freeze({ ...this.draftResources.project(secondaryDraft), ownerTabId: secondaryDraft.ownerTabId }),
