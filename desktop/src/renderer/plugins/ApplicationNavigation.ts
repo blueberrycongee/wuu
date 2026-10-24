@@ -2,7 +2,7 @@ import type { SetStateAction } from "react";
 import type { ApplicationNavigationActionMapV1 as Actions, ApplicationNavigationViewV1, NavigationReadonly } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import type { DesktopProject, Thread } from "../../shared/protocol";
 import type { ApplicationWebWorkspaceV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
-import { markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
+import { activeThreadForState, activeThreadIDForState, upsertThread, markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
 import { createRibbonBrowserState } from "../RibbonBrowserState";
 import { loadThreadListRefresh } from "../RuntimeLoadState";
 import { writeThreadReadState } from "../ThreadReadState";
@@ -47,6 +47,7 @@ export class ApplicationNavigation {
   constructor(private readonly host: {
     getWebWorkspace: () => ApplicationWebWorkspaceV1;
     getState: () => AppState;
+    subscribeState: (listener: () => void) => () => void;
     updateState: (update: SetStateAction<AppState>) => void;
     changed: () => void;
     sidebarCache: {
@@ -112,9 +113,75 @@ export class ApplicationNavigation {
     let runningEvent = false;
     const changed = () => { if (active) this.host.changed(); };
     const off = [desktopPluginHost.subscribe(changed), desktopWorkbenchController.subscribe(changed), this.browser.subscribe(changed), this.browser.start(error => this.host.updateState(state => ({ ...state, status: String(error) })))];
+    let repairTimer: number | undefined;
+    let repairSignature = "";
+    let repairVersion = 0;
+    let repairInFlight = "";
+    const reconcileForeground = () => {
+      if (!active) return;
+      const state = this.host.getState();
+      const thread = activeThreadForState(state);
+      const threadId = thread?.id;
+      desktopPluginHost.setActiveConversationThread(threadId);
+      const cwd = state.activeContext?.cwd;
+      const running = Boolean(thread && isThreadRunning(thread));
+      const hasRunningTurn = Boolean(thread?.turns.some(turn => turn.status === "in_progress"));
+      const executorRunning = Boolean(threadId && this.runningThreadIds.has(threadId));
+      const signature = JSON.stringify([cwd, threadId, running, hasRunningTurn, executorRunning]);
+      if (signature === repairSignature) return;
+      repairSignature = signature;
+      const version = ++repairVersion;
+      if (repairTimer !== undefined) window.clearTimeout(repairTimer);
+      repairTimer = undefined;
+      if (!threadId || !cwd || (!running && !executorRunning) || (hasRunningTurn && executorRunning)) return;
+      const key = `${cwd}\0${threadId}`;
+      repairTimer = window.setTimeout(() => {
+        repairTimer = undefined;
+        if (repairInFlight === key) return;
+        repairInFlight = key;
+        void window.wuu.resumeThread(threadId).then(({ thread }) => {
+          if (!active || version !== repairVersion || !thread) return;
+          this.host.updateState(current => current.activeContext?.cwd === cwd && activeThreadIDForState(current) === threadId
+            ? reconcileListedThreadState(current, upsertThread(current.threads, thread)) : current);
+        }).catch(() => {
+          // The focus/visibility heartbeat retries transient owner-resume failures.
+        }).finally(() => { if (repairInFlight === key) repairInFlight = ""; });
+      }, 200);
+    };
+    off.push(this.host.subscribeState(reconcileForeground));
+    reconcileForeground();
+    let lastRefreshAt = 0;
+    const refreshThreads = async () => {
+      const captured = this.host.getState();
+      const now = Date.now();
+      if (!captured.initialized || now - lastRefreshAt < 10_000) return;
+      lastRefreshAt = now;
+      try {
+        const rows = await loadThreadListRefresh(captured);
+        if (!active || this.host.getState().activeContext !== captured.activeContext) return;
+        this.host.sidebarCache.cacheSidebarThreads(rows);
+        this.host.updateState(current => current.initialized && current.activeContext === captured.activeContext
+          ? reconcileListedThreadState(current, rows) : current);
+      } catch {
+        // Another focus event or heartbeat retries shared-store pickup.
+      }
+    };
+    const onFocus = () => { void refreshThreads(); };
+    const onVisibility = () => { if (document.visibilityState === "visible") void refreshThreads(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    const heartbeat = window.setInterval(onVisibility, 60_000);
+    off.push(() => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.clearInterval(heartbeat);
+      if (repairTimer !== undefined) window.clearTimeout(repairTimer);
+      desktopPluginHost.setActiveConversationThread(undefined);
+    });
     const applyRunning = (items: { thread_id: string }[]) => {
       if (!active) return;
       this.runningThreadIds = new Set(items.map(row => row.thread_id));
+      reconcileForeground();
       changed();
       const captured = this.host.getState();
       if (this.threads().some(thread => isThreadRunning(thread) && !this.runningThreadIds.has(thread.id))) {

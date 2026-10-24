@@ -1,3 +1,5 @@
+import * as RuntimeLoader from "../RuntimeLoadState";
+import { desktopPluginHost } from "./DesktopPluginRuntime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
 import type { ApplicationWebWorkspaceV1, WebWorkspaceInitializationStateV1, WebWorkspaceStateV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
@@ -15,12 +17,55 @@ function fixture(controls = webControls()) {
     loadWorkspaceThreads: vi.fn(), cacheSidebarThreads: vi.fn(), updateCachedSidebarThread: vi.fn(),
     patchCachedSidebarThread: vi.fn(), updateCachedSidebarThreadPinned: vi.fn(), removeCachedSidebarThread: vi.fn() };
   const mutations = { toggleThreadPinned: vi.fn(), archiveThread: vi.fn(), deleteThread: vi.fn() };
+  const listeners = new Set<() => void>();
+  const updateState = (update: AppState | ((state: AppState) => AppState)) => { state = typeof update === "function" ? update(state) : update; for (const listener of listeners) listener(); };
   const navigation = new ApplicationNavigation({ getWebWorkspace: () => controls, getState: () => state,
-    updateState: update => { state = typeof update === "function" ? update(state) : update; }, changed: vi.fn(), getPendingDraftTabIds: () => [], sidebarCache: cache, mutationActions: () => mutations });
-  return { navigation, cache, mutations, get: () => state };
+    subscribeState: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, updateState, changed: vi.fn(), getPendingDraftTabIds: () => [], sidebarCache: cache, mutationActions: () => mutations });
+  return { navigation, cache, mutations, get: () => state, set: updateState };
 }
 
 describe("public navigation domain", () => {
+  it("repairs a missed foreground start from raw executor state and ignores a moved source", async () => {
+    vi.useFakeTimers();
+    const h = fixture(webControls({ capabilities: { available: false, windowInsets: false, nativeOverlays: false } }));
+    const thread = h.get().threads[0];
+    h.set(state => ({ ...state, initialized: {} as AppState["initialized"], activeContext: { kind: "no_project", cwd: "/one" }, thread }));
+    let running!: (items: { thread_id: string }[]) => void;
+    let finish!: (value: unknown) => void;
+    const resume = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    window.wuu = { onRunningThreadsChanged: (listener: typeof running) => { running = listener; return () => {}; }, resumeThread: resume } as unknown as typeof window.wuu;
+    const stop = h.navigation.start();
+    try {
+      expect(desktopPluginHost.getActiveConversationThreadId()).toBe(thread.id);
+      running([{ thread_id: thread.id }]);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(resume).toHaveBeenCalledExactlyOnceWith(thread.id);
+      h.set(state => ({ ...state, activeContext: { kind: "no_project", cwd: "/next" } }));
+      finish({ thread: { ...thread, status: "in_progress", turns: [{ id: "late", status: "in_progress", items_view: "full", items: [] }] } });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.get().thread?.status).toBe("idle");
+    } finally { stop(); vi.useRealTimers(); }
+    expect(desktopPluginHost.getActiveConversationThreadId()).toBeUndefined();
+  });
+
+  it("refreshes durable thread state on focus and visible heartbeat until host stop", async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-24T00:00:00Z"));
+    const h = fixture(webControls({ capabilities: { available: false, windowInsets: false, nativeOverlays: false } }));
+    const rows = [{ ...h.get().threads[0], title: "from phone" }];
+    h.set(state => ({ ...state, initialized: {} as AppState["initialized"], activeContext: { kind: "no_project", cwd: "/one" } }));
+    const refresh = vi.spyOn(RuntimeLoader, "loadThreadListRefresh").mockResolvedValue(rows);
+    window.wuu = {} as typeof window.wuu;
+    const stop = h.navigation.start();
+    try {
+      window.dispatchEvent(new Event("focus")); await vi.advanceTimersByTimeAsync(0);
+      expect(refresh).toHaveBeenCalledOnce(); expect(h.get().threads[0].title).toBe("from phone");
+      window.dispatchEvent(new Event("focus")); await vi.advanceTimersByTimeAsync(0); expect(refresh).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(60_000); expect(refresh).toHaveBeenCalledTimes(2);
+      stop(); window.dispatchEvent(new Event("focus")); await vi.advanceTimersByTimeAsync(60_000);
+      expect(refresh).toHaveBeenCalledTimes(2);
+    } finally { stop(); refresh.mockRestore(); vi.useRealTimers(); }
+  });
+
   it("publishes independent immutable rows preserving pin and fork identity", () => {
     const h = fixture();
     const view = h.navigation.getSnapshot();

@@ -445,7 +445,7 @@ export class ApplicationController implements HostApplicationService {
       setStatus: status => this.updateState(state => ({ ...state, status })),
     });
     this.applicationNavigation = new ApplicationNavigation({ getState: () => this.state, updateState: this.updateState,
-      getWebWorkspace: () => this.webWorkspace,
+      getWebWorkspace: () => this.webWorkspace, subscribeState: this.subscribeState,
       changed: () => this.publish(), sidebarCache: this.sidebarCache, mutationActions: () => this.mutationActions(),
       getPendingDraftTabIds: () => this.submissionOwner?.getPendingDraftTabIds() ?? [],
     });
