@@ -116,7 +116,8 @@ export function BrowserSettingsSection(): JSX.Element | null {
       const next = await controls.reloadBrowserExtension(extension.id);
       if (mounted.current) setExtensions(next);
     } catch (reason) {
-      if (mounted.current) setExtensionError(messageOf(reason));
+      if (!mounted.current) return;
+      setExtensionError(messageOf(reason));
       const next = await controls.listBrowserExtensions!();
       if (mounted.current) setExtensions(next);
     } finally {

@@ -1576,6 +1576,21 @@ describe("SettingsView About section", () => {
     expect(marks).toEqual([["danger", "连接失败"], ["warning", "需要认证"]]);
   });
 
+  it("does not open a late MCP authorization URL after settings unmount", async () => {
+    installBuildInfoStub({ core: undefined, desktop: { version: "test", date: "" } });
+    const api = (window as unknown as GlobalWindow).wuu;
+    api.listMCPServers = vi.fn().mockResolvedValue({ servers: [{ name: "docs", state: "auth_required", auth_status: "not_logged_in", connected: false, tool_count: 0 }] });
+    let admitted!: (result: { authorization_url: string; state: string }) => void;
+    api.startMCPAuth = vi.fn().mockReturnValue(new Promise(resolve => { admitted = resolve; }));
+    api.openExternal = vi.fn().mockResolvedValue(undefined);
+    renderSettings({ initialized: baseInitialized(), initialPage: "mcp" });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="登录 docs"]')!.click());
+    act(() => root!.render(null));
+    await act(async () => admitted({ authorization_url: "https://auth.example.test/late", state: "late-state" }));
+    expect(api.openExternal).not.toHaveBeenCalled();
+  });
+
   it("opens MCP OAuth and completes the authorization code flow inline", async () => {
     installBuildInfoStub({
       core: undefined,

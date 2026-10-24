@@ -841,6 +841,7 @@ function ServiceDetail({
   onRemove: (options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   const [liveModels, setLiveModels] = useState<ProviderModelSummary[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -877,12 +878,12 @@ function ServiceDetail({
     setBusy(true);
     try {
       await action();
-      return true;
+      return !lifetime.current.signal.aborted;
     } catch (saveError) {
-      setError(errorMessage(saveError, t));
+      if (!lifetime.current.signal.aborted) setError(errorMessage(saveError, t));
       return false;
     } finally {
-      setBusy(false);
+      if (!lifetime.current.signal.aborted) setBusy(false);
     }
   }
 
@@ -940,14 +941,16 @@ function ServiceDetail({
             if (method === "local" && isCodexType(provider.type)) {
               void run(async () => {
                 const reused = await controls.useCodexCredentials(provider.name);
+                lifetime.current.signal.throwIfAborted();
                 onProvidersChanged?.(reused.providers);
                 const checked = await controls.loadCodexModels(provider.name);
+                lifetime.current.signal.throwIfAborted();
                 onProvidersChanged?.(checked.providers);
               });
             } else onChooseMethod(method);
           }} />
         {direct || usingLocalCodex || provider.codex_credential_source ? <small className="connection-auth-source" data-auth-source={authSource}>{t(authSourceLabel[authSource])}</small> : null}
-        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const result = await controls.loadCodexModels(provider.name); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
+        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const result = await controls.loadCodexModels(provider.name); lifetime.current.signal.throwIfAborted(); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
       </> : null}
         {isGrokBuildType(provider.type) ? <GrokLogin disabled={running || busy} onBusyChange={setAuthBusy} onAuthenticated={onRefreshConnection} onReuseLocal={onRefreshConnection} /> : null}
       {!isGrokBuildType(provider.type) ? <SettingsSection title={t("provider.connectionSection")}>
@@ -1049,6 +1052,7 @@ function ConnectionRows({
   onRun: (action: () => Promise<void>) => Promise<boolean>;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   if (isXAISubscriptionType(provider.type)) {
     return (
@@ -1080,6 +1084,7 @@ function ConnectionRows({
         {!ENABLE_SUBSCRIPTIONS ? <SettingsRow title={t("settings.codexUseLocal")}>
           <button type="button" className="settings-button" disabled={disabled} onClick={() => void onRun(async () => {
             await controls.useCodexCredentials(provider.name);
+            lifetime.current.signal.throwIfAborted();
             await onSave({});
           })}>{t("settings.codexUseLocal")}</button>
         </SettingsRow> : null}

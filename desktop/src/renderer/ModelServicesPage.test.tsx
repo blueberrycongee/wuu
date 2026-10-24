@@ -122,3 +122,21 @@ it.each(["starting", "polling"])("stops xAI authorization when selected settings
     expect(save).not.toHaveBeenCalled();
   } finally {if(mounted)act(()=>root.unmount());container.remove();window.wuu=previous;vi.useRealTimers();}
 });
+
+it("does not load Codex models after credential admission outlives settings", async () => {
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); const previous = window.wuu;
+  const provider = { name: "saved-codex", type: "openai-codex", model: "chosen-model" };
+  let reused!: (value: unknown) => void;
+  const models = vi.fn(); const changed = vi.fn();
+  window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [] }), useCodexCredentials: vi.fn().mockReturnValue(new Promise(resolve => { reused = resolve; })), loadCodexModels: models } as unknown as WuuDesktopApi;
+  try {
+    await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><ModelServicesPage initialized={{ protocol_version: "wuu-app-server/v0.1", workspace_root: "/fixture", provider: provider.name, model: provider.model, providers: [provider] }} running={false} runningProviderNames={new Set()} onSave={vi.fn()} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()} onProvidersChanged={changed} /></SettingsControlsProvider>));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-auth-method-local"]')!.click());
+    act(() => root.render(null));
+    await act(async () => reused({ providers: [provider] }));
+    expect(models).not.toHaveBeenCalled();
+    expect(changed).not.toHaveBeenCalled();
+  } finally { act(() => root.unmount()); container.remove(); window.wuu = previous; }
+});

@@ -308,6 +308,11 @@ function SettingsViewContent({
   onToggleSidebar: () => void;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const { t } = useI18n();
   const providers = initialized?.providers ?? [];
   const runningProviderNameSet = useMemo(
@@ -485,13 +490,15 @@ function SettingsViewContent({
     setMCPError("");
     try {
       const result = await controls.startMCPAuth(name);
+      if (!mounted.current) return undefined;
       await controls.openExternal(result.authorization_url);
+      if (!mounted.current) return undefined;
       return result;
     } catch (err) {
-      setMCPError(err instanceof Error ? err.message : String(err));
+      if (mounted.current) setMCPError(err instanceof Error ? err.message : String(err));
       return undefined;
     } finally {
-      setMCPBusyServer("");
+      if (mounted.current) setMCPBusyServer("");
     }
   }
 

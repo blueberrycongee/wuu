@@ -41,6 +41,8 @@ export function SubscriptionDashboard({
   onSelectBuiltinModel: (provider: string, model: string) => Promise<void>;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const { t, formatDate } = useI18n();
   const displayPreferences = useSettingsConnectionDisplay();
   const scopedEngine = scope?.kind === "engine" ? inventory?.engines.find(engine => engine.id === scope.id) : undefined;
@@ -160,19 +162,23 @@ export function SubscriptionDashboard({
     try {
       if (useLocal) {
         const result = await controls.useCodexCredentials(source.id);
+        if (!mounted.current) return;
         setAuthProviders(result.providers);
         onProvidersChanged?.(result.providers);
       }
       const result = await controls.loadCodexModels(source.id);
+      if (!mounted.current) return;
       setAuthProviders(result.providers);
       onProvidersChanged?.(result.providers);
       setCheckedProvider(source.id);
     } catch {
-      setAuthError(true);
+      if (mounted.current) setAuthError(true);
     } finally {
-      setPending("");
-      setLoadedInventory(undefined);
-      setRefreshVersion((value) => value + 1);
+      if (mounted.current) {
+        setPending("");
+        setLoadedInventory(undefined);
+        setRefreshVersion((value) => value + 1);
+      }
     }
   }
 

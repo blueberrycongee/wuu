@@ -481,3 +481,18 @@ it("exposes compact quota loading and completion on its accessible section", asy
   expect(section.querySelector('[role="alert"]')).not.toBeNull();
   expect([...section.querySelectorAll("meter")].map(meter => meter.value)).toEqual(observed);
 });
+
+it("does not probe or publish after a credential result outlives the selected settings view", async () => {
+  const provider: ProviderSummary = { name: "late-codex", type: "openai-codex", model: "m" };
+  let reused!: (result: { providers: ProviderSummary[] }) => void;
+  window.wuu.useCodexCredentials = vi.fn().mockReturnValue(new Promise(resolve => { reused = resolve; }));
+  window.wuu.loadCodexModels = vi.fn();
+  const changed = vi.fn();
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><SubscriptionDashboard providers={[provider]} inventory={inventory} onProvidersChanged={changed} onSelectBuiltinModel={vi.fn()} /></SettingsControlsProvider>));
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="subscription-account-actions"]')!.click());
+  await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[0]!.click());
+  act(() => root.render(null));
+  await act(async () => reused({ providers: [provider] }));
+  expect(window.wuu.loadCodexModels).not.toHaveBeenCalled();
+  expect(changed).not.toHaveBeenCalled();
+});
