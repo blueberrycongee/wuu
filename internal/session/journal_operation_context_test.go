@@ -83,3 +83,44 @@ func TestJournalOperationContextBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestJournalSettlementUsesLiveReceiptAdmission(t *testing.T) {
+	type identityKey struct{}
+	for _, lazy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "remote", true: "lazy"}[lazy], func(t *testing.T) {
+			writes := 0
+			client := NewClient(context.Background(), func(ctx context.Context, _ string, _ json.RawMessage) (json.RawMessage, error) {
+				if ctx.Value(identityKey{}) != "admitted-operation" {
+					t.Fatal("settlement replaced the journal's admitted identity")
+				}
+				_, end, err := providers.BeginModelReceipt(ctx)
+				if err != nil {
+					return nil, err
+				}
+				defer end(nil)
+				writes++
+				return json.RawMessage(`{"values":[]}`), nil
+			})
+			runtime := &InferenceJournalRuntime{remote: &remoteJournalRuntime{store: client, handle: "handle"}}
+			if lazy {
+				real := runtime
+				runtime = NewLazyInferenceJournalRuntime(func(context.Context) (*InferenceJournalRuntime, error) { return real, nil })
+			}
+			operation, logical := providers.NewModelReceiptScope(context.WithValue(context.Background(), identityKey{}, "admitted-operation"))
+			journal := providers.InferenceJournalFromContext(providers.WithInferenceJournal(operation, runtime.ForOwner("owner")))
+			logical.Seal()
+			completion, settlement := providers.NewModelReceiptScope(context.WithValue(context.Background(), identityKey{}, "unrelated-caller"))
+			defer settlement.Seal()
+			if err := journal.UpsertSubmission(completion, providers.InferenceSubmissionJournalRecord{}); err != nil {
+				t.Fatalf("settlement inherited the ended logical ticket: %v", err)
+			}
+			settlement.Seal()
+			if err := journal.UpsertSubmission(completion, providers.InferenceSubmissionJournalRecord{}); !errors.Is(err, providers.ErrModelReceiptScopeClosed) {
+				t.Fatalf("sealed settlement admitted a write: %v", err)
+			}
+			if writes != 1 {
+				t.Fatalf("writes = %d, want one settlement", writes)
+			}
+		})
+	}
+}

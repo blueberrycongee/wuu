@@ -26,7 +26,7 @@ func journalCallContext(ctx, operation context.Context) context.Context {
 	if operation == nil {
 		return ctx
 	}
-	return journalOperationContext{Context: ctx, operation: operation}
+	return providers.WithModelReceiptAdmission(journalOperationContext{Context: ctx, operation: operation}, ctx)
 }
 
 // WithContext returns an independent operation binding for a shared resource.
