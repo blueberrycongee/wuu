@@ -1,6 +1,7 @@
 import { createContext, useLayoutEffect, useRef, useState } from "react";
-import type { ChromeAccountTrigger, ChromeDesktopUpdate, ChromeOverlayApi, ChromeOverlayCommand, ChromeOverlayModel, ChromeOverlayRect, ChromeOverlayRequest } from "../shared/chromeOverlay";
-import { CHROME_OVERLAY_VERSION } from "../shared/chromeOverlay";
+import type { ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger, ApplicationDesktopChromeDesktopUpdateV1 as ChromeDesktopUpdate, ApplicationDesktopChromeOverlayApiV1 as ChromeOverlayApi, ApplicationDesktopChromeOverlayCommandV1 as ChromeOverlayCommand, ApplicationDesktopChromeOverlayModelV1 as ChromeOverlayModel, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect, ApplicationDesktopChromeOverlayRequestV1 as ChromeOverlayRequest } from "../../../packages/plugin-sdk/src/ui-desktop";
+import { APPLICATION_DESKTOP_CHROME_OVERLAY_VERSION as CHROME_OVERLAY_VERSION } from "../../../packages/plugin-sdk/src/ui-desktop";
+import { useDesktopControls } from "./DesktopControlsContext";
 import { useI18n } from "./i18n";
 
 export const NativeRibbonFooterContext = createContext<{
@@ -8,14 +9,14 @@ export const NativeRibbonFooterContext = createContext<{
   publishUpdate: (model: ChromeDesktopUpdate | undefined, activate?: () => void) => void;
 } | null>(null);
 
-export function chromeOverlayApi(): ChromeOverlayApi | undefined {
-  return (window.wuu as typeof window.wuu & { chromeOverlay?: ChromeOverlayApi })?.chromeOverlay;
+export function useChromeOverlayApi(): ChromeOverlayApi | undefined {
+  return useDesktopControls().chromeOverlay;
 }
 
 /** Models contain presentation data; callbacks and account/browser authority stay here. */
 export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | null, model: ChromeOverlayModel,
   onCommand: (command: ChromeOverlayCommand) => void, onDismiss: () => void, focus = false, appearanceElement?: HTMLElement | null): boolean {
-  const api = chromeOverlayApi();
+  const api = useChromeOverlayApi();
   const { locale } = useI18n();
   const token = useRef<string | undefined>(undefined);
   const generation = useRef(0);
@@ -49,7 +50,7 @@ export function useChromeOverlay(enabled: boolean, bounds: ChromeOverlayRect | n
     token.current = currentToken;
     generation.current = 0;
     return () => {
-      void api.hide(currentToken, generation.current);
+      void api.hide(currentToken, generation.current).catch(() => {});
       if (token.current === currentToken) token.current = undefined;
     };
   }, [api, active]);

@@ -15,8 +15,8 @@ import {
 } from "./NavigationRibbonPreferences";
 import { SidebarPointerSensor } from "./SidebarPointerSensor";
 import { focusAfterRibbonClose, RibbonDestination } from "./NavigationRibbonDestination";
-import { chromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
-import type { ChromeAccountTrigger, ChromeDesktopUpdate, ChromeOverlayRect, ChromeRibbonFocus, ChromeRibbonModel, RibbonIconModel } from "../shared/chromeOverlay";
+import { useChromeOverlayApi, NativeRibbonFooterContext, useChromeOverlay } from "./ChromeOverlay";
+import type { ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger, ApplicationDesktopChromeDesktopUpdateV1 as ChromeDesktopUpdate, ApplicationDesktopChromeOverlayRectV1 as ChromeOverlayRect, ApplicationDesktopChromeRibbonFocusV1 as ChromeRibbonFocus, ApplicationDesktopChromeRibbonModelV1 as ChromeRibbonModel, ApplicationDesktopRibbonIconModelV1 as RibbonIconModel } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { showActionErrorToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -85,7 +85,7 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
   const scrollTop = useRef(0);
   // One desktop surface owns reveal motion across every destination. Switching
   // from a shell page to a website must not replace it or restart its reveal.
-  const nativeAvailable = Boolean(chromeOverlayApi());
+  const nativeAvailable = Boolean(useChromeOverlayApi());
   const accountContext = useMemo(() => ({ publishAccount: (trigger: ChromeAccountTrigger | undefined, open?: (bounds: ChromeOverlayRect) => void) => {
     setAccountTrigger(current => JSON.stringify(current) === JSON.stringify(trigger) ? current : trigger);
     accountOpen.current = open;

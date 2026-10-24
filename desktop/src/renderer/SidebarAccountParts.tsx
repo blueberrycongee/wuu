@@ -1,5 +1,5 @@
 import type { Ref } from "react";
-import type { ChromeAccountAction, ChromeAccountPanel, ChromeAccountTrigger } from "../shared/chromeOverlay";
+import type { ApplicationDesktopChromeAccountActionV1 as ChromeAccountAction, ApplicationDesktopChromeAccountPanelV1 as ChromeAccountPanel, ApplicationDesktopChromeAccountTriggerV1 as ChromeAccountTrigger } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { BarChart3, ChevronsUpDown, Cog, LogOut, Settings, Smartphone, UserRound } from "./WuuIcons";
 import { handleFloatingMenuKeyDown } from "./ComposerFloatingMenu";
 import "./SidebarAccountMenu.css";

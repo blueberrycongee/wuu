@@ -1,12 +1,15 @@
-import { act, useState } from "react";
+import { act, useState, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChromeOverlayApi, ChromeOverlayCommand, ChromeOverlayEvent, ChromeOverlayRequest } from "../shared/chromeOverlay";
+import { DesktopControlsProvider } from "./DesktopControlsContext";
+import type { ApplicationDesktopControlsV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { NavigationRibbon } from "./NavigationRibbon";
 
 // A website selection can replace the shell's pointer target with native chrome.
 // Navigating back to an app page must not end that reveal session. Only an actual
 // leave or explicit dismissal may release it; keyboard retention must survive too.
+let desktop: ApplicationDesktopControlsV1;
 let root: Root;
 let container: HTMLDivElement;
 let emit: (event: ChromeOverlayEvent) => void;
@@ -32,7 +35,10 @@ beforeEach(() => {
     hide,
     onEvent: callback => { emit = callback; return () => {}; },
   };
-  window.wuu = { chromeOverlay: api } as unknown as typeof window.wuu;
+  desktop = { hostKind: "desktop", popOut: { kind: null, threadID: null, context: null },
+    capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: true, notifications: false },
+    onVisibilityChange: () => () => {}, chromeOverlay: api };
+  window.wuu = {} as typeof window.wuu;
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -64,7 +70,7 @@ function command(command: ChromeOverlayCommand) {
   act(() => emit({ token: request.token, generation: request.generation, command }));
 }
 function open() {
-  act(() => root.render(<Journey />));
+  act(() => renderWithDesktop(<Journey />));
   act(() => rail().dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
   act(() => vi.advanceTimersByTime(120));
   expect(rail().dataset.expanded).toBeUndefined();
@@ -96,7 +102,7 @@ describe("NavigationRibbon reveal navigation", () => {
     ["leave", false, "Home"], ["leave", true, "Tab"],
     ["escape", false, "Tab"], ["escape", true, "Home"],
   ] as const)("does not reopen on native %s focus restoration (before dismissal=%s), but accepts %s", (reason, restoreFirst, nextKey) => {
-    act(() => root.render(<Journey />));
+    act(() => renderWithDesktop(<Journey />));
     const target = container.querySelector<HTMLButtonElement>('[data-ribbon-id="alpha"]')!;
     document.documentElement.dataset.focusModality = "keyboard";
     act(() => target.focus());
@@ -128,7 +134,7 @@ describe("NavigationRibbon reveal navigation", () => {
   });
 
   it("remembers the actual shell focus handed off after native presentation begins", () => {
-    act(() => root.render(<Journey />));
+    act(() => renderWithDesktop(<Journey />));
     document.documentElement.dataset.focusModality = "keyboard";
     const first = container.querySelector<HTMLButtonElement>('[data-ribbon-id="alpha"]')!;
     const next = container.querySelector<HTMLButtonElement>('[data-ribbon-id="beta"]')!;
@@ -180,8 +186,8 @@ describe("NavigationRibbon keyboard and close behavior", () => {
     /></>;
   }
   function renderBrowser() {
-    window.wuu = {} as typeof window.wuu;
-    act(() => root.render(<BrowserJourney />));
+    desktop = { ...desktop, chromeOverlay: undefined };
+    act(() => renderWithDesktop(<BrowserJourney />));
   }
   function button(id: string) { return container.querySelector<HTMLButtonElement>(`[data-ribbon-id="${id}"]`)!; }
   function key(target: HTMLElement, key: string) {
@@ -237,7 +243,7 @@ describe("NavigationRibbon reopened positions", () => {
   it("restores the former slot on first render and preserves later user reordering", () => {
     localStorage.setItem("wuu.navigation-ribbon.v1", JSON.stringify({ websites: [], order: ["conversations", "alpha", "beta", "files", "gamma"] }));
     const reorder = vi.fn();
-    const render = (restored?: { id: string; reopenedFrom: string }) => root.render(<NavigationRibbon
+    const render = (restored?: { id: string; reopenedFrom: string }) => renderWithDesktop(<NavigationRibbon
       items={["conversations", "files"].map(id => ({ id, title: id, icon: null, nativeIcon: { kind: "conversations" as const }, onSelect: () => {} }))}
       websites={[{ id: "alpha", title: "Alpha", url: "https://alpha.example/" },
         ...(restored ? [{ ...restored, title: "Beta", url: "https://beta.example/", pinned: true }] : []),
@@ -260,3 +266,5 @@ describe("NavigationRibbon reopened positions", () => {
     expect(order()).toEqual(["conversations", "beta-restored", "alpha", "files", "gamma"]);
   });
 });
+
+function renderWithDesktop(node: ReactNode) { root.render(<DesktopControlsProvider controls={desktop}>{node}</DesktopControlsProvider>); }
