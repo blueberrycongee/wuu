@@ -1,4 +1,4 @@
-import { hostSupports } from "./HostCapabilities";
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import {
   AlertCircle,
   Check,
@@ -11,7 +11,7 @@ import {
   Search,
   X
 } from "./WuuIcons";
-import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEffect, useState } from "react";
+import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEffect, useState, useSyncExternalStore } from "react";
 import type {
   GitStatusResult,
   InitializeResult,
@@ -30,14 +30,12 @@ export type EnvironmentPanelMotionState = "open" | "closing";
 export function EnvironmentPanel({
   panelRef,
   motionState,
-  gitStatus,
+  environment,
   activeMenu,
   running,
   pullRequestDisabledReason,
   onSetActiveMenu,
   onClose,
-  onSelectBranch,
-  onCreateBranch,
   onOpenReview,
   onOpenCommit,
   onOpenPullRequest,
@@ -49,14 +47,12 @@ export function EnvironmentPanel({
   panelRef: RefObject<HTMLDivElement | null>;
   motionState: EnvironmentPanelMotionState;
   initialized: InitializeResult;
-  gitStatus?: GitStatusResult;
+  environment: ApplicationEnvironmentV1;
   activeMenu: EnvironmentPanelMenu;
   running: boolean;
   pullRequestDisabledReason: string;
   onSetActiveMenu: (menu: EnvironmentPanelMenu) => void;
   onClose: () => void;
-  onSelectBranch: (branch: string) => void;
-  onCreateBranch: (branch: string) => Promise<void>;
   onOpenReview: () => void;
   onOpenCommit: () => void;
   onOpenPullRequest: () => void;
@@ -78,6 +74,26 @@ export function EnvironmentPanel({
   thread?: Thread;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
+  const snapshot = useSyncExternalStore(
+    listener => environment.subscribe(listener),
+    () => environment.getSnapshot(),
+    () => environment.getSnapshot(),
+  );
+  const gitStatus = snapshot.status;
+
+  async function selectBranch(branch: string): Promise<void> {
+    try {
+      await environment.checkoutBranch(branch);
+      onSetActiveMenu(null);
+    } catch (error) {
+      showErrorToast(error, t("git.checkoutFailed"));
+    }
+  }
+
+  async function createBranch(branch: string): Promise<void> {
+    await environment.createAndCheckoutBranch(branch);
+    onSetActiveMenu(null);
+  }
   if (activeMenu === "file" && rightPanelFilePath) {
     return (
       <EnvironmentFilePreview
@@ -165,7 +181,7 @@ export function EnvironmentPanel({
           <button
             className="environment-text-action"
             type="button"
-            disabled={!hasChanges || running || !hostSupports("commitGitChanges")}
+            disabled={!hasChanges || running || !snapshot.capabilities.commit}
             onClick={onOpenCommit}
           >
             {t("environment.commit")}
@@ -174,7 +190,7 @@ export function EnvironmentPanel({
             <button
               className="environment-text-action"
               type="button"
-              disabled={prDisabled || running || (!gitStatus?.pr_url && !hostSupports("createPullRequest"))}
+              disabled={prDisabled || running || (!gitStatus?.pr_url && !snapshot.capabilities.pullRequest)}
               onClick={onOpenPullRequest}
             >
               {t(gitStatus?.pr_url ? "environment.viewPR" : "environment.createPR")}
@@ -187,8 +203,10 @@ export function EnvironmentPanel({
       {activeMenu === "branch" && gitStatus?.is_repo ? (
         <EnvironmentBranchMenu
           gitStatus={gitStatus}
-          onSelectBranch={onSelectBranch}
-          onCreateBranch={onCreateBranch}
+          canCheckout={snapshot.capabilities.checkout}
+          canCreateBranch={snapshot.capabilities.createBranch}
+          onSelectBranch={branch => void selectBranch(branch)}
+          onCreateBranch={createBranch}
         />
       ) : null}
     </aside>
@@ -229,10 +247,14 @@ function EnvironmentActionRow({
 
 function EnvironmentBranchMenu({
   gitStatus,
+  canCheckout,
+  canCreateBranch,
   onSelectBranch,
   onCreateBranch
 }: {
   gitStatus: GitStatusResult;
+  canCheckout: boolean;
+  canCreateBranch: boolean;
   onSelectBranch: (branch: string) => void;
   onCreateBranch: (branch: string) => Promise<void>;
 }): JSX.Element {
@@ -276,7 +298,7 @@ function EnvironmentBranchMenu({
         {branches.map((branch) => {
           const selected = branch === gitStatus.branch;
           return (
-            <button key={branch} role="menuitem" type="button" aria-current={selected || undefined} disabled={selected || !hostSupports("checkoutGitBranch")} onClick={() => onSelectBranch(branch)}>
+            <button key={branch} role="menuitem" type="button" aria-current={selected || undefined} disabled={selected || !canCheckout} onClick={() => onSelectBranch(branch)}>
               <GitBranch className="icon" />
               <span>{branch}</span>
               {selected ? <Check className="icon" /> : null}
@@ -286,7 +308,7 @@ function EnvironmentBranchMenu({
       </div>
       <form className="environment-create-branch" onSubmit={(event) => void submitNewBranch(event)}>
         <input value={newBranch} placeholder={t("environment.newBranchName")} onChange={(event) => setNewBranch(event.target.value)} />
-        <button type="submit" disabled={!newBranch.trim() || submitting || !hostSupports("createCheckoutGitBranch")}>
+        <button type="submit" disabled={!newBranch.trim() || submitting || !canCreateBranch}>
           <Plus className="icon" />
         </button>
       </form>

@@ -1,0 +1,98 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ApplicationEnvironment } from "./ApplicationEnvironment";
+import type { GitStatusResult } from "../../shared/protocol";
+import { translateCurrent as t } from "../i18n";
+
+const originalWuu = window.wuu;
+afterEach(() => { vi.useRealTimers(); window.wuu = originalWuu; });
+const status = (branch = "main"): GitStatusResult => ({ is_repo: true, branch, dirty_count: 0 });
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+function fixture() {
+  let source: { contextKey: string; root?: string; status?: GitStatusResult } = { contextKey: "project:one", root: "/one" };
+  let active = true;
+  const publishStatus = vi.fn((value: GitStatusResult) => { source = { ...source, status: value }; });
+  const reportError = vi.fn();
+  const api = {
+    checkoutGitBranch: vi.fn().mockResolvedValue(status("feature")),
+    createCheckoutGitBranch: vi.fn().mockResolvedValue({ status: status("feature") }),
+    gitStatus: vi.fn().mockResolvedValue(status()),
+    commitGitChanges: vi.fn().mockResolvedValue({ status: status(), commit: "abc", message: "commit" }),
+    generateCommitMessage: vi.fn().mockResolvedValue({ message: "generated" }),
+    createPullRequest: vi.fn().mockResolvedValue({ status: status(), url: "https://example.test/pr/1", already_exists: false }),
+  };
+  window.wuu = api as unknown as typeof window.wuu;
+  const service = new ApplicationEnvironment({ getSource: () => source, publishStatus, reportError,
+    assertActive: () => { if (!active) throw new Error("generation disposed"); } });
+  return { service, api, publishStatus, reportError, change: (patch: Partial<typeof source>) => { source = { ...source, ...patch }; service.notifyChanged(); }, retire: () => { active = false; service.dispose(); } };
+}
+
+describe("ApplicationEnvironment", () => {
+  it("publishes branch and commit status and maps public parameters once", async () => {
+    const h = fixture(); const listener = vi.fn(); h.service.subscribe(listener);
+    await h.service.checkoutBranch("feature");
+    expect(h.api.checkoutGitBranch).toHaveBeenCalledWith("feature", "/one");
+    expect(h.publishStatus).toHaveBeenLastCalledWith(status("feature"), false);
+    await h.service.createAndCheckoutBranch("new");
+    expect(h.api.createCheckoutGitBranch).toHaveBeenCalledWith("new", "/one");
+    const result = await h.service.commit({ message: "commit", includeUnstaged: true });
+    expect(h.api.commitGitChanges).toHaveBeenCalledWith({ message: "commit", include_unstaged: true }, "/one");
+    expect(h.publishStatus).toHaveBeenLastCalledWith(status(), true);
+    expect(Object.isFrozen(result.status)).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+  it.each(["checkoutBranch", "createAndCheckoutBranch"] as const)("preserves host occupancy errors for %s without replay", async name => {
+    const h = fixture(); const call = name === "checkoutBranch" ? h.api.checkoutGitBranch : h.api.createCheckoutGitBranch;
+    call.mockRejectedValue(new Error("Error invoking remote method 'wuu:git-checkout': Error: cannot run Git actions while a thread is running in this working tree"));
+    await expect(h.service[name]("feature")).rejects.toThrow(t("git.checkoutBlockedByRunningThread"));
+    expect(call).toHaveBeenCalledTimes(1); expect(h.publishStatus).not.toHaveBeenCalled();
+  });
+  it("returns generated messages and PR data from the captured root", async () => {
+    const h = fixture();
+    expect(await h.service.generateCommitMessage({ includeUnstaged: false })).toBe("generated");
+    expect(h.api.generateCommitMessage).toHaveBeenCalledWith({ include_unstaged: false }, "/one");
+    const result = await h.service.createPullRequest({ title: "title", body: "body", draft: true });
+    expect(h.api.createPullRequest).toHaveBeenCalledWith({ title: "title", body: "body", draft: true }, "/one");
+    expect(result.url).toBe("https://example.test/pr/1");
+  });
+  it.each([{ root: "/two" }, { contextKey: "project:two" }])("fences late mutations across source changes %j", async patch => {
+    const h = fixture(); const pending = deferred<GitStatusResult>(); h.api.checkoutGitBranch.mockReturnValue(pending.promise);
+    const result = h.service.checkoutBranch("feature"); h.change(patch); pending.resolve(status("old"));
+    await expect(result).rejects.toThrow("workspace changed"); expect(h.publishStatus).not.toHaveBeenCalled();
+  });
+  it("coalesces in-flight refresh requests and discards stale results", async () => {
+    vi.useFakeTimers(); const h = fixture(); const pending = deferred<GitStatusResult>(); h.api.gitStatus.mockReturnValueOnce(pending.promise);
+    h.service.scheduleStatusRefresh(0); await vi.advanceTimersByTimeAsync(0);
+    h.service.scheduleStatusRefresh(0); await vi.advanceTimersByTimeAsync(0);
+    h.service.scheduleStatusRefresh(0); await vi.advanceTimersByTimeAsync(0);
+    expect(h.api.gitStatus).toHaveBeenCalledTimes(1);
+    h.change({ root: "/two" }); pending.resolve(status("stale")); await Promise.resolve();
+    expect(h.publishStatus).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(h.api.gitStatus).toHaveBeenCalledTimes(2); expect(h.api.gitStatus).toHaveBeenLastCalledWith("/two");
+    expect(h.service.getSnapshot().status?.branch).toBe("main");
+  });
+  it("clears timers and rejects late completion after generation retirement", async () => {
+    vi.useFakeTimers(); const h = fixture(); const pending = deferred<GitStatusResult>(); h.api.checkoutGitBranch.mockReturnValue(pending.promise);
+    const result = h.service.checkoutBranch("feature"); h.service.scheduleStatusRefresh(10); h.retire(); pending.resolve(status());
+    await expect(result).rejects.toThrow("disposed"); await vi.runAllTimersAsync();
+    expect(h.api.gitStatus).not.toHaveBeenCalled(); expect(h.publishStatus).not.toHaveBeenCalled();
+    await expect(h.service.commit({ message: "no", includeUnstaged: false })).rejects.toThrow("disposed");
+    expect(h.api.commitGitChanges).not.toHaveBeenCalled();
+  });
+  it("rejects abort after admission without publishing or replaying the effect", async () => {
+    const h = fixture(); const controller = new AbortController(); const pending = deferred<GitStatusResult>(); h.api.checkoutGitBranch.mockReturnValue(pending.promise);
+    const result = h.service.checkoutBranch("feature", { signal: controller.signal }); controller.abort(); pending.resolve(status());
+    await expect(result).rejects.toThrow(); expect(h.api.checkoutGitBranch).toHaveBeenCalledTimes(1); expect(h.publishStatus).not.toHaveBeenCalled();
+  });
+  it("caches detached immutable snapshots and refuses missing working directories", async () => {
+    const h = fixture(); const value = status(); value.branches = ["main"]; h.change({ status: value });
+    const snapshot = h.service.getSnapshot(); expect(h.service.getSnapshot()).toBe(snapshot);
+    value.branches.push("new"); expect(snapshot.status?.branches).toEqual(["main"]); expect(Object.isFrozen(snapshot.status?.branches)).toBe(true);
+    h.change({ root: undefined }); await expect(h.service.commit({ message: "no", includeUnstaged: true })).rejects.toThrow("unavailable");
+    expect(h.api.commitGitChanges).not.toHaveBeenCalled();
+  });
+});
