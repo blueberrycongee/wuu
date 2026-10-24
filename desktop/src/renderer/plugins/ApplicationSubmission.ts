@@ -87,7 +87,9 @@ export class ApplicationSubmission {
       })),
       failedDraftTabIds: Object.freeze([...this.failedDrafts]),
       stopRequests: Object.freeze([...this.stopRequests].map(([threadId, request]) => Object.freeze({ threadId, phase: request.phase }))) });
-    this.options.changed();
+    // Admitted results still settle and release resources after disposal, but
+    // notifying the ended owner would recreate its disposed projection services.
+    if (!this.disposed) this.options.changed();
   }
   private phase(operation: Operation, phase: ApplicationSubmissionOperationV1["phase"], error?: string): void {
     operation.view = { ...operation.view, phase, threadId: operation.thread?.id, error }; this.publish();

@@ -16,14 +16,33 @@ function fixture(existing?:Thread, reconcileOnUpdate = false, engine = "fixture"
   const getDraft=(id:string)=>{const tab=state.sessionTabs.find(tab=>tab.id===id);return tab?cloneSessionTabDraft(tab):emptyComposerDraft();};
   const setDraft=(id:string,draft:ReturnType<typeof emptyComposerDraft>)=>{state={...state,sessionTabs:state.sessionTabs.map(tab=>tab.id===id&&tab.kind!=="skills"?{...tab,...draft}:tab)};};
   const pending=createComposerPendingState({getAppState:()=>state,getComposerDraftForThread:getDraft,restoreComposerDraftForThread:setDraft,preserveFailedComposerMessage:vi.fn(),setStatus:vi.fn()});
-  const submission=new ApplicationSubmission({getState:()=>state,updateState:update=>{state=update(state);if(reconcileOnUpdate) submission.reconcile();},changed:vi.fn(),isNavigationPending:()=>false,pending,resources:new ApplicationDraftResources(()=>{}),getDraft,setDraft,
+  const changed=vi.fn();
+  const resources=new ApplicationDraftResources(()=>{});
+  const submission=new ApplicationSubmission({getState:()=>state,updateState:update=>{state=update(state);if(reconcileOnUpdate) submission.reconcile();},changed,isNavigationPending:()=>false,pending,resources,getDraft,setDraft,
     getRuntime:()=>({pending:false,params:{engine,model:"",effort:"",permission_mode:"unconfined"}}),sidebarCache:createSidebarThreadCache(()=>[],()=>{})});
-  return {submission,pending,getState:()=>state,setState:(next:AppState)=>{state=next;},getDraft};
+  return {submission,pending,changed,resources,getState:()=>state,setState:(next:AppState)=>{state=next;},getDraft};
 }
 
 // Escaped contracts: one creation owner, cancellation before/after admission,
 // source-bound adoption, ordered queue handoff, and uncertain delivery recovery.
 describe("application submission ownership",()=>{
+  it.each([false, true])("settles an admitted result after disposal without publishing to the ended owner (failure=%s)",async(failed)=>{
+    const starting=deferred<{turn:Thread["turns"][number]}>();
+    window.wuu={startTurn:vi.fn(()=>starting.promise)} as unknown as WuuDesktopApi;
+    const f=fixture(thread());
+    const release=vi.fn();vi.spyOn(f.resources,"retain").mockReturnValue(release);
+    f.submission.submit({ownerTabId:"thread:created"});
+    await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledTimes(1));
+    f.submission.dispose();f.changed.mockClear();
+    if(failed) starting.reject(new Error("admission rejected"));
+    else starting.resolve({turn:{id:"accepted",status:"completed",items_view:"full",items:[]}});
+    await vi.waitFor(()=>expect(release).toHaveBeenCalledTimes(1));
+    expect(f.changed).not.toHaveBeenCalled();
+    expect(f.submission.getSnapshot().operations).toEqual([]);
+    if(failed) expect(f.getDraft("thread:created").prompt).toBe("hello");
+    else expect(f.getState().thread?.turns.map(turn=>turn.id)).toContain("accepted");
+    expect(f.submission.submit({ownerTabId:"thread:created",text:"late"}).accepted).toBe(false);
+  });
   it("publishes one optimistic creation at click time and deletes a late empty thread after cancellation",async()=>{
     const creating=deferred<{thread:Thread}>();const remove=vi.fn().mockResolvedValue({});
     window.wuu={startThread:vi.fn(()=>creating.promise),deleteThread:remove,startTurn:vi.fn()} as unknown as WuuDesktopApi;
