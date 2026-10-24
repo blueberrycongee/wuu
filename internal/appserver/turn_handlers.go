@@ -2617,7 +2617,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if instructionsErr == nil && found {
 		sessionInstructions, instructionsErr = ProjectInstructions(s.projectServiceContext(ctx, binding), binding.Host, metadata)
 	}
-	capabilities, capabilityErr := startExternalCapabilities(ctx, threadRuntime)
+	capabilities, capabilityErr := startExternalCapabilities(ctx, binding, threadRuntime)
 	if instructionsErr != nil {
 		capabilityErr = instructionsErr
 	}
