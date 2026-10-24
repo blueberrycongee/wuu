@@ -3,9 +3,11 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -62,5 +64,37 @@ func TestRuntimeSessionClientUsesCapturedSelectedDomain(t *testing.T) {
 			}
 		}
 		previous = state
+	}
+}
+
+func TestNativeSessionDomainPreservesNestedAdmission(t *testing.T) {
+	ctx := context.Background()
+	registry := pluginhost.NewServiceRegistry()
+	home := t.TempDir()
+	documents := persistence.NewService(persistence.SQLiteModule, filepath.Join(home, "documents"), "sqlite")
+	domain := newNativeSessionDomain(registry, home)
+	consumer := &runtimeServiceConsumer{id: sessionStateConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: session.ServiceName, MajorVersion: 1, Required: true}}}
+	clients := []pluginhost.Client{documents, domain, consumer}
+	host := pluginhost.New(clients...)
+	host.AttachServiceRegistry(registry, registry.RegisterClients(clients...))
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := host.Close(ctx); err != nil {
+			t.Error(err)
+		}
+	})
+	state := newRuntimeState(registry, "workspace")
+	state.host, state.status = host, pluginhost.StateActive
+	if _, _, err := state.sessions.Find("missing"); err != nil {
+		t.Fatal(err)
+	}
+	host.StopBackground()
+	if _, _, err := state.sessions.Find("missing"); err != nil {
+		t.Fatalf("admitted native nested call failed after publication: %v", err)
+	}
+	if _, err := registry.Call(ctx, session.DefaultModule, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: "read", Params: json.RawMessage(`{"collection":"sessions","key":"missing"}`)}); err == nil || err.Code != "generation_closed" {
+		t.Fatalf("autonomous documents call was not rejected by admission: %v", err)
 	}
 }
