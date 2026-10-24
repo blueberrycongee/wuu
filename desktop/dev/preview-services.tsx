@@ -59,7 +59,7 @@ export function createFixtureApplication(initial: Partial<ApplicationSnapshotV1>
 }
 
 export function FixtureServices({application, children}: {application: ApplicationServiceV1; children: ReactNode}) {
-  return <ConversationControlsProvider application={application} slots={fixtureSlots}>
+  return <ConversationControlsProvider application={application} slots={fixtureSlots} slotOwner="preview-fixture">
     <ArtifactsProvider application={application}><SettingsControlsProvider controls={application.settingsControls}>
       <DesktopControlsProvider controls={application.desktop}><BrowserControlsProvider service={application.browser}>{children}</BrowserControlsProvider></DesktopControlsProvider>
     </SettingsControlsProvider></ArtifactsProvider>

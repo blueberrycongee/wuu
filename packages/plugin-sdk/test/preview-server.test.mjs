@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, realpath, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -67,4 +67,36 @@ export function activate(api: PluginGenerationApi) {
     await server.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+// Unchanged external-store reads must retain identity even when owners alternate.
+test('synthetic application snapshots remain stable across subscriptions and owners', async () => {
+  const { transform } = await import('esbuild');
+  const { code } = await transform(await readFile(new URL('../preview/application.ts', import.meta.url), 'utf8'), { loader: 'ts', format: 'esm' });
+  const { createPreviewApplication } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+  const app = createPreviewApplication();
+  for (const service of [app.environment, app.onboarding, app.catalog]) {
+    assert.strictEqual(service.getSnapshot(), service.getSnapshot());
+  }
+  const file = app.fileSelection.getSnapshot({ ownerTabId: 'first' });
+  const other = app.fileSelection.getSnapshot({ ownerTabId: 'second' });
+  assert.equal(other.ownerTabId, 'second');
+  assert.notStrictEqual(file, other);
+  assert.strictEqual(file, app.fileSelection.getSnapshot({ ownerTabId: 'first' }));
+  const project = app.projects.getSnapshot('first');
+  assert.equal(app.projects.getSnapshot('second').projectId, 'second');
+  assert.strictEqual(project, app.projects.getSnapshot('first'));
+  for (const read of [app.settingsControls.getPages, app.settingsControls.getConflicts, app.settingsControls.getDiagnostics,
+    app.composerPresentation.getComposerInlineCompletionProviders, app.composerPresentation.getContributions]) {
+    assert.strictEqual(read(), read());
+  }
+  const before = app.getSnapshot();
+  let notifications = 0;
+  const unsubscribe = app.subscribe(() => notifications++);
+  await app.invoke('composer.set-draft', { text: 'Updated' });
+  assert.equal(notifications, 1);
+  assert.notStrictEqual(before, app.getSnapshot());
+  assert.strictEqual(app.getSnapshot(), app.getSnapshot());
+  assert.strictEqual(file, app.fileSelection.getSnapshot({ ownerTabId: 'first' }));
+  unsubscribe();
 });

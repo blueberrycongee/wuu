@@ -59,26 +59,47 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     onPopoverDismiss: () => () => {}, onState: () => () => {}, onReveal: () => () => {}, onFocusAddress: () => () => {}, onFocusFind: () => () => {}, onDownloads: () => () => {},
     library: { getState: unavailable, setBookmark: unavailable, removeHistory: unavailable, clearHistory: unavailable, onState: () => () => {} },
   };
+  const environment: ReturnType<ApplicationServiceV1["environment"]["getSnapshot"]> = { contextKey: "preview", capabilities: { review: false, checkout: false, createBranch: false, commit: false, pullRequest: false } };
+  const onboarding: ReturnType<ApplicationServiceV1["onboarding"]["getSnapshot"]> = { revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } };
+  const catalog: ReturnType<ApplicationServiceV1["catalog"]["getSnapshot"]> = { contextKey: "preview", inventory: [], capabilities: { install: false, update: false, remove: false } };
+  const fileSelections = new Map<string, ReturnType<ApplicationServiceV1["fileSelection"]["getSnapshot"]>>();
+  const projects = new Map<string, ReturnType<ApplicationServiceV1["projects"]["getSnapshot"]>>();
+  // These disabled services never publish changes; external-store reads must retain identity.
+  const empty = Object.freeze([]);
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
-    environment: { getSnapshot: () => ({ contextKey: "preview", capabilities: { review: false, checkout: false, createBranch: false, commit: false, pullRequest: false } }), subscribe: () => () => {}, checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable, generateCommitMessage: unavailable, createPullRequest: unavailable, listChanges: unavailable, readDiff: unavailable, scheduleStatusRefresh: () => {} },
+    environment: { getSnapshot: () => environment, subscribe: () => () => {}, checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable, generateCommitMessage: unavailable, createPullRequest: unavailable, listChanges: unavailable, readDiff: unavailable, scheduleStatusRefresh: () => {} },
     artifacts: { capabilities: { nativeItemMenu: false, save: false, remoteAttachment: false, remoteAttachmentPreview: false, remoteItem: false }, resolveSource: unavailable, acquireSource: unavailable, releaseSource: () => {}, readAttachment: unavailable, readItem: unavailable, readText: unavailable, save: unavailable, showItemMenu: unavailable, openFile: unavailable },
-    composerPresentation: { getSnapshot: unavailable, subscribe: () => () => {}, getCommands: () => [], executeCommand: unavailable,
-      getComposerInlineCompletionProviders: () => [], subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: () => [],
+    composerPresentation: { getSnapshot: unavailable, subscribe: () => () => {}, getCommands: () => empty, executeCommand: unavailable,
+      getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: () => empty,
       getTelemetry: () => ({ tokensPerSecond: 0, source: "none", inputTokens: 0, outputTokens: 0 }), subscribeTelemetry: () => () => {} },
     desktop: { hostKind: "web", popOut: { kind: null, threadID: null, context: null }, capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false }, onVisibilityChange: () => () => {} },
     webWorkspace,
-    onboarding: { getSnapshot: () => ({ revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } }), subscribe: () => () => {}, checkpoint: unavailable, run: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
+    onboarding: { getSnapshot: () => onboarding, subscribe: () => () => {}, checkpoint: unavailable, run: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
     browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openURL: unavailable, openExternal: unavailable, consumeNavigation: unavailable },
-    fileSelection: { getSnapshot: target => ({ ...target, interactionOwnerKey: "preview", enabled: false, canAskSide: false, comments: [] }), subscribe: () => () => {},
+    fileSelection: { getSnapshot: ({ ownerTabId }) => {
+      let snapshot = fileSelections.get(ownerTabId);
+      if (!snapshot) {
+        snapshot = { ownerTabId, interactionOwnerKey: "preview", enabled: false, canAskSide: false, comments: empty };
+        fileSelections.set(ownerTabId, snapshot);
+      }
+      return snapshot;
+    }, subscribe: () => () => {},
       quote: unavailable, comment: unavailable, removeComment: unavailable, edit: unavailable, openPdf: unavailable, openFile: unavailable, askSide: unavailable },
-    projects: { getSnapshot: projectId => ({ projectId, enabled: false, loading: false, error: "" }), subscribe: () => () => {}, refresh: unavailable, control: unavailable, releaseSession: unavailable },
+    projects: { getSnapshot: projectId => {
+      let snapshot = projects.get(projectId);
+      if (!snapshot) {
+        snapshot = { projectId, enabled: false, loading: false, error: "" };
+        projects.set(projectId, snapshot);
+      }
+      return snapshot;
+    }, subscribe: () => () => {}, refresh: unavailable, control: unavailable, releaseSession: unavailable },
     terminals: {
       capabilities: Object.freeze({ createTerminal: false }),
       start: unavailable, write: unavailable, resize: unavailable, stop: unavailable, onEvent: () => () => {},
       listManaged: unavailable, readManaged: unavailable, writeManaged: unavailable, resizeManaged: unavailable, stopManaged: unavailable,
     },
-    catalog: { getSnapshot: () => ({ contextKey: "preview", inventory: [], capabilities: { install: false, update: false, remove: false } }),
+    catalog: { getSnapshot: () => catalog,
       listSkillsForThread: unavailable, listSkills: async () => [], readSkill: unavailable, refresh: unavailable, update: unavailable, install: unavailable, remove: unavailable, loadIcon: unavailable },
     previewContent: { resolveResourceURL: unavailable, openFile: unavailable, capabilities: Object.freeze({ nativeItemMenu: false, revealItem: false, exportFile: false }),
       listDirectory: unavailable, readFile: unavailable, revealItem: unavailable, showItemMenu: unavailable, exportFile: unavailable },
@@ -140,7 +161,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
       discardAppContextSnapshot: unavailable,
       loadPluginIconURL: unavailable,
       capabilities: Object.freeze({ systemPermissions: false, permissionGuide: false, permissionGuideUpdate: false, permissionGuideClose: false, themeChanges: false, activityPreview: false, activityPreviewChanges: false, appContext: false, appContextChanges: false, appContextRecording: false, chatGPTLogin: false, engineLogin: false, browser: false, browserReload: false, browserOptions: false, remote: false, build: false, catalog: false, engines: false, pets: false, diagnostics: false }),
-      subscribe: () => () => {}, subscribeRemote: () => () => {}, getPages: () => [], getConflicts: () => [], getDiagnostics: () => [],
+      subscribe: () => () => {}, subscribeRemote: () => () => {}, getPages: () => empty, getConflicts: () => empty, getDiagnostics: () => empty,
       renderPage: unavailable, renderPresentation: unavailable,
       chooseConflict: unavailable,
       getBuildInfo: unavailable,
