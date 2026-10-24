@@ -8,14 +8,18 @@ import { PluginHost } from "../plugins/PluginHost";
 import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate } from "./DefaultConversationSurface";
 import { activate as activatePreview } from "./DefaultPreviewSurface";
+import { activate as activateComposer } from "./DefaultComposerSurface";
+import { ApplicationComposerPresentation } from "../plugins/ApplicationComposerPresentation";
+import { initialState, type AppState } from "../AppState";
 import type { ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { mockAnimationFrames } from "../AnimationFrameTestHarness";
 
 let root: Root | undefined, container: HTMLDivElement | undefined, host: PluginHost | undefined;
 afterEach(() => {
   act(() => root?.unmount()); container?.remove(); root = undefined;
-  host?.unload("wuu.default-preview"); host?.unload("side-extension"); host?.unload("alternate-conversation"); host?.unload("wuu.default-conversation"); host?.unload("wuu.default-shell"); host = undefined;
+  host?.unload("wuu.default-preview"); host?.unload("wuu.default-composer"); host?.unload("side-extension"); host?.unload("alternate-conversation"); host?.unload("wuu.default-conversation"); host?.unload("wuu.default-shell"); host = undefined;
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 async function mountConversation(items: ThreadItem[]) {
@@ -61,15 +65,23 @@ it("resolves Markdown images through the selected generation's public file servi
 
 it("keeps preview-owned side turns and artifacts when an alternate conversation is selected", async () => {
   const frames = mockAnimationFrames();
+  vi.stubGlobal("wuu", { unsupportedMethods: [] });
   const base = createConversationTestApplication();
   const side = { ...base.getSnapshot().sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "", streaming: false }, turns: [{ id: "side-turn", status: "completed" as const, items_view: "full" as const, items: [user, { id: "side-artifact", type: "tool_call" as const, name: "present_artifact", status: "completed" as const, result_detail: { content: [{ type: "image" as const, mime_type: "image/png", name: "side.png", data: "c2lkZQ==", artifact: { placement: "inline" as const, ref: "side-image" } }] } }, { id: "side-answer", type: "agent_message" as const, text: "Independent side answer", status: "completed" as const, terminal: true }] }] };
   const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), sideConversation: side,
+    tabs: { ...base.getSnapshot().tabs, items: [{ ...base.getSnapshot().tabs.items[0], id: "thread:parent", threadId: "parent" }] },
     previewWorkspace: { ...base.getSnapshot().previewWorkspace, tabs: [{ kind: "side-thread", id: "side-thread" }], activeTabId: "side-thread", conversationSelected: false } };
+  const parent: Thread = { id: "parent", preview: "", cwd: "/repo", model_provider: "fixture", model: "fixture", status: "idle", created_at: "", updated_at: "", turns: [] };
+  const state: AppState = { ...initialState, thread: parent, threads: [parent], activeSessionTabID: "thread:parent",
+    sessionTabs: [{ id: "thread:parent", kind: "thread", threadID: "parent", title: "Parent", context: { kind: "no_project", cwd: "/repo" }, prompt: "", images: [], files: [] }] };
+  const presentation = new ApplicationComposerPresentation({ getState: () => state, updateState: vi.fn(), subscribeState: () => () => {}, getPluginHost: () => host! });
   const setPreviewVisibility = vi.fn();
   host = new PluginHost({ react: React, application: { ...base, getSnapshot: () => snapshot, setPreviewVisibility,
-    createDesktopScope: () => base.desktop, createComposerPresentationScope: () => base.composerPresentation } });
+    catalog: { ...base.catalog, listSkillsForThread: async () => ({ contextKey: "parent", skills: [] }) },
+    createDesktopScope: () => base.desktop, createComposerPresentationScope: signal => presentation.createScope(signal) } });
   await host.activateGeneration({ pluginId: "alternate-conversation", generation: "test", register: api => { api.registerUIContribution({ id: "conversation", target: "wuu.default-shell/application.conversation", render: () => <div>Alternate conversation</div> }); } });
   await host.activateGeneration({ pluginId: "wuu.default-preview", generation: "test", register: activatePreview });
+  await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "test", register: activateComposer });
   const presented = vi.fn(({ context }: { context: Readonly<Record<string, unknown>> }) => <span data-side-message>{String(context.itemId)}</span>);
   await host.activateGeneration({ pluginId: "side-extension", generation: "test", register: api => { api.registerUIContribution({ id: "side-message", target: "wuu.default-preview/conversation.message.after", render: presented }); } });
   await host.activateGeneration({ pluginId: "wuu.default-shell", generation: "test", register: api => {
@@ -78,7 +90,7 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
     api.registerApplicationShell({ id: "shell", render: ({ slots }) => <><slots.Slot name="wuu.default-shell/application.conversation" /><slots.Slot name="wuu.default-shell/application.preview" context={{ layout: { open: true, present: true, globalized: false, onToggleGlobalize: () => {}, pane: "primary" } }} /></> });
   } });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  await act(async () => root!.render(<ApplicationShellOutlet host={host!} binding={{ pluginId: "wuu.default-shell", generation: "test", id: "shell" }} surfaceBindings={{ "ui.conversation": { pluginId: "alternate-conversation", generation: "test", id: "conversation" }, "ui.preview": { pluginId: "wuu.default-preview", generation: "test", id: "ui.preview" } }} />));
+  await act(async () => root!.render(<ApplicationShellOutlet host={host!} binding={{ pluginId: "wuu.default-shell", generation: "test", id: "shell" }} surfaceBindings={{ "ui.conversation": { pluginId: "alternate-conversation", generation: "test", id: "conversation" }, "ui.preview": { pluginId: "wuu.default-preview", generation: "test", id: "ui.preview" }, "ui.composer": { pluginId: "wuu.default-composer", generation: "test", id: "ui.composer" } }} />));
   expect(host.getUISlot("wuu.default-conversation/conversation.turn")).toBeUndefined();
   expect(container.textContent).toContain("Alternate conversation");
   expect(container.textContent).toContain("Independent side answer");
@@ -96,4 +108,5 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   expect(container.textContent).toContain("Independent side answer");
   await act(async () => root!.unmount()); root = undefined;
   expect(setPreviewVisibility).toHaveBeenLastCalledWith(false, expect.any(AbortSignal));
+  presentation.dispose();
 });
