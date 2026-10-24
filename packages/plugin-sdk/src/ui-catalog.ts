@@ -230,11 +230,26 @@ export interface ApplicationCatalogSnapshotV1 {
  readonly inventory: readonly CatalogExtensionV1[];
  readonly capabilities: { readonly install: boolean; readonly update: boolean; readonly remove: boolean };
 }
+type CatalogReadonly<T> = T extends readonly (infer Item)[] ? readonly CatalogReadonly<Item>[]
+ : T extends object ? { readonly [Key in keyof T]: CatalogReadonly<T[Key]> } : T;
+export type CatalogReadonlySkillV1 = CatalogReadonly<CatalogSkillV1>;
+export interface CatalogThreadSkillsV1 {
+ readonly contextKey: string;
+ readonly threadId?: string;
+ readonly skills: readonly CatalogReadonlySkillV1[];
+}
+export interface CatalogThreadSkillsInputV1 {
+ readonly threadId?: string;
+ /** When supplied, reject before RPC if this workspace is no longer current. */
+ readonly contextKey?: string;
+}
 export interface CatalogCallOptionsV1 { readonly signal?: AbortSignal; }
 /** All calls retain their captured application generation. Failed effects must not be replayed. */
 export interface ApplicationCatalogV1 {
  getSnapshot(): ApplicationCatalogSnapshotV1;
  listSkills(options?: CatalogCallOptionsV1): Promise<readonly CatalogSkillV1[]>;
+ /** Thread-specific visibility for composer completion; omitted/empty thread IDs query workspace skills. */
+ listSkillsForThread(input: CatalogThreadSkillsInputV1, options?: CatalogCallOptionsV1): Promise<CatalogThreadSkillsV1>;
  readSkill(input: {readonly name:string; readonly source:string}, options?: CatalogCallOptionsV1): Promise<{readonly content:string}>;
  refresh(options?: CatalogCallOptionsV1): Promise<readonly CatalogSkillV1[] | undefined>;
  update(input: CatalogPackageUpdateV1, options?: CatalogCallOptionsV1): Promise<void>;

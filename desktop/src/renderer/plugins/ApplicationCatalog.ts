@@ -1,4 +1,4 @@
-import type { ApplicationCatalogV1, ApplicationCatalogSnapshotV1, CatalogCallOptionsV1, CatalogPackageUpdateV1, CatalogPackageResultV1, CatalogSkillV1, CatalogExtensionV1 } from "../../../../packages/plugin-sdk/src/ui-catalog";
+import type { ApplicationCatalogV1, ApplicationCatalogSnapshotV1, CatalogCallOptionsV1, CatalogPackageUpdateV1, CatalogPackageResultV1, CatalogSkillV1, CatalogExtensionV1, CatalogThreadSkillsInputV1, CatalogThreadSkillsV1 } from "../../../../packages/plugin-sdk/src/ui-catalog";
 import type { ExtensionInventoryRecord } from "../../shared/protocol";
 import { hostSupports } from "../HostCapabilities";
 
@@ -50,6 +50,14 @@ export class ApplicationCatalog implements ApplicationCatalogV1 {
   }
   async listSkills(options?: CatalogCallOptionsV1): Promise<readonly CatalogSkillV1[]> {
     const source=this.begin(options); const result=await window.wuu.listSkills(); this.finish(source,options); return immutable(result.skills);
+  }
+  async listSkillsForThread(input: CatalogThreadSkillsInputV1, options?: CatalogCallOptionsV1): Promise<CatalogThreadSkillsV1> {
+    const source = this.begin(options);
+    if (input.contextKey !== undefined && input.contextKey !== source) throw new Error("Catalog workspace changed before the operation");
+    const threadId = input.threadId || undefined;
+    const result = await window.wuu.listSkills(threadId ? { thread_id: threadId } : undefined);
+    this.finish(source, options);
+    return immutable({ contextKey: source, threadId, skills: result.skills });
   }
   async readSkill(input: {name:string;source:string}, options?: CatalogCallOptionsV1): Promise<{content:string}> {
     const source=this.begin(options); const result=await window.wuu.readSkillContent(input); this.finish(source,options); return {content:result.content};
