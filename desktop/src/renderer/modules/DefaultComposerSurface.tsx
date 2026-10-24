@@ -1,3 +1,4 @@
+import { ApplicationSideThreadComposer } from "../SideThreadComposer";
 import { ArtifactsProvider } from "../ArtifactsContext";
 import { ImagePreviewProvider } from "../ImagePreview";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
@@ -18,6 +19,7 @@ import { showErrorToast } from "../Toast";
 import { useI18n } from "../i18n";
 
 export interface DefaultComposerLayout {
+  side?: { readonly parentThreadId: string };
   variant?: ComposerVariant;
   pane?: "primary" | "secondary";
   ownerTabId?: string;
@@ -27,10 +29,30 @@ export interface DefaultComposerLayout {
 /** A selected composer receives geometry only; every operation retains its public draft owner. */
 export function DefaultComposerSurface({ application, ...layout }: DefaultComposerLayout & { application: ApplicationServiceV1 }): JSX.Element | null {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  if (layout.side) {
+    const parentThreadId = layout.side.parentThreadId;
+    const ownerTabId = view.tabs.items.find(tab => tab.threadId === parentThreadId)?.id;
+    if (!ownerTabId || view.sideConversation.parentThreadId !== parentThreadId || !view.sideConversation.entry) return null;
+    return <OwnedSideComposer application={application} ownerTabId={ownerTabId} parentThreadId={parentThreadId} variant={layout.variant} />;
+  }
   const pane = layout.pane ?? "primary";
   const ownerTabId = layout.ownerTabId ?? view.drafts[pane].ownerTabId;
   if (!ownerTabId || view.drafts[pane].ownerTabId !== ownerTabId) return null;
   return <OwnedComposer key={pane} application={application} {...layout} pane={pane} ownerTabId={ownerTabId} />;
+}
+
+function OwnedSideComposer({ application, ownerTabId, parentThreadId, variant }: {
+  application: ApplicationServiceV1; ownerTabId: string; parentThreadId: string; variant?: ComposerVariant;
+}): JSX.Element | null {
+  const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
+  const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
+  const services = useMemo(() => ({ ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, ownerTabId, presentation]);
+  if (view.sideConversation.parentThreadId !== parentThreadId) return null;
+  return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}>
+    <ApplicationSideThreadComposer snapshot={view.sideConversation} invoke={application.invoke} variant={variant}
+      onOpenFile={path => { void application.fileSelection.openFile({ target: { ownerTabId }, path }).catch(showErrorToast); }} />
+  </ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 
 function OwnedComposer({ application, variant = "dock", pane, ownerTabId, containerRef }: DefaultComposerLayout & { application: ApplicationServiceV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {

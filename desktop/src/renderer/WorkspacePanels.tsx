@@ -91,7 +91,6 @@ import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { TerminalControlsProvider } from "./TerminalControlsContext";
 import { ProjectActionsProvider } from "./ProjectActions";
 import { ApplicationSideThreadPanel, type SideThreadPanelHandle } from "./SideThreadPanel";
-import { ApplicationSideThreadComposer } from "./SideThreadComposer";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from "./WorkspaceBrowserOpen";
@@ -288,7 +287,7 @@ function WorkspacePanelContent({
   const sideThreadContent = <ApplicationSideThreadPanel snapshot={snapshot.sideConversation}
     ref={sideThreadPanelRef} active={sideThreadActive}
     title={t("sideThread.title")} cwd={workspaceContext?.cwd} onOpenFile={onOpenFile}
-    composer={<ApplicationSideThreadComposer snapshot={snapshot.sideConversation} invoke={application.invoke} onOpenFile={onOpenFile} />} />;
+    composer={snapshot.sideConversation.parentThreadId ? <slots.Slot name="wuu.default-preview/application.composer" context={{ side: { parentThreadId: snapshot.sideConversation.parentThreadId } }} /> : null} />;
   const conversationActive = Boolean(conversationTab?.active);
   const selectedTabID = conversationActive ? WORKSPACE_CONVERSATION_TAB_ID : activeTabID;
   const visibleTabs = tabs;

@@ -1,9 +1,14 @@
+import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPreviewApplication } from "../../../../packages/plugin-sdk/preview/application";
 import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationComposerPresentationV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
+import { PluginHost } from "../plugins/PluginHost";
+import type { HostApplicationService } from "../plugins/HostApplicationService";
+import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
+import { activate as activateComposer } from "./DefaultComposerSurface";
 import { DefaultComposerSurface } from "./DefaultComposerSurface";
 import { WuuUIRoot } from "../ui/layers/UILayerHost";
 
@@ -56,6 +61,43 @@ function setup() {
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  it("selects, replaces, and disables the side composer through the preview service slot", async () => {
+    const fixture = setup();
+    await fixture.update(view => ({ ...view,
+      tabs: { ...view.tabs, items: view.tabs.items.map(tab => ({ ...tab, kind: "thread", threadId: "parent" })) },
+      sideConversation: { ...view.sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "side question", streaming: false } },
+    }));
+    const publicPresentation = fixture.application.composerPresentation;
+    const readContributions = vi.spyOn(publicPresentation, "getContributions");
+    const host = new PluginHost({ react: React, application: { ...fixture.application,
+      createComposerPresentationScope: () => publicPresentation,
+      createDesktopScope: () => fixture.application.desktop,
+    } as unknown as HostApplicationService });
+    await host.activateGeneration({ pluginId: "wuu.default-preview", generation: "one", register: api => {
+      api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="wuu.default-preview/application.composer" context={{ side: { parentThreadId: "parent" } }} /> });
+    } });
+    await host.activateGeneration({ pluginId: "composer", generation: "one", register: activateComposer });
+    const show = async (pluginId: string) => { await act(async () => root.render(<WuuUIRoot><ApplicationShellOutlet host={host}
+      binding={{ pluginId: "wuu.default-preview", generation: "one", id: "shell" }}
+      surfaceBindings={{ "ui.composer": { pluginId, generation: "one", id: "ui.composer" } }} /></WuuUIRoot>)); };
+    await show("composer");
+    expect(container.querySelector("textarea")?.value).toBe("side question");
+    expect(readContributions).toHaveBeenCalledWith("composer.above");
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!.click());
+    expect(fixture.calls).toContainEqual({ action: "side.send", input: { parentThreadId: "parent", text: "side question" } });
+    await act(async () => { await host.activateGeneration({ pluginId: "alternative", generation: "one", register: api => {
+      api.registerUIContribution({ id: "ui.composer", target: "wuu.default-preview/application.composer", render: ({ context }) => <button data-side-replacement>{(context.side as { parentThreadId: string }).parentThreadId}</button> });
+    } }); });
+    await show("alternative");
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector("[data-side-replacement]")?.textContent).toBe("parent");
+    await act(async () => host.unload("alternative"));
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector("[role=alert]")?.textContent).toContain("Selected UI surface is unavailable");
+    await act(async () => root.render(null));
+    host.unload("composer"); host.unload("wuu.default-preview");
+  });
   it("retains an open runtime picker when its shell remounts", async () => {
     const fixture = setup(); await fixture.render();
     const trigger = container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!;
