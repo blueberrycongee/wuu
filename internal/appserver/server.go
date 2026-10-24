@@ -588,7 +588,7 @@ func (s *Server) settleOnBoot(binding *runtime.State) {
 		} else if pruned > 0 {
 			providers.DebugLogf("settleOnBoot pass5: pruned %d old inference operation(s)", pruned)
 		}
-		if runStore, err := execution.NewStore(binding.Documents); err == nil {
+		if runStore, err := execution.NewStore(binding.Documents); recoverErr == nil && err == nil {
 			recovered, err := runStore.ReconcileOrphans(context.Background(), binding.InferenceJournalRuntime.RuntimeID(), now)
 			if err != nil {
 				providers.DebugLogf("settleOnBoot pass6 (execution runs): %v", err)

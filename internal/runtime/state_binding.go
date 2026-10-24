@@ -30,6 +30,7 @@ type runtimeState struct {
 	documents persistence.Documents
 	sessions  *session.Store
 	journal   *session.InferenceJournalRuntime
+	registry  *pluginhost.ServiceRegistry
 }
 
 func newRuntimeState(registry *pluginhost.ServiceRegistry, workspaceScope string) *runtimeState {
@@ -55,7 +56,7 @@ func newRuntimeState(registry *pluginhost.ServiceRegistry, workspaceScope string
 			return result, nil
 		}
 	}
-	state = &runtimeState{status: pluginhost.StatePrepared, scope: workspaceScope,
+	state = &runtimeState{status: pluginhost.StatePrepared, scope: workspaceScope, registry: registry,
 		documents: persistence.NewClient(call(persistence.ServiceName)), sessions: session.NewClient(context.Background(), call(session.ServiceName))}
 
 	return state
@@ -76,20 +77,20 @@ func (s *runtimeState) RequiredServices() []pluginhost.ServiceRequirement {
 }
 
 func (s *runtimeState) Activate(ctx context.Context) error {
-	s.mu.Lock()
-	prepared := s.status == pluginhost.StatePrepared
-	s.mu.Unlock()
-	if !prepared {
-		return errors.New("session state consumer is not prepared")
-	}
-	journal, err := s.sessions.WithContext(ctx).NewInferenceJournalRuntime(s.scope)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err != nil {
-		s.status = pluginhost.StateFailed
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.journal = journal
+	if err := s.registry.CheckSatisfaction(s.RequiredServices()); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status != pluginhost.StatePrepared {
+		return errors.New("session state consumer is not prepared")
+	}
+	s.journal = session.NewLazyInferenceJournalRuntime(func(ctx context.Context) (*session.InferenceJournalRuntime, error) {
+		return s.sessions.WithContext(ctx).NewInferenceJournalRuntime(s.scope)
+	})
 	s.status = pluginhost.StateActive
 	return nil
 }
@@ -101,7 +102,7 @@ func (s *runtimeState) Close(ctx context.Context) error {
 	s.mu.Unlock()
 	var err error
 	if journal != nil {
-		err = journal.Close()
+		err = journal.CloseContext(ctx)
 	}
 	return err
 }

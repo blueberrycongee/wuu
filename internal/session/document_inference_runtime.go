@@ -16,6 +16,7 @@ import (
 // InferenceJournalRuntime holds one generation's authority for its lifetime.
 // Its owner releases the provider only after Close drains admitted journal work.
 type InferenceJournalRuntime struct {
+	lazy                              *lazyInferenceRuntime
 	remote                            *remoteJournalRuntime
 	store                             *documentStore
 	workspaceScope, runtimeID         string
@@ -105,6 +106,9 @@ func (r *InferenceJournalRuntime) RuntimeID() string {
 	if r == nil {
 		return ""
 	}
+	if r.lazy != nil {
+		return r.lazy.runtimeID()
+	}
 	return r.runtimeID
 }
 
@@ -139,9 +143,20 @@ func (r *InferenceJournalRuntime) heartbeat(tx *persistence.Tx, stamp int64, clo
 
 func (r *InferenceJournalRuntime) Close() error { return r.closeContext(context.Background()) }
 
+// CloseContext retains authenticated cleanup authority while draining the runtime.
+func (r *InferenceJournalRuntime) CloseContext(ctx context.Context) error { return r.closeContext(ctx) }
+
 func (r *InferenceJournalRuntime) closeContext(ctx context.Context) error {
+	if r != nil && r.lazy != nil {
+		return r.lazy.close(ctx)
+	}
 	if r != nil && r.remote != nil {
-		r.closeOnce.Do(func() { r.closeErr = r.remote.invoke("Close", nil, []any{}) })
+		r.closeOnce.Do(func() {
+			r.lifecycleMu.Lock()
+			r.closing = true
+			r.lifecycleMu.Unlock()
+			r.closeErr = r.remote.store.WithContext(context.WithoutCancel(ctx)).invoke("Journal.Close", []any{r.remote.handle}, []any{})
+		})
 		return r.closeErr
 	}
 	if r == nil {
@@ -163,6 +178,9 @@ func (r *InferenceJournalRuntime) closeContext(ctx context.Context) error {
 }
 
 func (r *InferenceJournalRuntime) ForOwner(ownerID string) providers.InferenceJournal {
+	if r != nil && r.lazy != nil {
+		return &lazyInferenceJournal{r.lazy, ownerID}
+	}
 	if r != nil && r.remote != nil {
 		return &remoteInferenceJournal{r.remote, ownerID}
 	}

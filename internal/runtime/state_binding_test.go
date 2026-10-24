@@ -38,6 +38,9 @@ func TestRuntimeStateBindingLifecycle(t *testing.T) {
 			if err := host.Activate(ctx); err != nil {
 				t.Fatal(err)
 			}
+			if err := state.journal.Ensure(ctx); err != nil {
+				t.Fatal(err)
+			}
 			runtimeID := state.journal.RuntimeID()
 			if _, err := state.documents.Read(ctx, persistence.Query{Namespace: "wuu.inference_journal_runtimes.v1", Keys: []string{runtimeID}}); err != nil {
 				t.Fatal(err)
