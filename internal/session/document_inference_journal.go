@@ -267,35 +267,9 @@ func (j *documentInferenceJournal) upsertSubmission(tx *persistence.Tx, record p
 		}
 		attempt.SubmissionIDs = append(attempt.SubmissionIDs, record.ID)
 	} else {
-		if existing.OperationID != record.OperationID || existing.AttemptID != record.AttemptID || existing.Ordinal != record.Ordinal || existing.AttemptOrdinal != record.AttemptOrdinal {
-			return fmt.Errorf("submission %q metadata changed after preparation", record.ID)
-		}
-		next = existing
-		if existing.Outcome != providers.InferenceSubmissionInFlight {
-			if record.Outcome != providers.InferenceSubmissionInFlight && record.Outcome != existing.Outcome {
-				return fmt.Errorf("submission %q already completed as %s", record.ID, existing.Outcome)
-			}
-		} else {
-			next.Outcome = record.Outcome
-		}
-		if next.FailureCategory == "" {
-			next.FailureCategory = record.FailureCategory
-		}
-		switch {
-		case inferenceCostRank(string(existing.CostState)) > inferenceCostRank(string(record.CostState)):
-		case inferenceCostRank(string(existing.CostState)) == inferenceCostRank(string(record.CostState)):
-			next.CostState = record.CostState
-			next.ReportedUsage = mergeInferenceDocumentUsage(existing.ReportedUsage, record.ReportedUsage)
-			next.EstimatedUsage = mergeInferenceDocumentUsage(existing.EstimatedUsage, record.EstimatedUsage)
-		default:
-			next.CostState, next.ReportedUsage = record.CostState, record.ReportedUsage
-			if record.EstimatedUsage != nil {
-				next.EstimatedUsage = record.EstimatedUsage
-			}
-		}
-		next.OutputBytes = max(existing.OutputBytes, record.OutputBytes)
-		if next.CompletedAt.IsZero() {
-			next.CompletedAt = record.CompletedAt
+		next, err = mergeInferenceSubmissionEvidence(existing, record)
+		if err != nil {
+			return err
 		}
 	}
 	if err := applyWorkflowDocumentCost(tx, op.WorkflowID, existing, next, stamp); err != nil {
@@ -320,6 +294,42 @@ func (j *documentInferenceJournal) upsertSubmission(tx *persistence.Tx, record p
 		return putInferenceOperation(tx, op)
 	}
 	return nil
+}
+
+// Progress snapshots can arrive out of order before or after a durable write.
+// Both boundaries preserve terminal evidence while accepting stronger usage.
+func mergeInferenceSubmissionEvidence(existing, record providers.InferenceSubmissionJournalRecord) (providers.InferenceSubmissionJournalRecord, error) {
+	if existing.OperationID != record.OperationID || existing.AttemptID != record.AttemptID || existing.Ordinal != record.Ordinal || existing.AttemptOrdinal != record.AttemptOrdinal {
+		return existing, fmt.Errorf("submission %q metadata changed after preparation", record.ID)
+	}
+	next := existing
+	if existing.Outcome != providers.InferenceSubmissionInFlight {
+		if record.Outcome != providers.InferenceSubmissionInFlight && record.Outcome != existing.Outcome {
+			return existing, fmt.Errorf("submission %q already completed as %s", record.ID, existing.Outcome)
+		}
+	} else {
+		next.Outcome = record.Outcome
+	}
+	if next.FailureCategory == "" {
+		next.FailureCategory = record.FailureCategory
+	}
+	switch {
+	case inferenceCostRank(string(existing.CostState)) > inferenceCostRank(string(record.CostState)):
+	case inferenceCostRank(string(existing.CostState)) == inferenceCostRank(string(record.CostState)):
+		next.CostState = record.CostState
+		next.ReportedUsage = mergeInferenceDocumentUsage(existing.ReportedUsage, record.ReportedUsage)
+		next.EstimatedUsage = mergeInferenceDocumentUsage(existing.EstimatedUsage, record.EstimatedUsage)
+	default:
+		next.CostState, next.ReportedUsage = record.CostState, record.ReportedUsage
+		if record.EstimatedUsage != nil {
+			next.EstimatedUsage = record.EstimatedUsage
+		}
+	}
+	next.OutputBytes = max(existing.OutputBytes, record.OutputBytes)
+	if next.CompletedAt.IsZero() {
+		next.CompletedAt = record.CompletedAt
+	}
+	return next, nil
 }
 
 func (j *documentInferenceJournal) MarkAttemptFirstEvent(operationID, attemptID, submissionID string, at time.Time) error {

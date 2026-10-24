@@ -207,6 +207,19 @@ func (j *documentInferenceJournal) RecordSubmissionProgress(record providers.Inf
 	if r.progress == nil {
 		r.progress = make(map[string]documentSubmissionProgress)
 	}
+	if pending, exists := r.progress[record.ID]; exists {
+		if pending.journal.ownerID != j.ownerID {
+			err = fmt.Errorf("submission %q progress belongs to another journal owner", record.ID)
+		} else {
+			record, err = mergeInferenceSubmissionEvidence(pending.record, record)
+		}
+		if err != nil {
+			r.progressErr = err
+			r.progressMu.Unlock()
+			providers.DebugLogf("inference journal: submission progress rejected: %v", err)
+			return
+		}
+	}
 	r.progress[record.ID] = documentSubmissionProgress{journal: j, record: record}
 	r.progressMu.Unlock()
 }

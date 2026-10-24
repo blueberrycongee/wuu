@@ -234,6 +234,158 @@ func TestInferenceJournalCoalescesStreamingProgressAndFlushesAtBarrier(t *testin
 	})
 }
 
+type capturedInferenceProgressJournal struct {
+	providers.InferenceJournal
+	records chan providers.InferenceSubmissionJournalRecord
+}
+
+func (j *capturedInferenceProgressJournal) RecordSubmissionProgress(record providers.InferenceSubmissionJournalRecord) {
+	j.records <- record
+}
+
+func TestInferenceJournalPreservesTerminalBeforeDelayedProgress(t *testing.T) {
+	for _, succeeded := range []bool{false, true} {
+		name := "canceled"
+		if succeeded {
+			name = "succeeded"
+		}
+		t.Run(name, func(t *testing.T) {
+			forEachSessionStore(t, func(t *testing.T, store *Store) {
+				runtime, err := store.NewInferenceJournalRuntime("workspace-delayed-progress")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = runtime.Close() })
+				journal := runtime.ForOwner("thread-delayed-progress")
+				progress := journal.(providers.InferenceProgressJournal)
+				captured := &capturedInferenceProgressJournal{
+					InferenceJournal: journal,
+					records:          make(chan providers.InferenceSubmissionJournalRecord, 2),
+				}
+				ctx := providers.WithInferenceJournal(context.Background(), captured)
+				request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Model: "fixture"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+				if err != nil {
+					t.Fatal(err)
+				}
+				submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{
+					Provider: "openai", Protocol: "chat_completions", Transport: "http", Mode: "stream", RequestBytes: 16,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Capture real execution snapshots. Delivery may be reordered after
+				// updateSubmission releases its lock and before progress is queued.
+				submission.ObserveOutput("held output")
+				older := <-captured.records
+				outcome := providers.InferenceOutcomeCanceled
+				failure := providers.NormalizeFailure(context.Canceled)
+				if succeeded {
+					submission.CompleteSuccess(&providers.TokenUsage{InputTokens: 10, OutputTokens: 20})
+					outcome, failure = providers.InferenceOutcomeSucceeded, providers.NormalizedFailure{}
+				} else {
+					submission.CompleteFailure(failure)
+				}
+				terminal := <-captured.records
+				// Keep the periodic writer from making the terminal durable before
+				// the delayed snapshot arrives. No ticker timing decides this test.
+				func() {
+					runtime.progressFlushMu.Lock()
+					defer runtime.progressFlushMu.Unlock()
+					progress.RecordSubmissionProgress(terminal)
+					progress.RecordSubmissionProgress(older)
+				}()
+				if err := request.Attempt.Complete(outcome, failure); err != nil {
+					t.Fatal(err)
+				}
+				if err := request.Execution.Complete(outcome, failure); err != nil {
+					t.Fatal(err)
+				}
+				if err := runtime.pendingProgressErr(); err != nil {
+					t.Fatalf("ordering case unexpectedly failed a progress write: %v", err)
+				}
+				receipt := readSessionDocument[providers.InferenceSubmissionJournalRecord](t, store, "inference_submissions", submission.ID)
+				if receipt.Outcome != terminal.Outcome || !receipt.CompletedAt.Equal(terminal.CompletedAt) || receipt.FailureCategory != terminal.FailureCategory {
+					t.Errorf("delayed progress replaced terminal receipt: got %+v, want outcome=%s completed=%s failure=%s", receipt, terminal.Outcome, terminal.CompletedAt, terminal.FailureCategory)
+				}
+				if receipt.CostState != terminal.CostState || receipt.OutputBytes != terminal.OutputBytes {
+					t.Errorf("delayed progress regressed cost evidence: got %+v, want cost=%s bytes=%d", receipt, terminal.CostState, terminal.OutputBytes)
+				}
+				if succeeded {
+					if receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 10 || receipt.ReportedUsage.OutputTokens != 20 {
+						t.Errorf("delayed progress lost reported usage: %+v", receipt.ReportedUsage)
+					}
+				} else if receipt.ReportedUsage != nil || receipt.EstimatedUsage == nil || *receipt.EstimatedUsage != *terminal.EstimatedUsage {
+					t.Errorf("delayed progress changed canceled usage evidence: %+v", receipt)
+				}
+				submission.ObserveUsage(&providers.TokenUsage{InputTokens: 12, OutputTokens: 24})
+				progress.RecordSubmissionProgress(<-captured.records)
+				runtime.flushSubmissionProgress(false)
+				receipt = readSessionDocument[providers.InferenceSubmissionJournalRecord](t, store, "inference_submissions", submission.ID)
+				if receipt.Outcome != terminal.Outcome || !receipt.CompletedAt.Equal(terminal.CompletedAt) || receipt.CostState != providers.InferenceCostKnown || receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 12 || receipt.ReportedUsage.OutputTokens != 24 {
+					t.Errorf("late usage did not refine the terminal receipt: %+v", receipt)
+				}
+			})
+		})
+	}
+}
+
+func TestInferenceJournalPendingProgressRejectsMismatchedEvidence(t *testing.T) {
+	for _, mismatch := range []string{"owner", "metadata", "terminal-outcome"} {
+		t.Run(mismatch, func(t *testing.T) {
+			forEachSessionStore(t, func(t *testing.T, store *Store) {
+				runtime, err := store.NewInferenceJournalRuntime("workspace-progress-identity")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = runtime.Close() })
+				journal := runtime.ForOwner("thread-progress-owner")
+				progress := journal.(providers.InferenceProgressJournal)
+				captured := &capturedInferenceProgressJournal{InferenceJournal: journal, records: make(chan providers.InferenceSubmissionJournalRecord, 1)}
+				ctx := providers.WithInferenceJournal(context.Background(), captured)
+				request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Model: "fixture"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+				if err != nil {
+					t.Fatal(err)
+				}
+				submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "openai", Protocol: "chat_completions", Transport: "http", Mode: "stream", RequestBytes: 16})
+				if err != nil {
+					t.Fatal(err)
+				}
+				failure := providers.NormalizeFailure(context.Canceled)
+				submission.CompleteFailure(failure)
+				terminal := <-captured.records
+				invalid, invalidProgress := terminal, progress
+				switch mismatch {
+				case "owner":
+					invalidProgress = runtime.ForOwner("another-owner").(providers.InferenceProgressJournal)
+				case "metadata":
+					invalid.AttemptID += "-another-attempt"
+				case "terminal-outcome":
+					invalid.Outcome = providers.InferenceSubmissionSucceeded
+				}
+				func() {
+					runtime.progressFlushMu.Lock()
+					defer runtime.progressFlushMu.Unlock()
+					progress.RecordSubmissionProgress(terminal)
+					invalidProgress.RecordSubmissionProgress(invalid)
+				}()
+				if err := request.Attempt.Complete(providers.InferenceOutcomeCanceled, failure); err != nil {
+					t.Fatal(err)
+				}
+				if err := request.Execution.Complete(providers.InferenceOutcomeCanceled, failure); err != nil {
+					t.Fatal(err)
+				}
+				if runtime.pendingProgressErr() == nil {
+					t.Error("mismatched pending evidence was not diagnosed")
+				}
+				receipt := readSessionDocument[providers.InferenceSubmissionJournalRecord](t, store, "inference_submissions", submission.ID)
+				if receipt.Outcome != terminal.Outcome || !receipt.CompletedAt.Equal(terminal.CompletedAt) || receipt.FailureCategory != terminal.FailureCategory || receipt.AttemptID != terminal.AttemptID || receipt.CostState != terminal.CostState {
+					t.Errorf("mismatched pending evidence displaced the owner's terminal receipt: %+v", receipt)
+				}
+			})
+		})
+	}
+}
+
 func TestInferenceJournalCompletesWorkflowOnlyAfterOperationsAreTerminal(t *testing.T) {
 	forEachSessionStore(t, func(t *testing.T, store *Store) {
 		runtime, err := store.NewInferenceJournalRuntime("workspace-workflow-terminal")
