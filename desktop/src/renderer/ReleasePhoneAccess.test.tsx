@@ -60,8 +60,11 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
 
     const pets = { home: "", enabled: false, selected_id: "", pets: [], errors: [] };
     const engines = { engines: [] };
+    const { createApplicationSettingsControls } = await import("./plugins/hostApplicationSettingsControls");
+    const application = { settingsControls: createApplicationSettingsControls() };
     await act(async () => root!.render(
       <SettingsView
+        application={application}
         initialPage={initialPage}
         running={false}
         codexPetsLoading={false}
