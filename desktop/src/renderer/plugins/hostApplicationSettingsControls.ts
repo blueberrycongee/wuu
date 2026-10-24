@@ -1,3 +1,8 @@
+import { appearanceDefaults, readAppearance, saveAppearance, observeAppearance } from "../AppearancePreferences";
+import { listLocalFonts, isMonospaceFont } from "../LocalFonts";
+import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
+import { applyThemePreference, currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme } from "../Theme";
+import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import type { InitializeResult } from "../../shared/protocol";
 import { createElement } from "react";
 import type { ApplicationSettingsControlsV1, SettingsControlsDiagnosticV1 } from "../../../../packages/plugin-sdk/src/ui-settings-controls";
@@ -17,6 +22,17 @@ export function createApplicationSettingsControls(options: {
   const diagnostics = new WeakMap<readonly unknown[], readonly SettingsControlsDiagnosticV1[]>();
   return {
     capabilities: Object.freeze({
+      systemPermissions: window.wuu?.platform === "darwin" && typeof window.wuu?.getSystemPermissions === "function",
+      permissionGuide: typeof window.wuu?.onSystemPermissionGuideChanged === "function",
+      permissionGuideUpdate: typeof window.wuu?.updateSystemPermissionGuide === "function",
+      permissionGuideClose: typeof window.wuu?.closeSystemPermissionGuide === "function",
+      themeChanges: typeof window.wuu?.onThemePreferenceChange === "function",
+      activityPreview: Boolean(window.wuu?.getActivityPreviewAutoShow && window.wuu.setActivityPreviewAutoShow),
+      activityPreviewChanges: typeof window.wuu?.onActivityPreviewAutoShowChange === "function",
+      appContext: window.wuu?.platform === "darwin" && typeof window.wuu?.getAppContextState === "function",
+      appContextChanges: typeof window.wuu?.onAppContextChanged === "function",
+      appContextRecording: typeof window.wuu?.setAppContextShortcutRecording === "function",
+
       chatGPTLogin: hostSupports("startChatGPTLogin"),
       engineLogin: window.wuu?.hostKind !== "web",
       platform: window.wuu?.platform,
@@ -30,6 +46,17 @@ export function createApplicationSettingsControls(options: {
       pets: hostSupports("listCodexPets"),
       diagnostics: typeof window.wuu?.getPluginDiagnostics === "function"
     }),
+    currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme,
+    observeContentThemeSelection: listener => {
+      window.addEventListener("wuu-theme-selection", listener);
+      window.addEventListener("storage", listener);
+      return () => { window.removeEventListener("wuu-theme-selection", listener); window.removeEventListener("storage", listener); };
+    },
+    initialMessageFlowFontSize: window.wuu?.initialMessageFlowFontSize ?? MESSAGE_FLOW_FONT_SIZE_RANGE.default,
+    initialThemePreference: window.wuu?.initialThemePreference ?? "system",
+    appearanceDefaults: Object.freeze({ ...appearanceDefaults }),
+    readAppearance, saveAppearance, observeAppearance, applyMessageFlowFontSize, applyThemePreference,
+    listLocalFonts: async () => { const names = await listLocalFonts(); return { names, monospace: names.filter(isMonospaceFont) }; },
     subscribe: listener => host().subscribe(listener),
     getPages: () => host().getSettingsPages(),
     getConflicts: () => host().getConflicts(),
@@ -99,6 +126,74 @@ export function createApplicationSettingsControls(options: {
     cancelEngineAuth: async (...args) => {
       if (typeof window.wuu?.cancelEngineAuth !== "function") throw new Error("Settings operation unavailable: cancelEngineAuth");
       return window.wuu.cancelEngineAuth(...args);
+    },
+    getSystemPermissions: async (...args) => {
+      if (typeof window.wuu?.getSystemPermissions !== "function") throw new Error("Settings operation unavailable: getSystemPermissions");
+      return window.wuu.getSystemPermissions(...args);
+    },
+    requestSystemPermission: async (...args) => {
+      if (typeof window.wuu?.requestSystemPermission !== "function") throw new Error("Settings operation unavailable: requestSystemPermission");
+      return window.wuu.requestSystemPermission(...args);
+    },
+    updateSystemPermissionGuide: (...args) => {
+      if (typeof window.wuu?.updateSystemPermissionGuide !== "function") throw new Error("Settings operation unavailable: updateSystemPermissionGuide");
+      return window.wuu.updateSystemPermissionGuide(...args);
+    },
+    onSystemPermissionGuideChanged: (...args) => {
+      if (typeof window.wuu?.onSystemPermissionGuideChanged !== "function") throw new Error("Settings operation unavailable: onSystemPermissionGuideChanged");
+      return window.wuu.onSystemPermissionGuideChanged(...args);
+    },
+    closeSystemPermissionGuide: async (...args) => {
+      if (typeof window.wuu?.closeSystemPermissionGuide !== "function") throw new Error("Settings operation unavailable: closeSystemPermissionGuide");
+      return window.wuu.closeSystemPermissionGuide(...args);
+    },
+    getMessageFlowFontSize: async (...args) => {
+      if (typeof window.wuu?.getMessageFlowFontSize !== "function") throw new Error("Settings operation unavailable: getMessageFlowFontSize");
+      return window.wuu.getMessageFlowFontSize(...args);
+    },
+    setMessageFlowFontSize: async (...args) => {
+      if (typeof window.wuu?.setMessageFlowFontSize !== "function") throw new Error("Settings operation unavailable: setMessageFlowFontSize");
+      return window.wuu.setMessageFlowFontSize(...args);
+    },
+    getThemePreference: async (...args) => {
+      if (typeof window.wuu?.getThemePreference !== "function") throw new Error("Settings operation unavailable: getThemePreference");
+      return window.wuu.getThemePreference(...args);
+    },
+    setThemePreference: async (...args) => {
+      if (typeof window.wuu?.setThemePreference !== "function") throw new Error("Settings operation unavailable: setThemePreference");
+      return window.wuu.setThemePreference(...args);
+    },
+    onThemePreferenceChange: (...args) => {
+      if (typeof window.wuu?.onThemePreferenceChange !== "function") throw new Error("Settings operation unavailable: onThemePreferenceChange");
+      return window.wuu.onThemePreferenceChange(...args);
+    },
+    getActivityPreviewAutoShow: async (...args) => {
+      if (typeof window.wuu?.getActivityPreviewAutoShow !== "function") throw new Error("Settings operation unavailable: getActivityPreviewAutoShow");
+      return window.wuu.getActivityPreviewAutoShow(...args);
+    },
+    setActivityPreviewAutoShow: async (...args) => {
+      if (typeof window.wuu?.setActivityPreviewAutoShow !== "function") throw new Error("Settings operation unavailable: setActivityPreviewAutoShow");
+      return window.wuu.setActivityPreviewAutoShow(...args);
+    },
+    onActivityPreviewAutoShowChange: (...args) => {
+      if (typeof window.wuu?.onActivityPreviewAutoShowChange !== "function") throw new Error("Settings operation unavailable: onActivityPreviewAutoShowChange");
+      return window.wuu.onActivityPreviewAutoShowChange(...args);
+    },
+    getAppContextState: async (...args) => {
+      if (typeof window.wuu?.getAppContextState !== "function") throw new Error("Settings operation unavailable: getAppContextState");
+      return window.wuu.getAppContextState(...args);
+    },
+    updateAppContextSettings: async (...args) => {
+      if (typeof window.wuu?.updateAppContextSettings !== "function") throw new Error("Settings operation unavailable: updateAppContextSettings");
+      return window.wuu.updateAppContextSettings(...args);
+    },
+    setAppContextShortcutRecording: async (...args) => {
+      if (typeof window.wuu?.setAppContextShortcutRecording !== "function") throw new Error("Settings operation unavailable: setAppContextShortcutRecording");
+      return window.wuu.setAppContextShortcutRecording(...args);
+    },
+    onAppContextChanged: (...args) => {
+      if (typeof window.wuu?.onAppContextChanged !== "function") throw new Error("Settings operation unavailable: onAppContextChanged");
+      return window.wuu.onAppContextChanged(...args);
     },
     getBuildInfo: async (...args) => {
       if (typeof window.wuu?.getBuildInfo !== "function") throw new Error("Settings operation unavailable: getBuildInfo");

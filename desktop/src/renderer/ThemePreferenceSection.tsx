@@ -1,13 +1,15 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useState } from "react";
 import type { ExtensionInventoryRecord, ThemePreference } from "../shared/protocol";
-import { applyThemePreference, availableExtensionThemes, currentAppliedTheme, observeAppliedTheme, selectExtensionTheme, selectedExtensionThemeKey } from "./Theme";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup } from "./SettingsSection";
 import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "./i18n";
 
 export function ContentThemeControl({ inventory }: { inventory?: readonly ExtensionInventoryRecord[] }): JSX.Element | null {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
+  const { currentAppliedTheme, observeAppliedTheme, availableExtensionThemes, selectedExtensionThemeKey, selectExtensionTheme } = settingsControls;
   const [mode, setMode] = useState(currentAppliedTheme);
   const [, refresh] = useState(0);
   useEffect(() => {
@@ -16,12 +18,7 @@ export function ContentThemeControl({ inventory }: { inventory?: readonly Extens
   }, []);
   useEffect(() => {
     const changed = () => refresh(value => value + 1);
-    window.addEventListener("wuu-theme-selection", changed);
-    window.addEventListener("storage", changed);
-    return () => {
-      window.removeEventListener("wuu-theme-selection", changed);
-      window.removeEventListener("storage", changed);
-    };
+    return settingsControls.observeContentThemeSelection(changed);
   }, []);
   const themes = availableExtensionThemes(inventory).filter(theme => theme.base === mode);
   if (themes.length === 0) return null;
@@ -51,11 +48,12 @@ function ThemePreviewWindow({ theme }: { theme: "light" | "dark" }): JSX.Element
  * 外观 row body: visual radio cards with a tiny window preview per option.
  * System lays the dark window over the light one and clips it at the middle,
  * so both halves share one skeleton and meet at a single seam. Reads and
- * persists through window.wuu directly, and applies the choice to
+ * persists through the selected settings service, and applies the choice to
  * <html data-theme> immediately so the user sees the switch without a save
  * step.
  */
 export function ThemePreferenceControl(): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const themeOptions: Array<{ value: ThemePreference; label: string }> = [
     { value: "system", label: t("settings.followSystem") },
@@ -63,12 +61,12 @@ export function ThemePreferenceControl(): JSX.Element {
     { value: "dark", label: t("settings.themeDark") },
   ];
   const [preference, setPreference] = useState<ThemePreference>(
-    () => window.wuu?.initialThemePreference ?? "system",
+    () => settingsControls.initialThemePreference ?? "system",
   );
   useEffect(() => {
     let cancelled = false;
-    void window.wuu
-      ?.getThemePreference?.()
+    void settingsControls
+      .getThemePreference?.()
       .then((stored) => {
         if (!cancelled && stored) {
           setPreference(stored);
@@ -86,16 +84,16 @@ export function ThemePreferenceControl(): JSX.Element {
   // so the segmented control must follow the main-process broadcast too.
   useEffect(
     () =>
-      window.wuu?.onThemePreferenceChange?.((theme) => {
+      settingsControls.capabilities.themeChanges ? settingsControls.onThemePreferenceChange((theme) => {
         setPreference(theme);
-      }),
+      }) : undefined,
     [],
   );
 
   function choose(next: ThemePreference): void {
     setPreference(next);
-    applyThemePreference(next);
-    void window.wuu?.setThemePreference?.(next).catch(() => {
+    settingsControls.applyThemePreference(next);
+    void settingsControls.setThemePreference?.(next).catch(() => {
       // Persistence failure leaves the applied theme for this window;
       // the next launch falls back to the stored preference.
     });

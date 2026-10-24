@@ -1,3 +1,4 @@
+import { useSettingsControls } from "./SettingsControlsContext";
 import { useEffect, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { AppLocale, SystemPermission, SystemPermissionPresentation, SystemPermissionsState } from "../shared/protocol";
 import { AlertCircle, Check, Hand, LoaderCircle, Monitor, RefreshCw } from "./WuuIcons";
@@ -60,6 +61,7 @@ function sourcePresentation(requestId: string, row: HTMLElement): SystemPermissi
 type ActiveGuide = { requestId: string; permission: SystemPermission; row: HTMLElement };
 
 export function SystemPermissionsPanel({ preview = false }: { preview?: boolean }): JSX.Element {
+  const settingsControls = useSettingsControls();
   const { t, locale } = useI18n();
   const [state, setState] = useState<SystemPermissionsState>();
   const [pending, setPending] = useState<{ requestId: string; permission: SystemPermission }>();
@@ -74,7 +76,7 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
 
   useEffect(() => {
     mounted.current = true;
-    const stopGuide = preview ? undefined : window.wuu.onSystemPermissionGuideChanged?.(next => {
+    const stopGuide = preview || !settingsControls.capabilities.permissionGuide ? undefined : settingsControls.onSystemPermissionGuideChanged(next => {
       const current = activeGuide.current;
       if (!current || next.requestId !== current.requestId) return;
       if (next.phase === "closed") {
@@ -94,7 +96,7 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
       const serialized = JSON.stringify(presentation);
       if (serialized === lastPresentation) return;
       lastPresentation = serialized;
-      window.wuu.updateSystemPermissionGuide?.(presentation);
+      if (settingsControls.capabilities.permissionGuideUpdate) settingsControls.updateSystemPermissionGuide(presentation);
     };
     const schedule = (): void => {
       cancelAnimationFrame(frame);
@@ -120,7 +122,7 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
       window.removeEventListener("resize", schedule);
       const current = activeGuide.current;
       activeGuide.current = undefined;
-      if (current) void window.wuu.closeSystemPermissionGuide?.(current.requestId).catch(() => undefined);
+      if (current && settingsControls.capabilities.permissionGuideClose) void settingsControls.closeSystemPermissionGuide(current.requestId).catch(() => undefined);
     };
   }, [preview]);
 
@@ -139,7 +141,7 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
       checking = true;
       clearTimeout(timer);
       try {
-        const next = await window.wuu.getSystemPermissions!();
+        const next = await settingsControls.getSystemPermissions!();
         if (active) { setState(next); setError(current => current === "read" ? undefined : current); }
       } catch { if (active) setError("read"); }
       finally {
@@ -169,13 +171,13 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
     activeGuide.current = { requestId, permission, row };
     setPending({ requestId, permission });
     setError(undefined);
-    try { await window.wuu.requestSystemPermission!(permission, presentation); }
+    try { await settingsControls.requestSystemPermission!(permission, presentation); }
     catch {
       if (mounted.current) setError("request");
       if (activeGuide.current?.requestId === requestId) {
         activeGuide.current = undefined;
         setFloating(undefined);
-        void window.wuu.closeSystemPermissionGuide?.(requestId).catch(() => undefined);
+        if (settingsControls.capabilities.permissionGuideClose) void settingsControls.closeSystemPermissionGuide(requestId).catch(() => undefined);
       }
     } finally {
       if (mounted.current) setPending(current => current?.requestId === requestId ? undefined : current);
@@ -206,7 +208,8 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
 }
 
 export function SystemPermissionsSection(): JSX.Element | null {
+  const settingsControls = useSettingsControls();
   const { t } = useI18n();
-  if (window.wuu?.platform !== "darwin" || !window.wuu.getSystemPermissions) return null;
+  if (!settingsControls.capabilities.systemPermissions) return null;
   return <SettingsSection title={t("settings.appContext.permissions")} testID="settings-system-permissions"><SystemPermissionsPanel /></SettingsSection>;
 }

@@ -1,3 +1,5 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -23,7 +25,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 async function mount() {
-  await act(async () => root.render(<I18nProvider><AppearanceTypography section="text" /></I18nProvider>));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<I18nProvider><AppearanceTypography section="text" /></I18nProvider>}</SettingsControlsProvider>));
 }
 async function click(element: Element) {
   await act(async () => element.dispatchEvent(new MouseEvent("click", { bubbles: true })));

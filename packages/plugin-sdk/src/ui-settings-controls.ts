@@ -7,6 +7,17 @@ import type { ApplicationSettingsCatalogProviderSummaryV1 as CatalogProviderSumm
 import type { ApplicationSettingsEngineListResultV1 as EngineListResult } from "./application-settings.js";
 import type { ApplicationSettingsProviderModelSummaryV1 as ProviderModelSummary } from "./application-settings.js";
 export interface SettingsControlsCapabilitiesV1 {
+  readonly systemPermissions: boolean;
+  readonly permissionGuide: boolean;
+  readonly permissionGuideUpdate: boolean;
+  readonly permissionGuideClose: boolean;
+  readonly themeChanges: boolean;
+  readonly activityPreview: boolean;
+  readonly activityPreviewChanges: boolean;
+  readonly appContext: boolean;
+  readonly appContextChanges: boolean;
+  readonly appContextRecording: boolean;
+
   readonly chatGPTLogin: boolean;
   readonly engineLogin: boolean;
   readonly browser: boolean;
@@ -63,6 +74,46 @@ export interface SettingsControlsDiagnosticV1 {
 }
 /** Public settings mechanisms. Operation results are caller-owned; snapshots are immutable. */
 export interface ApplicationSettingsControlsV1 {
+  currentAppliedTheme(): "light" | "dark";
+  observeAppliedTheme(listener: (theme: "light" | "dark") => void): () => void;
+  observeContentThemeSelection(listener: () => void): () => void;
+  availableExtensionThemes(inventory: readonly import("./application-settings.js").ApplicationSettingsExtensionInventoryRecordV1[] | undefined): { key: string; legacyKeys: string[]; name: string; base: "light" | "dark" }[];
+  selectedExtensionThemeKey(mode: "light" | "dark"): string;
+  selectExtensionTheme(mode: "light" | "dark", key: string): void;
+
+  readonly initialMessageFlowFontSize: number;
+  readonly initialThemePreference: "system" | "light" | "dark";
+  readonly appearanceDefaults: Readonly<SettingsAppearanceV1>;
+  readAppearance(): SettingsAppearanceV1;
+  saveAppearance(preferences: SettingsAppearanceV1): void;
+  observeAppearance(listener: () => void): () => void;
+  listLocalFonts(): Promise<{ names: string[]; monospace: string[] }>;
+  applyMessageFlowFontSize(size: number): void;
+  applyThemePreference(preference: "system" | "light" | "dark"): void;
+
+  getSystemPermissions: () => Promise<SystemPermissionsState>;
+  requestSystemPermission: (permission: SystemPermission, presentation?: SystemPermissionPresentation) => Promise<void>;
+  updateSystemPermissionGuide: (presentation: SystemPermissionPresentation) => void;
+  onSystemPermissionGuideChanged: (handler: (state: SystemPermissionGuideState) => void) => () => void;
+  closeSystemPermissionGuide: (requestId?: string) => Promise<void>;
+  getMessageFlowFontSize: () => Promise<MessageFlowFontSize>;
+  setMessageFlowFontSize: (
+    fontSize: MessageFlowFontSize,
+  ) => Promise<{ ok: boolean; fontSize: MessageFlowFontSize }>;
+  getThemePreference: () => Promise<ThemePreference>;
+  setThemePreference: (
+    theme: ThemePreference,
+  ) => Promise<{ ok: boolean; theme: ThemePreference }>;
+  onThemePreferenceChange: (
+    handler: (theme: ThemePreference) => void,
+  ) => () => void;
+  getActivityPreviewAutoShow: () => Promise<boolean>;
+  setActivityPreviewAutoShow: (enabled: boolean) => Promise<void>;
+  onActivityPreviewAutoShowChange: (handler: (enabled: boolean) => void) => () => void;
+  getAppContextState: () => Promise<AppContextState>;
+  updateAppContextSettings: (settings: AppContextSettings) => Promise<AppContextState>;
+  setAppContextShortcutRecording: (recording: boolean) => Promise<AppContextState>;
+  onAppContextChanged: (handler: () => void) => () => void;
   listChatGPTAccounts: () => Promise<{ accounts: ChatGPTAccount[] }>;
   signOutChatGPTAccount: (accountId: string) => Promise<{ ok: boolean; revocation_confirmed: boolean; providers: ProviderSummary[] }>;
   startChatGPTLogin: (accountId?: string, enablePlanUsage?: boolean) => Promise<AuthChatGPTLoginResult>;
@@ -354,4 +405,72 @@ type AuthChatGPTLoginResult = {
 type EngineAuthResult = {
   methods: { id: string; name: string; description?: string; type?: string }[];
   authenticated: boolean;
+};
+
+type MessageFlowFontSize = number;
+type ThemePreference = "system" | "light" | "dark";
+
+export interface SettingsAppearanceV1 {
+  messageStyle: "bubble" | "im";
+  codeSize: number;
+  uiFont: string;
+  contentFont: string;
+  codeFont: string;
+  fontSmoothing: "grayscale" | "system";
+  motion: "system" | "reduce";
+}
+
+type SystemPermission = "screen" | "accessibility";
+
+/** Source row in renderer viewport coordinates, before Electron zoom. */
+type SystemPermissionPresentation = {
+  requestId: string;
+  sourceRect: { x: number; y: number; width: number; height: number } | null;
+  reducedMotion: boolean;
+  /** Actual source appearance; onboarding can differ from the saved preference. */
+  theme: "light" | "dark";
+};
+
+type SystemPermissionGuideState = {
+  requestId: string;
+  phase: "lifting" | "guiding" | "returning" | "closed";
+  granted: boolean;
+};
+
+/** Current macOS grants, checked without requesting additional access. */
+type SystemPermissionsState = {
+  available: boolean;
+  screen: boolean;
+  accessibility: boolean;
+};
+
+/** Explicit, read-only local app snapshots. These never grant Computer Use. */
+type AppContextSettings = {
+  enabled: boolean;
+  shortcut: string;
+  include_text: boolean;
+};
+
+type AppContextSnapshot = {
+  id: string;
+  captured_at: string;
+  app_name: string;
+  bundle_id: string;
+  window_title: string;
+  window_id: number;
+  width: number;
+  height: number;
+  image_base64: string;
+  available_text: string;
+  text_status: "included" | "truncated" | "not_requested" | "permission_missing" | "unavailable";
+};
+
+type AppContextState = {
+  available: boolean;
+  settings: AppContextSettings;
+  shortcut_registered: boolean;
+  phase: "idle" | "capturing" | "ready" | "error";
+  app_name?: string;
+  error?: string;
+  snapshot?: AppContextSnapshot;
 };
