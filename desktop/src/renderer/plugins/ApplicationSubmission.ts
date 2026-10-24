@@ -454,26 +454,46 @@ export class ApplicationSubmission {
   }
   private report(error: unknown): void { this.options.updateState(state => ({ ...state, status: rawErrorMessage(error, t("composer.sendFailed")) })); }
 
-  private async submitInternal(message: QueuedComposerMessage, thread: Thread, kind: "send" | "steer", prepareThread?: () => Promise<Thread>): Promise<boolean> {
-    if (this.disposed || thread.read_only || !threadForTab(this.options.getState(), thread.id)) return false;
-    const source = this.options.getState().sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id)
-      ?? createThreadSessionTab(thread, resolveThreadRuntimeContext(thread, this.options.getState().projects));
-    if (source.kind === "skills") return false;
-    const operation = this.createOperation(message, source, thread);
+  private async runInternal(operation: Operation, kind: "send" | "steer" | "background", prepareThread?: () => Promise<Thread>): Promise<boolean> {
+    const { message, thread } = operation;
     message.images.forEach(value => this.options.resources.remember("image", value));
     message.files.forEach(value => this.options.resources.remember("file", value));
     const release = this.options.resources.retain([...message.images, ...message.files].map(value => value.id));
+    const key = thread?.id ?? operation.source.id;
+    const admission = this.admissions.get(key);
     try {
-      const sent = await (kind === "steer" ? this.steer(operation) : this.send(operation, prepareThread));
+      const sent = await (kind === "steer" ? this.steer(operation)
+        : kind === "background" && (admission || this.lanes.has(key) || thread && isThreadRunning(thread) && !activeTurnIsAnswerReady(thread))
+          ? this.queue(operation, admission) : this.send(operation, prepareThread));
       this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error);
       return sent;
     } finally { release(); this.finishOperation(operation); }
+  }
+  private submitInternal(message: QueuedComposerMessage, thread: Thread, kind: "send" | "steer" | "background", prepareThread?: () => Promise<Thread>, context?: RuntimeContext): Promise<boolean> {
+    if (this.disposed || thread.read_only || !threadForTab(this.options.getState(), thread.id)) return Promise.resolve(false);
+    const source = this.options.getState().sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id)
+      ?? createThreadSessionTab(thread, context ?? resolveThreadRuntimeContext(thread, this.options.getState().projects));
+    if (source.kind === "skills") return Promise.resolve(false);
+    const operation = this.createOperation(message, source, thread);
+    if (context) operation.context = context;
+    return this.runInternal(operation, kind, prepareThread);
   }
   submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {
     return this.submitInternal(message, thread, "send", prepareThread);
   }
   steerToThread(message: QueuedComposerMessage, thread: Thread): Promise<boolean> {
     return this.submitInternal(message, thread, "steer");
+  }
+  submitBackground(message: QueuedComposerMessage, thread: Thread, context: RuntimeContext): Promise<boolean> {
+    return this.submitInternal(message, thread, "background", undefined, context);
+  }
+  submitIndependent(ownerTabId: string, message: QueuedComposerMessage): Promise<boolean> {
+    const state = this.options.getState();
+    const source = state.sessionTabs.find(tab => tab.id === ownerTabId);
+    if (this.disposed || this.options.isNavigationPending() || !state.initialized || !source || source.kind === "skills") return Promise.resolve(false);
+    const thread = source.kind === "thread" ? threadForTab(state, source.threadID) : undefined;
+    if (source.kind === "thread" && !thread || thread?.read_only || !thread && this.options.getRuntime(ownerTabId).pending) return Promise.resolve(false);
+    return this.runInternal(this.createOperation(message, source, thread), "background");
   }
   dispose(): void {
     this.disposed = true;

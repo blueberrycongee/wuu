@@ -117,4 +117,22 @@ describe("application submission ownership",()=>{
     expect(f.pending.pendingComposerMessagesByThread.created.queued[0].deliveryUnconfirmed).toBe(true);
     expect(f.getDraft("thread:created").prompt).toBe("");expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
   });
+  it("submits an independent inline edit without consuming the main draft",async()=>{
+    window.wuu={startThread:vi.fn().mockResolvedValue({thread:thread()}),startTurn:vi.fn().mockResolvedValue({turn:{id:"edit",status:"completed",items_view:"full",items:[]}})} as unknown as WuuDesktopApi;
+    const f=fixture();
+    expect(await f.submission.submitIndependent("draft:a",{id:"inline",text:"edit selection",images:[],files:[]})).toBe(true);
+    expect(f.getDraft("thread:created").prompt).toBe("hello");
+    expect(vi.mocked(window.wuu.startTurn).mock.calls[0][1]).toBe("edit selection");
+  });
+  it("queues background Context Chat behind an admitted turn without touching drafts",async()=>{
+    const starting=deferred<{turn:Thread["turns"][number]}>();
+    window.wuu={startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn().mockResolvedValue({queued:{id:"background"}})} as unknown as WuuDesktopApi;
+    const f=fixture(thread());const first=f.submission.submitToThread({id:"first",text:"first",images:[],files:[]},thread());
+    const second=f.submission.submitBackground({id:"background",text:"context",images:[],files:[]},thread(),context);
+    await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalled());expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+    starting.resolve({turn:{id:"first",status:"in_progress",items_view:"full",items:[]}});
+    expect(await first).toBe(true);expect(await second).toBe(true);expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
+    expect(f.getDraft("thread:created").prompt).toBe("hello");
+  });
+
 });
