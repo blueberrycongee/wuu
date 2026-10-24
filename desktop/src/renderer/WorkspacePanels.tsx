@@ -263,8 +263,16 @@ function WorkspacePanelContent({
   const browserNavigation = preview.browserNavigation;
   const onSelectTab = (tabId: string) => { void application.invoke("preview.focus-tab", { tabId }).catch(showErrorToast); };
   const onCloseTab = (tabId: string) => { void application.invoke("preview.close-tab", { tabId }).catch(showErrorToast); };
-  const onOpenTool = (toolId: WorkspacePanelView) => { void application.invoke("preview.open-tool", { toolId }).catch(showErrorToast); };
-  const onShowTools = () => { void application.invoke("preview.new-tab", {}).catch(showErrorToast); };
+  const onOpenTool = (toolId: WorkspacePanelView) => {
+    void application.invoke("preview.open-tool", { toolId })
+      .then(() => application.invoke("navigation.reveal-region", { region: "auxiliary" }))
+      .catch(showErrorToast);
+  };
+  const onShowTools = () => {
+    void application.invoke("preview.new-tab", {})
+      .then(() => application.invoke("navigation.reveal-region", { region: "auxiliary" }))
+      .catch(showErrorToast);
+  };
   const onReorderTabs = (tabId: string, overTabId: string) => { void application.invoke("preview.reorder-tab", { tabId, overTabId }).catch(showErrorToast); };
   const onOpenFile = useCallback((path: string, context = workspaceContext) => {
     if (context) void application.invoke("preview.open-file", { context, path }).catch(showErrorToast);
@@ -709,6 +717,28 @@ function WorkspacePanelContent({
   });
 
   return (
+    <>
+    {!covered ? (
+      <nav className="workspace-tool-rail" aria-label={t("workspace.tools")}
+        data-wuu-component="workspace-tool-rail">
+        <Tooltip content={t("workspace.newPage")}>
+          <button className="icon-button" type="button" aria-label={t("workspace.newPage")}
+            aria-pressed={open && !conversationActive && showingPicker} onClick={onShowTools}>
+            <Plus />
+          </button>
+        </Tooltip>
+        {(["browser", "terminal", "files"] as const).map((tool) => (
+          <Tooltip key={tool} content={t(workspaceToolFor(tool).titleKey)}>
+            <button className="icon-button" type="button" data-wuu-tool={tool}
+              aria-label={t(workspaceToolFor(tool).titleKey)}
+              aria-pressed={open && !conversationActive && (activeTab?.kind === tool || (tool === "files" && activeTab?.kind === "file"))}
+              onClick={() => onOpenTool(tool)}>
+              <WorkspaceToolIcon view={tool} />
+            </button>
+          </Tooltip>
+        ))}
+      </nav>
+    ) : null}
     <aside
       className={`workspace-right-panel${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
       data-wuu-component="workspace-panel"
@@ -1096,6 +1126,7 @@ function WorkspacePanelContent({
         </>
       ) : null}
     </aside>
+    </>
   );
 }
 

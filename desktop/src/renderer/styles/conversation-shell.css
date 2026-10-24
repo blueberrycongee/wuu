@@ -207,7 +207,7 @@
     var(--environment-panel-reserved-width)
   );
   --conversation-visible-inset-left: 0px;
-  --conversation-visible-inset-right: 0px;
+  --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
   --dock-composer-height: 0px;
   grid-column: 2;
   grid-row: 1;
@@ -291,7 +291,7 @@
 }
 
 .conversation-pane.environment-panel-reserved {
-  --conversation-visible-inset-right: var(--environment-panel-content-inset);
+  --conversation-visible-inset-right: calc(var(--environment-panel-content-inset) + var(--workspace-tool-rail-inset, 0px));
 }
 
 /* Both headers share the same row height and continuous baseline. */

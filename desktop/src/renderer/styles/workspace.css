@@ -62,6 +62,63 @@
   --workspace-tab-active-bg: var(--selection-surface);
 }
 
+/* The preview provider owns the rail. Reserve its footprint only while that
+ * provider renders it, including when the tools themselves are collapsed. */
+.app-shell:has(.workspace-tool-rail) {
+  --workspace-tool-rail-width: calc(var(--control-size-toolbar) + var(--space-1) + 2px);
+  --workspace-tool-rail-reserve: calc(var(--workspace-tool-rail-width) + var(--space-2) * 2 + var(--scrollbar-width));
+}
+
+.workspace-tool-rail {
+  position: absolute;
+  top: calc(var(--workbench-top, 0px) + var(--canvas-titlebar-height) + var(--space-2));
+  right: calc(var(--conversation-pane-inset) + var(--scrollbar-width) + var(--space-2));
+  z-index: 131;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  width: var(--workspace-tool-rail-width);
+  max-height: calc(100% - var(--workbench-top, 0px) - var(--canvas-titlebar-height) - var(--space-2) * 2 - var(--conversation-pane-inset));
+  overflow-y: auto;
+  padding: var(--space-1) calc(var(--space-1) / 2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--workspace-canvas-bg);
+  -webkit-app-region: no-drag;
+}
+
+.workspace-tool-rail .icon-button {
+  flex-shrink: 0;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  place-items: center;
+}
+
+.workspace-tool-rail .icon-button[aria-pressed="true"] {
+  color: var(--ink);
+  background: var(--selection-surface);
+}
+
+.app-shell:has(.workspace-tool-rail):not(.right-panel-open) .conversation-pane,
+.app-shell:has(.workspace-tool-rail).workspace-conversation-active .conversation-pane {
+  --workspace-tool-rail-inset: var(--workspace-tool-rail-reserve);
+}
+
+/* Keep the viewport and its scrollbar at the canvas edge. Only the message
+ * content and floating controls yield space to the rail. */
+.conversation-pane .scroll-region-content {
+  padding-right: var(--workspace-tool-rail-inset, 0px);
+}
+
+.conversation-pane > .environment-side-stack {
+  margin-right: var(--workspace-tool-rail-inset, 0px);
+}
+
+.app-shell:has(.workspace-tool-rail) .workspace-panel-body {
+  margin-right: var(--workspace-tool-rail-reserve);
+}
+
 .workspace-right-panel {
   grid-column: 3;
   grid-row: 1 / 3;

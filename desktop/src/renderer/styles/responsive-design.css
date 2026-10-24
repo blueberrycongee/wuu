@@ -14,9 +14,9 @@
   padding-right: var(--environment-panel-content-inset);
 }
 
-.conversation-pane.environment-panel-reserved .dock-composer-wrap {
+.conversation-pane .dock-composer-wrap {
   padding-right: calc(
-    var(--environment-panel-content-inset) + var(--scrollbar-width)
+    var(--conversation-visible-inset-right) + var(--scrollbar-width)
   );
 }
 
