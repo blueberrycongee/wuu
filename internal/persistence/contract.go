@@ -170,12 +170,11 @@ func transactionDigest(tx Transaction) (string, error) {
 			return "", fmt.Errorf("%w: write requires a JSON value or an explicit deletion", ErrInvalid)
 		}
 	}
-	raw, err := json.Marshal(tx)
-	if err != nil {
+	digest := sha256.New()
+	if err := WriteTransactionJSON(digest, tx); err != nil {
 		return "", err
 	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func validateSnapshot(s Snapshot) error {

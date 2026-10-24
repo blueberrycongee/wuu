@@ -506,16 +506,9 @@ func (a *StateAuthority) readRecord() (*authorityRecord, error) {
 	return &record, nil
 }
 func (a *StateAuthority) writeRecord(record *authorityRecord) error {
-	payload, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	hash := sha256.Sum256(payload)
-	raw, err := json.Marshal(authorityEnvelope{Payload: payload, Digest: hex.EncodeToString(hash[:])})
-	if err != nil {
-		return err
-	}
-	if err := securefs.WriteFileAtomic(filepath.Join(a.dir, "head.json"), raw); err != nil {
+	if err := securefs.WriteFileAtomicFunc(filepath.Join(a.dir, "head.json"), func(w io.Writer) error {
+		return writeAuthorityEnvelope(w, record)
+	}); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(a.dir, "initialized")); errors.Is(err, os.ErrNotExist) {
