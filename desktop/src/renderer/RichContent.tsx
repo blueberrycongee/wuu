@@ -1,4 +1,5 @@
 import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
+import { useOptionalPreviewContent } from "./PreviewContentContext";
 import { hostSupports } from "./HostCapabilities";
 import { Children, createContext, useContext, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Github, Globe2, Mail } from "./WuuIcons";
@@ -151,7 +152,13 @@ function mermaidRenderKey(typography: ReturnType<typeof diagramTypography>, code
 
 const IMAGE_FILE_PATTERN = /\.(apng|avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i;
 
-export const RichContent = memo(function RichContent({
+export const RichContent = memo(function RichContent(props: RichContentProps): JSX.Element {
+  const preview = useOptionalPreviewContent();
+  if (preview) return <div className="rich-content"><MarkdownContent {...props} text={props.text ?? ""} /></div>;
+  return <LegacyRichContent {...props} />;
+});
+
+function LegacyRichContent({
   text = "",
   cwd,
   onOpenFile,
@@ -185,7 +192,7 @@ export const RichContent = memo(function RichContent({
       fallback={fallback}
     />
   );
-});
+}
 
 function MarkdownContentView({
   text,
@@ -629,6 +636,7 @@ function RichFileLink({
   onOpenFile: (path: string) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const preview = useOptionalPreviewContent();
   const reference = formatWorkspaceFileTarget(target);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const path = target.path;
@@ -667,10 +675,12 @@ function RichFileLink({
             { label: t("workspace.files.copyPath"), onSelect: () => copyToClipboard(absolutePath) },
             { label: t("workspace.files.copyRelativePath"), onSelect: () => copyToClipboard(path) },
             { label: t("workspace.files.copyFileName"), onSelect: () => copyToClipboard(fileName) },
-            ...(hostSupports("revealWorkspaceItem")
+            ...((preview ? preview.service.capabilities.revealItem : hostSupports("revealWorkspaceItem"))
               ? [{ separator: true } as const, {
                   label: t("workspace.files.revealInFileManager"),
-                  onSelect: () => window.wuu.revealWorkspaceItem(absolutePath),
+                  onSelect: () => preview
+                    ? preview.service.revealItem({ root: cwd ?? "", path: absolutePath })
+                    : window.wuu.revealWorkspaceItem(absolutePath),
                 }]
               : []),
           ]}
