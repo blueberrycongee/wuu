@@ -66,7 +66,7 @@ export class ApplicationPreview {
       }
       case "preview.open-tool": {
         const { toolId, activate = true } = input as ApplicationPreviewActionMapV1["preview.open-tool"]["input"];
-        this.update(openViewTab(this.state, workspaceToolViewTab(toolId), { activate, replaceActiveNewTab: true }), activate ? false : this.conversationSelected); break;
+        this.update(openViewTab(this.state, workspaceToolViewTab(toolId), { activate, replaceActiveNewTab: activate }), activate ? false : this.conversationSelected); break;
       }
       case "preview.open-plugin": {
         const value = input as ApplicationPreviewActionMapV1["preview.open-plugin"]["input"];

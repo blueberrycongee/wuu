@@ -42,6 +42,37 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachments[0].id })).rejects.toThrow("Unknown composer attachment");
   });
 
+  it("addresses each split pane attachment owner independently of the selected tab", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = (id: string) => ({ id, cwd: context.cwd, preview: "", status: "idle", model_provider: "", turns: [] }) as never;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: thread("a"), secondaryThread: thread("b"), activePane: "secondary", activeSessionTabID: "thread:b", sessionTabs: ["a", "b"].map(id => ({
+      id: `thread:${id}`, kind: "thread", threadID: id, context, title: id, prompt: "", images: [], files: [],
+    })) });
+    expect(controller.getSnapshot().drafts.primary.ownerTabId).toBe("thread:a");
+    expect(controller.getSnapshot().drafts.secondary.ownerTabId).toBe("thread:b");
+    await controller.invoke("composer.set-draft", { ownerTabId: controller.getSnapshot().drafts.primary.ownerTabId, text: "primary" });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("primary");
+    expect(controller.getSnapshot().drafts.secondary.text).toBe("");
+  });
+
+  it("finishes admitted attachment reads after the owning draft removes the resource", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "", images: [], files: [] },
+    ] });
+    let finish!: (bytes: ArrayBuffer) => void;
+    const file = new File(["a"], "note.txt", { type: "text/plain" });
+    Object.defineProperty(file, "arrayBuffer", { value: () => new Promise<ArrayBuffer>(resolve => { finish = resolve; }) });
+    const { attachments } = await controller.invoke("composer.attach", { files: [file] });
+    const attachmentId = attachments[0].id;
+    const reading = controller.invoke("composer.resolve-attachment", { attachmentId });
+    await controller.invoke("composer.checkpoint", { activeTabId: "draft:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
+    finish(new Uint8Array([65]).buffer);
+    await expect(reading).resolves.toMatchObject({ id: attachmentId, status: "ready", data: "QQ==" });
+    await expect(controller.invoke("composer.resolve-attachment", { attachmentId })).rejects.toThrow("Unknown composer attachment");
+    expect(controller.getSnapshot().drafts.attachments).toEqual([]);
+  });
+
   it("imports only ready attachment values and rejects conflicting resource identities", async () => {
     const controller = new ApplicationController();
     const attachment = { id: "ready", kind: "file" as const, name: "note.txt", mediaType: "text/plain", status: "ready" as const, data: "QQ==" };

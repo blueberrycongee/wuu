@@ -28,6 +28,8 @@ export interface ApplicationResponseSelectionV1 {
 }
 
 export interface ApplicationComposerDraftV1 {
+  /** Present in snapshots when this pane has a writable draft owner. */
+  readonly ownerTabId?: string;
   readonly text: string;
   readonly imageIds: readonly string[];
   readonly fileIds: readonly string[];

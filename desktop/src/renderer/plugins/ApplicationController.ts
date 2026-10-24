@@ -238,7 +238,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     const thread = pane === "primary" ? state.thread : state.secondaryThread;
     const tab = state.secondaryThread && thread
       ? state.sessionTabs.find(item => item.id === threadSessionTabID(thread.id)) : pane === "primary" ? activeSessionTab(state) : undefined;
-    const draft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
+    const draft = { ...(tab ? cloneSessionTabDraft(tab) : emptyComposerDraft()), ownerTabId: tab?.kind !== "skills" ? tab?.id : undefined };
     if (tab?.id === state.activeSessionTabID) draft.prompt = this.draft;
     return draft;
   }
@@ -795,7 +795,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),
         runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: this.submitting ? "Submitting" : undefined }),
       drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
-        primary: this.draftResources.project(primaryDraft), secondary: this.draftResources.project(secondaryDraft),
+        primary: Object.freeze({ ...this.draftResources.project(primaryDraft), ownerTabId: primaryDraft.ownerTabId }), secondary: Object.freeze({ ...this.draftResources.project(secondaryDraft), ownerTabId: secondaryDraft.ownerTabId }),
         attachments: Object.freeze([...attachmentIds].map(id => this.draftResources.describe(id))) }),
       settings: Object.freeze({ ...this.applicationSettings.getSnapshot(), contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),

@@ -73,7 +73,10 @@ export class ApplicationDraftResources {
   }
 
   describe(id: string): ApplicationAttachmentV1 {
-    const { kind, value } = this.require(id);
+    return this.describeResource(id, this.require(id));
+  }
+
+  private describeResource(id: string, { kind, value }: Resource): ApplicationAttachmentV1 {
     const preparation = value.preparation;
     const ready = preparation?.result ?? value;
     const error = preparation?.error;
@@ -86,7 +89,8 @@ export class ApplicationDraftResources {
   }
 
   async resolve(id: string, retry = false): Promise<ApplicationAttachmentV1> {
-    const { value } = this.require(id);
+    const resource = this.require(id);
+    const { value } = resource;
     const preparation = value.preparation;
     if (retry && preparation?.error) {
       if (preparation.retry) await preparation.retry();
@@ -95,7 +99,8 @@ export class ApplicationDraftResources {
     }
     const pending = preparation?.promise ?? value.encodePromise;
     if (pending) await pending;
-    return this.describe(id);
+    // An admitted read retains its bytes even after the draft releases its lookup.
+    return this.describeResource(id, resource);
   }
 
   read(input: ApplicationComposerDraftV1): ComposerDraftState {

@@ -18,6 +18,14 @@ describe("application preview ownership", () => {
     expect(preview.getSnapshot().activeTabId).toBe("terminal");
   });
 
+  it("keeps the active picker when prewarming an inactive tool", () => {
+    const preview = new ApplicationPreview({ getThreads: () => [], changed: vi.fn() });
+    const { tabId } = preview.invoke("preview.new-tab", {});
+    preview.invoke("preview.open-tool", { toolId: "terminal", activate: false });
+    expect(preview.getSnapshot().activeTabId).toBe(tabId);
+    expect(preview.getSnapshot().tabs.map(tab => tab.id)).toEqual([tabId, "terminal"]);
+  });
+
   it("copies nested diff data and rejects artifacts absent from owned history", () => {
     const preview = new ApplicationPreview({ getThreads: () => [], changed: vi.fn() });
     const selection = { path: "a.md", additions: 1, deletions: 0, newFile: false,
