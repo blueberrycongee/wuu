@@ -15,15 +15,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	_ "modernc.org/sqlite"
 )
 
 // Row retains SQLite storage types; BlobColumns distinguishes a blob from text
-// with identical base64 content in the portable JSON archive.
+// with identical base64 content in the portable JSON archive. TextBytes retains
+// invalid UTF-8 TEXT bytes that JSON would otherwise replace; Values still holds
+// the original SQLite string for typed converters.
 type Row struct {
-	Values      map[string]any `json:"values"`
-	BlobColumns []string       `json:"blob_columns,omitempty"`
+	Values      map[string]any    `json:"values"`
+	BlobColumns []string          `json:"blob_columns,omitempty"`
+	TextBytes   map[string][]byte `json:"text_bytes,omitempty"`
 }
 type Table struct {
 	Name   string `json:"name"`
@@ -149,9 +153,17 @@ func read(ctx context.Context, path string, visit func(*Table, Row)) (Snapshot, 
 			row := Row{Values: make(map[string]any, len(columns))}
 			for j, column := range columns {
 				value := values[j]
-				if blob, ok := value.([]byte); ok {
-					value = append([]byte(nil), blob...)
+				switch stored := value.(type) {
+				case []byte:
+					value = append([]byte(nil), stored...)
 					row.BlobColumns = append(row.BlobColumns, column)
+				case string:
+					if !utf8.ValidString(stored) {
+						if row.TextBytes == nil {
+							row.TextBytes = make(map[string][]byte)
+						}
+						row.TextBytes[column] = []byte(stored)
+					}
 				}
 				row.Values[column] = value
 			}

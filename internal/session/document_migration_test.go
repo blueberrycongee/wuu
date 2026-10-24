@@ -3,6 +3,8 @@ package session
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +15,99 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/session/legacysqlite"
 )
+
+func TestLegacyMigrationPreservesInvalidTextAndRejectsLossyMarker(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			legacy := t.TempDir()
+			original, err := Create(legacy, "original")
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := string([]byte{'a', 0xff, 0xfe, 'z'})
+			if err := AppendHistoryRecord(legacy, original.ID, HistoryRecord{Role: "user", Content: content}); err != nil {
+				t.Fatal(err)
+			}
+			snapshot, _, err := legacysqlite.Read(ctx, DBPath(legacy))
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Reproduce the pre-fix marker using its exact two-field row shape.
+			type oldRow struct {
+				Values      map[string]any `json:"values"`
+				BlobColumns []string       `json:"blob_columns,omitempty"`
+			}
+			type oldTable struct {
+				Name   string   `json:"name"`
+				Schema string   `json:"schema"`
+				Rows   []oldRow `json:"rows"`
+			}
+			var old struct {
+				Tables []oldTable `json:"tables"`
+			}
+			for _, table := range snapshot.Tables {
+				archived := oldTable{Name: table.Name, Schema: table.Schema}
+				for _, row := range table.Rows {
+					archived.Rows = append(archived.Rows, oldRow{Values: row.Values, BlobColumns: row.BlobColumns})
+				}
+				old.Tables = append(old.Tables, archived)
+			}
+			raw, err := json.Marshal(old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(raw)
+			lossy, err := persistence.Open(ctx, t.TempDir(), kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lossy.Close()
+			if err := persistence.Update(ctx, lossy, func(tx *persistence.Tx) error {
+				return tx.Put(documentNamespace("legacy_sqlite_migrations"), dbFileName, LegacyMigrationResult{Fingerprint: hex.EncodeToString(digest[:])})
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := lossy.Export(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result, err := MigrateLegacySQLite(ctx, legacy, lossy); !errors.Is(err, persistence.ErrMigrationRequired) || result.AlreadyMigrated {
+				t.Errorf("lossy marker was accepted: %+v, %v", result, err)
+			}
+			after, err := lossy.Export(ctx)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatalf("verification patched the lossy destination: %v", err)
+			}
+			provider, err := persistence.Open(ctx, t.TempDir(), kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer provider.Close()
+			if _, err := MigrateLegacySQLite(ctx, legacy, provider); err != nil {
+				t.Fatal(err)
+			}
+			view, err := provider.Read(ctx, persistence.Query{Namespace: documentNamespace("legacy_sqlite_rows"), Prefix: documentPrefix("session_messages")})
+			if err != nil || len(view.Documents) != 1 {
+				t.Fatalf("history archive: documents=%d, err=%v", len(view.Documents), err)
+			}
+			var row struct {
+				TextBytes map[string][]byte `json:"text_bytes"`
+			}
+			if err := json.Unmarshal(view.Documents[0].Value, &row); err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(row.TextBytes["content"], []byte(content)) {
+				t.Errorf("archive lost invalid text bytes: got %x, want %x", row.TextBytes["content"], content)
+			}
+			if result, err := MigrateLegacySQLite(ctx, legacy, provider); err != nil || !result.AlreadyMigrated {
+				t.Fatalf("byte-preserving marker rejected: %+v, %v", result, err)
+			}
+		})
+	}
+}
 
 func TestLegacyMigrationCompletedMarkerSkipsConversion(t *testing.T) {
 	for _, kind := range []string{"sqlite", "jsonl"} {
