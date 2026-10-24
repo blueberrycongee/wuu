@@ -39,3 +39,18 @@ test('independent refusal policy rejects mutations and preserves caller history'
   provider.shutdown();
   assert.throws(() => invoke('describe'), error => error.code === 'service_unavailable');
 });
+
+const titleEntry = process.env.WUU_PARITY_TITLE_ENTRY;
+test('independent title policy completes directly and owns output resolution', {skip: !titleEntry}, async () => {
+  const {createTitleProvider, independentTitle} = await import(pathToFileURL(titleEntry));
+  const provider = createTitleProvider();
+  const invoke = (method, params) => provider.invokeService({service:'session.title',method,params,caller:'acceptance'});
+  provider.initialize();
+  assert.throws(() => invoke('plan',{}), error => error.code === 'service_unavailable');
+  provider.activate();
+  assert.deepEqual(invoke('plan',{model:'synthetic',human_messages:['question'],persist:true}),{action:'complete',title:independentTitle});
+  assert.deepEqual(invoke('resolve',{text:'  unchanged  '}),{title:'independent-resolved:  unchanged  '});
+  assert.throws(() => invoke('unknown',{}), error => error.code === 'method_not_found');
+  provider.shutdown();
+  assert.throws(() => invoke('plan',{}), error => error.code === 'service_unavailable');
+});

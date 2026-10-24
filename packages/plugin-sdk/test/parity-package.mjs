@@ -32,18 +32,18 @@ try {
     await symlink(join(sdk, 'node_modules', dependency), destination);
   }
   await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
-  for (const name of ['tools', 'sessions', 'journal', 'turn-state', 'prompt', 'compaction']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
+  for (const name of ['tools', 'sessions', 'journal', 'turn-state', 'prompt', 'compaction', 'title']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
   for (const name of ['shell', 'navigation']) await cp(join(repo, `examples/plugins/independent-providers/${name}.tsx`), join(project, `${name}.tsx`));
-  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'prompt.ts', 'compaction.ts', 'shell.tsx', 'navigation.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
+  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'prompt.ts', 'compaction.ts', 'title.ts', 'shell.tsx', 'navigation.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
   const checked = await exec(process.execPath, ['--test', join(authorSDK, 'test/parity-tools.test.mjs'), join(authorSDK, 'test/parity-sessions.test.mjs'), join(authorSDK, 'test/parity-policies.test.mjs')], {
-    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js'), WUU_PARITY_PROMPT_ENTRY: join(project, 'prompt.js'), WUU_PARITY_COMPACTION_ENTRY: join(project, 'compaction.js')},
+    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js'), WUU_PARITY_PROMPT_ENTRY: join(project, 'prompt.js'), WUU_PARITY_COMPACTION_ENTRY: join(project, 'compaction.js'), WUU_PARITY_TITLE_ENTRY: join(project, 'title.js')},
   });
   await writeFile(join(output, 'public-sdk-check.log'), checked.stdout);
   const tarball = await readFile(join(temporary, packed));
   await cp(join(temporary, packed), join(output, 'sdk.tgz'));
-  await writeFile(join(output, 'public-sdk-check.json'), JSON.stringify({passed: true, sdkRoot: sdk, packageSHA256: createHash('sha256').update(tarball).digest('hex'), package: manifest.name, version: manifest.version, sourceFiles: ['tools.ts', 'sessions.ts', 'journal.ts', 'turn-state.ts', 'prompt.ts', 'compaction.ts', 'shell.tsx', 'navigation.tsx']}, null, 2));
+  await writeFile(join(output, 'public-sdk-check.json'), JSON.stringify({passed: true, sdkRoot: sdk, packageSHA256: createHash('sha256').update(tarball).digest('hex'), package: manifest.name, version: manifest.version, sourceFiles: ['tools.ts', 'sessions.ts', 'journal.ts', 'turn-state.ts', 'prompt.ts', 'compaction.ts', 'title.ts', 'shell.tsx', 'navigation.tsx']}, null, 2));
   console.log(checked.stdout);
-  console.log('PASS: independent session metadata and tool providers compiled against packed public SDK; no dependency installation.');
+  console.log('PASS: independent providers compiled against packed public SDK and passed behavior fixtures; no dependency installation.');
 } catch (error) {
   console.error(error.stdout ?? '', error.stderr ?? '');
   throw error;
