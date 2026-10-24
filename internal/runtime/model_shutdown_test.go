@@ -81,9 +81,11 @@ func (c *shutdownModelCaller) InvokeService(ctx context.Context, params pluginho
 
 type shutdownModelDocuments struct {
 	*persistence.Service
-	barrierURL    string
-	failTerminal  bool
-	beforeAttempt chan struct{}
+	barrierURL            string
+	failTerminal          bool
+	beforeAttempt         chan struct{}
+	failSubmission        string
+	submissionFailureOnce sync.Once
 }
 
 func (p *shutdownModelDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
@@ -91,6 +93,35 @@ func (p *shutdownModelDocuments) InvokeService(ctx context.Context, params plugi
 		var tx persistence.Transaction
 		if err := json.Unmarshal(params.Params, &tx); err != nil {
 			return nil, err
+		}
+		if p.failSubmission != "" {
+			for _, write := range tx.Writes {
+				if write.Namespace != "wuu.inference_submissions.v1" {
+					continue
+				}
+				var receipt providers.InferenceSubmissionJournalRecord
+				if err := json.Unmarshal(write.Value, &receipt); err != nil {
+					return nil, err
+				}
+				if receipt.Outcome == providers.InferenceSubmissionInFlight {
+					continue
+				}
+				// Reject every terminal retry, so duplicate observations cannot
+				// repair a lost batch merely by winning the ticker race.
+				var barrierErr error
+				p.submissionFailureOnce.Do(func() {
+					response, err := http.Get(p.barrierURL)
+					if err != nil {
+						barrierErr = err
+						return
+					}
+					response.Body.Close()
+				})
+				if barrierErr != nil {
+					return nil, barrierErr
+				}
+				return nil, &pluginhost.HostServiceError{Code: p.failSubmission, Message: "injected model submission persistence failure"}
+			}
 		}
 		for _, write := range tx.Writes {
 			terminal := false
@@ -146,6 +177,53 @@ func (p *shutdownModelDocuments) Close(ctx context.Context) error {
 	return err
 }
 
+type shutdownModelPreIntentDocuments struct {
+	pluginhost.ServiceInvoker
+	barrierURL  string
+	barrierOnce sync.Once
+}
+
+func (p *shutdownModelPreIntentDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if params.Method == "commit" {
+		var tx persistence.Transaction
+		if err := json.Unmarshal(params.Params, &tx); err != nil {
+			return nil, err
+		}
+		for _, write := range tx.Writes {
+			if write.Namespace != "wuu.inference_submissions.v1" {
+				continue
+			}
+			var receipt providers.InferenceSubmissionJournalRecord
+			if err := json.Unmarshal(write.Value, &receipt); err != nil {
+				return nil, err
+			}
+			if receipt.Outcome == providers.InferenceSubmissionInFlight {
+				continue
+			}
+			var barrierErr error
+			p.barrierOnce.Do(func() {
+				response, err := http.Get(p.barrierURL)
+				if err != nil {
+					barrierErr = err
+					return
+				}
+				response.Body.Close()
+			})
+			if barrierErr != nil {
+				return nil, barrierErr
+			}
+			// Registry admission and callback ownership are real. Cancel before
+			// the selected authority can persist an intent for this transaction.
+			canceled, cancel := context.WithCancel(ctx)
+			cancel()
+			result, err := p.ServiceInvoker.InvokeService(canceled, params)
+			fmt.Fprintf(os.Stderr, "pre-intent submission cancellation: %v\n", err)
+			return result, err
+		}
+	}
+	return p.ServiceInvoker.InvokeService(ctx, params)
+}
+
 // EOF must run cancellation and terminal persistence before the owning process
 // exits. A live HTTP connection disappearing is not evidence of that drain.
 // Terminal persistence failures must reach root cleanup, while an ordinary
@@ -158,6 +236,8 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 	for _, scenario := range []struct {
 		name, method                                                         string
 		failTerminal, rejectModel, terminalTimeout, failClose, beforeAttempt bool
+		failSubmission                                                       string
+		cancelBeforeIntent                                                   bool
 	}{
 		{name: "request", method: "request"},
 		{name: "call", method: "call"},
@@ -167,6 +247,9 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 		{name: "call-terminal-failure", method: "call", failTerminal: true},
 		{name: "start-terminal-failure", method: "start", failTerminal: true},
 		{name: "retired-start-terminal-failure", method: "retired-start", failTerminal: true},
+		{name: "retired-start-submission-canceled", method: "retired-start", failSubmission: "request_cancelled"},
+		{name: "retired-start-submission-failure", method: "retired-start", failSubmission: "state_io_error"},
+		{name: "retired-start-pre-intent-canceled", method: "retired-start", cancelBeforeIntent: true},
 		{name: "start-model-rejection", method: "start", rejectModel: true},
 		{name: "start-terminal-timeout", method: "start", terminalTimeout: true},
 		{name: "start-authority-release-failure", method: "start", failClose: true},
@@ -177,9 +260,9 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			root := t.TempDir()
-			started, terminal, rejected := make(chan struct{}, 1), make(chan struct{}, 1), make(chan struct{}, 1)
+			started, terminal, rejected := make(chan struct{}, 1), make(chan struct{}), make(chan struct{}, 1)
 			release := make(chan struct{})
-			var once sync.Once
+			var once, terminalOnce sync.Once
 			unblock := func() { once.Do(func() { close(release) }) }
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/prepared" {
@@ -191,7 +274,7 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 					return
 				}
 				if r.URL.Path == "/terminal" {
-					terminal <- struct{}{}
+					terminalOnce.Do(func() { close(terminal) })
 					<-release
 					return
 				}
@@ -209,6 +292,8 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			child := exec.Command(os.Args[0], "-test.run=^TestModelShutdownPersistsBeforeProcessExit$")
 			child.Env = append(os.Environ(), "WUU_MODEL_SHUTDOWN_HELPER="+root, "WUU_MODEL_SHUTDOWN_URL="+server.URL, "WUU_MODEL_SHUTDOWN_METHOD="+scenario.method, fmt.Sprintf("WUU_MODEL_SHUTDOWN_FAIL_TERMINAL=%t", scenario.failTerminal), fmt.Sprintf("WUU_MODEL_SHUTDOWN_REJECT=%t", scenario.rejectModel), fmt.Sprintf("WUU_MODEL_SHUTDOWN_FAIL_CLOSE=%t", scenario.failClose))
 			child.Env = append(child.Env, fmt.Sprintf("WUU_MODEL_SHUTDOWN_BEFORE_ATTEMPT=%t", scenario.beforeAttempt))
+			child.Env = append(child.Env, "WUU_MODEL_SHUTDOWN_FAIL_SUBMISSION="+scenario.failSubmission)
+			child.Env = append(child.Env, fmt.Sprintf("WUU_MODEL_SHUTDOWN_CANCEL_BEFORE_INTENT=%t", scenario.cancelBeforeIntent))
 			stdin, err := child.StdinPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -254,6 +339,9 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			}
 			select {
 			case err := <-exited:
+				if scenario.failSubmission != "" || scenario.cancelBeforeIntent {
+					t.Logf("submission persistence child result: %v\n%s", err, output.String())
+				}
 				if scenario.terminalTimeout || scenario.failClose {
 					want := "drain model invocations: context deadline exceeded"
 					if scenario.failClose {
@@ -262,8 +350,14 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 					if err == nil || !strings.Contains(output.String(), "root cleanup:") || !strings.Contains(output.String(), want) {
 						t.Errorf("root cleanup lost completion failure: %v\n%s", err, output.String())
 					}
-				} else if scenario.failTerminal {
-					if err == nil || !strings.Contains(output.String(), "root cleanup:") || !strings.Contains(output.String(), "injected model terminal persistence failure") {
+				} else if scenario.failTerminal || scenario.failSubmission != "" || scenario.cancelBeforeIntent {
+					want := "injected model terminal persistence failure"
+					if scenario.failSubmission != "" {
+						want = "injected model submission persistence failure"
+					} else if scenario.cancelBeforeIntent {
+						want = "context canceled"
+					}
+					if err == nil || !strings.Contains(output.String(), "root cleanup:") || !strings.Contains(output.String(), want) {
 						t.Errorf("root cleanup lost terminal persistence failure: %v\n%s", err, output.String())
 					}
 				} else if err != nil {
@@ -283,7 +377,26 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 					}
 				}
 			}
-			if scenario.failTerminal || scenario.terminalTimeout {
+			if scenario.failSubmission != "" || scenario.cancelBeforeIntent {
+				submissions := 0
+				for _, document := range snapshot.Documents {
+					if document.Namespace != "wuu.inference_submissions.v1" {
+						continue
+					}
+					var receipt providers.InferenceSubmissionJournalRecord
+					if err := json.Unmarshal(document.Value, &receipt); err != nil {
+						t.Fatal(err)
+					}
+					if receipt.Outcome != providers.InferenceSubmissionInFlight || !receipt.CompletedAt.IsZero() || receipt.FailureCategory != "" || receipt.ReportedUsage != nil {
+						t.Errorf("rejected submission commit invented a receipt: %+v", receipt)
+					}
+					submissions++
+				}
+				if submissions != 1 {
+					t.Errorf("rejected terminal commit left %d submissions, want the admitted receipt", submissions)
+				}
+			}
+			if scenario.failTerminal || scenario.terminalTimeout || scenario.failSubmission != "" || scenario.cancelBeforeIntent {
 				for _, document := range snapshot.Documents {
 					if document.Namespace == "wuu.inference_operations.v1" {
 						var record struct{ Status string }
@@ -347,6 +460,7 @@ func modelShutdownProcess(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	provider := &shutdownModelDocuments{Service: persistence.NewService("test.shutdown-documents", filepath.Join(root, "documents"), "jsonl"), barrierURL: os.Getenv("WUU_MODEL_SHUTDOWN_URL") + "/terminal", failTerminal: os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_TERMINAL") == "true"}
+	provider.failSubmission = os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_SUBMISSION")
 	if os.Getenv("WUU_MODEL_SHUTDOWN_BEFORE_ATTEMPT") == "true" {
 		provider.beforeAttempt = make(chan struct{})
 	}
@@ -377,6 +491,15 @@ func modelShutdownProcess(t *testing.T, root string) {
 		NativeProviderFactory{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }})
 	if err != nil {
 		t.Fatal(err)
+	}
+	var preIntentAuthority *StateAuthority
+	if os.Getenv("WUU_MODEL_SHUTDOWN_CANCEL_BEFORE_INTENT") == "true" {
+		if err := host.ServiceRegistry().WrapServiceInvoker(persistence.ServiceName, 1, func(invoker pluginhost.ServiceInvoker) pluginhost.ServiceInvoker {
+			preIntentAuthority = invoker.(*authorityInvoker).authority
+			return &shutdownModelPreIntentDocuments{ServiceInvoker: invoker, barrierURL: provider.barrierURL}
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	generation := &PluginGeneration{id: "shutdown-model-generation", host: host, state: kernel.state}
 	generation.retain()
@@ -424,7 +547,17 @@ func modelShutdownProcess(t *testing.T, root string) {
 	if _, err := owner.Cleanup(); err != nil {
 		t.Fatalf("root cleanup: %v", err)
 	}
-	if os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_TERMINAL") == "true" {
+	if preIntentAuthority != nil {
+		record, err := preIntentAuthority.readRecord()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.Pending != nil {
+			t.Fatal("pre-intent cancellation left a recoverable pending transaction")
+		}
+		fmt.Fprintln(os.Stdout, "pre-intent cancellation left no pending intent")
+	}
+	if os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_TERMINAL") == "true" || provider.failSubmission != "" || preIntentAuthority != nil {
 		fmt.Fprintln(os.Stdout, "root cleanup returned without terminal persistence error")
 		return
 	}
