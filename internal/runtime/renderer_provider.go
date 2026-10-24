@@ -14,6 +14,8 @@ import (
 const defaultShellModule = "wuu.default-shell"
 const defaultSettingsModule = "wuu.default-settings"
 const defaultNavigationModule = "wuu.default-navigation"
+const defaultConversationModule = "wuu.default-conversation"
+const defaultPreviewModule = "wuu.default-preview"
 
 // ApplicationShellBinding identifies the renderer contribution selected by the
 // same service registry as native and process implementations. Nil disables it.
@@ -43,7 +45,13 @@ func nativeRendererModules() []RendererModule {
 			Entry:       "wuu-builtin:default-settings", Services: []pluginhost.ServiceDescriptor{{Name: "ui.settings", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.settings.describe.input.v1", OutputSchema: "ui.settings.describe.output.v1"}}}}},
 		{ID: defaultNavigationModule, SubjectID: defaultNavigationModule,
 			Fingerprint: "ui-navigation-v1:" + version.Info().Version + ":" + version.Info().Commit,
-			Entry:       "wuu-builtin:default-navigation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.navigation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.navigation.describe.input.v1", OutputSchema: "ui.navigation.describe.output.v1"}}}}}}
+			Entry:       "wuu-builtin:default-navigation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.navigation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.navigation.describe.input.v1", OutputSchema: "ui.navigation.describe.output.v1"}}}}},
+		{ID: defaultConversationModule, SubjectID: defaultConversationModule,
+			Fingerprint: "ui-conversation-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-conversation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.conversation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.conversation.describe.input.v1", OutputSchema: "ui.conversation.describe.output.v1"}}}}},
+		{ID: defaultPreviewModule, SubjectID: defaultPreviewModule,
+			Fingerprint: "ui-preview-v1:" + version.Info().Version + ":" + version.Info().Commit,
+			Entry:       "wuu-builtin:default-preview", Services: []pluginhost.ServiceDescriptor{{Name: "ui.preview", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.preview.describe.input.v1", OutputSchema: "ui.preview.describe.output.v1"}}}}}}
 }
 
 // rendererServiceClient adds a renderer transport to a package's graph node.

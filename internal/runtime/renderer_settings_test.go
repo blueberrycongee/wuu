@@ -18,6 +18,14 @@ func TestNavigationRendererSelectedIndependently(t *testing.T) {
 	testRendererSelection(t, "wuu.default-navigation", "ui.navigation")
 }
 
+func TestConversationRendererSelectedIndependently(t *testing.T) {
+	testRendererSelection(t, "wuu.default-conversation", "ui.conversation")
+}
+
+func TestPreviewRendererSelectedIndependently(t *testing.T) {
+	testRendererSelection(t, "wuu.default-preview", "ui.preview")
+}
+
 func testRendererSelection(t *testing.T, moduleID, serviceName string) {
 	t.Helper()
 	for _, replacement := range []bool{false, true} {

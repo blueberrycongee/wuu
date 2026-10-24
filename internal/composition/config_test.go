@@ -196,3 +196,31 @@ func TestDesktopSettingsCanBeRemovedWithoutShellRemoval(t *testing.T) {
 		t.Fatal("settings replacement changed shell selection")
 	}
 }
+
+func TestDesktopContentRenderersCanBeReplacedIndependently(t *testing.T) {
+	for _, surface := range []string{"conversation", "preview"} {
+		t.Run(surface, func(t *testing.T) {
+			module := "wuu.default-" + surface
+			desktop, err := DefaultConfig("desktop").Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			headless, err := DefaultConfig("headless").Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !desktop.Includes(module) || headless.Includes(module) {
+				t.Fatal("incorrect product renderer selection")
+			}
+			cfg := DefaultConfig("desktop")
+			cfg.Patches = []Patch{{Modules: map[string]bool{module: false, "example.surface": true}, Services: []Binding{{Service: "ui." + surface, Major: 1, Provider: "example.surface"}}}}
+			resolved, err := cfg.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resolved.Includes(module) || !resolved.Includes("wuu.default-shell") || !resolved.Includes("example.surface") {
+				t.Fatal("surface replacement changed shell selection")
+			}
+		})
+	}
+}
