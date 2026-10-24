@@ -393,11 +393,13 @@ export function useDesktopPluginRuntime(
   inventory: readonly ExtensionInventoryRecord[] | undefined,
   safeMode = false,
   connectionGeneration = 0,
-): void {
+): boolean {
+  const [settled, setSettled] = React.useState<{ inventory: typeof inventory; safeMode: boolean; connectionGeneration: number }>();
   useEffect(() => window.wuu?.onServerEvent?.((event) => {
     desktopPluginHost.publishHostEvent(event);
   }), []);
   useEffect(() => {
+    let current = true;
     syncExtensionTheme(safeMode ? [] : inventory);
     syncShellSkins(inventory, safeMode);
     const syncThemeFromOtherWindow = (): void => syncExtensionTheme(safeMode ? [] : inventory);
@@ -406,9 +408,13 @@ export function useDesktopPluginRuntime(
       for (const failure of failures) {
         console.error(`Desktop plugin ${failure.pluginId} failed to activate`, failure.error);
       }
-    }).catch((error: unknown) => console.error("Desktop plugin synchronization failed", error));
-    return () => window.removeEventListener("storage", syncThemeFromOtherWindow);
+    }).catch((error: unknown) => console.error("Desktop plugin synchronization failed", error))
+      .finally(() => { if (current) setSettled({ inventory, safeMode, connectionGeneration }); });
+    return () => { current = false; window.removeEventListener("storage", syncThemeFromOtherWindow); };
   }, [inventory, safeMode, connectionGeneration]);
+  // The first render with a new inventory precedes the effect that loads it.
+  // An older synchronization must not turn that pending generation into an error.
+  return inventory !== undefined && (settled?.inventory !== inventory || settled.safeMode !== safeMode || settled.connectionGeneration !== connectionGeneration);
 }
 
 function isAvailablePlugin(plugin: ExtensionInventoryRecord): boolean {
