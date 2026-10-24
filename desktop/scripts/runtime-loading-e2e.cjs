@@ -30,6 +30,13 @@ app.whenReady().then(async () => {
     });
     fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   };
+  const awaitModuleLoad = async () => {
+    const deadline = Date.now() + 15000;
+    while (await evaluate(() => window.wuu.testModuleRequests()) === 0) {
+      assert.ok(Date.now() < deadline, "UI module load must start");
+      await evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+    }
+  };
   try {
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
     await until(() => document.querySelector('[role="status"]'));
@@ -53,10 +60,34 @@ app.whenReady().then(async () => {
     await evaluate(() => document.querySelector('[role="alert"] button').click());
     await reloaded;
     await until(() => document.querySelector('[role="status"]'));
+    await evaluate(() => {
+      window.startupErrors = [];
+      new MutationObserver(() => {
+        const alert = document.querySelector('[role="alert"]');
+        if (alert) window.startupErrors.push(alert.textContent);
+      }).observe(document, { childList: true, subtree: true, attributes: true });
+    });
     await evaluate(() => window.wuu.testStartup("ready"));
+    await awaitModuleLoad();
+    assert.equal(await evaluate(() => Boolean(document.querySelector('[role="status"]'))), true, "Backend readiness must keep loading while the UI module is pending");
+    assert.deepEqual(await evaluate(() => window.startupErrors), [], "Pending UI activation must not flash an error");
+    await capture("ui-module-pending");
+    await evaluate(() => window.wuu.testUIStartup("ready"));
     await until(() => document.querySelector(".conversation-pane"));
     assert.equal(await evaluate(() => Boolean(document.querySelector(".application-recovery"))), false);
-    fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, scope: "Startup wait, long wait, failure and user retry to ready; light/dark, wide/narrow, large UI font and reduced motion" }, null, 2));
+    await capture("ready-with-empty-folders");
+    assert.deepEqual(await evaluate(() => window.startupErrors), [], "Successful startup with an empty organization must not produce errors");
+    const nextDocument = new Promise(resolve => win.webContents.once("did-finish-load", resolve));
+    win.reload();
+    await nextDocument;
+    await until(() => document.querySelector('[role="status"]'));
+    await evaluate(() => window.wuu.testStartup("ready"));
+    await awaitModuleLoad();
+    await evaluate(() => window.wuu.testUIStartup("Synthetic UI activation failure"));
+    await until(() => document.querySelector('[role="alert"] button'));
+    assert.equal(await evaluate(() => Boolean(document.querySelector(".conversation-pane"))), false, "A genuine UI activation failure must remain actionable");
+    await capture("ui-module-failed");
+    fs.writeFileSync(path.join(output, "result.json"), JSON.stringify({ passed: true, scope: "Startup wait, long wait, failure and retry; delayed UI activation without error flash; real UI activation failure; null folder organization; light/dark, wide/narrow, large UI font and reduced motion" }, null, 2));
     app.exit(0);
   } catch (error) {
     console.error(error);

@@ -19,6 +19,7 @@ function activationKey(activation: object): number {
 }
 
 const SurfaceBindings = React.createContext<Readonly<Record<string, ApplicationShellBinding>>>({});
+const SurfacesPending = React.createContext(false);
 
 const SlotAncestors = React.createContext<readonly string[]>([]);
 
@@ -32,6 +33,7 @@ function compositionFor(host: PluginHost): UICompositionV1 {
     // A contribution cannot recreate a slot after its defining provider unloads.
     const slot = host.getUISlot(name);
     const bindings = React.useContext(SurfaceBindings);
+    const pending = React.useContext(SurfacesPending);
     if (!slot) return null;
     let contributions = host.getUIContributions(name);
     if (slot.service) {
@@ -39,7 +41,8 @@ function compositionFor(host: PluginHost): UICompositionV1 {
       // The graph selects a surface independently of the layout that renders it.
       contributions = binding ? registered.filter(item => item.pluginId === binding.pluginId
         && item.generation === binding.generation && item.id === binding.id) : [];
-      if (contributions.length !== 1) return <div role="alert">Selected UI surface is unavailable: {slot.service}</div>;
+      if (contributions.length !== 1) return binding && pending ? <RuntimeLoading status="opening" />
+        : <div role="alert">Selected UI surface is unavailable: {slot.service}</div>;
     }
     const content = contributions.length === 0 ? fallback : contributions.map(contribution => {
         return <ShellBoundary key={activationKey(contribution)}
@@ -88,15 +91,17 @@ function SelectedShell({ host, shell }: { host: PluginHost; shell: RegisteredApp
 }
 
 /** The selected graph binding is authoritative; absence never chooses a local default. */
-export function ApplicationShellOutlet({ host, binding, surfaceBindings = {} }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>> }): React.ReactNode {
+export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pending = false }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>>; pending?: boolean }): React.ReactNode {
   const shells = React.useSyncExternalStore(listener => host.subscribe(listener), host.getApplicationShells, host.getApplicationShells);
   const selected = binding && shells.find(shell => shell.pluginId === binding.pluginId
     && shell.generation === binding.generation && shell.id === binding.id);
   if (!selected) return <RuntimeLoading fullscreen onRetry={() => window.location.reload()}
-    status={binding ? `Selected application shell is unavailable: ${binding.pluginId}/${binding.id}@${binding.generation}` : "No application shell is selected."} />;
+    status={binding && pending ? "connecting" : binding ? `Selected application shell is unavailable: ${binding.pluginId}/${binding.id}@${binding.generation}` : "No application shell is selected."} />;
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>
-    <SurfaceBindings.Provider value={surfaceBindings}><SelectedShell host={host} shell={selected} /></SurfaceBindings.Provider>
+    <SurfacesPending.Provider value={pending}>
+      <SurfaceBindings.Provider value={surfaceBindings}><SelectedShell host={host} shell={selected} /></SurfaceBindings.Provider>
+    </SurfacesPending.Provider>
   </ShellBoundary>;
 }
