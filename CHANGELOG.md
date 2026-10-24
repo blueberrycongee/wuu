@@ -139,6 +139,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Distinguish the built-in interface modules and automation scheduler in the extension catalog.
+
 - Restore built-in composer, menu, text and border colors while keeping public semantic color defaults available to independent UI shells. Explicit plugin theme colors still override the corresponding surfaces; partial themes preserve unspecified component defaults.
 
 - Return to the conversation and exit full-panel mode when the last workspace tab closes. Closing a file no longer creates a replacement Files tab, and restoring a previous file keeps its selected tab and editor content aligned.

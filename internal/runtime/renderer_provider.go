@@ -28,6 +28,7 @@ type ApplicationShellBinding struct {
 
 type RendererModule struct {
 	ID, SubjectID, Fingerprint, Entry string
+	Name, Description                 string
 	Services                          []pluginhost.ServiceDescriptor
 }
 
@@ -39,21 +40,27 @@ func applicationShellDescriptor() pluginhost.ServiceDescriptor {
 
 func nativeRendererModules() []RendererModule {
 	return []RendererModule{{ID: defaultShellModule, SubjectID: defaultShellModule,
+		Name: "Wuu App Layout", Description: "Application frame and layout for selected interface modules.",
 		Fingerprint: "ui-shell-v1:" + version.Info().Version + ":" + version.Info().Commit,
 		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}},
 		{ID: defaultSettingsModule, SubjectID: defaultSettingsModule,
+			Name: "Wuu Settings", Description: "Application settings and extension management.",
 			Fingerprint: "ui-settings-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-settings", Services: []pluginhost.ServiceDescriptor{{Name: "ui.settings", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.settings.describe.input.v1", OutputSchema: "ui.settings.describe.output.v1"}}}}},
 		{ID: defaultNavigationModule, SubjectID: defaultNavigationModule,
+			Name: "Wuu Navigation", Description: "Workspace and conversation navigation.",
 			Fingerprint: "ui-navigation-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-navigation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.navigation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.navigation.describe.input.v1", OutputSchema: "ui.navigation.describe.output.v1"}}}}},
 		{ID: defaultConversationModule, SubjectID: defaultConversationModule,
+			Name: "Wuu Conversations", Description: "Conversation messages and activity.",
 			Fingerprint: "ui-conversation-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-conversation", Services: []pluginhost.ServiceDescriptor{{Name: "ui.conversation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.conversation.describe.input.v1", OutputSchema: "ui.conversation.describe.output.v1"}}}}},
 		{ID: defaultComposerModule, SubjectID: defaultComposerModule,
+			Name: "Wuu Message Composer", Description: "Message drafts, attachments, and submission controls.",
 			Fingerprint: "ui-composer-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-composer", Services: []pluginhost.ServiceDescriptor{{Name: "ui.composer", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.composer.describe.input.v1", OutputSchema: "ui.composer.describe.output.v1"}}}}},
 		{ID: defaultPreviewModule, SubjectID: defaultPreviewModule,
+			Name: "Wuu File Preview", Description: "Workspace files, documents, and previews.",
 			Fingerprint: "ui-preview-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-preview", Services: []pluginhost.ServiceDescriptor{{Name: "ui.preview", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.preview.describe.input.v1", OutputSchema: "ui.preview.describe.output.v1"}}}}}}
 }

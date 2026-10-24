@@ -40,7 +40,7 @@
   },
   "interface": {
     "displayName": "Automation",
-    "shortDescription": "Schedule prompts and recurring Agent work.",
+    "shortDescription": "Manage scheduled tasks and automation tools.",
     "developerName": "Wuu",
     "category": "Productivity",
     "capabilities": [

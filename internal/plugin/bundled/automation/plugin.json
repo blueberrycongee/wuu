@@ -18,8 +18,8 @@
     "timeout": 30
   },
   "interface": {
-    "displayName": "Automation",
-    "shortDescription": "Schedule prompts and recurring Agent work.",
+    "displayName": "Automation Scheduler",
+    "shortDescription": "Execute scheduled prompts and recurring Agent work.",
     "developerName": "Wuu",
     "category": "Productivity",
     "capabilities": [
