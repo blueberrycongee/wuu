@@ -100,6 +100,7 @@ export interface ApplicationActionMapV1 extends ApplicationNavigationActionMapV1
   "conversation.close-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
   "thread.activate-child": { input: { readonly threadId: string }; result: void };
   "thread.activate": { input: { readonly threadId: string; readonly workspaceId?: string }; result: void };
+  "draft.start-with-content": { input: { readonly text: string; readonly sourceTabId: string; readonly navigationRevision: number }; result: { readonly activated: boolean; readonly tabId?: string } };
   "draft.start": { input: Record<string, never>; result: { readonly tabId: string } };
   "tab.pop-out": { input: { readonly tabId: string }; result: void };
   "navigation.reveal-complete": { input: { readonly requestId: number }; result: void };

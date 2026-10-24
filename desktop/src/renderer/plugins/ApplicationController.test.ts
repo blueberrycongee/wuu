@@ -111,6 +111,27 @@ describe("shared application state", () => {
     } finally { stop(); streamTextStore.clearItem(target.turnId, target.itemId); vi.useRealTimers(); }
   });
 
+  it("starts catalog content atomically and never overwrites a superseding draft", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, nativeSection: "catalog", activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "original", images: [], files: [] },
+    ] });
+    controller.setSettings(true);
+    const starting = controller.invoke("draft.start-with-content", { text: "skill prompt", sourceTabId: "draft:a", navigationRevision: 0 });
+    await controller.invoke("navigation.cancel", {});
+    expect(await starting).toEqual({ activated: false });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("original");
+    const navigationRevision = controller.getSnapshot().tabs.navigationRevision;
+    const accepted = await controller.invoke("draft.start-with-content", { text: "skill prompt", sourceTabId: "draft:a", navigationRevision });
+    expect(accepted).toEqual({ activated: true, tabId: "draft:a" });
+    expect(controller.getSnapshot().drafts.primary).toMatchObject({ text: "skill prompt", imageIds: [], fileIds: [], selections: [] });
+    expect(controller.getSnapshot().settings.open).toBe(false);
+    expect(controller.getSnapshot().navigation.section).toBe("conversations");
+    expect(controller.getSnapshot().navigationWorkspace.composerFocusRequest?.tabId).toBe("draft:a");
+    expect(await controller.invoke("draft.start-with-content", { text: "stale", sourceTabId: "draft:a", navigationRevision: 0 })).toEqual({ activated: false });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("skill prompt");
+  });
+
   it("admits files into their source draft before returning and releases closed draft resources", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [

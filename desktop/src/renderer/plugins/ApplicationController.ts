@@ -619,9 +619,29 @@ export class ApplicationController implements ApplicationServiceV1 {
         const { threads } = this.navigationActions(signal);
         await (workspaceId ? threads.selectWorkspaceThread(workspaceId, threadId) : threads.activateThread(threadId)); return;
       }
-      case "draft.start": {
-        await this.navigationActions(signal).tabs.startNewThread();
-        return { tabId: this.state.activeSessionTabID };
+      case "draft.start":
+      case "draft.start-with-content": {
+        const content = action === "draft.start-with-content" ? input as ApplicationActionMapV1["draft.start-with-content"]["input"] : undefined;
+        if (content && (content.sourceTabId !== this.state.activeSessionTabID || content.navigationRevision !== this.navigationRequest)) return { activated: false };
+        const context = this.state.activeContext;
+        if (!context) throw new Error("No workspace is available for a draft");
+        const selecting = this.navigationActions(signal).tabs.startNewThread();
+        const request = this.navigationRequest;
+        await selecting;
+        signal?.throwIfAborted();
+        const tab = activeSessionTab(this.state);
+        if (request !== this.navigationRequest || !sameRuntimeContext(context, this.state.activeContext)
+          || context.cwd !== this.state.activeContext?.cwd || tab?.kind !== "draft") {
+          if (content) return { activated: false };
+          throw new Error("Draft navigation was superseded");
+        }
+        if (content) { this.draft = content.text; this.draftRevision++; }
+        this.updateState(state => ({ ...state, nativeSection: "conversations",
+          sessionTabs: content ? state.sessionTabs.map(item => item.id === tab.id ? { ...item, ...emptyComposerDraft(), prompt: content.text } : item) : state.sessionTabs }));
+        this.setSettings(false);
+        await this.applicationNavigation.invoke("navigation.show-native", {}, signal);
+        if (content) await this.applicationNavigation.invoke("navigation.focus-composer", { tabId: tab.id }, signal);
+        return content ? { activated: true, tabId: tab.id } : { tabId: tab.id };
       }
       case "tab.pop-out": {
         const { tabId } = input as ApplicationActionMapV1["tab.pop-out"]["input"];
