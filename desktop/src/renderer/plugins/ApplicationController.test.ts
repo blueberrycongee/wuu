@@ -16,6 +16,22 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("writes file comments into the canonical composer without consuming its attachments", () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    window.wuu = {} as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context,
+      activeSessionTabID: "draft:file", sessionTabs: [{ id: "draft:file", kind: "draft", context, title: "", createdAt: 1, prompt: "Unsent", images: [],
+        files: [{ id: "attachment", filename: "keep.txt", media_type: "text/plain", data: "QQ==" }] }] });
+    const target = { ownerTabId: "draft:file" };
+    const source = { workspace: "/fixture", path: "source.ts", start_line: 1, start_column: 1, end_line: 1, end_column: 4, quote: "text", revision: "revision" };
+    expect(controller.fileSelection.comment({ target, source, comment: "Explain" })).toBe(true);
+    const comment = controller.fileSelection.getSnapshot(target).comments[0];
+    expect(controller.getSnapshot().drafts.primary.text).toContain("Unsent");
+    expect(controller.getSnapshot().drafts.primary.fileIds).toEqual(["attachment"]);
+    expect(controller.fileSelection.removeComment({ target, id: comment.id })).toBe(true);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("Unsent");
+  });
+
   it("reconciles released project membership into the shared thread and sidebar", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     const thread = { id: "member", cwd: context.cwd, preview: "Member", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "",

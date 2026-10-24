@@ -1,4 +1,4 @@
-import { scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
+import { scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
 import * as React from 'react';
 import type {
   ApplicationServiceV1, ApplicationShellDefinition, ApplicationShellRenderProps, Disposable,
@@ -59,6 +59,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
       };
       const scoped: ApplicationServiceV1 = {
         contractVersion: 1,
+        fileSelection: scopeApplicationFileSelection(() => application.fileSelection, controller.signal, assertActive),
         projects: scopeApplicationProjects(() => application.projects, controller.signal, assertActive),
         terminals: scopeApplicationTerminals(() => application.terminals, controller.signal, assertActive),
         catalog: scopeApplicationCatalog(() => application.catalog, controller.signal, assertActive),

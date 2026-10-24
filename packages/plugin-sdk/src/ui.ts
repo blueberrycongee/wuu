@@ -1,3 +1,5 @@
+import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "./ui-side-conversation.js";
+import type { ApplicationFileSelectionServiceV1, FileSelectionCallOptionsV1 } from "./ui-file-selection.js";
 import type { ApplicationProjectsV1, ApplicationProjectCallOptionsV1 } from "./ui-projects.js";
 import type { ApplicationTerminalsV1 } from "./ui-terminals.js";
 export { scopeApplicationTerminals } from "./ui-terminals.js";
@@ -60,6 +62,7 @@ export interface ApplicationSnapshotV1 {
     readonly error?: string;
   };
   readonly composer: ComposerSnapshotV1;
+  readonly sideConversation: ApplicationSideConversationViewV1;
   readonly search: ApplicationSearchViewV1;
   readonly conversationActions: ApplicationConversationActionsViewV1;
   readonly submission: ApplicationSubmissionSnapshotV1;
@@ -101,7 +104,7 @@ export interface ApplicationAppearanceV1 {
 }
 
 /** Commands are scoped to the generation that captured this application handle. */
-export interface ApplicationActionMapV1 extends ApplicationSearchActionMapV1, ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
+export interface ApplicationActionMapV1 extends ApplicationSideConversationActionMapV1, ApplicationSearchActionMapV1, ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
   "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };
@@ -149,6 +152,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly fileSelection: ApplicationFileSelectionServiceV1;
   readonly projects: ApplicationProjectsV1;
   readonly terminals: ApplicationTerminalsV1;
   readonly catalog: ApplicationCatalogV1;
@@ -443,5 +447,30 @@ export function scopeApplicationProjects(source: () => ApplicationProjectsV1,
     refresh: (projectId, options) => invoke(signal => source().refresh(projectId, { signal }), options),
     control: (input, options) => invoke(signal => source().control(input, { signal }), options),
     releaseSession: (input, options) => invoke(signal => source().releaseSession(input, { signal }), options),
+  });
+}
+
+/** File references mutate the shared composer under the captured UI generation. */
+export function scopeApplicationFileSelection(source: () => ApplicationFileSelectionServiceV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationFileSelectionServiceV1 {
+  const read = <T>(operation: () => T): T => { assertActive(); signal.throwIfAborted(); return operation(); };
+  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: FileSelectionCallOptionsV1) =>
+    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
+  return Object.freeze<ApplicationFileSelectionServiceV1>({
+    getSnapshot: target => read(() => source().getSnapshot(target)),
+    subscribe: listener => read(() => {
+      const stop = source().subscribe(() => { if (!signal.aborted) listener(); });
+      let stopped = false;
+      const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
+      signal.addEventListener("abort", dispose, { once: true });
+      if (signal.aborted) dispose();
+      return dispose;
+    }),
+    quote: input => read(() => source().quote(input)), comment: input => read(() => source().comment(input)),
+    removeComment: input => read(() => source().removeComment(input)),
+    edit: (input, options) => invoke(signal => source().edit(input, { signal }), options),
+    openPdf: (input, options) => invoke(signal => source().openPdf(input, { signal }), options),
+    openFile: (input, options) => invoke(signal => source().openFile(input, { signal }), options),
+    askSide: (input, options) => invoke(signal => source().askSide(input, { signal }), options),
   });
 }

@@ -1,3 +1,6 @@
+import type { ApplicationSideConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
+import { ApplicationSideConversation, isApplicationSideConversationAction } from "./ApplicationSideConversation";
+import { ApplicationFileSelection } from "./ApplicationFileSelection";
 import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
 import type { ApplicationSearchActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-search";
@@ -196,31 +199,59 @@ export class ApplicationController implements ApplicationServiceV1 {
       getState: () => this.state, updateState: this.updateState, changed: () => { this.rememberDraftResources(); this.publish(); },
       isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       pending: this.pendingComposer, resources: this.draftResources, sidebarCache: this.sidebarCache,
-      getDraft: ownerTabId => {
-        const tab = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
-        const draft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
-        if (ownerTabId === this.state.activeSessionTabID) draft.prompt = this.draft;
-        return draft;
-      },
-      setDraft: (ownerTabId, draft) => {
-        if (ownerTabId === this.state.activeSessionTabID) this.draft = draft.prompt;
-        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
-      },
+      getDraft: this.getComposerDraft, setDraft: this.setComposerDraft,
       consumeOffer: async requestId => {
         const request = this.applicationConversationActions.getSnapshot().questions.find(question => question.request_id === requestId);
         if (!request || request.mode !== "offer") throw new Error("Conversation offer is unavailable");
         await this.applicationConversationActions.invoke("question.cancel", { requestId });
       },
-      getRuntime: ownerTabId => {
-        const owner = this.applicationComposerRuntime.getSnapshot().owners.find(owner => owner.ownerTabId === ownerTabId);
-        if (!owner) return { pending: true, params: {} };
-        const selection = owner.selection;
-        return { pending: !owner.available || owner.engineSelectionPending,
-          params: { engine: selection.engine, provider: selection.provider, model: selection.model,
-            effort: selection.engine === "wuu" ? selection.variant || selection.effort : selection.effort,
-            speed: selection.speed, model_options: { ...selection.modelOptions }, permission_mode: selection.permissionMode,
-            approve_for_me: selection.approveForMe }, worktree: owner.worktree.enabled ? { startBranch: owner.worktree.startBranch } : undefined };
-      },
+      getRuntime: ownerTabId => this.getSubmissionRuntime(ownerTabId),
+    });
+  }
+  private getSubmissionRuntime(ownerTabId: string) {
+    const owner = this.applicationComposerRuntime.getSnapshot().owners.find(owner => owner.ownerTabId === ownerTabId);
+    if (!owner) return { pending: true, params: {} };
+    const selection = owner.selection;
+    return { pending: !owner.available || owner.engineSelectionPending,
+      params: { engine: selection.engine, provider: selection.provider, model: selection.model,
+        effort: selection.engine === "wuu" ? selection.variant || selection.effort : selection.effort,
+        speed: selection.speed, model_options: { ...selection.modelOptions }, permission_mode: selection.permissionMode,
+        approve_for_me: selection.approveForMe }, worktree: owner.worktree.enabled ? { startBranch: owner.worktree.startBranch } : undefined };
+  }
+  private getComposerDraft = (ownerTabId: string): ComposerDraftState => {
+    const tab = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
+    const draft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
+    if (ownerTabId === this.state.activeSessionTabID) draft.prompt = this.draft;
+    return draft;
+  };
+  private setComposerDraft = (ownerTabId: string, draft: ComposerDraftState): void => {
+    if (ownerTabId === this.state.activeSessionTabID) this.draft = draft.prompt;
+    this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
+  };
+  private sideConversationOwner?: ApplicationSideConversation;
+  private get applicationSideConversation(): ApplicationSideConversation {
+    return this.sideConversationOwner ??= new ApplicationSideConversation({
+      getState: () => this.state, updateState: this.updateState, subscribeState: this.subscribeState, changed: () => this.publish(),
+      isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
+      activateThread: (threadId, signal) => this.invoke("thread.activate", { threadId }, { signal }),
+      openPanel: () => { void this.applicationPreview.invoke("preview.open-side-thread", {}); },
+      closePanel: () => { void this.applicationPreview.invoke("preview.close-tabs", { tabIds: this.applicationPreview.getSnapshot().tabs.filter(tab => tab.kind === "side-thread").map(tab => tab.id) }); },
+      getContextChatRuntime: () => this.getSubmissionRuntime(this.state.activeSessionTabID),
+      submitBackground: (message, thread, context) => this.applicationSubmission.submitBackground(message, thread, context),
+      cacheThread: thread => this.sidebarCache.updateCachedSidebarThread(thread),
+    });
+  }
+  private fileSelectionOwner?: ApplicationFileSelection;
+  get fileSelection(): ApplicationFileSelection {
+    return this.fileSelectionOwner ??= new ApplicationFileSelection({
+      getState: () => this.state, subscribeState: this.subscribe,
+      isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
+      getDraft: this.getComposerDraft, setDraft: this.setComposerDraft,
+      submission: { submitIndependent: (ownerTabId, message) => this.applicationSubmission.submitIndependent(ownerTabId, message),
+        getSnapshot: () => this.applicationSubmission.getSnapshot() },
+      preview: this.applicationPreview, previewContent: this.previewContent,
+      side: { available: () => Boolean(this.applicationSideConversation.getSnapshot().commandId),
+        open: async (parentThreadId, source) => { await this.applicationSideConversation.invoke("side.open", { parentThreadId, selection: { type: "file", file: source } }); return true; } },
     });
   }
   private reconcileSubmission(): void {
@@ -308,7 +339,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   start(): () => void {
     if (++this.consumers === 1) {
       this.lifetime = new AbortController();
-      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(),
+      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
       const restore = window.wuu?.onRuntimeRestore?.(async () => {
         const signal = this.lifetime!.signal;
@@ -333,6 +364,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.submissionOwner = undefined;
       this.composerRuntimeOwner?.dispose();
       this.composerRuntimeOwner = undefined;
+      this.fileSelectionOwner = undefined;
       this.projectsOwner?.dispose();
       this.projectsOwner = undefined;
       void this.terminalOwner?.dispose().catch(error => console.error("Terminal cleanup failed", error));
@@ -665,6 +697,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationSideConversationAction(action)) return this.applicationSideConversation.invoke(action,
+      input as ApplicationSideConversationActionMapV1[keyof ApplicationSideConversationActionMapV1]["input"]);
     if (isApplicationSearchAction(action)) return this.applicationSearch.invoke(action,
       input as ApplicationSearchActionMapV1[keyof ApplicationSearchActionMapV1]["input"]);
     if (isApplicationConversationAction(action)) return this.applicationConversationActions.invoke(action,
@@ -1103,6 +1137,7 @@ export class ApplicationController implements ApplicationServiceV1 {
           project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      sideConversation: this.applicationSideConversation.getSnapshot(),
       search: this.applicationSearch.getSnapshot(),
       conversationActions,
       conversationDetails: this.conversationDetails.getSnapshot(),
