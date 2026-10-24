@@ -51,7 +51,7 @@ export function DefaultSettingsSurface({ application, archive, onNoticeVisibilit
       icon={catalogNotice.isError ? CircleAlert : RefreshCw} isError={catalogNotice.isError}
       onDismiss={dismissCatalogNotice} dismissAriaLabel={t("common.closeNotice")} /></UILayerPortal>}
     {settings.open && <div className={layout.embedded ? "settings-workbench-layer" : "settings-standalone-layer"}>
-      <SettingsShellRenderer {...layout} initialized={initialized} running={settings.runtimeSwitchPending}
+      <SettingsShellRenderer {...layout} application={application} initialized={initialized} running={settings.runtimeSwitchPending}
         runningProviderNames={settings.runningProviderNames} engineInventory={engines} engineInventoryError={settings.engineInventoryError}
         page={(settings.activePageId ?? "providers") as SettingsPage}
         onPageChange={pageId => { void application.invoke("settings.open", { pageId }).catch(showErrorToast); }}

@@ -1,3 +1,4 @@
+import { SettingsControlsProvider } from "./SettingsControlsContext";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import { ApplicationController, getDesktopApplication } from "./plugins/ApplicationController";
 import { isSettingsPageAvailable } from "./SettingsPageAvailability";
@@ -5630,6 +5631,7 @@ export function App({ application: providedApplication }: { application?: Applic
   if (!onboardingComplete) {
     return (
       <WuuMascotRuntimeProvider>
+        <SettingsControlsProvider controls={application.settingsControls}>
         <FirstRunOnboarding
           state={state.onboarding}
           onStateChange={update => setState(current => {
@@ -5665,6 +5667,7 @@ export function App({ application: providedApplication }: { application?: Applic
             setState(current => ({ ...current, onboardingComplete: true, onboarding: undefined }));
           }}
         />
+        </SettingsControlsProvider>
       </WuuMascotRuntimeProvider>
     );
   }
@@ -6032,6 +6035,7 @@ export function App({ application: providedApplication }: { application?: Applic
             hidden={!showingManagementCatalog || showingPrimaryPluginView}
             inert={!showingManagementCatalog || showingPrimaryPluginView}
           >
+            <SettingsControlsProvider controls={application.settingsControls}>
             <SkillsCatalog
               active={!settingsOpen && showingManagementCatalog && !showingPrimaryPluginView}
               section={catalogSection}
@@ -6047,6 +6051,7 @@ export function App({ application: providedApplication }: { application?: Applic
               onRemovePluginPackage={removePluginPackage}
               openPluginRequest={catalogPluginRequest}
             />
+            </SettingsControlsProvider>
           </div>
         ) : null}
         {state.initialized ? (
