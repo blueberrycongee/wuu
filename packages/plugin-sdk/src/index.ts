@@ -2711,3 +2711,6 @@ export * from "./coordination.js";
 export * from "./tool-service.js";
 
 export * from "./session-service.js";
+
+export * from "./ui-composer.js";
+export * from "./prompt-service.js";
