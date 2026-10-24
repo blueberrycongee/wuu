@@ -16,7 +16,7 @@ app.setPath("userData", path.join(fixture, "profile"));
 process.env.WUU_HOME = home;
 process.env.HOME = userHome;
 process.env.WUU_DESKTOP_CORE = path.join(desktop, "build/bin/wuu-core");
-process.env.WUU_ENABLE_BROWSER = "0";
+process.env.WUU_ENABLE_BROWSER = "1";
 process.env.WUU_SAFE_MODE = "0";
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = "1";
 delete process.env.ELECTRON_RENDERER_URL;
@@ -60,6 +60,14 @@ async function selectPlugin(record) {
   }, record.name);
   await until(name => document.querySelector(".plugin-page-title")?.textContent === name, record.name);
 }
+async function openAutomations(origin) {
+  console.log(`Opening Automations from ${origin}`);
+  await evaluate(() => document.querySelector('.plugin-navigation-item[aria-label="Automations"]').click());
+  await until(() => document.querySelector('.conversation-pane[data-primary-plugin-view] .plugin-automation'));
+  await capture(`automations-from-${origin}`);
+  assert.equal(await evaluate(() => Boolean(document.querySelector('.conversation-pane[data-primary-plugin-view] .plugin-workbench-view-primary'))), true, "An empty browser must not deactivate the selected plugin page");
+  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true);
+}
 async function run() {
   await import(pathToFileURL(path.join(desktop, "out/main/index.js")).href);
   await windowCreated;
@@ -84,6 +92,9 @@ async function run() {
   await until(() => document.querySelector('.catalog-refresh:not(:disabled)'));
   assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Plugin management must not mount the conversation composer");
   await capture("plugin-list-without-composer");
+  await openAutomations("plugins");
+  await evaluate(() => document.querySelector('[data-ribbon-id="catalog"]').click());
+  await until(() => document.querySelector('.catalog-refresh:not(:disabled)'));
   for (const record of [...modules, ...automation]) {
     await selectPlugin(record);
     assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Plugin details must not mount the conversation composer");
@@ -102,10 +113,15 @@ async function run() {
   await until(() => document.querySelector('[data-tab="skills"][aria-selected="true"]'));
   assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer]') === null), true, "Skill management must not mount the conversation composer");
   await capture("skills-dark-narrow-large-without-composer");
+  await openAutomations("skills");
   await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
   await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));
   assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').value), draft, "Returning to chat must restore the entire unsent draft");
   await capture("chat-draft-restored");
+  await openAutomations("chat");
+  await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
+  await until(() => document.querySelector('[data-main-conversation-composer] textarea:not(:disabled)'));
+  assert.equal(await evaluate(() => document.querySelector('[data-main-conversation-composer] textarea').value), draft);
   await evaluate(async () => {
     await window.wuu.setThemePreference("light");
     document.documentElement.style.setProperty("--conversation-message-font-size", "15px");

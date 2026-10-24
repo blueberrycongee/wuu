@@ -391,9 +391,6 @@ export function App({ application, slots, shellPluginId }: {
   }, [application]);
   const activeWebsite = ribbonBrowser.state?.tabs?.find((website) => website.id === ribbonBrowser.state?.activeTabId);
   const showingWebsite = Boolean(activeWebsiteID && activeWebsite);
-  useEffect(() => {
-    if (ribbonBrowser.state && !ribbonBrowser.state.tabs?.length) setActiveWebsiteID(undefined);
-  }, [ribbonBrowser.state]);
   const catalogSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogSection);
   const catalogPluginID = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogPluginId);
   const setCatalogSection = useCallback((section: SkillsCatalogSection) => {
