@@ -47,7 +47,13 @@ describe("ApplicationEnvironment", () => {
     await vi.advanceTimersByTimeAsync(150);
     expect(h.api.gitStatus).toHaveBeenCalledTimes(2); expect(h.service.getSnapshot().status?.branch).toBe("main");
     expect(h.reportError).not.toHaveBeenCalled();
+    const stalled = deferred<GitStatusResult>(); const scope = new AbortController();
+    const detach = vi.spyOn(scope.signal, "removeEventListener");
+    h.api.gitStatus.mockReturnValueOnce(stalled.promise);
+    h.service.scheduleStatusRefresh(0, { signal: scope.signal }); await vi.advanceTimersByTimeAsync(0);
     h.retire();
+    expect(detach).toHaveBeenCalledWith("abort", expect.any(Function));
+    stalled.resolve(status("disposed")); await Promise.resolve();
   });
 
   it("publishes branch and commit status and maps public parameters once", async () => {

@@ -25,7 +25,7 @@ function immutable<T>(value: T): T {
 export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
   private disposed = false;
   private timer?: ReturnType<typeof setTimeout>;
-  private refreshing = false;
+  private activeRefresh?: RefreshRequest;
   private pendingRefresh?: RefreshRequest;
   private listeners = new Set<() => void>();
   private snapshot?: EnvironmentSnapshotV1;
@@ -76,6 +76,7 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
     this.pendingRefresh?.detach(); this.pendingRefresh = undefined;
+    this.activeRefresh?.detach();
     this.listeners.clear();
   }
 
@@ -208,11 +209,11 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
   }
 
   private async refreshStatus(): Promise<void> {
-    if (this.disposed || this.refreshing || !this.pendingRefresh) return;
+    if (this.disposed || this.activeRefresh || !this.pendingRefresh) return;
     const request = this.pendingRefresh; this.pendingRefresh = undefined;
     let source: Source & { root: string };
     try { source = this.begin(request.options); } catch { request.detach(); return; }
-    this.refreshing = true;
+    this.activeRefresh = request;
     try {
       const status = await window.wuu.gitStatus(source.root);
       this.finish(source, request.options);
@@ -222,7 +223,7 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
       try { this.finish(source, request.options); } catch { return; }
       this.host.reportError(error instanceof Error ? error : new Error(translateCurrent("git.refreshFailed")));
     } finally {
-      request.detach(); this.refreshing = false;
+      request.detach(); this.activeRefresh = undefined;
       if (this.pendingRefresh && this.timer === undefined && !this.disposed) {
         this.timer = setTimeout(() => { this.timer = undefined; void this.refreshStatus(); }, 150);
       }
