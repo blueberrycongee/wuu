@@ -226,8 +226,9 @@ export function App({ application, slots, shellPluginId }: {
   const conversationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationWorkspace);
   const primarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.primaryThreadId);
   const secondarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.secondaryThreadId);
-  const primaryThread = useMemo(() => primarySource && structuredClone(primarySource) as Thread, [primarySource]);
-  const secondaryThread = useMemo(() => secondarySource && structuredClone(secondarySource) as Thread, [secondarySource]);
+  // These display helpers read frozen snapshots; mutations use application actions.
+  const primaryThread = primarySource as Thread | undefined;
+  const secondaryThread = secondarySource as Thread | undefined;
   const activeThread = conversationWorkspace.activePane === "secondary" ? secondaryThread : primaryThread;
   const composerRuntimeView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
   useEffect(() => {

@@ -49,6 +49,7 @@ describe("application side conversation", () => {
     expect(view.entry).toMatchObject({ open: false, draft: "next" });
     expect(view.entry?.messages.at(-1)?.text).toBe("done");
     expect(Object.isFrozen(view.entry?.messages)).toBe(true);
+    expect(h.owner.getSnapshot().entry).toBe(view.entry);
   });
   it("does not substitute another command when the selected extension command disappears", async () => {
     const h = fixture(); await h.owner.invoke("side.open", { parentThreadId: "main", commandId: "side.side" });

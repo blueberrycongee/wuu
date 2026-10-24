@@ -51,8 +51,9 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const { t } = useI18n(), hour = useCurrentHour();
   const run = useCallback((result: Promise<unknown>) => { void result.catch(showErrorToast); }, []);
-  // Detached display values adapt readonly public histories to the established renderer.
-  const threads = useMemo(() => structuredClone(view.conversationWorkspace.threads) as Thread[], [view.conversationWorkspace.threads]);
+  // Leaf renderers only read histories; edits go through named application actions.
+  // Keep the frozen public values instead of serializing every loaded attachment.
+  const threads = view.conversationWorkspace.threads as readonly Thread[];
   const current = useMemo(() => new Map(threads.map(thread => [thread.id, thread])), [threads]);
   const primary = current.get(view.conversationWorkspace.primaryThreadId ?? ""), secondary = current.get(view.conversationWorkspace.secondaryThreadId ?? "");
   const cache = useRef<{ ids: string[]; threads: ReadonlyMap<string, Thread> }>({ ids: [], threads: new Map() });
@@ -129,7 +130,7 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
             onScroll={layout.onScroll} onBodyRef={node => { if (layout.splitPaneRefs) layout.splitPaneRefs.current[pane] = node; }}
             fork={fork} edit={edit} submitEdit={submitEdit} cancelEdit={cancelEdit} canEdit={canEdit} openFile={openFile} openURL={openURL} openAgent={openAgent} openDiff={openDiff}
             separator={pane === "primary" ? <div className="conversation-split-resizer" role="separator" aria-orientation="vertical" aria-label={t("shell.resizeSplit")} aria-valuemin={CONVERSATION_SPLIT_MIN_PERCENT} aria-valuemax={CONVERSATION_SPLIT_MAX_PERCENT} aria-valuenow={Math.round(layout.splitLeftPercent ?? 50)} tabIndex={0} onPointerDown={layout.onSplitResizeStart} onDoubleClick={layout.onSplitSeparatorDoubleClick} onKeyDown={layout.onSplitSeparatorKey} /> : undefined} />)}
-        </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={structuredClone(pending.turn) as Turn} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
+        </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={pending.turn as Turn} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
           : empty ? <EmptyConversationHome title={activeTab?.kind === "draft" && activeTab.project ? t("projects.newProject") : title} activity={activeDraft.text.trim() || activeDraft.imageIds.length || activeDraft.fileIds.length || activeDraft.selections.length ? "compose" : "idle"}>
             <>{workspaceMenu ? <div role="menu" className="composer-context-menu">{view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => { setWorkspaceMenu(false); run(application.invoke("workspace.select", { workspaceId: workspace.id })); }}>{workspace.name}</button>)}</div> : null}
             {activeTab?.project ? null : <EmptyHomeOverview application={application} />}</>

@@ -15,6 +15,9 @@ afterEach(() => { act(() => root?.unmount()); container?.remove(); root = undefi
 function thread(id: string): Thread { return { id, title: id, preview: "", cwd: "/repo", model_provider: "test", model: "test", status: "idle", created_at: "", updated_at: "", turns: [{ id: `${id}-turn`, status: "completed", items_view: "full", items: [{ id: `${id}-user`, type: "user_message", text: `Question ${id}` }, { id: `${id}-answer`, type: "agent_message", text: `Answer ${id}`, status: "completed", terminal: true }] }] }; }
 function fixture() {
   const preview = createConversationTestApplication(), one = thread("one"), two = thread("two");
+  // Public histories stay frozen while the selected renderer edits by action.
+  const freeze = (value: unknown): void => { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } };
+  freeze(one); freeze(two);
   let snapshot: ApplicationSnapshotV1 = { ...preview.getSnapshot(), phase: "ready", conversation: { loading: false, threadId: one.id, turns: [] }, conversationWorkspace: { primaryThreadId: one.id, activePane: "primary", turnStreamStatus: {}, threads: [one, two] } };
   const listeners = new Set<() => void>();
   const invoke = vi.fn().mockResolvedValue({ accepted: true });

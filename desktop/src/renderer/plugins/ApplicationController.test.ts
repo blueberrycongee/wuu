@@ -5,7 +5,7 @@ import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController";
 import { streamTextKey, streamTextStore } from "../StreamText";
 import { initialState, type AppState } from "../AppState";
-import type { CodexPetCommand, WuuDesktopApi } from "../../shared/protocol";
+import type { CodexPetCommand, Thread, WuuDesktopApi } from "../../shared/protocol";
 
 const submissionInitialized = { provider: "fixture", model: "fixture", providers: [{ name: "fixture", type: "openai", model: "fixture", api_key_configured: true }] } as AppState["initialized"];
 async function settleSubmission(controller: ApplicationController, result: Awaited<ReturnType<ApplicationController["invoke"]>>) {
@@ -136,7 +136,8 @@ describe("shared application state", () => {
     let finish!: (item: typeof remote) => void;
     const read = vi.fn(() => new Promise<typeof remote>(resolve => { finish = resolve; }));
     window.wuu = { readRemoteItem: read } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, thread, threads: [thread] });
+    const controller = new ApplicationController({ ...initialState, thread, threads: [thread], activeSessionTabID: "thread:large-history",
+      sessionTabs: [{ id: "thread:large-history", kind: "thread", threadID: thread.id, context: { kind: "no_project", cwd: thread.cwd }, title: "History", prompt: "", images: [], files: [] }] });
     const target = { threadId: "remote", turnId: "turn", itemId: "item" };
     await expect(controller.invoke("conversation.load-item", { ...target, threadId: "missing" })).rejects.toThrow();
     expect(read).not.toHaveBeenCalled();
@@ -403,6 +404,31 @@ describe("shared application state", () => {
     finish({ thread: { id: "other", cwd: context.cwd, status: "idle", turns: [] } });
     await stale;
     expect(controller.getSnapshot().tabs.secondaryThreadId).toBe("child");
+  });
+
+  it("retains unchanged public history across draft updates and streaming revisions", async () => {
+    // Real histories include large tool results and inline attachments. Copying
+    // their payloads for every draft/stream revision exhausted the renderer heap.
+    const thread: Thread = { id: "large-history", cwd: "/repo", preview: "", model: "test", model_provider: "test", status: "idle", created_at: "", updated_at: "",
+      turns: [{ id: "history", status: "completed", items_view: "full", items: [{ id: "large-result", type: "tool_call", status: "completed", result: "x".repeat(8 * 1024 * 1024), result_detail: { content: [{ type: "image", data: "a".repeat(8 * 1024 * 1024) }] } }] },
+        { id: "live", status: "in_progress", items_view: "full", items: [{ id: "answer", type: "agent_message", status: "in_progress", text: "first" }] }] };
+    const controller = new ApplicationController({ ...initialState, thread, threads: [thread] });
+    const first = controller.getSnapshot().conversationWorkspace.threads;
+    await controller.invoke("composer.set-draft", { text: "draft update" });
+    expect(controller.getSnapshot().conversationWorkspace.threads).toBe(first);
+    const key = streamTextKey("live", "answer", "text");
+    try {
+      streamTextStore.set(key, "next");
+      controller.setSettings(true);
+      const next = controller.getSnapshot().conversationWorkspace.threads[0];
+      expect(next.turns[0]).toBe(first[0].turns[0]);
+      expect(next.turns[1].items[0].text).toBe("next");
+      expect(first[0].turns[1].items[0].text).toBe("first");
+      expect(next.turns[0]).not.toBe(thread.turns[0]);
+      expect(Object.isFrozen(thread.turns[0])).toBe(false);
+      expect(() => { (next as Thread).turns[0].items[0].result_detail!.content![0].data = "changed"; }).toThrow();
+      expect(thread.turns[0].items[0].result_detail!.content![0].data).toHaveLength(8 * 1024 * 1024);
+    } finally { streamTextStore.clearItem("live", "answer"); }
   });
 
   it("projects complete immutable conversation content and observes host-owned live fields", async () => {

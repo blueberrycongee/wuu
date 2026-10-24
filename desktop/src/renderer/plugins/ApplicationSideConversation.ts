@@ -1,5 +1,5 @@
 import type { SetStateAction } from "react";
-import type { ApplicationSideConversationActionMapV1 as Actions, ApplicationSideConversationViewV1, SideConversationReadonly } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
+import type { ApplicationSideConversationActionMapV1 as Actions, ApplicationSideConversationViewV1 } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
 import type { RuntimeContext, SideThreadSelection, Thread, ThreadStartParams } from "../../shared/protocol";
 import { formatPageContext } from "../../shared/pageContext";
 import { activeThreadForState, sameRuntimeContext, requireThread, threadForTab, upsertThread, type AppState } from "../AppState";
@@ -9,14 +9,10 @@ import { buildComposerSlashCommands } from "../ComposerSlashCommands";
 import { createComposerMessage, type QueuedComposerMessage } from "../ComposerMessages";
 import { hasAuthenticatedProvider } from "../RuntimeHelpers";
 import { translateCurrent as t } from "../i18n";
+import { createImmutableSnapshotProjector } from "./ImmutableSnapshot";
 
 const names = new Set<keyof Actions>(["side.open", "side.close", "side.set-draft", "side.set-selection", "side.send", "side.interrupt", "side.reset", "context-chat.submit"]);
 export function isApplicationSideConversationAction(action: string): action is keyof Actions { return names.has(action as keyof Actions); }
-function immutable<T>(value: T): SideConversationReadonly<T> {
-  const copy = structuredClone(value);
-  const freeze = (item: unknown): void => { if (item && typeof item === "object") { Object.values(item).forEach(freeze); Object.freeze(item); } };
-  freeze(copy); return copy as SideConversationReadonly<T>;
-}
 export interface ApplicationSideConversationHost {
   getState(): AppState;
   updateState(update: SetStateAction<AppState>): void;
@@ -33,6 +29,7 @@ export interface ApplicationSideConversationHost {
 
 /** One existing side reducer owner; ordinary Context Chat stays in shared thread/submission state. */
 export class ApplicationSideConversation {
+  private readonly projectSnapshot = createImmutableSnapshotProjector();
   private readonly side: SideThreadOwner;
   private readonly selectedCommands = new Map<string, string>();
   private readonly pendingContext = new Map<string, { sourceId: string; sessionId?: string }>();
@@ -64,7 +61,7 @@ export class ApplicationSideConversation {
   }
   getSnapshot(): ApplicationSideConversationViewV1 {
     const options = this.options(), entry = options.activeThreadId ? this.side.getSnapshot().byThread[options.activeThreadId] : undefined;
-    return immutable({ parentThreadId: options.activeThreadId, commandId: options.commandID, commands: this.commands().map(command => ({ id: `${command.pluginId}.${command.pluginCommandId}`, title: command.title, description: command.description })), entry,
+    return this.projectSnapshot({ parentThreadId: options.activeThreadId, commandId: options.commandID, commands: this.commands().map(command => ({ id: `${command.pluginId}.${command.pluginCommandId}`, title: command.title, description: command.description })), entry,
       turns: sideThreadMessagesToTurns(entry?.messages ?? []), disabledReason: this.side.sendDisabledReason, contextChatPending: [...this.pendingContext.values()] });
   }
   private current(parentThreadId: string): void {

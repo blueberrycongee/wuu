@@ -254,7 +254,7 @@ function WorkspacePanelContent({
   // Detach public immutable display data before using the existing mutable leaf renderers.
   const tabs = useMemo(() => structuredClone(preview.tabs) as WorkspaceViewTab[], [preview.tabs]);
   const publicThread = snapshot.conversationWorkspace.threads.find(thread => thread.id === preview.threadId);
-  const terminalThread = useMemo(() => publicThread ? structuredClone(publicThread) as Thread : undefined, [publicThread]);
+  const terminalThread = publicThread as Thread | undefined;
   const { activeContext, workspaceContext, fileRefreshKey, browserActivity, browserDockTarget } = preview;
   const activeTabID = preview.activeTabId;
   const activeFileTabID = preview.activeFileTabId;

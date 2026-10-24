@@ -288,6 +288,7 @@ export class ApplicationController implements HostApplicationService {
     },
   });
   private readonly projectConversationThread = createConversationThreadProjector();
+  private conversationThreadViews: ApplicationSnapshotV1["conversationWorkspace"]["threads"] = Object.freeze([]);
   readonly recoveredDrafts = readComposerDraftRecovery();
   private state: AppState;
   private readonly stateListeners = new Set<() => void>();
@@ -1431,6 +1432,11 @@ export class ApplicationController implements HostApplicationService {
       return Object.freeze({ id: turn.id, status: turn.status === "in_progress" ? "running" as const : turn.status === "interrupted" ? "cancelled" as const : turn.status,
         items: Object.freeze(visible), process: toConversationProcessSnapshot(items.filter(item => item.type === "reasoning" || item.type === "tool_call"), turn.status === "in_progress", running, locale) });
     });
+    const conversationThreads = [...new Map([...state.threads, state.secondaryThread, state.thread].filter((item): item is Thread => Boolean(item))
+      .map(item => [item.id, item])).values()].map(this.projectConversationThread);
+    if (conversationThreads.length !== this.conversationThreadViews.length || conversationThreads.some((thread, index) => thread !== this.conversationThreadViews[index])) {
+      this.conversationThreadViews = Object.freeze(conversationThreads);
+    }
     return Object.freeze({ contractVersion: 1, revision: this.revision, phase: initialized ? "ready" : status === "connecting" ? "starting" : "error",
       connection: Object.freeze({ status, message: state.status }),
       workspaces: Object.freeze({ workspaces: Object.freeze(state.projects.map(project => Object.freeze({ id: project.id, name: project.name, root: project.path, available: !project.missing }))), activeWorkspaceId: state.activeProjectId, activeRoot: state.activeContext?.cwd }),
@@ -1461,8 +1467,7 @@ export class ApplicationController implements HostApplicationService {
       conversationActions,
       conversationDetails: this.conversationDetails.getSnapshot(),
       conversationWorkspace: Object.freeze({ turnStreamStatus: Object.freeze(Object.fromEntries(Object.entries(state.turnStreamStatus).map(([id, status]) => [id, Object.freeze({ ...status })]))), primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
-        threads: Object.freeze([...new Map([...state.threads, state.secondaryThread, state.thread].filter((item): item is Thread => Boolean(item))
-          .map(item => [item.id, item])).values()].map(this.projectConversationThread)) }),
+        threads: this.conversationThreadViews }),
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),

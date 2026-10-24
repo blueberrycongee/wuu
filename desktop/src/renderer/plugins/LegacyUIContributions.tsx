@@ -90,7 +90,9 @@ function Cards(props: LegacyUIContributionsProps): React.ReactNode {
 }
 
 type Mutable<T> = T extends readonly (infer V)[] ? Mutable<V>[] : T extends object ? { -readonly [K in keyof T]: Mutable<T[K]> } : T;
-function mutableCopy<T>(value: T): Mutable<T> { return structuredClone(value) as Mutable<T>; }
+// Legacy snapshot builders only read these values; preserve the frozen payload
+// instead of copying attachment data on each presentation/stream update.
+function legacyInput<T>(value: T): Mutable<T> { return value as Mutable<T>; }
 function sourceItem(snapshot: ApplicationSnapshotV1, context: Readonly<Record<string, unknown>>) {
   const threads = snapshot.conversationWorkspace.threads;
   const thread = threads.find(value => value.id === context.threadId);
@@ -104,7 +106,7 @@ function itemSnapshot(snapshot: ApplicationSnapshotV1, context: Readonly<Record<
   if (!item) return undefined;
   const kind = item.type === "user_message" ? "user-message" : item.type === "agent_message" ? "assistant-message"
     : item.type === "reasoning" ? "reasoning" : item.type === "error" || item.type === "context_compaction" ? "notice" : undefined;
-  return kind ? toConversationItemSnapshot(mutableCopy(item), kind) : undefined;
+  return kind ? toConversationItemSnapshot(legacyInput(item), kind) : undefined;
 }
 function MessageActions(props: LegacyUIContributionsProps): React.ReactNode {
   const snapshot = React.useSyncExternalStore(props.application.subscribe, props.application.getSnapshot, props.application.getSnapshot);
@@ -231,8 +233,8 @@ function Presenters(props: LegacyUIContributionsProps): React.ReactNode {
   let value: unknown = props.context.snapshot;
   let key: string | undefined;
   if (target === "conversation.item") { value = itemSnapshot(snapshot, props.context); key = (value as ConversationItemSnapshotV1 | undefined)?.kind; }
-  if (target === "conversation.process" && turn) value = toConversationProcessSnapshot(mutableCopy(turn.items.filter(item => Array.isArray(props.context.itemIds) && props.context.itemIds.includes(item.id))), turn.status === "in_progress", true, snapshot.locale);
-  if (target === "conversation.tool-activity" && item) { value = toToolActivitySnapshot(mutableCopy(item), snapshot.locale); key = item.display?.capability ?? item.name; }
+  if (target === "conversation.process" && turn) value = toConversationProcessSnapshot(legacyInput(turn.items.filter(item => Array.isArray(props.context.itemIds) && props.context.itemIds.includes(item.id))), turn.status === "in_progress", true, snapshot.locale);
+  if (target === "conversation.tool-activity" && item) { value = toToolActivitySnapshot(legacyInput(item), snapshot.locale); key = item.display?.capability ?? item.name; }
   if (target === "content.preview") key = (value as { contentType?: string } | undefined)?.contentType;
   const presenters = useRegistry(props.host, () => props.host.getPresenters(target, key));
   const surfaceId = props.semanticSlot === "conversation.message" || props.semanticSlot === "conversation.timeline" ? props.semanticSlot : undefined;

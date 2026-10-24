@@ -150,12 +150,12 @@ export const SideThreadPanel = forwardRef<SideThreadPanelHandle, SideThreadPanel
 );
 
 
-/** Public data is detached before passing it to the existing mutable renderer. */
+/** The panel reads frozen histories and sends edits through application actions. */
 export const ApplicationSideThreadPanel = forwardRef<SideThreadPanelHandle,
   Omit<SideThreadPanelProps, "entry" | "mainThreadId" | "turns"> & { snapshot: ApplicationSideConversationViewV1 }
 >(function ApplicationSideThreadPanel({ snapshot, ...presentation }, ref) {
-  const entry = useMemo(() => snapshot.entry ? structuredClone(snapshot.entry) as SideThreadEntryState : undefined, [snapshot.entry]);
-  const turns = useMemo(() => structuredClone(snapshot.turns) as Turn[], [snapshot.turns]);
+  const entry = snapshot.entry as SideThreadEntryState | undefined;
+  const turns = snapshot.turns as Turn[];
   if (!entry || !snapshot.parentThreadId) return null;
   return <SideThreadPanel {...presentation} ref={ref} entry={entry} turns={turns} mainThreadId={snapshot.parentThreadId} />;
 });
