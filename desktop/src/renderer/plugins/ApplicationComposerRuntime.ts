@@ -2,7 +2,7 @@ import type { ApplicationSettingsViewV1 } from "../../../../packages/plugin-sdk/
 import type { SetStateAction } from "react";
 import type { ApplicationComposerRuntimeActionMapV1 as Actions, ApplicationComposerRuntimeChoiceV1, ApplicationComposerRuntimeOwnerV1, ApplicationComposerRuntimeSelectionV1, ApplicationComposerRuntimeViewV1 } from "../../../../packages/plugin-sdk/src/ui-composer-runtime";
 import type { EngineListResult, InitializeResult, RuntimeContext, Thread, ThreadStartParams } from "../../shared/protocol";
-import { isThreadRunning, sameRuntimeContext, type AppState } from "../AppState";
+import { activeThreadIDForState, isThreadRunning, sameRuntimeContext, type AppState } from "../AppState";
 import type { CodexModelLoadState } from "../ComposerTypes";
 import { createRuntimeSettingsActions } from "../RuntimeSettingsActions";
 import { rememberedEngineRuntime, resolveDraftEngineMemory, writeDraftEngineMemory } from "../DraftEngineMemory";
@@ -45,6 +45,7 @@ export class ApplicationComposerRuntime {
   private snapshot?: ApplicationComposerRuntimeViewV1;
   private disposed = false;
   private initialOwner?: string;
+  private activeThreadId?: string;
   constructor(private readonly host: {
     getState(): AppState;
     updateState(update: SetStateAction<AppState>): void;
@@ -62,6 +63,13 @@ export class ApplicationComposerRuntime {
   }
   private sync(): AppState {
     const state = this.host.getState();
+    const activeThreadId = activeThreadIDForState(state);
+    if (activeThreadId !== this.activeThreadId) {
+      // Worktree placement applies to the next draft in the current conversation
+      // context; cached owners must observe navigation even without a shell.
+      for (const owner of this.owners.values()) owner.worktree = undefined;
+      this.activeThreadId = activeThreadId;
+    }
     this.initialOwner ??= state.activeSessionTabID || undefined;
     const present = new Set<string>();
     const sharedInventory = this.host.getEngineInventory?.();
