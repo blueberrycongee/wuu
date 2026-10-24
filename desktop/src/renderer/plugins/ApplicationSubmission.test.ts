@@ -105,5 +105,16 @@ describe("application submission ownership",()=>{
 
 
 
-
+  it("keeps the canonical unconfirmed-delivery barrier after a queued RPC times out",async()=>{
+    const queued=deferred<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>();
+    const target={...thread(),status:"in_progress" as const,turns:[{id:"running",status:"in_progress" as const,items_view:"full" as const,items:[]}]};
+    window.wuu={queueTurn:vi.fn(()=>queued.promise)} as unknown as WuuDesktopApi;
+    const f=fixture(target);f.submission.submit({ownerTabId:"thread:created"});
+    await vi.waitFor(()=>expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1));
+    f.pending.updateThreadPendingComposerMessages("created",previous=>({...previous,queued:previous.queued.map(message=>({...message,deliveryUnconfirmed:true,operationState:undefined}))}));
+    queued.reject(new Error("rpc timeout: turn/queue"));
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0].phase).toBe("completed"));
+    expect(f.pending.pendingComposerMessagesByThread.created.queued[0].deliveryUnconfirmed).toBe(true);
+    expect(f.getDraft("thread:created").prompt).toBe("");expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
+  });
 });

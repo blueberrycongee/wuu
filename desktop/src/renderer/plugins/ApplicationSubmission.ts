@@ -204,6 +204,10 @@ export class ApplicationSubmission {
       this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, id: acceptedID, images, files, operationState: undefined } : candidate) }));
       return true;
     } catch (error) {
+      // A server-owned uncertain delivery must stay behind the canonical
+      // pending owner's retry/edit barrier; a timeout is not a rejection.
+      const latest = this.options.pending.pendingComposerMessagesForThread(thread.id)[list].find(candidate => candidate.id === message.id);
+      if (latest?.deliveryUnconfirmed) return true;
       const pending = exists(); this.options.pending.removePendingComposerMessageByID(thread.id, message.id, kind);
       if (pending) this.phase(operation, "failed", rawErrorMessage(error, t(kind === "queue" ? "app.queueFailed" : "composer.guideFailed")));
       return !pending;
