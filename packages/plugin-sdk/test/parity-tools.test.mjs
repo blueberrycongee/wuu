@@ -13,9 +13,12 @@ test('independent registry owns discovery, resolution, execution and cleanup', {
   assert.equal(initialized.provided_services[0].name, 'agent.tools');
   assert.throws(() => invoke('list', {}), /not active/);
   plugin.activate();
+  invoke('freeze', {});
   const listed = invoke('list', {});
+  invoke('unfreeze', {});
+  assert.deepEqual(invoke('list', {}), listed);
   assert.deepEqual(listed.tools.map(tool => tool.name), ['author_echo']);
-  assert.equal(invoke('resolve', { call: { name: 'shell' } }).found, false);
+  assert.deepEqual(invoke('resolve', { call: { name: 'shell' } }), {found: false, supports: false});
   assert.equal(invoke('resolve', { call: { name: 'author_echo' } }).metadata.read_only, true);
   assert.throws(() => invoke('execute', { call: { name: 'shell', arguments: '{}' } }), /unknown tool/);
   assert.throws(() => invoke('execute', { call: { name: 'author_echo', arguments: '{' } }), /JSON/);

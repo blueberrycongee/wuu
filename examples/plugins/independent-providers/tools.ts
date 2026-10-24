@@ -2,7 +2,7 @@ import { RuntimeHostServiceError, type RuntimePlugin, type ServiceDescriptor } f
 
 const descriptor: ServiceDescriptor = {
   name: 'agent.tools', version: '1.0.0',
-  methods: ['list', 'resolve', 'execute'].map(name => ({
+  methods: ['list', 'resolve', 'execute', 'freeze', 'unfreeze'].map(name => ({
     name, input_schema: `agent.tools.${name}.input.v1`, output_schema: `agent.tools.${name}.output.v1`,
   })),
 };
@@ -16,15 +16,17 @@ export function createToolsProvider(owner = 'independent-tools'): RuntimePlugin 
     invokeService({service, method, params}) {
       if (!active) throw new RuntimeHostServiceError({code: 'service_unavailable', message: 'tool provider is not active'});
       if (service !== descriptor.name) throw new Error('unknown service');
+      // The catalog is immutable for this provider generation, so freezing cannot change it.
+      if (method === 'freeze' || method === 'unfreeze') return {};
       if (method === 'list') return {
         tools: [{name: 'author_echo', description: 'Echo text with the selected provider identity.', input_schema: {
           type: 'object', properties: {text: {type: 'string'}}, required: ['text'], additionalProperties: false,
-        }}], catalog: [], catalog_prompt: '',
+        }}], catalog: [], catalog_prompt: '', system_fragment: '',
       };
       const call = (params as {call?: {name?: string; arguments?: string}} | undefined)?.call;
       if (method === 'resolve') return call?.name === 'author_echo'
-        ? {found: true, metadata: {orchestrator: false, read_only: true, concurrency_safe: true, destructive: false, risk: 'low', reason: 'pure text transformation'}}
-        : {found: false};
+        ? {found: true, supports: true, display: {label: 'Independent echo'}, metadata: {orchestrator: false, read_only: true, concurrency_safe: true, destructive: false, risk: 'low', reason: 'pure text transformation'}}
+        : {found: false, supports: false};
       if (method !== 'execute') throw new Error('unknown tool service method');
       if (call?.name !== 'author_echo') throw new RuntimeHostServiceError({code: 'tool_not_found', message: 'unknown tool'});
       const input = JSON.parse(call.arguments ?? '{}') as {text?: unknown};
