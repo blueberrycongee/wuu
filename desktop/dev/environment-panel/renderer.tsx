@@ -65,10 +65,10 @@ function Card({
 }): JSX.Element {
   const environment = useMemo<ApplicationEnvironmentV1>(() => {
     const snapshot = { contextKey: "environment-preview", root: "/repo", status: { ...git, branch },
-      capabilities: { checkout: true, createBranch: true, commit: false, pullRequest: false } };
+      capabilities: { review: false, checkout: true, createBranch: true, commit: false, pullRequest: false } };
     const unavailable = async (): Promise<never> => { throw new Error("Git mutations are unavailable in this visual preview"); };
     return { getSnapshot: () => snapshot, subscribe: () => () => {},
-      checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable,
+      listChanges: unavailable, readDiff: unavailable, checkoutBranch: unavailable, createAndCheckoutBranch: unavailable, commit: unavailable,
       generateCommitMessage: unavailable, createPullRequest: unavailable, scheduleStatusRefresh: () => {} };
   }, [branch]);
   return (
