@@ -6,13 +6,14 @@ import type { PageHistoryControlsProps } from "./PageHistoryControls";
 import type { AccountDriver } from "./AccountPanel";
 import { translateCurrent as t } from "./i18n";
 
+const originalBridge = window.wuu;
 let root: Root;
 let container: HTMLDivElement;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); localStorage.clear(); });
-async function mount(driver: AccountDriver, standalone = false, pageHistory?: Omit<PageHistoryControlsProps, "children">) {
+afterEach(() => { act(() => root?.unmount()); container?.remove(); localStorage.clear(); window.wuu = originalBridge; });
+async function mount(driver: AccountDriver, standalone = false, pageHistory?: Omit<PageHistoryControlsProps, "children">, openExternal = vi.fn(async (_url: string) => {})) {
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
   const back = vi.fn();
-  await act(async () => root.render(<AccountScreen driver={driver} onBack={back} standalone={standalone} pageHistory={pageHistory} />));
+  await act(async () => root.render(<AccountScreen openExternal={openExternal} driver={driver} onBack={back} standalone={standalone} pageHistory={pageHistory} />));
   return back;
 }
 async function click(key: Parameters<typeof t>[0]) {
@@ -37,6 +38,28 @@ async function credentials() {
 }
 
 describe("AccountScreen", () => {
+  it("does not open a late OAuth authorization after the screen is unmounted", async () => {
+    let finish!: (value: { oauth_url: string }) => void;
+    const pending = new Promise<{ oauth_url: string }>(resolve => { finish = resolve; });
+    const openExternal = vi.fn(async (_url: string) => {});
+    window.wuu = { ...originalBridge, openExternal };
+    await mount(async action => action === "github-start" ? pending : action === "config" ? { github: true } : {}, false, undefined, openExternal);
+    await click("account.linkReady"); await fill('input[type="url"]', "https://account.example"); await click("account.linkContinue");
+    await click("account.githubContinue");
+    await act(async () => root.unmount());
+    await act(async () => finish({ oauth_url: "https://account.example/authorize" }));
+    expect(openExternal).not.toHaveBeenCalled();
+  });
+  it("does not refresh account status after a retired login resolves", async () => {
+    let finish!: (value: { username: string }) => void;
+    const pending = new Promise<{ username: string }>(resolve => { finish = resolve; });
+    const driver = vi.fn(async (action: Parameters<AccountDriver>[0]) => action === "login" ? pending : {});
+    await mount(driver); await click("account.linkReady"); await credentials(); await click("account.login");
+    const statuses = driver.mock.calls.filter(([action]) => action === "status").length;
+    await act(async () => root.unmount());
+    await act(async () => finish({ username: "late" }));
+    expect(driver.mock.calls.filter(([action]) => action === "status")).toHaveLength(statuses);
+  });
   it("routes window history separately from the back-to-app action", async () => {
     const onBack = vi.fn();
     const onForward = vi.fn();

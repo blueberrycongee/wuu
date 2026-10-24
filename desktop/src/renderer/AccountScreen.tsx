@@ -6,10 +6,11 @@ import { useI18n } from "./i18n";
 import "./AccountScreen.css";
 
 /** Shared content for the native device-linking window and web fallback. */
-export function AccountScreen({ driver, onBack, standalone = false, pageHistory }: {
+export function AccountScreen({ driver, openExternal, onBack, standalone = false, pageHistory }: {
   standalone?: boolean;
   pageHistory?: Omit<PageHistoryControlsProps, "children">;
   driver: AccountDriver;
+  openExternal: (url: string) => Promise<void>;
   onBack: () => void;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -24,7 +25,7 @@ export function AccountScreen({ driver, onBack, standalone = false, pageHistory 
       </button>}
     </header>
     <main className="account-screen-content">
-      <AccountPanel desktopConnectionFlow driver={driver} onSignedIn={() => setConnected(true)} />
+      <AccountPanel desktopConnectionFlow driver={driver} openExternal={openExternal} onSignedIn={() => setConnected(true)} />
       {standalone && connected && <div className="account-panel account-window-done"><button className="account-primary" type="button" onClick={onBack}>{t("account.linkFinish")}</button></div>}
     </main>
     {pageHistory ? <PageHistoryControls {...pageHistory} /> : null}
