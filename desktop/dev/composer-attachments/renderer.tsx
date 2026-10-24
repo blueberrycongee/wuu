@@ -1,3 +1,4 @@
+import { createFixtureApplication } from "../application";
 // Production Composer with synthetic attachments; no product bridge or user data.
 import { useEffect, useRef, useState } from "react";
 import { ComposerPdfQuoteCard } from "../../src/renderer/PdfQuoteCard";
@@ -117,8 +118,10 @@ function run(task: () => Promise<void> | void): Promise<void> {
 }
 Object.assign(window, { fixtureIdle: () => queue });
 
+const application = createFixtureApplication();
+
 function Fixture(): JSX.Element {
-  const draft = useComposerDraftState();
+  const draft = useComposerDraftState(application);
   const seeded = useRef(false);
   const [quoteVisible, setQuoteVisible] = useState(params.has("quote"));
   const [comment, setComment] = useState("");

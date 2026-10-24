@@ -42,9 +42,12 @@ async function renderComposerDraftState(application?: ApplicationServiceV1): Pro
   get: () => ComposerDraftStateController;
 }> {
   let latest: ComposerDraftStateController | undefined;
+  const context = { kind: "no_project" as const, cwd: "/tmp" };
+  const service = application ?? new ApplicationController({ ...initialState, activeContext: context,
+    activeSessionTabID: "draft", sessionTabs: [createDraftSessionTab("draft", context)] });
 
   function Probe() {
-    latest = useComposerDraftState(undefined, application);
+    latest = useComposerDraftState(service);
     return null;
   }
 
@@ -128,6 +131,19 @@ function stubFileReader(result: string): void {
 }
 
 describe("useComposerDraftState", () => {
+  it("retains complete captured draft data when its UI consumer is replaced", async () => {
+    const context = { kind: "no_project" as const, cwd: "/tmp" };
+    const application = new ApplicationController({ ...initialState, activeContext: context,
+      activeSessionTabID: "draft", sessionTabs: [createDraftSessionTab("draft", context)] });
+    const first = await renderComposerDraftState(application);
+    const draft = { prompt: "Question", images: [encodedImage()], files: [pdfFile()],
+      selections: [{ id: "quote", text: "Answer", source: { thread_id: "a", turn_id: "t", item_id: "i", start_offset: 0, end_offset: 6 } }] };
+    await act(async () => first.get().restorePrimaryComposerDraft(draft));
+    first.unmount();
+    const second = await renderComposerDraftState(application);
+    expect(second.get().currentPrimaryComposerDraft()).toEqual(draft);
+  });
+
   it.each([
     ["primary", "primary"], ["primary", "secondary"],
     ["secondary", "primary"], ["secondary", "secondary"],
@@ -213,7 +229,13 @@ describe("useComposerDraftState", () => {
   });
 
   it.each(["global", "primary", "secondary"] as const)("retains an unreadable %s attachment and retries restored snapshots explicitly", async (pane) => {
-    const hook = await renderComposerDraftState();
+    const context = { kind: "no_project" as const, cwd: "/tmp" };
+    const primary: Thread = { id: "primary", preview: "", cwd: context.cwd, model_provider: "fixture", model: "fixture", status: "idle", created_at: "", updated_at: "", turns: [] };
+    const secondary: Thread = { ...primary, id: "secondary" };
+    const application = pane === "global" ? undefined : new ApplicationController({ ...initialState, activeContext: context,
+      thread: primary, secondaryThread: secondary, activePane: "primary", activeSessionTabID: threadSessionTabID(primary.id),
+      sessionTabs: [createThreadSessionTab(primary, context), createThreadSessionTab(secondary, context)] });
+    const hook = await renderComposerDraftState(application);
     stubFileReader("data:text/plain;base64,aGVsbG8=");
     const file = new File(["hello"], "notes.txt", { type: "text/plain" });
     const read = vi.fn().mockRejectedValueOnce(new Error("File temporarily unavailable"))
@@ -260,6 +282,16 @@ describe("useComposerDraftState", () => {
       filename: "brief.pdf",
     });
     expect(hook.get().composerImages).toEqual([]);
+  });
+
+  it("keeps valid files when another file in the same paste exceeds the limit", async () => {
+    const hook = await renderComposerDraftState();
+    const valid = new File(["ok"], "notes.txt", { type: "text/plain" });
+    Object.defineProperty(valid, "arrayBuffer", { value: async () => new TextEncoder().encode("ok").buffer });
+    const oversized = new File(["bad"], "huge.pdf", { type: "application/pdf" });
+    Object.defineProperty(oversized, "size", { value: 21 * 1024 * 1024 });
+    await act(async () => hook.get().attachComposerAttachmentFiles([valid, oversized]));
+    expect(hook.get().composerFiles.map(file => file.filename)).toEqual(["notes.txt"]);
   });
 
   it("rejects PDFs over the 20MB limit with a reason and skips reading them", async () => {

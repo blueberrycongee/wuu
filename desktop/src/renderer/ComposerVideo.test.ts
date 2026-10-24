@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { clipboardAttachmentFiles, composerFileFromFile, composerImageFromFile, COMPOSER_ATTACHMENT_MAX_BYTES } from "./ComposerMessages";
-import { buildComposerAttachments } from "./ComposerDraftState";
+import { ApplicationDraftResources } from "./plugins/ApplicationDrafts";
 import type { ClipboardEvent } from "react";
 
 describe("video attachments", () => {
@@ -22,24 +22,19 @@ describe("video attachments", () => {
   it("delivers ordinary files byte-for-byte through the same draft lifecycle", async () => {
     const file = new File([new Uint8Array([0, 255, 2, 3])], "archive.zip", { type: "application/zip" });
     Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([0, 255, 2, 3]).buffer });
-    const attached = vi.fn();
-    await buildComposerAttachments([file], { onImagePlaceholder: vi.fn(), onImageEncoded: vi.fn(), onFilePlaceholder: vi.fn(), onFileEncoded: attached });
-    expect(attached).toHaveBeenCalledOnce();
-    expect(attached.mock.calls[0][1]).toMatchObject({ filename: "archive.zip", media_type: "application/zip", data: "AP8CAw==" });
+    const resources = new ApplicationDraftResources(() => {});
+    const [attachment] = resources.attach([file]);
+    expect(await resources.resolve(attachment.id)).toMatchObject({ name: "archive.zip", mediaType: "application/zip", data: "AP8CAw==" });
   });
-  it("retains a pasted file through encoding and the shared draft attachment builder", async () => {
+  it("retains a pasted file through encoding and the application-owned draft resource", async () => {
     const file = new File([new Uint8Array([0, 1, 2, 3])], "clip.mp4", { type: "video/mp4" });
     Object.defineProperty(file, "arrayBuffer", { value: async () => new Uint8Array([0, 1, 2, 3]).buffer });
     const event = { clipboardData: { items: [{ kind: "file", getAsFile: () => file }] } } as unknown as ClipboardEvent<HTMLTextAreaElement>;
     const pasted = clipboardAttachmentFiles(event);
     expect(pasted).toEqual([file]);
-    const attached = vi.fn();
-    await buildComposerAttachments(pasted, {
-      onImagePlaceholder: vi.fn(), onImageEncoded: vi.fn(),
-      onFilePlaceholder: vi.fn(), onFileEncoded: attached,
-    });
-    expect(attached).toHaveBeenCalledOnce();
-    expect(attached.mock.calls[0][1]).toMatchObject({ filename: "clip.mp4", media_type: "video/mp4", data: "AAECAw==" });
+    const resources = new ApplicationDraftResources(() => {});
+    const [attachment] = resources.attach(pasted);
+    expect(await resources.resolve(attachment.id)).toMatchObject({ name: "clip.mp4", mediaType: "video/mp4", data: "AAECAw==" });
   });
 
   it("rejects oversized video before allocating its byte buffer", async () => {

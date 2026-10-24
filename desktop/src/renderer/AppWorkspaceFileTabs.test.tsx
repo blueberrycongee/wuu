@@ -729,7 +729,7 @@ describe("workspace file tabs", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="在 对话 中新建对话"]')!.click());
     await flushAsync();
     const attachment = { id: "file-selection-retry-attachment", filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" };
-    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), restart: vi.fn() } });
+    const encode = vi.spyOn(composerMessages, "composerFilePlaceholder").mockReturnValue({ ...attachment, encodePromise: Promise.resolve(attachment), preparation: { filename: attachment.filename, promise: Promise.resolve(attachment), result: attachment, restart: vi.fn() } });
     try {
       const input = openComposerAttachmentPicker(container.querySelector("[data-main-conversation-composer]")!);
       Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF"], attachment.filename, { type: attachment.media_type })] });
@@ -796,7 +796,7 @@ describe("workspace file tabs", () => {
       { id: "retry-file-2", filename: "资料.txt", media_type: "text/plain", data: "Y29udGV4dA==" },
     ];
     const imageEncode = vi.spyOn(composerMessages, "composerImagePlaceholder")
-      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image), preparation: { filename: "reference.png", promise: Promise.resolve(image), restart: vi.fn() } });
+      .mockReturnValue({ ...image, encodePromise: Promise.resolve(image), preparation: { filename: "reference.png", promise: Promise.resolve(image), result: image, restart: vi.fn() } });
     const fileRead = deferred<void>();
     const encodings: Promise<composerMessages.ComposerFile>[] = [];
     const prepareFile = composerMessages.composerFilePlaceholder;

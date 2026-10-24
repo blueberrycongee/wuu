@@ -1842,7 +1842,11 @@ describe("session tab switch latency", () => {
     window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
     const encoded = { id: "prepared-image", media_type: "image/png", data: "aW1hZ2U=" };
     const encoding = deferred<ComposerMessages.ComposerImage>();
-    vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise, preparation: { filename: "image.png", promise: encoding.promise, restart: vi.fn() } });
+    const preparation: ComposerMessages.ComposerAttachmentPreparation<ComposerMessages.ComposerImage> = {
+      filename: "image.png", promise: encoding.promise, restart: vi.fn(),
+    };
+    void encoding.promise.then(value => { preparation.result = value; });
+    vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise, preparation });
     await act(async () => { root = createRoot(container); root.render(<App />); });
     await flushAsync();
     const input = openComposerAttachmentPicker(container.querySelector('[data-main-conversation-composer="dock"]')!);

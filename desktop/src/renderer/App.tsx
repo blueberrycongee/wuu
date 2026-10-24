@@ -507,17 +507,7 @@ export function App({ application: providedApplication }: { application?: Applic
     moveSplitDraftToGlobalComposer,
     currentPrimaryComposerDraft,
     restorePrimaryComposerDraft,
-  } = useComposerDraftState((update) => {
-    setState((current) => {
-      const sessionTabs = current.sessionTabs.map((tab) => {
-        if (tab.kind !== "draft" && tab.kind !== "thread") return tab;
-        const draft = update(tab);
-        return draft === tab ? tab : { ...tab, ...draft };
-      });
-      return sessionTabs.every((tab, index) => tab === current.sessionTabs[index])
-        ? current : { ...current, sessionTabs };
-    });
-  }, application);
+  } = useComposerDraftState(application);
   useEffect(() => {
     const addSelection = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
@@ -3763,11 +3753,14 @@ export function App({ application: providedApplication }: { application?: Applic
 
   function currentComposerDraftSnapshot() {
     const current = appStateRef.current;
+    const activeTab = current.sessionTabs.find(tab => tab.id === current.activeSessionTabID);
+    const drafts = application.getSnapshot().drafts;
     return captureComposerDrafts(
       current,
       current.thread && current.secondaryThread
-        ? composerDraftsRef.current.split
-        : composerDraftsRef.current.primary(),
+        ? { primary: { ...sessionTabDraftForThread(current, current.thread.id), prompt: drafts.primary.text },
+          secondary: { ...sessionTabDraftForThread(current, current.secondaryThread.id), prompt: drafts.secondary.text } }
+        : { ...(activeTab ? cloneSessionTabDraft(activeTab) : emptyComposerDraft()), prompt: drafts.primary.text },
     );
   }
 
