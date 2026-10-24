@@ -155,7 +155,6 @@ type Session struct {
 	instructionConfig   config.InstructionFilesConfig
 	skillsConfig        config.SkillsConfig
 	pluginSkills        pluginSkillSnapshot
-	AgentControl        *agentcontrol.AgentControl
 	ProcessManager      *process.Manager
 	Toolkit             *tools.Toolkit
 	ActivityRegistry    *activity.Registry
@@ -279,7 +278,6 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		instructionConfig:           s.instructionConfig,
 		skillsConfig:                s.skillsConfig,
 		pluginSkills:                s.pluginSkills,
-		AgentControl:                s.AgentControl,
 		ProcessManager:              s.ProcessManager,
 		threadProcesses:             s.threadProcessManagerPool(),
 		executionEnvironments:       s.executionEnvironmentManager(),
@@ -477,11 +475,6 @@ func NewSession(opts Options) (*Session, error) {
 	if err := catalogLease.Release(); err != nil {
 		return nil, err
 	}
-	// Root worker callbacks run only after this dormant control is bound. The
-	// pointer is assigned once before startup; each callback reads a current
-	// immutable generation snapshot rather than constructor-captured skills.
-	var runtimeSession *Session
-	var agentControl *agentcontrol.AgentControl
 	pluginTurnRouter := NewPluginSessionRouter()
 	var userQuestions *pluginhost.UserQuestionBroker
 	if !opts.NonInteractive {
@@ -712,14 +705,6 @@ func NewSession(opts Options) (*Session, error) {
 		cfg.Agent.MaxContextTokens,
 	)
 	if toolkit != nil {
-		workerToolProviderName := roleSelections.Worker.RuleProvider
-		workerToolModeModel := roleSelections.Worker.APIModel
-		_, workerToolSearchEnabled, workerNativeDeferredDiscovery := resolveToolLoadingForProvider(cfg.Agent, roleSelections.Worker.RuleProviderConfig, workerToolModeModel, roleSelections.Worker.ProviderOptions)
-		workerToolSurface, catErr := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
-		if catErr != nil {
-			return nil, catErr
-		}
-		workerBaseSystemPrompt := buildBaseSystemPromptContent(rootDir, sessionDate, config.WorkerSystemPrompt(), "", workerToolProviderName, workerToolModeModel, workerToolSurface, instructionFiles, "", "", discoveredSkills)
 		var werr error
 		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 		if werr != nil {
@@ -729,87 +714,6 @@ func NewSession(opts Options) (*Session, error) {
 			} else {
 				return nil, fmt.Errorf("build worker client: %w", werr)
 			}
-		}
-
-		c, cerr := agentcontrol.New(agentcontrol.Config{
-			UseCurrentTemperatureOnRestore: opts.DesktopExecutionDefaults,
-			Client:                         workerClient,
-			ProviderName:                   roleSelections.Worker.Provider,
-			DefaultModel:                   roleSelections.Worker.APIModel,
-			DefaultEffort:                  roleSelections.Worker.LegacyEffort,
-			DefaultOptions:                 modelvariant.CloneOptions(roleSelections.Worker.ProviderOptions),
-			DefaultContextWindow:           workerModelBudget.ContextWindowTokens,
-			DefaultMaxInputTokens:          workerModelBudget.InputLimitTokens,
-			DefaultOutputReserveTokens:     workerModelBudget.OutputReserveTokens,
-			DefaultCompactThresholdTokens:  workerModelBudget.CompactThresholdTokens,
-			DefaultTemperature:             cfg.Agent.Temperature,
-			DefaultCompactThresholdPct:     cfg.Agent.CompactThresholdPct,
-			DefaultCompactKeepRecentTokens: cfg.Agent.CompactKeepRecentTokens,
-			DefaultDisableAutoCompact:      cfg.Agent.DisableAutoCompact,
-			ParentRepo:                     rootDir,
-			WorktreeRoot:                   statepath.WorktreeRoot(workspaceStateDir),
-			SessionID:                      "session-pending",
-			HistoryDir:                     "",
-			WorkerSysPrompt:                workerBaseSystemPrompt,
-			WorkerPrompt: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata, isolation agentcontrol.IsolationMode) (string, error) {
-				workerToolSurface, err := workerToolSurfaceForToolkit(toolkit, workerToolProviderName, workerToolModeModel, workerToolSearchEnabled)
-				if err != nil {
-					return "", err
-				}
-				files, workerSkills := runtimeSession.guidanceForRoot(workerRoot, nil)
-				return buildWorkerBasePrompt(workerRoot, sessionDate, "", workerToolProviderName, workerToolModeModel, workerToolSurface, files, workerSkills), nil
-			},
-			WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
-				wkit, werr := toolkit.CloneForRoot(workerRoot)
-				if werr != nil {
-					return nil, werr
-				}
-				// Reset the inherited file-scope whitelist to the standard
-				// workspace, registered-project, and temporary roots.
-				wkit.SetFileScopeRoots(workspaces.BoundaryRoots(workerRoot, wuuHome))
-				workerStateDir := workspaceStateDir
-				if workerRoot != rootDir {
-					if dir, err := statepath.WorkspaceDir(wuuHome, workerRoot); err == nil {
-						workerStateDir = dir
-					}
-				}
-				wkit.SetStateDir(workerStateDir)
-				wkit.SetRuntimeHome(wuuHome)
-				wkit.SetProcessManager(processMgr)
-				_, workerSkills, workerGeneration := runtimeSession.skillSnapshotForRoot(workerRoot, nil)
-				wkit.SetSkillsWithAvailability(workerSkills, workerGeneration.skillAvailable)
-				runtimeSession.bindLocalSkillRefresh(wkit, workerRoot, workerGeneration)
-				wkit.SetAgentControl(agentControl)
-				wkit.ConfigureSurfaceForProviderModel(workerToolProviderName, workerToolModeModel, false)
-				wkit.SetToolSearchEnabled(workerToolSearchEnabled)
-				wkit.SetNativeDeferredToolDiscovery(workerNativeDeferredDiscovery)
-				wkit.SetAgentIdentity(meta.ID, meta.Path)
-				applyWorkerToolFilter(wkit, wt)
-				return wkit, nil
-			},
-			AcquireLoopDriver: func(ctx context.Context, binding *loopdriver.Binding) (loopdriver.Driver, loopdriver.Binding, func(), error) {
-				return runtimeSession.driverResolver(nil)(ctx, binding)
-			},
-			WorkerWakeAuthority: workerWakeAuthority(toolkit),
-			OnSubagentStart: func(ctx context.Context, agentID string) error {
-				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStart, &hooks.Input{CWD: rootDir, AgentID: agentID})
-				return err
-			},
-			OnSubagentStop: func(ctx context.Context, agentID string) error {
-				_, err := hookDispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{CWD: rootDir, AgentID: agentID})
-				return err
-			},
-			ParticipantStore:   sessionParticipantStore{sessions: sessions},
-			MaxParallel:        cfg.Agent.MaxParallelValue(),
-			InferenceJournal:   workspaceJournal,
-			BeginModelReceipts: initialGeneration.beginModelReceipts,
-			ToolLedgerFactory: func(ownerID string) (*toolledger.Ledger, error) {
-				return toolledger.New(documents, ownerID)
-			},
-		})
-		if cerr == nil {
-			agentControl = c
-			toolkit.SetAgentControl(agentControl)
 		}
 	}
 
@@ -842,7 +746,7 @@ func NewSession(opts Options) (*Session, error) {
 		CompactThresholdPct:         cfg.Agent.CompactThresholdPct,
 		CompactKeepRecentTokens:     cfg.Agent.CompactKeepRecentTokens,
 		DisableAutoCompact:          cfg.Agent.DisableAutoCompact,
-		BeforeRequestContext:        RuntimeContextInjector(agentControl, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
+		BeforeRequestContext:        RuntimeContextInjector(nil, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
 		BeforeModelStep:             pluginPreStepInjector(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
 		BeforeRequest:               pluginRequestInterceptor(pluginHost, resolvedName, "", rootDir),
 		InferenceOperationKind:      providers.InferenceOperationAgentRound,
@@ -854,7 +758,7 @@ func NewSession(opts Options) (*Session, error) {
 
 	bindPluginCompactionHooks(streamRunner, hookDispatcher, "", rootDir)
 
-	runtimeSession = &Session{
+	runtimeSession := &Session{
 		Documents: documents, Sessions: sessions, nativeProviders: append([]NativeProviderFactory(nil), opts.NativeProviders...),
 		credentials: credentials, configClient: configClient, chatGPTManager: chatGPTManager, artifactClient: artifacts,
 		ProviderName:                resolvedName,
@@ -886,7 +790,6 @@ func NewSession(opts Options) (*Session, error) {
 		instructionConfig:           cfg.Instructions,
 		skillsConfig:                cfg.Skills,
 		pluginSkills:                pluginSkills,
-		AgentControl:                agentControl,
 		ProcessManager:              processMgr,
 		Toolkit:                     toolkit,
 		mcpOAuth:                    mcpOAuth,
@@ -1003,9 +906,6 @@ func NewSession(opts Options) (*Session, error) {
 		toolkit.SetSkillsWithAvailability(discoveredSkills, runtimeSession.pluginGeneration.skillAvailable)
 		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
 	}
-	// The legacy/root control remains dormant until SetSessionID binds its real
-	// artifact directories. Per-thread controls created by NewThreadRuntime are
-	// likewise started only after app-server installs their terminal finalizer.
 	graphOwned = false
 	return runtimeSession, nil
 }
@@ -1206,10 +1106,8 @@ func (s *Session) PrewarmThreadProvider(ctx context.Context, sessionID string, e
 	return prewarmer.PrewarmSession(ctx, sessionID)
 }
 
-// NewThreadRuntime creates a per-conversation execution runtime from the
-// shared workspace runtime. It intentionally does not mutate Session.Toolkit or
-// Session.AgentControl; those remain the legacy single-session runtime used by
-// CLI and older call sites.
+// NewThreadRuntime captures per-conversation execution resources from the
+// workspace templates. Each conversation owns its toolkit and worker control.
 func (s *Session) NewThreadRuntime(sessionID string) (*ThreadRuntime, error) {
 	return s.NewThreadRuntimeForRoot(sessionID, s.RootDir)
 }
@@ -2092,8 +1990,8 @@ func applyWorkerToolFilter(kit *tools.Toolkit, wt agentcontrol.WorkerType) {
 	kit.DisableTools(disabled...)
 }
 
-// SetSessionID binds user-level runtime artifact paths after the UI has
-// created or resumed a session. Conversation logs live in SessionDir.
+// SetSessionID binds workspace artifact paths and dispatches SessionStart.
+// Conversation execution and workers belong to owned ThreadRuntime instances.
 func (s *Session) SetSessionID(id string) error {
 	if s == nil || strings.TrimSpace(id) == "" {
 		return nil
@@ -2127,17 +2025,6 @@ func (s *Session) SetSessionID(id string) error {
 				s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections = systemPromptForThreadRoot(s.StreamRunner.SystemPrompt, s.StreamRunner.SystemPromptSections, environment.Root(), s.SessionDate)
 			}
 		}
-	}
-	if s.AgentControl != nil {
-		if err := s.AgentControl.SetSessionInfo(
-			id,
-			filepath.Join(artifactDir, "workers"),
-			filepath.Join(artifactDir, "threads"),
-		); err != nil {
-			return err
-		}
-		s.AgentControl.StartWorkerTerminalRecovery()
-		s.AgentControl.StartQueuedWork()
 	}
 	if s.HookDispatcher != nil {
 		if _, err := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionStart, &hooks.Input{SessionID: id, CWD: s.RootDir}); err != nil {
@@ -2191,13 +2078,6 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 		}
 		_, hookErr := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionEnd, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
 		cleanupErr = errors.Join(cleanupErr, hookErr)
-	}
-	if s.AgentControl != nil {
-		// Terminal intents are the durable recovery authority. Yield local retry
-		// loops, wait for physical execution leases to release, and only remove
-		// worktrees when no unacknowledged terminal record remains.
-		cleanupErr = errors.Join(cleanupErr, shutdownAndCleanupAgentControl(s.AgentControl))
-		s.AgentControl = nil
 	}
 	if !s.borrowedPluginGeneration {
 		cleanupErr = errors.Join(cleanupErr, s.stopPluginModelInvocations())

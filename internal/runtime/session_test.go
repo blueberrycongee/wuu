@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/capability"
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -100,7 +101,7 @@ func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 	}
 }
 
-func TestSessionCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *testing.T) {
+func TestOwnedThreadCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *testing.T) {
 	control, worktreePath := newRuntimeCleanupWorktree(t, "pending-terminal-cleanup")
 	// The control's harness path is stable under the repository state root used
 	// by newRuntimeCleanupWorktree. Derive it from the worker's session ID via
@@ -113,8 +114,8 @@ func TestSessionCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *t
 		t.Fatalf("write pending terminal finalization: %v", err)
 	}
 
-	rt := &Session{AgentControl: control}
-	if _, err := rt.Cleanup(); err == nil || !strings.Contains(err.Error(), "preserving session worktrees") {
+	engine := &wuuEngineSession{owner: &Session{}, ownedRuntime: &ThreadRuntime{AgentControl: control}}
+	if err := engine.Close(context.Background()); err == nil || !strings.Contains(err.Error(), "preserving session worktrees") {
 		t.Fatalf("Cleanup error = %v, want pending-terminal diagnostic", err)
 	}
 	if _, err := os.Stat(worktreePath); err != nil {
@@ -122,10 +123,10 @@ func TestSessionCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *t
 	}
 }
 
-func TestSessionCleanupRemovesWorktreesWithoutPendingTerminalFinalization(t *testing.T) {
+func TestOwnedThreadCleanupRemovesWorktreesWithoutPendingTerminalFinalization(t *testing.T) {
 	control, worktreePath := newRuntimeCleanupWorktree(t, "settled-terminal-cleanup")
-	rt := &Session{AgentControl: control}
-	if _, err := rt.Cleanup(); err != nil {
+	engine := &wuuEngineSession{owner: &Session{}, ownedRuntime: &ThreadRuntime{AgentControl: control}}
+	if err := engine.Close(context.Background()); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 	if _, err := os.Stat(worktreePath); !errors.Is(err, os.ErrNotExist) {
@@ -244,7 +245,7 @@ func (c *sessionQueueBlockingClient) StreamChat(ctx context.Context, _ providers
 	return events, nil
 }
 
-func TestNewSessionStartsLegacyAgentControlQueue(t *testing.T) {
+func TestOwnedThreadStartsQueuedWorkers(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
@@ -272,23 +273,21 @@ func TestNewSessionStartsLegacyAgentControlQueue(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = rt.Cleanup()
 	})
-	if rt.AgentControl == nil {
-		t.Fatal("NewSession did not build the legacy AgentControl")
-	}
-	rt.AgentControl.UpdateWorkerDefaults(client, "gpt-test", subagent.ManagerOptions{})
-	if err := rt.SetSessionID("legacy-queue-session"); err != nil {
-		t.Fatalf("SetSessionID: %v", err)
-	}
+	rt.WorkerClient = client
+	engine, thread := openOwnedRuntimeTestThread(t, rt, "owned-queue-session")
+	control := thread.AgentControl
+	control.StartWorkerTerminalRecovery()
+	control.StartQueuedWork()
 
 	var firstWorkerID string
 	for i := 0; i < 5; i++ {
-		result, spawnErr := rt.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{
+		result, spawnErr := control.Spawn(context.Background(), agentcontrol.SpawnRequest{
 			Type:     agentcontrol.DefaultSubagentType,
-			TaskName: "legacy_queue_" + string(rune('a'+i)),
-			Prompt:   "hold root runtime capacity",
+			TaskName: "owned_queue_" + string(rune('a'+i)),
+			Prompt:   "hold thread runtime capacity",
 		})
 		if spawnErr != nil {
-			t.Fatalf("spawn root worker %d: %v", i, spawnErr)
+			t.Fatalf("spawn thread worker %d: %v", i, spawnErr)
 		}
 		if i == 0 {
 			firstWorkerID = result.AgentID
@@ -296,37 +295,37 @@ func TestNewSessionStartsLegacyAgentControlQueue(t *testing.T) {
 		select {
 		case <-client.started:
 		case <-time.After(2 * time.Second):
-			t.Fatalf("root worker %d did not start", i)
+			t.Fatalf("thread worker %d did not start", i)
 		}
 	}
-	queued, err := rt.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{
+	queued, err := control.Spawn(context.Background(), agentcontrol.SpawnRequest{
 		Type:     agentcontrol.DefaultSubagentType,
-		TaskName: "legacy_queue_waiter",
-		Prompt:   "run when root capacity frees",
+		TaskName: "owned_queue_waiter",
+		Prompt:   "run when thread capacity frees",
 	})
 	if err != nil {
-		t.Fatalf("queue root worker: %v", err)
+		t.Fatalf("queue thread worker: %v", err)
 	}
 	if queued.Status != string(subagent.StatusQueued) {
-		t.Fatalf("root queued worker status = %q, want queued", queued.Status)
+		t.Fatalf("thread queued worker status = %q, want queued", queued.Status)
 	}
-	if !rt.AgentControl.Stop(firstWorkerID) {
-		t.Fatalf("stop root worker %s", firstWorkerID)
+	if !control.Stop(firstWorkerID) {
+		t.Fatalf("stop thread worker %s", firstWorkerID)
 	}
 	select {
 	case <-client.started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("legacy root AgentControl did not drain its queue")
+		t.Fatal("owned thread AgentControl did not drain its queue")
 	}
-	if _, err := rt.Cleanup(); err != nil {
-		t.Fatalf("Cleanup: %v", err)
+	if err := engine.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	if rt.AgentControl != nil {
-		t.Fatal("Cleanup retained the legacy AgentControl")
+	if control.HasOwnedWorkerExecutions() {
+		t.Fatal("owned thread cleanup left a physical worker running")
 	}
 }
 
-func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
+func TestOwnedThreadRestoresQueueAndTerminalRecovery(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
@@ -351,16 +350,16 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 	client := &sessionQueueBlockingClient{started: make(chan struct{}, 2), release: make(chan struct{})}
-	rt.AgentControl.UpdateWorkerDefaults(client, "gpt-test", subagent.ManagerOptions{})
+	rt.WorkerClient = client
 	t.Cleanup(func() {
 		close(client.release)
 		_, _ = rt.Cleanup()
 	})
 
 	const (
-		sessionID        = "legacy-restored-session"
-		queuedWorkerID   = "legacy-restored-queued-worker"
-		terminalWorkerID = "legacy-restored-terminal-worker"
+		sessionID        = "owned-restored-session"
+		queuedWorkerID   = "owned-restored-queued-worker"
+		terminalWorkerID = "owned-restored-terminal-worker"
 	)
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, sessionID)
 	harnessDir := filepath.Join(artifactDir, "harness")
@@ -404,8 +403,10 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 		t.Fatalf("persist queue payload: %v", err)
 	}
 	terminalPath := writeRuntimeTerminalFinalization(t, harnessDir, terminalWorkerID)
+	_, thread := openOwnedRuntimeTestThread(t, rt, sessionID)
+	control := thread.AgentControl
 	finalized := make(chan subagent.Notification, 1)
-	unsubscribe := rt.AgentControl.SubscribeWorkerTerminalFinalizer(func(n subagent.Notification) error {
+	unsubscribe := control.SubscribeWorkerTerminalFinalizer(func(n subagent.Notification) error {
 		if n.AgentID == terminalWorkerID {
 			finalized <- n
 		}
@@ -415,16 +416,15 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 
 	select {
 	case <-client.started:
-		t.Fatal("legacy queue started before the real session was bound")
+		t.Fatal("owned thread queue started before explicit admission")
 	case <-time.After(100 * time.Millisecond):
 	}
-	if err := rt.SetSessionID(sessionID); err != nil {
-		t.Fatalf("SetSessionID: %v", err)
-	}
+	control.StartWorkerTerminalRecovery()
+	control.StartQueuedWork()
 	select {
 	case <-client.started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("bound legacy runtime did not start its restored queue")
+		t.Fatal("owned thread runtime did not start its restored queue")
 	}
 	select {
 	case notification := <-finalized:
@@ -432,7 +432,7 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 			t.Fatalf("recovered terminal notification = %+v", notification)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("bound legacy runtime did not recover its terminal intent")
+		t.Fatal("owned thread runtime did not recover its terminal intent")
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -447,35 +447,22 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 	}
 }
 
-func TestSetSessionIDReturnsQueueRestoreFailure(t *testing.T) {
-	root := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
-	t.Setenv("TEST_WUU_KEY", "abc")
-	rt, err := NewSession(Options{
-		RootDir: root,
-		HomeDir: home,
-		Config: config.Config{
-			DefaultProvider: "test",
-			Providers: map[string]config.ProviderConfig{
-				"test": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKeyEnv: "TEST_WUU_KEY", Model: "gpt-test"},
-			},
-		},
-	})
+func openOwnedRuntimeTestThread(t *testing.T, workspace *Session, id string) (agentengine.Session, *ThreadRuntime) {
+	t.Helper()
+	engine, err := NewWuuEngine(workspace).Open(context.Background(), agentengine.OpenRequest{ThreadID: id, RootDir: workspace.RootDir})
 	if err != nil {
-		t.Fatalf("NewSession: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { _, _ = rt.Cleanup() })
-	harnessDir := filepath.Join(statepath.SessionArtifactDir(rt.StateDir, "corrupt-legacy-queue"), "harness")
-	if err := os.MkdirAll(harnessDir, 0o755); err != nil {
-		t.Fatalf("mkdir harness: %v", err)
+	t.Cleanup(func() {
+		if err := engine.Close(context.Background()); err != nil {
+			t.Errorf("Close owned runtime: %v", err)
+		}
+	})
+	thread := engine.(*wuuEngineSession).ownedRuntime
+	if _, err := thread.Sessions.CreateWithMetadata(id, workspace.RootDir); err != nil {
+		t.Fatalf("create captured thread metadata: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(harnessDir, "queue.json"), []byte("{"), 0o600); err != nil {
-		t.Fatalf("write corrupt queue: %v", err)
-	}
-	if err := rt.SetSessionID("corrupt-legacy-queue"); err == nil || !strings.Contains(err.Error(), "restore queued spawns") {
-		t.Fatalf("SetSessionID error = %v, want queue restore failure", err)
-	}
+	return engine, thread
 }
 
 func writeRuntimeTerminalFinalization(t *testing.T, harnessDir, workerID string) string {
@@ -1277,9 +1264,6 @@ func TestNewThreadRuntimePropagatesQueuedSpawnRestoreFailure(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 	defer func() { _, _ = rt.Cleanup() }()
-	if rt.AgentControl != nil {
-		defer rt.AgentControl.Close()
-	}
 	rt.WorkerClient = &sessionRecordingClient{}
 
 	threadID := "thread-corrupt-queue"
@@ -1328,10 +1312,6 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 		t.Fatalf("NewSession: %v", err)
 	}
 	defer func() {
-		if rt.AgentControl != nil {
-			rt.AgentControl.StopAll()
-			rt.AgentControl.Close()
-		}
 		_, _ = rt.Cleanup()
 	}()
 	rt.WorkerClient = &sessionRecordingClient{}

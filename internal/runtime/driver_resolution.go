@@ -55,8 +55,7 @@ func (s *Session) currentDriverGatewayTable() *driverGatewayTable {
 }
 
 // driverResolver retains the selected generation through execution cleanup.
-// Root workers acquire the current generation at each execution boundary;
-// conversations and their workers inherit the thread's retained generation.
+// Conversations and their workers inherit the thread's captured generation.
 func (s *Session) driverResolver(parent *PluginGeneration) loopdriver.AcquireFunc {
 	return func(ctx context.Context, expected *loopdriver.Binding) (driver loopdriver.Driver, binding loopdriver.Binding, release func(), err error) {
 		generation := parent
