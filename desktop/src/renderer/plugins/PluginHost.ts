@@ -1,4 +1,4 @@
-import { scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
+import { scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1,
@@ -853,6 +853,7 @@ export class PluginHost {
     };
     return Object.freeze({
       contractVersion: 1 as const,
+      onboarding: scopeApplicationOnboarding(() => service().onboarding, state.lifetime.signal, () => this.assertActive(state)),
       browser: scopeApplicationBrowser(() => service().browser, state.lifetime.signal, () => this.assertActive(state)),
       fileSelection: scopeApplicationFileSelection(() => service().fileSelection, state.lifetime.signal, () => this.assertActive(state)),
       projects: scopeApplicationProjects(() => service().projects, state.lifetime.signal, () => this.assertActive(state)),

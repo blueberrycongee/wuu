@@ -1,3 +1,4 @@
+import type { ApplicationOnboardingV1, OnboardingCallOptionsV1 } from "./ui-onboarding.js";
 import type { ApplicationBrowserV1, BrowserActivityV1, BrowserDockTargetV1, BrowserOperationOptionsV1, BrowserSurfaceHandleV1 } from "./ui-browser.js";
 import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "./ui-side-conversation.js";
 import type { ApplicationFileSelectionServiceV1, FileSelectionCallOptionsV1 } from "./ui-file-selection.js";
@@ -141,7 +142,7 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "navigation.show-section": { input: { readonly section: "conversations" | "catalog" }; result: void };
   "catalog.select-section": { input: { readonly section: "plugins" | "skills" }; result: void };
   "catalog.select-plugin": { input: { readonly pluginId: string }; result: void };
-  "workspace.select": { input: { readonly workspaceId: string }; result: void };
+  "workspace.select": { input: { readonly workspaceId: string; readonly resumeLatestThread?: boolean }; result: void };
   "thread.select": { input: { readonly threadId: string }; result: void };
   "thread.create": { input: { readonly workspaceId?: string }; result: { readonly threadId: string } };
   "thread.rename": { input: { readonly threadId: string; readonly title: string }; result: void };
@@ -163,6 +164,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly onboarding: ApplicationOnboardingV1;
   readonly browser: ApplicationBrowserV1;
   readonly fileSelection: ApplicationFileSelectionServiceV1;
   readonly projects: ApplicationProjectsV1;
@@ -529,5 +531,28 @@ export function scopeApplicationBrowser(source: () => ApplicationBrowserV1,
     onInvalidate: listener => subscribe(callback => source().onInvalidate(callback), listener),
     openExternal: (url, options) => invokeApplicationOperation(signal => source().openExternal(url, { signal }), signal, assertActive, options?.signal),
     consumeNavigation: requestId => { check(); source().consumeNavigation(requestId); },
+  });
+}
+
+/** Setup state survives renderer replacement; observations and commands retain their caller lifetime. */
+export function scopeApplicationOnboarding(source: () => ApplicationOnboardingV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationOnboardingV1 {
+  const read = <T>(operation: () => T): T => { assertActive(); signal.throwIfAborted(); return operation(); };
+  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: OnboardingCallOptionsV1) =>
+    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
+  return Object.freeze<ApplicationOnboardingV1>({
+    getSnapshot: () => read(() => source().getSnapshot()),
+    checkpoint: input => read(() => source().checkpoint(input)),
+    subscribe: listener => read(() => {
+      const stop = source().subscribe(() => { if (!signal.aborted) listener(); });
+      let stopped = false;
+      const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
+      signal.addEventListener("abort", dispose, { once: true });
+      if (signal.aborted) dispose();
+      return dispose;
+    }),
+    discoverWorkspaces: options => invoke(signal => source().discoverWorkspaces({ signal }), options),
+    chooseWorkspace: options => invoke(signal => source().chooseWorkspace({ signal }), options),
+    complete: (input, options) => invoke(signal => source().complete(input, { signal }), options),
   });
 }

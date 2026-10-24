@@ -49,6 +49,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   const unavailable = (): never => { throw new Error("Settings controls are unavailable in the synthetic preview"); };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    onboarding: { getSnapshot: () => ({ revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } }), subscribe: () => () => {}, checkpoint: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
     browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openExternal: unavailable, consumeNavigation: unavailable },
     fileSelection: { getSnapshot: target => ({ ...target, interactionOwnerKey: "preview", enabled: false, canAskSide: false, comments: [] }), subscribe: () => () => {},
       quote: unavailable, comment: unavailable, removeComment: unavailable, edit: unavailable, openPdf: unavailable, openFile: unavailable, askSide: unavailable },

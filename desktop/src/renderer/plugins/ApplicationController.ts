@@ -1,3 +1,4 @@
+import { ApplicationOnboarding } from "./ApplicationOnboarding";
 import { ApplicationBrowser } from "./ApplicationBrowser";
 import { emptyActivitySessions, mergeActivityList, reduceActivitySessionEvent, clearActivitiesForWorkdir } from "../ActivitySessions";
 import type { ApplicationSideConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
@@ -70,6 +71,11 @@ export class ApplicationController implements ApplicationServiceV1 {
     return this.composerRuntimeOwner ??= new ApplicationComposerRuntime({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
+  }
+  private onboardingOwner?: ApplicationOnboarding;
+  get onboarding(): ApplicationOnboarding {
+    return this.onboardingOwner ??= new ApplicationOnboarding({ getState: () => this.state, updateState: this.updateState,
+      selectImportedWorkspace: (workspaceId, signal) => this.invoke("workspace.select", { workspaceId, resumeLatestThread: false }, { signal }) });
   }
   private activitySessions = emptyActivitySessions();
   private activitySourceKey?: string;
@@ -358,6 +364,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     }
     this.state = next;
     this.projectsOwner?.notifyChanged();
+    this.onboardingOwner?.notifyChanged();
     this.syncActivities();
     this.pendingComposer.reconcilePendingComposerMessagesForState(next);
     this.rememberDraftResources();
@@ -415,6 +422,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.composerRuntimeOwner = undefined;
       this.activityRequest++; this.activitySourceKey = undefined;
       this.browserOwner?.dispose(); this.browserOwner = undefined;
+      this.onboardingOwner?.dispose(); this.onboardingOwner = undefined;
       this.fileSelectionOwner = undefined;
       this.projectsOwner?.dispose();
       this.projectsOwner = undefined;
@@ -1018,13 +1026,17 @@ export class ApplicationController implements ApplicationServiceV1 {
         this.updateState(state => ({ ...state, catalogPluginID: pluginId })); return;
       }
       case "workspace.select": {
-        const request = ++this.navigationRequest;
-        const { workspaceId } = input as ApplicationActionMapV1["workspace.select"]["input"];
-        const workspace = await window.wuu.selectProject(workspaceId);
-        signal?.throwIfAborted();
-        const loaded = await loadRuntime(workspace);
-        signal?.throwIfAborted();
-        if (request === this.navigationRequest) this.updateState(state => withLoadedRuntimeSessionTab(state, loaded));
+        const { workspaceId, resumeLatestThread } = input as ApplicationActionMapV1["workspace.select"]["input"];
+        const request = this.beginNavigation("workspace", workspaceId, true, signal);
+        try {
+          const workspace = await window.wuu.selectProject(workspaceId);
+          signal?.throwIfAborted();
+          if (request !== this.navigationRequest) throw new Error("Workspace navigation was superseded");
+          const loaded = await loadRuntime(workspace, { resumeLatestThread });
+          signal?.throwIfAborted();
+          if (request !== this.navigationRequest) throw new Error("Workspace navigation was superseded");
+          this.updateState(state => withLoadedRuntimeSessionTab(state, loaded));
+        } finally { this.finishNavigation(request); }
         return;
       }
       case "thread.select": {

@@ -19,6 +19,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    get onboarding() { return new ApplicationController().onboarding; },
     browser: new ApplicationBrowser({ api: {}, onActivityChanged: () => {} }),
     get fileSelection() { return new ApplicationController().fileSelection; },
     projects: new ApplicationProjects({ getSource: () => ({ contextKey: "test", enabled: false }), updateThread: () => {} }),

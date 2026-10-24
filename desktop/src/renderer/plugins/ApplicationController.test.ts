@@ -16,6 +16,23 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("completes onboarding through canonical workspace navigation without resuming an old thread", async () => {
+    const context = { kind: "project" as const, project_id: "imported", cwd: "/imported" };
+    const workspace = { projects: [{ id: "imported", path: "/imported", name: "Imported" }], active_context: context };
+    window.wuu = { importWorkspaces: vi.fn().mockResolvedValue(workspace), selectProject: vi.fn().mockResolvedValue(workspace),
+      completeOnboarding: vi.fn().mockResolvedValue(undefined) } as unknown as WuuDesktopApi;
+    const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: context, projects: workspace.projects });
+    try {
+      const controller = new ApplicationController({ ...initialState, onboardingComplete: false });
+      await controller.onboarding.complete({ paths: ["/imported"] });
+      expect(load).toHaveBeenCalledExactlyOnceWith(workspace, { resumeLatestThread: false });
+      expect(controller.getSnapshot().workspaces.activeRoot).toBe("/imported");
+      expect(controller.getState().sessionTabs.find(tab => tab.id === controller.getSnapshot().tabs.activeTabId)?.kind).toBe("draft");
+      expect(controller.onboarding.getSnapshot().completed).toBe(true);
+      expect(window.wuu.completeOnboarding).toHaveBeenCalledOnce();
+    } finally { load.mockRestore(); }
+  });
+
   it("merges browser takeover into the canonical immutable activity view", async () => {
     const activity = { id: "activity", kind: "browser", workdir: "/fixture", thread_id: "thread", execution_id: "run", state: "user_controlled", controller: "user", created_at: "2026-10-24T00:00:00Z", updated_at: "2026-10-24T00:00:01Z" };
     const off = () => () => {};
