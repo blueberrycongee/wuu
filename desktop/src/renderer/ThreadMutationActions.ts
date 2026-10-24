@@ -42,6 +42,7 @@ function withThreadTitle(
 
 export type ThreadMutationActionsDeps = {
   getAppState: () => AppState;
+  onError?: (error: Error) => never;
   setAppState: SetAppState;
   nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => SessionTab;
   clearPrimaryComposerDraft: () => void;
@@ -102,6 +103,7 @@ export function createThreadMutationActions(
   deps: ThreadMutationActionsDeps,
 ): ThreadMutationActions {
   function setStatus(status: string): void {
+    deps.onError?.(new Error(status));
     showErrorToast(status);
   }
 

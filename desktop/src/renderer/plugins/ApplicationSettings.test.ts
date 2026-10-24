@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { initialState, type AppState } from "../AppState";
+import { ApplicationController } from "./ApplicationController";
 import { ApplicationSettings } from "./ApplicationSettings";
 
 function fixture() {
@@ -10,7 +11,7 @@ function fixture() {
   };
   const settings = new ApplicationSettings({ getState: () => state,
     updateState: update => { state = typeof update === "function" ? update(state) : update; },
-    changed: vi.fn(), isNavigationPending: () => false });
+    changed: vi.fn(), isNavigationPending: () => false, deleteArchivedThread: vi.fn(), unarchiveThread: vi.fn() });
   return { settings, get: () => state, set: (next: AppState) => { state = next; } };
 }
 
@@ -66,7 +67,7 @@ describe("application settings operations", () => {
     const remove = vi.fn().mockRejectedValue(new Error("restored elsewhere"));
     window.wuu = { deleteThread: remove } as unknown as typeof window.wuu;
     const before = h.get();
-    await expect(h.settings.invoke("settings.delete-archived", { threadId: "thread" })).rejects.toThrow("restored elsewhere");
+    await expect(new ApplicationController(h.get()).invoke("settings.delete-archived", { threadId: "thread" })).rejects.toThrow("restored elsewhere");
     expect(remove).toHaveBeenCalledWith("thread", { onlyIfArchived: true });
     expect(h.get()).toBe(before);
   });

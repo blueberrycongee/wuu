@@ -1,8 +1,8 @@
 import type { SetStateAction } from "react";
 import type { ApplicationSettingsActionMapV1, ApplicationSettingsViewV1, SettingsReadonly } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { EngineListResult } from "../../shared/protocol";
-import { activeThreadForState, createDraftSessionTab, isThreadRunning, mergeListedThreads, sameRuntimeContext,
-  threadBelongsToWorkspace, threadSessionTabID, updateThreadByID, upsertThread, type AppState } from "../AppState";
+import { activeThreadForState, isThreadRunning, mergeListedThreads, sameRuntimeContext,
+  threadBelongsToWorkspace, type AppState } from "../AppState";
 import type { CodexModelLoadState } from "../ComposerTypes";
 import { createRuntimeSettingsActions } from "../RuntimeSettingsActions";
 import { isCodexSubscription, isGrokBuild } from "../SubscriptionSources";
@@ -45,6 +45,8 @@ export class ApplicationSettings {
     updateState: (update: SetStateAction<AppState>) => void;
     changed: () => void;
     isNavigationPending: () => boolean;
+    deleteArchivedThread: (threadId: string) => Promise<void>;
+    unarchiveThread: (threadId: string) => Promise<void>;
   }) {}
 
   private engineContext(): { key: string; cwd?: string } {
@@ -191,33 +193,11 @@ export class ApplicationSettings {
       }
       case "settings.delete-archived": {
         const { threadId } = input as ApplicationSettingsActionMapV1["settings.delete-archived"]["input"];
-        await window.wuu.deleteThread(threadId, { onlyIfArchived: true });
-        signal?.throwIfAborted();
-        this.host.updateState(state => {
-          const remaining = state.thread?.id === threadId ? state.secondaryThread : state.thread;
-          const closingSplit = Boolean(state.secondaryThread && (state.thread?.id === threadId || state.secondaryThread.id === threadId));
-          const tabs = state.sessionTabs.filter(tab => tab.id !== threadSessionTabID(threadId));
-          const closingActive = state.activeSessionTabID === threadSessionTabID(threadId);
-          const fallback = closingActive && !remaining && state.activeContext ? createDraftSessionTab(`draft:${crypto.randomUUID()}`, state.activeContext) : undefined;
-          return { ...state, thread: remaining, secondaryThread: closingSplit || state.secondaryThread?.id === threadId ? undefined : state.secondaryThread,
-            activePane: closingSplit ? "primary" : state.activePane, sessionTabs: fallback ? [...tabs, fallback] : tabs,
-            activeSessionTabID: closingActive ? remaining ? threadSessionTabID(remaining.id) : fallback?.id ?? "" : state.activeSessionTabID,
-            threads: state.threads.filter(thread => thread.id !== threadId), running: isThreadRunning(remaining) };
-        }); break;
+        await this.host.deleteArchivedThread(threadId); break;
       }
       case "settings.unarchive": {
         const { threadId } = input as ApplicationSettingsActionMapV1["settings.unarchive"]["input"];
-        const previous = this.host.getState().threads.find(thread => thread.id === threadId);
-        this.host.updateState(state => updateThreadByID(state, threadId, thread => ({ ...thread, archived: false })));
-        try {
-          const { thread } = await window.wuu.archiveThread(threadId, false);
-          this.host.updateState(state => ({ ...updateThreadByID(state, threadId, current => ({ ...current, ...thread })),
-            threads: upsertThread(state.threads, thread) }));
-        } catch (error) {
-          if (previous) this.host.updateState(state => updateThreadByID(state, threadId, thread => ({ ...thread, archived: previous.archived })));
-          throw error;
-        }
-        break;
+        await this.host.unarchiveThread(threadId); break;
       }
     }
     signal?.throwIfAborted();

@@ -42,6 +42,33 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachments[0].id })).rejects.toThrow("Unknown composer attachment");
   });
 
+  it("deletes an archived split owner while retaining the surviving draft", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = (id: string) => ({ id, cwd: context.cwd, preview: "", status: "idle", model_provider: "", archived: id === "a", turns: [] }) as never;
+    window.wuu = { deleteThread: vi.fn().mockResolvedValue({}) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: thread("a"), secondaryThread: thread("b"),
+      threads: [thread("a"), thread("b")], activePane: "primary", activeSessionTabID: "thread:a", sessionTabs: ["a", "b"].map(id => ({
+        id: `thread:${id}`, kind: "thread", threadID: id, context, title: id, prompt: `draft ${id}`, images: [], files: [],
+      })) });
+    await controller.invoke("settings.delete-archived", { threadId: "a" });
+    expect(window.wuu.deleteThread).toHaveBeenCalledWith("a", { onlyIfArchived: true });
+    expect(controller.getSnapshot().drafts).toMatchObject({ split: false, activeTabId: "thread:b", primary: { text: "draft b", ownerTabId: "thread:b" } });
+    expect(controller.getSnapshot().settings.archivedThreads).toEqual([]);
+  });
+
+  it("reuses a populated context draft after archived thread deletion", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = { id: "a", cwd: context.cwd, preview: "", status: "idle", model_provider: "", archived: true, turns: [] } as never;
+    window.wuu = { deleteThread: vi.fn().mockResolvedValue({}) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, threads: [thread], activeSessionTabID: "thread:a", sessionTabs: [
+      { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "", images: [], files: [] },
+      { id: "draft:b", kind: "draft", context, title: "B", createdAt: 1, prompt: "keep this", images: [], files: [] },
+    ] });
+    await controller.invoke("settings.delete-archived", { threadId: "a" });
+    expect(controller.getSnapshot().drafts).toMatchObject({ activeTabId: "draft:b", primary: { text: "keep this" } });
+    expect(controller.getSnapshot().tabs.items).toHaveLength(1);
+  });
+
   it("addresses each split pane attachment owner independently of the selected tab", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const thread = (id: string) => ({ id, cwd: context.cwd, preview: "", status: "idle", model_provider: "", turns: [] }) as never;

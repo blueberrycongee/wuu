@@ -16,7 +16,10 @@ import { getActiveLocale, translateCurrent } from "../i18n";
 import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
-import { awaitComposerFiles, awaitComposerImages, createComposerMessage, inputFilesFromComposer, inputImagesFromComposer } from "../ComposerMessages";
+import { awaitComposerFiles, awaitComposerImages, createComposerMessage, createOptimisticTurn, inputFilesFromComposer, inputImagesFromComposer } from "../ComposerMessages";
+import { createComposerPendingState } from "../ComposerPendingState";
+import { createSidebarThreadCache } from "../SidebarWorkspaceState";
+import { createThreadMutationActions } from "../ThreadMutationActions";
 import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
@@ -45,6 +48,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   private readonly draftResources = new ApplicationDraftResources(() => this.publish());
   private draftRevision = 0;
   private readonly applicationSettings: ApplicationSettings;
+  private readonly sidebarCache: ReturnType<typeof createSidebarThreadCache>;
+  private readonly pendingComposer: ReturnType<typeof createComposerPendingState>;
   private readonly applicationPreview: ApplicationPreview;
   private settings = { open: false, pageId: "providers" };
   private preview: ApplicationSnapshotV1["preview"] = null;
@@ -66,14 +71,37 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   constructor(state?: AppState) {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
+    this.sidebarCache = createSidebarThreadCache(() => this.state.projects, status => { throw new Error(status); });
+    this.pendingComposer = createComposerPendingState({ getAppState: () => this.state,
+      getComposerDraftForThread: id => {
+        const tab = this.state.sessionTabs.find(tab => tab.id === id || tab.kind === "thread" && tab.threadID === id);
+        const draft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
+        if (tab?.id === this.state.activeSessionTabID) draft.prompt = this.draft;
+        return draft;
+      },
+      restoreComposerDraftForThread: (id, draft) => {
+        const tab = this.state.sessionTabs.find(tab => tab.id === id || tab.kind === "thread" && tab.threadID === id);
+        if (!tab) return;
+        if (tab.id === this.state.activeSessionTabID) { this.draft = draft.prompt; this.draftRevision++; }
+        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tab.id && item.kind !== "skills" ? { ...item, ...draft } : item) }));
+      },
+      preserveFailedComposerMessage: (id, message) => this.updateState(state => updateThreadByID(state, id, thread => upsertTurn(thread, {
+        ...createOptimisticTurn(message, Date.now()), status: "failed", error: { message: translateCurrent("composer.sendFailed") },
+      }))),
+      setStatus: status => this.updateState(state => ({ ...state, status })),
+    });
     this.applicationPreview = new ApplicationPreview({ getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
       .filter((thread): thread is Thread => Boolean(thread)), changed: () => this.publish() });
     this.applicationSettings = new ApplicationSettings({ getState: () => this.state, updateState: this.updateState,
-      changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady) });
+      changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
+      deleteArchivedThread: id => this.mutationActions().deleteArchivedThread(id),
+      unarchiveThread: id => this.mutationActions().unarchiveThread({ id }) });
     const tab = activeSessionTab(this.state);
     this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";
     this.rememberDraftResources();
     this.snapshot = this.project();
+    this.sidebarCache.subscribe(() => this.publish());
+    this.pendingComposer.subscribe(() => { this.rememberDraftResources(); this.publish(); });
   }
 
   getState = (): AppState => this.state;
@@ -104,6 +132,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.draftRevision++;
     }
     this.state = next;
+    this.pendingComposer.reconcilePendingComposerMessagesForState(next);
     this.rememberDraftResources();
     this.publish();
     for (const listener of this.stateListeners) listener();
@@ -162,12 +191,15 @@ export class ApplicationController implements ApplicationServiceV1 {
       signal?.throwIfAborted();
       this.loaded = loaded;
       this.updateState(state => withLoadedRuntimeSessionTab(state, loaded));
+      if (loaded.thread && loaded.heldComposerMessages) this.pendingComposer.seedHeldComposerMessages(loaded.thread.id, loaded.heldComposerMessages);
       return loaded;
     })();
     return this.load;
   }
 
   private receive(event: ServerEvent): void {
+    this.sidebarCache.syncSidebarServerEvent(event);
+    this.pendingComposer.syncPendingComposerMessagesFromServerEvent(event);
     if (!serverEventTargetsActiveContext(event, this.state)) return;
     const handling = handleStreamingNotification(event, this.state);
     if (handling === "stream" || handling === "background-stream") {
@@ -229,6 +261,12 @@ export class ApplicationController implements ApplicationServiceV1 {
       [...tab.images, ...tab.files].forEach(attachment => references.add(attachment.id));
       tab.images.forEach(image => this.draftResources.remember("image", image));
       tab.files.forEach(file => this.draftResources.remember("file", file));
+    }
+    for (const pending of Object.values(this.pendingComposer.pendingComposerMessagesByThread)) {
+      for (const message of [...pending.queued, ...pending.guides]) {
+        message.images.forEach(image => { references.add(image.id); this.draftResources.remember("image", image); });
+        message.files.forEach(file => { references.add(file.id); this.draftResources.remember("file", file); });
+      }
     }
     this.draftResources.reconcile(references);
   }
@@ -320,8 +358,8 @@ export class ApplicationController implements ApplicationServiceV1 {
     };
     const threads = createThreadActivationActions({ ...common,
       getActiveThreadID: () => activeThreadIDForState(this.state),
-      getSidebarThreads: () => this.state.threads,
-      getSidebarWorkspaceThreadsByWorkspaceID: () => ({}),
+      getSidebarThreads: () => [...this.state.threads, ...this.sidebarCache.getSnapshot().cachedScratchThreads],
+      getSidebarWorkspaceThreadsByWorkspaceID: () => this.sidebarCache.getSnapshot().workspaceThreadsByWorkspaceID,
       getRunningThreadIDs: () => new Set(this.state.threads.filter(isThreadRunning).map(thread => thread.id)),
       isCurrentViewSwitchRequest: isCurrent,
     });
@@ -337,6 +375,29 @@ export class ApplicationController implements ApplicationServiceV1 {
       },
     });
     return { threads, tabs, workspaces };
+  }
+
+  private mutationActions() {
+    let restoredDraft: ComposerDraftState | undefined;
+    return createThreadMutationActions({ getAppState: () => this.state,
+      setAppState: update => this.updateState(state => {
+        const next = typeof update === "function" ? update(state) : update;
+        if (!restoredDraft) return next;
+        const draft = restoredDraft;
+        restoredDraft = undefined;
+        return { ...next, sessionTabs: next.sessionTabs.map(tab => tab.id === next.activeSessionTabID && tab.kind !== "skills" ? { ...tab, ...draft } : tab) };
+      }),
+      nextDraftSessionTab: context => createDraftSessionTab(`draft:${crypto.randomUUID()}`, context),
+      clearPrimaryComposerDraft: () => { restoredDraft = emptyComposerDraft(); },
+      restorePrimaryComposerDraft: draft => { restoredDraft = draft; },
+      getSplitComposerDrafts: () => ({ primary: this.composerDraftForPane("primary"), secondary: this.composerDraftForPane("secondary") }),
+      resetSplitComposerDrafts: () => {},
+      updateCachedSidebarThread: this.sidebarCache.updateCachedSidebarThread,
+      updateCachedSidebarThreadPinned: this.sidebarCache.updateCachedSidebarThreadPinned,
+      removeCachedSidebarThread: this.sidebarCache.removeCachedSidebarThread,
+      clearThreadPendingComposerMessages: this.pendingComposer.clearThreadPendingComposerMessages,
+      onError: error => { throw error; },
+    });
   }
 
   private async selectTab(tab: SessionTab, signal?: AbortSignal): Promise<void> {
