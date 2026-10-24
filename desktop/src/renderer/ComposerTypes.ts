@@ -26,6 +26,7 @@ export type FloatingMenuOwner =
   | "sidebar-account"
   | "sidebar-workspace"
   | "conversation-actions"
+  | "conversation-workspace"
   | "conversation-status"
   | "conversation-todo"
   | "conversation-triggers"

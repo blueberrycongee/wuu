@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, Turn, UserQuestionRequest } from "../../shared/protocol";
@@ -13,6 +13,7 @@ import { retainCachedConversationPaneThreads, selectCachedConversationPaneIDs } 
 import { ConversationForkDialog } from "../ConversationForkDialog";
 import { EmptyConversationHome, RuntimeLoading } from "../LoadingViews";
 import { EmptyHomeOverview } from "../EmptyHomeOverview";
+import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "../ComposerFloatingMenu";
 import { WorkbenchConnectionContext } from "../WorkbenchConnectionContext";
 import { ImagePreviewProvider } from "../ImagePreview";
 import { TurnView } from "../TurnView";
@@ -111,9 +112,24 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
   const answer = useCallback((requestId: string, answer: { answers: { id: string; selected: string[]; custom?: string }[] }) => application.invoke("question.answer", { requestId, answer }), [application]);
   const cancelQuestion = useCallback((requestId: string) => application.invoke("question.cancel", { requestId }), [application]);
   const [workspaceMenu, setWorkspaceMenu] = useState(false);
+  const workspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const [workspaceMenuFromEnd, setWorkspaceMenuFromEnd] = useState(false);
+  useFloatingMenuFocus(workspaceMenuRef, "", workspaceMenu, workspaceMenuFromEnd);
+  useEffect(() => {
+    if (!workspaceMenu) return;
+    const dismiss = (event: globalThis.PointerEvent) => {
+      if (event.target instanceof Node && !workspaceTriggerRef.current?.contains(event.target) && !workspaceMenuRef.current?.contains(event.target)) setWorkspaceMenu(false);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [workspaceMenu]);
   const selectedWorkspace = view.workspaces.workspaces.find(row => row.id === view.workspaces.activeWorkspaceId);
   const greeting = selectedWorkspace ? greetingFor(hour, { kind: "workspace", workspaceName: "{workspace}" }).split("{workspace}") : undefined;
-  const title = greeting ? <>{greeting[0]}<button type="button" className="empty-home-workspace-link" aria-haspopup="menu" aria-expanded={workspaceMenu} onClick={() => setWorkspaceMenu(value => !value)}>{selectedWorkspace!.name}</button>{greeting[1]}</> : greetingFor(hour, { kind: "wuu" });
+  const title = greeting ? <>{greeting[0]}<button ref={workspaceTriggerRef} type="button" className="empty-home-workspace-link" aria-haspopup="menu" aria-expanded={workspaceMenu}
+    onClick={() => { setWorkspaceMenuFromEnd(false); setWorkspaceMenu(value => !value); }}
+    onKeyDown={event => { const edge = menuOpeningKey(event); if (edge) { setWorkspaceMenuFromEnd(edge === "end"); setWorkspaceMenu(true); } }}
+  >{selectedWorkspace!.name}</button>{greeting[1]}</> : greetingFor(hour, { kind: "wuu" });
   const activeDraft = view.drafts[view.drafts.activePane];
   const activeTab = view.tabs.items.find(tab => tab.id === view.tabs.activeTabId);
   if (view.phase === "starting" || view.conversation.loading) return <RuntimeLoading status={view.connection.message ?? "connecting"} />;
@@ -132,7 +148,16 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
             separator={pane === "primary" ? <div className="conversation-split-resizer" role="separator" aria-orientation="vertical" aria-label={t("shell.resizeSplit")} aria-valuemin={CONVERSATION_SPLIT_MIN_PERCENT} aria-valuemax={CONVERSATION_SPLIT_MAX_PERCENT} aria-valuenow={Math.round(layout.splitLeftPercent ?? 50)} tabIndex={0} onPointerDown={layout.onSplitResizeStart} onDoubleClick={layout.onSplitSeparatorDoubleClick} onKeyDown={layout.onSplitSeparatorKey} /> : undefined} />)}
         </div> : pending ? <div className="conversation-width session-flow"><TurnView turn={pending.turn as Turn} onStreamFrame={onStreamFrame} isLatestTurn cwd={view.workspaces.activeRoot} /></div>
           : empty ? <EmptyConversationHome title={activeTab?.kind === "draft" && activeTab.project ? t("projects.newProject") : title} activity={activeDraft.text.trim() || activeDraft.imageIds.length || activeDraft.fileIds.length || activeDraft.selections.length ? "compose" : "idle"}>
-            <>{workspaceMenu ? <div role="menu" className="composer-context-menu">{view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => { setWorkspaceMenu(false); run(application.invoke("workspace.select", { workspaceId: workspace.id })); }}>{workspace.name}</button>)}</div> : null}
+            <>{workspaceMenu && greeting && !activeTab?.project ? <FloatingMenuPortal anchorRef={workspaceTriggerRef} owner="conversation-workspace" placement="below" align="left" width={composerMenuWidth(244)} flip>
+              <div ref={workspaceMenuRef} role="menu" className="composer-context-menu"
+                style={{ width: "var(--floating-menu-available-width)", maxHeight: "min(340px, var(--floating-menu-available-height))" }}
+                onKeyDown={event => handleFloatingMenuKeyDown(event, () => setWorkspaceMenu(false), workspaceTriggerRef.current)}>
+                {view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => {
+                  setWorkspaceMenu(false); workspaceTriggerRef.current?.focus();
+                  run(application.invoke("workspace.select", { workspaceId: workspace.id }));
+                }}>{workspace.name}</button>)}
+              </div>
+            </FloatingMenuPortal> : null}
             {activeTab?.project ? null : <EmptyHomeOverview application={application} />}</>
           </EmptyConversationHome>
           : <CachedConversationPanes threadIDs={ids} threadsByID={cached} activeThreadID={primary?.id} restoring={layout.restoring} activeContextCwd={view.workspaces.activeRoot}

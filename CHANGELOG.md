@@ -145,6 +145,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Anchor the new-conversation workspace menu below the workspace name in the greeting, keeping it attached during scrolling and resizing.
+
 - Restore manual navigation ribbon resizing and remembered width while keeping the default compact and disabling automatic expansion on hover or focus.
 
 - Match sidebar group headings, including Workspaces and Recent, to the list text size and follow the saved UI font preference.
