@@ -2707,3 +2707,5 @@ export * from "./model.js";
 
 export * from "./providers.js";
 export * from "./coordination.js";
+
+export * from "./tool-service.js";

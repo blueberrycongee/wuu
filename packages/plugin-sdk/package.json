@@ -37,6 +37,8 @@
     "dist/providers.d.ts",
     "dist/coordination.js",
     "dist/coordination.d.ts",
+    "dist/tool-service.js",
+    "dist/tool-service.d.ts",
     "dist/ui.js",
     "dist/ui.d.ts",
     "bin/preview.mjs",
