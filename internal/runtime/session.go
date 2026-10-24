@@ -1504,7 +1504,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						return "", err
 					}
 					files, workerSkills := s.guidanceForRoot(workerRoot, generation)
-					result, err := assembleSelectedPrompt(context.Background(), s.PluginHost, promptservice.Request{Role: "worker", CWD: workerRoot, Date: s.SessionDate, UserPrompt: s.workerOrientation, Provider: workerToolProviderName, Model: workerToolModeModel, Surface: workerToolSurface, Instructions: files, Skills: workerSkills}, s.systemPrompts)
+					result, err := assembleSelectedPrompt(context.Background(), s.PluginHost, promptservice.Request{Role: "worker", CWD: workerRoot, Date: s.SessionDate, UserPrompt: s.workerOrientation, Provider: workerToolProviderName, Model: workerToolModeModel, Surface: workerToolSurface, Instructions: files, Skills: workerSkills, Worker: &promptservice.WorkerContext{Type: wt.Name, Role: wt.Role, Prompt: wt.SystemPrompt, ContextScope: wt.ContextScope, OutputSchema: wt.OutputSchema, SuccessCriteria: wt.SuccessCriteria, Isolation: string(isolation), AgentID: meta.ID, AgentPath: meta.Path, AgentProfile: meta.AgentProfile}}, s.systemPrompts)
 					return result.Content, err
 				},
 				WorkerFactory: func(workerRoot string, wt agentcontrol.WorkerType, meta agentthread.Metadata) (agent.ToolExecutor, error) {
