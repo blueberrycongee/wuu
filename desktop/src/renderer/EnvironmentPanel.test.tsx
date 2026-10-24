@@ -5,17 +5,16 @@ import { EnvironmentPanel } from "./EnvironmentPanel";
 import { PreviewContentProvider } from "./PreviewContentContext";
 import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import type { ApplicationPreviewContentV1, PreviewFileV1 } from "../../../packages/plugin-sdk/src/ui-preview-content";
-import type { InitializeResult } from "../shared/protocol";
 let root: Root | undefined;
 let container: HTMLDivElement;
 afterEach(() => { act(() => root?.unmount()); root = undefined; container?.remove(); vi.restoreAllMocks(); });
 function renderPreview(workspaceRoot: string | undefined, readFile: ApplicationPreviewContentV1["readFile"]) {
-  const snapshot = { contextKey: "context", root: workspaceRoot, capabilities: { checkout: true, createBranch: true, commit: true, pullRequest: true } };
+  const snapshot = { contextKey: "context", actionBusy: false, root: workspaceRoot, capabilities: { checkout: true, createBranch: true, commit: true, pullRequest: true } };
   const environment = { getSnapshot: () => snapshot, subscribe: () => () => {} } as unknown as ApplicationEnvironmentV1;
   const service = { readFile } as ApplicationPreviewContentV1;
   if (!root) { container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container); }
   root.render(<PreviewContentProvider service={service}><EnvironmentPanel environment={environment} panelRef={createRef()} motionState="open"
-    initialized={{} as InitializeResult} activeMenu="file" running={false} pullRequestDisabledReason="" rightPanelFilePath="note.txt"
+    activeMenu="file" running={false} pullRequestDisabledReason="" rightPanelFilePath="note.txt"
     onSetActiveMenu={() => {}} onClose={() => {}} onOpenReview={() => {}} onOpenCommit={() => {}} onOpenPullRequest={() => {}} /></PreviewContentProvider>);
 }
 function file(text: string): PreviewFileV1 {

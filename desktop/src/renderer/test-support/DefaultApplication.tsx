@@ -2,13 +2,24 @@ import * as React from "react";
 import { vi } from "vitest";
 import * as applicationState from "../plugins/ApplicationController";
 import { PluginHost } from "../plugins/PluginHost";
+import { desktopPluginHost } from "../plugins/DesktopPluginRuntime";
 import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate as activateShell } from "../plugins/DefaultApplicationShell";
 import { activate as activateNavigation } from "../modules/DefaultNavigationSurface";
+import { activate as activateComposer } from "../modules/DefaultComposerSurface";
+import { activate as activateConversation } from "../modules/DefaultConversationSurface";
 import { activate as activatePreview } from "../modules/DefaultPreviewSurface";
 import { activate as activateSettings } from "../modules/DefaultSettingsSurface";
 
+export function createDefaultTestHost(application: applicationState.ApplicationController): PluginHost {
+  return new PluginHost({ react: React, application,
+    renderLegacyWorkbench: input => desktopPluginHost.renderLegacyWorkbench(input),
+  });
+}
+
 export const defaultSurfaceBindings = {
+  "ui.composer": { pluginId: "wuu.default-composer", generation: "fixture", id: "ui.composer" },
+  "ui.conversation": { pluginId: "wuu.default-conversation", generation: "fixture", id: "ui.conversation" },
   "ui.preview": { pluginId: "wuu.default-preview", generation: "fixture", id: "ui.preview" },
   "ui.navigation": { pluginId: "wuu.default-navigation", generation: "fixture", id: "ui.navigation" },
   "ui.settings": { pluginId: "wuu.default-settings", generation: "fixture", id: "ui.settings" },
@@ -31,6 +42,8 @@ export async function registerDefaultTestSurfaces(host: PluginHost): Promise<voi
     }
   });
   await host.activateGeneration({ pluginId: "wuu.default-navigation", generation: "fixture", register: activateNavigation });
+  await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "fixture", register: activateComposer });
+  await host.activateGeneration({ pluginId: "wuu.default-conversation", generation: "fixture", register: activateConversation });
   await host.activateGeneration({ pluginId: "wuu.default-preview", generation: "fixture", register: activatePreview });
   await host.activateGeneration({ pluginId: "wuu.default-settings", generation: "fixture", register: activateSettings });
 }
@@ -48,7 +61,7 @@ export async function createDefaultApplicationTestView(
 ): Promise<React.ReactElement> {
   document.title = document.title || "Wuu";
   vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(application);
-  const host = new PluginHost({ react: React, application });
+  const host = createDefaultTestHost(application);
   await registerDefaultTestSurfaces(host);
   await host.activateGeneration({ pluginId: "wuu.default-shell", generation: "fixture", register: activateShell });
   function View(): React.ReactNode {
@@ -57,6 +70,8 @@ export async function createDefaultApplicationTestView(
       host.unload("wuu.default-settings");
       host.unload("wuu.default-navigation");
       host.unload("wuu.default-preview");
+      host.unload("wuu.default-conversation");
+      host.unload("wuu.default-composer");
     }, []);
     return <TestApplicationShellOutlet host={host}
       binding={{ pluginId: "wuu.default-shell", generation: "fixture", id: "ui.shell" }}

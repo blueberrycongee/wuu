@@ -456,7 +456,7 @@ export function ConversationTitleContent({ application, slots, slotOwner }: Conv
 }
 
 export type ConversationTitleActionsProps = {
-  state: AppState;
+  thread?: Thread;
   /** A primary plugin page covers the conversation and its environment panel. */
   pluginPageVisible?: boolean;
   environmentToggleRef: RefObject<HTMLButtonElement | null>;
@@ -468,7 +468,7 @@ export type ConversationTitleActionsProps = {
 };
 
 export function ConversationTitleActions({
-  state,
+  thread,
   pluginPageVisible,
   environmentToggleRef,
   environmentPanelVisible,
@@ -479,7 +479,6 @@ export function ConversationTitleActions({
 }: ConversationTitleActionsProps): JSX.Element {
   const { t } = useI18n();
   const projectActions = useProjectActions();
-  const thread = state.activePane === "secondary" ? state.secondaryThread : state.thread;
   // Controls for the covered conversation leave with it; new conversations
   // and the right panel stay available on every page.
   const control = pluginPageVisible ? undefined : thread?.session_control;
@@ -533,7 +532,9 @@ export function ConversationTitleActions({
 }
 
 export type ConversationSidePanelsProps = {
-  state: AppState;
+  application: EnvironmentSideStackProps["application"];
+  slots: EnvironmentSideStackProps["slots"];
+  slotOwner: string;
   environment: EnvironmentSideStackProps["environment"];
   environmentPanelVisible: boolean;
   environmentPanelMounted: boolean;
@@ -555,7 +556,9 @@ export type ConversationSidePanelsProps = {
 };
 
 export function ConversationSidePanels({
-  state,
+  application,
+  slots,
+  slotOwner,
   environment,
   environmentPanelVisible,
   environmentPanelMounted,
@@ -580,7 +583,9 @@ export function ConversationSidePanels({
       <EnvironmentSideStack
         visible={environmentPanelVisible}
         mounted={environmentPanelMounted}
-        state={state}
+        application={application}
+        slots={slots}
+        slotOwner={slotOwner}
         environment={environment}
         panelRef={environmentPanelRef}
         closing={environmentPanelClosing}

@@ -1,4 +1,5 @@
 import { usePreviewContent } from "./PreviewContentContext";
+import type { ApplicationConversationThreadV1 } from "../../../packages/plugin-sdk/src/ui-conversation";
 import type { PreviewFileV1 } from "../../../packages/plugin-sdk/src/ui-preview-content";
 import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import {
@@ -16,7 +17,6 @@ import {
 import { type FormEvent as ReactFormEvent, type ReactNode, type RefObject, useEffect, useState, useSyncExternalStore } from "react";
 import type {
   GitStatusResult,
-  InitializeResult,
   Thread
 } from "../shared/protocol";
 import { desktopApiErrorMessage, formatBytes } from "./WorkspaceReviewHelpers";
@@ -47,7 +47,6 @@ export function EnvironmentPanel({
 }: {
   panelRef: RefObject<HTMLDivElement | null>;
   motionState: EnvironmentPanelMotionState;
-  initialized: InitializeResult;
   environment: ApplicationEnvironmentV1;
   activeMenu: EnvironmentPanelMenu;
   running: boolean;
@@ -72,7 +71,7 @@ export function EnvironmentPanel({
   onCloseFilePreview?: () => void;
   /** Host-mounted plugin summaries. Each contribution owns its own error boundary. */
   pluginSections?: ReactNode;
-  thread?: Thread;
+  thread?: ApplicationConversationThreadV1;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
   const snapshot = useSyncExternalStore(

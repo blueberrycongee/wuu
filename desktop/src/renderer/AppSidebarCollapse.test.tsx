@@ -41,7 +41,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
+import { createDefaultTestHost, createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
 import * as applicationState from "./plugins/ApplicationController";
 import { TestApplicationShellOutlet as ApplicationShellOutlet } from "./test-support/DefaultApplication";
@@ -208,7 +208,7 @@ describe("sidebar collapse-state independence", () => {
     installWuuApi();
     const controller = new applicationState.ApplicationController();
     vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
-    const host = new PluginHost({ react: React, application: controller });
+    const host = createDefaultTestHost(controller);
     await registerDefaultTestSurfaces(host);
     await host.activateGeneration({ pluginId: "shell", generation: "fixture", register: activateDefaultShell });
     await host.activateGeneration({ pluginId: "alternate-settings", generation: "fixture", register: api => {
@@ -246,7 +246,7 @@ describe("sidebar collapse-state independence", () => {
     window.wuu.gitStatus = vi.fn(async () => ({ is_repo: true, branch: "main", branches: ["main", "feature"], dirty_count: 0, files: [] }));
     const controller = new applicationState.ApplicationController();
     const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
-    const host = new PluginHost({ react: React, application: controller });
+    const host = createDefaultTestHost(controller);
     await registerDefaultTestSurfaces(host);
     let release!: () => void, started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
@@ -320,7 +320,7 @@ describe("sidebar collapse-state independence", () => {
     const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
     // DesktopApplicationRoot retains the controller independently of its shell.
     const stopController = controller.start();
-    const host = new PluginHost({ react: React, application: controller });
+    const host = createDefaultTestHost(controller);
     await registerDefaultTestSurfaces(host);
     const activate = (graph: string) => host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: graph, register: activateDefaultShell });
     const render = () => root!.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
@@ -376,7 +376,7 @@ describe("sidebar collapse-state independence", () => {
     window.wuu.refreshExtensionCatalog = vi.fn(() => new Promise<ExtensionCatalogRefreshResult>(resolve => { finishRefresh = resolve; }));
     const controller = new applicationState.ApplicationController();
     const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
-    const host = new PluginHost({ react: React, application: controller });
+    const host = createDefaultTestHost(controller);
     await registerDefaultTestSurfaces(host);
     const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
     const click = async (selector: string) => {
@@ -432,7 +432,7 @@ describe("sidebar collapse-state independence", () => {
     window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
     const controller = new applicationState.ApplicationController();
     const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
-    const host = new PluginHost({ react: React, application: controller });
+    const host = createDefaultTestHost(controller);
     await registerDefaultTestSurfaces(host);
     const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
     window.wuu.updateExtensionPackage = vi.fn(async ({ action }) => {

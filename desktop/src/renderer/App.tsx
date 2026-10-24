@@ -1,32 +1,15 @@
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
-import { SettingsControlsProvider } from "./SettingsControlsContext";
-import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
-import { getDesktopApplication } from "./plugins/ApplicationController";
-import { isSettingsPageAvailable } from "./SettingsPageAvailability";
+import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import { AccountScreen } from "./AccountScreen";
+import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
+import { FileSelectionProvider } from "./FileSelectionContext";
 import { usePageHistory } from "./PageHistory";
 import { PageHistoryControls } from "./PageHistoryControls";
-import { visibleWorkbenchView } from "./plugins/Workbench";
-import { sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
-import { validPdfSelectionReference } from "./PdfSelection";
-import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { SideConversationAvailableContext } from "./ResponseSelection";
-import { buildComposerSlashCommands } from "./ComposerSlashCommands";
-import { forgetLocalTurnTiming } from "./LocalTurnTiming";
-import { subscribeServerEvents } from "./ServerEvents";
-import { AccountScreen } from "./AccountScreen";
-import { hostSupports } from "./HostCapabilities";
-import { isCodexSubscription, isGrokBuild } from "./SubscriptionSources";
-import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
-import { writeThreadReadState } from "./ThreadReadState";
-import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
-import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
+import { SettingsControlsProvider } from "./SettingsControlsContext";
 /// <reference path="../shared/jsx-compat.d.ts" />
 
 import {
-  type CSSProperties,
-  type ReactNode,
-  type RefObject,
-  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -34,304 +17,109 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties
 } from "react";
+import { type PageContextSnapshot } from "../shared/pageContext";
 import type {
-  ActivitySession,
-  BrowserDockTarget,
-  Agent,
-  DesktopProject,
-  EngineListResult,
-  EngineUpdateParams,
-  ExtensionPackageUpdateParams,
-  GitStatusResult,
-  InitializeResult,
-  InputFile,
-  InputImage,
-  MessageContentPart,
-  ResponseSelection,
-  SideThreadSelection,
-  PopOutInitResult,
-  RuntimeContext,
-  RunningThreadSnapshot,
-  ServerEvent,
-  Thread,
-  ThreadItem,
-  ThreadStartParams,
-  Turn,
-  UserQuestionAnswer,
-  UserQuestionRequest,
+ResponseSelection,
+RuntimeContext,
+SideThreadSelection,
+Thread
 } from "../shared/protocol";
+import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT } from "../shared/webWorkspace";
+import { observeAppearance } from "./AppearancePreferences";
 import {
-  OPTIMISTIC_TURN_ID_PREFIX,
-  awaitComposerImages,
-  awaitComposerFiles,
-  createComposerMessage,
-  composerContextFromMessage,
-  createOptimisticCompactTurn,
-  createOptimisticTurn,
-  dropOptimisticTurn,
-  failOptimisticCompactTurn,
-  inputFilesFromComposer,
-  inputImagesFromComposer,
-  interruptOptimisticTurn,
-  isOptimisticTurnInterrupted,
-  replaceOptimisticTurn,
-  threadHasAcceptedComposerMessage,
-  type QueuedComposerMessage,
-} from "./ComposerMessages";
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_RIBBON_WIDTH,
+  sidebarDrawerExitMs,
+  sidebarMotionMs,
+  useAppLayoutState,
+  WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
+  WORKSPACE_RIGHT_PANEL_MIN_WIDTH
+} from "./AppLayoutState";
+import { ApplicationFirstRunOnboarding } from "./ApplicationFirstRunOnboarding";
 import {
-  greetingFor,
-  useCurrentHour,
-  type GreetingContext,
-} from "./greetings";
+  isThreadRunning,
+  latestTodoUpdateForThread,
+  runtimeContextKey,
+  sameRuntimeContext,
+  workspacePanelContext
+} from "./AppState";
+import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
+import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
+import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
+import { isForegroundControlled } from "./BrowserVisibility";
+import { createComposerControls } from "./ComposerControls";
 import {
-  Composer,
   isInsideFloatingMenu,
-  type CodexModelLoadState,
-  type CodexRuntimeMenu,
-  type ComposerVariant,
-  type PermissionMode,
+  type ComposerVariant
 } from "./ComposerView";
-import { UserQuestionCard } from "./UserQuestionCard";
-import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
+import { ContextChatCapsule } from "./ContextChatCapsule";
+import type { ContextCompositionEntry } from "./ContextCompositionCard";
 import {
-  useConversationScrollState,
-  type ConversationScrollSnapshot,
+  useConversationScrollState
 } from "./ConversationScrollState";
-import { useConversationSearch } from "./ConversationSearchState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
+import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
+import { useConversationSearch } from "./ConversationSearchState";
 import {
-  SideThreadPanel,
-  type SideThreadPanelHandle,
-} from "./SideThreadPanel";
-import { SideThreadComposer } from "./SideThreadComposer";
-import { ConversationForkDialog } from "./ConversationForkDialog";
-import { firstUserMessageText } from "./TurnViewHelpers";
-import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
-import { AppSidebar } from "./AppSidebar";
+  ConversationSidePanels,
+  ConversationTitleActions,
+  ConversationTitleContent
+} from "./ConversationShellRenderers";
+import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
+import { ConversationStatusCluster } from "./ConversationStatusCluster";
+import { useConversationSwitchReady } from "./ConversationSwitchReady";
+import { createEnvironmentPanelActions } from "./EnvironmentActions";
 import {
   type EnvironmentPanelMenu,
   type EnvironmentPanelMotionState,
 } from "./EnvironmentPanel";
-import { createEnvironmentPanelActions } from "./EnvironmentActions";
-import { useGitActionBusy } from "./GitActionBusy";
 import {
-  activeTodoUpdateForThread,
-  activeSessionTab,
-  activeThreadForState,
-  activeThreadIDForState,
-  activeTurnAcceptsSteering,
-  activeTurnIsAnswerReady,
-  activeTurnForThread,
-  latestContextUsageForThread,
-  activeTurnIDForThread,
-  bindActiveSessionTabToThread,
-  cloneSessionTabDraft,
-  captureComposerDrafts,
-  cloneComposerDraft,
-  sessionTabDraftForThread,
-  composerDraftHasContent,
-  conversationPaneThreadsByID,
-  createDraftSessionTab,
-  createThreadSessionTab,
-  emptyComposerDraft,
-  ensureSessionTab,
-  handleStreamingNotification,
-  initialSplitComposerDrafts,
-  isStateActiveThreadRunning,
-  isThreadExecuting,
-  isThreadRunning,
-  isThreadUnread,
-  latestTodoUpdateForThread,
-  markThreadSummariesViewed,
-  markThreadTurnsViewed,
-  pinnedThreadSummaries,
-  presentationRunningThreadIDs,
-  queryTextForUserItem,
-  SCRATCH_PSEUDO_PROJECT_ID,
-  scratchThreadSummaries,
-  requestedHandoffIntentForThread,
-  reconcileListedThreadState,
-  resolveComposerRunningAction,
-  resolveThreadRuntimeContext,
-  requireThread,
-  runtimeContextKey,
-  sameRuntimeContext,
-  serverEventShouldRefreshGit,
-  serverEventTargetsActiveContext,
-  sessionTabForLoadedRuntime,
-  setThreadForPane,
-  sortThreads,
-  summarizeWorkspaceThreadsForSidebar,
-  summarizeThreadsForSidebar,
-  threadBelongsToWorkspace,
-  threadForTab,
-  threadForPane,
-  threadSessionTabID,
-  turnStreamStatusForThread,
-  turnPreview,
-  updateThreadByID,
-  upsertThread,
-  upsertTurn,
-  withLoadedRuntimeSessionTab,
-  workspaceNameForContext,
-  workspacePanelContext,
-  type AppState,
-  type ComposerDraftState,
-  type ConversationPaneID,
-  type SessionTab,
-  type ThreadSummary,
-} from "./AppState";
-import {
-  rightPanelMotionMs,
-  sidebarDrawerExitMs,
-  SIDEBAR_MAX_WIDTH,
-  SIDEBAR_MIN_WIDTH,
-  SIDEBAR_RIBBON_WIDTH,
-  sidebarMotionMs,
-  WORKSPACE_RIGHT_PANEL_MAIN_MIN_WIDTH,
-  WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
-  WORKSPACE_RIGHT_PANEL_MIN_WIDTH,
-  useAppLayoutState,
-} from "./AppLayoutState";
-import { CommitChangesDialog, PullRequestDialog } from "./GitDialogs";
-import { motionDurationMs } from "./motion";
-import type { ContextCompositionEntry } from "./ContextCompositionCard";
-import type { InstructionFilesEntry } from "./InstructionFilesCard";
-import {
-  rememberedEngineRuntime,
-  resolveDraftEngineMemory,
-  writeDraftEngineMemory,
-} from "./DraftEngineMemory";
-import { FirstRunOnboarding } from "./FirstRunOnboarding";
-import {
-  EmptyConversationHome,
-  RuntimeLoading,
-} from "./LoadingViews";
-import { EmptyHomeOverview } from "./EmptyHomeOverview";
-import { menuOpeningKey } from "./ComposerFloatingMenu";
-import { WuuMascotRuntimeProvider } from "./WuuMascot";
-import { deriveActiveSessionHints } from "./activeSessionHint";
-import {
-  hasAuthenticatedProvider as hasReadyProvider,
-  providerModelContextWindow,
-  pullRequestUnavailableReason,
-} from "./RuntimeHelpers";
-import type { SettingsPage } from "./SettingsView";
-import {
+  ENABLE_ACCOUNT,
   ENABLE_EMBEDDED_BROWSER,
   ENABLE_ENVIRONMENT_PANEL,
-  ENABLE_ACCOUNT,
 } from "./FeatureFlags";
-import { ArchiveTip } from "./ArchiveTip";
-import { TopNotice } from "./TopNotice";
-import { UILayerPortal } from "./ui/layers/UILayerHost";
-import { showActionErrorToast, showErrorToast, showToast } from "./Toast";
-import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
-import { CircleAlert } from "./WuuIcons";
-import type { CodexPetCommand, CodexPetSubmitTarget } from "../shared/protocol";
-import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
-import { JumpToLatestPill } from "./JumpToLatestPill";
-import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
-import { ConversationStatusCluster } from "./ConversationStatusCluster";
-import { externalAgentActivityStore } from "./ExternalAgentActivityStore";
-import { SkillsCatalog, type SkillsCatalogSection } from "./SkillsCatalog";
-import { userVisibleThreads } from "./SkillsAssistant";
-import { isForegroundControlled, useBrowserVisibility } from "./BrowserVisibility";
-import { useSideThreadController } from "./SideThreadController";
-import {
-  isCancellationMessage,
-  rawErrorMessage,
-  statusMessageForError,
-} from "./UserFacingErrors";
-import { TurnView } from "./TurnView";
-import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail, type OpenSettingsDetail } from "./TurnNotice";
-import {
-  WorkspaceRightPanel,
-} from "./WorkspacePanels";
-import { WorkspaceDocumentTurnDock } from "./WorkspaceDocumentTurnDock";
-import { useWorkspaceToolState } from "./WorkspaceToolState";
-import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
+import { CommitChangesDialog, PullRequestDialog } from "./GitDialogs";
+import { HoverRevealScopeContext } from "./HoverReveal";
+import { resolveLocalizedText, translateCurrent, useI18n } from "./i18n";
 import { ImagePreviewProvider } from "./ImagePreview";
-import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
-import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
+import { JumpToLatestPill } from "./JumpToLatestPill";
+import { useApplicationNavigationState } from "./modules/ApplicationNavigationState";
+import { motionDurationMs } from "./motion";
+import { useNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
+import { ProjectActionsProvider } from "./ProjectActions";
+import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
+import { ProjectStatusCapsule } from "./ProjectViews";
+import {
+  pullRequestUnavailableReason
+} from "./RuntimeHelpers";
+import type { SettingsPage } from "./SettingsView";
+import { useSidebarDrawerState } from "./SidebarDrawerState";
+import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
+import { SkillsCatalog, type SkillsCatalogSection } from "./SkillsCatalog";
+import {
+  baseThreadTitle,
+  conversationHeadingTitle
+} from "./ThreadTitles";
+import { showErrorToast, showToast } from "./Toast";
+import { TopNotice } from "./TopNotice";
+import { CONTINUE_TURN_EVENT, OPEN_SETTINGS_EVENT, type ContinueTurnDetail, type OpenSettingsDetail } from "./TurnNotice";
+import { UILayerPortal } from "./ui/layers/UILayerHost";
+import { WebWorkspacePanel } from "./WebWorkspace";
+import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
 import {
   openWorkspaceBrowserOrExternal,
   workspaceBrowserFocusDecision,
   WorkspaceBrowserOpenContext,
   type WorkspaceBrowserOpenTarget,
 } from "./WorkspaceBrowserOpen";
-import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
-import {
-  desktopPluginHost,
-  desktopWorkbenchController,
-} from "./plugins/DesktopPluginRuntime";
-import { DesktopWorkbench } from "./plugins";
-import { WebWorkspacePanel } from "./WebWorkspace";
-import { ContextChatCapsule } from "./ContextChatCapsule";
-import { formatPageContext, type PageContextSnapshot } from "../shared/pageContext";
-import { useNavigationRibbonPreferences, type RibbonWebsite } from "./NavigationRibbonPreferences";
-import { useRibbonBrowserTabs } from "./RibbonBrowserState";
-import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT, type WebWorkspaceApi } from "../shared/webWorkspace";
-import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
-import { useComposerDraftState } from "./ComposerDraftState";
-import { useComposerPendingState } from "./ComposerPendingState";
-import { useSidebarDrawerState } from "./SidebarDrawerState";
-import { HoverRevealScopeContext } from "./HoverReveal";
-import { useSidebarWorkspaceState } from "./SidebarWorkspaceState";
-import { useViewSwitchState } from "./ViewSwitchState";
-import { turnTelemetryStore } from "./TurnTelemetryStore";
-import {
-  activitiesForThread,
-  clearActivitiesForWorkdir,
-  emptyActivitySessions,
-  mergeActivityList,
-  reduceActivitySessionEvent,
-  serverEventCarriesActivitySessionUpdate,
-} from "./ActivitySessions";
-import {
-  loadRuntime,
-  loadThreadListRefresh,
-  selectRuntimeContext,
-} from "./RuntimeLoadState";
-import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
-import { createWorkspaceActions } from "./WorkspaceActions";
-import { createSessionTabActions } from "./SessionTabActions";
-import { createThreadActivationActions } from "./ThreadActivationActions";
-import { createThreadMutationActions } from "./ThreadMutationActions";
-import {
-  baseThreadTitle,
-  conversationHeadingTitle,
-  customDraftConversationTitle,
-} from "./ThreadTitles";
-import { ProjectActionsProvider, type ProjectActions, type ProjectThread } from "./ProjectActions";
-import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
-import { ProjectStatusCapsule } from "./ProjectViews";
-import { createRuntimeSettingsActions } from "./RuntimeSettingsActions";
-import { createConversationPaneActions } from "./ConversationPaneActions";
-import {
-  createConversationHistoryActions,
-  type HistoryMessageEditState,
-  type PendingForkState,
-} from "./ConversationHistoryActions";
-import { localizedText, resolveLocalizedText, translateCurrent, useI18n } from "./i18n";
-import { CachedConversationPanes } from "./CachedConversationPanes";
-import { useConversationSwitchReady } from "./ConversationSwitchReady";
-import { observeAppearance } from "./AppearancePreferences";
-import {
-  retainCachedConversationPaneThreads,
-  selectCachedConversationPaneIDs,
-} from "./ConversationPaneCache";
-import {
-  ConversationSidePanels,
-  ConversationSplitLayoutRenderer,
-  ConversationTitleActions,
-  ConversationTitleContent,
-} from "./ConversationShellRenderers";
-import {
-  runtimeViewForConversation,
-  runtimeViewForSession,
-} from "./SessionRuntimeState";
+import { useWorkspaceToolState } from "./WorkspaceToolState";
+import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
+import { CircleAlert } from "./WuuIcons";
+import { WuuMascotRuntimeProvider } from "./WuuMascot";
 export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
 
 const ENGINE_INVENTORY_STALE_MS = 2 * 60 * 1000;
@@ -364,46 +152,8 @@ function environmentPanelFits(paneWidth: number): boolean {
     window.innerHeight >= ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX;
 }
 type EnvironmentDialog = "commit" | "pull-request" | null;
-/**
- * True when a turn/start failure means the user has no usable model
- * configuration (no provider with a key, or model roles unresolved).
- * The Go side raises these from modelroles resolution; they map to the
- * "configure a model provider" onboarding toast instead of the composer
- * status row.
- */
-function isNoModelConfiguredError(message: string): boolean {
-  const lower = message.toLowerCase();
-  return (
-    lower.includes("main model is required") ||
-    lower.includes("has no model") ||
-    lower.includes("has no provider") ||
-    lower.includes("not found in providers") ||
-    lower.includes("model is required")
-  );
-}
 
 type EngineRuntimeSelection = { model: string; effort: string; speed?: string; model_options?: Record<string, string> };
-
-// Runtime settings for a new conversation: an external engine runs with its
-// runtime selection, Wuu with the configured provider and permissions.
-function newThreadRuntimeParams(
-  engine: string,
-  initialized: AppState["initialized"],
-  externalRuntime: EngineRuntimeSelection,
-  externalPermissionMode: PermissionMode,
-): ThreadStartParams {
-  if (engine !== "wuu") {
-    return { ...externalRuntime, permission_mode: externalPermissionMode };
-  }
-  return {
-    provider: initialized?.provider,
-    model: initialized?.model,
-    effort: initialized?.variant || initialized?.effort,
-    speed: initialized?.speed,
-    permission_mode: initialized?.permissions?.mode,
-    approve_for_me: initialized?.permissions?.approve_for_me,
-  };
-}
 
 function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
   const callbackRef = useRef(callback);
@@ -416,135 +166,85 @@ function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
   );
 }
 
-// Canonical prompts include serialized file/quote context that is hidden behind
-// attachment chips. Only user-authored text crosses the recovery boundary.
-function composerRecoveryText(prompt: string, parts?: MessageContentPart[]): string {
-  return parts ? parts.filter((part) => part.type === "text" || part.type === "pasted_text")
-    .map((part) => part.text).join("") : prompt;
-}
-
-function readPopOutInit(): PopOutInitResult | null {
-  try {
-    const init = window.wuu.popOutInit();
-    return init.kind && init.context ? init : null;
-  } catch {
-    return null;
-  }
-}
 
 type MainComposerFocusRequest = {
   target: ComposerVariant;
   origin: Element | null;
   interactionVersion: number;
-  matchesDestination?: (state: AppState) => boolean;
+  matchesDestination?: (snapshot: ApplicationSnapshotV1) => boolean;
 };
-
-function formatUserQuestionSteerPrompt(
-  request: UserQuestionRequest,
-  answer: UserQuestionAnswer,
-): string {
-  return request.questions.map((question) => {
-    const item = answer.answers.find((entry) => entry.id === question.id);
-    const parts = [...(item?.selected ?? [])];
-    if (item?.custom?.trim()) parts.push(item.custom.trim());
-    return `${question.question}\n${parts.join(", ") || "(no answer)"}`;
-  }).join("\n\n");
-}
-
-// A project's name until the user renames it: its goal's first line, short
-// enough for the sidebar.
-function projectNameFromGoal(goal: string): string {
-  const line = goal.split("\n").find((part) => part.trim())?.trim().replace(/\s+/g, " ") ?? "";
-  return line.length > 48 ? `${line.slice(0, 47)}…` : line;
-}
 
 export function App({ application, slots, shellPluginId }: {
   application: ApplicationServiceV1;
   slots: UICompositionV1;
   shellPluginId: string;
 }): JSX.Element {
-  const [applicationController] = useState(getDesktopApplication);
-  const { locale, t } = useI18n();
-  const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
+  const { t } = useI18n();
+  const popOutInit = application.desktop.popOut.kind && application.desktop.popOut.context ? application.desktop.popOut : null;
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
-  const recoveredDrafts = applicationController.recoveredDrafts;
-  const state = useSyncExternalStore(applicationController.subscribeState, applicationController.getState, applicationController.getState);
-  const setState = applicationController.updateState;
-  useEffect(() => {
-    writeThreadReadState(state.lastViewedTurnByThreadID);
-  }, [state.lastViewedTurnByThreadID]);
-  const [userQuestions, setUserQuestions] = useState<UserQuestionRequest[]>([]);
-  const resolvedUserQuestionIDsRef = useRef(new Set<string>());
-  const userQuestionApiAvailable =
-    typeof window.wuu.listUserQuestions === "function" &&
-    typeof window.wuu.answerUserQuestion === "function" &&
-    typeof window.wuu.cancelUserQuestion === "function";
-  const projectAgentEnabled = state.initialized?.features?.project_agent === true;
-  const {
-    prompt,
-    promptRevision,
-    setPrompt,
-    setPromptFromInput: updatePromptFromInput,
-    composerImages,
-    setComposerImages,
-    composerFiles,
-    setComposerFiles,
-    composerSelections,
-    setComposerSelections,
-    splitComposerDrafts,
-    setSplitComposerDrafts,
-    attachComposerAttachmentFiles,
-    removeComposerImage,
-    removeComposerFile,
-    setSplitComposerPrompt: updateSplitComposerPrompt,
-    attachSplitComposerAttachmentFiles,
-    removeSplitComposerImage,
-    removeSplitComposerFile,
-    moveSplitDraftToGlobalComposer,
-    currentPrimaryComposerDraft,
-    restorePrimaryComposerDraft,
-  } = useComposerDraftState(application);
+  const recoveryNotices = useSyncExternalStore(application.subscribe, () => application.getSnapshot().drafts.recoveryNotices);
+  const workspaceSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().workspaces);
+  const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
+  const configuration = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.configuration);
+  const initialized = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigationWorkspace.initialized);
+  const environmentSnapshot = useSyncExternalStore(application.environment.subscribe, application.environment.getSnapshot);
+  const gitStatus = environmentSnapshot.status;
+  const activeContext = useMemo<RuntimeContext | undefined>(() => workspaceSnapshot.activeRoot
+    ? workspaceSnapshot.activeWorkspaceId
+      ? { kind: "project", project_id: workspaceSnapshot.activeWorkspaceId, cwd: workspaceSnapshot.activeRoot }
+      : { kind: "no_project", cwd: workspaceSnapshot.activeRoot }
+    : undefined, [workspaceSnapshot.activeRoot, workspaceSnapshot.activeWorkspaceId]);
+  const projectAgentEnabled = configuration?.features?.project_agent === true;
   useEffect(() => {
     const addSelection = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
-      const current = appStateRef.current;
-      const pane = current.thread?.id === selection.source.thread_id ? "primary"
-        : current.secondaryThread?.id === selection.source.thread_id ? "secondary" : undefined;
-      // A toolbar belongs to its response, not to whichever composer is active.
-      if (!pane || threadForPane(current, pane)?.read_only) return;
-      const copy = { ...selection, source: { ...selection.source } };
-      if (current.thread && current.secondaryThread) {
-        setSplitComposerDrafts((drafts) => ({ ...drafts, [pane]: {
-          ...drafts[pane], selections: [...(drafts[pane].selections ?? []), copy],
-        } }));
-      } else {
-        setComposerSelections((selections) => [...selections, copy]);
-      }
-      const owner = current.secondaryThread
-        ? [...document.querySelectorAll<HTMLElement>(".conversation-split-pane[data-thread-id]")].find((element) => element.dataset.threadId === selection.source.thread_id)
-        : document.querySelector<HTMLElement>("[data-main-conversation-composer]");
-      focusComposerTextarea(owner?.querySelector<HTMLTextAreaElement>("textarea") ?? null);
+      const snapshot = application.getSnapshot();
+      const pane = snapshot.conversationWorkspace.primaryThreadId === selection.source.thread_id ? "primary"
+        : snapshot.conversationWorkspace.secondaryThreadId === selection.source.thread_id ? "secondary" : undefined;
+      if (!pane || snapshot.conversationWorkspace.threads.find(thread => thread.id === selection.source.thread_id)?.read_only) return;
+      const draft = snapshot.drafts[pane];
+      if (!draft.ownerTabId) return;
+      void createComposerControls(application, { ownerTabId: draft.ownerTabId, pane })
+        .setSelections([...draft.selections, selection]).then(() => {
+          const owner = snapshot.drafts.split
+            ? [...document.querySelectorAll<HTMLElement>(".conversation-split-pane[data-thread-id]")].find(element => element.dataset.threadId === selection.source.thread_id)
+            : document.querySelector<HTMLElement>("[data-main-conversation-composer]");
+          focusComposerTextarea(owner?.querySelector<HTMLTextAreaElement>("textarea") ?? null);
+        }).catch(showErrorToast);
     };
     window.addEventListener("wuu:add-response-selection", addSelection);
     return () => window.removeEventListener("wuu:add-response-selection", addSelection);
-  }, [setComposerSelections, setSplitComposerDrafts]);
+  }, [application]);
   // Conversation notices share the latest settings navigation callback.
   useEffect(() => {
     const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
     window.addEventListener(OPEN_SETTINGS_EVENT, open);
     return () => window.removeEventListener(OPEN_SETTINGS_EVENT, open);
   }, []);
-  const [historyMessageEdit, setHistoryMessageEdit] =
-    useState<HistoryMessageEditState | undefined>(undefined);
-  const fileSelectionDraftOwners = useRef(new Map<string, string>());
-  const composerDraftsRef = useRef({ primary: currentPrimaryComposerDraft, split: splitComposerDrafts });
-  composerDraftsRef.current = { primary: currentPrimaryComposerDraft, split: splitComposerDrafts };
-  const [activitySessions, setActivitySessions] = useState(emptyActivitySessions);
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
-  const closeWorkspaceMenu = useCallback(() => setWorkspaceMenuOpen(false), []);
+  const conversationActions = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationActions);
+  const submissionView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().submission);
+  const conversationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationWorkspace);
+  const primarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.primaryThreadId);
+  const secondarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.secondaryThreadId);
+  const primaryThread = useMemo(() => primarySource && structuredClone(primarySource) as Thread, [primarySource]);
+  const secondaryThread = useMemo(() => secondarySource && structuredClone(secondarySource) as Thread, [secondarySource]);
+  const activeThread = conversationWorkspace.activePane === "secondary" ? secondaryThread : primaryThread;
+  const composerRuntimeView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
+  useEffect(() => {
+    const ownerTabId = composerRuntimeView.activeOwnerTabId;
+    if (!ownerTabId) return;
+    const refresh = () => { void application.invoke("composer.refresh-engine-models", { ownerTabId }).catch(showErrorToast); };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [application, composerRuntimeView.activeOwnerTabId]);
+  const activities = useSyncExternalStore(application.subscribe, () => application.getSnapshot().activities);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
   const settingsOpen = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.open);
+  const openSettingsPage = (page: SettingsPage): void => {
+    void application.invoke("settings.open", { pageId: page }).catch(showErrorToast);
+  };
   const setSettingsOpen = useCallback((open: boolean): void => {
     void application.invoke(open ? "settings.open" : "settings.close", {}).catch(showErrorToast);
   }, [application]);
@@ -553,7 +253,7 @@ export function App({ application, slots, shellPluginId }: {
   const [nativeRibbonExpanded, setNativeRibbonExpanded] = useState(false);
   const handleRibbonExpandedChange = useCallback((expanded: boolean) => {
     const shell = appShellRef.current;
-    if (expanded && window.wuu.platform === "darwin"
+    if (expanded && application.desktop.platform === "darwin"
       && shell?.querySelector(".section-sidebar-toggle") === document.activeElement) {
       // Release owned focus before hidden/inert can blur the covered toggle.
       // Focusing a ribbon item here would turn hover into retained keyboard focus.
@@ -597,7 +297,8 @@ export function App({ application, slots, shellPluginId }: {
     settingsLayoutRootRef: settingsShellRef,
     collapsedSidebarWidth: SIDEBAR_RIBBON_WIDTH,
     additionalNavigationWidth: ribbonWidth - SIDEBAR_RIBBON_WIDTH,
-    onCloseWorkspaceMenu: closeWorkspaceMenu,
+    // The selected navigation surface owns its menus.
+    onCloseWorkspaceMenu: () => {},
   });
   const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
     useState(false);
@@ -654,8 +355,6 @@ export function App({ application, slots, shellPluginId }: {
   }, [workspaceSheetPhase]);
   // The bell view is a sidebar-level navigation mode rather than sidebar-local
   // state so section changes and the account page retain the view the user left.
-  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
-  const [attentionStickyIDs, setAttentionStickyIDs] = useState<Set<string>>(() => new Set());
   // A manually expanded workspace owns the main stage, not the navigation
   // rail. Keep a docked sidebar docked; only an already-collapsed sidebar
   // remains a drawer while the workspace is expanded.
@@ -679,68 +378,16 @@ export function App({ application, slots, shellPluginId }: {
     dockingMotionMs: sidebarMotionMs,
   });
   const sidebarDrawerVisible = sidebarDrawerPhase === "open";
-  const {
-    collapsedSidebarSectionIDs,
-    expandedSidebarSectionIDs,
-    loadingWorkspaceThreadIDs,
-    workspaceThreadsByWorkspaceID,
-    cachedScratchThreads,
-    sidebarSectionOrder,
-    setSidebarSectionOrder,
-    cacheSidebarThreads,
-    updateCachedSidebarThread,
-    patchCachedSidebarThread,
-    updateCachedSidebarThreadPinned,
-    removeCachedSidebarThread,
-    syncSidebarServerEvent,
-    toggleSidebarSectionCollapsed,
-    loadWorkspaceThreads,
-  } = useSidebarWorkspaceState({
-    // Let the visible workspace finish booting before background catalogs
-    // compete for the same remote connection.
-    backgroundLoadingEnabled: Boolean(state.initialized) || state.status !== "connecting",
-    projects: state.projects,
-    threads: state.threads,
-    activeContext: state.activeContext,
-    activeWorkspaceID: state.activeProjectId,
-    setStatus: (status) => {
-      showErrorToast(status);
-    },
-  });
-  const syncSidebarServerEventStable = useStableCallback(syncSidebarServerEvent);
-  const loadWorkspaceThreadsStable = useStableCallback(loadWorkspaceThreads);
-  // Settings and account pages unmount the sidebar; keep manual folds here.
-  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
-  const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
-  const [accessMenuOpen, setAccessMenuOpen] = useState(false);
-  const codexRuntimeMenu = state.codexRuntimeMenu ?? null;
-  const runtimeMenuOwner = useRef(true);
-  useLayoutEffect(() => {
-    runtimeMenuOwner.current = true;
-    return () => { runtimeMenuOwner.current = false; };
-  }, []);
-  const setCodexRuntimeMenu = useCallback((update: SetStateAction<CodexRuntimeMenu>) => {
-    // A checkout started by the retired shell may finish after its replacement.
-    // Its menu cleanup must retain React's former unmounted-setter behavior.
-    if (!runtimeMenuOwner.current) return;
-    setState(current => {
-      const previous = current.codexRuntimeMenu ?? null;
-      const next = typeof update === "function" ? update(previous) : update;
-      return next === previous ? current : { ...current, codexRuntimeMenu: next };
-    });
-  }, [setState]);
-  const [codexModels, setCodexModels] = useState<CodexModelLoadState>({
-    loading: false,
-    error: "",
-    models: [],
-  });
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const nativeSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.section);
   const setNativeSection = useCallback((section: "conversations" | "catalog") => {
     void application.invoke("navigation.show-section", { section }).catch(showErrorToast);
   }, [application]);
-  const ribbonBrowser = useRibbonBrowserTabs(!poppedOutMode);
-  const [activeWebsiteID, setActiveWebsiteID] = useState<string>();
+  const navigationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigationWorkspace);
+  const ribbonBrowser = { state: navigationWorkspace.browser };
+  const activeWebsiteID = navigationWorkspace.activeWebsiteId;
+  const setActiveWebsiteID = useCallback((id: string | undefined): void => {
+    void application.invoke(id ? "navigation.reveal-browser" : "navigation.show-native", {}).catch(showErrorToast);
+  }, [application]);
   const activeWebsite = ribbonBrowser.state?.tabs?.find((website) => website.id === ribbonBrowser.state?.activeTabId);
   const showingWebsite = Boolean(activeWebsiteID && activeWebsite);
   useEffect(() => {
@@ -754,23 +401,34 @@ export function App({ application, slots, shellPluginId }: {
   const setCatalogPluginID = useCallback((pluginId: string) => {
     void application.invoke("catalog.select-plugin", { pluginId }).catch(showErrorToast);
   }, [application]);
-  const [catalogPluginRequest, setCatalogPluginRequest] = useState<{ id: string; request: number }>();
   const [catalogVisited, setCatalogVisited] = useState(false);
-  const pageWorkbench = useSyncExternalStore(desktopWorkbenchController.subscribe,
-    desktopWorkbenchController.getSnapshot, desktopWorkbenchController.getSnapshot);
-  const primaryPageView = visibleWorkbenchView(pageWorkbench, "primary");
+  const primaryPageView = navigationWorkspace.activePluginView;
   const showingPrimaryPluginView = primaryPageView !== undefined;
-  const showingPluginWebPage = Boolean(primaryPageView && pageWorkbench.webPageViewIds.includes(primaryPageView.view.id));
+  const showingPluginWebPage = primaryPageView?.webPage === true;
   const showingWebPage = showingWebsite || showingPluginWebPage;
-  const [accountOpen, setAccountOpen] = useState(false);
-  const onboardingComplete = state.onboardingComplete ?? window.wuu?.initialOnboardingComplete ?? true;
+  const handledRegionRequest = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const request = navigationWorkspace.regionVisibilityRequest;
+    if (!request || handledRegionRequest.current === request.id) return;
+    handledRegionRequest.current = request.id;
+    if (request.region === "primary" && rightPanelGlobalized) setRightPanelOpenWithMotion(false);
+    if (request.region === "auxiliary") setRightPanelOpenWithMotion(true);
+    if (request.region === "inspector") {
+      setEnvironmentPanelDismissed(false);
+      setEnvironmentPanelOpen(true);
+    }
+  }, [navigationWorkspace.regionVisibilityRequest, rightPanelGlobalized, setRightPanelOpenWithMotion]);
+  const accountOpen = navigationWorkspace.accountOpen;
+  const setAccountOpen = useCallback((open: boolean): void => {
+    void application.invoke("navigation.show-account", { open }).catch(showErrorToast);
+  }, [application]);
+  const onboardingComplete = useSyncExternalStore(application.onboarding.subscribe, () => application.onboarding.getSnapshot().completed);
 
   const settingsInitialPage = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.activePageId ?? "providers") as SettingsPage;
   const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
     void application.invoke("settings.open", { pageId }).catch(showErrorToast);
   }, [application]);
 
-  const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
     workspaceViewTabs,
     workspaceConversationActive,
@@ -779,18 +437,11 @@ export function App({ application, slots, shellPluginId }: {
     workspaceActiveFileTabID,
     ensureWorkspaceToolTab,
     openWorkspaceTool,
-    openWorkspaceSideThread,
-    openWorkspacePluginTool,
-    openWorkspaceDiffTab,
-    openWorkspaceFileTab,
     openWorkspaceArtifactTab,
-    openWorkspaceProjectTab,
     syncWorkspaceProjectTab,
-    showWorkspaceToolPicker,
     focusWorkspaceViewTab,
     closeWorkspaceViewTab,
     closeWorkspaceViewTabsWhere,
-    reorderWorkspaceViewTabs,
     toggleRightPanel,
   } = useWorkspaceToolState({
     application,
@@ -820,8 +471,17 @@ export function App({ application, slots, shellPluginId }: {
   const [rightPanelFilePath, setRightPanelFilePath] = useState<
     string | undefined
   >(undefined);
-  const [focusedWorkspaceContext, setFocusedWorkspaceContext] =
-    useState<RuntimeContext | undefined>(undefined);
+  const focusedWorkspace = navigationWorkspace.workspaces.find(workspace => workspace.id === navigationWorkspace.focusedWorkspaceId);
+  const focusedWorkspaceContext: RuntimeContext | undefined = focusedWorkspace
+    ? { kind: "project", project_id: focusedWorkspace.id, cwd: focusedWorkspace.path } : undefined;
+  const setFocusedWorkspaceContext = useCallback((context: RuntimeContext | undefined): void => {
+    void application.invoke("navigation.focus-workspace", { workspaceId: context?.kind === "project" ? context.project_id : undefined }).catch(showErrorToast);
+  }, [application]);
+  useEffect(() => {
+    if (!navigationWorkspace.focusedWorkspaceId) return;
+    closePrimaryPluginView();
+    openWorkspaceTool("files");
+  }, [navigationWorkspace.focusedWorkspaceId]);
   useEffect(() => {
     if (!rightPanelOpen) {
       setFocusedWorkspaceContext(undefined);
@@ -863,7 +523,7 @@ export function App({ application, slots, shellPluginId }: {
   ]);
   const revealConversationFromFocusedWorkspace = useCallback((): void => {
     setActiveWebsiteID(undefined);
-    desktopWorkbenchController.deactivateRegion("primary");
+    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
     setSettingsOpen(false);
     setNativeSection("conversations");
     if (!rightPanelGlobalized) {
@@ -890,281 +550,28 @@ export function App({ application, slots, shellPluginId }: {
   ]);
   const [environmentDialog, setEnvironmentDialog] =
     useState<EnvironmentDialog | null>(null);
-  const [contextCompositionEntries, setContextCompositionEntries] = useState<
-    ContextCompositionEntry[]
-  >([]);
-  const [instructionFilesEntries, setInstructionFilesEntries] = useState<
-    InstructionFilesEntry[]
-  >([]);
-  const [archiveTip, setArchiveTip] = useState<{
-    threadID: string;
-    threadTitle: string;
-    errorMessage?: string;
-    // Present when the archive failed with a running-turn rejection: the tip
-    // offers the force escape hatch and retries with this summary.
-    forceRetryThread?: ThreadSummary;
-  } | null>(null);
-  // Cross-workdir running threads aggregated by the main process. While a
-  // non-active workspace's turn events are filtered out of renderer state, the
-  // host still tracks which sessions are turning; this set drives accurate
-  // sidebar spinners for every workspace. It only ever marks threads running —
-  // completion is delivered by the same aggregate broadcast, so a thread never
-  // sticks as running.
-  const [crossWorkdirRunningThreadIDs, setCrossWorkdirRunningThreadIDs] =
-    useState<ReadonlySet<string>>(() => new Set());
-  useEffect(() => {
-    // Defensive optional calls: renderer tests stub window.wuu with partial
-    // mocks that predate this API; the real preload always provides both.
-    let disposed = false;
-    const applyRunningSnapshot = (snapshot: RunningThreadSnapshot[]): void => {
-      if (disposed) return;
-      const runningIDs = new Set(snapshot.map((item) => item.thread_id));
-      setCrossWorkdirRunningThreadIDs(
-        runningIDs,
-      );
-      const current = appStateRef.current;
-      const hasStaleRunningTurn = [
-        current.thread,
-        current.secondaryThread,
-        ...current.threads,
-      ].some(
-        (thread) =>
-          thread && isThreadRunning(thread) && !runningIDs.has(thread.id),
-      );
-      if (!hasStaleRunningTurn) {
-        return;
-      }
-      // The main process is authoritative for execution ownership. If its
-      // snapshot says a loaded thread is idle while the renderer still has an
-      // in-progress turn, repair immediately instead of waiting for the
-      // throttled cross-process discovery refresh.
-      void loadThreadListRefresh(current).then((listed) => {
-        if (disposed) return;
-        setState((state) => state.activeContext === current.activeContext
-          ? reconcileListedThreadState(state, listed)
-          : state);
-      }).catch(() => {
-        // A later running snapshot or ordinary refresh retries.
-      });
-    };
-    void window.wuu.getRunningThreadsSnapshot?.().then(applyRunningSnapshot);
-    const unsubscribe = window.wuu.onRunningThreadsChanged?.((snapshot) => {
-      applyRunningSnapshot(snapshot);
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, []);
-  // Archive is now a single-click action (the previous two-step "click again
-  // to confirm" pattern was too easy to misfire). Success and failure feedback
-  // lives in `archiveTip` above; the underlying IPC still goes through
-  // `window.wuu.archiveThread(id, true)`.
-  const dismissArchiveTip = useCallback(() => {
-    setArchiveTip(null);
-  }, []);
+  const conversationDetails = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationDetails);
+  const contextCompositionEntries = useMemo(() => structuredClone(conversationDetails.filter(entry => entry.kind === "context")) as ContextCompositionEntry[], [conversationDetails]);
   const [settingsNoticeVisible, setSettingsNoticeVisible] = useState(false);
-  // Agent engine inventory is shared by the composer and settings within a
-  // runtime context. A workspace switch must not reuse another CLI environment.
-  // Settings remounts keep the snapshot until a refresh finishes.
-  // Recheck on focus after two minutes so native login/config changes become
-  // visible. Each engine owns its expensive discovery cache on the server.
-  const engineInventoryCwd = activeThreadForState(state)?.cwd || state.activeContext?.cwd;
-  const engineInventoryContext = `${state.activeContext ? runtimeContextKey(state.activeContext) : ""}\u0000${engineInventoryCwd ?? ""}`;
-  const [engineInventorySnapshot, setEngineInventory] = useState<{ context: string; result: EngineListResult }>();
-  const engineInventory = engineInventorySnapshot?.context === engineInventoryContext ? engineInventorySnapshot.result : undefined;
-  const engineInventoryContextRef = useRef(engineInventoryContext);
-  engineInventoryContextRef.current = engineInventoryContext;
-  const [engineInventoryError, setEngineInventoryError] = useState("");
-  const engineInventoryRef = useRef<EngineListResult | undefined>(undefined);
-  const engineInventoryFetchedAtRef = useRef(0);
-  const engineInventoryRefreshRef = useRef<Promise<EngineListResult | undefined> | null>(null);
-  const engineInventoryRequestRef = useRef(0);
-  const storeEngineInventory = useCallback((next: EngineListResult, request: number) => {
-    if (request !== engineInventoryRequestRef.current || engineInventoryContext !== engineInventoryContextRef.current) return;
-    engineInventoryRef.current = next;
-    engineInventoryFetchedAtRef.current = Date.now();
-    setEngineInventory({ context: engineInventoryContext, result: next });
-    setEngineInventoryError("");
-  }, [engineInventoryContext]);
-
-  const publicEngineInventory = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.engineInventory);
-  useEffect(() => {
-    if (publicEngineInventory) storeEngineInventory(structuredClone(publicEngineInventory) as EngineListResult, engineInventoryRequestRef.current);
-  }, [publicEngineInventory, storeEngineInventory]);
-
-  const refreshEngineInventory = useCallback((force = false): Promise<EngineListResult | undefined> => {
-    const cached = engineInventoryRef.current;
-    const fresh = cached !== undefined
-      && Date.now() - engineInventoryFetchedAtRef.current < ENGINE_INVENTORY_STALE_MS;
-    if (!force && fresh) return Promise.resolve(cached);
-    if (!force && engineInventoryRefreshRef.current) return engineInventoryRefreshRef.current;
-    // Focused renderer tests and older preload bridges can expose only a
-    // partial desktop API. Preserve the previous best-effort degradation
-    // rather than making engine discovery block the rest of the shell.
-    if (typeof window.wuu.listEngines !== "function") return Promise.resolve(cached);
-
-    const request = engineInventoryRequestRef.current + 1;
-    engineInventoryRequestRef.current = request;
-    const pending = window.wuu.listEngines({ cwd: engineInventoryCwd, ...(force ? { refresh_models: true } : {}) })
-      .then((next) => {
-        storeEngineInventory(next, request);
-        return next;
-      })
-      .catch((error: unknown) => {
-        if (request === engineInventoryRequestRef.current) {
-          setEngineInventoryError(error instanceof Error ? error.message : String(error));
-        }
-        return engineInventoryRef.current;
-      })
-      .finally(() => {
-        if (engineInventoryRefreshRef.current === pending) {
-          engineInventoryRefreshRef.current = null;
-        }
-      });
-    engineInventoryRefreshRef.current = pending;
-    return pending;
-  }, [storeEngineInventory, engineInventoryCwd]);
-
-  const updateEngineInventory = useCallback(async (params: EngineUpdateParams) => {
-    engineInventoryRequestRef.current += 1;
-    const next = await window.wuu.updateEngines(params);
-    // A save from a workspace we left must not cancel its successor's discovery.
-    if (engineInventoryContext !== engineInventoryContextRef.current) return next;
-    // Settings responses use the project root. Refresh the session catalog
-    // before publishing model choices for a worktree.
-    engineInventoryRef.current = undefined;
-    engineInventoryFetchedAtRef.current = 0;
-    engineInventoryRefreshRef.current = null;
-    return await refreshEngineInventory(true) ?? next;
-  }, [engineInventoryContext, refreshEngineInventory]);
-
-  useEffect(() => {
-    engineInventoryRequestRef.current += 1;
-    engineInventoryRefreshRef.current = null;
-    engineInventoryRef.current = undefined;
-    engineInventoryFetchedAtRef.current = 0;
-    setEngineInventory(undefined);
-    setEngineInventoryError("");
-    void refreshEngineInventory();
-  }, [engineInventoryContext, refreshEngineInventory]);
-  useEffect(() => {
-    const refreshAfterLongIdle = () => {
-      void refreshEngineInventory();
-    };
-    window.addEventListener("focus", refreshAfterLongIdle);
-    return () => window.removeEventListener("focus", refreshAfterLongIdle);
-  }, [refreshEngineInventory]);
-  // When the user clicks "分叉" on a non-latest user message, the fork
-  // picker dialog asks whether to stay local or fork into a new worktree.
-  // Holding the source thread snapshot in state lets the dialog callback
-  // resolve the same data the user clicked, regardless of subsequent
-  // thread updates.
-  const [pendingFork, setPendingFork] =
-    useState<PendingForkState | undefined>(undefined);
+  const pendingFork = conversationActions.pendingFork;
+  const cancelPendingFork = (): void => { void application.invoke("history.cancel-fork", {}).catch(showErrorToast); };
   const {
     pendingViewSwitch,
     visiblePendingThreadID,
-    visiblePendingWorkspaceID,
     viewSwitchPending,
-    submissionTargetPending,
     viewContextSwitchPending,
-    beginViewSwitch,
-    prepareThreadReveal,
     finishViewSwitch,
     cancelViewSwitch,
     isCurrentViewSwitchRequest,
     getCurrentViewSwitchRequestID,
-  } = useViewSwitchState();
+  } = useApplicationNavigationState(application);
   const windowResizingRef = useRef(false);
   const environmentPanelHasRoomRef = useRef(environmentPanelHasRoom);
   const pendingEnvironmentPanelHasRoomRef = useRef<boolean | undefined>(
     undefined,
   );
-  const workspaceMenuRef = useRef<HTMLDivElement>(null);
-  const runtimeMenuRef = useRef<HTMLDivElement>(null);
-  const runtimeMenuTriggerRef = useRef<HTMLElement>(null);
-  const greetingWorkspaceRef = useRef<HTMLButtonElement>(null);
-  const accessMenuRef = useRef<HTMLDivElement>(null);
-  const codexRuntimeRef = useRef<HTMLDivElement>(null);
   const environmentToggleRef = useRef<HTMLButtonElement>(null);
   const environmentPanelRef = useRef<HTMLDivElement>(null);
-  const appStateRef = useRef<AppState>(state);
-  const pendingDraftRecovery = useRef(new Map<string, SessionTab>());
-  const recoveryTextSnapshots = useRef(new Map<string, { prompt: string; text: string; hasReferences: boolean }>());
-  const recoveryStorageWarning = useRef(false);
-  const saveDraftRecovery = useStableCallback((input?: { prompt: string; pane?: ConversationPaneID }) => {
-    const current = appStateRef.current;
-    // Boot has not selected a workspace yet. Never replace the recovery store
-    // with the initial empty/default composer while that selection is pending.
-    if (!current.initialized || !current.activeContext) return;
-    const tabs = new Map(current.sessionTabs.map((tab) => [tab.id, tab]));
-    if (current.thread && current.secondaryThread) {
-      for (const pane of ["primary", "secondary"] as const) {
-        const thread = pane === "primary" ? current.thread : current.secondaryThread;
-        const id = threadSessionTabID(thread.id);
-        const tab = tabs.get(id) ?? createThreadSessionTab(thread, resolveThreadRuntimeContext(thread, current.projects));
-        if (tab.kind === "skills") continue;
-        tabs.set(id, { ...tab, prompt: input?.pane === pane ? input.prompt : composerDraftsRef.current.split[pane].prompt });
-      }
-    } else {
-      const tab = tabs.get(current.activeSessionTabID);
-      if (tab && tab.kind !== "skills") {
-        tabs.set(tab.id, { ...tab, prompt: input && !input.pane ? input.prompt : composerDraftsRef.current.primary().prompt });
-      }
-    }
-    for (const [id, tab] of tabs) {
-      if (tab.kind === "skills") continue;
-      const parts = readCollapsedPromptParts(tab.kind === "thread" ? tab.threadID : id, tab.prompt);
-      const previous = recoveryTextSnapshots.current.get(id);
-      // The fold registry is bounded. Its eviction must not later serialize an
-      // unchanged hidden reference as if it were newly typed text. If input
-      // changes after its source metadata is lost, omit that uncertain draft.
-      const hasReferences = parts ? parts.some((part) => part.type !== "text" && part.type !== "pasted_text")
-        : Boolean(previous?.hasReferences && tab.prompt && tab.prompt !== previous.text);
-      const text = parts ? composerRecoveryText(tab.prompt, parts)
-        : previous?.prompt === tab.prompt ? previous.text
-        : hasReferences ? "" : tab.prompt;
-      recoveryTextSnapshots.current.set(id, { prompt: tab.prompt, text, hasReferences });
-      tabs.set(id, { ...tab, prompt: text });
-    }
-    for (const id of recoveryTextSnapshots.current.keys()) {
-      if (!tabs.has(id)) recoveryTextSnapshots.current.delete(id);
-    }
-    // Optimistic UI clearing is not acceptance. Retain the submitted text until
-    // the operation settles, without replacing input typed in the meantime.
-    for (const [messageID, tab] of pendingDraftRecovery.current) {
-      const live = tabs.get(tab.id);
-      if (!live || live.kind === "skills" || tab.kind === "skills") continue;
-      if (!live.prompt.trim()) tabs.set(tab.id, tab);
-      else if (live.prompt !== tab.prompt) {
-        const recovery = createDraftSessionTab(`draft:recovery:${messageID}`, tab.context, tab);
-        tabs.set(recovery.id, recovery);
-      }
-    }
-    const saved = writeComposerDraftRecovery([...tabs.values()], current.activeSessionTabID);
-    if (!saved && !recoveryStorageWarning.current) showErrorToast(t("settings.draftRecoveryUnavailable"));
-    recoveryStorageWarning.current = !saved;
-  });
-  function setPromptFromInput(value: string): void {
-    updatePromptFromInput(value);
-    // This is deliberately before the 400 ms shell publication: an immediate
-    // reload must recover the textarea's latest input, not its idle snapshot.
-    saveDraftRecovery({ prompt: value });
-  }
-  function setSplitComposerPrompt(pane: ConversationPaneID, value: string): void {
-    updateSplitComposerPrompt(pane, value);
-    saveDraftRecovery({ pane, prompt: value });
-  }
-  useEffect(() => {
-    saveDraftRecovery();
-  }, [state.sessionTabs, state.activeSessionTabID, state.initialized, state.activeContext,
-    state.thread?.id, state.secondaryThread?.id, prompt, promptRevision, splitComposerDrafts, saveDraftRecovery]);
-  useEffect(() => {
-    const timer = window.setInterval(() => saveDraftRecovery(), 60_000);
-    return () => window.clearInterval(timer);
-  }, [saveDraftRecovery]);
-  const runningThreadReconcileInFlightRef = useRef("");
   const workspaceHasDirtyFilesRef = useRef(false);
   const lastFocusOutsideWorkspaceRef = useRef<{
     element: HTMLElement;
@@ -1174,77 +581,7 @@ export function App({ application, slots, shellPluginId }: {
     fullPanel: false,
     open: false,
   });
-  const {
-    pendingComposerMessagesByThread,
-    pendingComposerMessagesByThreadRef,
-    pendingComposerMessagesForThread: pendingComposerMessagesForActiveThread,
-    updateThreadPendingComposerMessages,
-    clearThreadPendingComposerMessages,
-    removePendingComposerMessageByID,
-    syncPendingComposerMessagesFromServerEvent,
-    reconcilePendingComposerMessagesForState,
-    seedHeldComposerMessages,
-    enqueueComposerMessage,
-    removeQueuedMessage,
-    removeGuideMessage,
-    editQueuedMessage,
-    editGuideMessage,
-    guideQueuedMessage,
-    threadHasPendingComposerMessages,
-  } = useComposerPendingState({
-    getAppState: () => appStateRef.current,
-    getComposerDraftForThread: (threadID) => {
-      const current = appStateRef.current;
-      if (current.thread && current.secondaryThread) {
-        if (current.thread.id === threadID) return composerDraftsRef.current.split.primary;
-        if (current.secondaryThread.id === threadID) return composerDraftsRef.current.split.secondary;
-      }
-      return activeThreadIDForState(current) === threadID || current.activeSessionTabID === threadID
-        ? composerDraftsRef.current.primary() : sessionTabDraftForThread(current, threadID);
-    },
-    restoreComposerDraftForThread: (threadID, draft) => {
-      const currentState = appStateRef.current;
-      if (currentState.thread && currentState.secondaryThread) {
-        const pane = currentState.thread.id === threadID ? "primary"
-          : currentState.secondaryThread.id === threadID ? "secondary" : undefined;
-        if (pane) {
-          setSplitComposerDrafts((current) => ({ ...current, [pane]: cloneComposerDraft(draft) }));
-          return;
-        }
-      }
-      if ((activeThreadIDForState(appStateRef.current) === threadID || appStateRef.current.activeSessionTabID === threadID)) {
-        restorePrimaryComposerDraft(draft);
-        return;
-      }
-      setState((current) => ({
-        ...current,
-        sessionTabs: current.sessionTabs.map((tab) =>
-          tab.kind === "thread" && tab.threadID === threadID
-            ? {
-                ...tab,
-                prompt: draft.prompt,
-                images: draft.images.map((image) => ({ ...image })),
-                files: draft.files.map((file) => ({ ...file })),
-                selections: draft.selections?.map((selection) => ({ ...selection, source: { ...selection.source } })),
-              }
-            : tab,
-        ),
-      }));
-    },
-    setStatus: (status) =>
-      setState((current) => ({
-        ...current,
-        status,
-      })),
-    sendComposerMessageToThread,
-    preserveFailedComposerMessage,
-  });
-  const runtimeVariantByModelRef = useRef(new Map<string, string>());
-  const pendingRuntimeSelectionsRef = useRef(new Map<string, Promise<void>>());
-  const cachedThreadPaneHistoryRef = useRef<string[]>([]);
-  const cachedConversationPaneThreadsRef = useRef(new Map<string, Thread>());
-  const draftSessionTabCounterRef = useRef(0);
-  const currentSessionTab = activeSessionTab(state);
+  const currentSessionTab = tabs.items.find(tab => tab.id === tabs.activeTabId);
 
   useEffect(() => {
     const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
@@ -1261,11 +598,11 @@ export function App({ application, slots, shellPluginId }: {
   }, []);
 
   const workspaceFocusOwner = JSON.stringify([
-    state.activeContext ? runtimeContextKey(state.activeContext) : "",
-    state.activeContext?.cwd,
-    state.activeSessionTabID,
-    activeThreadIDForState(state),
-    activeThreadForState(state)?.cwd,
+    activeContext ? runtimeContextKey(activeContext) : "",
+    activeContext?.cwd,
+    tabs.activeTabId,
+    activeThread?.id,
+    activeThread?.cwd,
   ]);
   useLayoutEffect(() => {
     const handleFocusIn = (event: FocusEvent): void => {
@@ -1326,13 +663,13 @@ export function App({ application, slots, shellPluginId }: {
   }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner, mainComposerFocusRequest]);
 
   // Workspace panel (file tree / file preview / terminal / review) root: follows the
-  // active thread's own cwd when it differs from state.activeContext — the
+  // active thread's own cwd when it differs from activeContext — the
   // main remaining case is a worktree-fork thread, whose cwd is a git
   // worktree directory distinct from the project root activeContext stays
   // pinned to.
   const conversationWorkspaceContext = useMemo(
-    () => workspacePanelContext(state.activeContext, state.thread),
-    [state.activeContext, state.thread],
+    () => workspacePanelContext(activeContext, primaryThread),
+    [activeContext, primaryThread],
   );
   const workspaceContext = focusedWorkspaceContext ?? conversationWorkspaceContext;
   const activeWorkspaceViewTab = workspaceActiveViewTabID
@@ -1350,11 +687,6 @@ export function App({ application, slots, shellPluginId }: {
     sameRuntimeContext(activeWorkspaceFileTab.context, workspaceContext)
       ? activeWorkspaceFileTab.id
       : undefined;
-  const activeWorkspaceFile =
-    activeWorkspaceFileTab?.kind === "file" && activeWorkspaceFileTabID
-      ? activeWorkspaceFileTab.path
-      : undefined;
-  const activeThread = activeThreadForState(state);
   const activeThreadID = activeThread?.id;
   const activeThreadCwd = activeThread?.cwd;
   const previousThreadWorkspace = useRef({ id: activeThreadID, cwd: activeThreadCwd });
@@ -1369,338 +701,36 @@ export function App({ application, slots, shellPluginId }: {
       });
     }
   }, [activeThreadID, activeThreadCwd]);
-  const activeProjectDraft = projectAgentEnabled && !activeThread && currentSessionTab?.kind === "draft" && currentSessionTab.project === true;
-  const activeThreadRunning = isThreadRunning(activeThread);
-  const activeThreadHasRunningTurn = activeThread?.turns.some(turn => turn.status === "in_progress") ?? false;
-  useEffect(() => {
-    const contextCwd = state.activeContext?.cwd;
-    const executorRunning = activeThreadID !== undefined && crossWorkdirRunningThreadIDs.has(activeThreadID);
-    if (
-      !activeThreadID ||
-      !contextCwd ||
-      (!activeThreadRunning && !executorRunning) ||
-      (activeThreadHasRunningTurn && executorRunning)
-    ) {
-      return undefined;
-    }
-
-    // The aggregate main-process snapshot is independent of renderer server
-    // events. Repair both a missed start and a missed completion. An owner
-    // resume includes the new input and live items; a workspace list alone may
-    // only know that another process holds the execution lease.
-    const key = `${contextCwd}\u0000${activeThreadID}`;
-    let disposed = false;
-    const timer = window.setTimeout(() => {
-      if (runningThreadReconcileInFlightRef.current === key) {
-        return;
-      }
-      runningThreadReconcileInFlightRef.current = key;
-      void window.wuu.resumeThread(activeThreadID)
-        .then(({ thread }) => {
-          if (disposed) {
-            return;
-          }
-          setState((current) => {
-            if (
-              current.activeContext?.cwd !== contextCwd ||
-              activeThreadIDForState(current) !== activeThreadID
-            ) {
-              return current;
-            }
-            if (!thread) return current;
-            return reconcileListedThreadState(current, upsertThread(current.threads, thread));
-          });
-        })
-        .catch(() => {
-          // The focus/visibility heartbeat below retries transient failures.
-        })
-        .finally(() => {
-          if (runningThreadReconcileInFlightRef.current === key) {
-            runningThreadReconcileInFlightRef.current = "";
-          }
-        });
-    }, 200);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-    };
-  }, [
-    activeThreadID,
-    activeThreadRunning,
-    activeThreadHasRunningTurn,
-    crossWorkdirRunningThreadIDs,
-    state.activeContext?.cwd,
-  ]);
-  // Draft engine for the next brand-new conversation. Empty means "follow the
-  // settings default". Unlike the fallback chain, an explicit "wuu" selection
-  // is stored as-is so it overrides an external default engine. Engine
-  // binding is a per-thread creation decision, so the draft resets whenever
-  // the active thread changes, then re-seeds from the last composer pick so
-  // working in an external agent does not mean re-selecting it for every new
-  // session (see DraftEngineMemory).
-  const [draftEngine, setDraftEngine] = useState<string>("");
-  const engineSelectionPending = !activeThread && draftEngine !== "wuu" && !engineInventory && typeof window.wuu.listEngines === "function";
-  const [draftEngineRuntime, setDraftEngineRuntime] = useState<EngineRuntimeSelection>({
-    model: "",
-    effort: "",
-  });
-  // Switching the parent engine in the picker must not discard that engine's
-  // child model/effort choice when the user switches back within the draft.
-  const draftEngineRuntimeByID = useRef<Record<string, EngineRuntimeSelection>>({});
-  const draftPermissionMode = state.draftPermissionMode ?? "";
-  const setDraftPermissionMode = useCallback((update: SetStateAction<PermissionMode | "">) => {
-    setState(current => {
-      const previous = current.draftPermissionMode ?? "";
-      const next = typeof update === "function" ? update(previous) : update;
-      return next === previous ? current : { ...current, draftPermissionMode: next };
-    });
-  }, [setState]);
-  // Present while the next conversation starts in its own worktree. It belongs
-  // to one project root, so switching projects never carries one repository's
-  // start branch into another. An empty start branch means the project's HEAD.
-  const draftWorktree = state.draftWorktree;
-  const setDraftWorktree = useCallback((draftWorktree: AppState["draftWorktree"]) => {
-    setState(current => current.draftWorktree === draftWorktree ? current : { ...current, draftWorktree });
-  }, [setState]);
-  const draftWorktreeFor = (context: RuntimeContext | undefined, gitStatus: GitStatusResult | undefined) =>
-    draftWorktree && gitStatus?.is_repo && draftWorktree.cwd === context?.cwd ? draftWorktree : undefined;
-  const draftEngineSeed = useRef<{ threadID?: string; done: boolean }>({
-    threadID: activeThreadID,
-    done: false,
-  });
-  useEffect(() => {
-    if (draftEngineSeed.current.threadID !== activeThreadID) {
-      draftEngineSeed.current = { threadID: activeThreadID, done: false };
-      setDraftEngine("");
-      setDraftEngineRuntime({ model: "", effort: "" });
-    }
-    // Only a brand-new conversation seeds from memory. An open thread is
-    // already bound to its engine, and a seeded draft would otherwise win the
-    // fallback chain for a thread that carries no explicit engine_id.
-    if (activeThreadID || draftEngineSeed.current.done) return;
-    // The inventory arrives asynchronously, so a remembered external engine
-    // can only be validated once it lands; until then the seed stays pending
-    // and retries. An explicit pick in the meantime wins and ends the retry.
-    const remembered = resolveDraftEngineMemory(engineInventory);
-    if (!remembered) {
-      draftEngineSeed.current.done = engineInventory !== undefined;
-      return;
-    }
-    draftEngineSeed.current.done = true;
-    setDraftEngine(remembered.engine);
-    setDraftEngineRuntime({ model: remembered.model, effort: remembered.effort, speed: remembered.speed, model_options: remembered.model_options });
-    draftEngineRuntimeByID.current[remembered.engine] = {
-      model: remembered.model,
-      effort: remembered.effort,
-      speed: remembered.speed,
-      model_options: remembered.model_options,
-    };
-    setDraftPermissionMode(current => current || (remembered.engine === "wuu" ? "" : "unconfined"));
-  }, [activeThreadID, engineInventory]);
-  const selectDraftEngine = useCallback((id: string) => {
-    const runtime = draftEngineRuntimeByID.current[id]
-      ?? (id === "wuu"
-        ? { model: "", effort: "" }
-        : rememberedEngineRuntime(id, engineInventory)
-          ?? { model: "", effort: "" });
-    draftEngineSeed.current.done = true;
-    setDraftEngine(id);
-    setDraftPermissionMode(id === "wuu" ? "" : "unconfined");
-    setDraftEngineRuntime(runtime);
-    draftEngineRuntimeByID.current[id] = runtime;
-    writeDraftEngineMemory({ engine: id, ...runtime });
-  }, [engineInventory]);
-  useEffect(() => {
-    let current = true;
-    if (!activeThreadID || !userQuestionApiAvailable) {
-      setUserQuestions([]);
-      return () => { current = false; };
-    }
-    void window.wuu.listUserQuestions(activeThreadID).then((result) => {
-      if (current) {
-        setUserQuestions(result.questions.filter(
-          (request) => !resolvedUserQuestionIDsRef.current.has(request.request_id),
-        ));
-      }
-    }).catch(() => {
-      if (current) setUserQuestions([]);
-    });
-    return () => { current = false; };
-  }, [activeThreadID, userQuestionApiAvailable]);
-  useEffect(() => {
-    desktopPluginHost.setActiveConversationThread(activeThreadID);
-    return () => desktopPluginHost.setActiveConversationThread(undefined);
-  }, [activeThreadID]);
-  const activeTabKind = activeSessionTab(state)?.kind;
-  const environmentContext = workspacePanelContext(state.activeContext, activeThread);
-  const sideCommands = useMemo(() => buildComposerSlashCommands({
-    activeContext: state.activeContext, initialized: state.initialized, running: false,
-  }).filter((command) => command.action === "open-side-thread"), [state.activeContext, state.initialized]);
-  const [sideCommandByThread, setSideCommandByThread] = useState<Record<string, string>>({});
-  const sideCommandKey = `${state.activeContext?.cwd ?? ""}\0${activeThreadID ?? ""}`;
-  const selectedSideCommandID = sideCommandByThread[sideCommandKey];
-  const activeSideCommand = sideCommands.find((command) => !selectedSideCommandID || `${command.pluginId}.${command.pluginCommandId}` === selectedSideCommandID);
-  const sideCommandID = activeSideCommand ? `${activeSideCommand.pluginId}.${activeSideCommand.pluginCommandId}` : undefined;
-  const sideConversationAvailable = Boolean(sideCommandID);
-  const sideThread = useSideThreadController({
-    activeThreadId: activeThreadID,
-    activeContext: state.activeContext,
-    commandID: sideCommandID,
-    disabled: sideCommands.length === 0,
-  });
-  const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
+  const environmentContext = workspacePanelContext(activeContext, activeThread);
+  const sideSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().sideConversation);
+  const sideCommandID = sideSnapshot.commandId;
+  const sideConversationAvailable = sideSnapshot.commands.length > 0;
+  const sideThread = useMemo(() => ({
+    entry: sideSnapshot.entry,
+    open: () => { if (sideSnapshot.parentThreadId) void application.invoke("side.open", { parentThreadId: sideSnapshot.parentThreadId }).catch(showErrorToast); },
+    close: () => { if (sideSnapshot.parentThreadId) void application.invoke("side.close", { parentThreadId: sideSnapshot.parentThreadId }).catch(showErrorToast); },
+    setDraftSelection: (selection?: SideThreadSelection) => { if (sideSnapshot.parentThreadId) void application.invoke("side.set-selection", { parentThreadId: sideSnapshot.parentThreadId, selection }).catch(showErrorToast); },
+  }), [application, sideSnapshot]);
   const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
-  const activeTurn = activeTurnForThread(activeThread);
   useEffect(() => {
     const syncVisibleCUAThread = () => {
-      (window.wuu as typeof window.wuu & { setActiveCUAThread?: (threadID?: string) => void })
-        .setActiveCUAThread?.(activeThreadID);
+      application.desktop.setActiveCUAThread?.(activeThreadID);
     };
     syncVisibleCUAThread();
     window.addEventListener("focus", syncVisibleCUAThread);
     return () => window.removeEventListener("focus", syncVisibleCUAThread);
-  }, [activeThreadID]);
+  }, [application, activeThreadID]);
   const activeBrowserActivity = useMemo(
     () =>
       ENABLE_EMBEDDED_BROWSER
-        ? activitiesForThread(activitySessions, state.activeContext?.cwd, activeThreadID)
+        ? activities.filter(activity => activity.workdir === activeContext?.cwd && activity.thread_id === activeThreadID)
             .filter((activity) => activity.kind === "browser" && activity.state !== "stopped")
             .at(-1)
         : undefined,
-    [activitySessions, activeThreadID, state.activeContext?.cwd],
+    [activities, activeThreadID, activeContext?.cwd],
   );
 
-  useEffect(() => {
-    const workdir = state.activeContext?.cwd;
-    if (!workdir || !activeThreadID || typeof window.wuu.listActivities !== "function") {
-      return undefined;
-    }
-    let cancelled = false;
-    void window.wuu.listActivities(activeThreadID).then((result) => {
-      if (!cancelled) {
-        setActivitySessions((current) =>
-          mergeActivityList(current, workdir, activeThreadID, result.activities ?? []),
-        );
-      }
-    }).catch(() => {
-      // Live notifications still populate the panel when the initial list
-      // races app-server startup; ordinary app status handles transport errors.
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeThreadID, state.activeContext?.cwd]);
-
-  const sessionRuntime = useMemo(
-    () => runtimeViewForSession(state.initialized, activeThread),
-    [state.initialized, activeThread],
-  );
-  const mascotProviderNames = useMemo(
-    () => state.initialized?.providers?.map((provider) => provider.name),
-    [state.initialized?.providers],
-  );
-  const [mascotRuntimePreview, setMascotRuntimePreview] = useState<{
-    provider: string;
-    model: string;
-  } | null>(null);
-  const mascotRuntimePreviewRequestRef = useRef(0);
-  const visibleConversationRuntime = useMemo(
-    () => runtimeViewForConversation(state.initialized, activeThread, activeTurn),
-    [state.initialized, activeThread, activeTurn],
-  );
-  const currentConversationThreadsByID = useMemo(
-    () =>
-      conversationPaneThreadsByID(
-        state.threads,
-        state.thread,
-        state.secondaryThread,
-    ),
-    [state.threads, state.thread, state.secondaryThread],
-  );
-  // A runtime switch replaces state.threads with the target workspace. Keep
-  // snapshots only for panes admitted by the bounded cache below so an open
-  // source-workspace pane stays mounted without retaining every known thread.
-  const availableConversationThreadsByID = useMemo(() => {
-    const available = new Map(cachedConversationPaneThreadsRef.current);
-    for (const [threadID, thread] of currentConversationThreadsByID) {
-      available.set(threadID, thread);
-    }
-    return available;
-  }, [currentConversationThreadsByID]);
-  const availableConversationThreadsByIDRef = useRef(
-    availableConversationThreadsByID,
-  );
-  availableConversationThreadsByIDRef.current = availableConversationThreadsByID;
-  // Per-thread keep-alive for the main conversation pane. Recently visited
-  // conversations stay mounted within both a pane-count cap and an estimated
-  // rendered-turn budget. This avoids the old three-tab performance cliff
-  // without allowing many long conversations to retain unbounded DOM.
-  //
-  // Crucially we derive the cache synchronously from the active thread
-  // via useMemo, not via useState + useEffect. The async effect path
-  // rendered once with the new activeThreadID but the stale cache (no
-  // pane for the new thread) and then a second time with the cache
-  // updated — the "two flickers" the user saw. Computing the cache from
-  // state in the same render closes that empty frame.
-  const cachedThreadPaneIDs = useMemo(() => {
-    const activeID = state.thread?.id;
-    // Sidebar navigation does not keep a tab strip of open conversations, but
-    // recently visited panes still stay mounted within the existing count and
-    // render-weight caps. Unmounting the outgoing pane on every click rebuilt
-    // the markdown tree after paint and flashed the incoming session.
-    const openThreadIDs = new Set(cachedThreadPaneHistoryRef.current);
-    if (activeID) {
-      openThreadIDs.add(activeID);
-    }
-    const next = selectCachedConversationPaneIDs({
-      activeThreadID: activeID,
-      previousThreadIDs: cachedThreadPaneHistoryRef.current,
-      openThreadIDs,
-      threadsByID: availableConversationThreadsByIDRef.current,
-    });
-    cachedThreadPaneHistoryRef.current = next;
-    return next;
-  }, [state.thread?.id]);
-  const cachedConversationThreadsByID = useMemo(
-    () =>
-      retainCachedConversationPaneThreads({
-        threadIDs: cachedThreadPaneIDs,
-        currentThreadsByID: currentConversationThreadsByID,
-        previousThreadsByID: cachedConversationPaneThreadsRef.current,
-      }),
-    [cachedThreadPaneIDs, currentConversationThreadsByID],
-  );
-  cachedConversationPaneThreadsRef.current = cachedConversationThreadsByID;
-  const openTurnFileDiffPanel = useStableCallback(
-    (threadID: string, selection: TurnFileDiffSelection) => {
-      openWorkspaceDiffTab({ threadID, path: selection.path, selection });
-      setRightPanelOpenWithMotion(true);
-      closeEnvironmentPanel({ dismissed: true });
-    },
-  );
-  const activePendingComposerMessages = pendingComposerMessagesForActiveThread(
-    activeThreadID,
-  );
-  const queuedMessages = activePendingComposerMessages.queued;
-  const guideMessages = activePendingComposerMessages.guides;
-  // Self-healing reconciliation for pending composer messages: once a queued
-  // or guide send materializes as a real user_message turn item, drop it from
-  // the composer queue strip / chat "发送中…" bubble even if the live
-  // turn/started (or item/completed) removal notification was missed — e.g. it
-  // got gated out of the renderer because the thread was backgrounded when the
-  // event arrived (serverEventTargetsActiveContext filter). Keying off the
-  // authoritative thread turns means a message that already went out can never
-  // stay stuck as "排队中".
-  useEffect(() => {
-    // Use the state snapshot that produced this render so reconciliation stays
-    // tied to the thread that actually materialized the queued message.
-    reconcilePendingComposerMessagesForState(state);
-  }, [
-    pendingComposerMessagesByThread,
-    state.thread,
-    state.secondaryThread,
-    state.threads,
-  ]);
+  const mascotProviderNames = useMemo(() => configuration?.providers?.map(provider => provider.name), [configuration?.providers]);
   const {
     conversationSearch,
     conversationSearchResults,
@@ -1715,14 +745,11 @@ export function App({ application, slots, shellPluginId }: {
     setConversationSearchSelectedIndex,
   } = useConversationSearch({
     application,
+    open: navigationWorkspace.searchOpen,
+    onOpenChange: open => { void application.invoke("navigation.show-search", { open }).catch(showErrorToast); },
     onOpen: () => {
-      setWorkspaceMenuOpen(false);
-      setRuntimeMenuOpen(false);
-      setAccessMenuOpen(false);
-      setBranchMenuOpen(false);
-      setCodexRuntimeMenu(null);
       setEnvironmentDialog(null);
-      setPendingFork(undefined);
+      cancelPendingFork();
     },
     onSelect: closePrimaryPluginView,
   });
@@ -1753,7 +780,7 @@ export function App({ application, slots, shellPluginId }: {
 
   function openEnvironmentDialog(dialog: EnvironmentDialog): void {
     closeConversationSearch({ immediate: true });
-    setPendingFork(undefined);
+    cancelPendingFork();
     setEnvironmentDialog(dialog);
   }
   // A visible agent browser view is a main-owned WebContentsView that floats
@@ -1768,28 +795,8 @@ export function App({ application, slots, shellPluginId }: {
     environmentDialog !== null ||
     Boolean(pendingFork) ||
     conversationSearch.open;
-  useBrowserVisibility({
-    onInvalidateWorkdir: (workdir) =>
-      setActivitySessions((current) =>
-        clearActivitiesForWorkdir(current, workdir),
-      ),
-  });
-  const [browserDockTarget, setBrowserDockTarget] = useState<BrowserDockTarget>();
-  const [pendingBrowserDock, setPendingBrowserDock] = useState<{
-    target: BrowserDockTarget;
-    ready: boolean;
-  }>();
-  const openWorkspaceBrowserRef = useRef(openWorkspaceTool);
-  openWorkspaceBrowserRef.current = openWorkspaceTool;
   const activeTodoUpdate = latestTodoUpdateForThread(activeThread);
-  const activeContextKey = state.activeContext
-    ? runtimeContextKey(state.activeContext)
-    : "";
-  const forkWorktreeDisabledReason =
-    state.gitStatus?.is_repo === false
-      ? t("app.worktreeRequiresGit")
-      : undefined;
-  const splitConversation = Boolean(state.thread && state.secondaryThread);
+  const splitConversation = Boolean(primaryThread && secondaryThread);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -1847,7 +854,7 @@ export function App({ application, slots, shellPluginId }: {
       scheduleResizeEnd();
     }
 
-    const offWindowResizeState = window.wuu.onWindowResizeState(
+    const offWindowResizeState = application.desktop.onResizeState?.(
       ({ resizing: nextResizing }) => {
         if (nextResizing) {
           setResizeState(true);
@@ -1860,7 +867,7 @@ export function App({ application, slots, shellPluginId }: {
 
     window.addEventListener("resize", handleWindowResize);
     return () => {
-      offWindowResizeState();
+      offWindowResizeState?.();
       window.removeEventListener("resize", handleWindowResize);
       if (resizeEndTimer !== undefined) {
         window.clearTimeout(resizeEndTimer);
@@ -1897,9 +904,6 @@ export function App({ application, slots, shellPluginId }: {
     };
   }, [environmentPanelPaneOffset]);
 
-  useLayoutEffect(() => {
-    appStateRef.current = state;
-  }, [state]);
 
   useEffect(() => {
     const markUserInteraction = (): void => {
@@ -1914,255 +918,10 @@ export function App({ application, slots, shellPluginId }: {
   }, []);
 
   useEffect(() => {
-    let mounted = true;
-    const off = subscribeServerEvents((event) => {
-      if (!mounted) {
-        return;
-      }
-      // Token speed and live context telemetry are high-rate supporting UI.
-      // Keep them outside App state so provider events cannot re-render the
-      // full desktop tree merely to advance the composer meters.
-      turnTelemetryStore.ingest(event);
-      externalAgentActivityStore.ingest(event);
-      if (serverEventCarriesActivitySessionUpdate(event)) {
-        setActivitySessions((current) => reduceActivitySessionEvent(current, event));
-      }
-      if (event.kind === "notification" && event.message.method === "user-question/requested") {
-        const request = (event.message.params as { request?: UserQuestionRequest } | undefined)?.request;
-        if (request) {
-          resolvedUserQuestionIDsRef.current.delete(request.request_id);
-          setUserQuestions((current) => [
-            ...current.filter((item) => item.request_id !== request.request_id),
-            request,
-          ]);
-          if (typeof window.wuu.showSystemNotification === "function") {
-            void window.wuu.showSystemNotification({
-              title: translateCurrent("notification.questionTitle"),
-              body: translateCurrent("notification.questionBody"),
-            });
-          }
-        }
-      }
-      if (event.kind === "notification" && event.message.method === "user-question/resolved") {
-        const requestID = (event.message.params as { request_id?: string } | undefined)?.request_id;
-        if (requestID) {
-          if (resolvedUserQuestionIDsRef.current.size >= 256) {
-            resolvedUserQuestionIDsRef.current.clear();
-          }
-          resolvedUserQuestionIDsRef.current.add(requestID);
-          setUserQuestions((current) => current.filter((item) => item.request_id !== requestID));
-        }
-      }
-      if (event.kind === "notification" && event.message.method === "turn/completed") {
-        const params = event.message.params as { thread_id?: string } | undefined;
-        const threadID = typeof params?.thread_id === "string" ? params.thread_id : undefined;
-        const thread = threadID
-          ? appStateRef.current.threads.find((item) => item.id === threadID)
-          : undefined;
-        // Main-thread turns only: child/subagent completions stay quiet, and
-        // ephemeral threads never reach user-facing history. The main process
-        // still suppresses the notification when the window has focus.
-        if (
-          thread &&
-          !thread.parent_id &&
-          !thread.ephemeral &&
-          typeof window.wuu.showSystemNotification === "function"
-        ) {
-          void window.wuu.showSystemNotification({
-            title: translateCurrent("notification.turnCompletedTitle"),
-            body: translateCurrent("notification.turnCompletedBody"),
-          });
-        }
-      }
-      // All app-server clients share this event channel. Keep folded workspace
-      // snapshots live so expanding a workspace only reveals state; it never
-      // needs to wait for a status refresh first.
-      syncSidebarServerEventStable(event);
-      // Queue state belongs to the composer message, not to whichever workdir
-      // is currently visible. Process these low-rate lifecycle events before
-      // active-context filtering so background turns cannot leave a phantom
-      // queued message behind.
-      syncPendingComposerMessagesFromServerEvent(event);
-      if (!serverEventTargetsActiveContext(event, appStateRef.current)) {
-        return;
-      }
-      // Before initialization, the launch view already displays these failures.
-      if (appStateRef.current.initialized) {
-        if (event.kind === "server-error") {
-          showErrorToast(event.message, translateCurrent("error.server"));
-        } else if (event.kind === "server-exit") {
-          showErrorToast(event.message, translateCurrent("appState.coreExited"), "app-server:exit");
-        } else if (event.kind === "notification" && event.message.method === "config/error") {
-          const configError = (event.message.params as { message?: unknown } | undefined)?.message;
-          if (typeof configError === "string") showErrorToast(configError, "", "app-server:config-error");
-        }
-      }
-      const handling = handleStreamingNotification(event, appStateRef.current);
-      if (handling === "stream" || handling === "stream-state") {
-        // The first visible delta still needs to mount and reveal the live
-        // surface. Subsequent text commits call onStreamFrame after the
-        // throttled StreamTextStore publication; scrolling here as well would
-        // schedule two layout passes for every provider delta, including
-        // passes before the DOM contains the new text.
-        if (handling === "stream-state") {
-          scheduleStreamScroll();
-        }
-      }
-      if (handling === "stream") {
-        return;
-      }
-      if (handling === "background-stream") {
-        return;
-      }
-      if (handling === "skip") {
-        return;
-      }
-      if (serverEventShouldRefreshGit(event)) {
-        scheduleGitStatusRefresh(600);
-      }
-
-    });
-
-    void (async () => {
-      try {
-        const loadedState = await applicationController.initialize();
-        if (!mounted) {
-          return;
-        }
-        const { heldComposerMessages } = loadedState;
-        // A replacement shell can consume navigation while initialize resolves.
-        // Restore the composer from live state, not the earlier snapshot.
-        restoreInitialComposerRuntime(applicationController.getState());
-        if (loadedState.thread) {
-          seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
-        }
-      } catch (error) {
-        if (!mounted) {
-          return;
-        }
-        setState((current) => ({
-          ...current,
-          status: error instanceof Error ? error.message : t("runtime.startFailed"),
-        }));
-      }
-    })();
-
-    return () => {
-      mounted = false;
-      off();
-    };
-  }, [popOutInit]);
-
-  useEffect(() => {
-    let mounted = true;
-    const unsubscribe = window.wuu.onRuntimeRestore?.(async () => {
-      const questions = await window.wuu.listUserQuestions();
-      if (!mounted) return;
-      setUserQuestions(questions.questions.filter(
-        (request) => !resolvedUserQuestionIDsRef.current.has(request.request_id),
-      ));
-    });
-    return () => { mounted = false; unsubscribe?.(); };
-  }, []);
-
-  // Cross-process session pickup: sessions started from a paired phone are
-  // written to the shared store by the remote host process, which emits no
-  // events this renderer's app-server can forward. Re-list on window focus /
-  // visibility regain plus a slow heartbeat so the sidebar converges to the
-  // shared store when the user returns to the desktop. Failures stay silent:
-  // the next trigger retries.
-  useEffect(() => {
-    const REFRESH_MIN_INTERVAL_MS = 10_000;
-    const HEARTBEAT_MS = 60_000;
-    let lastRefreshAt = 0;
-    let disposed = false;
-
-    const refreshThreads = async (): Promise<void> => {
-      const now = Date.now();
-      if (now - lastRefreshAt < REFRESH_MIN_INTERVAL_MS) {
-        return;
-      }
-      lastRefreshAt = now;
-      try {
-        const snapshot = appStateRef.current;
-        const listed = await loadThreadListRefresh(snapshot);
-        if (disposed) {
-          return;
-        }
-        setState((current) => {
-          if (!current.initialized || current.activeContext !== snapshot.activeContext) {
-            return current;
-          }
-          // Besides sidebar pickup, this is the durable repair path when a
-          // renderer misses turn/completed during a tab/workspace transition.
-          // Reconcile the visible panes and composer running flag as one state
-          // update instead of refreshing only the sidebar copy.
-          return reconcileListedThreadState(current, listed);
-        });
-      } catch {
-        // Transient listing failure; do not surface into app status.
-      }
-    };
-
-    const onVisibility = (): void => {
-      if (document.visibilityState === "visible") {
-        void refreshThreads();
-      }
-    };
-    const onFocus = (): void => {
-      void refreshThreads();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("focus", onFocus);
-    const heartbeat = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void refreshThreads();
-      }
-    }, HEARTBEAT_MS);
-
-    return () => {
-      disposed = true;
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("focus", onFocus);
-      window.clearInterval(heartbeat);
-    };
-  }, []);
-
-  useEffect(() => {
     function handlePointerDown(event: PointerEvent): void {
       const target = event.target;
       if (!(target instanceof Node)) {
         return;
-      }
-      if (
-        workspaceMenuOpen &&
-        !workspaceMenuRef.current?.contains(target) &&
-        !isInsideFloatingMenu(target, "sidebar-workspace")
-      ) {
-        setWorkspaceMenuOpen(false);
-      }
-      if (
-        (runtimeMenuOpen || branchMenuOpen) &&
-        !runtimeMenuRef.current?.contains(target) &&
-        !greetingWorkspaceRef.current?.contains(target) &&
-        !isInsideFloatingMenu(target, "composer-runtime")
-      ) {
-        setRuntimeMenuOpen(false);
-        setBranchMenuOpen(false);
-      }
-      if (
-        accessMenuOpen &&
-        !accessMenuRef.current?.contains(target) &&
-        !isInsideFloatingMenu(target, "composer-access")
-      ) {
-        setAccessMenuOpen(false);
-      }
-      if (
-        codexRuntimeMenu &&
-        !codexRuntimeRef.current?.contains(target) &&
-        !isInsideFloatingMenu(target, "codex-runtime")
-      ) {
-        setCodexRuntimeMenu(null);
       }
       const environmentPanelClickOutside =
         !environmentToggleRef.current?.contains(target) &&
@@ -2181,22 +940,17 @@ export function App({ application, slots, shellPluginId }: {
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, [
-    accessMenuOpen,
-    branchMenuOpen,
-    codexRuntimeMenu,
     environmentPanelHasRoom,
     environmentPanelMenu,
     environmentPanelOpen,
-    workspaceMenuOpen,
-    runtimeMenuOpen,
   ]);
 
   useEffect(() => {
     scheduleGitStatusRefresh(0);
   }, [
-    state.activeContext?.kind,
+    activeContext?.kind,
     environmentContext?.cwd,
-    state.activeProjectId,
+    workspaceSnapshot.activeWorkspaceId,
     activeThreadID,
   ]);
 
@@ -2208,14 +962,8 @@ export function App({ application, slots, shellPluginId }: {
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
   }, []);
-
-  const activeWorkspace = useMemo(
-    () =>
-      state.projects.find((project) => project.id === state.activeProjectId),
-    [state.activeProjectId, state.projects],
-  );
   const showingSkillsCatalog = Boolean(
-    state.initialized &&
+    initialized &&
     (nativeSection === "catalog" || currentSessionTab?.kind === "skills"),
   );
   const showingManagementCatalog = showingSkillsCatalog;
@@ -2240,161 +988,8 @@ export function App({ application, slots, shellPluginId }: {
   useEffect(() => {
     document.title = windowTitle;
   }, [windowTitle]);
-  const currentHour = useCurrentHour();
-  const greetingContext: GreetingContext =
-    state.activeContext?.kind === "project"
-      ? {
-          kind: "workspace",
-          workspaceName: activeWorkspace?.name ?? t("greeting.workspaceFallback"),
-        }
-      : { kind: "wuu" };
-  let emptyThreadTitle: ReactNode = greetingFor(currentHour, greetingContext);
-  if (greetingContext.kind === "workspace" && !activeThread) {
-    const [beforeWorkspace, afterWorkspace] = greetingFor(currentHour, {
-      kind: "workspace",
-      workspaceName: "{workspace}",
-    }).split("{workspace}");
-    emptyThreadTitle = (
-      <>
-        {beforeWorkspace}
-        <button
-          ref={greetingWorkspaceRef}
-          className="empty-home-workspace-link"
-          type="button"
-          aria-haspopup="menu"
-          aria-expanded={runtimeMenuOpen}
-          aria-label={t("composer.switchWorkspace", { workspace: greetingContext.workspaceName })}
-          onClick={toggleWorkspacePicker}
-          onKeyDown={(event) => {
-            if (!runtimeMenuOpen && menuOpeningKey(event)) toggleWorkspacePicker();
-          }}
-        >
-          {greetingContext.workspaceName}
-        </button>
-        {afterWorkspace}
-      </>
-    );
-  }
-  type TurnAdmission = {
-    message: QueuedComposerMessage;
-    previousTurnIDs: ReadonlySet<string>;
-    thread?: Thread;
-    ready: Promise<Thread | undefined>;
-    resolve: (thread: Thread | undefined) => void;
-    stopRequested: boolean;
-    sent: boolean;
-    cancelled: Promise<undefined>;
-    cancelPreparation: () => void;
-  };
-  const turnAdmissionsRef = useRef(new Map<string, TurnAdmission>());
-  const [turnAdmissions, setTurnAdmissions] = useState(turnAdmissionsRef.current);
-  const submittingThreadIDs = new Set<string>();
-  for (const [key, admission] of turnAdmissions) {
-    // A server event can acknowledge the message before the RPC returns.
-    if (!threadHasAcceptedComposerMessage(threadForTab(state, key), admission.message, undefined, admission.previousTurnIDs)) {
-      submittingThreadIDs.add(key);
-    }
-  }
-  for (const [key, pending] of Object.entries(pendingComposerMessagesByThread)) {
-    if ([...pending.queued, ...pending.guides].some((message) => message.operationState)) {
-      submittingThreadIDs.add(key);
-    }
-  }
-  const queueLanesRef = useRef(new Map<string, { tail: Promise<void>; stopVersion: number }>());
-  const stopDeliveredRef = useRef(new Map<string, symbol>());
-  const stopTargetsRef = useRef(new Map<string, string>());
-  const stopRequestsRef = useRef<Record<string, "pending" | "retry">>({});
-  const [stopRequests, setStopRequests] = useState(stopRequestsRef.current);
-  function setStopRequest(threadID: string, phase?: "pending" | "retry"): void {
-    const next = { ...stopRequestsRef.current };
-    if (phase) next[threadID] = phase;
-    else {
-      delete next[threadID];
-      stopDeliveredRef.current.delete(threadID);
-      stopTargetsRef.current.delete(threadID);
-    }
-    stopRequestsRef.current = next;
-    setStopRequests(next);
-  }
-  useEffect(() => {
-    for (const threadID of Object.keys(stopRequestsRef.current)) {
-      const thread = threadForTab(state, threadID);
-      const target = stopTargetsRef.current.get(threadID);
-      const targetEnded = thread?.turns.some((turn) => turn.status !== "in_progress" && (
-        turn.id === target || turn.items.some((item) => item.type === "user_message"
-          && item.source_id && `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}` === target)
-      ));
-      if (thread && !isThreadRunning(thread) && !turnAdmissionsRef.current.has(threadID)
-        && (stopRequestsRef.current[threadID] !== "retry" || targetEnded)) {
-        setStopRequest(threadID);
-      } else if (thread && stopRequestsRef.current[threadID] === "pending" && thread.turns.some(
-        (turn) => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX),
-      )) {
-        void interruptAcceptedThread(threadID);
-      }
-    }
-  }, [state, stopRequests]);
-
-  async function requestThreadStop(thread: Thread): Promise<void> {
-    const admission = turnAdmissionsRef.current.get(thread.id);
-    if (admission) {
-      admission.stopRequested = true;
-      if (!admission.sent) admission.cancelPreparation();
-    }
-    const lane = queueLanesRef.current.get(thread.id);
-    if (lane) lane.stopVersion += 1;
-    if (stopRequestsRef.current[thread.id] === "pending") return;
-    const target = thread.turns.at(-1);
-    if (target) stopTargetsRef.current.set(thread.id, target.id);
-    setStopRequest(thread.id, "pending");
-    // Preparation can be cancelled locally. In-flight admission is stopped as
-    // soon as its real turn is known; never mark it terminal on user intent.
-    if (admission && !thread.turns.some((turn) =>
-      turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) return;
-    await interruptAcceptedThread(thread.id);
-  }
-
-  async function interruptAcceptedThread(threadID: string): Promise<void> {
-    if (stopDeliveredRef.current.has(threadID)) return;
-    const delivery = Symbol();
-    stopDeliveredRef.current.set(threadID, delivery);
-    try {
-      const result = await window.wuu.interruptTurn(threadID);
-      if (!result.ok) throw new Error(t("composer.stopUnconfirmed"));
-    } catch (error) {
-      if (stopDeliveredRef.current.get(threadID) !== delivery) return;
-      stopDeliveredRef.current.delete(threadID);
-      setStopRequest(threadID, "retry");
-      showErrorToast(error);
-    }
-  }
-
-  type PendingThreadCreation = {
-    sessionTabID: string;
-    context: RuntimeContext;
-    turn: Turn;
-    cancel: () => void;
-  };
-  const pendingThreadCreationsRef = useRef(new Map<string, PendingThreadCreation>());
-  const [pendingThreadCreations, setPendingThreadCreations] = useState<PendingThreadCreation[]>([]);
-  function clearPendingThreadCreation(turnID: string): void {
-    for (const [tabID, pending] of pendingThreadCreationsRef.current) {
-      if (pending.turn.id !== turnID) continue;
-      pendingThreadCreationsRef.current.delete(tabID);
-      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
-      return;
-    }
-  }
-  const [failedDraftTabIDs, setFailedDraftTabIDs] = useState<string[]>(() => recoveredDrafts.tabs
-    .filter((tab) => tab.id.startsWith("draft:recovery:"))
-    .map((tab) => tab.id));
-  useEffect(() => {
-    setFailedDraftTabIDs((ids) => ids.includes(state.activeSessionTabID)
-      ? ids.filter((id) => id !== state.activeSessionTabID)
-      : ids);
-  }, [state.activeSessionTabID]);
-  const activePendingThreadCreation = pendingThreadCreations.find(
-    (pending) => pending.sessionTabID === state.activeSessionTabID,
+  const activePendingThreadCreation = submissionView.pendingCreations.find(
+    (pending) => pending.ownerTabId === tabs.activeTabId,
   );
   const activePendingNewThreadTurn = activePendingThreadCreation?.turn;
   const turns = activeThread?.turns ?? [];
@@ -2409,7 +1004,7 @@ export function App({ application, slots, shellPluginId }: {
 
   useArtifactAutoPreview({
     thread: activeThread,
-    enabled: Boolean(state.initialized)
+    enabled: initialized
       && !poppedOutMode && !isTouchWebShell() && !activeThread?.read_only
       && !showingManagementCatalog && !emptyConversation && !browserOverlaySuppressed
       && !workspaceRightPanelAutoGlobalized
@@ -2419,23 +1014,8 @@ export function App({ application, slots, shellPluginId }: {
     activeTabID: workspaceActiveViewTabID,
     onOpen: openWorkspaceArtifactTab,
   });
-
-  // Past user queries for the composer's history recall, oldest first. Empty,
-  // handoff and image-only items have no text to recall and are skipped.
-  const composerQueryHistory = useMemo(() => {
-    const queries: string[] = [];
-    for (const turn of turns) {
-      for (const item of turn.items) {
-        const text = queryTextForUserItem(item);
-        if (text) {
-          queries.push(text);
-        }
-      }
-    }
-    return queries;
-  }, [turns]);
-  const previewTargetThread = threadForPane(state, state.activePane);
-  const previewTargetContext = workspacePanelContext(state.activeContext, previewTargetThread);
+  const previewTargetThread = activeThread;
+  const previewTargetContext = workspacePanelContext(activeContext, previewTargetThread);
   const activePreviewFile = activeWorkspaceViewTab?.kind === "file" &&
     activeWorkspaceViewTab.id === activeWorkspaceFileTabID &&
     sameRuntimeContext(activeWorkspaceViewTab.context, previewTargetContext) &&
@@ -2450,22 +1030,15 @@ export function App({ application, slots, shellPluginId }: {
   // A docked preview sits beside the conversation, whose own input is in
   // reach; the document input appears once the preview takes the window.
   const documentComposerVisible = Boolean(
-    state.initialized && workspaceToolsCoverConversation &&
+    initialized && workspaceToolsCoverConversation &&
     !splitConversation &&
     !showingManagementCatalog && !showingPrimaryPluginView &&
     (activePreviewFile || activePreviewArtifact),
   );
-  const previousDocumentComposerOwner = useRef(documentComposerVisible);
-  useLayoutEffect(() => {
-    if (previousDocumentComposerOwner.current === documentComposerVisible) return;
-    previousDocumentComposerOwner.current = documentComposerVisible;
-    // Text is input-local until idle. Publish it before the new surface paints.
-    setPrompt(currentPrimaryComposerDraft().prompt);
-  }, [documentComposerVisible, setPrompt, currentPrimaryComposerDraft]);
   const conversationVisible = !showingWebsite && !showingManagementCatalog && !showingPrimaryPluginView &&
     !settingsOpen && !accountOpen && !workspaceToolsCoverConversation;
   const mainConversationDockVisible =
-    Boolean(state.initialized) &&
+    initialized &&
     !showingWebsite &&
     !splitConversation &&
     !showingManagementCatalog &&
@@ -2479,7 +1052,7 @@ export function App({ application, slots, shellPluginId }: {
     const isStaleTurnTab = (tab: WorkspaceViewTab): boolean => {
       if (tab.kind === "artifact") {
         return emptyConversation
-          || ![state.thread, state.secondaryThread].some((thread) =>
+          || ![primaryThread, secondaryThread].some((thread) =>
             thread?.id === tab.threadID && thread.cwd === tab.cwd);
       }
       return tab.kind === "diff" &&
@@ -2500,8 +1073,8 @@ export function App({ application, slots, shellPluginId }: {
     emptyConversation,
     workspaceActiveViewTabID,
     workspaceViewTabs,
-    state.thread,
-    state.secondaryThread,
+    primaryThread,
+    secondaryThread,
   ]);
 
   const conversationRestoring = pendingViewSwitch?.restoreRequestID !== undefined;
@@ -2515,30 +1088,53 @@ export function App({ application, slots, shellPluginId }: {
     statusClusterRef,
     scheduleStreamScroll,
     handleConversationScroll,
-    enableConversationAutoFollow,
     jumpToLatest: jumpConversationToLatest,
-    jumpToUserMessage,
     jumpToConversationMessage,
     captureConversationScrollIntent,
-    disableConversationAutoFollow,
-    captureConversationScrollPosition,
-    restoreConversationScrollPosition,
     settleConversationLayout,
     requestSubmittedQueryScroll,
-    acknowledgeSubmittedMessage,
     discardSubmittedMessage,
   } = useConversationScrollState({
     activeThreadID,
-    primaryThreadID: state.thread?.id,
-    secondaryThreadID: state.secondaryThread?.id,
-    activePane: state.activePane,
+    primaryThreadID: primaryThread?.id,
+    secondaryThreadID: secondaryThread?.id,
+    activePane: conversationWorkspace.activePane,
     splitConversation,
-    primaryTurns: state.thread?.turns,
-    secondaryTurns: state.secondaryThread?.turns,
+    primaryTurns: primaryThread?.turns,
+    secondaryTurns: secondaryThread?.turns,
     emptyConversation,
-    initialized: Boolean(state.initialized),
-    running: isStateActiveThreadRunning(state),
+    initialized,
+    nativeScrollBounce: application.desktop.platform === "darwin" && application.desktop.hostKind !== "web",
+    running: isThreadRunning(activeThread),
   });
+  const initialSubmissionIds = useRef(new Set(submissionView.operations.map(operation => operation.operationID)));
+  const placedSubmissions = useRef(new Map<string, string>());
+  useLayoutEffect(() => {
+    const activeOperations = new Set(submissionView.operations.map(operation => operation.operationID));
+    for (const id of placedSubmissions.current.keys()) if (!activeOperations.has(id)) placedSubmissions.current.delete(id);
+    for (const operation of submissionView.operations) {
+      if (initialSubmissionIds.current.has(operation.operationID)) continue;
+      const placed = placedSubmissions.current.get(operation.operationID);
+      if (operation.phase === "failed" || operation.phase === "cancelled") {
+        if (placed) discardSubmittedMessage(placed);
+        initialSubmissionIds.current.add(operation.operationID);
+        placedSubmissions.current.delete(operation.operationID);
+        continue;
+      }
+      if (placed) continue;
+      if (operation.ownerTabId !== tabs.activeTabId && operation.threadId !== activeThreadID) {
+        initialSubmissionIds.current.add(operation.operationID);
+        continue;
+      }
+      const pending = submissionView.pendingCreations.find(creation => creation.operationID === operation.operationID);
+      const thread = conversationWorkspace.threads.find(thread => thread.id === operation.threadId);
+      const item = (pending ? [pending.turn] : thread?.turns ?? []).flatMap(turn => turn.items)
+        .find(item => item.type === "user_message" && item.source_id === operation.messageID);
+      if (!item) continue;
+      placedSubmissions.current.set(operation.operationID, item.id);
+      requestSubmittedQueryScroll(item.id, operation.messageID);
+    }
+  }, [submissionView, conversationWorkspace, tabs.activeTabId, activeThreadID, requestSubmittedQueryScroll, discardSubmittedMessage]);
   useConversationSwitchReady({
     visible: !settingsOpen && !accountOpen && !showingWebsite,
     pendingViewSwitch,
@@ -2586,7 +1182,7 @@ export function App({ application, slots, shellPluginId }: {
       target: ComposerVariant,
       origin: Element | null = document.activeElement,
       interactionVersion: number = userInteractionVersionRef.current,
-      matchesDestination?: (state: AppState) => boolean,
+      matchesDestination?: (snapshot: ApplicationSnapshotV1) => boolean,
     ): MainComposerFocusRequest => {
       const request = {
         target,
@@ -2620,17 +1216,8 @@ export function App({ application, slots, shellPluginId }: {
       return () => window.cancelAnimationFrame(frame);
     }
     requestMainComposerFocus("dock", document.activeElement, interactionVersion,
-      current => current.activeSessionTabID === request.tabId);
+      current => current.tabs.activeTabId === request.tabId);
   }, [application, publicComposerFocusRequest, requestMainComposerFocus, setRightPanelOpenWithMotion]);
-
-  const cancelMainComposerFocusRequest = useCallback(
-    (request: MainComposerFocusRequest): void => {
-      setMainComposerFocusRequest((current) =>
-        current === request ? null : current,
-      );
-    },
-    [],
-  );
 
   useLayoutEffect(() => {
     if (!mainComposerFocusRequest) {
@@ -2638,7 +1225,7 @@ export function App({ application, slots, shellPluginId }: {
     }
     if (
       mainComposerFocusRequest.matchesDestination &&
-      !mainComposerFocusRequest.matchesDestination(state)
+      !mainComposerFocusRequest.matchesDestination(application.getSnapshot())
     ) {
       return;
     }
@@ -2659,7 +1246,7 @@ export function App({ application, slots, shellPluginId }: {
     focusMainComposer,
     mainComposerFocusRequest,
     mainConversationDockVisible,
-    state,
+    tabs, conversationWorkspace,
   ]);
   const handleTurnCollapseComplete = useCallback(() => {
     scheduleStreamScroll();
@@ -2668,146 +1255,16 @@ export function App({ application, slots, shellPluginId }: {
   // Captures the user's scroll position when they open the inline edit on a
   // historical message so cancel can put them back exactly where they were
   // instead of dropping them at the latest content via the resize observer.
-  const preEditScrollSnapshotRef = useRef<ConversationScrollSnapshot | undefined>(
-    undefined,
-  );
-  const rememberConversationScrollForEdit = useCallback((): void => {
-    preEditScrollSnapshotRef.current = captureConversationScrollPosition();
-  }, [captureConversationScrollPosition]);
-  const restoreConversationScrollForEdit = useCallback((): void => {
-    const snapshot = preEditScrollSnapshotRef.current;
-    preEditScrollSnapshotRef.current = undefined;
-    if (!snapshot) {
-      return;
-    }
-    restoreConversationScrollPosition(snapshot);
-  }, [restoreConversationScrollPosition]);
-  const canEditCachedThreadMessage = useStableCallback((thread: Thread) =>
-    canShowHistoryEditButton(thread),
-  );
-  const handleCachedPaneForkMessage = useStableCallback(
-    (thread: Thread, turnID: string, itemID: string) => {
-      void forkThreadFromMessage(thread, turnID, itemID);
-    },
-  );
-  const handleCachedPaneEditMessage = useStableCallback(
-    (thread: Thread, turnID: string, item: ThreadItem) => {
-      startEditingThreadMessageFromHistory(thread, turnID, item);
-    },
-  );
-  const handleCachedPaneCancelEditMessage = useStableCallback(() => {
-    cancelEditingThreadMessage();
-  });
-  const handleCachedPaneSubmitEditMessage = useStableCallback(
-    (
-      thread: Thread,
-      turnID: string,
-      item: ThreadItem,
-      text: string,
-      images: InputImage[],
-      files: InputFile[],
-      contentParts?: MessageContentPart[],
-    ) => {
-      return submitEditedThreadMessageFromHistory(
-        thread,
-        turnID,
-        item,
-        text,
-        images,
-        files,
-        contentParts,
-      );
-    },
-  );
-  // Stable identities for every remaining CachedConversationPanes
-  // callback prop. The component is React.memo'd; a single freshly
-  // created arrow prop defeats the bailout and re-renders the full
-  // cached turn lists on EVERY App state change — that full re-render
-  // is the sidebar click lag (collapse a section → conversation pane
-  // re-renders for nothing).
-  const handleCachedPaneDismissContextComposition = useStableCallback(
-    (id: string) => {
-      dismissContextCompositionEntry(id);
-    },
-  );
-  const handleCachedPaneDismissInstructions = useStableCallback((id: string) => {
-    dismissInstructionFilesEntry(id);
-  });
-  const handleCachedPaneOpenAgent = useStableCallback((agent: Agent) => {
-    void selectChildAgent(agent);
-  });
   // Details actions on subagent completion messages split the conversation
   // and open the child session in the secondary pane. The App owns thread
   // state, so it registers the bridge handler once; message buttons call it.
-  const relatedSplitRequestRef = useRef(0);
-  const handleOpenThreadInSplit = useStableCallback((threadID: string) => {
-    const origin = appStateRef.current;
-    const context = origin.activeContext;
-    if (!origin.thread || !context) return;
-    const requestID = ++relatedSplitRequestRef.current;
-    const viewRequestID = getCurrentViewSwitchRequestID();
-    const ownsView = (current = appStateRef.current): boolean =>
-      requestID === relatedSplitRequestRef.current && isCurrentViewSwitchRequest(viewRequestID)
-      && sameRuntimeContext(current.activeContext, context) && current.activeContext?.cwd === context.cwd
-      && current.activeSessionTabID === origin.activeSessionTabID && current.activePane === origin.activePane
-      && current.thread?.id === origin.thread?.id && current.secondaryThread?.id === origin.secondaryThread?.id;
-    void (async () => {
-      try {
-        const thread = requireThread(
-          await window.wuu.resumeThread(threadID),
-          t("thread.childResumeMissing"),
-        );
-        // Resume snapshots may still refresh the cache. Only the request's
-        // current view may accept its layout and composer ownership change.
-        if (!ownsView()) return;
-        const current = appStateRef.current;
-        const drafts = composerDraftsRef.current;
-        const primaryDraft = current.secondaryThread
-          ? cloneComposerDraft(drafts.split.primary) : drafts.primary();
-        const secondaryDraft = current.secondaryThread?.id === thread.id
-          ? cloneComposerDraft(drafts.split.secondary) : sessionTabDraftForThread(current, thread.id);
-        const previousSecondaryDraft = cloneComposerDraft(drafts.split.secondary);
-        setSplitComposerDrafts({ primary: primaryDraft, secondary: secondaryDraft });
-        setState((latest) => {
-          if (!ownsView(latest)) return latest;
-          let tabs = latest.sessionTabs;
-          if (latest.secondaryThread && latest.secondaryThread.id !== thread.id) {
-            tabs = ensureSessionTab(tabs, createThreadSessionTab(
-              latest.secondaryThread,
-              resolveThreadRuntimeContext(latest.secondaryThread, latest.projects) ?? context,
-              previousSecondaryDraft,
-            ));
-          }
-          tabs = ensureSessionTab(tabs, createThreadSessionTab(
-            thread, resolveThreadRuntimeContext(thread, latest.projects) ?? context, secondaryDraft,
-          ));
-          return {
-            ...latest,
-            secondaryThread: thread,
-            activeSessionTabID: latest.activePane === "secondary" ? threadSessionTabID(thread.id) : latest.activeSessionTabID,
-            sessionTabs: tabs,
-            threads: upsertThread(latest.threads, thread),
-          };
-        });
-      } catch (error) {
-        if (ownsView()) showErrorToast(
-          error instanceof Error ? error.message : t("thread.childLoadFailed"),
-        );
-      }
-    })();
+  const handleOpenThreadInSplit = useStableCallback((threadId: string) => {
+    void application.invoke("conversation.open-split", { threadId }).catch(showErrorToast);
   });
   useEffect(() => {
     setOpenThreadInSplitHandler(handleOpenThreadInSplit);
-    return () => {
-      relatedSplitRequestRef.current += 1;
-      setOpenThreadInSplitHandler(undefined);
-    };
+    return () => setOpenThreadInSplitHandler(undefined);
   }, [handleOpenThreadInSplit]);
-  const handleCachedPaneOpenFileDiff = useStableCallback(
-    (thread: Thread, selection: TurnFileDiffSelection) => {
-      openTurnFileDiffPanel(thread.id, selection);
-    },
-  );
   const openWorkspaceBrowser = useStableCallback((target: WorkspaceBrowserOpenTarget): void => {
     requestWorkspaceBrowserNavigation(target);
     const focus = workspaceBrowserFocusDecision({
@@ -2827,226 +1284,33 @@ export function App({ application, slots, shellPluginId }: {
   ): void => {
     openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
   });
-  const openWorkspaceFile = useStableCallback((path: string, sourceContext?: RuntimeContext): void => {
-    // Stamp the same derived context the workspace panel's file tree/preview
-    // are rooted at (workspacePanelContext), not the raw activeContext — for
-    // a worktree-fork thread these differ, and activeWorkspaceFile's match
-    // above must be comparing against the same context or the tab silently
-    // stops highlighting/previewing once opened.
-    const context = sourceContext ?? workspacePanelContext(
-      appStateRef.current.activeContext,
-      appStateRef.current.thread,
-    );
-    if (!context) {
-      return;
-    }
-    openWorkspaceFileTab({ context, path });
-  });
-  const openWorkspaceFileForThread = useStableCallback((thread: Thread, path: string): void => {
-    const context = workspacePanelContext(appStateRef.current.activeContext, thread);
-    if (!context) {
-      return;
-    }
-    openWorkspaceFileTab({ context, path });
-  });
   const rememberWorkspaceDirtyFiles = useStableCallback((dirty: boolean): void => {
     workspaceHasDirtyFilesRef.current = dirty;
   });
-  const sidebarWorkspaceThreadsByWorkspaceID = workspaceThreadsByWorkspaceID;
-  const sidebarThreads = useMemo(() => {
-    const byID = new Map<string, Thread>();
-    for (const thread of cachedScratchThreads) {
-      byID.set(thread.id, thread);
-    }
-    for (const threads of Object.values(sidebarWorkspaceThreadsByWorkspaceID)) {
-      for (const thread of threads) {
-        byID.set(thread.id, thread);
-      }
-    }
-    for (const thread of state.threads) {
-      byID.set(thread.id, thread);
-    }
-    return sortThreads([...byID.values()]);
-  }, [
-    cachedScratchThreads,
-    sidebarWorkspaceThreadsByWorkspaceID,
-    state.threads,
-  ]);
-  const visibleRunningThreadIDs = useMemo(
-    () => presentationRunningThreadIDs(
-      [state.thread, state.secondaryThread, ...sidebarThreads],
-      crossWorkdirRunningThreadIDs,
-    ),
-    [crossWorkdirRunningThreadIDs, sidebarThreads, state.secondaryThread, state.thread],
-  );
-  const sidebarWorkspaceThreadSummariesByWorkspaceID = useMemo(
-    () => summarizeWorkspaceThreadsForSidebar(
-      sidebarWorkspaceThreadsByWorkspaceID,
-      state.threads,
-      visibleRunningThreadIDs,
-    ),
-    [
-      sidebarWorkspaceThreadsByWorkspaceID,
-      state.threads,
-      visibleRunningThreadIDs,
-    ],
-  );
-  const sidebarThreadSummaries = useMemo(
-    () => summarizeThreadsForSidebar(sidebarThreads, visibleRunningThreadIDs),
-    [sidebarThreads, visibleRunningThreadIDs],
-  );
-  const sidebarPinnedThreads = useMemo(
-    () => pinnedThreadSummaries(sidebarThreadSummaries),
-    [sidebarThreadSummaries],
-  );
-  const sidebarScratchThreads = useMemo(
-    () => scratchThreadSummaries(sidebarThreadSummaries, state.projects),
-    [sidebarThreadSummaries, state.projects],
-  );
-  // The scratch pseudo project lives at the top of the sidebar tree. It is
-  // a synthetic DesktopProject (id = SCRATCH_PSEUDO_PROJECT_ID) whose
-  // threads are the scratch conversations pulled out of
-  // sidebarThreadSummaries above. path is intentionally "" — ThreadSidebar
-  // special-cases the scratch pseudo id and skips its cwd-path filter.
-  const scratchPseudoWorkspace = useMemo<DesktopProject>(
-    () => ({
-      id: SCRATCH_PSEUDO_PROJECT_ID,
-      name: t("sidebar.conversations"),
-      path: "",
-      created_at: new Date(0).toISOString(),
-      updated_at: new Date(0).toISOString(),
-    }),
-    [t],
-  );
-  const sidebarWorkspaces = useMemo<DesktopProject[]>(
-    () => [scratchPseudoWorkspace, ...state.projects],
-    [scratchPseudoWorkspace, state.projects],
-  );
-  const sidebarThreadsByWorkspaceID = useMemo(
-    () => ({
-      [SCRATCH_PSEUDO_PROJECT_ID]: sidebarScratchThreads,
-      ...sidebarWorkspaceThreadSummariesByWorkspaceID,
-    }),
-    [sidebarScratchThreads, sidebarWorkspaceThreadSummariesByWorkspaceID],
-  );
-  const activeThreadReadOnly = Boolean(activeThread?.read_only);
-  const activeThreadIsRunning = isStateActiveThreadRunning(state);
-  const activeThreadCanSteer = activeTurnAcceptsSteering(activeThread);
-  const activeThreadAnswerReady = activeTurnIsAnswerReady(activeThread);
-  const composerTurnRunning = activeThreadIsRunning && !activeThreadAnswerReady;
-  const activeThreadStreamStatus = activeThreadAnswerReady
-    ? undefined
-    : turnStreamStatusForThread(state, activeThread);
-  const runningThreadKey = useMemo(() => {
-    const running = new Set<string>();
-    for (const thread of [state.thread, state.secondaryThread, ...state.threads]) {
-      if (thread?.cwd && isThreadRunning(thread)) {
-        running.add(`${thread.id}\0${thread.cwd}`);
-      }
-    }
-    if (state.running && activeThread?.cwd) {
-      running.add(`${activeThread.id}\0${activeThread.cwd}`);
-    }
-    return [...running].sort().join("\x01");
-  }, [
-    activeThread?.cwd,
-    activeThread?.id,
-    state.running,
-    state.secondaryThread,
-    state.thread,
-    state.threads,
-  ]);
-  const activeWorkingTreeBusy = useGitActionBusy(
-    environmentContext,
-    runningThreadKey,
-  );
+  const sidebarThreads = navigationWorkspace.threads;
   // The Environment panel's git actions (branch switch / commit / PR) mutate the
   // active session's working tree, so they are gated on that tree being busy —
   // not on any thread anywhere running. A worktree-fork thread running in its
   // own cwd, or a thread in another project, no longer blocks them.
-  const environmentGitBusy = activeWorkingTreeBusy || viewContextSwitchPending;
-  // The pet bubble is a lightweight hint of the most relevant session.
-  // Re-derive whenever the thread state changes and push the result to
-  // the main process, which keeps the always-on-top pet window in sync.
-  // See ./activeSessionHint for the priority logic.
-  // `unreadThreadIDs` lets an idle thread outrank a plain idle one when its
-  // latest completed turn has not been viewed yet, so a finished-but-unread
-  // conversation still surfaces in the bubble.
-  const unreadThreadIDs = useMemo(() => {
-    const ids = new Set<string>();
-    for (const thread of [state.thread, state.secondaryThread, ...state.threads]) {
-      if (!thread?.id) continue;
-      if (
-        isThreadUnread(
-          thread,
-          state.lastViewedTurnByThreadID[thread.id],
-        )
-      ) {
-        ids.add(thread.id);
-      }
-    }
-    return ids;
-  }, [
-    state.thread,
-    state.secondaryThread,
-    state.threads,
-    state.lastViewedTurnByThreadID,
-  ]);
-  // Blocking questions and approvals; non-blocking offers need no answer.
-  const waitingThreadIDs = useMemo(
-    () => new Set(userQuestions.filter((request) => request.mode !== "offer").map((request) => request.thread_id)),
-    [userQuestions],
-  );
+  const environmentGitBusy = environmentSnapshot.actionBusy || viewContextSwitchPending;
   useEffect(() => {
-    const api = window.wuu as Partial<typeof window.wuu>;
-    if (typeof api.updateCodexPetFeed !== "function" || !hostSupports("updateCodexPetFeed")) return;
-    const hints = deriveActiveSessionHints({
-      thread: state.thread ?? undefined,
-      secondaryThread: state.secondaryThread ?? undefined,
-      threads: state.threads,
-      unreadThreadIDs,
-      waitingThreadIDs,
-    });
-    const workspace = state.activeContext
-      ? { context: state.activeContext, name: workspaceNameForContext(state.activeContext, state.projects) }
-      : undefined;
-    void api.updateCodexPetFeed({ hints, workspace }).catch(() => undefined);
-  }, [
-    state.thread,
-    state.secondaryThread,
-    state.threads,
-    state.activeContext,
-    state.projects,
-    unreadThreadIDs,
-    waitingThreadIDs,
-  ]);
-  useEffect(() => {
-    if (!state.initialized?.extension_inventory || sideConversationAvailable) return;
+    if (!configuration?.extension_inventory || sideConversationAvailable) return;
     pendingSideSelectionRef.current = null;
     if (sideThread.entry?.open) sideThread.close();
     if (workspaceViewTabs.some((tab) => tab.id === "side-thread")) closeWorkspaceViewTab("side-thread");
-  }, [sideConversationAvailable, activeThreadID, workspaceViewTabs, state.initialized?.extension_inventory]);
+  }, [sideConversationAvailable, activeThreadID, workspaceViewTabs, configuration?.extension_inventory]);
   const sideThreadPanelVisible = Boolean(sideConversationAvailable && activeThreadID && rightPanelOpen &&
     !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
   useEffect(() => {
     if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
   }, [sideThreadPanelVisible, sideThread.entry?.open, sideThread.open]);
-  useEffect(() => {
-    if (!sideThreadPanelVisible || isTouchWebShell()) {
-      return undefined;
-    }
-    const frame = window.requestAnimationFrame(() => {
-      sideThreadPanelRef.current?.focusComposer();
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [sideThreadPanelVisible, activeThreadID]);
   // The environment panel floats inside the conversation pane, so it can
   // coexist with the docked workspace right panel. Only the globalized
   // (full-window sheet) right panel blocks it, because that mode makes the
   // entire conversation pane inert.
   const environmentPanelCanShow = Boolean(
     ENABLE_ENVIRONMENT_PANEL &&
-    state.initialized &&
+    initialized &&
     !poppedOutMode &&
     !workspaceToolsCoverConversation &&
     // The card describes the conversation's workspace; pages that replace the
@@ -3062,7 +1326,7 @@ export function App({ application, slots, shellPluginId }: {
         !emptyConversation &&
         // Wait for repository detection so non-Git folders do not briefly
         // open and close the panel while their status is still unknown.
-        state.gitStatus?.is_repo === true));
+        gitStatus?.is_repo === true));
   const environmentPanelVisible = environmentPanelTargetVisible;
   const environmentPanelMotionState: EnvironmentPanelMotionState =
     environmentPanelVisible ? "open" : "closing";
@@ -3100,7 +1364,7 @@ export function App({ application, slots, shellPluginId }: {
     "--conversation-split-left": `${splitLeftPercent}%`,
   } as CSSProperties;
   const pullRequestDisabledReason = pullRequestUnavailableReason(
-    state.gitStatus,
+    gitStatus,
   );
   useLayoutEffect(() => {
     if (environmentPanelVisible) {
@@ -3139,514 +1403,44 @@ export function App({ application, slots, shellPluginId }: {
     setEnvironmentPanelMenu(null);
   }, []);
 
-  // Mark the active thread's latest completed turn as viewed so the sidebar
-  // and session tab strip stop showing the "has-unread" dot. This effect is
-  // the single source of truth for advancing `lastViewedTurnByThreadID`; any
-  // state change that re-renders the conversation (tab switch, new turn for
-  // the active thread) reaches here. Mid-stream turns stay deferred until
-  // the visible answer is ready, matching the tab/sidebar unread boundary.
+  // Read state follows visible completed content, not unrelated snapshot publications.
+  const viewedThread = navigationWorkspace.threads.find(thread => thread.id === activeThreadID);
+  const viewedTurnId = viewedThread?.latest_completed_turn_id;
+  const viewedThreadStatus = viewedThread?.status;
   useEffect(() => {
-    if (!conversationVisible) return;
-    const tab = state.sessionTabs.find(
-      (candidate) => candidate.id === state.activeSessionTabID,
-    );
-    if (tab?.kind !== "thread") return;
-    const thread = threadForTab(state, tab.threadID);
-    if (!thread) return;
-    setState((current) => {
-      const next = markThreadTurnsViewed(current, thread.id);
-      return next === current ? current : next;
-    });
-  }, [conversationVisible, state.activeSessionTabID, state.thread, state.threads]);
+    if (!conversationVisible || !activeThreadID || !viewedTurnId || viewedThreadStatus === "in_progress") return;
+    void application.invoke("navigation.mark-viewed", { threadIds: [activeThreadID] }).catch(showErrorToast);
+  }, [application, conversationVisible, activeThreadID, viewedTurnId, viewedThreadStatus]);
 
   function openSideThreadPanel(prompt?: string, commandID = sideCommandID): void {
-    if (!activeThreadID || !commandID || !sideCommands.some((command) => `${command.pluginId}.${command.pluginCommandId}` === commandID)) {
-      return;
-    }
-    setSideCommandByThread((current) => ({ ...current, [sideCommandKey]: commandID }));
-    openWorkspaceSideThread();
-    if (!sideThread.entry?.open) sideThread.open();
-    requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
-    const trimmed = prompt?.trim();
-    if (trimmed) {
-      sideThread.sendMessage(trimmed, commandID);
-    }
+    const parentThreadId = application.getSnapshot().sideConversation.parentThreadId;
+    if (!parentThreadId) return;
+    void application.invoke("side.open", { parentThreadId, commandId: commandID, prompt }).catch(showErrorToast);
   }
 
   function openSideThreadWithSelection(selection: SideThreadSelection): void {
     if (!activeThreadID || !sideConversationAvailable) return;
     openSideThreadPanel();
     sideThread.setDraftSelection(selection);
-    requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
   }
 
   // Blocking questions stay in the conversation stream. Offers float above the composer.
-  const pendingUserQuestion = userQuestionApiAvailable
-    ? userQuestions.find((request) => request.thread_id === activeThreadID && request.mode !== "offer")
-    : undefined;
-  const pendingUserQuestionOffer = userQuestionApiAvailable
-    ? userQuestions.find((request) => request.thread_id === activeThreadID && request.mode === "offer")
-    : undefined;
-
-  const answerUserQuestion = useCallback(
-    async (requestID: string, answer: UserQuestionAnswer): Promise<void> => {
-      await window.wuu.answerUserQuestion(requestID, answer);
-      setUserQuestions((current) =>
-        current.filter((request) => request.request_id !== requestID),
-      );
-    },
-    [],
-  );
-
-  const cancelUserQuestion = useCallback(
-    async (requestID: string): Promise<void> => {
-      await window.wuu.cancelUserQuestion(requestID);
-      setUserQuestions((current) =>
-        current.filter((request) => request.request_id !== requestID),
-      );
-    },
-    [],
-  );
-
-  const holdUserQuestion = useCallback(
-    async (requestID: string): Promise<void> => {
-      if (typeof window.wuu.holdUserQuestion !== "function") return;
-      await window.wuu.holdUserQuestion(requestID);
-      setUserQuestions((current) => current.map((request) =>
-        request.request_id === requestID ? { ...request, expires_at: undefined } : request,
-      ));
-    },
-    [],
-  );
-
-  function renderComposer(variant: ComposerVariant): JSX.Element {
-    const telemetryTurnID = activeThread
-      ? activeTurnIDForThread(activeThread)
-      : undefined;
-    // Drives the composer context meter. Existing threads use the latest
-    // known usage; a brand-new session falls back to the current runtime
-    // window so the meter can render at 0% before the first turn.
-    const conversationRuntime = visibleConversationRuntime;
-    const modelContextWindow = providerModelContextWindow(
-      state.initialized,
-      conversationRuntime?.provider,
-      conversationRuntime?.model,
-    );
-    const fallbackContextWindow =
-      modelContextWindow ??
-      (!activeThread
-        ? state.initialized?.advanced_settings?.context_window_tokens
-        : undefined);
-    const rawContextUsage = latestContextUsageForThread(state, activeThread, {
-      model: conversationRuntime?.model,
-      contextWindowTokens: fallbackContextWindow,
-    });
-    // Live telemetry can still carry a ceiling from the previous workspace
-    // runtime. Once the exact conversation model is known, reuse the same
-    // provider-summary ceiling the backend budgeted with (including channel
-    // clamps such as Codex subscription input caps).
-    const contextUsage =
-      rawContextUsage && modelContextWindow
-        ? { ...rawContextUsage, window: modelContextWindow }
-        : rawContextUsage;
-    const streamStatus = activeThreadStreamStatus;
-    const defaultEngine = engineInventory?.settings?.default_engine ?? "";
-    // A project coordinator runs on the Wuu engine.
-    const effectiveEngine = activeProjectDraft
-      ? "wuu"
-      : (activeThread?.engine_id ?? "") || draftEngine || defaultEngine || "wuu";
-    const effectiveEngineRuntime = activeThread && effectiveEngine !== "wuu"
-      ? {
-          model: activeThread.model,
-          effort: activeThread.model_effort ?? activeThread.model_variant ?? "",
-          speed: activeThread.speed ?? "",
-          model_options: activeThread.model_options,
-        }
-      : draftEngineRuntime;
-    const projectComposer = activeProjectDraft || (activeThread !== undefined && isProjectCoordinator(activeThread));
-    const composerPermissionMode = activeProjectDraft
-      ? "read_only"
-      : activeThread?.permission_mode
-      || (!activeThread && effectiveEngine !== "wuu"
-        ? draftPermissionMode || "unconfined"
-        : conversationRuntime?.permissions?.mode);
-    const composerWorktree = draftWorktreeFor(state.activeContext, state.gitStatus);
-    const composerRuntime = conversationRuntime && composerPermissionMode
-      ? {
-          ...conversationRuntime,
-          permissions: { ...conversationRuntime.permissions, mode: composerPermissionMode },
-        }
-      : conversationRuntime;
-    return (
-      <>
-      <Composer
-        canSelectWorkspace={!activeThread && !activePendingNewThreadTurn}
-        topAccessory={pendingUserQuestionOffer ? (
-          <UserQuestionCard
-            key={pendingUserQuestionOffer.request_id}
-            request={pendingUserQuestionOffer}
-            onAnswer={async (answer) => {
-              const prompt = formatUserQuestionSteerPrompt(pendingUserQuestionOffer, answer);
-              await answerUserQuestion(pendingUserQuestionOffer.request_id, answer);
-              if (!pendingUserQuestionOffer.reply_to_tool) await sendPrompt("steer", prompt);
-            }}
-            onCancel={() => cancelUserQuestion(pendingUserQuestionOffer.request_id)}
-            onHold={() => holdUserQuestion(pendingUserQuestionOffer.request_id)}
-            onCustom={async (text) => {
-              if (pendingUserQuestionOffer.reply_to_tool) {
-                if (text?.trim()) {
-                  await answerUserQuestion(pendingUserQuestionOffer.request_id, { answers: [{
-                    id: pendingUserQuestionOffer.questions[0].id, selected: [], custom: text.trim(),
-                  }] });
-                }
-                return;
-              }
-              if (text?.trim()) {
-                await sendPrompt("steer", text.trim(), undefined, pendingUserQuestionOffer.request_id);
-                return;
-              }
-              requestMainComposerFocus(variant === "hero" ? "hero" : "dock");
-            }}
-          />
-        ) : undefined}
-        variant={variant}
-        mainConversation
-        permissionLocked={projectComposer}
-        placeholder={activeProjectDraft ? t("projects.draftPlaceholder") : undefined}
-        containerRef={variant === "dock" ? dockComposerRef : undefined}
-        prompt={currentPrimaryComposerDraft().prompt}
-        promptRevision={promptRevision}
-        setPrompt={setPromptFromInput}
-        files={composerFiles}
-        selections={composerSelections}
-        onChangeSelection={(selection) => setComposerSelections((current) => current.map((entry) => entry.id === selection.id ? selection : entry))}
-        onRemoveSelection={(id) => setComposerSelections((current) => current.filter((entry) => entry.id !== id))}
-        images={composerImages}
-        queuedMessages={activePendingThreadCreation
-          ? pendingComposerMessagesForActiveThread(activePendingThreadCreation.sessionTabID).queued
-          : queuedMessages}
-        guideMessages={guideMessages}
-        sendDisabled={submissionTargetPending || engineSelectionPending || Boolean(activeThread && stopRequests[activeThread.id])}
-        submitting={submittingThreadIDs.has(activeThread?.id ?? state.activeSessionTabID)}
-        stopState={activeThread ? stopRequests[activeThread.id] : undefined}
-        running={
-          Boolean(activePendingThreadCreation) ||
-          (!activeThreadReadOnly && composerTurnRunning) ||
-          viewContextSwitchPending
-        }
-        runtimeControlsDisabled={
-          Boolean(activePendingThreadCreation) ||
-          (!activeThreadReadOnly && activeThreadIsRunning) ||
-          viewContextSwitchPending
-        }
-        telemetryTurnID={telemetryTurnID}
-        contextUsage={contextUsage}
-        status={
-          activeThreadReadOnly
-            ? activeThreadIsRunning
-              ? t("app.childTaskRunning")
-              : t("app.childTaskReadOnly")
-            : state.status
-        }
-        disabledReason={activeThreadReadOnly
-          ? activeThreadIsRunning ? t("app.childTaskRunning") : t("app.childTaskReadOnly")
-          : undefined}
-        readOnly={activeThreadReadOnly || submissionTargetPending}
-        initialized={composerRuntime}
-        engines={engineInventory?.engines}
-        activeEngine={effectiveEngine !== "wuu" ? effectiveEngine : ""}
-        engineLocked={Boolean(activeThread) || activeProjectDraft}
-        engineModel={effectiveEngineRuntime.model}
-        engineEffort={effectiveEngineRuntime.effort}
-        engineSpeed={effectiveEngineRuntime.speed}
-        engineModelOptions={effectiveEngineRuntime.model_options}
-        onSelectSpeed={async (speed) => {
-          if (effectiveEngine === "wuu" || activeThread) return selectRuntimeSpeed(speed);
-          const runtime = { ...effectiveEngineRuntime, speed };
-          setDraftEngineRuntime(runtime);
-          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
-          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
-          return true;
-        }}
-        onSelectEngine={selectDraftEngine}
-        onSelectEngineModel={async (model, effort) => {
-          if (activeThread) return selectEngineRuntime({ reset_model: true, model, effort });
-          const runtime = { model, effort };
-          setDraftEngineRuntime(runtime);
-          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
-          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
-          return true;
-        }}
-        onSelectEngineEffort={async (effort) => {
-          if (activeThread) return selectEngineRuntime({ effort });
-          setDraftEngineRuntime((current) => {
-            const runtime = { ...current, effort };
-            draftEngineRuntimeByID.current[effectiveEngine] = runtime;
-            return runtime;
-          });
-          if (!activeThread) {
-            writeDraftEngineMemory({
-              engine: effectiveEngine,
-              model: effectiveEngineRuntime.model,
-              speed: effectiveEngineRuntime.speed,
-              model_options: effectiveEngineRuntime.model_options,
-              effort,
-            });
-          }
-          return true;
-        }}
-        onSelectEngineModelOptions={async (model_options) => {
-          if (activeThread) return selectEngineRuntime({ model_options });
-          const runtime = { ...draftEngineRuntime, model_options };
-          setDraftEngineRuntime(runtime);
-          draftEngineRuntimeByID.current[effectiveEngine] = runtime;
-          writeDraftEngineMemory({ engine: effectiveEngine, ...runtime });
-          return true;
-        }}
-        gitStatus={state.gitStatus}
-        branchPickerDisabled={viewContextSwitchPending}
-        worktree={activeProjectDraft ? undefined : {
-          enabled: Boolean(composerWorktree),
-          startBranch: composerWorktree?.startBranch ?? "",
-          onToggle: () => {
-            const cwd = state.activeContext?.cwd;
-            setDraftWorktree(composerWorktree || !cwd ? undefined : { cwd, startBranch: "" });
-          },
-          onSelectStartBranch: (startBranch) => {
-            const cwd = state.activeContext?.cwd;
-            if (cwd) setDraftWorktree({ cwd, startBranch });
-            setBranchMenuOpen(false);
-          },
-        }}
-        projects={state.projects}
-        activeContext={state.activeContext}
-        inlineCompletionWorkspace={activeThread ? resolveThreadRuntimeContext(activeThread, state.projects) : state.activeContext}
-        activeWorkspace={activeWorkspace}
-        compactDisabledReason={
-          !activeThread
-            ? t("app.openConversationFirst")
-            : activeThread.engine_id && activeThread.engine_id !== "wuu"
-              ? t("slash.compact.externalEngineUnavailable")
-              : undefined
-        }
-        sideThreadDisabledReason={
-          !activeThread ? t("app.sendMessageFirst") : undefined
-        }
-        handoffDisabledReason={
-          !activeThread
-            ? t("app.openConversationFirst")
-            : activeThread.engine_id && activeThread.engine_id !== "wuu"
-              ? t("slash.compact.externalEngineUnavailable")
-              : undefined
-        }
-        codexModels={codexModels}
-        codexRuntimeMenu={codexRuntimeMenu}
-        codexRuntimeRef={codexRuntimeRef}
-        menuOpen={runtimeMenuOpen}
-        accessMenuOpen={accessMenuOpen}
-        branchMenuOpen={branchMenuOpen}
-        menuRef={runtimeMenuRef}
-        menuTriggerRef={runtimeMenuTriggerRef}
-        accessMenuRef={accessMenuRef}
-        workspaceFilter={workspaceFilter}
-        setWorkspaceFilter={setWorkspaceFilter}
-        onToggleMenu={toggleWorkspacePicker}
-        onToggleAccessMenu={() => {
-          setRuntimeMenuOpen(false);
-          setBranchMenuOpen(false);
-          setCodexRuntimeMenu(null);
-          setAccessMenuOpen((open) => !open);
-        }}
-        onToggleBranchMenu={() => {
-          if (!branchMenuOpen) scheduleGitStatusRefresh(0);
-          setRuntimeMenuOpen(false);
-          setAccessMenuOpen(false);
-          setCodexRuntimeMenu(null);
-          setBranchMenuOpen((open) => !open);
-        }}
-        onToggleCodexRuntimeMenu={(menu) => {
-          toggleCodexRuntimeMenu(menu);
-          // Revalidate only after the shared session snapshot becomes stale;
-          // opening this frequently-used picker must not restart detection.
-          void refreshEngineInventory();
-        }}
-        onSelectRuntimeModel={async (provider, model, variant) => {
-          const request = mascotRuntimePreviewRequestRef.current + 1;
-          mascotRuntimePreviewRequestRef.current = request;
-          setMascotRuntimePreview({ provider, model });
-          const committed = await selectRuntimeModel(provider, model, variant);
-          if (mascotRuntimePreviewRequestRef.current === request) {
-            setMascotRuntimePreview(null);
-          }
-          return committed;
-        }}
-        onSelectRuntimeEffort={(nextVariant) =>
-          selectRuntimeEffort(nextVariant)
-        }
-        onSelectPermissionMode={(mode, approveForMe) => {
-          if (!activeThread && effectiveEngine !== "wuu") {
-            setDraftPermissionMode(mode);
-            setAccessMenuOpen(false);
-            return;
-          }
-          void selectPermissionMode(mode, approveForMe);
-        }}
-        onOpenSettings={() => openSettingsPage("providers")}
-        onOpenSkillsCatalog={openSkillsTab}
-        onSelectWorkspace={(id) => void selectWorkspaceForNewThread(id)}
-        onSelectNoProject={() => void useNoProject(false)}
-        onSelectGitBranch={checkoutBranch}
-        onCreateGitBranch={async (branch) => {
-          await createAndCheckoutBranch(branch);
-          setBranchMenuOpen(false);
-        }}
-        onCreateWorkspace={() => void createBlankProject()}
-        onOpenWorkspace={() => void chooseProjectFolder()}
-        onStartNewThread={startNewThreadWithComposerFocus}
-        onHandoffSession={handoffActiveThread}
-        onOpenSideThread={openSideThreadPanel}
-        onOpenWorkspaceTool={openWorkspaceTool}
-        onOpenContextComposition={openContextComposition}
-        onCompactContext={() => void compactActiveThread()}
-        onOpenInstructions={openInstructions}
-        onPasteAttachmentFiles={(files) => void attachComposerAttachmentFiles(files)}
-        onRemoveFile={removeComposerFile}
-        onRemoveImage={removeComposerImage}
-        onRemoveQueuedMessage={removeQueuedMessage}
-        onRemoveGuideMessage={removeGuideMessage}
-        onGuideQueuedMessage={(id) => {
-          if (!activeThread || !stopRequestsRef.current[activeThread.id]) void guideQueuedMessage(id);
-        }}
-        onEditQueuedMessage={(id) => void editQueuedMessage(id)}
-        onEditGuideMessage={(id) => void editGuideMessage(id)}
-        onSend={(promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)}
-        onSteer={
-          activeThreadIsRunning && activeThread && activeThreadCanSteer
-            ? (promptOverride, contentParts) => sendPrompt("steer", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
-            : undefined
-        }
-        onQueue={
-          (activePendingThreadCreation || (activeThreadIsRunning && activeThread))
-            ? (promptOverride, contentParts) => sendPrompt("queue", promptOverride, contentParts, pendingUserQuestionOffer?.request_id)
-            : undefined
-        }
-        onInterrupt={() => {
-          if (activePendingThreadCreation) activePendingThreadCreation.cancel();
-          else void interrupt();
-        }}
-        queryHistorySessionID={activeThread?.id ?? currentSessionTab?.id}
-        skillThreadID={activeThread?.id}
-        threadId={activeThread?.id}
-        queryHistory={composerQueryHistory}
-        requestedHandoffIntent={requestedHandoffIntentForThread(activeThread)}
-      />
-      </>
-    );
-  }
-
-  const openSettingsPage = useStableCallback((page: SettingsPage): void => {
-    desktopWorkbenchController.deactivateRegion("primary");
-    closeWorkspaceMenus();
-    closeConversationSearch({ immediate: true });
-    setEnvironmentDialog(null);
-    setPendingFork(undefined);
-    setSettingsInitialPage(page);
-    setSettingsOpen(true);
-  });
-
-  function showNoModelConfiguredToast(): void {
-    showToast({
-      message: t("composer.noModelConfigured"),
-      tone: "error",
-      dedupeKey: "composer:no-model-configured",
-      action: {
-        label: t("common.goConfigure"),
-        onClick: () => openSettingsPage("providers"),
-      },
-    });
-  }
-
-  function openArchiveSettings(): void {
-    openSettingsPage("archive");
-  }
-
-  function updateConnectionProviders(providers: NonNullable<InitializeResult["providers"]>): void {
-    setState(current => current.initialized ? {
-      ...current,
-      initialized: {
-        ...current.initialized,
-        providers: current.initialized.providers?.map(provider => {
-          if (isCodexSubscription(provider.type) || isGrokBuild(provider.type)) {
-            const snapshot = providers.find(item => item.name === provider.name
-              && item.type === provider.type && item.base_url === provider.base_url);
-            return snapshot ? {
-              ...provider,
-              auth_status: snapshot.auth_status,
-              api_key_configured: snapshot.api_key_configured,
-              codex_credential_source: snapshot.codex_credential_source,
-              reuse_codex_credentials: snapshot.reuse_codex_credentials,
-              models: snapshot.models ?? provider.models,
-            } : provider;
-          }
-          if (!provider.chatgpt_account_id || provider.type !== "chatgpt") return provider;
-          const snapshot = providers.find(item => item.type === "chatgpt" && item.name === provider.name && item.chatgpt_account_id === provider.chatgpt_account_id);
-          return snapshot ? {
-            ...provider,
-            auth_status: snapshot.auth_status,
-            api_key_configured: snapshot.api_key_configured,
-            models: snapshot.auth_status === "connected" ? snapshot.models ?? [] : [],
-          } : provider;
-        }),
-      },
-    } : current);
-  }
-
-  function toggleWorkspacePicker(): void {
-    if (!runtimeMenuOpen) {
-      runtimeMenuTriggerRef.current = document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    }
-    setAccessMenuOpen(false);
-    setBranchMenuOpen(false);
-    setCodexRuntimeMenu(null);
-    setRuntimeMenuOpen((open) => !open);
-  }
 
   function closeWorkspaceMenus(): void {
-    setWorkspaceMenuOpen(false);
-    setRuntimeMenuOpen(false);
-    setAccessMenuOpen(false);
-    setCodexRuntimeMenu(null);
-    setBranchMenuOpen(false);
     setEnvironmentPanelMenu(null);
     setSettingsOpen(false);
-    setWorkspaceFilter("");
   }
 
   const scheduleGitStatusRefresh = (delayMs: number): void => application.environment.scheduleStatusRefresh(delayMs);
-  async function checkoutBranch(branch: string): Promise<void> {
-    await application.environment.checkoutBranch(branch);
-    closeWorkspaceMenus();
-  }
-  async function createAndCheckoutBranch(branch: string): Promise<void> {
-    await application.environment.createAndCheckoutBranch(branch);
-    setEnvironmentPanelMenu(null);
-  }
   const {
     toggleEnvironmentPanel,
-    openEnvironmentPanel,
     closeEnvironmentPanel,
   } = createEnvironmentPanelActions({
     setEnvironmentPanelOpen,
     setEnvironmentPanelDismissed,
     setEnvironmentPanelMenu,
-    closeRuntimeMenus: () => {
-      setRuntimeMenuOpen(false);
-      setAccessMenuOpen(false);
-      setBranchMenuOpen(false);
-      setCodexRuntimeMenu(null);
-    },
+    // Runtime menus are owned by the selected composer.
+    closeRuntimeMenus: () => {},
     getEnvironmentPanelVisible: () => environmentPanelVisible,
     environmentPanelContainsActiveElement: () => {
       const activeElement = document.activeElement;
@@ -3658,143 +1452,7 @@ export function App({ application, slots, shellPluginId }: {
     focusEnvironmentToggle: () =>
       environmentToggleRef.current?.focus({ preventScroll: true }),
   });
-
-  function canShowHistoryEditButton(thread: Thread): boolean {
-    return (
-      !thread.read_only &&
-      !isThreadRunning(thread) &&
-      !threadHasPendingComposerMessages(thread.id)
-    );
-  }
-
-  function restoreInitialComposerRuntime(loadedState: Partial<AppState>): void {
-    const context = loadedState.activeContext;
-    const current = appStateRef.current;
-    const sessionTabs = current.sessionTabs.filter((tab) => {
-      // Check inactive projects too: their id may now name another directory.
-      if (tab.context.kind === "project") {
-        const tabContext = tab.context;
-        const project = loadedState.projects?.find((project) => project.id === tabContext.project_id);
-        if (!project || project.path !== tab.context.cwd) return false;
-      }
-      return !context || !sameRuntimeContext(tab.context, context) || sameRecoveryContext(tab.context, context);
-    });
-    let next = withLoadedRuntimeSessionTab({ ...current, sessionTabs }, loadedState);
-    const active = sessionTabs.find((tab) => tab.id === recoveredDrafts.activeTabID &&
-      context && sameRecoveryContext(tab.context, context));
-    if (!next.thread && active?.kind === "draft") next = { ...next, activeSessionTabID: active.id };
-    const tab = activeSessionTab(next);
-    if (tab) restorePrimaryComposerDraft(cloneSessionTabDraft(tab));
-    appStateRef.current = next;
-    setState(next);
-  }
-
-  function restoreSessionTabComposerDraft(tab: SessionTab): void {
-    restorePrimaryComposerDraft(cloneSessionTabDraft(tab));
-    setSplitComposerDrafts(initialSplitComposerDrafts());
-  }
-
-  function restoreLoadedRuntimeComposerDraft(
-    loadedState: Partial<AppState>,
-    carryDraft?: ComposerDraftState,
-  ): void {
-    const context = loadedState.activeContext;
-    if (!context) {
-      return;
-    }
-    // When a draft is being carried across the switch (see
-    // applyLoadedRuntimeWithDraftCarry), the composer should keep showing
-    // exactly what the user had typed rather than whatever the target
-    // context's own tab already held.
-    if (carryDraft) {
-      restorePrimaryComposerDraft(carryDraft);
-      setSplitComposerDrafts(initialSplitComposerDrafts());
-      return;
-    }
-    restoreSessionTabComposerDraft(
-      sessionTabForLoadedRuntime(
-        appStateRef.current.sessionTabs,
-        context,
-        loadedState.thread,
-      ),
-    );
-  }
-
-  function nextDraftSessionTab(context: RuntimeContext): SessionTab {
-    draftSessionTabCounterRef.current += 1;
-    return createDraftSessionTab(
-      `draft:${Date.now()}:${draftSessionTabCounterRef.current}`,
-      context,
-    );
-  }
-
-  function currentComposerDraftSnapshot() {
-    const current = appStateRef.current;
-    const activeTab = current.sessionTabs.find(tab => tab.id === current.activeSessionTabID);
-    const drafts = application.getSnapshot().drafts;
-    return captureComposerDrafts(
-      current,
-      current.thread && current.secondaryThread
-        ? { primary: { ...sessionTabDraftForThread(current, current.thread.id), prompt: drafts.primary.text },
-          secondary: { ...sessionTabDraftForThread(current, current.secondaryThread.id), prompt: drafts.secondary.text } }
-        : { ...(activeTab ? cloneSessionTabDraft(activeTab) : emptyComposerDraft()), prompt: drafts.primary.text },
-    );
-  }
-
-  const {
-    selectWorkspaceForNewThread,
-    startNewThreadInWorkspace,
-    createBlankProject,
-    chooseProjectFolder,
-    removeProject,
-    relocateProject,
-    useNoProject,
-  } = createWorkspaceRuntimeActions({
-    getPendingViewSwitch: () => pendingViewSwitch,
-    getAppState: () => appStateRef.current,
-    setAppState: setState,
-    getComposerDraftSnapshot: currentComposerDraftSnapshot,
-    restorePrimaryComposerDraft,
-    clearPrimaryComposerDraft: () =>
-      restorePrimaryComposerDraft(emptyComposerDraft()),
-    restoreLoadedRuntimeComposerDraft,
-    nextDraftSessionTab,
-    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
-    closeWorkspaceMenus,
-    
-    beginViewSwitch,
-    finishViewSwitch,
-    cancelViewSwitch,
-    loadRuntime,
-  });
-
-  const {
-    selectThread,
-    selectContextThread,
-    selectWorkspaceThread,
-    activateThread,
-    selectChildAgent,
-  } = createThreadActivationActions({
-    getAppState: () => appStateRef.current,
-    setAppState: setState,
-    getActiveThreadID: () => activeThreadID,
-    getPendingViewSwitch: () => pendingViewSwitch,
-    getComposerDraftSnapshot: currentComposerDraftSnapshot,
-    restorePrimaryComposerDraft,
-    resetSplitComposerDrafts: () =>
-      setSplitComposerDrafts(initialSplitComposerDrafts()),
-    getSidebarThreads: () => sidebarThreads,
-    getSidebarWorkspaceThreadsByWorkspaceID: () =>
-      sidebarWorkspaceThreadsByWorkspaceID,
-    getRunningThreadIDs: () => crossWorkdirRunningThreadIDs,
-    
-    beginViewSwitch,
-    prepareThreadReveal,
-    finishViewSwitch,
-    cancelViewSwitch,
-    isCurrentViewSwitchRequest,
-    selectRuntimeContext,
-  });
+  const activateThread = useCallback((threadId: string): Promise<void> => application.invoke("thread.activate", { threadId }).catch(error => { showErrorToast(error); }), [application]);
 
   useConversationSearchNavigation({
     application,
@@ -3828,8 +1486,8 @@ export function App({ application, slots, shellPluginId }: {
   }, [activeThreadID]);
 
   useEffect(() => {
-    const api = (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace;
-    if (!api?.onReveal) return;
+    const api = application.webWorkspace;
+    if (!api.capabilities.available) return;
     return api.onReveal((id) => {
       if (id === WEB_WORKSPACE_RIBBON_ID) { revealWebsite(); return; }
       // The native page belongs to this retained instance. Never open a new
@@ -3837,66 +1495,19 @@ export function App({ application, slots, shellPluginId }: {
       const panel = [...document.querySelectorAll<HTMLElement>(".web-workspace-panel")]
         .find((element) => element.dataset.websiteId === id);
       const instanceID = panel?.closest<HTMLElement>("[data-workbench-view-id]")?.dataset.workbenchViewId;
-      if (!instanceID || !desktopWorkbenchController.getSnapshot().views.some((view) => view.id === instanceID)) return;
+      const destination = application.getSnapshot().navigationWorkspace.destinations.find(view => view.instanceId === instanceID);
+      if (!destination?.instanceId) return;
       setActiveWebsiteID(undefined);
       setAccountOpen(false);
-      desktopWorkbenchController.activateView(instanceID);
+      void application.invoke("navigation.open-plugin", { pluginId: destination.pluginId, viewTypeId: destination.view, instanceId: destination.instanceId }).catch(showErrorToast);
     });
-  }, [revealWebsite]);
-
-  useEffect(() => {
-    const subscribe = window.wuu.onBrowserDock;
-    if (typeof subscribe !== "function") return undefined;
-    return subscribe((payload) => {
-      if (!payload || [payload.thread_id, payload.workdir, payload.tabID]
-        .some((value) => typeof value !== "string" || !value.trim())) return;
-      setPendingBrowserDock({ target: payload, ready: false });
-      revealConversationFromFocusedWorkspace();
-      void activateThread(payload.thread_id).then(() => {
-        setPendingBrowserDock((current) => current?.target === payload
-          ? { target: payload, ready: true } : current);
-      });
-    });
-  }, [activateThread, revealConversationFromFocusedWorkspace]);
-
-  useEffect(() => {
-    if (!pendingBrowserDock?.ready) return;
-    const { target } = pendingBrowserDock;
-    setPendingBrowserDock(undefined);
-    // Activation may fail or be superseded. Wait for its committed state before
-    // opening the panel, and never substitute the previously active session.
-    if (activeThreadID !== target.thread_id || state.activeContext?.cwd !== target.workdir) return;
-    setBrowserDockTarget(target);
-    openWorkspaceBrowserRef.current("browser");
-  }, [pendingBrowserDock, activeThreadID, state.activeContext?.cwd]);
-
-  // Commands from the desktop pet: open a conversation, or send text the
-  // user typed into the pet. The handler is refreshed every render so it
-  // always sees the current send functions; the subscription waits for an
-  // initialized workspace because subscribing releases queued commands.
-  const codexPetCommandHandlerRef = useRef<(command: CodexPetCommand) => void>(() => undefined);
-  codexPetCommandHandlerRef.current = (command) => {
-    if (command.kind === "jump") {
-      revealConversationFromFocusedWorkspace();
-      void activateThread(command.thread_id);
-      return;
-    }
-    void submitCodexPetText(command.text, command.target)
-      .catch(() => false)
-      .then((ok) => window.wuu.resolveCodexPetCommand(command.id, { ok }));
-  };
-  const codexPetCommandsReady = Boolean(state.initialized && state.activeContext);
-  useEffect(() => {
-    const api = window.wuu as Partial<typeof window.wuu>;
-    if (!codexPetCommandsReady || typeof api.onCodexPetCommand !== "function") return;
-    return api.onCodexPetCommand((command) => codexPetCommandHandlerRef.current(command));
-  }, [codexPetCommandsReady]);
+  }, [application, revealWebsite]);
 
   // A failure notice continues an interrupted reply in its own conversation,
   // the same way the pet sends text: without touching the composer draft.
   const continueTurnHandlerRef = useRef<(detail: ContinueTurnDetail) => void>(() => undefined);
   continueTurnHandlerRef.current = ({ threadID, text, done }) => {
-    void submitCodexPetText(text, { thread_id: threadID })
+    void application.invoke("conversation.continue", { threadId: threadID, text }).then(result => result.accepted)
       .catch((error: unknown) => {
         showErrorToast(error);
         return false;
@@ -3911,65 +1522,36 @@ export function App({ application, slots, shellPluginId }: {
     window.addEventListener(CONTINUE_TURN_EVENT, handle);
     return () => window.removeEventListener(CONTINUE_TURN_EVENT, handle);
   }, []);
-
-  const {
-    startNewThread,
-    selectSessionTab,
-  } = createSessionTabActions({
-    getPendingViewSwitch: () => pendingViewSwitch,
-    getAppState: () => appStateRef.current,
-    setAppState: setState,
-    getComposerDraftSnapshot: currentComposerDraftSnapshot,
-    restorePrimaryComposerDraft,
-    clearPrimaryComposerDraft: () =>
-      restorePrimaryComposerDraft(emptyComposerDraft()),
-    resetSplitComposerDrafts: () =>
-      setSplitComposerDrafts(initialSplitComposerDrafts()),
-    nextDraftSessionTab,
-    isDraftPending: (tabID) => pendingThreadCreationsRef.current.has(tabID),
-    selectThread,
-    selectContextThread,
-    beginViewSwitch,
-    prepareThreadReveal,
-    finishViewSwitch,
-    cancelViewSwitch,
-    loadRuntime,
-    selectRuntimeContext,
-  });
+  const selectSessionTab = (tabId: string): Promise<void> => application.invoke("tab.select", { tabId }).catch(error => { showErrorToast(error); });
 
   function closePrimaryPluginView(): void {
     setActiveWebsiteID(undefined);
-    desktopWorkbenchController.deactivateRegion("primary");
+    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
     setSettingsOpen(false);
     setNativeSection("conversations");
   }
 
   function revealWebsite(): void {
-    desktopWorkbenchController.deactivateRegion("primary");
+    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
     closeWorkspaceMenus();
     closeConversationSearch({ immediate: true });
     setEnvironmentDialog(null);
-    setPendingFork(undefined);
+    cancelPendingFork();
     setSettingsOpen(false);
     setAccountOpen(false);
     closeSidebarDrawer();
     setActiveWebsiteID(WEB_WORKSPACE_RIBBON_ID);
   }
 
-  function showWebsite(website: RibbonWebsite): void {
-    revealWebsite();
-    void ribbonBrowser.selectTab(website.id);
-  }
-
   async function createWebsiteTab(reopen = false): Promise<void> {
-    const next = await (reopen ? ribbonBrowser.reopenTab() : ribbonBrowser.createTab());
-    if (next?.activeTabId) revealWebsite();
+    await application.invoke(reopen ? "navigation.reopen-browser-tab" : "navigation.create-browser-tab", {});
+    revealWebsite();
   }
 
   useEffect(() => {
     if (!ribbonBrowser.state) return;
     const onKeyDown = (event: KeyboardEvent): void => {
-      const modifier = window.wuu.platform === "darwin" ? event.metaKey : event.ctrlKey;
+      const modifier = application.desktop.platform === "darwin" ? event.metaKey : event.ctrlKey;
       if (!modifier || event.altKey || event.defaultPrevented || event.key.toLowerCase() !== "t") return;
       // Retained extension WebPages keep their own browser shortcut contract.
       if ((event.target as Element | null)?.closest?.(".web-workspace-panel")) return;
@@ -3982,95 +1564,16 @@ export function App({ application, slots, shellPluginId }: {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [ribbonBrowser.state, createWebsiteTab]);
 
-  function showConversations(): void {
-    revealConversationFromFocusedWorkspace();
-    if (currentSessionTab?.kind === "skills") {
-      const conversationTab = state.sessionTabs.find((tab) => tab.kind !== "skills");
-      if (conversationTab) void selectSessionTab(conversationTab.id);
-      else void startNewThread();
-    }
-  }
-
   function openSkillsTab(): void {
-    if (!appStateRef.current.activeContext) return;
+    if (!application.getSnapshot().workspaces.activeRoot) return;
     setActiveWebsiteID(undefined);
-    desktopWorkbenchController.deactivateRegion("primary");
+    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
     setSettingsOpen(false);
     setCatalogVisited(true);
     setNativeSection("catalog");
     if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
   }
 
-  function openCatalogPlugin(id: string): void {
-    setCatalogSection("plugins");
-    setCatalogPluginRequest((current) => ({
-      id,
-      request: (current?.request ?? 0) + 1,
-    }));
-    openSkillsTab();
-  }
-
-  // The active draft starts a project or an ordinary conversation; the entry
-  // the user chose decides which.
-  function setDraftProjectMode(project: boolean): void {
-    void application.invoke("draft.set-project-mode", { project }).catch(showErrorToast);
-  }
-
-  // A project starts as a draft like a conversation: its first message names
-  // the project and becomes the coordinator's first instruction.
-  function startNewProject(workspaceID?: string): void {
-    if (!projectAgentEnabled) return;
-    const current = appStateRef.current;
-    const targetID = workspaceID
-      ?? (current.activeContext?.kind === "project" ? current.activeContext.project_id : undefined)
-      ?? current.projects.find((workspace) => !workspace.missing)?.id;
-    const workspace = current.projects.find((candidate) => candidate.id === targetID);
-    if (!workspace || workspace.missing) {
-      showErrorToast(t("projects.needsWorkspace"));
-      return;
-    }
-    closePrimaryPluginView();
-    revealConversationFromFocusedWorkspace();
-    const origin = document.activeElement;
-    focusHeroAfter(
-      startNewThreadInWorkspace(workspace.id).then((started) => {
-        if (started) setDraftProjectMode(true);
-        return started;
-      }),
-      origin,
-      (next) => next.activeContext?.kind === "project" && next.activeProjectId === workspace.id,
-    );
-  }
-
-  async function adoptIntoProject(projectID: string, threadID: string): Promise<void> {
-    if (!projectAgentEnabled || !window.wuu.projectSession) return;
-    try {
-      const { thread } = await window.wuu.projectSession({ action: "adopt", project_id: projectID, session_id: threadID });
-      updateCachedSidebarThread(thread);
-    } catch (error) {
-      showErrorToast(error);
-    }
-  }
-
-  const openProjectThread = useStableCallback((threadID: string) => {
-    closePrimaryPluginView();
-    void activateThread(threadID);
-  });
-  const openProjectPanel = useStableCallback((project: ProjectThread) => {
-    openWorkspaceProjectTab(project.id, baseThreadTitle(project));
-  });
-  const releaseProjectSession = useStableCallback((session: ProjectThread) => {
-    if (!projectAgentEnabled || !session.project_id || !window.wuu.projectSession) return;
-    void window.wuu.projectSession({ action: "release", project_id: session.project_id, session_id: session.id })
-      .then(({ thread }) => updateCachedSidebarThread(thread))
-      .catch(showErrorToast);
-  });
-  const projectActions = useMemo<ProjectActions>(() => ({
-    threads: sidebarThreads,
-    openThread: openProjectThread,
-    openProjectPanel,
-    release: releaseProjectSession,
-  }), [openProjectPanel, openProjectThread, releaseProjectSession, sidebarThreads]);
   const selectedProjectID = activeThread && isProjectCoordinator(activeThread)
     ? activeThread.id
     : activeThread?.source === PROJECT_SESSION_SOURCE ? activeThread.project_id : undefined;
@@ -4085,1225 +1588,18 @@ export function App({ application, slots, shellPluginId }: {
     () => activeThread && isProjectCoordinator(activeThread) ? projectSessionsOf(activeThread.id, sidebarThreads) : [],
     [activeThread, sidebarThreads],
   );
-
-  function focusHeroAfter(
-    action: Promise<void | boolean>,
-    origin: Element | null,
-    matchesDestination: (state: AppState) => boolean,
-  ): void {
-    const interactionVersion = userInteractionVersionRef.current;
-    void action.then((succeeded) => {
-      if (succeeded === false) {
-        return;
-      }
-      requestMainComposerFocus(
-        "hero",
-        origin,
-        interactionVersion,
-        (current) =>
-          !current.thread &&
-          !current.secondaryThread &&
-          activeSessionTab(current)?.kind === "draft" &&
-          matchesDestination(current),
-      );
-    });
-  }
-
-  function startNewThreadWithComposerFocus(): void {
-    const origin = document.activeElement;
-    const context = appStateRef.current.activeContext;
-    focusHeroAfter(
-      startNewThread().then(() => setDraftProjectMode(false)),
-      origin,
-      (current) => sameRuntimeContext(current.activeContext, context),
-    );
-  }
-
-  async function handoffActiveThread(input: { provider: string; model: string; effort?: string; intent: string }): Promise<void> {
-    const currentState = appStateRef.current;
-    const source = activeThreadForState(currentState);
-    const activeContext = currentState.activeContext;
-    if (!source || !activeContext) {
-      showActionErrorToast(t("app.openConversationFirst"));
-      return;
-    }
-    try {
-      const thread = requireThread(
-        await window.wuu.startThread({
-          provider: input.provider,
-          model: input.model,
-          effort: input.effort,
-          handoff: {
-            request_id: crypto.randomUUID?.() ?? Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""),
-            revision: 1,
-            parent_session_id: source.id,
-            intent: input.intent,
-          },
-        }),
-        "thread/start did not return a handoff session",
-      );
-      appStateRef.current = {
-        ...setThreadForPane(appStateRef.current, "primary", thread),
-        activePane: "primary",
-        allowThreadAutoActivation: true,
-        sessionTabs: bindActiveSessionTabToThread(
-          appStateRef.current.sessionTabs,
-          appStateRef.current.activeSessionTabID,
-          thread,
-          activeContext,
-        ),
-        activeSessionTabID: threadSessionTabID(thread.id),
-        threads: upsertThread(appStateRef.current.threads, thread),
-      };
-      setState((current) => ({
-        ...setThreadForPane(current, "primary", thread),
-        activePane: "primary",
-        allowThreadAutoActivation: true,
-        sessionTabs: bindActiveSessionTabToThread(
-          current.sessionTabs,
-          current.activeSessionTabID,
-          thread,
-          activeContext,
-        ),
-        activeSessionTabID: threadSessionTabID(thread.id),
-        threads: upsertThread(current.threads, thread),
-      }));
-    } catch (error) {
-      showErrorToast(error instanceof Error ? error.message : t("handoff.card.unavailable"));
-    }
-  }
-
-  async function updateExtensionPackage(update: ExtensionPackageUpdateParams): Promise<void> {
-    await window.wuu.updateExtensionPackage(update);
-  }
-
-  function startNewThreadInWorkspaceWithComposerFocus(id: string): void {
-    const origin = document.activeElement;
-    focusHeroAfter(
-      (id === SCRATCH_PSEUDO_PROJECT_ID
-        ? useNoProject(true)
-        : startNewThreadInWorkspace(id)).then((started) => {
-        setDraftProjectMode(false);
-        return started;
-      }),
-      origin,
-      (current) =>
-        id === SCRATCH_PSEUDO_PROJECT_ID
-          ? current.activeContext?.kind === "no_project"
-          : current.activeContext?.kind === "project" &&
-            current.activeProjectId === id,
-    );
-  }
-
-  const {
-    toggleThreadPinned,
-    renameThread,
-    archiveThread,
-    deleteThread,
-  } = createThreadMutationActions({
-    getAppState: () => appStateRef.current,
-    setAppState: setState,
-    nextDraftSessionTab,
-    restorePrimaryComposerDraft,
-    getSplitComposerDrafts: () => composerDraftsRef.current.split,
-    clearPrimaryComposerDraft: () =>
-      restorePrimaryComposerDraft(emptyComposerDraft()),
-    resetSplitComposerDrafts: () =>
-      setSplitComposerDrafts(initialSplitComposerDrafts()),
-    updateCachedSidebarThread,
-    updateCachedSidebarThreadPinned,
-    removeCachedSidebarThread,
-    clearThreadPendingComposerMessages,
-  });
-
-
-  function commitConversationTitle(nextTitle: string): void {
-    const trimmed = nextTitle.trim();
-    if (!trimmed) return;
-    const current = appStateRef.current;
-    const thread = activeThreadForState(current);
-    if (thread && !thread.read_only && !thread.ephemeral) {
-      void renameThread(thread, trimmed);
-      return;
-    }
-    const { activeTabId, items } = application.getSnapshot().tabs;
-    const tab = items.find(item => item.id === activeTabId);
-    if (tab?.kind !== "draft" || tab.title.trim() === trimmed) return;
-    void application.invoke("draft.rename", { tabId: tab.id, title: trimmed }).catch(showErrorToast);
-  }
-
-  const {
-    updateRuntimeSettings,
-    updateProviderSettings,
-    toggleCodexRuntimeMenu,
-    loadCodexModelsForProvider,
-    selectRuntimeModel,
-    selectRuntimeEffort,
-    selectRuntimeSpeed,
-    selectEngineRuntime,
-    selectPermissionMode,
-    interrupt,
-    interruptPane,
-  } = createRuntimeSettingsActions({
-    getAppState: () => appStateRef.current,
-    setAppState: setState,
-    getViewContextSwitchPending: () => viewContextSwitchPending,
-    getCodexModels: () => codexModels,
-    setCodexModels,
-    setRuntimeMenuOpen,
-    setAccessMenuOpen,
-    setBranchMenuOpen,
-    setCodexRuntimeMenu,
-    clearThreadPendingComposerMessages,
-    requestThreadStop,
-    variantByModel: runtimeVariantByModelRef.current,
-    pendingRuntimeSelections: pendingRuntimeSelectionsRef.current,
-  });
-
-  const {
-    dismissContextCompositionEntry,
-    dismissInstructionFilesEntry,
-    openInstructions,
-    openContextComposition,
-  } = createWorkspaceActions({
-    getAppState: () => appStateRef.current,
-    setAppState: setState,
-    getActiveTitle: () => activeTitle,
-    getComposerDraftSnapshot: currentComposerDraftSnapshot,
-    setSplitComposerDrafts,
-    restorePrimaryComposerDraft,
-    
-    cancelViewSwitch,
-    setContextCompositionEntries,
-    setInstructionFilesEntries,
-    scheduleStreamScroll,
-    closeWorkspaceMenus,
-    setSettingsInitialPage,
-    setSettingsOpen,
-  });
-
-  const { activateConversationPane, closeConversationPane } = createConversationPaneActions({
-    setAppState: setState,
-    getComposerDraftSnapshot: currentComposerDraftSnapshot,
-    moveSplitDraftToGlobalComposer,
-  });
-
-  const {
-    choosePendingFork,
-    forkThreadFromMessage,
-    startEditingThreadMessageFromHistory,
-    cancelEditingThreadMessage,
-    submitEditedThreadMessageFromHistory,
-  } = createConversationHistoryActions({
-    appStateRef,
-    setAppState: setState,
-    getPendingFork: () => pendingFork,
-    setPendingFork,
-    setHistoryMessageEdit,
-    
-    getPrompt: () => composerDraftsRef.current.primary().prompt,
-    getComposerImages: () => composerDraftsRef.current.primary().images,
-    getComposerFiles: () => composerDraftsRef.current.primary().files,
-    getComposerSelections: () => composerDraftsRef.current.primary().selections ?? [],
-    getSplitComposerDrafts: () => composerDraftsRef.current.split,
-    setPrompt,
-    setComposerImages,
-    setComposerFiles,
-    setComposerSelections,
-    setSplitComposerDrafts,
-    restorePrimaryComposerDraft,
-    closeConversationSearch,
-    clearEnvironmentDialog: () => setEnvironmentDialog(null),
-    scheduleGitStatusRefresh,
-    disableConversationAutoFollow,
-    enableConversationAutoFollow,
-    rememberConversationScrollForEdit,
-    restoreConversationScrollForEdit,
-    jumpToUserMessage,
-    threadHasPendingComposerMessages,
-    sendComposerMessageToThread,
-    worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
-  });
-
-  function preserveFailedComposerMessage(threadID: string, message: QueuedComposerMessage): void {
-    const failedTurn: Turn = {
-      ...createOptimisticTurn(message, Date.now()),
-      status: "failed",
-      error: { message: t("composer.sendFailed") },
-    };
-    const preserve = (state: AppState) => updateThreadByID(state, threadID, (thread) => upsertTurn(thread, failedTurn));
-    appStateRef.current = preserve(appStateRef.current);
-    setState(preserve);
-  }
-
-  function sendPrompt(
-    runningAction: "queue" | "steer" = "queue",
-    promptOverride?: string,
-    contentParts?: MessageContentPart[],
-    consumedOfferID?: string,
-    pane?: ConversationPaneID,
-  ): boolean {
-    if (submissionTargetPending) {
-      return false;
-    }
-    const draft = pane ? splitComposerDrafts[pane] : currentPrimaryComposerDraft();
-    const draftMessage = createComposerMessage(
-      promptOverride ?? draft.prompt,
-      draft.images,
-      draft.files,
-      contentParts,
-      draft.selections,
-    );
-    const activeDocumentPath = !pane && documentComposerVisible ? activePreviewFile?.path : undefined;
-    let message =
-      draftMessage && activeDocumentPath
-        ? { ...draftMessage, activeDocument: { path: activeDocumentPath } }
-        : draftMessage;
-    const currentState = appStateRef.current;
-    const targetPane = pane ?? currentState.activePane;
-    const targetThread = threadForPane(currentState, targetPane);
-    if (targetThread?.read_only) {
-      showActionErrorToast(t("app.childTaskReadOnly"));
-      return false;
-    }
-    if (
-      !message || !currentState.activeContext || !currentState.initialized ||
-      (pane && !targetThread) || (targetThread && stopRequestsRef.current[targetThread.id])
-    ) {
-      return false;
-    }
-    if (!targetThread && engineSelectionPending) return false;
-    if (!targetThread && (draftEngine || engineInventory?.settings?.default_engine || "wuu") === "wuu"
-      && !hasReadyProvider(currentState.initialized.providers)) {
-      showNoModelConfiguredToast();
-      return false;
-    }
-    let implicitArtifactFileID: string | undefined;
-    if (!pane && documentComposerVisible && activePreviewArtifact && targetThread) {
-      try {
-        const file = createArtifactComposerFile(activePreviewArtifact, targetThread.id);
-        implicitArtifactFileID = file.id;
-        message = { ...message, files: [...message.files.filter(existing => existing.id !== file.id), file] };
-      } catch (error) {
-        showErrorToast(error);
-        return false;
-      }
-    }
-    if (consumedOfferID && pendingUserQuestionOffer?.request_id === consumedOfferID) {
-      void cancelUserQuestion(consumedOfferID).catch(() => undefined);
-    }
-    let focusRequest: MainComposerFocusRequest | undefined;
-    if (!pane && emptyConversation) {
-      const activeElement = document.activeElement;
-      if (
-        activeElement === document.body ||
-        activeElement?.closest("[data-main-conversation-composer]")
-      ) {
-        focusRequest = requestMainComposerFocus("dock", activeElement);
-      }
-    }
-    // Capture the destination and install pending state before preparation yields.
-    let submittedThread = targetThread;
-    const submissionKey = targetThread?.id ?? currentState.activeSessionTabID;
-    const admission = turnAdmissionsRef.current.get(submissionKey);
-    const busy = targetThread && isThreadRunning(targetThread) && !activeTurnIsAnswerReady(targetThread);
-    const recoveryOwner = targetThread
-      ? createThreadSessionTab(targetThread, resolveThreadRuntimeContext(targetThread, currentState.projects), draft)
-      : activeSessionTab(currentState);
-    if (recoveryOwner && recoveryOwner.kind !== "skills") {
-      const parts = contentParts ?? readCollapsedPromptParts(
-        recoveryOwner.kind === "thread" ? recoveryOwner.threadID : recoveryOwner.id, draft.prompt,
-      );
-      const previous = recoveryTextSnapshots.current.get(recoveryOwner.id);
-      const text = parts ? composerRecoveryText(draft.prompt, parts)
-        : previous?.prompt === draft.prompt ? previous.text
-        : previous?.hasReferences ? "" : draft.prompt;
-      pendingDraftRecovery.current.set(message.id, { ...recoveryOwner, prompt: text });
-    }
-    const operation = admission || (!busy && queueLanesRef.current.has(submissionKey))
-      ? queueComposerMessage(message, targetThread, admission)
-      : busy
-      ? resolveComposerRunningAction(runningAction, targetThread) === "steer"
-        ? steerComposerMessage(message, targetThread)
-        : queueComposerMessage(message, targetThread)
-      : sendComposerMessage(message, targetThread, targetPane, (thread) => {
-          submittedThread = thread;
-          for (const [id, recovery] of pendingDraftRecovery.current) {
-            if (recovery.kind !== "skills" && recovery.id === recoveryOwner?.id) {
-              pendingDraftRecovery.current.set(id, createThreadSessionTab(thread, recovery.context, recovery));
-            }
-          }
-        });
-    if (pane) {
-      setSplitComposerDrafts((current) => ({ ...current, [pane]: emptyComposerDraft() }));
-    } else {
-      restorePrimaryComposerDraft(emptyComposerDraft());
-    }
-    const sessionTabID = currentState.activeSessionTabID;
-    void operation.then((sent) => {
-      pendingDraftRecovery.current.delete(message.id);
-      if (sent) { saveDraftRecovery(); return; }
-      submittedThread ??= admission?.thread;
-      const latest = appStateRef.current;
-      const recoveryDraft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files.filter(file => file.id !== implicitArtifactFileID) };
-      const latestTab = activeSessionTab(latest);
-      const stillTarget = submittedThread
-        ? latestTab?.kind === "thread" &&
-          (pane ? Boolean(latest.secondaryThread) : !latest.secondaryThread) &&
-          threadForPane(latest, targetPane)?.id === submittedThread.id
-        : latestTab?.kind === "draft" && latest.activeSessionTabID === sessionTabID;
-      const latestDraft = pane ? composerDraftsRef.current.split[pane] : composerDraftsRef.current.primary();
-      if (stillTarget && !composerDraftHasContent(latestDraft)) {
-        rememberCollapsedPromptParts(submittedThread?.id ?? sessionTabID, recoveryDraft.prompt, recoveryDraft.contentParts);
-        if (pane) {
-          setSplitComposerDrafts((current) => ({ ...current, [pane]: cloneComposerDraft(recoveryDraft) }));
-        } else {
-          restorePrimaryComposerDraft(recoveryDraft);
-        }
-      } else if (submittedThread) {
-        // Keep failed input in its conversation without replacing a newer draft.
-        preserveFailedComposerMessage(submittedThread.id, message);
-        const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, recoveryOwner?.context ?? currentState.activeContext!, recoveryDraft);
-        rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
-        const preserve = (state: AppState): AppState => ({ ...state, sessionTabs: [recoveryTab, ...state.sessionTabs] });
-        appStateRef.current = preserve(appStateRef.current);
-        setState(preserve);
-        setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
-      } else {
-        // Thread creation failed before there was a conversation to retain the
-        // input. A separate draft must not replace newer work in the source tab.
-        const recoveryTab = createDraftSessionTab(`draft:recovery:${message.id}`, currentState.activeContext!, recoveryDraft);
-        rememberCollapsedPromptParts(recoveryTab.id, recoveryDraft.prompt, recoveryDraft.contentParts);
-        const preserve = (state: AppState): AppState => ({
-          ...state,
-          // Keep the newer tab as the workspace's default draft.
-          sessionTabs: [recoveryTab, ...state.sessionTabs],
-        });
-        appStateRef.current = preserve(appStateRef.current);
-        setState(preserve);
-        setFailedDraftTabIDs((ids) => [...ids, recoveryTab.id]);
-      }
-      if (stillTarget && focusRequest) {
-        cancelMainComposerFocusRequest(focusRequest);
-        requestMainComposerFocus("hero", focusRequest.origin, focusRequest.interactionVersion);
-      }
-    });
-    return true;
-  }
-
-  // Sends pet input without touching the composer draft or what the main
-  // window shows. A reply to a conversation that is no longer loaded fails
-  // rather than redirecting the text.
-  async function submitCodexPetText(text: string, target: CodexPetSubmitTarget): Promise<boolean> {
-    const current = appStateRef.current;
-    const message = createComposerMessage(text, [], []);
-    if (!message) return false;
-    if ("workspace" in target) return startCodexPetConversation(message, target.workspace);
-    const thread = [current.thread, current.secondaryThread, ...current.threads]
-      .find((entry) => entry?.id === target.thread_id);
-    if (!thread || thread.read_only) return false;
-    const admission = turnAdmissionsRef.current.get(thread.id);
-    const busy = isThreadRunning(thread) && !activeTurnIsAnswerReady(thread);
-    if (admission || busy || queueLanesRef.current.has(thread.id)) {
-      return queueComposerMessage(message, thread, admission);
-    }
-    return sendComposerMessage(message, thread, current.activePane);
-  }
-
-  // Starts a conversation in the workspace the pet captured. It is created
-  // up front rather than through the active draft tab, so the main window's
-  // draft and current conversation stay as they are. A workspace removed or
-  // missing since then fails rather than falling back to another one.
-  async function startCodexPetConversation(message: QueuedComposerMessage, workspace: RuntimeContext): Promise<boolean> {
-    const current = appStateRef.current;
-    if (!current.initialized || submissionTargetPending) return false;
-    const project = workspace.kind === "project"
-      ? current.projects.find((candidate) => candidate.id === workspace.project_id)
-      : undefined;
-    if (workspace.kind === "project" && (!project || project.missing)) return false;
-    const context: RuntimeContext = project
-      ? { kind: "project", project_id: project.id, cwd: project.path }
-      : workspace;
-    const inventory = await window.wuu.listEngines({ cwd: context.cwd }, context);
-    const engine = inventory.settings?.default_engine || "wuu";
-    if (engine === "wuu" && !hasReadyProvider(current.initialized.providers)) {
-      showNoModelConfiguredToast();
-      return false;
-    }
-    const thread = requireThread(
-      await window.wuu.startThread({ engine, ...newThreadRuntimeParams(
-        engine,
-        current.initialized,
-        { model: "", effort: "" },
-        "unconfined",
-      ) }, context),
-      "thread/start did not return a thread",
-    );
-    const adopt = (state: AppState): AppState => ({ ...state, threads: upsertThread(state.threads, thread) });
-    appStateRef.current = adopt(appStateRef.current);
-    setState(adopt);
-    return sendComposerMessage(message, thread, appStateRef.current.activePane);
-  }
+  useEffect(() => { scheduleStreamScroll(); }, [conversationDetails, scheduleStreamScroll]);
 
   async function submitContextChat(text: string, page: PageContextSnapshot, context: RuntimeContext, sessionId?: string): Promise<{ sessionId: string; sent: boolean }> {
-    const current = appStateRef.current;
-    if (!current.initialized || submissionTargetPending || !sameRuntimeContext(context, current.activeContext)) {
-      throw new Error("The workspace changed. Return to the source workspace and send again.");
-    }
-    const reference = formatPageContext(page);
-    // pasted_text becomes a file attachment in the core. Keep this bounded
-    // reference inline so the initial model request has the exact browser target.
-    const message = createComposerMessage(text + reference, [], [], [
-      { type: "text", text }, { type: "text", text: reference },
-    ])!;
-    let thread = sessionId ? [current.thread, current.secondaryThread, ...current.threads].find(value => value?.id === sessionId) : undefined;
-    if (sessionId && (!thread || thread.read_only || thread.archived)) throw new Error("This conversation is no longer available. Open Chat to continue it.");
-    if (!thread) {
-      const selected = activeThreadForState(current);
-      const engine = selected?.engine_id || draftEngine || engineInventory?.settings?.default_engine || "wuu";
-      if (engineSelectionPending) throw new Error("The selected agent is still loading. Try again shortly.");
-      if (engine === "wuu" && !hasReadyProvider(current.initialized.providers)) {
-        showNoModelConfiguredToast();
-        throw new Error("Configure a model before sending.");
-      }
-      const runtime = selected ? { model: selected.model, effort: selected.model_effort ?? selected.model_variant ?? "", speed: selected.speed, model_options: selected.model_options } : draftEngineRuntime;
-      const permissionMode = (selected?.permission_mode || draftPermissionMode || current.initialized.permissions?.mode || "standard") as PermissionMode;
-      // A background source chat must never adopt the active draft, even when
-      // the core's thread/started notification arrives before this response.
-      const preserve = (state: AppState): AppState => ({ ...state, allowThreadAutoActivation: false });
-      appStateRef.current = preserve(appStateRef.current);
-      setState(preserve);
-      thread = requireThread(await window.wuu.startThread({ engine,
-        ...newThreadRuntimeParams(engine, current.initialized, runtime, permissionMode),
-        ...(selected && engine === "wuu" ? { provider: selected.model_provider, model: selected.model, effort: selected.model_variant || selected.model_effort,
-          speed: selected.speed, permission_mode: permissionMode, approve_for_me: selected.approve_for_me } : {}),
-      }, context), "thread/start did not return a thread");
-      const created = thread;
-      const adopt = (state: AppState): AppState => ({ ...state, threads: upsertThread(state.threads, created) });
-      appStateRef.current = adopt(appStateRef.current);
-      setState(adopt);
-    }
-    const admission = turnAdmissionsRef.current.get(thread.id);
-    const busy = isThreadRunning(thread) && !activeTurnIsAnswerReady(thread);
-    const sent = admission || busy || queueLanesRef.current.has(thread.id)
-      ? await queueComposerMessage(message, thread, admission)
-      : await sendComposerMessage(message, thread, current.activePane);
-    return { sessionId: thread.id, sent };
+    return application.invoke("context-chat.submit", { text, page, context, sessionId });
   }
 
-  async function submitFileSelectionEdit(part: FileSelectionPart): Promise<boolean> {
-    const current = appStateRef.current;
-    const splitPane = splitConversation && !workspaceToolsCoverConversation ? current.activePane : undefined;
-    const thread = splitPane ? threadForPane(current, splitPane) : activeThreadForState(current);
-    if (viewSwitchPending || !current.activeContext || !current.initialized || thread?.read_only) return false;
-    const draft = createComposerMessage(part.text, [], [], [part]);
-    if (!draft) return false;
-    const message = { ...draft, activeDocument: { path: part.source.path } };
-    // Inline edits are independent submissions: never consume the main draft
-    // or its attachments. The inline form retains the request on failure.
-    if (isThreadRunning(thread) && !activeTurnIsAnswerReady(thread)) {
-      return queueComposerMessage(message, thread);
-    }
-    return sendComposerMessage(message, thread, splitPane ?? current.activePane);
-  }
-
-  async function compactActiveThread(): Promise<void> {
-    if (viewSwitchPending) {
-      return;
-    }
-    const currentState = appStateRef.current;
-    const targetThread = activeThreadForState(currentState);
-    if (!currentState.activeContext || !currentState.initialized) {
-      return;
-    }
-    if (!targetThread) {
-      showActionErrorToast(t("app.openConversationFirst"));
-      return;
-    }
-    if (targetThread.read_only) {
-      showActionErrorToast(t("app.childTaskReadOnly"));
-      return;
-    }
-    if (isStateActiveThreadRunning(currentState)) {
-      showActionErrorToast(t("app.currentTaskRunning"));
-      return;
-    }
-
-    enableConversationAutoFollow();
-    appStateRef.current = {
-      ...currentState,
-      running: true,
-      status: localizedText("app.compactingContext"),
-    };
-    setState((current) => ({
-      ...current,
-      running: true,
-      status: localizedText("app.compactingContext"),
-    }));
-
-    const optimisticTurn = createOptimisticCompactTurn(Date.now());
-    const optimisticTurnID = optimisticTurn.id;
-    appStateRef.current = updateThreadByID(
-      appStateRef.current,
-      targetThread.id,
-      (thread) => upsertTurn(thread, optimisticTurn),
-      { running: true, status: localizedText("app.compactingContext") },
-    );
-    setState((current) =>
-      updateThreadByID(
-        current,
-        targetThread.id,
-        (thread) => upsertTurn(thread, optimisticTurn),
-        { running: true, status: localizedText("app.compactingContext") },
-      ),
-    );
-
-    try {
-      const result = await window.wuu.compactThread(targetThread.id);
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        targetThread.id,
-        (thread) =>
-          replaceOptimisticTurn(
-            thread,
-            optimisticTurnID,
-            result.turn,
-            upsertTurn,
-          ),
-        { running: true, status: localizedText("app.compactingContext") },
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) =>
-            replaceOptimisticTurn(
-              thread,
-              optimisticTurnID,
-              result.turn,
-              upsertTurn,
-            ),
-          { running: true, status: localizedText("app.compactingContext") },
-        ),
-      );
-    } catch (error) {
-      const rawMessage = rawErrorMessage(error, t("composer.compactFailed"));
-      const failedTurn = failOptimisticCompactTurn(
-        optimisticTurn,
-        rawMessage,
-        Date.now(),
-      );
-      appStateRef.current = {
-        ...updateThreadByID(
-          appStateRef.current,
-          targetThread.id,
-          (thread) =>
-            replaceOptimisticTurn(
-              thread,
-              optimisticTurnID,
-              failedTurn,
-              upsertTurn,
-            ),
-        ),
-        running: false,
-        status: "ready",
-      };
-      setState((current) =>
-        updateThreadByID(
-          current,
-          targetThread.id,
-          (thread) =>
-            replaceOptimisticTurn(
-              thread,
-              optimisticTurnID,
-              failedTurn,
-              upsertTurn,
-            ),
-          { running: false, status: "ready" },
-        ),
-      );
-    }
-  }
-
-  async function queueComposerMessage(
-    message: QueuedComposerMessage,
-    targetThread = activeThreadForState(appStateRef.current),
-    admission = targetThread ? turnAdmissionsRef.current.get(targetThread.id) : undefined,
-  ): Promise<boolean> {
-    const currentState = appStateRef.current;
-    const queueKey = targetThread?.id ?? currentState.activeSessionTabID;
-    const pendingKey = () => admission?.thread?.id ?? queueKey;
-    const text = message.text.trim();
-    const imageCount = message.images.length;
-    if (
-      (!text && imageCount === 0 && message.files.length === 0) ||
-      (!targetThread && !admission) ||
-      targetThread?.read_only ||
-      !currentState.activeContext ||
-      !currentState.initialized ||
-      submissionTargetPending
-    ) {
-      return false;
-    }
-    enqueueComposerMessage(queueKey, {
-      ...message,
-      operationState: "preparing",
-    });
-    const lane = queueLanesRef.current.get(queueKey) ?? { tail: Promise.resolve(), stopVersion: 0 };
-    // Stop holds messages already waiting; later user sends keep their order
-    // behind them without inheriting that earlier stop request.
-    const stopVersion = lane.stopVersion;
-    const previous = lane.tail;
-    let release!: () => void;
-    const tail = new Promise<void>((resolve) => { release = resolve; });
-    lane.tail = tail;
-    queueLanesRef.current.set(queueKey, lane);
-    try {
-      await previous;
-      if (admission) targetThread = await admission.ready;
-      if (!targetThread) {
-        const stillPending = Boolean(pendingComposerMessagesByThreadRef.current[pendingKey()]?.queued.some(
-          (candidate) => candidate.id === message.id,
-        ));
-        removePendingComposerMessageByID(pendingKey(), message.id, "queue");
-        return !stillPending;
-      }
-      return await submitQueuedComposerMessage(message, targetThread, () =>
-        lane.stopVersion !== stopVersion || Boolean(admission?.stopRequested),
-      );
-    } finally {
-      release();
-      if (lane.tail === tail) {
-        queueLanesRef.current.delete(queueKey);
-        if (admission?.thread) queueLanesRef.current.delete(admission.thread.id);
-      }
-    }
-  }
-
-  async function submitQueuedComposerMessage(
-    message: QueuedComposerMessage,
-    targetThread: Thread,
-    shouldHold: () => boolean,
-  ): Promise<boolean> {
-    const targetContext = resolveThreadRuntimeContext(targetThread, appStateRef.current.projects);
-    try {
-      const [encodedImages, encodedFiles] = await Promise.all([
-        awaitComposerImages(message.images), awaitComposerFiles(message.files),
-      ]);
-      const files = inputFilesFromComposer(encodedFiles);
-      if (
-        !pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
-          (candidate) => candidate.id === message.id,
-        )
-      ) {
-        return true;
-      }
-      updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
-        ...previous,
-        queued: previous.queued.map((candidate) =>
-          candidate.id === message.id
-            ? { ...candidate, operationState: "sending" }
-            : candidate,
-        ),
-      }));
-      const images = inputImagesFromComposer(encodedImages);
-      const result = await window.wuu.queueTurn(
-        targetThread.id,
-        message.text.trim(),
-        images,
-        message.id,
-        files,
-        targetThread.permission_mode,
-        message.activeDocument,
-        message.contentParts,
-        targetContext,
-        shouldHold(),
-      );
-      updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
-        ...previous,
-        queued: previous.queued.map((candidate) =>
-          candidate.id === message.id
-            ? {
-                ...candidate,
-                id: result.queued.id || message.id,
-                images: encodedImages,
-                files: encodedFiles,
-                operationState: undefined,
-              }
-            : candidate,
-        ),
-      }));
-      return true;
-    } catch (error) {
-      const stillPending = Boolean(
-        pendingComposerMessagesByThreadRef.current[targetThread.id]?.queued.some(
-          (candidate) => candidate.id === message.id,
-        ),
-      );
-      removePendingComposerMessageByID(targetThread.id, message.id, "queue");
-      if (stillPending) discardSubmittedMessage(message.id);
-      if (stillPending) {
-        showActionErrorToast(error, t("app.queueFailed"));
-      }
-      return !stillPending;
-    }
-  }
-
-  async function steerComposerMessage(
-    message: QueuedComposerMessage,
-    targetThread = activeThreadForState(appStateRef.current),
-  ): Promise<boolean> {
-    const currentState = appStateRef.current;
-    const targetContext = targetThread ? resolveThreadRuntimeContext(targetThread, currentState.projects) : undefined;
-    const text = message.text.trim();
-    const turnID = targetThread ? activeTurnIDForThread(targetThread) : undefined;
-    if (
-      (!text && message.images.length === 0 && message.files.length === 0) ||
-      !targetThread ||
-      targetThread.read_only ||
-      !turnID ||
-      !currentState.activeContext ||
-      !currentState.initialized ||
-      submissionTargetPending
-    ) {
-      return false;
-    }
-    updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
-      ...previous,
-      guides: [
-        ...previous.guides,
-        { ...message, origin: "steer", operationState: "preparing" },
-      ],
-    }));
-    try {
-      const [encodedImages, encodedFiles] = await Promise.all([
-        awaitComposerImages(message.images), awaitComposerFiles(message.files),
-      ]);
-      const files = inputFilesFromComposer(encodedFiles);
-      if (
-        !pendingComposerMessagesByThreadRef.current[targetThread.id]?.guides.some(
-          (candidate) => candidate.id === message.id,
-        )
-      ) {
-        return true;
-      }
-      updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
-        ...previous,
-        guides: previous.guides.map((candidate) =>
-          candidate.id === message.id
-            ? { ...candidate, operationState: "sending" }
-            : candidate,
-        ),
-      }));
-      await window.wuu.steerTurn(
-        targetThread.id,
-        turnID,
-        text,
-        inputImagesFromComposer(encodedImages),
-        message.id,
-        files,
-        message.activeDocument,
-        message.contentParts,
-        targetContext,
-      );
-      updateThreadPendingComposerMessages(targetThread.id, (previous) => ({
-        ...previous,
-        guides: previous.guides.map((candidate) =>
-          candidate.id === message.id
-            ? { ...candidate, images: encodedImages, files: encodedFiles, operationState: undefined }
-            : candidate,
-        ),
-      }));
-      return true;
-    } catch (error) {
-      const stillPending = Boolean(
-        pendingComposerMessagesByThreadRef.current[targetThread.id]?.guides.some(
-          (candidate) => candidate.id === message.id,
-        ),
-      );
-      removePendingComposerMessageByID(targetThread.id, message.id, "guide");
-      if (stillPending) discardSubmittedMessage(message.id);
-      if (stillPending) {
-        showActionErrorToast(error, t("composer.guideFailed"));
-      }
-      return !stillPending;
-    }
-  }
-
-  async function sendComposerMessage(
-    message: QueuedComposerMessage,
-    targetThread = activeThreadForState(appStateRef.current),
-    targetPane = appStateRef.current.activePane,
-    onThreadCreated?: (thread: Thread) => void,
-    prepareThread?: () => Promise<Thread>,
-  ): Promise<boolean> {
-    // Captured before any await: on a brand-new conversation the thread
-    // itself is created over IPC first, and the optimistic turn's live
-    // timer must count from the user's click, not from when that
-    // round-trip finishes.
-    const sendClickedAtMs = Date.now();
-    const currentState = appStateRef.current;
-    const text = message.text.trim();
-    const imageCount = message.images.length;
-    if (
-      (!text && imageCount === 0 && message.files.length === 0) ||
-      !currentState.activeContext ||
-      !currentState.initialized ||
-      targetThread?.read_only ||
-      (!targetThread && engineSelectionPending) ||
-      submissionTargetPending ||
-      turnAdmissionsRef.current.has(targetThread?.id ?? currentState.activeSessionTabID) ||
-      (targetThread && isThreadRunning(targetThread) &&
-        !activeTurnIsAnswerReady(targetThread))
-    ) {
-      return false;
-    }
-    const activeContext = targetThread
-      ? resolveThreadRuntimeContext(targetThread, currentState.projects)
-      : currentState.activeContext;
-    const sendingDraftTab = targetThread
-      ? undefined
-      : currentState.sessionTabs.find((tab) => tab.id === currentState.activeSessionTabID);
-    const projectDraft = currentState.initialized?.features?.project_agent === true && sendingDraftTab?.kind === "draft" && sendingDraftTab.project === true &&
-      activeContext.kind === "project" ? sendingDraftTab : undefined;
-    const newThreadEngine = projectDraft
-      ? "wuu"
-      : (targetThread?.engine_id ?? "")
-      || draftEngine
-      || engineInventory?.settings?.default_engine
-      || "wuu";
-    if (!targetThread && newThreadEngine === "wuu" && !hasReadyProvider(currentState.initialized?.providers)) {
-      showNoModelConfiguredToast();
-      return false;
-    }
-    // Empty external selections remain native defaults. Persisting the
-    // discovered default would turn it into an override in a new worktree.
-    const newThreadEngineRuntime = draftEngineRuntime;
-    const newThreadWorktree = targetThread ? undefined : draftWorktreeFor(activeContext, currentState.gitStatus);
-    let resolveAdmission!: TurnAdmission["resolve"];
-    let cancelPreparation!: () => void;
-    const admission: TurnAdmission = {
-      message,
-      previousTurnIDs: new Set(targetThread?.turns.map((turn) => turn.id)),
-      thread: targetThread,
-      ready: new Promise((resolve) => { resolveAdmission = resolve; }),
-      resolve: (thread) => resolveAdmission(thread),
-      stopRequested: false,
-      sent: false,
-      cancelled: new Promise((resolve) => { cancelPreparation = () => resolve(undefined); }),
-      cancelPreparation: () => cancelPreparation(),
-    };
-    const admissionKey = targetThread?.id ?? currentState.activeSessionTabID;
-    turnAdmissionsRef.current.set(admissionKey, admission);
-    setTurnAdmissions(new Map(turnAdmissionsRef.current));
-    const optimisticTurn = createOptimisticTurn(message, sendClickedAtMs);
-    const previousTurnIDs = admission.previousTurnIDs;
-    if (!targetThread || activeThreadIDForState(currentState) === targetThread.id) {
-      if (!prepareThread) requestSubmittedQueryScroll(optimisticTurn.items[0].id, message.id);
-      appStateRef.current = { ...currentState, running: true, status: "" };
-      setState((current) => ({ ...current, running: true, status: "" }));
-    }
-    let optimisticTurnID: string | undefined;
-    let optimisticThreadID: string | undefined;
-    // Creation belongs to the draft, independently of background list refreshes.
-    let creationCancelled = false;
-    const cancelledCreation = !targetThread ? new Promise<never>((_, reject) => {
-      pendingThreadCreationsRef.current.set(currentState.activeSessionTabID, {
-        sessionTabID: currentState.activeSessionTabID,
-        context: activeContext,
-        turn: optimisticTurn,
-        cancel: () => {
-          creationCancelled = true;
-          admission.stopRequested = true;
-          reject(new Error("Thread creation cancelled"));
-        },
-      });
-      setPendingThreadCreations([...pendingThreadCreationsRef.current.values()]);
-    }) : undefined;
-    try {
-      let thread =
-        (prepareThread ? await prepareThread() : targetThread) ??
-        requireThread(
-          await Promise.race([window.wuu.startThread(projectDraft && activeContext.kind === "project" ? {
-            // A renamed draft names the project; otherwise its goal does.
-            project: { name: customDraftConversationTitle(projectDraft.title, t("projects.newProject")) || projectNameFromGoal(text) },
-            workspace_id: activeContext.project_id,
-            cwd: activeContext.cwd,
-            engine: "wuu",
-            provider: currentState.initialized?.provider,
-            model: currentState.initialized?.model,
-            effort: currentState.initialized?.variant || currentState.initialized?.effort,
-            speed: currentState.initialized?.speed,
-          } satisfies ThreadStartParams : {
-            engine: newThreadEngine,
-            ...(newThreadWorktree
-              ? {
-                  workspace: "worktree",
-                  ...(newThreadWorktree.startBranch ? { base_revision: newThreadWorktree.startBranch } : {}),
-                } satisfies ThreadStartParams
-              : {}),
-            ...newThreadRuntimeParams(
-              newThreadEngine,
-              currentState.initialized,
-              newThreadEngineRuntime,
-              draftPermissionMode || "unconfined",
-            ),
-          }, activeContext).then(async (result) => {
-            if (creationCancelled && result.thread) {
-              // No turn was submitted to this newly created session. A late
-              // response must not leave an empty conversation after Stop.
-              try {
-                const threadID = result.thread.id;
-                await window.wuu.deleteThread(threadID);
-                removeCachedSidebarThread(threadID);
-                setState((current) => ({
-                  ...current,
-                  threads: current.threads.filter((thread) => thread.id !== threadID),
-                }));
-              } catch (error) {
-                showErrorToast(error);
-              }
-            }
-            return result;
-          }), cancelledCreation!]),
-          "thread/start did not return a thread",
-        );
-      const draftTab = currentState.sessionTabs.find(
-        (tab) => tab.id === currentState.activeSessionTabID,
-      );
-      const customTitle = !targetThread && !creationCancelled && !projectDraft
-        ? customDraftConversationTitle(
-            draftTab?.kind === "draft" ? draftTab.title : undefined,
-            t("tabs.newConversation"),
-          )
-        : "";
-      const originalTitle = thread.title;
-      if (customTitle) thread = { ...thread, title: customTitle };
-      admission.thread = thread;
-      if (!targetThread) {
-        const oldOwner = currentState.activeSessionTabID;
-        if (oldOwner) fileSelectionDraftOwners.current.set(thread.id, oldOwner);
-        const draftPrompt = currentPrimaryComposerDraft().prompt;
-        const draftParts = oldOwner ? readCollapsedPromptParts(oldOwner, draftPrompt) : undefined;
-        rememberCollapsedPromptParts(thread.id, draftPrompt, draftParts);
-        turnAdmissionsRef.current.set(thread.id, admission);
-        turnAdmissionsRef.current.delete(admissionKey);
-        setTurnAdmissions(new Map(turnAdmissionsRef.current));
-        const lane = queueLanesRef.current.get(admissionKey);
-        if (lane) {
-          queueLanesRef.current.set(thread.id, lane);
-          queueLanesRef.current.delete(admissionKey);
-        }
-        const pending = pendingComposerMessagesByThreadRef.current[admissionKey];
-        if (pending) {
-          updateThreadPendingComposerMessages(thread.id, (previous) => ({
-            ...previous, queued: [...previous.queued, ...pending.queued],
-          }));
-          clearThreadPendingComposerMessages(admissionKey);
-        }
-        onThreadCreated?.(thread);
-        const adoptThread = (current: AppState): AppState => {
-          const stillTarget = current.activeSessionTabID === currentState.activeSessionTabID
-            && sameRuntimeContext(current.activeContext, activeContext);
-          return {
-            ...(stillTarget ? setThreadForPane(current, targetPane, thread) : current),
-            sessionTabs: bindActiveSessionTabToThread(current.sessionTabs, currentState.activeSessionTabID, thread, activeContext),
-            activeSessionTabID: stillTarget ? threadSessionTabID(thread.id) : current.activeSessionTabID,
-            threads: upsertThread(current.threads, thread),
-          };
-        };
-        appStateRef.current = adoptThread(appStateRef.current);
-        setState(adoptThread);
-      }
-      if (prepareThread && activeThreadIDForState(appStateRef.current) === thread.id) {
-        requestSubmittedQueryScroll(optimisticTurn.items[0].id, message.id);
-      }
-      optimisticTurnID = optimisticTurn.id;
-      optimisticThreadID = thread.id;
-      appStateRef.current = updateThreadByID(
-        appStateRef.current,
-        thread.id,
-        (currentThread) => upsertTurn(currentThread, optimisticTurn),
-      );
-      setState((current) =>
-        updateThreadByID(
-          current,
-          thread.id,
-          (currentThread) => upsertTurn(currentThread, optimisticTurn),
-        ),
-      );
-      clearPendingThreadCreation(optimisticTurn.id);
-      // Complete the draft-to-thread handoff before another IPC wait can
-      // expose both the pending row and the server's thread/started snapshot.
-      // Persist the draft name before sending, while retaining its optimistic
-      // title and first turn during that wait.
-      if (customTitle) {
-        // The persisted name is exactly the trimmed optimistic title. A late
-        // success must not replay its snapshot over a newer edit or deletion.
-        const renaming = window.wuu.renameThread(thread.id, customTitle).catch((error) => {
-          const revertTitle = (value: Thread): Thread => value.title === customTitle
-            ? { ...value, title: originalTitle } : value;
-          patchCachedSidebarThread(thread.id, revertTitle);
-          const fallbackTitle = baseThreadTitle({ ...thread, title: originalTitle,
-            preview: thread.preview || turnPreview(optimisticTurn) });
-          const revert = (current: AppState): AppState => {
-            const next = updateThreadByID(current, thread.id, revertTitle);
-            return { ...next, sessionTabs: next.sessionTabs.map((tab) =>
-              tab.kind === "thread" && tab.threadID === thread.id && tab.title === customTitle
-                ? { ...tab, title: fallbackTitle } : tab) };
-          };
-          appStateRef.current = revert(appStateRef.current);
-          setState(revert);
-          showErrorToast(error, t("thread.rename.failed"));
-        });
-        // Stop releases preparation immediately; a late failure still rolls
-        // back the title without starting a turn or dropping local input.
-        await Promise.race([renaming, admission.cancelled]);
-      }
-      const attachments = await Promise.race([
-        Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]),
-        admission.cancelled,
-      ]);
-      if (!attachments || admission.stopRequested) {
-        const settle = (current: AppState) => updateThreadByID(current, thread.id,
-          (value) => interruptOptimisticTurn(value, optimisticTurn.id, Date.now()),
-          activeThreadIDForState(current) === thread.id ? { running: false } : {});
-        appStateRef.current = settle(appStateRef.current);
-        setState(settle);
-        return true;
-      }
-      admission.sent = true;
-      const [encodedImages, encodedFiles] = attachments;
-      const images = inputImagesFromComposer(encodedImages);
-      const files = inputFilesFromComposer(encodedFiles);
-      const result = await window.wuu.startTurn(
-        thread.id,
-        text,
-        images,
-        files,
-        thread.permission_mode || (!targetThread
-          ? currentState.initialized.permissions?.mode : undefined),
-        message.activeDocument,
-        message.contentParts,
-        activeContext,
-        message.id,
-      );
-      const acceptedTurn = result.turn;
-      const acceptedMessage = acceptedTurn.items.find(item => item.type === "user_message");
-      if (acceptedMessage) acknowledgeSubmittedMessage(optimisticTurn.items[0].id, acceptedMessage.id);
-      const accept = (current: AppState) => updateThreadByID(
-        current, thread.id,
-        (currentThread) => replaceOptimisticTurn(currentThread, optimisticTurn.id, acceptedTurn, upsertTurn),
-      );
-      appStateRef.current = accept(appStateRef.current);
-      setState(accept);
-      if (admission.stopRequested && isThreadRunning(threadForTab(appStateRef.current, thread.id))) {
-        await interruptAcceptedThread(thread.id);
-      }
-    } catch (error) {
-      const rawMessage = rawErrorMessage(error, t("composer.sendFailed"));
-      const errorMessage = statusMessageForError(rawMessage, t("composer.sendFailed"));
-      const noModelConfigured = isNoModelConfiguredError(rawMessage);
-      const currentThread = appStateRef.current.threads.find(
-        (candidate) => candidate.id === optimisticThreadID,
-      );
-      const interrupted =
-        isCancellationMessage(rawMessage.toLowerCase()) ||
-        isOptimisticTurnInterrupted(currentThread, optimisticTurnID);
-      const alreadyAccepted = threadHasAcceptedComposerMessage(
-        currentThread,
-        message,
-        optimisticTurnID,
-        previousTurnIDs,
-      );
-      // Only a definite admission rejection may become a queued send. Timeouts
-      // can follow acceptance and must not replay the same input. Keep the
-      // admission unresolved until this message is queued so later sends cannot
-      // overtake it through their queue lane.
-      const busyMessage = `thread ${JSON.stringify(optimisticThreadID)} already has a running turn`;
-      const admissionBusy = rawMessage.endsWith(busyMessage)
-        || rawMessage.endsWith(`${busyMessage} in another app-server: thread execution is owned by another app-server`);
-      if (!interrupted && !alreadyAccepted && admission.sent && admission.thread && admissionBusy) {
-        const thread = admission.thread;
-        const deferSend = (current: AppState) => {
-          const next = updateThreadByID(current, thread.id,
-            (value) => dropOptimisticTurn(value, optimisticTurnID));
-          return activeThreadIDForState(next) === thread.id
-            ? { ...next, running: isThreadRunning(threadForTab(next, thread.id)) }
-            : next;
-        };
-        appStateRef.current = deferSend(appStateRef.current);
-        setState(deferSend);
-        enqueueComposerMessage(thread.id, { ...message, operationState: "preparing" });
-        return await submitQueuedComposerMessage(message, thread, () => admission.stopRequested);
-      }
-      admission.stopRequested = true;
-      const keepAcceptedTurn = alreadyAccepted && !interrupted;
-      if (!interrupted && !keepAcceptedTurn) discardSubmittedMessage(optimisticTurn.items[0].id);
-      const settle = (current: AppState): AppState => {
-        const next = optimisticTurnID && optimisticThreadID
-          ? updateThreadByID(
-              current,
-              optimisticThreadID,
-              (currentThread) =>
-                interrupted
-                  ? interruptOptimisticTurn(currentThread, optimisticTurnID, Date.now())
-                  : keepAcceptedTurn
-                    ? currentThread
-                    : dropOptimisticTurn(currentThread, optimisticTurnID),
-            )
-          : current;
-        const stillTarget = optimisticThreadID
-          ? activeThreadIDForState(current) === optimisticThreadID
-          : current.activeSessionTabID === currentState.activeSessionTabID;
-        return stillTarget ? {
-          ...next,
-          running: keepAcceptedTurn,
-          status: "",
-        } : next;
-      };
-      appStateRef.current = settle(appStateRef.current);
-      setState(settle);
-      clearPendingThreadCreation(optimisticTurn.id);
-      if (!optimisticThreadID) forgetLocalTurnTiming(optimisticTurn.id);
-      if (noModelConfigured) {
-        showNoModelConfiguredToast();
-      } else if (!interrupted && !keepAcceptedTurn) {
-        // The rejected turn was removed from the transcript, so nothing else
-        // tells the user why their message came back to the composer.
-        showActionErrorToast(errorMessage);
-      }
-      if (admission.sent && optimisticThreadID && stopRequestsRef.current[optimisticThreadID]) {
-        await interruptAcceptedThread(optimisticThreadID!);
-      }
-      return !creationCancelled && (interrupted || keepAcceptedTurn);
-    } finally {
-      admission.resolve(admission.thread);
-      turnAdmissionsRef.current.delete(admissionKey);
-      if (admission.thread) {
-        turnAdmissionsRef.current.delete(admission.thread.id);
-        // Re-evaluate a locally cancelled preparation with no server event.
-        setStopRequests({ ...stopRequestsRef.current });
-      }
-      setTurnAdmissions(new Map(turnAdmissionsRef.current));
-    }
-    return true;
-  }
-
-  async function sendComposerMessageToThread(
-    message: QueuedComposerMessage,
-    targetThread: Thread,
-    prepareThread?: () => Promise<Thread>,
-  ): Promise<boolean> {
-    return sendComposerMessage(message, targetThread, appStateRef.current.activePane, undefined, prepareThread);
-  }
-
-  const failedDraftTabID = failedDraftTabIDs.find((id) => state.sessionTabs.some((tab) => tab.id === id));
+  const failedDraftTabID = submissionView.failedDraftTabIds.find((id) => tabs.items.some((tab) => tab.id === id));
   const failedDraftNotice = failedDraftTabID ? (
     <UILayerPortal layer="notice">
       <TopNotice
         key={failedDraftTabID}
-        message={t(recoveredDrafts.tabs.some((tab) => tab.id === failedDraftTabID)
+        message={t(recoveryNotices.some(notice => notice.ownerTabId === failedDraftTabID)
           ? "composer.recoveredInterruptedDraft" : "composer.failedDraftSaved")}
         icon={CircleAlert}
         isError
@@ -5314,47 +1610,12 @@ export function App({ application, slots, shellPluginId }: {
         } }}
         dismissAriaLabel={t("composer.discardFailedDraft")}
         onDismiss={() => {
-          setFailedDraftTabIDs((ids) => ids.filter((id) => id !== failedDraftTabID));
-          setState((current) => ({ ...current, sessionTabs: current.sessionTabs.filter((tab) => tab.id !== failedDraftTabID) }));
+          void application.invoke("tab.close", { tabId: failedDraftTabID }).catch(showErrorToast);
         }}
       />
     </UILayerPortal>
   ) : null;
 
-  const archiveTipNode = archiveTip ? (
-    <UILayerPortal layer="notice">
-      <ArchiveTip
-        threadTitle={archiveTip.threadTitle}
-        errorMessage={archiveTip.errorMessage}
-        onViewArchive={() => {
-          dismissArchiveTip();
-          openArchiveSettings();
-        }}
-        onForceArchive={
-          archiveTip.forceRetryThread
-            ? () => {
-                const target = archiveTip.forceRetryThread;
-                if (!target) {
-                  dismissArchiveTip();
-                  return;
-                }
-                void archiveThread(target, { force: true }).then((outcome) => {
-                  setArchiveTip({
-                    threadID: target.id,
-                    threadTitle:
-                      target.title?.trim() || t("app.thisConversation"),
-                    errorMessage: outcome.ok ? undefined : outcome.error,
-                    forceRetryThread:
-                      !outcome.ok && outcome.forceRetryable ? target : undefined,
-                  });
-                });
-              }
-            : undefined
-        }
-        onDismiss={dismissArchiveTip}
-      />
-    </UILayerPortal>
-  ) : null;
 
   useEffect(() => {
     const back = (event: Event): void => {
@@ -5372,18 +1633,18 @@ export function App({ application, slots, shellPluginId }: {
 
   // This is a window history of existing destinations, never a second owner of
   // session content. Docked panels and split-pane focus are not page visits.
-  const currentPage = !onboardingComplete || !state.initialized ? undefined
+  const currentPage = !onboardingComplete || !initialized ? undefined
     : settingsOpen ? JSON.stringify(["settings", settingsInitialPage])
     : accountOpen ? JSON.stringify(["account", ""])
     : showingWebsite ? JSON.stringify(["website", activeWebsite?.id])
     : workspaceToolsCoverConversation && rightPanelOpen && workspaceActiveViewTabID
       ? JSON.stringify(["workspace", workspaceActiveViewTabID])
-    : primaryPageView ? JSON.stringify(["plugin", primaryPageView.view.id])
+    : primaryPageView ? JSON.stringify(["plugin", primaryPageView.id])
     : showingSkillsCatalog ? JSON.stringify(["catalog", catalogSection])
-    : state.activeSessionTabID ? JSON.stringify(["session", state.activeSessionTabID]) : undefined;
+    : tabs.activeTabId ? JSON.stringify(["session", tabs.activeTabId]) : undefined;
   const pageLayoutIntent = JSON.stringify([
-    state.activeSessionTabID, settingsOpen, settingsInitialPage, accountOpen, activeWebsiteID, activeWebsite?.id, nativeSection, catalogSection,
-    primaryPageView?.view.id, workspaceActiveViewTabID, rightPanelOpen, rightPanelManualGlobalized,
+    tabs.activeTabId, settingsOpen, settingsInitialPage, accountOpen, activeWebsiteID, activeWebsite?.id, nativeSection, catalogSection,
+    primaryPageView?.id, workspaceActiveViewTabID, rightPanelOpen, rightPanelManualGlobalized,
   ]);
   const previousPageLayout = useRef({ intent: pageLayoutIntent, autoGlobalized: rightPanelAutoGlobalized });
   const layoutOnlyPageChange = previousPageLayout.current.intent === pageLayoutIntent
@@ -5407,14 +1668,14 @@ export function App({ application, slots, shellPluginId }: {
       // alone would leave the main process on the abandoned target runtime.
       if (isCurrentViewSwitchRequest(request.viewRequestID)
         && (targetUnavailable || (currentPage && JSON.parse(currentPage)[0] !== "session"))) {
-        if (pendingViewSwitch?.contextSwitching) void selectSessionTab(state.activeSessionTabID);
+        if (pendingViewSwitch?.contextSwitching) void selectSessionTab(tabs.activeTabId);
         else cancelViewSwitch();
       }
       request.done();
       setHistorySessionRestore(undefined);
       return;
     }
-    if (state.activeSessionTabID === request.id) {
+    if (tabs.activeTabId === request.id) {
       closePrimaryPluginView();
       focusWorkspaceConversation();
       setSettingsOpen(false);
@@ -5425,26 +1686,32 @@ export function App({ application, slots, shellPluginId }: {
       request.done();
       setHistorySessionRestore(undefined);
     }
-  }, [historySessionRestore, state.activeSessionTabID, state.sessionTabs, state.projects, currentPage, pendingViewSwitch]);
+  }, [historySessionRestore, tabs.activeTabId, tabs.items, navigationWorkspace.workspaces, currentPage, pendingViewSwitch]);
   function isHistoryPageAvailable(page: string): boolean {
     const [kind, id] = JSON.parse(page) as [string, string];
-    if (kind === "settings") return isSettingsPageAvailable(id as SettingsPage, state.initialized?.extension_inventory, desktopPluginHost, !poppedOutMode);
+    if (kind === "settings") {
+      if (id === "subscriptions" || id === "agents") return false;
+      if (id === "remote") return application.settingsControls.capabilities.remote;
+      if (id === "browser") return !poppedOutMode && application.settingsControls.capabilities.browser;
+      if (id.startsWith("plugin-view:")) return application.settingsControls.getPages().some(page => `plugin-view:${page.pluginId}:${page.id}` === id);
+      if (id.startsWith("plugin-settings:")) return configuration?.extension_inventory?.some(plugin =>
+        `plugin-settings:${plugin.id}` === id && plugin.kind === "plugin" && plugin.enabled !== false
+        && (plugin.approval_state === "official" || plugin.approval_state === "granted")
+        && (plugin.contributions?.settings?.length ?? 0) > 0) ?? false;
+      return true;
+    }
     if (kind === "website") return !poppedOutMode && Boolean(ribbonBrowser.state?.tabs?.some(website => website.id === id));
-    if (kind === "catalog") return Boolean(state.activeContext);
-    if (kind === "account") return ENABLE_ACCOUNT && Boolean(window.wuu?.remoteAccount);
+    if (kind === "catalog") return Boolean(activeContext);
+    if (kind === "account") return ENABLE_ACCOUNT && Boolean(application.desktop.account);
     if (kind === "workspace") {
       const tab = workspaceViewTabs.find(tab => tab.id === id);
-      return Boolean(tab && (tab.kind !== "plugin" || pageWorkbench.viewTypes.some(view =>
-        view.pluginId === tab.pluginId && view.id === tab.viewTypeId)));
+      return Boolean(tab);
     }
-    if (kind === "plugin") return pageWorkbench.views.some(view => view.id === id && view.region === "primary"
-      && pageWorkbench.viewTypes.some(definition => definition.pluginId === view.pluginId
-        && definition.id === view.viewTypeId && definition.generation === view.generation));
-    const tab = state.sessionTabs.find(tab => tab.id === id);
+    if (kind === "plugin") return navigationWorkspace.destinations.some(view => view.instanceId === id);
+    const tab = tabs.items.find(tab => tab.id === id);
     if (!tab) return false;
-    const context = tab.context;
-    return context.kind !== "project"
-      || state.projects.some(project => project.id === context.project_id && !project.missing);
+    return !tab.workspaceId
+      || navigationWorkspace.workspaces.some(project => project.id === tab.workspaceId && !project.missing);
   }
   const pageHistory = usePageHistory(currentPage, isHistoryPageAvailable, async (page, isCurrent) => {
     const [kind, id] = JSON.parse(page) as [string, string];
@@ -5456,8 +1723,8 @@ export function App({ application, slots, shellPluginId }: {
     }
     if (kind === "account") { setSettingsOpen(false); setAccountOpen(true); return; }
     if (kind === "website") {
-      const api = (window.wuu as typeof window.wuu & { webWorkspace?: WebWorkspaceApi }).webWorkspace;
-      if (!api) return;
+      const api = application.webWorkspace;
+      if (!api.capabilities.available) return;
       try {
         // Replay only the existing native tab ID. Its own URL/back-forward
         // history stays owned by WebContents and onState remains authoritative.
@@ -5488,17 +1755,19 @@ export function App({ application, slots, shellPluginId }: {
     } else if (kind === "plugin") {
       setActiveWebsiteID(undefined);
       setNativeSection("conversations");
-      desktopWorkbenchController.activateView(id);
+      const destination = application.getSnapshot().navigationWorkspace.destinations.find(view => view.instanceId === id);
+      if (!destination) return;
+      await application.invoke("navigation.open-plugin", { pluginId: destination.pluginId, viewTypeId: destination.view, instanceId: id });
       focusWorkspaceConversation();
     }
     setSettingsOpen(false);
     setAccountOpen(false);
   }, layoutOnlyPageChange);
 
-  const contextCapsule = !poppedOutMode && onboardingComplete && state.initialized && state.activeContext
+  const contextCapsule = !poppedOutMode && onboardingComplete && initialized && activeContext
     ? (
     // Restore visibility when the workbench experiment re-enables the floating context chat.
-    <ContextChatCapsule context={state.activeContext} visible={false}
+    <ContextChatCapsule context={activeContext} visible={false}
       source={showingWebsite && activeWebsite && !settingsOpen && !accountOpen
         ? { kind: "website", id: WEB_WORKSPACE_RIBBON_ID, tabId: activeWebsite.id, title: activeWebsite.title || activeWebsite.url }
         : { kind: "app", id: `wuu:${accountOpen ? "account" : settingsOpen ? "settings" : showingPrimaryPluginView ? "plugin" : nativeSection}`,
@@ -5507,95 +1776,32 @@ export function App({ application, slots, shellPluginId }: {
       onOpen={sessionId => { setAccountOpen(false); revealConversationFromFocusedWorkspace(); void activateThread(sessionId); }} />
   ) : null;
 
-  if (ENABLE_ACCOUNT && accountOpen && window.wuu?.remoteAccount) {
-    return <><AccountScreen pageHistory={isTouchWebShell() ? undefined : pageHistory} driver={window.wuu.remoteAccount} onBack={() => setAccountOpen(false)} />{contextCapsule}</>;
+  if (ENABLE_ACCOUNT && accountOpen && application.desktop.account) {
+    return <><AccountScreen pageHistory={isTouchWebShell() ? undefined : pageHistory} driver={application.desktop.account} openExternal={application.settingsControls.openExternal} onBack={() => setAccountOpen(false)} />{contextCapsule}</>;
   }
 
 
   if (!onboardingComplete) {
     return (
       <WuuMascotRuntimeProvider>
-        <SettingsControlsProvider controls={application.settingsControls}>
-        <FirstRunOnboarding
-          state={state.onboarding}
-          onStateChange={update => setState(current => {
-            const onboarding = typeof update === "function" ? update(current.onboarding) : update;
-            return onboarding === current.onboarding ? current : { ...current, onboarding };
-          })}
-          onProvidersChanged={updateConnectionProviders}
-          inventory={state.initialized?.extension_inventory}
-          providers={state.initialized?.providers}
-          catalogProviders={state.initialized?.catalog_providers}
-          engines={engineInventory}
-          onUpdateExtensionPackage={updateExtensionPackage}
-          onSaveProvider={async (provider, model, connection) => {
-            // Setup writes workspace defaults like Model services; a restored
-            // conversation's ID would make the core refuse the connection.
-            await updateProviderSettings(provider, model, undefined, connection);
-          }}
-          onUpdateEngines={updateEngineInventory}
-          onComplete={async (paths = []) => {
-            if (paths.length > 0) {
-              if (!window.wuu.importWorkspaces) throw new Error(t("onboarding.importFailed"));
-              const imported = await window.wuu.importWorkspaces(paths);
-              const first = imported.projects.find((project) => project.path === paths[0]);
-              if (!first) throw new Error(t("onboarding.importFailed"));
-              const selected = await window.wuu.selectProject(first.id);
-              const loaded = await loadRuntime(selected, { resumeLatestThread: false });
-              setState((current) => withLoadedRuntimeSessionTab(current, loaded));
-            }
-            if (!window.wuu?.completeOnboarding) {
-              throw new Error(t("onboarding.finishFailed"));
-            }
-            await window.wuu.completeOnboarding();
-            setState(current => ({ ...current, onboardingComplete: true, onboarding: undefined }));
-          }}
-        />
-        </SettingsControlsProvider>
+        <ApplicationFirstRunOnboarding application={application} />
       </WuuMascotRuntimeProvider>
     );
   }
 
-  const conversationTitleEditable =
-    !showingSkillsCatalog &&
-    !showingPrimaryPluginView &&
-    ((activeThread !== undefined && !activeThread.read_only && !activeThread.ephemeral) ||
-      currentSessionTab?.kind === "draft");
-
-  const selectionUsesSplitDraft = splitConversation;
-  const selectionThread = selectionUsesSplitDraft ? threadForPane(state, state.activePane) : activeThread;
-
   return (
     <WuuMascotRuntimeProvider
-      provider={mascotRuntimePreview?.provider ?? sessionRuntime?.provider}
+      provider={activeThread?.model_provider || configuration?.provider}
       providers={mascotProviderNames}
-      model={mascotRuntimePreview?.model ?? sessionRuntime?.model}
+      model={activeThread?.model || configuration?.model}
     >
       <SideConversationAvailableContext.Provider value={sideConversationAvailable}>
-      <FileSelectionProvider
-        ownerKey={selectionThread?.id ?? currentSessionTab?.id}
-        interactionOwnerKey={selectionThread ? fileSelectionDraftOwners.current.get(selectionThread.id) : undefined}
-        getPrompt={() => selectionUsesSplitDraft ? splitComposerDrafts[appStateRef.current.activePane].prompt : currentPrimaryComposerDraft().prompt}
-        setPrompt={(value) => selectionUsesSplitDraft ? setSplitComposerPrompt(appStateRef.current.activePane, value) : setPrompt(value)}
-        onEdit={submitFileSelectionEdit}
-        onAskSide={activeThreadID && sideConversationAvailable ? (source) => openSideThreadWithSelection({ type: "file", file: source }) : undefined}
-        onOpenFile={openWorkspaceFile}
-        onOpenPdf={(source) => {
-          const pdf = source.pdf;
-          if (poppedOutMode || !activeThread || !validPdfSelectionReference(pdf) || !pdf.artifact_uri || !pdf.artifact_sha256
-            || pdf.artifact_thread_id !== activeThread?.id || source.revision !== `sha256:${pdf.artifact_sha256}`) return false;
-          openWorkspaceArtifactTab({ threadID: activeThread.id, cwd: source.workspace, page: pdf.start_page, pageRequest: crypto.randomUUID(),
-            artifact: { id: pdf.artifact_uri, itemId: "", index: 0, type: "file", name: source.path,
-              mimeType: "application/pdf", uri: pdf.artifact_uri, sha256: pdf.artifact_sha256,
-              delivered: true, placement: "turn_end" } });
-          return true;
-        }}
-        disabled={Boolean(selectionThread?.read_only) || viewSwitchPending || !state.initialized}
-      >
-      {archiveTipNode}
-      {!archiveTip && !settingsNoticeVisible && failedDraftNotice}
+      <FileSelectionProvider application={application} source={{ ownerTabId: application.getSnapshot().drafts.split
+        ? application.getSnapshot().drafts[conversationWorkspace.activePane].ownerTabId ?? tabs.activeTabId
+        : application.getSnapshot().drafts.activeTabId }}>
+      {!settingsNoticeVisible && failedDraftNotice}
       <ImagePreviewProvider>
-      <ProjectActionsProvider value={projectAgentEnabled ? projectActions : null}>
+      <ProjectActionsProvider application={application}>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
       <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
         <div
@@ -5642,146 +1848,15 @@ export function App({ application, slots, shellPluginId }: {
             </div>
           ) : null}
           <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
-            <AppSidebar
-              onShowConversations={showConversations}
-              activeWebsiteId={showingWebsite && !settingsOpen ? activeWebsite?.id : undefined}
-              websites={ribbonBrowser.state?.tabs}
-              onNewTab={ribbonBrowser.state && (ribbonBrowser.state.tabs?.length ?? 0) < WEB_WORKSPACE_TAB_LIMIT ? () => { void createWebsiteTab(); } : undefined}
-              onCloseTab={ribbonBrowser.closeTab}
-              onPinTab={ribbonBrowser.pinTab}
-              onMuteTab={ribbonBrowser.muteTab}
-              onReorderTabs={ribbonBrowser.reorderTabs}
-              onSelectWebsite={showWebsite}
-              catalogActive={showingSkillsCatalog}
-              settingsActive={settingsOpen}
-              onLeaveSettings={() => { setSettingsOpen(false); setActiveWebsiteID(undefined); }}
-              onRibbonPresenceChange={setNativeRibbonPresent}
-              onRibbonExpandedChange={handleRibbonExpandedChange}
-              catalogSection={catalogSection}
-              onSelectCatalogSection={setCatalogSection}
-              onOpenCatalogPlugin={openCatalogPlugin}
-              sidebarCollapsed={sidebarCollapsed}
-              sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
-              initialized={Boolean(state.initialized)}
-              activeContextKind={state.activeContext?.kind}
-              activeSessionTabID={state.activeSessionTabID}
-              selectedWorkspaceID={state.activeProjectId}
-              extensionInventory={state.initialized?.extension_inventory}
-              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
-              sidebarWorkspaces={sidebarWorkspaces}
-              pendingConversations={pendingThreadCreations.map((pending) => ({
-                id: pending.sessionTabID,
-                context: pending.context,
-                title: pending.turn.items[0].text || t("tabs.newConversation"),
-              }))}
-              onSelectPendingConversation={(tabID) => {
-                closePrimaryPluginView();
-                void selectSessionTab(tabID);
-              }}
-              activeWorkspaceID={
-                workspaceSelectionEnabled && workspaceContext?.kind === "project"
-                  ? workspaceContext.project_id
-                  : undefined
-              }
-              pinnedThreads={sidebarPinnedThreads}
-              activeThreadID={activeThreadID}
-              pendingThreadID={visiblePendingThreadID}
-              pendingWorkspaceID={visiblePendingWorkspaceID}
-              collapsedSidebarSectionIDs={collapsedSidebarSectionIDs}
-              collapsedFolderIDs={collapsedFolderIDs}
-              setCollapsedFolderIDs={setCollapsedFolderIDs}
-              expandedSidebarSectionIDs={expandedSidebarSectionIDs}
-              loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
-              workspaceThreadsByWorkspaceID={sidebarThreadsByWorkspaceID}
-              workspaceMenuOpen={workspaceMenuOpen}
-              workspaceMenuRef={workspaceMenuRef}
-              searchOpen={conversationSearch.open}
-              sectionOrder={sidebarSectionOrder}
-              onStartNewThread={() => {
-                closePrimaryPluginView();
-                revealConversationFromFocusedWorkspace();
-                startNewThreadWithComposerFocus();
-              }}
-              onOpenSkillsTab={() => {
-                closePrimaryPluginView();
-                openSkillsTab();
-              }}
-              onMarkThreadsViewed={(threads) => {
-                setState((current) => markThreadSummariesViewed(current, threads));
-              }}
-              unreadViewOpen={unreadViewOpen}
-              onToggleUnreadView={() => setUnreadViewOpen((open) => !open)}
-              attentionStickyIDs={attentionStickyIDs}
-              onAttentionStickyIDsChange={setAttentionStickyIDs}
-              onToggleConversationSearch={toggleConversationSearch}
-              onSelectThread={(id) => {
-                closePrimaryPluginView();
-                revealConversationFromFocusedWorkspace();
-                void activateThread(id);
-              }}
-              onTogglePinned={(thread) => void toggleThreadPinned(thread)}
-              onArchiveThread={(thread) => {
-                const archivedTitle =
-                  thread.title?.trim() || t("app.thisConversation");
-                void archiveThread(thread).then((outcome) => {
-                  setArchiveTip({
-                    threadID: thread.id,
-                    threadTitle: archivedTitle,
-                    errorMessage: outcome.ok ? undefined : outcome.error,
-                    forceRetryThread:
-                      !outcome.ok && outcome.forceRetryable ? thread : undefined,
-                  });
-                });
-              }}
-              onDeleteThread={(thread) => void deleteThread(thread)}
-              onRenameThread={(thread, title) => void renameThread(thread, title)}
-              onToggleWorkspaceMenu={() => setWorkspaceMenuOpen((open) => !open)}
-              onCreateWorkspace={() => void createBlankProject()}
-              onOpenWorkspaceFolder={() => void chooseProjectFolder()}
-              onToggleSidebarSectionCollapsed={toggleSidebarSectionCollapsed}
-              onLoadWorkspaceThreads={loadWorkspaceThreadsStable}
-              onFocusWorkspace={
-                workspaceSelectionEnabled
-                  ? (id) => {
-                      const project = state.projects.find((item) => item.id === id);
-                      if (!project || project.missing) {
-                        return;
-                      }
-                      closePrimaryPluginView();
-                      setFocusedWorkspaceContext({
-                        kind: "project",
-                        project_id: project.id,
-                        cwd: project.path,
-                      });
-                      openWorkspaceTool("files");
-                    }
-                  : undefined
-              }
-              onStartNewThreadInWorkspace={(id) => {
-                closePrimaryPluginView();
-                revealConversationFromFocusedWorkspace();
-                startNewThreadInWorkspaceWithComposerFocus(id);
-              }}
-              onSelectWorkspaceThread={(workspaceID, threadID) => {
-                closePrimaryPluginView();
-                revealConversationFromFocusedWorkspace();
-                void selectWorkspaceThread(workspaceID, threadID);
-              }}
-              onRemoveWorkspace={(id) => void removeProject(id)}
-              onRelocateWorkspace={(id) => void relocateProject(id)}
-              onCreateProject={projectAgentEnabled ? startNewProject : undefined}
-              onAdoptIntoProject={projectAgentEnabled ? (projectID, threadID) => void adoptIntoProject(projectID, threadID) : undefined}
-              onReorderSections={setSidebarSectionOrder}
-              onPointerEnter={openSidebarDrawer}
-              onPointerLeave={(event) =>
-                scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
-              }
-              onOpenAccount={ENABLE_ACCOUNT ? () => {
-                  if (window.wuu.openAccountWindow) void window.wuu.openAccountWindow().catch(error => showErrorToast(error));
-                  else setAccountOpen(true);
-                } : undefined}
-              onOpenSettings={(page = "providers") => openSettingsPage(page)}
-            />
+            <slots.Slot name={`${shellPluginId}/application.navigation`} context={{
+              workspaceSelectionEnabled,
+              sidebarCollapsed,
+              sidebarVisible: !sidebarDrawerMode || sidebarDrawerVisible,
+              onPointerEnter: openSidebarDrawer,
+              onPointerLeave: (event: React.PointerEvent<HTMLElement>) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent),
+              onRibbonPresenceChange: setNativeRibbonPresent,
+              onRibbonExpandedChange: handleRibbonExpandedChange,
+            }} />
           </HoverRevealScopeContext.Provider>
 
           {/* Hidden rather than unmounted: inserting or removing a shell child
@@ -5807,8 +1882,8 @@ export function App({ application, slots, shellPluginId }: {
       <ConversationSearchOverlay
         state={conversationSearch}
         results={conversationSearchResults}
-        threads={userVisibleThreads(state.threads)}
-        projects={state.projects}
+        threads={navigationWorkspace.threads.filter(thread => !thread.parent_id && !thread.ephemeral)}
+        projects={navigationWorkspace.workspaces}
         activeThreadID={activeThreadID}
         pendingThreadID={visiblePendingThreadID}
         dialogRef={conversationSearchRef}
@@ -5858,18 +1933,10 @@ export function App({ application, slots, shellPluginId }: {
                 <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
               </button>
             ) : null}
-            <ConversationTitleContent
-              state={state}
-              runningThreadIDs={visibleRunningThreadIDs}
-              pendingSwitchThreadID={visiblePendingThreadID}
-              activeTitle={activeTitle}
-              onStartNewThread={startNewThreadWithComposerFocus}
-              onRenameTitle={conversationTitleEditable ? commitConversationTitle : undefined}
-              titleEditKey={activeThread?.id ?? currentSessionTab?.id}
-            />
+            <ConversationTitleContent application={application} slots={slots} slotOwner={shellPluginId} />
           </div>
           <ConversationTitleActions
-            state={state}
+            thread={activeThread}
             pluginPageVisible={showingPrimaryPluginView || showingManagementCatalog}
             environmentToggleRef={environmentToggleRef}
             environmentPanelVisible={environmentPanelVisible}
@@ -5880,7 +1947,9 @@ export function App({ application, slots, shellPluginId }: {
           />
         </header>
         <ConversationSidePanels
-          state={state}
+          application={application}
+          slots={slots}
+          slotOwner={shellPluginId}
           environment={application.environment}
           environmentPanelVisible={environmentPanelVisible}
           environmentPanelMounted={environmentPanelMounted}
@@ -5906,7 +1975,7 @@ export function App({ application, slots, shellPluginId }: {
           switchLoadingVisible={pendingViewSwitch?.visible === true}
         />
 
-        {state.initialized && (catalogVisited || showingSkillsCatalog) ? (
+        {initialized && (catalogVisited || showingSkillsCatalog) ? (
           <div
             className="catalog-section-pane skills-scroll-region"
             hidden={!showingManagementCatalog || showingPrimaryPluginView}
@@ -5920,158 +1989,30 @@ export function App({ application, slots, shellPluginId }: {
               selectedPluginID={catalogPluginID}
               onSelectPlugin={setCatalogPluginID}
               application={application}
-              openPluginRequest={catalogPluginRequest}
             />
             </SettingsControlsProvider>
           </div>
         ) : null}
-        {state.initialized ? (
-          <div
-            data-pip-anchor-host="conversation"
-            data-scroll-fade={!emptyConversation && !splitConversation ? "" : undefined}
-            className={`scroll-region${emptyConversation ? " empty-scroll-region" : ""}${
-              splitConversation ? " split-scroll-region" : ""
-            }`}
-            inert={!conversationVisible || viewSwitchPending}
-            style={conversationRestoring ? { visibility: "hidden" } : undefined}
-            onScroll={(event) => handleConversationScroll(event.currentTarget)}
-            ref={conversationScrollRef}
-          >
-            <div ref={scrollContentRef} className="scroll-region-content">
-                {splitConversation && state.thread && state.secondaryThread ? (
-                  <ConversationSplitLayoutRenderer
-                    state={state}
-                    pendingComposerMessagesForThread={pendingComposerMessagesForActiveThread}
-                    primaryThread={state.thread}
-                    secondaryThread={state.secondaryThread}
-                    splitLeftPercent={splitLeftPercent}
-                    splitComposerDrafts={splitComposerDrafts}
-                    splitPaneRefs={splitPaneRefs}
-                    submittingThreadIDs={submittingThreadIDs}
-                    stopRequests={stopRequests}
-                    viewSwitchPending={submissionTargetPending}
-                    historyMessageEdit={historyMessageEdit}
-                    onSplitResizeStart={startSplitResize}
-                    onSplitSeparatorDoubleClick={resetSplitPercent}
-                    onSplitSeparatorKey={handleSplitSeparatorKey}
-                    onActivatePane={activateConversationPane}
-                    onClosePane={closeConversationPane}
-                    onConversationScroll={handleConversationScroll}
-                    onSetPrompt={setSplitComposerPrompt}
-                    onPasteAttachmentFiles={(pane, files) =>
-                      void attachSplitComposerAttachmentFiles(pane, files)
-                    }
-                    onRemoveFile={removeSplitComposerFile}
-                    onRemoveImage={removeSplitComposerImage}
-                    onChangeSelection={(pane, selection) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.map((entry) => entry.id === selection.id ? selection : entry) } }))}
-                    onRemoveSelection={(pane, id) => setSplitComposerDrafts((current) => ({ ...current, [pane]: { ...current[pane], selections: current[pane].selections?.filter((entry) => entry.id !== id) } }))}
-                    onSend={(pane, promptOverride, contentParts) =>
-                      sendPrompt("queue", promptOverride, contentParts, undefined, pane)
-                    }
-                    onInterrupt={(pane) => void interruptPane(pane)}
-                    onForkMessage={(thread, turnID, itemID) =>
-                      void forkThreadFromMessage(thread, turnID, itemID)
-                    }
-                    onOpenFile={openWorkspaceFileForThread}
-                    onOpenURL={openWorkspaceBrowserURL}
-                    onOpenAgent={(agent) => void selectChildAgent(agent)}
-                    canEditThreadMessage={canShowHistoryEditButton}
-                    onEditMessage={startEditingThreadMessageFromHistory}
-                    onCancelEditMessage={cancelEditingThreadMessage}
-                    onSubmitEditMessage={(
-                      thread,
-                      turnID,
-                      item,
-                      text,
-                      images,
-                      files,
-                      contentParts,
-                      pane,
-                    ) =>
-                      submitEditedThreadMessageFromHistory(
-                        thread,
-                        turnID,
-                        item,
-                        text,
-                        images,
-                        files,
-                        contentParts,
-                        pane,
-                      )
-                    }
-                    onStreamFrame={scheduleStreamScroll}
-                    onOpenFileDiff={openTurnFileDiffPanel}
-                    pendingUserQuestion={pendingUserQuestion}
-                    onAnswerUserQuestion={answerUserQuestion}
-                    onCancelUserQuestion={cancelUserQuestion}
-                  />
-                ) : activePendingNewThreadTurn ? (
-                  <div className="conversation-width session-flow">
-                    <TurnView
-                      turn={activePendingNewThreadTurn}
-                      cwd={state.activeContext?.cwd}
-                      onStreamFrame={scheduleStreamScroll}
-                      isLatestTurn
-                    />
-                  </div>
-                ) : emptyConversation ? (
-              showingPrimaryPluginView ? null : (
-              <EmptyConversationHome
-                title={activeProjectDraft ? t("projects.newProject") : emptyThreadTitle}
-                // A draft lowers the greeting mascot’s gaze toward the composer.
-                activity={
-                  prompt.trim().length > 0 || composerImages.length > 0 || composerFiles.length > 0 || composerSelections.length > 0
-                    ? "compose"
-                    : "idle"
-                }
-              >
-                {activeProjectDraft ? null : <EmptyHomeOverview />}
-              </EmptyConversationHome>
-              )
-            ) : (
-              <CachedConversationPanes
-                threadIDs={cachedThreadPaneIDs}
-                threadsByID={cachedConversationThreadsByID}
-                activeThreadID={activeThreadID}
-                restoring={conversationRestoring}
-                activeContextCwd={state.activeContext?.cwd}
-                contextCompositionEntries={contextCompositionEntries}
-                instructionFilesEntries={instructionFilesEntries}
-                historyMessageEdit={historyMessageEdit}
-                onStreamFrame={scheduleStreamScroll}
-                onCollapseComplete={handleTurnCollapseComplete}
-                onDismissContextComposition={
-                  handleCachedPaneDismissContextComposition
-                }
-                onDismissInstructions={handleCachedPaneDismissInstructions}
-                canEditThreadMessage={canEditCachedThreadMessage}
-                onForkMessage={handleCachedPaneForkMessage}
-                onOpenFile={openWorkspaceFileForThread}
-                onOpenURL={openWorkspaceBrowserURL}
-                onOpenAgent={handleCachedPaneOpenAgent}
-                onEditMessage={handleCachedPaneEditMessage}
-                onCancelEditMessage={handleCachedPaneCancelEditMessage}
-                onSubmitEditMessage={handleCachedPaneSubmitEditMessage}
-                turnStreamStatus={state.turnStreamStatus}
-                onOpenFileDiff={handleCachedPaneOpenFileDiff}
-                pendingUserQuestion={pendingUserQuestion}
-                onAnswerUserQuestion={answerUserQuestion}
-                onCancelUserQuestion={cancelUserQuestion}
-              />
-            )}
-            </div>
-          </div>
-        ) : (
-          <RuntimeLoading
-            status={resolveLocalizedText(state.status)}
-          />
-        )}
+        <slots.Slot name={`${shellPluginId}/application.conversation`} context={{
+          scrollRef: conversationScrollRef,
+          contentRef: scrollContentRef,
+          splitPaneRefs,
+          visible: conversationVisible,
+          restoring: conversationRestoring,
+          onScroll: handleConversationScroll,
+          onStreamFrame: scheduleStreamScroll,
+          onCollapseComplete: handleTurnCollapseComplete,
+          splitLeftPercent,
+          onSplitResizeStart: startSplitResize,
+          onSplitSeparatorKey: handleSplitSeparatorKey,
+          onSplitSeparatorDoubleClick: resetSplitPercent,
+        }} />
 
-        {state.initialized && !splitConversation && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? renderComposer("dock") : null}
+        {initialized && !splitConversation && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", containerRef: dockComposerRef }} /> : null}
 
 
         <ConversationStatusCluster
-          host={desktopPluginHost}
+          application={application}
           visible={mainConversationDockVisible}
           clusterRef={statusClusterRef}
           navigation={!emptyConversation ? (
@@ -6087,8 +2028,6 @@ export function App({ application, slots, shellPluginId }: {
             <ProjectStatusCapsule project={activeThread} sessions={activeProjectSessions} />
           ) : undefined}
           threadId={activeThreadID}
-          todoUpdate={activeTodoUpdateForThread(activeThread)}
-          onOpenSession={handleOpenThreadInSplit}
         />
       </main>
 
@@ -6110,124 +2049,29 @@ export function App({ application, slots, shellPluginId }: {
         />
       ) : null}
       {poppedOutMode ? null : (
-        <WorkspaceRightPanel
-          environment={application.environment}
-          covered={settingsOpen || showingWebsite}
-          open={rightPanelOpen}
-          present={rightPanelOpen || rightPanelAnimating}
-          prewarm={Boolean(state.initialized)}
-          tabs={workspaceViewTabs}
-          activeTabID={workspaceActiveViewTabID}
-          activeFileTabID={activeWorkspaceFileTabID}
-          activeContext={state.activeContext}
-          workspaceContext={workspaceContext}
-          terminalThread={activeThread}
-          gitStatus={state.gitStatus}
-          selectedFilePath={activeWorkspaceFile}
-          onSelectTab={focusWorkspaceViewTab}
-          onOpenTool={openWorkspaceTool}
-          onOpenPluginTool={openWorkspacePluginTool}
-          onShowTools={showWorkspaceToolPicker}
-          onCloseTab={(id) => {
-            if (id === "side-thread") sideThread.close();
-            closeWorkspaceViewTab(id);
-          }}
-          onDirtyFileTabsChange={rememberWorkspaceDirtyFiles}
-          onReorderTabs={reorderWorkspaceViewTabs}
-          onOpenFile={openWorkspaceFile}
-          globalized={rightPanelGlobalized}
-          conversationTab={rightPanelGlobalized ? {
-            title: activeTitle,
-            active: workspaceConversationActive,
-            onSelect: focusWorkspaceConversation,
-          } : undefined}
-          sideThreadContent={sideConversationAvailable && activeThreadID && sideThread.entry ? (
-            <SideThreadPanel
-              key={activeThreadID}
-              ref={sideThreadPanelRef}
-              entry={sideThread.entry}
-              mainThreadId={activeThreadID}
-              active={sideThreadPanelVisible}
-              title={activeTitle}
-              cwd={activeThread?.cwd ?? state.activeContext?.cwd}
-              onOpenFile={openWorkspaceFile}
-              composer={
-                <SideThreadComposer
-                  draft={sideThread.entry.draft}
-                  selection={sideThread.entry.draftSelection}
-                  onRemoveSelection={() => sideThread.setDraftSelection(undefined)}
-                  onOpenFile={openWorkspaceFile}
-                  running={sideThread.entry.streaming}
-                  disabledReason={sideThread.sendDisabledReason}
-                  mainThreadId={activeThreadID}
-                  sideThreadId={sideThread.entry.summary?.side_thread_id}
-                  queryHistorySessionID={
-                    sideThread.entry.summary?.side_thread_id ?? `side:${activeThreadID}`
-                  }
-                  queryHistory={sideThread.entry.messages
-                    .filter((message) => message.role === "user")
-                    .map((message) => message.text)}
-                  onChangeDraft={sideThread.setDraft}
-                  onSend={sideThread.sendMessage}
-                  onInterrupt={sideThread.interrupt}
-                  onReset={sideThread.reset}
-                />
-              }
-            />
-          ) : <div className="workspace-side-thread-empty">{t("sideThread.selectConversation")}</div>}
-          sideThreadRunning={sideThread.entry?.streaming}
-          sheetPhase={workspaceSheetPhase}
-          onToggleGlobalize={toggleWorkspacePanelGlobalized}
-          canExitGlobalized={
-            !rightPanelAutoGlobalized ||
-            workspaceRightPanelDockableWithoutSidebar
-          }
-          browserActivity={activeBrowserActivity}
-          browserDockTarget={browserDockTarget}
-          browserOverlaySuppressed={browserOverlaySuppressed}
-          focusedComposer={
-            documentComposerVisible
-              ? (
-                  <WorkspaceDocumentTurnDock
-                    key={activeThreadID ?? state.activeSessionTabID}
-                    title={activeTitle}
-                    onOpenConversation={() => {
-                      setPrompt(currentPrimaryComposerDraft().prompt);
-                      setRightPanelOpenWithMotion(false);
-                      requestMainComposerFocus("dock");
-                    }}
-                    cwd={activeThread?.cwd ?? state.activeContext?.cwd}
-                    onOpenFile={openWorkspaceFile}
-                    waitingQuery={
-                      activeThreadIsRunning
-                        ? firstUserMessageText(activeTurnForThread(activeThread))
-                        : undefined
-                    }
-                    turns={
-                      activePendingNewThreadTurn
-                        ? [...turns, activePendingNewThreadTurn]
-                        : turns
-                    }
-                  >
-                    {renderComposer("document")}
-                  </WorkspaceDocumentTurnDock>
-                )
-              : undefined
-          }
-          fileRefreshKey={
-            activeThreadIsRunning ? "running" : activeThread?.updated_at
-          }
-          pluginHost={desktopPluginHost}
-          workbenchController={desktopWorkbenchController}
-        />
+        <slots.Slot name={`${shellPluginId}/application.preview`} context={{ layout: {
+          covered: settingsOpen || showingWebsite,
+          open: rightPanelOpen,
+          present: rightPanelOpen || rightPanelAnimating,
+          prewarm: initialized,
+          onDirtyFileTabsChange: rememberWorkspaceDirtyFiles,
+          globalized: rightPanelGlobalized,
+          conversationTabVisible: rightPanelGlobalized,
+          sheetPhase: workspaceSheetPhase,
+          onToggleGlobalize: toggleWorkspacePanelGlobalized,
+          canExitGlobalized: !rightPanelAutoGlobalized || workspaceRightPanelDockableWithoutSidebar,
+          browserOverlaySuppressed,
+          documentComposer: documentComposerVisible,
+          pane: conversationWorkspace.activePane,
+        } }} />
       )}
       </>
 
 
       {!settingsOpen && environmentDialog === "commit" ? (
         <CommitChangesDialog
-          gitStatus={state.gitStatus}
-          branch={state.gitStatus?.branch}
+          gitStatus={gitStatus}
+          branch={gitStatus?.branch}
           onCancel={() => setEnvironmentDialog(null)}
           onCommit={input => application.environment.commit(input)}
           onGenerateMessage={input => application.environment.generateCommitMessage(input)}
@@ -6235,17 +2079,10 @@ export function App({ application, slots, shellPluginId }: {
       ) : null}
       {!settingsOpen && environmentDialog === "pull-request" ? (
         <PullRequestDialog
-          gitStatus={state.gitStatus}
+          gitStatus={gitStatus}
           disabledReason={pullRequestDisabledReason}
           onCancel={() => setEnvironmentDialog(null)}
           onCreate={input => application.environment.createPullRequest(input)}
-        />
-      ) : null}
-      {!settingsOpen && pendingFork ? (
-        <ConversationForkDialog
-          worktreeDisabledReason={forkWorktreeDisabledReason}
-          onCancel={() => setPendingFork(undefined)}
-          onChoose={choosePendingFork}
         />
       ) : null}
       <slots.Slot name={`${shellPluginId}/application.settings`} context={{ layout: {
@@ -6270,44 +2107,9 @@ export function App({ application, slots, shellPluginId }: {
           <WebWorkspacePanel site={ribbonBrowser.state ? { id: WEB_WORKSPACE_RIBBON_ID, url: "about:blank", title: activeWebsite?.title } : undefined} active={showingWebsite && !settingsOpen && !accountOpen} tabs resizeWithWindow />
         </section>
       ) : null}
-      <DesktopWorkbench
-        settingsOnly={settingsOpen}
-        host={desktopPluginHost}
-        controller={desktopWorkbenchController}
-        inventory={state.initialized?.extension_inventory}
-        services={{
-          getSetting: async (pluginId, generation, key) => {
-            if (!window.wuu?.getPluginSetting) throw new Error("Plugin settings service is unavailable");
-            return (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value;
-          },
-          getStorage: async (pluginId, generation, key, scope) => {
-            if (!window.wuu?.getPluginStorage) throw new Error("Plugin storage service is unavailable");
-            return (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value;
-          },
-          setStorage: async (pluginId, generation, key, value, scope) => {
-            if (!window.wuu?.setPluginStorage) throw new Error("Plugin storage service is unavailable");
-            await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope });
-          },
-          openSettings: () => openSettingsPage("providers"),
-          disablePlugin: async (pluginId) => {
-            await application.catalog.update({ id: pluginId, action: "disable" });
-          },
-          reportError: (pluginId, generation, error) => {
-            console.error(`Plugin view ${pluginId}@${generation} failed to render`, error);
-          },
-          requestRegionVisible: (region) => {
-            if (region === "settings") openSettingsPage("providers");
-            else setSettingsOpen(false);
-            if (region === "primary") {
-              setActiveWebsiteID(undefined);
-              if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
-            }
-            if (region === "auxiliary") setRightPanelOpenWithMotion(true);
-          },
-        }}
-      />
+      <slots.Slot name={`${shellPluginId}/workbench.layers`} context={{ settingsOnly: settingsOpen }} />
       {!poppedOutMode && !isTouchWebShell() ? <PageHistoryControls {...pageHistory}
-        hidden={(showingWebPage && !settingsOpen) || (window.wuu.platform === "darwin" && nativeRibbonPresent && (
+        hidden={(showingWebPage && !settingsOpen) || (application.desktop.platform === "darwin" && nativeRibbonPresent && (
           (!(showingWebPage && !settingsOpen) && sidebarDrawerPhase !== "closed")
           // The expanded ribbon covers the collapsed and browser header lanes.
           // Docked content starts beyond it, so its history remains available.
@@ -6319,8 +2121,8 @@ export function App({ application, slots, shellPluginId }: {
         * cover this no-drag control. Keep it as the shell's last child. */}
       {!poppedOutMode ? (
         <button
-          hidden={window.wuu.platform === "darwin" && nativeRibbonPresent && nativeRibbonExpanded}
-          inert={window.wuu.platform === "darwin" && nativeRibbonPresent && nativeRibbonExpanded}
+          hidden={application.desktop.platform === "darwin" && nativeRibbonPresent && nativeRibbonExpanded}
+          inert={application.desktop.platform === "darwin" && nativeRibbonPresent && nativeRibbonExpanded}
           className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle section-sidebar-toggle"
           data-wuu-component="sidebar-toggle"
           type="button"

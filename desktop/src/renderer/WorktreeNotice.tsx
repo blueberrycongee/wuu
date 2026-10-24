@@ -1,5 +1,5 @@
 import { ChevronDown, Split } from "./WuuIcons";
-import type { Thread } from "../shared/protocol";
+import type { ApplicationConversationThreadV1 } from "../../../packages/plugin-sdk/src/ui-conversation";
 import { MessageCopyButton } from "./MessageActions";
 import { useI18n } from "./i18n";
 
@@ -7,7 +7,7 @@ import { useI18n } from "./i18n";
 export function WorktreeNotice({
   thread,
 }: {
-  thread: Thread;
+  thread: Pick<ApplicationConversationThreadV1, "cwd" | "worktree">;
 }): JSX.Element | null {
   const { t } = useI18n();
   const worktree = thread.worktree;

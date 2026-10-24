@@ -99,7 +99,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div />,
 }));
 
-import { createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
+import { createDefaultTestHost, createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
 import * as applicationState from "./plugins/ApplicationController";
@@ -420,7 +420,7 @@ async function enterCommand(
 async function holdShellReplacement(stage: "bridge" | "register") {
   const controller = new applicationState.ApplicationController();
   vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
-  const host = new PluginHost({ react: React, application: controller });
+  const host = createDefaultTestHost(controller);
     await registerDefaultTestSurfaces(host);
   let replacing = false;
   let release!: () => void, started!: () => void;
@@ -539,7 +539,8 @@ describe("main composer focus continuity", () => {
         .find(button => button.textContent?.includes("Alternative fixture model"));
       expect(alternative).toBeDefined();
       await act(async () => alternative!.click());
-      expect(controller.getState().initialized?.model).toBe("gpt-alternative");
+      const runtime = controller.getSnapshot().composerRuntime;
+      expect(runtime.owners.find(owner => owner.ownerTabId === runtime.activeOwnerTabId)?.selection.model).toBe("gpt-alternative");
       expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Alternative fixture model");
       await click(".codex-runtime-trigger");
       expect(document.querySelector(".runtime-panel")).toBeNull();
@@ -821,7 +822,7 @@ describe("main composer focus continuity", () => {
       provider: "fake",
       model: "fake-model",
       effort: "high",
-      speed: undefined,
+      speed: "",
     }, workspace);
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });
@@ -1076,7 +1077,9 @@ describe("main composer focus continuity", () => {
       provider: "fake",
       model: "fake-model",
       effort: "high",
+      speed: "",
       permission_mode: "standard",
+      approve_for_me: false,
     }, { kind: "no_project", cwd: scratchCwd });
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });

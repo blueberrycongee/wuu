@@ -78,7 +78,6 @@ function Card({
         <EnvironmentPanel
           panelRef={createRef<HTMLDivElement>()}
           motionState="open"
-          initialized={initialized}
           environment={environment}
           activeMenu={null}
           running={false}

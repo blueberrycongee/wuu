@@ -13,10 +13,18 @@ import { AppContextCaptureHost } from "../AppContextCapture";
 import { ENABLE_APP_SNAPSHOTS } from "../../shared/featureFlags";
 
 /** Shipped module uses the same registration, selection and unload path as an external shell. */
-export function activate(api: ApplicationGenerationAPI & { readonly pluginId: string }): void {
+export function activate(api: ApplicationGenerationAPI): void {
   api.registerUISlot({ id: "application.before", cardinality: "many" });
   api.registerUISlot({ id: "application.after", cardinality: "many" });
+  api.registerUISlot({ id: "workbench.layers", cardinality: "many" });
+  api.registerUISlot({ id: "inspector.sections", cardinality: "many" });
+  api.registerUISlot({ id: "header.conversation", cardinality: "one" });
+  api.registerUISlot({ id: "header.workspace", cardinality: "one" });
+  api.registerUISlot({ id: "conversation.header", cardinality: "many" });
+  api.registerUISlot({ id: "workspace.header", cardinality: "many" });
   api.registerUISlot({ id: "application.navigation", cardinality: "one", service: "ui.navigation" });
+  api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
+  api.registerUISlot({ id: "application.conversation", cardinality: "one", service: "ui.conversation" });
   api.registerUISlot({ id: "application.preview", cardinality: "one", service: "ui.preview" });
   api.registerUISlot({ id: "application.settings", cardinality: "one", service: "ui.settings" });
   function DefaultShell({ application, slots }: ApplicationShellRenderProps): JSX.Element {
@@ -26,13 +34,13 @@ export function activate(api: ApplicationGenerationAPI & { readonly pluginId: st
       <TerminalControlsProvider controls={application.terminals} appearance={application.settingsControls}>
       <ArtifactsProvider application={application}>
       <AppBackground />
-      <slots.Slot name={`${api.pluginId}/application.before`} />
+      <slots.Slot name={`${api.manifestId}/application.before`} />
       <PreviewContentProvider service={application.previewContent} slots={slots}>
-        <App application={application} slots={slots} shellPluginId={api.pluginId} />
+        <App application={application} slots={slots} shellPluginId={api.manifestId} />
         <LinuxWindowControls desktop={application.desktop} />
         <MacWindowControls desktop={application.desktop} />
       </PreviewContentProvider>
-      <slots.Slot name={`${api.pluginId}/application.after`} />
+      <slots.Slot name={`${api.manifestId}/application.after`} />
       {ENABLE_APP_SNAPSHOTS && <AppContextCaptureHost application={application} />}
       </ArtifactsProvider>
       </TerminalControlsProvider>
