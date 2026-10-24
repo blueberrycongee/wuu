@@ -8,6 +8,7 @@ import { hostSupports } from "../HostCapabilities";
 import { translateCurrent } from "../i18n";
 import { toastErrorMessage } from "../Toast";
 
+type RefreshRequest = { options?: EnvironmentCallOptionsV1; detach(): void };
 type Source = { contextKey: string; root?: string; status?: GitStatusResult };
 function immutable<T>(value: T): T {
   const copy = structuredClone(value);
@@ -25,7 +26,7 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
   private disposed = false;
   private timer?: ReturnType<typeof setTimeout>;
   private refreshing = false;
-  private queued = false;
+  private pendingRefresh?: RefreshRequest;
   private listeners = new Set<() => void>();
   private snapshot?: EnvironmentSnapshotV1;
   private snapshotKey = "";
@@ -74,7 +75,7 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
     this.disposed = true;
     if (this.timer !== undefined) clearTimeout(this.timer);
     this.timer = undefined;
-    this.queued = false;
+    this.pendingRefresh?.detach(); this.pendingRefresh = undefined;
     this.listeners.clear();
   }
 
@@ -186,36 +187,44 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
     }
   }
 
-  scheduleStatusRefresh(delayMs: number): void {
-    this.assertActive();
+  scheduleStatusRefresh(delayMs: number, options?: EnvironmentCallOptionsV1): void {
+    this.assertActive(); options?.signal?.throwIfAborted();
     const source = this.host.getSource();
     if (!source.contextKey || !source.root) return;
+    this.pendingRefresh?.detach();
     if (this.timer !== undefined) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = undefined;
-      void this.refreshStatus();
-    }, delayMs);
+    const abort = () => {
+      if (this.pendingRefresh === request) {
+        this.pendingRefresh = undefined;
+        if (this.timer !== undefined) clearTimeout(this.timer);
+        this.timer = undefined;
+      }
+      request.detach();
+    };
+    const request: RefreshRequest = { options, detach: () => options?.signal?.removeEventListener("abort", abort) };
+    this.pendingRefresh = request;
+    options?.signal?.addEventListener("abort", abort, { once: true });
+    this.timer = setTimeout(() => { this.timer = undefined; void this.refreshStatus(); }, delayMs);
   }
 
   private async refreshStatus(): Promise<void> {
-    if (this.disposed) return;
-    if (this.refreshing) { this.queued = true; return; }
+    if (this.disposed || this.refreshing || !this.pendingRefresh) return;
+    const request = this.pendingRefresh; this.pendingRefresh = undefined;
     let source: Source & { root: string };
-    try { source = this.begin(); } catch { return; }
+    try { source = this.begin(request.options); } catch { request.detach(); return; }
     this.refreshing = true;
     try {
       const status = await window.wuu.gitStatus(source.root);
-      this.finish(source);
+      this.finish(source, request.options);
       this.publish(status, false);
     } catch (error) {
-      // A retired generation or old worktree must not report into its successor.
-      try { this.finish(source); } catch { return; }
+      // A retired caller or old worktree must not report into its successor.
+      try { this.finish(source, request.options); } catch { return; }
       this.host.reportError(error instanceof Error ? error : new Error(translateCurrent("git.refreshFailed")));
     } finally {
-      this.refreshing = false;
-      if (this.queued && !this.disposed) {
-        this.queued = false;
-        try { this.scheduleStatusRefresh(150); } catch { /* Generation retired during the read. */ }
+      request.detach(); this.refreshing = false;
+      if (this.pendingRefresh && this.timer === undefined && !this.disposed) {
+        this.timer = setTimeout(() => { this.timer = undefined; void this.refreshStatus(); }, 150);
       }
     }
   }

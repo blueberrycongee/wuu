@@ -85,5 +85,5 @@ export interface ApplicationEnvironmentV1 {
   generateCommitMessage(input: { includeUnstaged: boolean }, options?: EnvironmentCallOptionsV1): Promise<string>;
   createPullRequest(input: { title: string; body: string; draft: boolean }, options?: EnvironmentCallOptionsV1): Promise<EnvironmentPullRequestResultV1>;
   /** Debounces scheduled reads and coalesces requests arriving during a read. */
-  scheduleStatusRefresh(delayMs: number): void;
+  scheduleStatusRefresh(delayMs: number, options?: EnvironmentCallOptionsV1): void;
 }

@@ -33,6 +33,23 @@ function fixture() {
 }
 
 describe("ApplicationEnvironment", () => {
+  it("cancels a retired caller refresh without cancelling its successor", async () => {
+    vi.useFakeTimers(); const h = fixture();
+    const old = new AbortController(), next = new AbortController();
+    h.service.scheduleStatusRefresh(10, { signal: old.signal }); old.abort();
+    await vi.advanceTimersByTimeAsync(10); expect(h.api.gitStatus).not.toHaveBeenCalled();
+    const active = new AbortController(); const pending = deferred<GitStatusResult>();
+    h.api.gitStatus.mockReturnValueOnce(pending.promise);
+    h.service.scheduleStatusRefresh(0, { signal: active.signal }); await vi.advanceTimersByTimeAsync(0);
+    h.service.scheduleStatusRefresh(0, { signal: next.signal }); await vi.advanceTimersByTimeAsync(0);
+    active.abort(); pending.resolve(status("retired")); await Promise.resolve();
+    expect(h.publishStatus).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(150);
+    expect(h.api.gitStatus).toHaveBeenCalledTimes(2); expect(h.service.getSnapshot().status?.branch).toBe("main");
+    expect(h.reportError).not.toHaveBeenCalled();
+    h.retire();
+  });
+
   it("publishes branch and commit status and maps public parameters once", async () => {
     const h = fixture(); const listener = vi.fn(); h.service.subscribe(listener);
     await h.service.checkoutBranch("feature");
