@@ -9,6 +9,7 @@ import (
 
 type invocationStateKey struct{}
 type invocationStateRetainer func() (*State, error)
+type modelInvocationOwner struct{ cancel context.CancelFunc }
 
 // WithInvocationState borrows a live capture for host dispatch. Asynchronous
 // callers must retain the handle before launching work and close it afterward.
@@ -85,7 +86,7 @@ func (k *kernelHostServices) retainState() (*State, error) {
 
 // The generation lease protects storage; this finite task also lets root
 // shutdown join terminal accounting without waiting on unrelated State handles.
-func (k *kernelHostServices) retainModelInvocation() (*State, func(context.Context) error, error) {
+func (k *kernelHostServices) retainModelInvocation(cancel context.CancelFunc) (*State, func(context.Context) error, error) {
 	binding, err := k.retainState()
 	if err != nil {
 		return nil, nil, err
@@ -97,9 +98,21 @@ func (k *kernelHostServices) retainModelInvocation() (*State, func(context.Conte
 		_ = binding.Close()
 		return nil, nil, serviceError("generation_closed", "model invocation admission is closed")
 	}
+	owner := &modelInvocationOwner{cancel: cancel}
+	if generation.modelOwners == nil {
+		generation.modelOwners = make(map[*modelInvocationOwner]struct{})
+	}
+	generation.modelOwners[owner] = struct{}{}
+	generation.modelBodies.Add(1)
 	generation.modelInvocations.Add(1)
 	generation.modelMu.Unlock()
 	return binding, func(ctx context.Context) error {
+		// Required accounting is complete before the parent service chain exits.
+		// Root can now cancel that parent without interrupting model durability.
+		generation.modelMu.Lock()
+		delete(generation.modelOwners, owner)
+		generation.modelMu.Unlock()
+		generation.modelBodies.Done()
 		release := func() error {
 			defer generation.modelInvocations.Done()
 			err := binding.Close()

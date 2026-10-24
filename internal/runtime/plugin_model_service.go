@@ -122,7 +122,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	}
 	// Transport cancellation can precede terminal accounting. Keep this
 	// generation's authority until Execute has persisted the complete outcome.
-	binding, complete, err := k.parent.retainModelInvocation()
+	binding, complete, err := k.parent.retainModelInvocation(cancel)
 	if err != nil {
 		return nil, err
 	}

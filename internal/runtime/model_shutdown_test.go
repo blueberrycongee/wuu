@@ -26,12 +26,21 @@ import (
 
 type shutdownModelCaller struct {
 	fakeServicePluginClient
-	host    *pluginhost.Host
-	method  string
-	doneURL string
+	host                         *pluginhost.Host
+	method                       string
+	doneURL                      string
+	waitForScopeCancellation     bool
+	mu                           sync.Mutex
+	parentContext                context.Context
+	parentCanceledBeforeTerminal bool
 }
 
 func (c *shutdownModelCaller) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if c.waitForScopeCancellation {
+		c.mu.Lock()
+		c.parentContext = ctx
+		c.mu.Unlock()
+	}
 	service, method := pluginhost.KernelModelInvokeService, c.method
 	input := json.RawMessage(`{"request":{"version":1,"provider":"fixture","model":"gpt-test","messages":[{"role":"user","content":"hold"}]}}`)
 	if method == "request" {
@@ -39,6 +48,10 @@ func (c *shutdownModelCaller) InvokeService(ctx context.Context, params pluginho
 		input = json.RawMessage(`{"messages":[{"role":"user","content":"hold"}]}`)
 	}
 	result, err := c.host.ServiceRegistry().Call(ctx, c.ID(), pluginhost.ServiceCallParams{Service: service, Method: method, Params: input, ExecutionID: params.ExecutionID})
+	if c.waitForScopeCancellation {
+		<-ctx.Done()
+		return result, errors.Join(err, ctx.Err())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -86,6 +99,7 @@ type shutdownModelDocuments struct {
 	beforeAttempt         chan struct{}
 	failSubmission        string
 	submissionFailureOnce sync.Once
+	foregroundParent      *shutdownModelCaller
 }
 
 func (p *shutdownModelDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
@@ -154,6 +168,13 @@ func (p *shutdownModelDocuments) InvokeService(ctx context.Context, params plugi
 				continue
 			}
 			if terminal {
+				if p.foregroundParent != nil {
+					p.foregroundParent.mu.Lock()
+					if p.foregroundParent.parentContext.Err() != nil {
+						p.foregroundParent.parentCanceledBeforeTerminal = true
+					}
+					p.foregroundParent.mu.Unlock()
+				}
 				response, err := http.Get(p.barrierURL)
 				if err != nil {
 					return nil, err
@@ -179,8 +200,12 @@ func (p *shutdownModelDocuments) Close(ctx context.Context) error {
 
 type shutdownModelPreIntentDocuments struct {
 	pluginhost.ServiceInvoker
-	barrierURL  string
-	barrierOnce sync.Once
+	barrierURL        string
+	barrierOnce       sync.Once
+	waitForRootCancel bool
+	entered           chan struct{}
+	canceled          chan struct{}
+	canceledOnce      sync.Once
 }
 
 func (p *shutdownModelPreIntentDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
@@ -208,9 +233,18 @@ func (p *shutdownModelPreIntentDocuments) InvokeService(ctx context.Context, par
 					return
 				}
 				response.Body.Close()
+				if p.waitForRootCancel {
+					close(p.entered)
+				}
 			})
 			if barrierErr != nil {
 				return nil, barrierErr
+			}
+			if p.waitForRootCancel {
+				<-ctx.Done()
+				fmt.Fprintf(os.Stderr, "original terminal callback canceled by host: %v\n", ctx.Err())
+				p.canceledOnce.Do(func() { close(p.canceled) })
+				return p.ServiceInvoker.InvokeService(ctx, params)
 			}
 			// Registry admission and callback ownership are real. Cancel before
 			// the selected authority can persist an intent for this transaction.
@@ -222,6 +256,13 @@ func (p *shutdownModelPreIntentDocuments) InvokeService(ctx context.Context, par
 		}
 	}
 	return p.ServiceInvoker.InvokeService(ctx, params)
+}
+
+// Required checkpoints must remain correct even when advisory telemetry drops
+// every observation. This also isolates the original required callback's scope.
+type shutdownCheckpointJournal struct{ providers.InferenceJournal }
+
+func (shutdownCheckpointJournal) RecordSubmissionProgress(providers.InferenceSubmissionJournalRecord) {
 }
 
 // EOF must run cancellation and terminal persistence before the owning process
@@ -238,6 +279,7 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 		failTerminal, rejectModel, terminalTimeout, failClose, beforeAttempt bool
 		failSubmission                                                       string
 		cancelBeforeIntent                                                   bool
+		foreground, rootCancelBeforeIntent                                   bool
 	}{
 		{name: "request", method: "request"},
 		{name: "call", method: "call"},
@@ -250,6 +292,11 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 		{name: "retired-start-submission-canceled", method: "retired-start", failSubmission: "request_cancelled"},
 		{name: "retired-start-submission-failure", method: "retired-start", failSubmission: "state_io_error"},
 		{name: "retired-start-pre-intent-canceled", method: "retired-start", cancelBeforeIntent: true},
+		{name: "foreground-request", method: "request", foreground: true},
+		{name: "foreground-call", method: "call", foreground: true},
+		{name: "foreground-request-authority-failure", method: "request", foreground: true, failClose: true},
+		{name: "foreground-call-authority-failure", method: "call", foreground: true, failClose: true},
+		{name: "retired-start-root-callback-timeout", method: "retired-start", rootCancelBeforeIntent: true, terminalTimeout: true},
 		{name: "start-model-rejection", method: "start", rejectModel: true},
 		{name: "start-terminal-timeout", method: "start", terminalTimeout: true},
 		{name: "start-authority-release-failure", method: "start", failClose: true},
@@ -275,6 +322,9 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 				}
 				if r.URL.Path == "/terminal" {
 					terminalOnce.Do(func() { close(terminal) })
+					if scenario.rootCancelBeforeIntent {
+						return
+					}
 					<-release
 					return
 				}
@@ -294,6 +344,7 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			child.Env = append(child.Env, fmt.Sprintf("WUU_MODEL_SHUTDOWN_BEFORE_ATTEMPT=%t", scenario.beforeAttempt))
 			child.Env = append(child.Env, "WUU_MODEL_SHUTDOWN_FAIL_SUBMISSION="+scenario.failSubmission)
 			child.Env = append(child.Env, fmt.Sprintf("WUU_MODEL_SHUTDOWN_CANCEL_BEFORE_INTENT=%t", scenario.cancelBeforeIntent))
+			child.Env = append(child.Env, fmt.Sprintf("WUU_MODEL_SHUTDOWN_FOREGROUND=%t", scenario.foreground), fmt.Sprintf("WUU_MODEL_SHUTDOWN_ROOT_CANCEL_BEFORE_INTENT=%t", scenario.rootCancelBeforeIntent))
 			stdin, err := child.StdinPipe()
 			if err != nil {
 				t.Fatal(err)
@@ -339,6 +390,12 @@ func TestModelShutdownPersistsBeforeProcessExit(t *testing.T) {
 			}
 			select {
 			case err := <-exited:
+				if scenario.foreground && strings.Contains(output.String(), "foreground parent canceled before terminal accounting") {
+					t.Errorf("root canceled the foreground parent before its model settled:\n%s", output.String())
+				}
+				if scenario.rootCancelBeforeIntent && !strings.Contains(output.String(), "original terminal callback canceled by host: context canceled") {
+					t.Errorf("root did not cancel the original admitted callback:\n%s", output.String())
+				}
 				if scenario.failSubmission != "" || scenario.cancelBeforeIntent {
 					t.Logf("submission persistence child result: %v\n%s", err, output.String())
 				}
@@ -471,9 +528,23 @@ func modelShutdownProcess(t *testing.T, root string) {
 	if os.Getenv("WUU_MODEL_SHUTDOWN_REJECT") == "true" {
 		caller.doneURL = os.Getenv("WUU_MODEL_SHUTDOWN_URL") + "/rejected"
 	}
+	foreground := os.Getenv("WUU_MODEL_SHUTDOWN_FOREGROUND") == "true"
+	caller.waitForScopeCancellation = foreground
+	if foreground {
+		provider.foregroundParent = caller
+	}
 	modules := testStateModules()
 	modules[1] = provider.ID()
 	modules = append(modules, kernelHostModule, caller.ID())
+	factories := []NativeProviderFactory{
+		{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }},
+		{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }},
+	}
+	foregroundOwner := &fakeServicePluginClient{id: "foreground-owner", required: []pluginhost.ServiceRequirement{{Name: "test.shutdown-model", MajorVersion: 1, Required: true}}}
+	if foreground {
+		modules = append(modules, foregroundOwner.ID())
+		factories = append(factories, NativeProviderFactory{ID: foregroundOwner.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return foregroundOwner, nil }})
+	}
 	cfg := config.Default()
 	cfg.DefaultProvider = "fixture"
 	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: os.Getenv("WUU_MODEL_SHUTDOWN_URL") + "/v1", APIKey: "fixture", Model: "gpt-test"}}
@@ -486,17 +557,18 @@ func modelShutdownProcess(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
-		&composition.Config{Version: composition.Version, Modules: &modules}, "",
-		NativeProviderFactory{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }},
-		NativeProviderFactory{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }})
+		&composition.Config{Version: composition.Version, Modules: &modules}, "", factories...)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var preIntentAuthority *StateAuthority
-	if os.Getenv("WUU_MODEL_SHUTDOWN_CANCEL_BEFORE_INTENT") == "true" {
+	var preIntentGate *shutdownModelPreIntentDocuments
+	rootCancelBeforeIntent := os.Getenv("WUU_MODEL_SHUTDOWN_ROOT_CANCEL_BEFORE_INTENT") == "true"
+	if os.Getenv("WUU_MODEL_SHUTDOWN_CANCEL_BEFORE_INTENT") == "true" || rootCancelBeforeIntent {
 		if err := host.ServiceRegistry().WrapServiceInvoker(persistence.ServiceName, 1, func(invoker pluginhost.ServiceInvoker) pluginhost.ServiceInvoker {
 			preIntentAuthority = invoker.(*authorityInvoker).authority
-			return &shutdownModelPreIntentDocuments{ServiceInvoker: invoker, barrierURL: provider.barrierURL}
+			preIntentGate = &shutdownModelPreIntentDocuments{ServiceInvoker: invoker, barrierURL: provider.barrierURL, waitForRootCancel: rootCancelBeforeIntent, entered: make(chan struct{}), canceled: make(chan struct{})}
+			return preIntentGate
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -522,7 +594,16 @@ func modelShutdownProcess(t *testing.T, root string) {
 		t.Fatal(err)
 	}
 	caller.host = host
-	if _, err := host.StartBackground(ctx, caller.ID(), pluginhost.BackgroundStartParams{Key: "shutdown", Service: "test.shutdown-model", Method: "run"}); err != nil {
+	foregroundDone := make(chan struct{})
+	if rootCancelBeforeIntent {
+		ctx = providers.WithInferenceJournal(ctx, shutdownCheckpointJournal{owner.InferenceJournalRuntime.ForOwner("plugin:" + caller.ID())})
+	}
+	if foreground {
+		go func() {
+			_, _ = host.CallService(ctx, foregroundOwner.ID(), "test.shutdown-model", "run", json.RawMessage(`{}`))
+			close(foregroundDone)
+		}()
+	} else if _, err := host.StartBackground(ctx, caller.ID(), pluginhost.BackgroundStartParams{Key: "shutdown", Service: "test.shutdown-model", Method: "run"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
@@ -539,13 +620,41 @@ func modelShutdownProcess(t *testing.T, root string) {
 		owner.pluginGeneration, owner.PluginHost = nil, nil
 		generation.Release()
 	}
+	if rootCancelBeforeIntent {
+		select {
+		case <-preIntentGate.entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("terminal checkpoint did not enter its original callback")
+		}
+	}
 	if os.Getenv("WUU_MODEL_SHUTDOWN_FAIL_CLOSE") == "true" {
 		if err := captured.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := owner.Cleanup(); err != nil {
-		t.Fatalf("root cleanup: %v", err)
+	_, cleanupErr := owner.Cleanup()
+	if rootCancelBeforeIntent {
+		select {
+		case <-preIntentGate.canceled:
+		case <-time.After(10 * time.Second):
+			t.Fatal("root cleanup did not cancel the original terminal callback")
+		}
+	}
+	if foreground {
+		caller.mu.Lock()
+		earlyCancellation := caller.parentCanceledBeforeTerminal
+		caller.mu.Unlock()
+		if earlyCancellation {
+			fmt.Fprintln(os.Stderr, "foreground parent canceled before terminal accounting")
+		}
+		select {
+		case <-foregroundDone:
+		case <-time.After(10 * time.Second):
+			t.Fatal("foreground parent did not finish after root cleanup")
+		}
+	}
+	if cleanupErr != nil {
+		t.Fatalf("root cleanup: %v", cleanupErr)
 	}
 	if preIntentAuthority != nil {
 		record, err := preIntentAuthority.readRecord()

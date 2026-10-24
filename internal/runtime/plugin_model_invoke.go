@@ -80,13 +80,18 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	if err := decodeServiceParams(params.Params, &input); err != nil {
 		return nil, err
 	}
-	binding, complete, err := k.parent.retainModelInvocation()
+	// Register the stable base cancellation before admission. A later timeout
+	// wraps this context without changing root's ownership of the model body.
+	ctx, cancel := context.WithCancel(scope.Context)
+	binding, complete, err := k.parent.retainModelInvocation(cancel)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 	streamOwnsState := false
 	defer func() {
 		if !streamOwnsState {
+			cancel()
 			callErr = errors.Join(callErr, complete(callCtx))
 		}
 	}()
@@ -111,7 +116,6 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 			}
 		}()
 	}
-	ctx, cancel := context.WithCancel(scope.Context)
 	if params.Method == "call" {
 		stop := context.AfterFunc(callCtx, cancel)
 		defer stop()
@@ -123,7 +127,6 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 			input.TimeoutMS = 120_000
 		}
 		if input.TimeoutMS < 1 || input.TimeoutMS > 600_000 {
-			cancel()
 			return nil, serviceError("invalid_params", "timeout_ms must be between 1 and 600000")
 		}
 		timeoutCtx, timeoutCancel := context.WithTimeout(ctx, time.Duration(input.TimeoutMS)*time.Millisecond)
@@ -133,7 +136,6 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		client, request, err = k.prepareIndependent(ctx, session, host, scope, input)
 	}
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	origin := independentModelOrigin(scope, request)
@@ -143,7 +145,6 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	if providers.InferenceJournalFromContext(ctx) == nil && !direct {
 		journal := binding.InferenceJournalRuntime.ForOwner("plugin:" + scope.PluginID)
 		if journal == nil {
-			cancel()
 			return nil, serviceError("service_unavailable", "inference accounting is unavailable")
 		}
 		ctx = providers.WithInferenceJournal(ctx, journal)
@@ -151,12 +152,10 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 	if !direct {
 		request, err = providers.EnsureInferenceExecutionContext(ctx, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
 		if err != nil {
-			cancel()
 			return nil, modelRequestError(err)
 		}
 	}
 	if params.Method == "call" {
-		defer cancel()
 		var response providers.ChatResponse
 		if direct {
 			response, err = client.Chat(ctx, request)

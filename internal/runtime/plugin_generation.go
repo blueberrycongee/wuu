@@ -76,6 +76,8 @@ type PluginGeneration struct {
 	// Admission closes under modelMu before root shutdown starts Wait.
 	modelMu            sync.Mutex
 	modelStopped       bool
+	modelOwners        map[*modelInvocationOwner]struct{}
+	modelBodies        sync.WaitGroup
 	modelInvocations   sync.WaitGroup
 	modelCompletionErr error
 	// revokedMu also protects host detachment from read-only diagnostics.
@@ -123,26 +125,54 @@ func (s *Session) stopPluginModelInvocations() (err error) {
 			err = errors.Join(err, s.releasePluginGeneration(generation))
 		}
 	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var cancelModels []context.CancelFunc
 	for _, generation := range generations {
 		generation.modelMu.Lock()
 		generation.modelStopped = true
+		for owner := range generation.modelOwners {
+			cancelModels = append(cancelModels, owner.cancel)
+		}
 		generation.modelMu.Unlock()
+	}
+	for _, generation := range generations {
 		generation.host.StopBackground()
+	}
+	for _, cancelModel := range cancelModels {
+		cancelModel()
+	}
+	bodiesDone := make(chan struct{})
+	go func() {
+		for _, generation := range generations {
+			generation.modelBodies.Wait()
+		}
+		close(bodiesDone)
+	}()
+	select {
+	case <-bodiesDone:
+	case <-ctx.Done():
+		err = fmt.Errorf("drain model invocations: %w", ctx.Err())
+	}
+	// Parent callbacks may await their execution's cancellation before returning.
+	// Revoke them even after a failed drain, then join deferred State releases
+	// with the remaining time from the same shutdown deadline.
+	for _, generation := range generations {
 		generation.host.CancelExecutions(context.Canceled)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	done := make(chan struct{})
+	releasesDone := make(chan struct{})
 	go func() {
 		for _, generation := range generations {
 			generation.modelInvocations.Wait()
 		}
-		close(done)
+		close(releasesDone)
 	}()
 	select {
-	case <-done:
+	case <-releasesDone:
 	case <-ctx.Done():
-		err = fmt.Errorf("drain model invocations: %w", ctx.Err())
+		if err == nil {
+			err = fmt.Errorf("drain model invocations: %w", ctx.Err())
+		}
 	}
 	for _, generation := range generations {
 		generation.modelMu.Lock()
