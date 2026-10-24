@@ -18,6 +18,39 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("hydrates only the captured remote item and rejects stale, mismatched, or cancelled reads", async () => {
+    const remote = { id: "item", type: "agent_message" as const, remote_content_ref: "ref:one", text: "preview" };
+    const thread = { id: "remote", cwd: "/fixture", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const,
+      turns: [{ id: "turn", status: "completed" as const, items_view: "full" as const, items: [remote] }] };
+    let finish!: (item: typeof remote) => void;
+    const read = vi.fn(() => new Promise<typeof remote>(resolve => { finish = resolve; }));
+    window.wuu = { readRemoteItem: read } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, thread, threads: [thread] });
+    const target = { threadId: "remote", turnId: "turn", itemId: "item" };
+    await expect(controller.invoke("conversation.load-item", { ...target, threadId: "missing" })).rejects.toThrow();
+    expect(read).not.toHaveBeenCalled();
+    const stale = controller.invoke("conversation.load-item", target);
+    controller.updateState(state => ({ ...state, thread: { ...thread, turns: [{ ...thread.turns[0], items: [{ ...remote, remote_content_ref: "ref:two" }] }] } }));
+    finish({ ...remote, text: "old content" });
+    await expect(stale).rejects.toThrow();
+    expect(controller.getState().thread?.turns[0].items[0].text).toBe("preview");
+    const cancelled = new AbortController();
+    const pending = controller.invoke("conversation.load-item", target, { signal: cancelled.signal });
+    cancelled.abort(); finish({ ...remote, remote_content_ref: "ref:two", text: "cancelled content" });
+    await expect(pending).rejects.toThrow();
+    expect(controller.getState().thread?.turns[0].items[0].text).toBe("preview");
+    const mismatch = controller.invoke("conversation.load-item", target);
+    finish({ ...remote, id: "other" }); await expect(mismatch).rejects.toThrow();
+    const loading = controller.invoke("conversation.load-item", target);
+    finish({ ...remote, remote_content_ref: "ref:two", text: "full content" });
+    const loaded = await loading;
+    expect(loaded.text).toBe("full content");
+    expect(Object.isFrozen(loaded)).toBe(true);
+    expect(controller.getState().thread?.turns[0].items[0].text).toBe("full content");
+    expect(controller.getState().threads[0].turns[0].items[0].text).toBe("full content");
+    expect(read).toHaveBeenLastCalledWith("ref:two");
+  });
+
   it("settles admitted onboarding imports after their initiating UI retires", async () => {
     let finish!: (value: unknown) => void;
     window.wuu = { importBrowserCookies: vi.fn(() => new Promise(resolve => { finish = resolve; })) } as unknown as WuuDesktopApi;

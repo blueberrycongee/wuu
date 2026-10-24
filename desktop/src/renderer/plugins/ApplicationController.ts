@@ -32,7 +32,7 @@ import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -855,10 +855,33 @@ export class ApplicationController implements HostApplicationService {
     if (isApplicationNavigationAction(action)) return this.applicationNavigation.invoke(action,
       input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
     if (isApplicationPreviewAction(action)) return this.applicationPreview.invoke(action,
-      input as ApplicationPreviewActionMapV1[keyof ApplicationPreviewActionMapV1]["input"], signal);
+      input as ApplicationPreviewActionMapV1[typeof action]["input"], signal);
     if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
       input as ApplicationSettingsActionMapV1[keyof ApplicationSettingsActionMapV1]["input"], signal);
     switch (action) {
+      case "conversation.load-item": {
+        const { threadId, turnId, itemId } = input as ApplicationActionMapV1["conversation.load-item"]["input"];
+        const source = this.knownThread(threadId)?.turns.find(turn => turn.id === turnId)?.items.find(item => item.id === itemId);
+        if (!source?.remote_content_ref) throw new Error("Remote item is unavailable");
+        const navigation = this.navigationRequest;
+        const generation = this.state.runtimeConnectionGeneration;
+        const complete = await this.artifacts.readItem({ remoteRef: source.remote_content_ref }, { signal });
+        signal?.throwIfAborted();
+        const thread = this.knownThread(threadId);
+        const current = thread?.turns.find(turn => turn.id === turnId)?.items.find(item => item.id === itemId);
+        if (!thread || current?.remote_content_ref !== source.remote_content_ref || current.type !== source.type
+          || navigation !== this.navigationRequest || generation !== this.state.runtimeConnectionGeneration
+          || complete.id !== itemId || complete.type !== source.type
+          || (complete.remote_content_ref && complete.remote_content_ref !== source.remote_content_ref)) {
+          throw new Error("Remote item changed during download");
+        }
+        const hydrated = { ...structuredClone(complete), remote_content_ref: undefined };
+        const updated = updateTurnItem(thread, turnId, itemId, () => hydrated);
+        this.sidebarCache.patchCachedSidebarThread(threadId, cached => updateTurnItem(cached, turnId, itemId, () => hydrated));
+        this.updateState(state => updateThreadByID(state, threadId, () => updated));
+        return this.projectConversationThread(updated).turns.find(turn => turn.id === turnId)!.items.find(item => item.id === itemId)!;
+      }
+
       case "navigation.cancel": {
         const { requestId } = input as ApplicationActionMapV1["navigation.cancel"]["input"];
         if (requestId !== undefined && requestId !== this.pendingNavigation?.requestId) return;

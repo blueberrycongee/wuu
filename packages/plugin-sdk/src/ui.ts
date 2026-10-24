@@ -15,7 +15,7 @@ import type { ApplicationSubmissionActionMapV1, ApplicationSubmissionSnapshotV1 
 import type { ApplicationComposerRuntimeActionMapV1, ApplicationComposerRuntimeViewV1 } from "./ui-composer-runtime.js";
 import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogThreadSkillsInputV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
 import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1 } from "./ui-preview-content.js";
-import type { ApplicationConversationDetailsActionMapV1, ApplicationConversationDetailV1, ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
+import type { ApplicationConversationThreadItemV1, ApplicationConversationDetailsActionMapV1, ApplicationConversationDetailV1, ApplicationConversationWorkspaceV1, ApplicationConversationTextV1 } from "./ui-conversation.js";
 import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "./ui-navigation.js";
 import type { ApplicationSettingsControlsV1 } from "./ui-settings-controls.js";
 import type { ApplicationPreviewActionMapV1, ApplicationPreviewWorkspaceV1 } from "./ui-preview.js";
@@ -128,6 +128,7 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "workspace.remove": { input: { readonly workspaceId: string }; result: void };
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
   "navigation.cancel": { input: { readonly requestId?: number }; result: void };
+  "conversation.load-item": { input: { readonly threadId: string; readonly turnId: string; readonly itemId: string }; result: ApplicationConversationThreadItemV1 };
   "conversation.open-split": { input: { readonly threadId: string }; result: void };
   "conversation.activate-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
   "conversation.close-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
