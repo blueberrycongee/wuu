@@ -1,0 +1,431 @@
+import type { ApplicationSubmissionInputV1, ApplicationSubmissionResultV1, ApplicationSubmissionSnapshotV1, ApplicationSubmissionOperationV1 } from "../../../../packages/plugin-sdk/src/ui-submission";
+import type { MessageContentPart, ResponseSelection, RuntimeContext, Thread, ThreadStartParams, Turn } from "../../shared/protocol";
+import { activeThreadIDForState, activeTurnIDForThread, activeTurnIsAnswerReady, bindActiveSessionTabToThread, cloneComposerDraft, composerDraftHasContent, createDraftSessionTab, emptyComposerDraft, isThreadRunning, resolveComposerRunningAction, resolveThreadRuntimeContext, sameRuntimeContext, setThreadForPane, threadForTab, threadSessionTabID, updateThreadByID, upsertThread, upsertTurn, type AppState, type ComposerDraftState, type SessionTab } from "../AppState";
+import { awaitComposerFiles, awaitComposerImages, composerContextFromMessage, createComposerMessage, createOptimisticTurn, dropOptimisticTurn, inputFilesFromComposer, inputImagesFromComposer, interruptOptimisticTurn, isOptimisticTurnInterrupted, OPTIMISTIC_TURN_ID_PREFIX, replaceOptimisticTurn, threadHasAcceptedComposerMessage, type QueuedComposerMessage } from "../ComposerMessages";
+import type { ComposerPendingStateController } from "../ComposerPendingState";
+import type { ApplicationDraftResources } from "./ApplicationDrafts";
+import type { createSidebarThreadCache } from "../SidebarWorkspaceState";
+import { collectTurnArtifacts } from "../ArtifactOutputs";
+import { createArtifactComposerFile } from "../ArtifactComposerFile";
+import { customDraftConversationTitle } from "../ThreadTitles";
+import { translateCurrent as t } from "../i18n";
+import { isCancellationMessage, rawErrorMessage } from "../UserFacingErrors";
+import { forgetLocalTurnTiming } from "../LocalTurnTiming";
+import { rememberCollapsedPromptParts, readCollapsedPromptParts } from "../ComposerCollapsedPrompt";
+import { writeComposerDraftRecovery } from "../ComposerDraftRecovery";
+import { hasAuthenticatedProvider } from "../RuntimeHelpers";
+import { toConversationItemSnapshot } from "./ApplicationSnapshots";
+
+export interface ApplicationSubmissionOptions {
+  getState(): AppState;
+  updateState(update: (state: AppState) => AppState): void;
+  changed(): void;
+  isNavigationPending(): boolean;
+  pending: ComposerPendingStateController;
+  resources: ApplicationDraftResources;
+  getDraft(ownerTabId: string): ComposerDraftState;
+  setDraft(ownerTabId: string, draft: ComposerDraftState): void;
+  getRuntime(ownerTabId: string): { pending: boolean; params: ThreadStartParams; worktree?: { startBranch?: string } };
+  sidebarCache: ReturnType<typeof createSidebarThreadCache>;
+  consumeOffer?(offerID: string): Promise<void>;
+}
+
+type Operation = {
+  view: ApplicationSubmissionOperationV1;
+  message: QueuedComposerMessage;
+  source: Exclude<SessionTab, { kind: "skills" }>;
+  context: RuntimeContext;
+  thread?: Thread;
+  optimistic: Turn;
+  previousTurnIDs: ReadonlySet<string>;
+  ready: Promise<Thread | undefined>;
+  resolve(thread: Thread | undefined): void;
+  cancelled: Promise<undefined>;
+  cancelPreparation(): void;
+  stopped: boolean;
+  sent: boolean;
+  creationCancelled: boolean;
+  implicitFileID?: string;
+  clickedAtMs: number;
+};
+
+/** One submission owner for all shells, sharing the controller's drafts and queues. */
+export class ApplicationSubmission {
+  private readonly operations = new Map<string, Operation>();
+  private readonly admissions = new Map<string, Operation>();
+  private readonly lanes = new Map<string, { tail: Promise<void>; stopVersion: number }>();
+  private readonly creations = new Map<string, Operation>();
+  private readonly stopRequests = new Map<string, { target?: string; phase: "pending" | "retry"; delivery?: symbol }>();
+  private readonly failedDrafts = new Set<string>();
+  private snapshot: ApplicationSubmissionSnapshotV1 = Object.freeze({ operations: Object.freeze([]), pendingCreations: Object.freeze([]), failedDraftTabIds: Object.freeze([]) });
+  private disposed = false;
+  private readonly recoveryText = new Map<string, { prompt: string; text: string; hasReferences: boolean }>();
+  private recoveryWarning = false;
+
+  constructor(private readonly options: ApplicationSubmissionOptions) {}
+  getSnapshot = (): ApplicationSubmissionSnapshotV1 => this.snapshot;
+  getPendingDraftTabIds = (): readonly string[] => [...this.creations.keys()];
+  isOwnerPending = (ownerTabId: string): boolean => {
+    const tab = this.options.getState().sessionTabs.find(tab => tab.id === ownerTabId);
+    return this.admissions.has(tab?.kind === "thread" ? tab.threadID : ownerTabId);
+  };
+
+  private publish(): void {
+    this.snapshot = Object.freeze({ operations: Object.freeze([...this.operations.values()].map(operation => Object.freeze({ ...operation.view }))),
+      pendingCreations: Object.freeze([...this.creations.values()].map(operation => Object.freeze({ ownerTabId: operation.source.id, operationID: operation.view.operationID, startedAtMs: operation.clickedAtMs,
+        turn: Object.freeze({ id: operation.optimistic.id, status: "running" as const, items: Object.freeze(operation.optimistic.items.map(item => toConversationItemSnapshot(item, "user-message"))) }) }))),
+      failedDraftTabIds: Object.freeze([...this.failedDrafts]) });
+    this.options.changed();
+  }
+  private phase(operation: Operation, phase: ApplicationSubmissionOperationV1["phase"], error?: string): void {
+    operation.view = { ...operation.view, phase, threadId: operation.thread?.id, error }; this.publish();
+  }
+
+  submit(input: ApplicationSubmissionInputV1, signal?: AbortSignal): ApplicationSubmissionResultV1 {
+    const state = this.options.getState();
+    const source = state.sessionTabs.find(tab => tab.id === input.ownerTabId);
+    const visible = input.ownerTabId === state.activeSessionTabID || Boolean(state.thread && input.ownerTabId === threadSessionTabID(state.thread.id)) || Boolean(state.secondaryThread && input.ownerTabId === threadSessionTabID(state.secondaryThread.id));
+    if (this.disposed || signal?.aborted || this.options.isNavigationPending() || !source || source.kind === "skills" || !visible || !state.activeContext || !state.initialized) return { accepted: false };
+    const thread = source.kind === "thread" ? threadForTab(state, source.threadID) : undefined;
+    if (source.kind === "thread" && !thread || thread?.read_only || thread && this.stopRequests.has(thread.id) || !thread && this.options.getRuntime(source.id).pending) return { accepted: false };
+    if (!thread && this.options.getRuntime(source.id).params.engine === "wuu" && !hasAuthenticatedProvider(state.initialized.providers)) return { accepted: false };
+    const draft = this.options.getDraft(source.id);
+    const contentParts: MessageContentPart[] | undefined = input.contentParts ? structuredClone(input.contentParts) as MessageContentPart[] : input.text === undefined || input.text === draft.prompt ? readCollapsedPromptParts(thread?.id ?? source.id, draft.prompt) : undefined;
+    const selections = input.selections ? structuredClone(input.selections) as ResponseSelection[] : draft.selections;
+    let message = createComposerMessage(input.text ?? draft.prompt, draft.images, draft.files, contentParts, selections);
+    if (!message) return { accepted: false };
+    if (input.activeDocument) message = { ...message, activeDocument: { ...input.activeDocument } };
+    let implicitFileID: string | undefined;
+    if (input.artifact) {
+      if (!thread || input.artifact.threadId !== thread.id) throw new Error("The artifact belongs to another conversation");
+      const artifact = thread.turns.flatMap(collectTurnArtifacts).find(artifact => artifact.id === input.artifact!.id && artifact.sha256 === input.artifact!.sha);
+      if (!artifact) throw new Error("The artifact snapshot is no longer available");
+      const file = createArtifactComposerFile({ threadID: thread.id, artifact }, thread.id);
+      implicitFileID = file.id;
+      message = { ...message, files: [...message.files.filter(item => item.id !== file.id), file] };
+    }
+    const operation = this.createOperation(message, source, thread); operation.implicitFileID = implicitFileID;
+    message.images.forEach(value => this.options.resources.remember("image", value));
+    message.files.forEach(value => this.options.resources.remember("file", value));
+    const release = this.options.resources.retain([...message.images, ...message.files].map(value => value.id));
+    const key = thread?.id ?? source.id;
+    const admission = this.admissions.get(key);
+    const busy = thread && isThreadRunning(thread) && !activeTurnIsAnswerReady(thread);
+    const mode = input.mode ?? "send";
+    const work = admission || !busy && this.lanes.has(key)
+      ? this.queue(operation, admission)
+      : busy
+        ? thread && !admission && resolveComposerRunningAction(mode === "steer" ? "steer" : "queue", thread) === "steer"
+          ? this.steer(operation) : this.queue(operation)
+        : this.send(operation);
+    // Admission and its optimistic state are installed synchronously above.
+    this.options.setDraft(source.id, emptyComposerDraft());
+    this.saveRecovery();
+    if (input.consumedOfferID && this.options.consumeOffer) void this.options.consumeOffer(input.consumedOfferID).catch(error => this.report(error));
+    const abort = () => { this.cancel(operation.view.operationID); };
+    signal?.addEventListener("abort", abort, { once: true });
+    void work.then(sent => {
+      if (!sent) this.recover(operation);
+      this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error);
+    }, error => { this.recover(operation); this.phase(operation, "failed", rawErrorMessage(error, t("composer.sendFailed"))); })
+      .finally(() => { signal?.removeEventListener("abort", abort); release(); this.saveRecovery(); });
+    return { accepted: true, operationID: operation.view.operationID, threadId: thread?.id };
+  }
+
+  private createOperation(message: QueuedComposerMessage, source: Exclude<SessionTab, { kind: "skills" }>, thread?: Thread): Operation {
+    let resolve!: Operation["resolve"]; let cancelPreparation!: () => void;
+    const clickedAtMs = Date.now();
+    const operation: Operation = { clickedAtMs, view: { operationID: message.id, ownerTabId: source.id, threadId: thread?.id, messageID: message.id, phase: "preparing" },
+      message, source, context: thread ? resolveThreadRuntimeContext(thread, this.options.getState().projects) : source.context,
+      thread, optimistic: createOptimisticTurn(message, clickedAtMs), previousTurnIDs: new Set(thread?.turns.map(turn => turn.id)),
+      ready: new Promise(done => { resolve = done; }), resolve: thread => resolve(thread),
+      cancelled: new Promise(done => { cancelPreparation = () => done(undefined); }), cancelPreparation: () => cancelPreparation(),
+      stopped: false, sent: false, creationCancelled: false };
+    this.operations.set(operation.view.operationID, operation); this.publish(); return operation;
+  }
+
+  cancel(operationID: string): boolean {
+    const operation = this.operations.get(operationID);
+    if (!operation || ["completed", "failed", "cancelled"].includes(operation.view.phase)) return false;
+    operation.stopped = true; operation.cancelPreparation();
+    if (this.creations.get(operation.source.id) === operation) { operation.creationCancelled = true; this.creations.delete(operation.source.id); }
+    if (operation.thread && operation.sent) void this.stop(threadSessionTabID(operation.thread.id));
+    this.publish(); return true;
+  }
+
+  private async queue(operation: Operation, admission?: Operation): Promise<boolean> {
+    const key = operation.thread?.id ?? operation.source.id;
+    forgetLocalTurnTiming(operation.optimistic.id);
+    if (!operation.thread && !admission) return false;
+    this.options.pending.enqueueComposerMessage(key, { ...operation.message, operationState: "preparing" });
+    const lane = this.lanes.get(key) ?? { tail: Promise.resolve(), stopVersion: 0 };
+    const previous = lane.tail; const version = lane.stopVersion;
+    let release!: () => void;
+    const tail = new Promise<void>(done => { release = done; }); lane.tail = tail; this.lanes.set(key, lane);
+    try {
+      await previous;
+      if (admission) operation.thread = await admission.ready;
+      if (!operation.thread) {
+        const pendingKey = admission?.thread?.id ?? key;
+        const exists = this.options.pending.pendingComposerMessagesForThread(pendingKey).queued.some(message => message.id === operation.message.id);
+        this.options.pending.removePendingComposerMessageByID(pendingKey, operation.message.id, "queue");
+        return !exists;
+      }
+      return await this.deliverPending(operation, "queue", () => lane.stopVersion !== version || Boolean(admission?.stopped) || operation.stopped);
+    } finally { release(); if (lane.tail === tail) { this.lanes.delete(key); if (admission?.thread) this.lanes.delete(admission.thread.id); } }
+  }
+  private async steer(operation: Operation): Promise<boolean> {
+    forgetLocalTurnTiming(operation.optimistic.id);
+    if (!operation.thread || !activeTurnIDForThread(operation.thread)) return false;
+    this.options.pending.updateThreadPendingComposerMessages(operation.thread.id, previous => ({ ...previous, guides: [...previous.guides, { ...operation.message, origin: "steer", operationState: "preparing" }] }));
+    return this.deliverPending(operation, "guide", () => false);
+  }
+  private async deliverPending(operation: Operation, kind: "queue" | "guide", shouldHold: () => boolean): Promise<boolean> {
+    const thread = operation.thread!; const message = operation.message; const list = kind === "queue" ? "queued" : "guides";
+    const exists = () => this.options.pending.pendingComposerMessagesForThread(thread.id)[list].some(candidate => candidate.id === message.id);
+    try {
+      const [images, files] = await Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]);
+      if (!exists()) return true;
+      if (kind === "guide" && operation.stopped) { this.options.pending.removePendingComposerMessageByID(thread.id, message.id, kind); return false; }
+      this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, operationState: "sending" } : candidate) }));
+      this.phase(operation, "sending"); operation.sent = true;
+      let acceptedID = message.id;
+      if (kind === "queue") {
+        const result = await window.wuu.queueTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), thread.permission_mode, message.activeDocument, message.contentParts, operation.context, shouldHold());
+        acceptedID = result.queued.id || message.id;
+      } else await window.wuu.steerTurn(thread.id, activeTurnIDForThread(thread)!, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), message.activeDocument, message.contentParts, operation.context);
+      this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, id: acceptedID, images, files, operationState: undefined } : candidate) }));
+      return true;
+    } catch (error) {
+      const pending = exists(); this.options.pending.removePendingComposerMessageByID(thread.id, message.id, kind);
+      if (pending) this.phase(operation, "failed", rawErrorMessage(error, t(kind === "queue" ? "app.queueFailed" : "composer.guideFailed")));
+      return !pending;
+    }
+  }
+
+  private async send(operation: Operation, prepareThread?: () => Promise<Thread>): Promise<boolean> {
+    const { source, context, message, optimistic } = operation;
+    const initial = this.options.getState(); const target = operation.thread;
+    const key = target?.id ?? source.id;
+    if (this.admissions.has(key) || target?.read_only || target && isThreadRunning(target) && !activeTurnIsAnswerReady(target)) return false;
+    this.admissions.set(key, operation);
+    if (!target) this.creations.set(source.id, operation);
+    this.options.updateState(state => state.activeSessionTabID === source.id ? { ...state, running: true, status: "" } : state);
+    this.publish();
+    let optimisticThreadID: string | undefined;
+    try {
+      const runtime = this.options.getRuntime(source.id);
+      const projectDraft = !target && source.kind === "draft" && source.project && initial.initialized?.features?.project_agent && context.kind === "project";
+      let thread = prepareThread ? await prepareThread() : target;
+      if (!thread) {
+        let params = { ...runtime.params };
+        if (runtime.worktree) params = { ...params, workspace: "worktree", ...(runtime.worktree.startBranch ? { base_revision: runtime.worktree.startBranch } : {}) };
+        if (projectDraft && context.kind === "project") {
+          const line = message.text.split("\n").find(line => line.trim())?.trim().replace(/\s+/g, " ") ?? "";
+          params = { ...runtime.params, engine: "wuu", workspace_id: context.project_id, cwd: context.cwd,
+            project: { name: customDraftConversationTitle(source.kind === "draft" ? source.title : undefined, t("projects.newProject")) || (line.length > 48 ? `${line.slice(0, 47)}…` : line) } };
+        }
+        const creating = window.wuu.startThread(params, context).then(async result => {
+          if (operation.creationCancelled && result.thread) {
+            try {
+              await window.wuu.deleteThread(result.thread.id);
+              this.options.sidebarCache.removeCachedSidebarThread(result.thread.id);
+              this.options.updateState(state => ({ ...state, threads: state.threads.filter(thread => thread.id !== result.thread!.id) }));
+            } catch (error) { this.report(error); }
+          }
+          return result.thread;
+        });
+        thread = await Promise.race([creating, operation.cancelled]);
+        if (!thread) {
+          if (!operation.stopped) throw new Error("thread/start did not return a thread");
+          return false;
+        }
+      }
+      // An edit's authoritative prepare result is adopted even if Stop arrived.
+      operation.thread = thread;
+      const customTitle = !target && !projectDraft && !operation.creationCancelled
+        ? customDraftConversationTitle(source.kind === "draft" ? source.title : undefined, t("tabs.newConversation")) : "";
+      const originalTitle = thread.title;
+      if (customTitle) thread = { ...thread, title: customTitle };
+      operation.thread = thread;
+      if (!target) {
+        this.admissions.set(thread.id, operation); this.admissions.delete(key);
+        const lane = this.lanes.get(key);
+        if (lane) { this.lanes.set(thread.id, lane); this.lanes.delete(key); }
+        const pending = this.options.pending.pendingComposerMessagesByThread[key];
+        if (pending) {
+          this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, queued: [...previous.queued, ...pending.queued], guides: [...previous.guides, ...pending.guides] }));
+          this.options.pending.clearThreadPendingComposerMessages(key);
+        }
+        const draft = this.options.getDraft(source.id);
+        rememberCollapsedPromptParts(thread.id, draft.prompt, readCollapsedPromptParts(source.id, draft.prompt));
+        const created = thread;
+        this.options.updateState(state => {
+          const stillTarget = state.activeSessionTabID === source.id && sameRuntimeContext(state.activeContext, context);
+          return { ...(stillTarget ? setThreadForPane(state, state.activePane, created) : state),
+            sessionTabs: bindActiveSessionTabToThread(state.sessionTabs, source.id, created, context),
+            activeSessionTabID: stillTarget ? threadSessionTabID(created.id) : state.activeSessionTabID, threads: upsertThread(state.threads, created) };
+        });
+      }
+      optimisticThreadID = thread.id;
+      this.options.updateState(state => updateThreadByID(state, thread!.id, current => upsertTurn(current, optimistic)));
+      this.creations.delete(source.id); this.publish();
+      if (customTitle) {
+        const renamed = window.wuu.renameThread(thread.id, customTitle).catch(error => {
+          const revert = (current: Thread): Thread => current.title === customTitle ? { ...current, title: originalTitle } : current;
+          this.options.sidebarCache.patchCachedSidebarThread(thread!.id, revert);
+          this.options.updateState(state => {
+            const next = updateThreadByID(state, thread!.id, revert);
+            return { ...next, sessionTabs: next.sessionTabs.map(tab => tab.kind === "thread" && tab.threadID === thread!.id && tab.title === customTitle ? { ...tab, title: originalTitle || t("thread.untitled") } : tab) };
+          });
+          this.report(error);
+        });
+        await Promise.race([renamed, operation.cancelled]);
+      }
+      const attachments = await Promise.race([Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]), operation.cancelled]);
+      if (!attachments || operation.stopped) {
+        this.options.updateState(state => updateThreadByID(state, thread!.id, current => interruptOptimisticTurn(current, optimistic.id, Date.now()), activeThreadIDForState(state) === thread!.id ? { running: false } : {}));
+        return true;
+      }
+      operation.sent = true; this.phase(operation, "sending");
+      const [images, files] = attachments;
+      const result = await window.wuu.startTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), inputFilesFromComposer(files), thread.permission_mode || runtime.params.permission_mode, message.activeDocument, message.contentParts, context, message.id);
+      this.options.updateState(state => updateThreadByID(state, thread!.id, current => replaceOptimisticTurn(current, optimistic.id, result.turn, upsertTurn)));
+      if (operation.stopped && isThreadRunning(threadForTab(this.options.getState(), thread.id))) await this.interruptAccepted(thread.id);
+      return true;
+    } catch (error) {
+      const raw = rawErrorMessage(error, t("composer.sendFailed"));
+      const current = optimisticThreadID ? threadForTab(this.options.getState(), optimisticThreadID) : undefined;
+      const interrupted = isCancellationMessage(raw.toLowerCase()) || isOptimisticTurnInterrupted(current, optimistic.id);
+      const accepted = threadHasAcceptedComposerMessage(current, message, optimistic.id, operation.previousTurnIDs);
+      const busy = `thread ${JSON.stringify(optimisticThreadID)} already has a running turn`;
+      if (!interrupted && !accepted && operation.sent && operation.thread && (raw.endsWith(busy) || raw.endsWith(`${busy} in another app-server: thread execution is owned by another app-server`))) {
+        this.options.updateState(state => updateThreadByID(state, operation.thread!.id, current => dropOptimisticTurn(current, optimistic.id)));
+        this.options.pending.enqueueComposerMessage(operation.thread.id, { ...message, operationState: "preparing" });
+        return await this.deliverPending(operation, "queue", () => operation.stopped);
+      }
+      const keep = accepted && !interrupted;
+      this.options.updateState(state => {
+        const next = optimisticThreadID ? updateThreadByID(state, optimisticThreadID, current => interrupted ? interruptOptimisticTurn(current, optimistic.id, Date.now()) : keep ? current : dropOptimisticTurn(current, optimistic.id)) : state;
+        const stillTarget = optimisticThreadID ? activeThreadIDForState(state) === optimisticThreadID : state.activeSessionTabID === source.id;
+        return stillTarget ? { ...next, running: keep, status: "" } : next;
+      });
+      if (!interrupted && !keep) this.phase(operation, "failed", raw);
+      if (operation.sent && optimisticThreadID && this.stopRequests.has(optimisticThreadID)) await this.interruptAccepted(optimisticThreadID);
+      return !operation.creationCancelled && (interrupted || keep);
+    } finally {
+      operation.resolve(operation.thread);
+      if (this.admissions.get(key) === operation) this.admissions.delete(key);
+      if (operation.thread && this.admissions.get(operation.thread.id) === operation) this.admissions.delete(operation.thread.id);
+      this.creations.delete(source.id);
+      if (!optimisticThreadID) {
+        forgetLocalTurnTiming(optimistic.id);
+        this.options.updateState(state => state.activeSessionTabID === source.id ? { ...state, running: false } : state);
+      }
+      this.publish(); this.reconcile();
+    }
+  }
+
+  async stop(ownerTabId: string): Promise<void> {
+    const state = this.options.getState(); const tab = state.sessionTabs.find(tab => tab.id === ownerTabId);
+    const creation = this.creations.get(ownerTabId);
+    if (creation) { this.cancel(creation.view.operationID); return; }
+    if (tab?.kind !== "thread") return;
+    const thread = threadForTab(state, tab.threadID); if (!thread) return;
+    const admission = this.admissions.get(thread.id);
+    if (admission) { admission.stopped = true; if (!admission.sent) admission.cancelPreparation(); }
+    const lane = this.lanes.get(thread.id); if (lane) lane.stopVersion++;
+    if (this.stopRequests.get(thread.id)?.phase === "pending") return;
+    this.stopRequests.set(thread.id, { target: thread.turns.at(-1)?.id, phase: "pending" }); this.publish();
+    if (admission && !thread.turns.some(turn => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) return;
+    await this.interruptAccepted(thread.id);
+  }
+  private async interruptAccepted(threadID: string): Promise<void> {
+    const request = this.stopRequests.get(threadID) ?? { phase: "pending" as const };
+    if (request.delivery) return;
+    const delivery = Symbol(); this.stopRequests.set(threadID, { ...request, delivery });
+    try {
+      const result = await window.wuu.interruptTurn(threadID);
+      if (!result.ok) throw new Error(t("composer.stopUnconfirmed"));
+    } catch (error) {
+      if (this.stopRequests.get(threadID)?.delivery !== delivery) return;
+      this.stopRequests.set(threadID, { ...request, phase: "retry", delivery: undefined }); this.report(error);
+    }
+  }
+  reconcile(): void {
+    const state = this.options.getState();
+    for (const [threadID, request] of this.stopRequests) {
+      const thread = threadForTab(state, threadID);
+      const targetEnded = thread?.turns.some(turn => turn.status !== "in_progress" && (turn.id === request.target || turn.items.some(item => item.type === "user_message" && item.source_id && `${OPTIMISTIC_TURN_ID_PREFIX}${item.source_id}` === request.target)));
+      if (thread && !isThreadRunning(thread) && !this.admissions.has(threadID) && (request.phase !== "retry" || targetEnded)) this.stopRequests.delete(threadID);
+      else if (request.phase === "pending" && thread?.turns.some(turn => turn.status === "in_progress" && !turn.answer_ready_at && !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX))) void this.interruptAccepted(threadID);
+    }
+    this.saveRecovery();
+    for (const id of this.failedDrafts) if (id === state.activeSessionTabID || !state.sessionTabs.some(tab => tab.id === id)) this.failedDrafts.delete(id);
+  }
+  private recover(operation: Operation): void {
+    const { message, source } = operation;
+    const draft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files.filter(file => file.id !== operation.implicitFileID) };
+    const owner = operation.thread ? threadSessionTabID(operation.thread.id) : source.id;
+    const state = this.options.getState();
+    if (state.sessionTabs.some(tab => tab.id === owner) && !composerDraftHasContent(this.options.getDraft(owner))) {
+      rememberCollapsedPromptParts(operation.thread?.id ?? owner, draft.prompt, draft.contentParts);
+      this.options.setDraft(owner, cloneComposerDraft(draft)); return;
+    }
+    if (operation.thread) this.options.updateState(state => updateThreadByID(state, operation.thread!.id, current => upsertTurn(current, { ...createOptimisticTurn(message, Date.now()), status: "failed", error: { message: operation.view.error || t("composer.sendFailed") } })));
+    const recovery = createDraftSessionTab(`draft:recovery:${message.id}`, operation.context, draft);
+    rememberCollapsedPromptParts(recovery.id, draft.prompt, draft.contentParts);
+    this.options.updateState(state => ({ ...state, sessionTabs: [recovery, ...state.sessionTabs] }));
+    this.failedDrafts.add(recovery.id);
+  }
+  private saveRecovery(): void {
+    const state = this.options.getState();
+    if (!state.initialized || !state.activeContext) return;
+    const tabs = new Map(state.sessionTabs.map(tab => [tab.id, tab]));
+    for (const [id, tab] of tabs) {
+      if (tab.kind === "skills") continue;
+      const draft = this.options.getDraft(id);
+      const parts = readCollapsedPromptParts(tab.kind === "thread" ? tab.threadID : id, draft.prompt);
+      const previous = this.recoveryText.get(id);
+      const hasReferences = parts ? parts.some(part => part.type !== "text" && part.type !== "pasted_text")
+        : Boolean(previous?.hasReferences && draft.prompt && draft.prompt !== previous.text);
+      const text = parts ? parts.filter(part => part.type === "text" || part.type === "pasted_text").map(part => part.text).join("")
+        : previous?.prompt === draft.prompt ? previous.text : hasReferences ? "" : draft.prompt;
+      this.recoveryText.set(id, { prompt: draft.prompt, text, hasReferences });
+      tabs.set(id, { ...tab, ...draft, prompt: text });
+    }
+    for (const id of this.recoveryText.keys()) if (!tabs.has(id)) this.recoveryText.delete(id);
+    for (const operation of this.operations.values()) {
+      if (operation.view.phase !== "preparing" && operation.view.phase !== "sending") continue;
+      const parts = operation.message.contentParts;
+      const prompt = parts ? parts.filter(part => part.type === "text" || part.type === "pasted_text").map(part => part.text).join("") : operation.message.text;
+      const id = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;
+      const live = tabs.get(id);
+      if (!live || live.kind === "skills") continue;
+      if (!live.prompt.trim()) tabs.set(id, { ...live, prompt });
+      else if (live.prompt !== prompt) {
+        const recovery = createDraftSessionTab(`draft:recovery:${operation.message.id}`, operation.context, { ...emptyComposerDraft(), prompt });
+        tabs.set(recovery.id, recovery);
+      }
+    }
+    const saved = writeComposerDraftRecovery([...tabs.values()], state.activeSessionTabID);
+    if (!saved && !this.recoveryWarning) this.report(t("settings.draftRecoveryUnavailable"));
+    this.recoveryWarning = !saved;
+  }
+  private report(error: unknown): void { this.options.updateState(state => ({ ...state, status: rawErrorMessage(error, t("composer.sendFailed")) })); }
+
+  async submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {
+    const source = this.options.getState().sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id);
+    if (!source || source.kind === "skills" || this.disposed || thread.read_only) return false;
+    const operation = this.createOperation(message, source, thread);
+    message.images.forEach(value => this.options.resources.remember("image", value));
+    message.files.forEach(value => this.options.resources.remember("file", value));
+    const release = this.options.resources.retain([...message.images, ...message.files].map(value => value.id));
+    try { const sent = await this.send(operation, prepareThread); this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error); return sent; }
+    finally { release(); }
+  }
+  dispose(): void {
+    this.disposed = true;
+    for (const operation of this.operations.values()) if (!operation.sent) this.cancel(operation.view.operationID);
+  }
+}
