@@ -2714,3 +2714,6 @@ export * from "./session-service.js";
 
 export * from "./ui-composer.js";
 export * from "./prompt-service.js";
+export * from "./compaction-service.js";
+export * from "./application-settings.js";
+export * from "./ui-preview.js";
