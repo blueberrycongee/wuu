@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, cp, readFile, writeFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,6 +10,8 @@ const exec = promisify(execFile);
 const authorSDK = fileURLToPath(new URL('../', import.meta.url));
 const sdk = resolve(process.env.WUU_PARITY_SDK_ROOT ?? authorSDK);
 const repo = resolve(authorSDK, '../..');
+const output = resolve(process.env.WUU_PARITY_OUTPUT ?? join(repo, 'artifacts/parity-author'));
+await mkdir(output, {recursive: true});
 const temporary = await mkdtemp(join(tmpdir(), 'wuu-parity-author-'));
 try {
   const stage = join(temporary, 'package');
@@ -29,12 +32,16 @@ try {
     await symlink(join(sdk, 'node_modules', dependency), destination);
   }
   await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
-  for (const name of ['tools', 'sessions', 'journal', 'turn-state']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
+  for (const name of ['tools', 'sessions', 'journal', 'turn-state', 'prompt']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
   for (const name of ['shell', 'navigation']) await cp(join(repo, `examples/plugins/independent-providers/${name}.tsx`), join(project, `${name}.tsx`));
-  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'shell.tsx', 'navigation.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
-  const checked = await exec(process.execPath, ['--test', join(authorSDK, 'test/parity-tools.test.mjs'), join(authorSDK, 'test/parity-sessions.test.mjs')], {
-    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js')},
+  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'prompt.ts', 'shell.tsx', 'navigation.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
+  const checked = await exec(process.execPath, ['--test', join(authorSDK, 'test/parity-tools.test.mjs'), join(authorSDK, 'test/parity-sessions.test.mjs'), join(authorSDK, 'test/parity-policies.test.mjs')], {
+    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js'), WUU_PARITY_PROMPT_ENTRY: join(project, 'prompt.js')},
   });
+  await writeFile(join(output, 'public-sdk-check.log'), checked.stdout);
+  const tarball = await readFile(join(temporary, packed));
+  await cp(join(temporary, packed), join(output, 'sdk.tgz'));
+  await writeFile(join(output, 'public-sdk-check.json'), JSON.stringify({passed: true, sdkRoot: sdk, packageSHA256: createHash('sha256').update(tarball).digest('hex'), package: manifest.name, version: manifest.version, sourceFiles: ['tools.ts', 'sessions.ts', 'journal.ts', 'turn-state.ts', 'prompt.ts', 'shell.tsx', 'navigation.tsx']}, null, 2));
   console.log(checked.stdout);
   console.log('PASS: independent session metadata and tool providers compiled against packed public SDK; no dependency installation.');
 } catch (error) {

@@ -2,6 +2,7 @@ import {
   RuntimeHostServiceError, sessionDomainProvider, type RuntimePlugin,
   type SessionDomainHandlers, type SessionDomainSession as Session,
   type SessionDomainHistoryRecord as HistoryRecord,
+  type SessionDomainPluginGenerationSnapshot as GenerationSnapshot,
 } from '@wuu/plugin-sdk';
 
 import {createTurnState} from './turn-state.js';
@@ -16,7 +17,7 @@ function checkedHistory(value: readonly HistoryRecord[]): HistoryRecord[] {
 /** Volatile author probe. Inference, compaction and recovery are deliberately unsupported. */
 export function createSessionProvider(owner = 'independent-sessions'): RuntimePlugin {
   const sessions = new Map<string, Session>();
-  const generations = new Map<string, Parameters<NonNullable<SessionDomainHandlers['WritePluginGenerationSnapshot']>>[0][1]>();
+  const generations = new Map<string, GenerationSnapshot>();
   const histories = new Map<string, readonly HistoryRecord[]>();
   let active = false;
   const journal = createJournal();
