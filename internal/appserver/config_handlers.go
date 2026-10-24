@@ -1207,7 +1207,6 @@ func (s *Server) handleConfigAdvancedUpdate(req Request) error {
 		s.rt.StreamRunner.OutputReserveTokens = modelBudget.OutputReserveTokens
 		s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
 	}
-	s.updateRootAgentControlWorkerDefaults()
 	s.updateIdleThreadAdvancedRuntime(cfg)
 	if s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
@@ -1869,7 +1868,6 @@ func (s *Server) applyModelSelectionToRuntime(
 			s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
 		}
 	}
-	s.updateRootAgentControlWorkerDefaults()
 	if connectionChanged {
 		// Connection credentials/endpoints are workspace configuration, so every
 		// cached runtime must rebuild before its next turn. Running turns keep
@@ -2638,8 +2636,7 @@ func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
 
 // workerManagerOptionsForDerivation builds worker manager options from a
 // thread's own derived worker role, layering the workspace behavior knobs
-// (temperature, compaction cadence) that apply uniformly. It is the per-thread
-// analogue of currentWorkerManagerOptions, which serves the workspace runtime.
+// (temperature, compaction cadence) that apply uniformly.
 func (s *Server) workerManagerOptionsForDerivation(derivation runtime.ThreadModelDerivation) subagent.ManagerOptions {
 	temperature := 0.0
 	compactPct := 0.0
@@ -2659,46 +2656,6 @@ func (s *Server) workerManagerOptionsForDerivation(derivation runtime.ThreadMode
 		MaxInputTokens:          derivation.WorkerModelBudget.InputLimitTokens,
 		OutputReserveTokens:     derivation.WorkerModelBudget.OutputReserveTokens,
 		CompactThresholdTokens:  derivation.WorkerModelBudget.CompactThresholdTokens,
-		Temperature:             temperature,
-		CompactThresholdPct:     compactPct,
-		CompactKeepRecentTokens: keepRecent,
-		DisableAutoCompact:      disableCompact,
-	}
-}
-
-func (s *Server) updateRootAgentControlWorkerDefaults() {
-	if s == nil || s.rt == nil || s.rt.AgentControl == nil {
-		return
-	}
-	s.rt.AgentControl.UpdateWorkerDefaults(
-		s.rt.WorkerClient,
-		s.rt.ModelRoles.Worker.APIModel,
-		s.currentWorkerManagerOptions(),
-	)
-}
-
-func (s *Server) currentWorkerManagerOptions() subagent.ManagerOptions {
-	if s == nil || s.rt == nil {
-		return subagent.ManagerOptions{}
-	}
-	compactPct := 0.0
-	keepRecent := 0
-	disableCompact := false
-	temperature := 0.0
-	if s.rt.StreamRunner != nil {
-		compactPct = s.rt.StreamRunner.CompactThresholdPct
-		keepRecent = s.rt.StreamRunner.CompactKeepRecentTokens
-		disableCompact = s.rt.StreamRunner.DisableAutoCompact
-		temperature = s.rt.StreamRunner.Temperature
-	}
-	return subagent.ManagerOptions{
-		DefaultProviderName:     workerProviderName(s.rt),
-		DefaultEffort:           s.rt.ModelRoles.Worker.LegacyEffort,
-		DefaultProviderOptions:  s.rt.ModelRoles.Worker.ProviderOptions,
-		ContextWindowOverride:   s.rt.WorkerModelBudget.ContextWindowTokens,
-		MaxInputTokens:          s.rt.WorkerModelBudget.InputLimitTokens,
-		OutputReserveTokens:     s.rt.WorkerModelBudget.OutputReserveTokens,
-		CompactThresholdTokens:  s.rt.WorkerModelBudget.CompactThresholdTokens,
 		Temperature:             temperature,
 		CompactThresholdPct:     compactPct,
 		CompactKeepRecentTokens: keepRecent,

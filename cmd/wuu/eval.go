@@ -16,6 +16,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/evalharness"
@@ -25,7 +26,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/securefs"
-	sessionid "github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
@@ -365,9 +366,9 @@ type evalTaskRunConfig struct {
 	KeepWorkdir   bool
 }
 
-// waitForSubAgentQuiescence blocks until every spawned sub-agent reaches a
-// terminal lifecycle state, so task verification observes finished child work
-// instead of racing it. Bounded by ctx (the per-task timeout).
+// waitForSubAgentQuiescence closes worker admission after every child becomes
+// terminal, then waits for physical execution release before task verification.
+// The task context bounds the wait without releasing unfinished ownership.
 func waitForSubAgentQuiescence(ctx context.Context, control *agentcontrol.AgentControl) error {
 	if control == nil {
 		return nil
@@ -382,7 +383,10 @@ func waitForSubAgentQuiescence(ctx context.Context, control *agentcontrol.AgentC
 			}
 		}
 		if active == 0 {
-			return nil
+			// Terminal status precedes finalization and physical lease release.
+			// Stop admission before taking the final execution-drain snapshot.
+			control.BeginShutdown()
+			return control.WaitOwnedWorkerExecutions(ctx)
 		}
 		select {
 		case <-ctx.Done():
@@ -392,9 +396,9 @@ func waitForSubAgentQuiescence(ctx context.Context, control *agentcontrol.AgentC
 	}
 }
 
-func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
+func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 	started := time.Now()
-	result := evalharness.Result{
+	result = evalharness.Result{
 		TaskID:   cfg.Task.ID,
 		TaskName: cfg.Task.Name,
 	}
@@ -445,92 +449,127 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 		result.DurationMS = time.Since(started).Milliseconds()
 		return result
 	}
-	evalSessionID := "eval-" + cfg.Task.ID + "-" + sessionid.NewID()
-	if err := rt.SetSessionID(evalSessionID); err != nil {
-		_, _ = rt.Cleanup()
-		result.Error = err.Error()
+	var engine agentengine.Session
+	defer func() {
+		var cleanupErr error
+		if engine != nil {
+			// An expired task context must not release the workspace while the
+			// engine still owns worker cleanup and its provider generation.
+			cleanupErr = engine.Close(context.Background())
+		}
+		_, workspaceErr := rt.Cleanup()
+		if cleanupErr = errors.Join(cleanupErr, workspaceErr); cleanupErr != nil {
+			result.Success = false
+			if result.Error == "" {
+				result.Error = cleanupErr.Error()
+			} else {
+				result.Error = errors.Join(errors.New(result.Error), cleanupErr).Error()
+			}
+		}
+		result.Validation = evalharness.BuildValidationSummary(result)
 		result.DurationMS = time.Since(started).Milliseconds()
+		persistEvalTrace(&result)
+	}()
+	evalSessionID := "eval-" + cfg.Task.ID + "-" + session.NewID()
+	if err := rt.SetSessionID(evalSessionID); err != nil {
+		result.Error = err.Error()
 		return result
 	}
-	defer func() {
-		_, _ = rt.Cleanup()
-	}()
-	if cfg.MaxSteps > 0 {
-		rt.StreamRunner.MaxSteps = cfg.MaxSteps
+	engine, thread, err := runtime.NewWuuEngine(rt).OpenWithRuntime(ctx, agentengine.OpenRequest{ThreadID: evalSessionID, RootDir: taskRoot})
+	if err != nil {
+		result.Error = err.Error()
+		return result
 	}
-	if rt.Toolkit != nil {
-		if err := waitForMCPRequiredTools(ctx, rt.Toolkit, cfg.Task.RequiredTools, 5*time.Second); err != nil {
+	runner := thread.StreamRunner
+	if _, err := thread.Sessions.WithContext(ctx).CreateInitialized(session.Session{
+		ID: evalSessionID, Title: cfg.Task.Name, CWD: taskRoot, WorkspaceID: rt.WorkspaceID,
+		Source: "eval", EngineID: string(agentengine.EngineWuu),
+		Provider: runner.ProviderName, Model: runner.Model, Variant: runner.Variant,
+		Effort: runner.Effort, PermissionMode: thread.Selection.PermissionMode,
+	}, nil); err != nil {
+		result.Error = fmt.Sprintf("create eval session: %v", err)
+		return result
+	}
+	if cfg.MaxSteps > 0 {
+		runner.MaxSteps = cfg.MaxSteps
+	}
+	if thread.Toolkit != nil {
+		if err := waitForMCPRequiredTools(ctx, thread.Toolkit, cfg.Task.RequiredTools, 5*time.Second); err != nil {
 			result.Error = err.Error()
-			result.DurationMS = time.Since(started).Milliseconds()
 			return result
 		}
 	}
 
 	var contextRequests []agent.RequestContextInfo
-	if rt.StreamRunner != nil {
-		previous := rt.StreamRunner.OnRequestContext
-		previousTokenUsage := rt.StreamRunner.OnTokenUsage
-		rt.StreamRunner.OnRequestContext = func(info agent.RequestContextInfo) {
-			if previous != nil {
-				previous(info)
-			}
-			contextRequests = append(contextRequests, agent.RequestContextInfo{
-				StepIndex:                info.StepIndex,
-				TransientMessages:        info.TransientMessages,
-				ContentBytes:             info.ContentBytes,
-				BlockKinds:               append([]string(nil), info.BlockKinds...),
-				BlockKindCounts:          cloneStringIntMap(info.BlockKindCounts),
-				BlockKindBytes:           cloneStringIntMap(info.BlockKindBytes),
-				SegmentLifecycleCounts:   cloneStringIntMap(info.SegmentLifecycleCounts),
-				SegmentPlacementCounts:   cloneStringIntMap(info.SegmentPlacementCounts),
-				SegmentCachePolicyCounts: cloneStringIntMap(info.SegmentCachePolicyCounts),
-				MessageCount:             info.MessageCount,
-				SystemMessages:           info.SystemMessages,
-				HiddenMessages:           info.HiddenMessages,
-				ToolCount:                info.ToolCount,
-				StablePrefix:             info.StablePrefix,
-				TurnPrefix:               info.TurnPrefix,
-				DynamicBytes:             info.DynamicBytes,
-				SystemBytes:              info.SystemBytes,
-				StablePrefixBytes:        info.StablePrefixBytes,
-				TurnPrefixBytes:          info.TurnPrefixBytes,
-				MessageBytes:             info.MessageBytes,
-				ToolSchemaBytes:          info.ToolSchemaBytes,
-				LoadableToolCount:        info.LoadableToolCount,
-				LoadableToolSchemaBytes:  info.LoadableToolSchemaBytes,
-				LoadableToolSurfaceHash:  info.LoadableToolSurfaceHash,
-				SystemHash:               info.SystemHash,
-				StablePrefixHash:         info.StablePrefixHash,
-				TurnPrefixHash:           info.TurnPrefixHash,
-				ToolSurfaceHash:          info.ToolSurfaceHash,
-				PromptCacheKey:           info.PromptCacheKey,
-				InputTokens:              info.InputTokens,
-				OutputTokens:             info.OutputTokens,
-				CacheCreationTokens:      info.CacheCreationTokens,
-				CacheReadTokens:          info.CacheReadTokens,
-			})
+	previous := runner.OnRequestContext
+	previousTokenUsage := runner.OnTokenUsage
+	runner.OnRequestContext = func(info agent.RequestContextInfo) {
+		if previous != nil {
+			previous(info)
 		}
-		rt.StreamRunner.OnTokenUsage = func(usage providers.TokenUsage) {
-			if previousTokenUsage != nil {
-				previousTokenUsage(usage)
-			}
-			attachUsageToLatestEvalRequestContext(contextRequests, usage)
+		contextRequests = append(contextRequests, agent.RequestContextInfo{
+			StepIndex:                info.StepIndex,
+			TransientMessages:        info.TransientMessages,
+			ContentBytes:             info.ContentBytes,
+			BlockKinds:               append([]string(nil), info.BlockKinds...),
+			BlockKindCounts:          cloneStringIntMap(info.BlockKindCounts),
+			BlockKindBytes:           cloneStringIntMap(info.BlockKindBytes),
+			SegmentLifecycleCounts:   cloneStringIntMap(info.SegmentLifecycleCounts),
+			SegmentPlacementCounts:   cloneStringIntMap(info.SegmentPlacementCounts),
+			SegmentCachePolicyCounts: cloneStringIntMap(info.SegmentCachePolicyCounts),
+			MessageCount:             info.MessageCount,
+			SystemMessages:           info.SystemMessages,
+			HiddenMessages:           info.HiddenMessages,
+			ToolCount:                info.ToolCount,
+			StablePrefix:             info.StablePrefix,
+			TurnPrefix:               info.TurnPrefix,
+			DynamicBytes:             info.DynamicBytes,
+			SystemBytes:              info.SystemBytes,
+			StablePrefixBytes:        info.StablePrefixBytes,
+			TurnPrefixBytes:          info.TurnPrefixBytes,
+			MessageBytes:             info.MessageBytes,
+			ToolSchemaBytes:          info.ToolSchemaBytes,
+			LoadableToolCount:        info.LoadableToolCount,
+			LoadableToolSchemaBytes:  info.LoadableToolSchemaBytes,
+			LoadableToolSurfaceHash:  info.LoadableToolSurfaceHash,
+			SystemHash:               info.SystemHash,
+			StablePrefixHash:         info.StablePrefixHash,
+			TurnPrefixHash:           info.TurnPrefixHash,
+			ToolSurfaceHash:          info.ToolSurfaceHash,
+			PromptCacheKey:           info.PromptCacheKey,
+			InputTokens:              info.InputTokens,
+			OutputTokens:             info.OutputTokens,
+			CacheCreationTokens:      info.CacheCreationTokens,
+			CacheReadTokens:          info.CacheReadTokens,
+		})
+	}
+	runner.OnTokenUsage = func(usage providers.TokenUsage) {
+		if previousTokenUsage != nil {
+			previousTokenUsage(usage)
 		}
+		attachUsageToLatestEvalRequestContext(contextRequests, usage)
+	}
+	if thread.AgentControl != nil {
+		thread.AgentControl.StartWorkerTerminalRecovery()
+		thread.AgentControl.StartQueuedWork()
 	}
 
 	history := []providers.ChatMessage{}
-	if strings.TrimSpace(rt.StreamRunner.SystemPrompt) != "" {
-		history = append(history, providers.ChatMessage{Role: "system", Content: rt.StreamRunner.SystemPrompt})
+	if strings.TrimSpace(runner.SystemPrompt) != "" {
+		history = append(history, providers.ChatMessage{Role: "system", Content: runner.SystemPrompt})
 	}
 	userMessage := providers.ChatMessage{Role: "user", Content: cfg.Task.Prompt}
 	history = append(history, userMessage)
 
-	runResult, runErr := rt.StreamRunner.RunWithCallback(ctx, history, nil)
+	turnResult, runErr := engine.RunTurn(ctx, agentengine.TurnInput{History: history}, nil)
+	runResult := turnResult.Result
 	// Background sub-agents spawned during the turn outlive the main agent's
 	// final answer. Verification must observe their terminal state, not race
-	// against it: wait (bounded by the task ctx) until every child settles.
-	if waitErr := waitForSubAgentQuiescence(ctx, rt.AgentControl); waitErr != nil && runErr == nil {
-		runErr = fmt.Errorf("sub-agents still running at verification: %w", waitErr)
+	// against it: wait (bounded by the task ctx) until every child releases its
+	// physical execution lease, without removing worktrees before verification.
+	waitErr := waitForSubAgentQuiescence(ctx, thread.AgentControl)
+	if waitErr != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("sub-agents still running at verification: %w", waitErr))
 	}
 	result.InputTokens = runResult.InputTokens
 	result.OutputTokens = runResult.OutputTokens
@@ -538,8 +577,8 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 	result.CacheReadTokens = runResult.CacheReadTokens
 	result.CacheHitRate = evalharness.CacheHitRate(result.InputTokens, result.CacheReadTokens)
 	result.Turns = countAssistantTurns(runResult.NewMessages)
-	if rt.Toolkit != nil {
-		records := rt.Toolkit.ToolTelemetry()
+	if thread.Toolkit != nil {
+		records := thread.Toolkit.ToolTelemetry()
 		result.ToolCalls = len(records)
 		result.ToolNames = uniqueToolNames(records)
 		result.ToolSequence = toolNameSequence(records)
@@ -550,22 +589,23 @@ func runEvalTask(cfg evalTaskRunConfig) evalharness.Result {
 	result.MissingToolCalls = missingRequiredToolCalls(cfg.Task.RequiredToolCalls, runResult.NewMessages)
 	result.MissingToolSeq = missingRequiredToolSequence(cfg.Task.RequiredToolSequence, runResult.NewMessages)
 
-	verification, verifyErr := evalharness.VerifyTask(ctx, cfg.Task, taskRoot, runResult.Content)
-	if verifyErr != nil {
-		result.Error = verifyErr.Error()
+	if waitErr == nil {
+		verification, verifyErr := evalharness.VerifyTask(ctx, cfg.Task, taskRoot, runResult.Content)
+		if verifyErr != nil {
+			result.Error = verifyErr.Error()
+		} else {
+			result.Success = runErr == nil && verification.Passed && len(result.MissingTools) == 0 && len(result.ForbiddenToolsUsed) == 0 && len(result.MissingToolCalls) == 0 && len(result.MissingToolSeq) == 0 && len(result.MissingErrors) == 0
+			result.VerificationReason = verification.Reason
+			result.VerificationEvidence = verification.Evidence
+		}
 	} else {
-		result.Success = runErr == nil && verification.Passed && len(result.MissingTools) == 0 && len(result.ForbiddenToolsUsed) == 0 && len(result.MissingToolCalls) == 0 && len(result.MissingToolSeq) == 0 && len(result.MissingErrors) == 0
-		result.VerificationReason = verification.Reason
-		result.VerificationEvidence = verification.Evidence
+		result.VerificationReason = "verification skipped while worker executions remain active"
 	}
 	if runErr != nil {
 		result.Error = runErr.Error()
 	}
-	result.Observability = collectEvalObservability(rt, evalSessionID, taskRoot, cfg.KeepWorkdir, runResult.Content, contextRequests)
+	result.Observability = collectEvalObservability(thread, rt.StateDir, evalSessionID, taskRoot, cfg.KeepWorkdir, runResult.Content, contextRequests)
 	applyEvalAttentionIssues(&result)
-	result.Validation = evalharness.BuildValidationSummary(result)
-	result.DurationMS = time.Since(started).Milliseconds()
-	persistEvalTrace(&result)
 	return result
 }
 
@@ -612,7 +652,7 @@ func attachUsageToLatestEvalRequestContext(records []agent.RequestContextInfo, u
 	record.CacheReadTokens = usage.CacheReadTokens
 }
 
-func collectEvalObservability(rt *runtime.Session, sessionID, taskRoot string, keepWorkdir bool, finalAnswer string, contextRequests []agent.RequestContextInfo) *evalharness.Observability {
+func collectEvalObservability(rt *runtime.ThreadRuntime, stateDir, sessionID, taskRoot string, keepWorkdir bool, finalAnswer string, contextRequests []agent.RequestContextInfo) *evalharness.Observability {
 	obs := &evalharness.Observability{
 		SessionID:          strings.TrimSpace(sessionID),
 		FinalAnswerPreview: evalSafePreview(finalAnswer, evalAnswerPreviewLimit),
@@ -628,7 +668,7 @@ func collectEvalObservability(rt *runtime.Session, sessionID, taskRoot string, k
 		obs.Warnings = append(obs.Warnings, "runtime session is unavailable")
 		return obs
 	}
-	obs.StateDir = strings.TrimSpace(rt.StateDir)
+	obs.StateDir = strings.TrimSpace(stateDir)
 	obs.ModelProfile = evalModelProfileObservation(rt)
 	obs.ContextBlocks = evalContextBlockObservations(rt)
 	if obs.StateDir != "" {
@@ -675,22 +715,20 @@ func persistEvalTrace(result *evalharness.Result) {
 	}
 }
 
-func evalModelProfileObservation(rt *runtime.Session) *evalharness.ModelProfileObservation {
-	if rt == nil {
+func evalModelProfileObservation(rt *runtime.ThreadRuntime) *evalharness.ModelProfileObservation {
+	if rt == nil || rt.StreamRunner == nil {
 		return nil
 	}
-	apiModel := ""
-	if rt.StreamRunner != nil {
-		apiModel = strings.TrimSpace(rt.StreamRunner.APIModel)
-	}
+	runner := rt.StreamRunner
+	apiModel := strings.TrimSpace(runner.APIModel)
 	modelForProfile := apiModel
 	if modelForProfile == "" {
-		modelForProfile = strings.TrimSpace(rt.Model)
+		modelForProfile = strings.TrimSpace(runner.Model)
 	}
-	profile := modelprofile.Resolve(rt.ProviderName, modelForProfile)
+	profile := modelprofile.Resolve(runner.ProviderName, modelForProfile)
 	return &evalharness.ModelProfileObservation{
-		ProviderName:              rt.ProviderName,
-		Model:                     rt.Model,
+		ProviderName:              runner.ProviderName,
+		Model:                     runner.Model,
 		APIModel:                  apiModel,
 		Family:                    string(profile.Family),
 		ToolCalling:               string(profile.APIShape.ToolCalling),
@@ -706,7 +744,7 @@ func evalModelProfileObservation(rt *runtime.Session) *evalharness.ModelProfileO
 	}
 }
 
-func evalContextBlockObservations(rt *runtime.Session) []evalharness.ContextBlockObservation {
+func evalContextBlockObservations(rt *runtime.ThreadRuntime) []evalharness.ContextBlockObservation {
 	if rt == nil {
 		return nil
 	}

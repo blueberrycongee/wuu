@@ -14,17 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
-// workerProviderName returns the provider name used by worker runs.
-func workerProviderName(rt *runtime.Session) string {
-	if rt == nil {
-		return ""
-	}
-	if name := strings.TrimSpace(rt.ModelRoles.Worker.Provider); name != "" {
-		return name
-	}
-	return strings.TrimSpace(rt.ProviderName)
-}
-
 // parseParticipantModelPin splits a participant model pin into provider and
 // model parts. A bare model follows the current worker provider.
 func parseParticipantModelPin(value string) (providerName, modelName string) {

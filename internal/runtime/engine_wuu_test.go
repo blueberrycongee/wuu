@@ -18,6 +18,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
@@ -68,11 +69,26 @@ func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 	s.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
 	t.Cleanup(func() { _, _ = s.Cleanup(); _ = generation.close() })
 	factory := NewWuuEngine(s)
-	first, err := factory.Open(context.Background(), agentengine.OpenRequest{ThreadID: "first"})
+	first, firstRuntime, err := factory.OpenWithRuntime(context.Background(), agentengine.OpenRequest{ThreadID: "first"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = first.Close(context.Background()) })
+	model := &defaultBindingModel{}
+	firstRuntime.StreamRunner.Client = model
+	if _, err := first.RunTurn(context.Background(), agentengine.TurnInput{}, nil); !errors.Is(err, session.ErrSessionNotFound) || model.calls != 0 {
+		t.Fatalf("missing metadata admitted inference: calls=%d err=%v", model.calls, err)
+	}
+	if _, err := firstRuntime.Sessions.CreateWithMetadata("first", s.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	// Native observers configure the exact runner owned by the engine. Changing
+	// workspace defaults after capture must not redirect this admitted session.
+	s.StreamRunner.Client = &defaultBindingModel{fail: true}
+	result, err := first.RunTurn(context.Background(), agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "hello"}}}, nil)
+	if err != nil || result.Result.Content != "Hello" || model.calls != 1 {
+		t.Fatalf("owned runtime was not used: result=%+v calls=%d err=%v", result.Result, model.calls, err)
+	}
 	second, err := factory.Resume(context.Background(), agentengine.ResumeRequest{OpenRequest: agentengine.OpenRequest{ThreadID: "second"}})
 	if err != nil {
 		t.Fatal(err)
