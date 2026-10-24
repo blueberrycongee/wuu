@@ -7,8 +7,7 @@ import type { ThreadItem, ToolResultContentPart, Turn } from "../shared/protocol
 import { useImagePreview } from "./ImagePreview";
 import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import { useI18n } from "./i18n";
-import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
-import { WorkbenchContentRenderer } from "./plugins/Workbench";
+import { useConversationControls, useConversationTurnIdentity } from "./ConversationControlsContext";
 import { RichContent } from "./RichContent";
 import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
 import { AttachmentImage } from "./AttachmentImage";
@@ -367,22 +366,11 @@ function ArtifactRenderer({
       onPreview={onPreview}
     />
   );
-  const content = (
-    <WorkbenchContentRenderer
-      controller={desktopWorkbenchController}
-      category="tool-result"
-      contentType={artifact.mimeType}
-      content={artifact}
-      metadata={{
-        artifactId: artifact.ref ?? artifact.id,
-        partId: artifact.id,
-        itemId: artifact.itemId,
-        placement: artifact.placement,
-        variant,
-      }}
-      fallback={fallback}
-    />
-  );
+  const { slots } = useConversationControls();
+  const { threadId, turnId } = useConversationTurnIdentity();
+  const content = <slots.Slot name="wuu.default-conversation/conversation.artifact"
+    context={{threadId, turnId, itemId: artifact.itemId, partId: artifact.id, variant}}
+    fallback={fallback} />;
   if (variant === "inline" && artifact.foldPreview && !inspectionExpanded) {
     return (
       <div className="process-surface">

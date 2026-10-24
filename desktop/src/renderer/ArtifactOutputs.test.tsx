@@ -7,9 +7,8 @@ import { expect, it, vi } from "vitest";
 import { ArtifactPreview, collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
 import { ArtifactPreviewContext, ArtifactThreadContext } from "./ArtifactPreviewContext";
 import type { ThreadItem, Turn } from "../shared/protocol";
-const { openPreview } = vi.hoisted(() => ({ openPreview: vi.fn() }));
-vi.mock("./plugins/DesktopPluginRuntime", () => ({desktopWorkbenchController:{ subscribe: () => () => {}, getSnapshot: () => 0 }}));
-vi.mock("./plugins/Workbench", () => ({WorkbenchContentRenderer:({fallback}:{fallback:React.ReactNode})=>fallback}));
+const { openPreview, renderArtifactSlot } = vi.hoisted(() => ({ openPreview: vi.fn(), renderArtifactSlot: vi.fn(({fallback}: {fallback?: React.ReactNode}) => fallback) }));
+vi.mock("./ConversationControlsContext", () => ({useConversationControls: () => ({slots:{Slot:renderArtifactSlot}}), useConversationTurnIdentity: () => ({threadId:"source-thread",turnId:"source-turn"})}));
 vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key, formatNumber:(value:number)=>String(value)})}));
 vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview})}));
 
@@ -299,3 +298,15 @@ function createRoot(container: HTMLElement) {
     root.render(<ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider>);
   }, unmount: () => root.unmount()};
 }
+
+it("routes artifact presentation through the public slot with source identity only", async () => {
+  const artifact = collectTurnArtifacts({items: [presentedImage("part", "snapshot")]})[0];
+  const container = document.createElement("div"), root = createRoot(container);
+  renderArtifactSlot.mockClear();
+  try {
+    await act(async () => root.render(<TurnInlineArtifactOutputs artifacts={[artifact]} inspectionExpanded />));
+    expect(renderArtifactSlot).toHaveBeenCalled();
+    expect(renderArtifactSlot.mock.calls[0][0]).toMatchObject({name:"wuu.default-conversation/conversation.artifact", context:{threadId:"source-thread",turnId:"source-turn",itemId:"part",partId:artifact.id,variant:"inline"}});
+    expect(Object.keys((renderArtifactSlot.mock.calls[0][0] as unknown as {context: object}).context).sort()).toEqual(["itemId","partId","threadId","turnId","variant"]);
+  } finally {act(() => root.unmount());}
+});
