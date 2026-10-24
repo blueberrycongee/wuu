@@ -2729,3 +2729,7 @@ export * from "./ui-composer-runtime.js";
 export * from "./ui-environment.js";
 export * from "./ui-submission.js";
 export * from "./ui-search.js";
+export * from "./ui-terminals.js";
+export * from "./ui-browser.js";
+export * from "./ui-desktop.js";
+export * from "./ui-projects.js";
