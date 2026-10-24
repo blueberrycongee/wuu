@@ -16,6 +16,22 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("resolves search through the shared navigation and rejects a superseded target", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const thread = { id: "search", cwd: context.cwd, preview: "Found", title: "Found", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle", turns: [
+      { id: "turn", status: "completed", items_view: "full", items: [{ id: "answer", seq: 7, type: "agent_message", text: "needle" }] },
+    ] };
+    window.wuu = { searchThreads: vi.fn().mockResolvedValue({ results: [{ thread, message_seq: 7, snippet: "needle" }] }), resumeThread: vi.fn().mockResolvedValue({ thread }) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context });
+    await controller.invoke("search.run", { query: "needle" });
+    const row = controller.getSnapshot().search.results[0];
+    const result = await controller.invoke("search.locate", { resultId: row.resultId });
+    expect(controller.getSnapshot().tabs.activeTabId).toBe("thread:search");
+    expect(controller.getSnapshot().search.target).toMatchObject({ id: result.targetId, phase: "ready", itemId: "answer" });
+    await controller.invoke("search.query", { query: "changed", composing: true });
+    await expect(controller.invoke("search.locate", { resultId: row.resultId })).rejects.toThrow("no longer current");
+  });
+
   it("retains imported history attachments until the shared edit is cancelled", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     const thread = { id: "history", cwd: context.cwd, preview: "", model_provider: "fixture", status: "idle", turns: [

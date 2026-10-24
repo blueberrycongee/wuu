@@ -1,3 +1,4 @@
+import type { ApplicationSearchActionMapV1, ApplicationSearchViewV1 } from "./ui-search.js";
 import type { ApplicationConversationActionMapV1, ApplicationConversationActionsViewV1 } from "./ui-conversation-actions.js";
 import type { ApplicationSubmissionActionMapV1, ApplicationSubmissionSnapshotV1 } from "./ui-submission.js";
 import type { ApplicationComposerRuntimeActionMapV1, ApplicationComposerRuntimeViewV1 } from "./ui-composer-runtime.js";
@@ -56,6 +57,7 @@ export interface ApplicationSnapshotV1 {
     readonly error?: string;
   };
   readonly composer: ComposerSnapshotV1;
+  readonly search: ApplicationSearchViewV1;
   readonly conversationActions: ApplicationConversationActionsViewV1;
   readonly submission: ApplicationSubmissionSnapshotV1;
   readonly composerRuntime: ApplicationComposerRuntimeViewV1;
@@ -96,7 +98,7 @@ export interface ApplicationAppearanceV1 {
 }
 
 /** Commands are scoped to the generation that captured this application handle. */
-export interface ApplicationActionMapV1 extends ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
+export interface ApplicationActionMapV1 extends ApplicationSearchActionMapV1, ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
   "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };

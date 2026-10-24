@@ -25,6 +25,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
         items: [{ id: 'search-1', kind: 'tool-activity', status: 'completed', toolName: 'Search sources', displayLabel: 'Reviewed 3 sources' }] },
     }] },
     composer: { contractVersion: 1, threadId: 'research-1', draftText: '', running: false, availableSubmissionModes: ['send'], model: { id: 'preview', label: 'Preview fixture' }, permission: { id: 'standard', label: 'Standard' } },
+    search: { query: "", composing: false, loading: false, results: [] },
     conversationActions: { questions: [], pendingQuestionIds: [], compactingThreadIds: [], handoffThreadIds: [] },
     submission: { operations: [], pendingCreations: [], failedDraftTabIds: [], stopRequests: [] },
     composerRuntime: { owners: [] },

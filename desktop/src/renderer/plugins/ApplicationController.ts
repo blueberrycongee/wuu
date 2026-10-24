@@ -1,3 +1,5 @@
+import type { ApplicationSearchActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-search";
+import { ApplicationSearch, isApplicationSearchAction } from "./ApplicationSearch";
 import type { ApplicationConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-conversation-actions";
 import { ApplicationConversationActions, isApplicationConversationAction } from "./ApplicationConversationActions";
 import { ApplicationSubmission } from "./ApplicationSubmission";
@@ -129,6 +131,12 @@ export class ApplicationController implements ApplicationServiceV1 {
   private navigationAbortCleanup?: () => void;
   private abortedNavigation?: { request: number; signal: AbortSignal; context: NonNullable<AppState["activeContext"]> };
   private pendingNavigation?: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>;
+  private readonly applicationSearch = new ApplicationSearch({
+    getState: () => this.state, updateState: update => this.updateState(update), subscribeState: listener => this.subscribe(listener),
+    changed: () => this.publish(), cacheThreads: threads => this.sidebarCache.cacheSidebarThreads(threads),
+    activateThread: (threadId, signal) => this.invoke("thread.activate", { threadId }, { signal }),
+    getNavigation: () => ({ revision: this.navigationRequest, pending: Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady) }),
+  });
   private conversationActionsOwner?: ApplicationConversationActions;
   private get applicationConversationActions(): ApplicationConversationActions {
     return this.conversationActionsOwner ??= new ApplicationConversationActions({
@@ -284,7 +292,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   start(): () => void {
     if (++this.consumers === 1) {
       this.lifetime = new AbortController();
-      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(),
+      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
       const restore = window.wuu?.onRuntimeRestore?.(async () => {
         const signal = this.lifetime!.signal;
@@ -637,6 +645,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationSearchAction(action)) return this.applicationSearch.invoke(action,
+      input as ApplicationSearchActionMapV1[keyof ApplicationSearchActionMapV1]["input"]);
     if (isApplicationConversationAction(action)) return this.applicationConversationActions.invoke(action,
       input as ApplicationConversationActionMapV1[keyof ApplicationConversationActionMapV1]["input"]);
     if (isApplicationComposerRuntimeAction(action)) return this.applicationComposerRuntime.invoke(action,
@@ -1073,6 +1083,7 @@ export class ApplicationController implements ApplicationServiceV1 {
           project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      search: this.applicationSearch.getSnapshot(),
       conversationActions,
       conversationDetails: this.conversationDetails.getSnapshot(),
       conversationWorkspace: Object.freeze({ primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
