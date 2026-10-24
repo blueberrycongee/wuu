@@ -31,6 +31,300 @@ type modelTerminalDocuments struct {
 	closeCtx context.Context
 }
 
+type modelReceiptStreamClient struct{ stream <-chan providers.StreamEvent }
+
+func (c modelReceiptStreamClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	return providers.ChatResponse{}, errors.New("stream-only fixture")
+}
+
+func (c modelReceiptStreamClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	return c.stream, nil
+}
+
+type modelReceiptCapabilityClient struct {
+	fakeServicePluginClient
+	capability pluginhost.CapabilityDescriptor
+	adapters   []pluginhost.ModelAdapterDescriptor
+	invoke     func(context.Context, pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error)
+}
+
+func (c *modelReceiptCapabilityClient) ProtocolVersion() int {
+	return pluginhost.CapabilityProtocolVersion
+}
+func (c *modelReceiptCapabilityClient) Capabilities() []pluginhost.CapabilityDescriptor {
+	return []pluginhost.CapabilityDescriptor{c.capability}
+}
+func (c *modelReceiptCapabilityClient) ModelAdapters() []pluginhost.ModelAdapterDescriptor {
+	return c.adapters
+}
+func (c *modelReceiptCapabilityClient) InvokeCapability(ctx context.Context, params pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+	return c.invoke(ctx, params)
+}
+
+type modelReceiptContinuationClient struct{ scope *providers.ModelReceiptScope }
+
+func (c modelReceiptContinuationClient) Chat(ctx context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
+	if providers.ModelReceiptScopeFromContext(ctx) != c.scope {
+		return providers.ChatResponse{}, errors.New("direct continuation replaced its parent receipt scope")
+	}
+	_, end, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	end(nil)
+	return providers.ChatResponse{Content: "continued", FinishReason: providers.FinishReasonStop}, nil
+}
+func (c modelReceiptContinuationClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	return nil, errors.New("synchronous continuation fixture")
+}
+
+func TestDirectModelContinuationDoesNotJoinOrSealParentReceiptScope(t *testing.T) {
+	ctx, receipts := providers.NewModelReceiptScope(context.Background())
+	parentCtx, endParent, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endParent(nil)
+	defer receipts.Seal()
+	caller := &modelReceiptCapabilityClient{
+		fakeServicePluginClient: fakeServicePluginClient{id: "receipt-middleware", required: []pluginhost.ServiceRequirement{{Name: pluginhost.KernelModelInvokeService, MajorVersion: 1, Required: true}}},
+		capability:              pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityModelMiddleware, Kind: "transform", Version: 1, ErrorPolicy: pluginhost.ErrorPolicyPropagate},
+	}
+	root := t.TempDir()
+	home, workspace := testWorkspaceState(t, root)
+	modules := append(testStateModules(), kernelHostModule, caller.ID())
+	host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
+		&composition.Config{Version: composition.Version, Modules: &modules}, "",
+		NativeProviderFactory{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := &PluginGeneration{id: "receipt-continuation", host: host, state: kernel.state}
+	generation.retain()
+	kernel.bindStateGeneration(generation, nil)
+	t.Cleanup(func() { generation.Release() })
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	kernel.bindModelSession(&Session{RootDir: root, HomeDir: home}, host)
+	caller.invoke = func(callCtx context.Context, params pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+		var input pluginhost.ModelMiddlewareInput
+		if err := json.Unmarshal(params.Input, &input); err != nil {
+			return pluginhost.CapabilityInvokeResult{}, err
+		}
+		raw, err := json.Marshal(pluginhost.ModelInvokeParams{ContinuationID: input.ContinuationID, Request: input.Request})
+		if err != nil {
+			return pluginhost.CapabilityInvokeResult{}, err
+		}
+		result, callErr := host.ServiceRegistry().Call(callCtx, caller.ID(), pluginhost.ServiceCallParams{Service: pluginhost.KernelModelInvokeService, Method: "call", Params: raw, ExecutionID: params.ExecutionID})
+		if callErr != nil {
+			return pluginhost.CapabilityInvokeResult{}, callErr
+		}
+		var response pluginhost.ModelInvokeResult
+		if err := json.Unmarshal(result, &response); err != nil {
+			return pluginhost.CapabilityInvokeResult{}, err
+		}
+		output, err := json.Marshal(pluginhost.ModelAdapterOutput{Response: &response.Response})
+		return pluginhost.CapabilityInvokeResult{Output: output}, err
+	}
+	capability, ok := host.Capability(caller.ID(), pluginhost.CapabilityModelMiddleware)
+	if !ok {
+		t.Fatal("middleware capability unavailable")
+	}
+	request, err := providers.EnsureInferenceAttemptContext(parentCtx, providers.ChatRequest{Provider: "fixture", Model: "fixture"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &modelMiddlewareClient{host: host, capability: capability, next: modelReceiptContinuationClient{scope: receipts}}
+	finished := make(chan error, 1)
+	go func() {
+		_, err := client.Chat(parentCtx, request)
+		finished <- err
+	}()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("direct continuation waited for its still-running parent receipt")
+	}
+	_, end, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		t.Fatalf("direct continuation sealed its parent scope: %v", err)
+	}
+	end(nil)
+	endParent(nil)
+	receipts.Seal()
+	waitCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := receipts.Wait(waitCtx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDirectAdapterReceiptScopeRetainsCanceledCallback(t *testing.T) {
+	modelCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx, receipts := providers.NewModelReceiptScope(modelCtx)
+	caller := &modelReceiptCapabilityClient{
+		fakeServicePluginClient: fakeServicePluginClient{id: "receipt-adapter"},
+		capability:              pluginhost.CapabilityDescriptor{ID: pluginhost.CapabilityModelAdapter, Kind: "transform", Version: 1, ErrorPolicy: pluginhost.ErrorPolicyPropagate},
+		adapters:                []pluginhost.ModelAdapterDescriptor{{ID: "test.receipt", Version: 1, Mode: "direct"}},
+	}
+	host := pluginhost.New(caller)
+	defer host.Close(context.Background())
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	accepted := make(chan error, 1)
+	release := make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
+	caller.invoke = func(callCtx context.Context, params pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+		accepted <- host.EmitModelEvent(callCtx, caller.ID(), params.ExecutionID, pluginhost.ModelStreamEventV1{Type: "usage", Usage: &pluginhost.ModelRequestUsage{InputTokens: 71, OutputTokens: 13}})
+		<-release
+		return pluginhost.CapabilityInvokeResult{}, callCtx.Err()
+	}
+	request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Provider: "fixture", Model: "fixture", Adapter: "test.receipt"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &modelAdapterClient{host: host}
+	logical, err := client.StreamChat(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-accepted:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("direct adapter did not emit its usage receipt")
+	}
+	cancel()
+	receipts.Seal()
+	logicalDone := make(chan struct{})
+	go func() {
+		for range logical {
+		}
+		close(logicalDone)
+	}()
+	select {
+	case <-logicalDone:
+	case <-time.After(10 * time.Second):
+		t.Error("logical cancellation waited for the direct adapter callback")
+	}
+	select {
+	case <-receipts.Done():
+		t.Error("logical cancellation declared the direct adapter callback complete")
+	default:
+	}
+	unblock()
+	waitCtx, stopWait := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopWait()
+	if err := receipts.Wait(waitCtx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-logicalDone:
+	case <-waitCtx.Done():
+		t.Fatal("logical relay retained the completed direct adapter")
+	}
+	submissions := request.Execution.Snapshot().Submissions
+	if len(submissions) != 1 || submissions[0].Outcome != providers.InferenceSubmissionFailed || submissions[0].FailureCategory != providers.FailureCanceled || submissions[0].ReportedUsage == nil || submissions[0].ReportedUsage.InputTokens != 71 || submissions[0].ReportedUsage.OutputTokens != 13 {
+		t.Errorf("direct adapter cancellation lost validated receipts: %+v", submissions)
+	}
+}
+
+// Logical cancellation/error can finish before the native adapter's observer.
+// Its tail must remain joined, retain late usage, and ignore events after done.
+func TestNativeModelReceiptScopeJoinsObserverTail(t *testing.T) {
+	for _, terminal := range []string{"cancel", "error", "done"} {
+		t.Run(terminal, func(t *testing.T) {
+			modelCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx, scope := providers.NewModelReceiptScope(modelCtx)
+			request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Provider: "fixture", Model: "fixture"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "stream"}); err != nil {
+				t.Fatal(err)
+			}
+			physical := make(chan providers.StreamEvent)
+			var closeOnce sync.Once
+			closePhysical := func() { closeOnce.Do(func() { close(physical) }) }
+			defer closePhysical()
+			client := &modelAdapterClient{inner: modelReceiptStreamClient{stream: physical}}
+			logical, err := client.StreamChat(ctx, request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if terminal == "cancel" {
+				cancel()
+			} else {
+				event := providers.StreamEvent{Type: providers.EventDone}
+				if terminal == "error" {
+					event = providers.StreamEvent{Type: providers.EventError, Error: context.Canceled}
+				}
+				select {
+				case physical <- event:
+				case <-time.After(10 * time.Second):
+					t.Fatal("native observer did not accept the terminal event")
+				}
+			}
+			logicalDone := make(chan struct{})
+			go func() {
+				for range logical {
+				}
+				close(logicalDone)
+			}()
+			select {
+			case <-logicalDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("logical result waited for the still-open physical tail")
+			}
+			scope.Seal()
+			select {
+			case <-scope.Done():
+				t.Error("logical stream closure declared the native receipt observer complete")
+			default:
+			}
+			expired, stop := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+			defer stop()
+			if err := scope.Wait(expired); !errors.Is(err, context.DeadlineExceeded) {
+				t.Errorf("pending receipt wait = %v, want owner deadline", err)
+			}
+			usage := &providers.TokenUsage{InputTokens: 71, OutputTokens: 13}
+			select {
+			case physical <- providers.StreamEvent{Type: providers.EventUsage, Usage: usage}:
+			case <-time.After(10 * time.Second):
+				t.Fatal("native receipt tail stopped accepting buffered evidence")
+			}
+			closePhysical()
+			waitCtx, stopWait := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stopWait()
+			if err := scope.Wait(waitCtx); err != nil {
+				t.Fatal(err)
+			}
+			receipts := request.Execution.Snapshot().Submissions
+			if len(receipts) != 1 {
+				t.Fatalf("physical submissions = %d", len(receipts))
+			}
+			if terminal == "done" {
+				if receipts[0].Outcome != providers.InferenceSubmissionSucceeded || receipts[0].ReportedUsage != nil {
+					t.Errorf("events after done changed the final receipt: %+v", receipts[0])
+				}
+			} else if receipts[0].Outcome != providers.InferenceSubmissionFailed || receipts[0].FailureCategory != providers.FailureCanceled || receipts[0].ReportedUsage == nil || *receipts[0].ReportedUsage != *usage {
+				t.Errorf("late usage changed the terminal outcome or was lost: %+v", receipts[0])
+			}
+		})
+	}
+}
+
 func (p *modelTerminalDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	if params.Method == "commit" {
 		var transaction persistence.Transaction
