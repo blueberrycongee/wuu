@@ -85,6 +85,8 @@
     "dist/ui-file-selection.d.ts",
     "dist/ui-side-conversation.js",
     "dist/ui-side-conversation.d.ts",
+    "dist/ui-onboarding.js",
+    "dist/ui-onboarding.d.ts",
     "dist/ui.js",
     "dist/ui.d.ts",
     "bin/preview.mjs",
