@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
-import { createApplicationSettingsControls } from "../plugins/hostApplicationSettingsControls";
+import { ApplicationController } from "../plugins/ApplicationController";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import { awaitComposerFiles, revokeComposerImagePreview, type ComposerFile, type ComposerImage } from "../ComposerMessages";
 import { createApplicationComposerAttachments } from "./ApplicationComposerAttachments";
@@ -8,7 +8,9 @@ import { createApplicationComposerAttachments } from "./ApplicationComposerAttac
 const pending: ApplicationAttachmentV1 = { id: "file", kind: "file", name: "notes.txt", mediaType: "text/plain", status: "pending" };
 const ready: ApplicationAttachmentV1 = { ...pending, status: "ready", data: "aGVsbG8=" };
 function service(invoke: ReturnType<typeof vi.fn>): ApplicationServiceV1 {
-  return { contractVersion: 1, settingsControls: createApplicationSettingsControls(), getSnapshot: vi.fn(), subscribe: () => () => {}, invoke: invoke as ApplicationServiceV1["invoke"] };
+  const application = new ApplicationController();
+  application.invoke = invoke as ApplicationServiceV1["invoke"];
+  return application;
 }
 
 // Failures: pending sends must wait for owned bytes; retry must update captured

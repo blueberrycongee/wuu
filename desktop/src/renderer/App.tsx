@@ -9,7 +9,7 @@ import { sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraft
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { SideConversationAvailableContext } from "./ResponseSelection";
-import { buildComposerSlashCommands, composerSkillPrompt } from "./ComposerSlashCommands";
+import { buildComposerSlashCommands } from "./ComposerSlashCommands";
 import { forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { subscribeServerEvents } from "./ServerEvents";
 import { AccountScreen } from "./AccountScreen";
@@ -50,12 +50,9 @@ import type {
   ResponseSelection,
   SideThreadSelection,
   PopOutInitResult,
-  PluginPackageInstallResult,
-  PluginPackageRemoveResult,
   RuntimeContext,
   RunningThreadSnapshot,
   ServerEvent,
-  SkillSummary,
   Thread,
   ThreadItem,
   ThreadStartParams,
@@ -4221,56 +4218,8 @@ export function App({ application: providedApplication }: { application?: Applic
     }
   }
 
-  function trySkillFromCatalog(skill: SkillSummary): void {
-    const origin = document.activeElement;
-    const context = appStateRef.current.activeContext;
-    if (!context) {
-      return;
-    }
-    closePrimaryPluginView();
-    revealConversationFromFocusedWorkspace();
-    void startNewThread().then(() => {
-      setComposerImages([]);
-      setComposerFiles([]);
-      setComposerSelections([]);
-      setPrompt(composerSkillPrompt(skill));
-      requestMainComposerFocus("hero", origin);
-    });
-  }
-
-  async function updateExtensionPackage(
-    update: ExtensionPackageUpdateParams,
-  ): Promise<void> {
+  async function updateExtensionPackage(update: ExtensionPackageUpdateParams): Promise<void> {
     await window.wuu.updateExtensionPackage(update);
-  }
-
-  async function refreshExtensionCatalog(): Promise<SkillSummary[] | undefined> {
-    const context = appStateRef.current.activeContext;
-    const result = await window.wuu.refreshExtensionCatalog();
-    if (!sameRuntimeContext(appStateRef.current.activeContext, context)) {
-      return undefined;
-    }
-    return result.skills;
-  }
-
-  async function installPluginPackage(): Promise<PluginPackageInstallResult | undefined> {
-    const context = appStateRef.current.activeContext;
-    const result = await window.wuu.installPluginPackage();
-    if (!result || !sameRuntimeContext(appStateRef.current.activeContext, context)) {
-      return undefined;
-    }
-    return result;
-  }
-
-  async function removePluginPackage(
-    id: string,
-  ): Promise<PluginPackageRemoveResult | undefined> {
-    const context = appStateRef.current.activeContext;
-    const result = await window.wuu.removePluginPackage(id);
-    if (!sameRuntimeContext(appStateRef.current.activeContext, context)) {
-      return undefined;
-    }
-    return result;
   }
 
   function startNewThreadInWorkspaceWithComposerFocus(id: string): void {
@@ -6035,13 +5984,7 @@ export function App({ application: providedApplication }: { application?: Applic
               onSectionChange={setCatalogSection}
               selectedPluginID={catalogPluginID}
               onSelectPlugin={setCatalogPluginID}
-              activeContext={state.activeContext}
-              extensionInventory={state.initialized.extension_inventory}
-              onTrySkill={trySkillFromCatalog}
-              onRefreshCatalog={refreshExtensionCatalog}
-              onUpdateExtensionPackage={updateExtensionPackage}
-              onInstallPluginPackage={installPluginPackage}
-              onRemovePluginPackage={removePluginPackage}
+              application={application}
               openPluginRequest={catalogPluginRequest}
             />
             </SettingsControlsProvider>
@@ -6422,7 +6365,7 @@ export function App({ application: providedApplication }: { application?: Applic
           },
           openSettings: () => openSettingsPage("providers"),
           disablePlugin: async (pluginId) => {
-            await updateExtensionPackage({ id: pluginId, action: "disable" });
+            await application.catalog.update({ id: pluginId, action: "disable" });
           },
           reportError: (pluginId, generation, error) => {
             console.error(`Plugin view ${pluginId}@${generation} failed to render`, error);
