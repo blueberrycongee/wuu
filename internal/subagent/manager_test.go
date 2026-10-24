@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -450,6 +451,142 @@ func TestWorkerModelReceiptsSurviveInheritedClosedParent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+type lifecyclePromptJournal struct {
+	managerTestJournal
+	operations []providers.InferenceOperation
+}
+
+func (j *lifecyclePromptJournal) PrepareOperation(record providers.InferenceOperationJournalRecord) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.operations = append(j.operations, record.Operation)
+	return nil
+}
+
+type lifecyclePromptClient struct {
+	mu       sync.Mutex
+	scopes   []*providers.ModelReceiptScope
+	journals []providers.InferenceJournal
+}
+
+func (c *lifecyclePromptClient) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if req.Operation.Kind != providers.InferenceOperationHookPrompt {
+		return providers.ChatResponse{}, errors.New("lifecycle prompt lost its operation kind")
+	}
+	c.scopes = append(c.scopes, providers.ModelReceiptScopeFromContext(ctx))
+	c.journals = append(c.journals, providers.InferenceJournalFromContext(ctx))
+	if len(c.scopes) == 2 {
+		return providers.ChatResponse{Content: `{"ok":false,"reason":"stop policy rejected"}`}, nil
+	}
+	return providers.ChatResponse{Content: `{"ok":true}`}, nil
+}
+
+func TestWorkerPromptHooksOwnReceiptsAndJournal(t *testing.T) {
+	deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	parentJournal, workerJournal := &lifecyclePromptJournal{}, &lifecyclePromptJournal{}
+	ctx, parent := providers.NewModelReceiptScope(providers.WithInferenceJournal(deadline, parentJournal))
+	parent.Seal()
+	ctx = context.WithoutCancel(ctx)
+	promptClient := &lifecyclePromptClient{}
+	registry := hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
+		hooks.SubagentStart: {{Type: "prompt", Prompt: "$ARGUMENTS"}},
+		hooks.SubagentStop:  {{Type: "prompt", Prompt: "$ARGUMENTS"}},
+	})
+	registry.SetModelClient(hooks.NewProviderModelClient(promptClient, "hook-model", parentJournal))
+	dispatcher := hooks.NewDispatcher(registry)
+	cleanupErr := errors.New("stop receipt checkpoint failed")
+	stopFinishing, releaseStop := make(chan struct{}), make(chan struct{})
+	var scopes []*providers.ModelReceiptScope
+	var admissionJournals []providers.InferenceJournal
+	manager := NewManagerWithOptions(&fakeClient{response: providers.ChatResponse{Content: "worker output"}}, "worker-model", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		InferenceJournal:  workerJournal,
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+			ctx, scope := providers.NewModelReceiptScope(ctx)
+			scopes = append(scopes, scope)
+			admissionJournals = append(admissionJournals, providers.InferenceJournalFromContext(ctx))
+			ordinal := len(scopes)
+			return ctx, func() error {
+				scope.Seal()
+				if ordinal == 3 {
+					close(stopFinishing)
+					select {
+					case <-releaseStop:
+					case <-deadline.Done():
+						return deadline.Err()
+					}
+					return errors.Join(scope.CheckpointSubmissions(deadline), cleanupErr)
+				}
+				return scope.CheckpointSubmissions(deadline)
+			}, nil
+		},
+		OnSubagentStart: func(ctx context.Context, id string) error {
+			_, err := dispatcher.Dispatch(ctx, hooks.SubagentStart, &hooks.Input{AgentID: id})
+			return err
+		},
+		OnSubagentStop: func(ctx context.Context, id string) error {
+			_, err := dispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{AgentID: id})
+			return err
+		},
+	})
+	sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		snapshot SubAgentSnapshot
+		err      error
+	}
+	done := make(chan outcome, 1)
+	go func() { snapshot, err := manager.Wait(deadline, sa.ID); done <- outcome{snapshot, err} }()
+	select {
+	case <-stopFinishing:
+	case result := <-done:
+		promptClient.mu.Lock()
+		calls := len(promptClient.scopes)
+		promptClient.mu.Unlock()
+		t.Fatalf("worker became terminal before stop receipt cleanup: status=%s hook model calls=%d err=%v", result.snapshot.Status, calls, result.err)
+	case <-deadline.Done():
+		t.Fatal("worker never reached stop receipt cleanup")
+	}
+	sa.mu.Lock()
+	status := sa.Status
+	sa.mu.Unlock()
+	if status != StatusRunning {
+		t.Fatalf("worker published %s before stop cleanup", status)
+	}
+	close(releaseStop)
+	select {
+	case result := <-done:
+		if result.err != nil || result.snapshot.Status != StatusFailed || !errors.Is(result.snapshot.Error, hooks.ErrBlocked) || !errors.Is(result.snapshot.Error, cleanupErr) || result.snapshot.Result != "worker output" {
+			t.Fatalf("stop lost callback/cleanup error or partial result: %+v waitErr=%v", result.snapshot, result.err)
+		}
+	case <-deadline.Done():
+		t.Fatal("worker did not finish after stop cleanup")
+	}
+	if len(scopes) != 3 || scopes[0] == parent || scopes[1] == parent || scopes[2] == parent || scopes[0] == scopes[1] || scopes[1] == scopes[2] || scopes[0] == scopes[2] {
+		t.Fatalf("start, main and stop did not receive independent owners: %v", scopes)
+	}
+	if admissionJournals[0] != workerJournal || admissionJournals[2] != workerJournal {
+		t.Fatal("lifecycle admission inherited the parent journal")
+	}
+	promptClient.mu.Lock()
+	defer promptClient.mu.Unlock()
+	if len(promptClient.scopes) != 2 || promptClient.scopes[0] != scopes[0] || promptClient.scopes[1] != scopes[2] || promptClient.journals[0] != workerJournal || promptClient.journals[1] != workerJournal {
+		t.Fatalf("real prompt model escaped worker receipt/journal ownership: scopes=%v journals=%v", promptClient.scopes, promptClient.journals)
+	}
+	parentJournal.mu.Lock()
+	defer parentJournal.mu.Unlock()
+	workerJournal.mu.Lock()
+	defer workerJournal.mu.Unlock()
+	if len(parentJournal.operations) != 0 || len(workerJournal.operations) != 3 || workerJournal.operations[0].Kind != providers.InferenceOperationHookPrompt || workerJournal.operations[1].Kind != providers.InferenceOperationAgentRound || workerJournal.operations[2].Kind != providers.InferenceOperationHookPrompt {
+		t.Fatalf("lifecycle writes used wrong journal: parent=%+v worker=%+v", parentJournal.operations, workerJournal.operations)
 	}
 }
 

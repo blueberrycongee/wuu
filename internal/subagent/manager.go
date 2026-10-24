@@ -639,16 +639,12 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	// active parent turn. Inheriting its ID would alias the callback registry.
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: executionID})
 	if err == nil {
-		if m.onSubagentStart != nil {
-			err = m.onSubagentStart(ctx, sa.ID)
-		}
+		err = runWorkerLifecycleHook(ctx, sa.ID, defaults, m.onSubagentStart)
 		if err == nil {
 			res, err = runner.RunWithCallback(ctx, history, onEvent)
 			sa.acceptDriverCheckpoint(res)
 		}
-		if m.onSubagentStop != nil {
-			err = errors.Join(err, m.onSubagentStop(ctx, sa.ID))
-		}
+		err = errors.Join(err, runWorkerLifecycleHook(ctx, sa.ID, defaults, m.onSubagentStop))
 	}
 	content := res.Content
 	nextHistory := mergeTurnHistory(history, res)
@@ -745,6 +741,24 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	finalStatus := sa.Status
 	sa.mu.Unlock()
 	m.finishTerminal(ctx, sa, finalStatus, nextHistory)
+}
+
+func runWorkerLifecycleHook(ctx context.Context, id string, defaults managerDefaults, hook func(context.Context, string) error) (hookErr error) {
+	if hook == nil {
+		return nil
+	}
+	// Prompt hooks run outside the main runner and must not inherit its parent's
+	// journal or receipt lifetime, even when the worker detached cancellation.
+	ctx = providers.WithInferenceJournal(ctx, defaults.journal)
+	if defaults.BeginModelReceipts != nil {
+		var finish func() error
+		ctx, finish, hookErr = defaults.BeginModelReceipts(ctx)
+		if hookErr != nil {
+			return hookErr
+		}
+		defer func() { hookErr = errors.Join(hookErr, finish()) }()
+	}
+	return hook(ctx, id)
 }
 
 // finishTerminal is shared by a running turn and cancellation of a parked turn.
