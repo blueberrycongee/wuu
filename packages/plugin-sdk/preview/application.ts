@@ -25,6 +25,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
         items: [{ id: 'search-1', kind: 'tool-activity', status: 'completed', toolName: 'Search sources', displayLabel: 'Reviewed 3 sources' }] },
     }] },
     composer: { contractVersion: 1, threadId: 'research-1', draftText: '', running: false, availableSubmissionModes: ['send'], model: { id: 'preview', label: 'Preview fixture' }, permission: { id: 'standard', label: 'Standard' } },
+    activities: [],
     sideConversation: { commands: [], turns: [], contextChatPending: [] },
     search: { query: "", composing: false, loading: false, results: [] },
     conversationActions: { questions: [], pendingQuestionIds: [], compactingThreadIds: [], handoffThreadIds: [] },
@@ -48,6 +49,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   const unavailable = (): never => { throw new Error("Settings controls are unavailable in the synthetic preview"); };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openExternal: unavailable, consumeNavigation: unavailable },
     fileSelection: { getSnapshot: target => ({ ...target, interactionOwnerKey: "preview", enabled: false, canAskSide: false, comments: [] }), subscribe: () => () => {},
       quote: unavailable, comment: unavailable, removeComment: unavailable, edit: unavailable, openPdf: unavailable, openFile: unavailable, askSide: unavailable },
     projects: { getSnapshot: projectId => ({ projectId, enabled: false, loading: false, error: "" }), subscribe: () => () => {}, refresh: unavailable, control: unavailable, releaseSession: unavailable },

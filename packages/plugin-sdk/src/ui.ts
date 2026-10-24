@@ -1,3 +1,4 @@
+import type { ApplicationBrowserV1, BrowserActivityV1, BrowserDockTargetV1, BrowserOperationOptionsV1, BrowserSurfaceHandleV1 } from "./ui-browser.js";
 import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "./ui-side-conversation.js";
 import type { ApplicationFileSelectionServiceV1, FileSelectionCallOptionsV1 } from "./ui-file-selection.js";
 import type { ApplicationProjectsV1, ApplicationProjectCallOptionsV1 } from "./ui-projects.js";
@@ -30,6 +31,14 @@ export const APPLICATION_SHELL_SERVICE = {
 } satisfies import("./index.js").ServiceDescriptor;
 
 /** Immutable public application state. Snapshots retain identity until a change. */
+export interface ApplicationActivityV1 extends BrowserActivityV1 {
+  readonly plugin_id?: string; readonly process_id?: number; readonly window_id?: number;
+  readonly controller: "agent" | "user" | "none"; readonly preview?: string; readonly error?: string;
+  readonly interaction?: { readonly kind: "click" | "drag" | "scroll" | "type"; readonly x: number; readonly y: number;
+    readonly to_x?: number; readonly to_y?: number; readonly direction?: string; readonly revision: number };
+  readonly created_at: string; readonly updated_at: string;
+}
+
 export interface ApplicationSnapshotV1 {
   readonly contractVersion: 1;
   readonly revision: number;
@@ -62,6 +71,8 @@ export interface ApplicationSnapshotV1 {
     readonly error?: string;
   };
   readonly composer: ComposerSnapshotV1;
+  readonly activities: readonly ApplicationActivityV1[];
+  readonly browserDockTarget?: BrowserDockTargetV1;
   readonly sideConversation: ApplicationSideConversationViewV1;
   readonly search: ApplicationSearchViewV1;
   readonly conversationActions: ApplicationConversationActionsViewV1;
@@ -152,6 +163,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly browser: ApplicationBrowserV1;
   readonly fileSelection: ApplicationFileSelectionServiceV1;
   readonly projects: ApplicationProjectsV1;
   readonly terminals: ApplicationTerminalsV1;
@@ -472,5 +484,50 @@ export function scopeApplicationFileSelection(source: () => ApplicationFileSelec
     openPdf: (input, options) => invoke(signal => source().openPdf(input, { signal }), options),
     openFile: (input, options) => invoke(signal => source().openFile(input, { signal }), options),
     askSide: (input, options) => invoke(signal => source().askSide(input, { signal }), options),
+  });
+}
+
+/** A UI owns presentation leases and listeners, never the shared native tab registry. */
+export function scopeApplicationBrowser(source: () => ApplicationBrowserV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationBrowserV1 {
+  const cleanup = new Set<() => void>();
+  const check = () => { assertActive(); signal.throwIfAborted(); };
+  const subscribe = <T>(register: (listener: (value: T) => void) => () => void, listener: (value: T) => void,
+    local?: Set<() => void>): (() => void) => {
+    check(); const off = register(value => { if (!signal.aborted) listener(value); });
+    let stopped = false;
+    const stop = () => { if (stopped) return; stopped = true; cleanup.delete(stop); local?.delete(stop); off(); };
+    cleanup.add(stop); local?.add(stop);
+    if (signal.aborted) stop();
+    return stop;
+  };
+  signal.addEventListener("abort", () => { for (const dispose of [...cleanup]) dispose(); }, { once: true });
+  return Object.freeze<ApplicationBrowserV1>({
+    get available() { check(); return source().available; },
+    acquireSurface: target => {
+      check(); const handle = source().acquireSurface(target), local = new Set<() => void>();
+      let disposed = false;
+      const checkLease = () => { check(); if (disposed) throw new Error("Browser presentation lease is disposed"); };
+      const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: BrowserOperationOptionsV1) =>
+        invokeApplicationOperation(operation, signal, checkLease, options?.signal);
+      const dispose = () => { if (disposed) return; disposed = true; cleanup.delete(dispose); for (const stop of [...local]) stop(); handle.dispose(); };
+      cleanup.add(dispose);
+      const scoped: BrowserSurfaceHandleV1 = {
+        target: handle.target,
+        read: options => invoke(signal => handle.read({ signal }), options),
+        command: (input, options) => invoke(signal => handle.command(input, { signal }), options),
+        takeOver: (activity, generation, options) => invoke(signal => handle.takeOver(activity, generation, { signal }), options),
+        onSurface: listener => { checkLease(); return subscribe(callback => handle.onSurface(callback), listener, local); },
+        onTabAdopted: listener => { checkLease(); return subscribe(callback => handle.onTabAdopted(callback), listener, local); },
+        onUserInput: listener => { checkLease(); return subscribe(callback => handle.onUserInput(callback), listener, local); },
+        reportBounds: (rect, force) => { checkLease(); handle.reportBounds(rect, force); },
+        suppressOverlay: suppressed => { checkLease(); handle.suppressOverlay(suppressed); }, dispose,
+      };
+      return Object.freeze(scoped);
+    },
+    onDock: listener => subscribe(callback => source().onDock(callback), listener),
+    onInvalidate: listener => subscribe(callback => source().onInvalidate(callback), listener),
+    openExternal: (url, options) => invokeApplicationOperation(signal => source().openExternal(url, { signal }), signal, assertActive, options?.signal),
+    consumeNavigation: requestId => { check(); source().consumeNavigation(requestId); },
   });
 }

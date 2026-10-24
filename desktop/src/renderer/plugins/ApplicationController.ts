@@ -1,3 +1,5 @@
+import { ApplicationBrowser } from "./ApplicationBrowser";
+import { emptyActivitySessions, mergeActivityList, reduceActivitySessionEvent, clearActivitiesForWorkdir } from "../ActivitySessions";
 import type { ApplicationSideConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
 import { ApplicationSideConversation, isApplicationSideConversationAction } from "./ApplicationSideConversation";
 import { ApplicationFileSelection } from "./ApplicationFileSelection";
@@ -68,6 +70,33 @@ export class ApplicationController implements ApplicationServiceV1 {
     return this.composerRuntimeOwner ??= new ApplicationComposerRuntime({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
+  }
+  private activitySessions = emptyActivitySessions();
+  private activitySourceKey?: string;
+  private activityRequest = 0;
+  private browserDockTarget?: ApplicationSnapshotV1["browserDockTarget"];
+  private browserOwner?: ApplicationBrowser;
+  get browser(): ApplicationBrowser {
+    return this.browserOwner ??= new ApplicationBrowser({ api: window.wuu, onActivityChanged: activity => {
+      this.activitySessions = mergeActivityList(this.activitySessions, activity.workdir, activity.thread_id, [activity]);
+      this.publish();
+    } });
+  }
+  private syncActivities(): void {
+    if (!this.consumers) return;
+    const threadId = activeThreadIDForState(this.state), workdir = this.state.activeContext?.cwd;
+    const key = JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0, threadId]);
+    if (key === this.activitySourceKey) return;
+    this.activitySourceKey = key;
+    const request = ++this.activityRequest;
+    if (!threadId || !workdir || typeof window.wuu.listActivities !== "function") return;
+    void window.wuu.listActivities(threadId).then(result => {
+      if (!this.consumers || request !== this.activityRequest) return;
+      this.activitySessions = mergeActivityList(this.activitySessions, workdir, threadId, result.activities);
+      this.publish();
+    }).catch(() => {
+      // Live activity events still populate the view when initial listing races core startup.
+    });
   }
   private projectsOwner?: ApplicationProjects;
   get projects(): ApplicationProjects {
@@ -329,6 +358,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     }
     this.state = next;
     this.projectsOwner?.notifyChanged();
+    this.syncActivities();
     this.pendingComposer.reconcilePendingComposerMessagesForState(next);
     this.rememberDraftResources();
     this.publish();
@@ -341,6 +371,25 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.lifetime = new AbortController();
       this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
+      if (this.browser.available) {
+        this.subscriptions.push(this.browser.onInvalidate(({ workdir }) => {
+          this.activitySessions = clearActivitiesForWorkdir(this.activitySessions, workdir);
+          this.publish();
+        }), this.browser.onDock(target => {
+          if ([target.thread_id, target.workdir, target.tabID].some(value => !value?.trim())) return;
+          const signal = this.lifetime!.signal;
+          const navigation = this.invoke("thread.activate", { threadId: target.thread_id }, { signal });
+          const revision = this.navigationRequest;
+          void navigation.then(async () => {
+            if (signal.aborted || revision !== this.navigationRequest || activeThreadIDForState(this.state) !== target.thread_id || this.state.activeContext?.cwd !== target.workdir) return;
+            this.browserDockTarget = Object.freeze({ ...target });
+            await this.applicationNavigation.invoke("navigation.show-native", {}, signal);
+            await this.applicationPreview.invoke("preview.open-tool", { toolId: "browser" }, signal);
+            this.publish();
+          }).catch(error => { if (!signal.aborted) this.updateState(state => ({ ...state, status: String(error) })); });
+        }));
+      }
+      this.syncActivities();
       const restore = window.wuu?.onRuntimeRestore?.(async () => {
         const signal = this.lifetime!.signal;
         const restored = await loadRuntimeRestore(this.state);
@@ -364,6 +413,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.submissionOwner = undefined;
       this.composerRuntimeOwner?.dispose();
       this.composerRuntimeOwner = undefined;
+      this.activityRequest++; this.activitySourceKey = undefined;
+      this.browserOwner?.dispose(); this.browserOwner = undefined;
       this.fileSelectionOwner = undefined;
       this.projectsOwner?.dispose();
       this.projectsOwner = undefined;
@@ -408,6 +459,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private receive(event: ServerEvent): void {
+    const activities = reduceActivitySessionEvent(this.activitySessions, event);
+    if (activities !== this.activitySessions) { this.activitySessions = activities; this.publish(); }
     this.sidebarCache.syncSidebarServerEvent(event);
     this.pendingComposer.syncPendingComposerMessagesFromServerEvent(event);
     if (!serverEventTargetsActiveContext(event, this.state)) return;
@@ -1137,6 +1190,9 @@ export class ApplicationController implements ApplicationServiceV1 {
           project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      activities: Object.freeze(Object.values(this.activitySessions.byKey).map(activity => Object.freeze({ ...activity,
+        interaction: activity.interaction && Object.freeze({ ...activity.interaction }) }))),
+      browserDockTarget: this.browserDockTarget,
       sideConversation: this.applicationSideConversation.getSnapshot(),
       search: this.applicationSearch.getSnapshot(),
       conversationActions,

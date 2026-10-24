@@ -16,6 +16,22 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("merges browser takeover into the canonical immutable activity view", async () => {
+    const activity = { id: "activity", kind: "browser", workdir: "/fixture", thread_id: "thread", execution_id: "run", state: "user_controlled", controller: "user", created_at: "2026-10-24T00:00:00Z", updated_at: "2026-10-24T00:00:01Z" };
+    const off = () => () => {};
+    window.wuu = { browserSurface: vi.fn(), browserCommand: vi.fn(), onBrowserSurface: off, onBrowserTabAdopted: off, onBrowserUserInput: off,
+      onBrowserDock: off, onBrowserInvalidate: off, reportBrowserBounds: vi.fn(), suppressBrowserOverlay: vi.fn(), takeoverActivity: vi.fn().mockResolvedValue({ activity }) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController(initialState);
+    const lease = controller.browser.acquireSurface({ workdir: "/fixture", tabID: "tab", threadID: "thread" });
+    await lease.takeOver({ id: "activity", thread_id: "thread", execution_id: "run" });
+    const value = controller.getSnapshot().activities[0];
+    expect(value).toMatchObject({ state: "user_controlled", execution_id: "run" });
+    expect(Object.isFrozen(value)).toBe(true);
+    activity.state = "stopped";
+    expect(value.state).toBe("user_controlled");
+    lease.dispose();
+  });
+
   it("writes file comments into the canonical composer without consuming its attachments", () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     window.wuu = {} as WuuDesktopApi;

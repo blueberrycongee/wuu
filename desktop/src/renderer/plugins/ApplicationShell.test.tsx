@@ -1,3 +1,4 @@
+import { ApplicationBrowser } from "./ApplicationBrowser";
 import { ApplicationController } from "./ApplicationController";
 import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
@@ -18,6 +19,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    browser: new ApplicationBrowser({ api: {}, onActivityChanged: () => {} }),
     get fileSelection() { return new ApplicationController().fileSelection; },
     projects: new ApplicationProjects({ getSource: () => ({ contextKey: "test", enabled: false }), updateThread: () => {} }),
     terminals: new ApplicationTerminals({ unsupportedMethods: ["startTerminalSession"] } as never),
@@ -38,6 +40,22 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("releases browser presentation leases when the selected generation retires", async () => {
+    const { host, service } = fixture();
+    const dispose = vi.fn(), reportBounds = vi.fn();
+    Object.defineProperty(service, "browser", { value: { available: true, acquireSurface: () => ({ target: { workdir: "/fixture", tabID: "tab" }, dispose, reportBounds }) } });
+    let application!: ApplicationServiceV1;
+    await host.activateGeneration({ pluginId: "browser", generation: "one", register: api => { application = api.application; } });
+    const handle = application.browser.acquireSurface({ workdir: "/fixture", tabID: "tab" });
+    handle.reportBounds(null);
+    await host.activateGeneration({ pluginId: "browser", generation: "two", register: () => {} });
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(() => handle.reportBounds(null)).toThrow();
+    handle.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(reportBounds).toHaveBeenCalledOnce();
+  });
+
   it("cleans up a terminal created after its selected generation retires", async () => {
     const { host, service } = fixture();
     let finish!: (value: { id: string; cwd: string; shell: string; started_at: string }) => void;
