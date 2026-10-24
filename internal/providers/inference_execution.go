@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -266,6 +267,7 @@ type InferenceExecution struct {
 	nextSubmission  int
 	submissions     []InferenceSubmission
 	journal         InferenceJournal
+	checkpoints     map[string]InferenceSubmissionJournalRecord
 	requestHash     string
 	journalErr      error
 	journalDegraded error
@@ -844,12 +846,22 @@ func (e *InferenceExecution) checkpointSubmissionsLocked(ctx context.Context, at
 		if attemptID != "" && submission.AttemptID != attemptID {
 			continue
 		}
-		if err := e.journal.UpsertSubmission(ctx, journalSubmission(e.operation.ID, snapshotSubmission(submission))); err != nil {
+		record := journalSubmission(e.operation.ID, snapshotSubmission(submission))
+		// Only acknowledged synchronous checkpoints can discharge this write.
+		// Progress is best effort; late physical evidence changes the snapshot.
+		if prior, ok := e.checkpoints[submission.ID]; ok && reflect.DeepEqual(prior, record) {
+			continue
+		}
+		if err := e.journal.UpsertSubmission(ctx, record); err != nil {
 			// Cancellation of a required write is still a persistence failure;
 			// recovery must not discard it as ordinary caller cancellation.
 			e.journalErr = err
 			return err
 		}
+		if e.checkpoints == nil {
+			e.checkpoints = make(map[string]InferenceSubmissionJournalRecord)
+		}
+		e.checkpoints[submission.ID] = record
 	}
 	return nil
 }

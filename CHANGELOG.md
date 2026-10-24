@@ -145,6 +145,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Avoid rewriting unchanged, acknowledged model-call receipts during turn cleanup, preventing completed replies from failing their cleanup deadline when conversations run concurrently. Late usage and physical completion evidence still require durable checkpoints.
+
 - Anchor the new-conversation workspace menu below the workspace name in the greeting, keeping it attached during scrolling and resizing. Selecting a workspace retargets the current draft and preserves its content instead of reopening the workspace's latest conversation.
 
 - Restore manual navigation ribbon resizing and remembered width while keeping the default compact and disabling automatic expansion on hover or focus.

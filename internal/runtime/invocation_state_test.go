@@ -1118,6 +1118,7 @@ func TestReceiptSettlementCheckpointsWithLiveAdmission(t *testing.T) {
 	if err := request.Execution.Complete(providers.InferenceOutcomeCanceled, providers.NormalizedFailure{Category: providers.FailureCanceled}); err != nil {
 		t.Fatal(err)
 	}
+	submission.ObserveUsage(&providers.TokenUsage{InputTokens: 10})
 	before := journal.writes
 	journal.final = true
 	if err := complete(); err != nil {

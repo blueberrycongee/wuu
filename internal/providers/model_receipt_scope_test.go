@@ -294,7 +294,8 @@ func TestModelReceiptScopeCheckpointDistinguishesFailureFromIncomplete(t *testin
 		t.Run(mode, func(t *testing.T) {
 			ctx, scope := NewModelReceiptScope(context.Background())
 			journal := &receiptScopeJournal{}
-			receiptScopeRequest(t, ctx, journal, ChatRequest{})
+			_, submission := receiptScopeRequest(t, ctx, journal, ChatRequest{})
+			submission.ObserveUsage(&TokenUsage{InputTokens: 10})
 			journal.writes = nil
 			_, end, err := BeginModelReceipt(ctx)
 			if err != nil {
@@ -355,8 +356,10 @@ func TestModelReceiptScopeCheckpointDistinguishesFailureFromIncomplete(t *testin
 func TestModelReceiptScopeCheckpointKeepsFailedWritesAndFinishesHealthyExecutions(t *testing.T) {
 	ctx, scope := NewModelReceiptScope(context.Background())
 	failed, next, healthy := &receiptScopeJournal{}, &receiptScopeJournal{}, &receiptScopeJournal{}
-	first, _ := receiptScopeRequest(t, ctx, failed, ChatRequest{})
-	second, _ := receiptScopeRequest(t, ctx, next, ChatRequest{})
+	first, firstSubmission := receiptScopeRequest(t, ctx, failed, ChatRequest{})
+	firstSubmission.ObserveUsage(&TokenUsage{InputTokens: 10})
+	second, secondSubmission := receiptScopeRequest(t, ctx, next, ChatRequest{})
+	secondSubmission.ObserveUsage(&TokenUsage{InputTokens: 11})
 	_, healthySubmission := receiptScopeRequest(t, ctx, healthy, ChatRequest{})
 	healthySubmission.ObserveUsage(&TokenUsage{InputTokens: 23, OutputTokens: 7})
 	_, endObserver, err := BeginModelReceipt(ctx)
@@ -389,10 +392,10 @@ func TestModelReceiptScopeCheckpointKeepsFailedWritesAndFinishesHealthyExecution
 		if len(failed.writes) != 1 || len(next.writes) != 1 {
 			t.Fatal("final checkpoint replayed an uncertain write")
 		}
-		if len(healthy.writes) != pass {
+		if len(healthy.writes) != 1 {
 			t.Fatal("failed execution prevented a healthy execution checkpoint")
 		}
-		if got := healthy.writes[pass-1]; got.ID != healthySubmission.ID || got.ReportedUsage == nil || got.ReportedUsage.InputTokens != 23 || got.ReportedUsage.OutputTokens != 7 {
+		if got := healthy.writes[0]; got.ID != healthySubmission.ID || got.ReportedUsage == nil || got.ReportedUsage.InputTokens != 23 || got.ReportedUsage.OutputTokens != 7 {
 			t.Fatalf("healthy execution lost its actual late receipt: %+v", got)
 		}
 	}
@@ -402,7 +405,8 @@ func TestModelReceiptScopeCheckpointUsesOneOwnerDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx, scope := NewModelReceiptScope(context.Background())
 		journal := &receiptScopeJournal{}
-		first, _ := receiptScopeRequest(t, ctx, journal, ChatRequest{})
+		first, submission := receiptScopeRequest(t, ctx, journal, ChatRequest{})
+		submission.ObserveUsage(&TokenUsage{InputTokens: 10})
 		receiptScopeRequest(t, ctx, journal, ChatRequest{})
 		journal.writes = nil
 		finishCtx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -432,7 +436,8 @@ func TestModelReceiptScopeNestedExecutionOwnership(t *testing.T) {
 		t.Run(map[bool]string{false: "success", true: "child-error"}[childFails], func(t *testing.T) {
 			parentCtx, parent := NewModelReceiptScope(context.Background())
 			parentJournal, childJournal := &receiptScopeJournal{}, &receiptScopeJournal{}
-			request, _ := receiptScopeRequest(t, parentCtx, parentJournal, ChatRequest{})
+			request, parentSubmission := receiptScopeRequest(t, parentCtx, parentJournal, ChatRequest{})
+			parentSubmission.ObserveUsage(&TokenUsage{InputTokens: 10})
 			borrowedCtx, endBorrowed, err := BeginModelReceipt(parentCtx)
 			if err != nil {
 				t.Fatal(err)
@@ -447,7 +452,8 @@ func TestModelReceiptScopeNestedExecutionOwnership(t *testing.T) {
 			}
 			defer endChild(nil)
 			childCtx, child := NewModelReceiptScope(bridgeCtx)
-			receiptScopeRequest(t, childCtx, childJournal, ChatRequest{})
+			_, childSubmission := receiptScopeRequest(t, childCtx, childJournal, ChatRequest{})
+			childSubmission.ObserveUsage(&TokenUsage{InputTokens: 11})
 			parentJournal.writes, childJournal.writes = nil, nil
 			parent.Seal()
 			expired, cancel := context.WithTimeout(context.Background(), 0)
@@ -496,5 +502,50 @@ func TestModelReceiptScopeUnboundExecutionAndNoScopeCompatibility(t *testing.T) 
 	scope.Seal()
 	if err := scope.CheckpointSubmissions(context.Background()); err != nil {
 		t.Fatalf("unbound probe required a journal: %v", err)
+	}
+}
+
+// Settling a completed turn must not spend its bounded cleanup window rewriting
+// acknowledged receipts. Late physical evidence must still cross durability.
+func TestModelReceiptScopeOnlyCheckpointsChangedEvidence(t *testing.T) {
+	ctx, scope := NewModelReceiptScope(context.Background())
+	journal := &receiptScopeJournal{}
+	var last InferenceSubmission
+	for range 7 {
+		_, last = receiptScopeRequest(t, ctx, journal, ChatRequest{})
+	}
+	scope.Seal()
+	journal.writes = nil
+	if err := scope.CheckpointSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(journal.writes) != 0 {
+		t.Fatalf("rewrote %d already acknowledged receipts", len(journal.writes))
+	}
+	last.ObserveUsage(&TokenUsage{InputTokens: 20, OutputTokens: 3})
+	if err := scope.CheckpointSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(journal.writes) != 1 || journal.writes[0].ID != last.ID || journal.writes[0].ReportedUsage.InputTokens != 20 {
+		t.Fatalf("late usage was not checkpointed: %+v", journal.writes)
+	}
+	journal.writes = nil
+	if err := scope.CheckpointSubmissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(journal.writes) != 0 {
+		t.Fatal("acknowledged late usage was rewritten")
+	}
+	last.ObserveOutput("late output")
+	failure := errors.New("late evidence write failed")
+	journal.write = func(context.Context, InferenceSubmissionJournalRecord) error { return failure }
+	if err := scope.CheckpointSubmissions(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("lost required write error: %v", err)
+	}
+	if err := scope.CheckpointSubmissions(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("forgot unconfirmed write: %v", err)
+	}
+	if len(journal.writes) != 1 {
+		t.Fatal("retried an unconfirmed write")
 	}
 }
