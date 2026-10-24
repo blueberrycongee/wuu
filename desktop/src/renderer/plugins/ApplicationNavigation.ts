@@ -4,6 +4,7 @@ import type { DesktopProject, Thread } from "../../shared/protocol";
 import type { ApplicationWebWorkspaceV1 } from "../../../../packages/plugin-sdk/src/ui-web-workspace";
 import { activeThreadForState, activeThreadIDForState, upsertThread, markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
 import { createRibbonBrowserState } from "../RibbonBrowserState";
+import { parseSessionOrganization } from "../SessionOrganization";
 import { loadThreadListRefresh } from "../RuntimeLoadState";
 import { writeThreadReadState } from "../ThreadReadState";
 import { hostSupports } from "../HostCapabilities";
@@ -222,7 +223,7 @@ export class ApplicationNavigation {
         // Organization and thread listings are independent; preserve each
         // successful result while still surfacing a failed refresh to callers.
         if (threads.status === "fulfilled") this.host.sidebarCache.cacheSidebarThreads(threads.value.threads, { projects: requested.workspaceThreadsByWorkspaceID, scratch: requested.cachedScratchThreads });
-        if (folders.status === "fulfilled" && folderRevision === this.folderRevision) this.folders = folders.value.organization.folders.map(({ id, name }) => ({ id, name }));
+        if (folders.status === "fulfilled" && folderRevision === this.folderRevision) this.folders = parseSessionOrganization(folders.value.organization).folders;
         if (threads.status === "rejected") { this.host.changed(); throw threads.reason; }
         if (folders.status === "rejected") { this.host.changed(); throw folders.reason; }
         break;
@@ -280,7 +281,7 @@ export class ApplicationNavigation {
         const request = this.folderQueue.catch(() => {}).then(async () => {
           const { organization } = await window.wuu.reorderSessionFolders([...folderIds]);
           this.folderRevision++;
-          this.folders = organization.folders.map(({ id, name }) => ({ id, name })); this.host.changed();
+          this.folders = parseSessionOrganization(organization).folders; this.host.changed();
         });
         this.folderQueue = request; await request; break;
       }

@@ -25,6 +25,20 @@ function fixture(controls = webControls()) {
 }
 
 describe("public navigation domain", () => {
+  it.each(["refresh", "reorder"])("accepts the backend's null empty folder list during %s", async action => {
+    const h = fixture();
+    window.wuu = {
+      createSessionFolder: vi.fn().mockResolvedValue({ group: { id: "old", name: "Old" } }),
+      listAllThreads: vi.fn().mockResolvedValue({ threads: [] }),
+      getSessionOrganization: vi.fn().mockResolvedValue({ organization: { folders: null } }),
+      reorderSessionFolders: vi.fn().mockResolvedValue({ organization: { folders: null } }),
+    } as unknown as typeof window.wuu;
+    await h.navigation.invoke("navigation.create-folder", { name: "Old" });
+    if (action === "refresh") await expect(h.navigation.invoke("navigation.refresh", {})).resolves.toBeUndefined();
+    else await expect(h.navigation.invoke("navigation.reorder-folders", { folderIds: [] })).resolves.toBeUndefined();
+    expect(h.navigation.getSnapshot().folders).toEqual([]);
+  });
+
   it("closes only the addressed active plugin view and exposes region reveal requests", async () => {
     window.wuu = {} as typeof window.wuu;
     window.wuu.reportPluginDesktopActivation = vi.fn().mockResolvedValue(undefined);
