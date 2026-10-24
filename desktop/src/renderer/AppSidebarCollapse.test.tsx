@@ -204,6 +204,77 @@ describe("sidebar collapse-state independence", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
+  it("keeps the draft worktree base through shell replacement without applying it to another project", async () => {
+    installWuuApi();
+    const projects = ["first", "second"].map(id => ({
+      id, name: id, path: `${workspace}/${id}`,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    }));
+    let activeContext = { kind: "project" as const, project_id: "first", cwd: projects[0].path };
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: activeContext }));
+    window.wuu.selectProject = vi.fn(async id => {
+      activeContext = { kind: "project", project_id: id, cwd: projects.find(project => project.id === id)!.path };
+      return { projects, active_context: activeContext };
+    });
+    window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: activeContext.cwd }));
+    window.wuu.listThreads = vi.fn(async () => ({ threads: [] }));
+    window.wuu.gitStatus = vi.fn(async () => ({ is_repo: true, branch: "main", branches: ["main", "feature"], dirty_count: 0, files: [] }));
+    const controller = new applicationState.ApplicationController();
+    const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    let release!: () => void, started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let pending: ReturnType<PluginHost["activateGeneration"]> | undefined;
+    const click = async (selector: string) => {
+      const button = document.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+      expect(button!.closest("[inert]")).toBeNull();
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    try {
+      await host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: "first", register: activateDefaultShell });
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+      });
+      await flushAsync();
+      act(() => {
+        pending = host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: "second", register: async api => {
+          activateDefaultShell(api);
+          started();
+          await gate;
+        } });
+      });
+      await ready;
+      const oldToggle = container.querySelector(".composer-worktree-toggle")!;
+      await click(".composer-worktree-toggle");
+      expect(oldToggle.getAttribute("aria-pressed")).toBe("true");
+      await click(".composer-git-controls .hero-project-pill");
+      await click('.composer-branch-menu button[title="feature"]');
+      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
+      await act(async () => { release(); await pending; });
+      await flushAsync();
+      expect(oldToggle.isConnected).toBe(false);
+      expect(container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed")).toBe("true");
+      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
+      await click(".composer-project-control .hero-project-pill");
+      await click('.composer-project-menu button[title="second"]');
+      expect(controller.getState().activeContext?.cwd).toBe(projects[1].path);
+      expect(container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed")).toBe("false");
+      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("main");
+    } finally {
+      release();
+      await pending;
+      act(() => { root?.unmount(); });
+      root = null;
+      await host.unloadAndWait("shell");
+      shared.mockRestore();
+    }
+  });
+
   // A refresh replaces the shell activation even when its code fingerprint is
   // unchanged. Preserve the selected catalog, but never replay stale navigation.
   it.each([
