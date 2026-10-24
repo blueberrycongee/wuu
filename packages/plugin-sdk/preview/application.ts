@@ -61,10 +61,11 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    artifacts: { capabilities: { nativeItemMenu: false, save: false, remoteAttachment: false, remoteAttachmentPreview: false, remoteItem: false }, resolveSource: unavailable, acquireSource: unavailable, releaseSource: () => {}, readAttachment: unavailable, readItem: unavailable, readText: unavailable, save: unavailable, showItemMenu: unavailable, openFile: unavailable },
     desktop: { hostKind: "web", popOut: { kind: null, threadID: null, context: null }, capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false }, onVisibilityChange: () => () => {} },
     webWorkspace,
     onboarding: { getSnapshot: () => ({ revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } }), subscribe: () => () => {}, checkpoint: unavailable, discoverWorkspaces: unavailable, chooseWorkspace: unavailable, complete: unavailable },
-    browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openExternal: unavailable, consumeNavigation: unavailable },
+    browser: { available: false, acquireSurface: unavailable, onDock: () => () => {}, onInvalidate: () => () => {}, openURL: unavailable, openExternal: unavailable, consumeNavigation: unavailable },
     fileSelection: { getSnapshot: target => ({ ...target, interactionOwnerKey: "preview", enabled: false, canAskSide: false, comments: [] }), subscribe: () => () => {},
       quote: unavailable, comment: unavailable, removeComment: unavailable, edit: unavailable, openPdf: unavailable, openFile: unavailable, askSide: unavailable },
     projects: { getSnapshot: projectId => ({ projectId, enabled: false, loading: false, error: "" }), subscribe: () => () => {}, refresh: unavailable, control: unavailable, releaseSession: unavailable },
@@ -75,7 +76,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     },
     catalog: { getSnapshot: () => ({ contextKey: "preview", inventory: [], capabilities: { install: false, update: false, remove: false } }),
       listSkills: async () => [], readSkill: unavailable, refresh: unavailable, update: unavailable, install: unavailable, remove: unavailable, loadIcon: unavailable },
-    previewContent: { capabilities: Object.freeze({ nativeItemMenu: false, revealItem: false, exportFile: false }),
+    previewContent: { resolveResourceURL: unavailable, openFile: unavailable, capabilities: Object.freeze({ nativeItemMenu: false, revealItem: false, exportFile: false }),
       listDirectory: unavailable, readFile: unavailable, revealItem: unavailable, showItemMenu: unavailable, exportFile: unavailable },
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
     settingsControls: {

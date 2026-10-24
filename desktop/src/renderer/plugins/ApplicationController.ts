@@ -1,3 +1,4 @@
+import { ApplicationArtifacts } from "./ApplicationArtifacts";
 import { ApplicationDesktop } from "./ApplicationDesktop";
 import type { HostApplicationService } from "./HostApplicationService";
 import { ApplicationWebWorkspace } from "./ApplicationWebWorkspace";
@@ -76,6 +77,10 @@ export class ApplicationController implements HostApplicationService {
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
   }
+  private artifactsOwner?: ApplicationArtifacts;
+  get artifacts(): ApplicationArtifacts {
+    return this.artifactsOwner ??= new ApplicationArtifacts(window.wuu, this.previewContent);
+  }
   private desktopOwner?: ApplicationDesktop;
   createDesktopScope(signal: AbortSignal) {
     return (this.desktopOwner ??= new ApplicationDesktop()).createScope(signal);
@@ -132,7 +137,14 @@ export class ApplicationController implements HostApplicationService {
   private terminalOwner?: ApplicationTerminals;
   get terminals(): ApplicationTerminals { return this.terminalOwner ??= new ApplicationTerminals(window.wuu); }
   private previewContentOwner?: ApplicationPreviewContent;
-  get previewContent(): ApplicationPreviewContent { return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu); }
+  get previewContent(): ApplicationPreviewContent {
+    return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu, { openFile: ({ root, path }) => {
+      const project = this.state.projects.find(project => project.path === root);
+      const context = this.state.activeContext?.cwd === root ? this.state.activeContext
+        : project ? { kind: "project" as const, project_id: project.id, cwd: root } : { kind: "no_project" as const, cwd: root };
+      return this.applicationPreview.invoke("preview.open-file", { context, path });
+    } });
+  }
   readonly settingsControls = createApplicationSettingsControls();
   readonly conversationText: ApplicationConversationTextV1 = Object.freeze({
     getSnapshot: (target: ApplicationConversationTextTargetV1) => {
@@ -436,6 +448,7 @@ export class ApplicationController implements HostApplicationService {
       this.composerRuntimeOwner = undefined;
       this.activityRequest++; this.activitySourceKey = undefined;
       this.browserOwner?.dispose(); this.browserOwner = undefined;
+      this.artifactsOwner = undefined;
       this.desktopOwner?.dispose(); this.desktopOwner = undefined;
       void this.webWorkspaceOwner?.dispose().catch(error => console.error("Web workspace cleanup failed", error));
       this.webWorkspaceOwner = undefined;

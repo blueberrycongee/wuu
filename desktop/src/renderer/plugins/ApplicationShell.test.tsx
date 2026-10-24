@@ -22,6 +22,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: HostApplicationService = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    get artifacts() { return new ApplicationController().artifacts; },
     createDesktopScope: signal => new ApplicationDesktop().createScope(signal),
     webWorkspace: new ApplicationWebWorkspace(undefined, "linux", async () => {}),
     get onboarding() { return new ApplicationController().onboarding; },
@@ -46,6 +47,21 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("releases late artifact leases through their captured owner after UI replacement", async () => {
+    const { host, service } = fixture();
+    let finish!: (value: { url: string; leaseId: string }) => void;
+    const releaseSource = vi.fn();
+    Object.defineProperty(service, "artifacts", { value: { acquireSource: () => new Promise(resolve => { finish = resolve; }), releaseSource } });
+    let application!: ApplicationServiceV1;
+    await host.activateGeneration({ pluginId: "artifacts", generation: "one", register: api => { application = api.application; } });
+    const opening = application.artifacts.acquireSource({ id: "item", name: "file", mimeType: "application/pdf", text: "bytes" });
+    const rejected = expect(opening).rejects.toThrow();
+    await host.activateGeneration({ pluginId: "artifacts", generation: "two", register: () => {} });
+    finish({ url: "blob:fixture", leaseId: "late" }); await rejected;
+    expect(releaseSource).toHaveBeenCalledExactlyOnceWith("late");
+    application.artifacts.releaseSource("late"); expect(releaseSource).toHaveBeenCalledOnce();
+  });
+
   it("gives each replacement UI its own native window scope", async () => {
     const { host, service } = fixture();
     const signals: AbortSignal[] = [];

@@ -32,6 +32,7 @@ export const desktopPluginHost = new PluginHost({
   react: React,
   application: {
     contractVersion: 1,
+    get artifacts() { return getDesktopApplication().artifacts; },
     createDesktopScope: signal => getDesktopApplication().createDesktopScope(signal),
     get webWorkspace() { return getDesktopApplication().webWorkspace; },
     get onboarding() { return getDesktopApplication().onboarding; },

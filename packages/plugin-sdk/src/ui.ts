@@ -1,3 +1,4 @@
+import type { ApplicationArtifactsV1, ArtifactCallOptionsV1 } from "./ui-artifacts.js";
 import type { ApplicationDesktopControlsV1 } from "./ui-desktop.js";
 import type { ApplicationWebWorkspaceV1 } from "./ui-web-workspace.js";
 import type { ApplicationOnboardingV1, OnboardingCallOptionsV1 } from "./ui-onboarding.js";
@@ -166,6 +167,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly artifacts: ApplicationArtifactsV1;
   readonly desktop: ApplicationDesktopControlsV1;
   readonly webWorkspace: ApplicationWebWorkspaceV1;
   readonly onboarding: ApplicationOnboardingV1;
@@ -400,6 +402,8 @@ export function scopeApplicationPreviewContent(source: () => ApplicationPreviewC
     invokeApplicationOperation(operation, signal, assertActive, options?.signal);
   return Object.freeze({
     get capabilities() { assertActive(); signal.throwIfAborted(); return source().capabilities; },
+    resolveResourceURL: (target: { readonly source: string; readonly cwd?: string }) => { assertActive(); signal.throwIfAborted(); return source().resolveResourceURL(target); },
+    openFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().openFile(target, { signal }), options),
     listDirectory: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().listDirectory(target, { signal }), options),
     readFile: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().readFile(target, { signal }), options),
     revealItem: (target: PreviewFileTargetV1, options?: PreviewContentOptionsV1) => invoke(signal => source().revealItem(target, { signal }), options),
@@ -533,6 +537,7 @@ export function scopeApplicationBrowser(source: () => ApplicationBrowserV1,
     },
     onDock: listener => subscribe(callback => source().onDock(callback), listener),
     onInvalidate: listener => subscribe(callback => source().onInvalidate(callback), listener),
+    openURL: (input, options) => invokeApplicationOperation(signal => source().openURL(input, { signal }), signal, assertActive, options?.signal),
     openExternal: (url, options) => invokeApplicationOperation(signal => source().openExternal(url, { signal }), signal, assertActive, options?.signal),
     consumeNavigation: requestId => { check(); source().consumeNavigation(requestId); },
   });
@@ -558,5 +563,41 @@ export function scopeApplicationOnboarding(source: () => ApplicationOnboardingV1
     discoverWorkspaces: options => invoke(signal => source().discoverWorkspaces({ signal }), options),
     chooseWorkspace: options => invoke(signal => source().chooseWorkspace({ signal }), options),
     complete: (input, options) => invoke(signal => source().complete(input, { signal }), options),
+  });
+}
+
+/** Resource leases keep their source and cancellation links until release, even after acquisition settles. */
+export function scopeApplicationArtifacts(source: () => ApplicationArtifactsV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationArtifactsV1 {
+  const leases = new Map<string, () => void>();
+  const check = () => { assertActive(); signal.throwIfAborted(); };
+  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: ArtifactCallOptionsV1) =>
+    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
+  return Object.freeze<ApplicationArtifactsV1>({
+    get capabilities() { check(); return source().capabilities; },
+    resolveSource: resource => { check(); return source().resolveSource(resource); },
+    acquireSource: async (resource, options) => {
+      check(); options?.signal?.throwIfAborted();
+      const owner = source(), lifetime = new AbortController();
+      let leaseId: string | undefined;
+      const detach = () => { signal.removeEventListener("abort", abort); options?.signal?.removeEventListener("abort", abort); };
+      const release = () => { if (leaseId) { leases.delete(leaseId); owner.releaseSource(leaseId); leaseId = undefined; } detach(); };
+      const abort = () => { lifetime.abort(signal.aborted ? signal.reason : options?.signal?.reason); release(); };
+      signal.addEventListener("abort", abort, { once: true }); options?.signal?.addEventListener("abort", abort, { once: true });
+      try {
+        const result = await owner.acquireSource(resource, { signal: lifetime.signal });
+        leaseId = result.leaseId;
+        check(); lifetime.signal.throwIfAborted();
+        if (leaseId) leases.set(leaseId, release); else detach();
+        return result;
+      } catch (error) { release(); throw error; }
+    },
+    releaseSource: leaseId => { leases.get(leaseId)?.(); },
+    readAttachment: (input, options) => invoke(signal => source().readAttachment(input, { signal }), options),
+    readItem: (input, options) => invoke(signal => source().readItem(input, { signal }), options),
+    readText: (resource, options) => invoke(signal => source().readText(resource, { signal }), options),
+    save: (resource, options) => invoke(signal => source().save(resource, { signal }), options),
+    showItemMenu: (resource, options) => invoke(signal => source().showItemMenu(resource, { signal }), options),
+    openFile: (resource, options) => invoke(signal => source().openFile(resource, { signal }), options),
   });
 }
