@@ -2026,12 +2026,48 @@ func (s *Session) SetSessionID(id string) error {
 			}
 		}
 	}
-	if s.HookDispatcher != nil {
-		if _, err := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionStart, &hooks.Input{SessionID: id, CWD: s.RootDir}); err != nil {
-			return fmt.Errorf("session start hook: %w", err)
-		}
+	if err := s.dispatchSessionLifecycleHook(hooks.SessionStart, id); err != nil {
+		return fmt.Errorf("session start hook: %w", err)
 	}
 	return nil
+}
+
+func (s *Session) dispatchSessionLifecycleHook(event hooks.Event, sessionID string) (hookErr error) {
+	s.pluginGenerationMu.Lock()
+	dispatcher := s.HookDispatcher
+	if s.pluginGeneration != nil {
+		dispatcher = s.pluginGeneration.hooks
+	}
+	hasHooks := dispatcher != nil && dispatcher.HasHooks(event)
+	s.pluginGenerationMu.Unlock()
+	if !hasHooks {
+		return nil
+	}
+	binding, err := s.RetainState()
+	if err != nil {
+		return err
+	}
+	defer func() { hookErr = errors.Join(hookErr, binding.Close()) }()
+	if binding.Generation == nil {
+		return serviceError("service_unavailable", "session lifecycle hooks require a captured generation")
+	}
+	// Publication may have changed the graph since the no-hook fast path.
+	// The dispatcher, journal and receipt owner must all use this capture.
+	dispatcher = binding.Generation.hooks
+	if dispatcher == nil || !dispatcher.HasHooks(event) {
+		return nil
+	}
+	if binding.InferenceJournalRuntime == nil {
+		return serviceError("service_unavailable", "session lifecycle inference accounting is unavailable")
+	}
+	ctx, finish, err := binding.BeginModelReceipts(context.Background())
+	if err != nil {
+		return err
+	}
+	defer func() { hookErr = errors.Join(hookErr, finish()) }()
+	ctx = providers.WithInferenceJournal(ctx, binding.InferenceJournalRuntime.ForOwner("session-lifecycle:"+sessionID))
+	_, hookErr = dispatcher.Dispatch(ctx, event, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
+	return hookErr
 }
 
 // ownedWorkerExecutionDrainTimeout bounds how long session cleanup waits for
@@ -2071,14 +2107,11 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	s.pluginTransitionMu.Lock()
 	defer s.pluginTransitionMu.Unlock()
 	var cleanupErr error
-	if s.HookDispatcher != nil {
-		sessionID := ""
-		if s.Toolkit != nil {
-			sessionID = s.Toolkit.SessionID()
-		}
-		_, hookErr := s.HookDispatcher.Dispatch(context.Background(), hooks.SessionEnd, &hooks.Input{SessionID: sessionID, CWD: s.RootDir})
-		cleanupErr = errors.Join(cleanupErr, hookErr)
+	sessionID := ""
+	if s.Toolkit != nil {
+		sessionID = s.Toolkit.SessionID()
 	}
+	cleanupErr = errors.Join(cleanupErr, s.dispatchSessionLifecycleHook(hooks.SessionEnd, sessionID))
 	if !s.borrowedPluginGeneration {
 		cleanupErr = errors.Join(cleanupErr, s.stopPluginModelInvocations())
 	}

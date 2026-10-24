@@ -21,6 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -29,7 +30,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -78,6 +81,199 @@ func TestSessionCleanupClosesMCPManager(t *testing.T) {
 	}
 }
 
+type sessionHookReceiptClient struct {
+	started chan providers.ChatRequest
+	release chan struct{}
+	done    chan struct{}
+}
+
+func (c sessionHookReceiptClient) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	_, end, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "chat"})
+	if err != nil {
+		end(nil)
+		return providers.ChatResponse{}, err
+	}
+	go func() {
+		defer close(c.done)
+		defer func() { end(request.Execution.JournalError()) }()
+		<-c.release
+		submission.CompleteSuccess(&providers.TokenUsage{InputTokens: 31, OutputTokens: 7})
+	}()
+	c.started <- request
+	return providers.ChatResponse{Content: `{"ok":true}`}, nil
+}
+
+type sessionHookDocuments struct {
+	*modelTerminalDocuments
+	logicalDone chan struct{}
+	logicalOnce sync.Once
+	failReceipt bool
+}
+
+func (p *sessionHookDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	terminal := false
+	if params.Method == "commit" {
+		var tx persistence.Transaction
+		if err := json.Unmarshal(params.Params, &tx); err != nil {
+			return nil, err
+		}
+		for _, write := range tx.Writes {
+			if write.Namespace == "wuu.inference_operations.v1" {
+				var operation struct{ Status string }
+				if err := json.Unmarshal(write.Value, &operation); err != nil {
+					return nil, err
+				}
+				terminal = operation.Status != "active"
+			}
+			if p.failReceipt && write.Namespace == "wuu.inference_submissions.v1" {
+				var receipt providers.InferenceSubmissionJournalRecord
+				if err := json.Unmarshal(write.Value, &receipt); err != nil {
+					return nil, err
+				}
+				if receipt.ReportedUsage != nil {
+					return nil, &pluginhost.HostServiceError{Code: "receipt_checkpoint_rejected", Message: "lifecycle receipt rejected"}
+				}
+			}
+		}
+	}
+	result, err := p.modelTerminalDocuments.InvokeService(ctx, params)
+	if terminal && err == nil {
+		p.logicalOnce.Do(func() { close(p.logicalDone) })
+	}
+	return result, err
+}
+
+// Detached lifecycle prompt hooks need the selected journal and must finish
+// physical receipt accounting before their caller can retire that generation.
+func TestSessionLifecyclePromptReceiptsFinishBeforeAuthorityRelease(t *testing.T) {
+	for _, event := range []hooks.Event{hooks.SessionStart, hooks.SessionEnd} {
+		for _, failReceipt := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail_receipt_%t", event, failReceipt), func(t *testing.T) {
+				ctx := context.Background()
+				root := t.TempDir()
+				home, workspace := testWorkspaceState(t, root)
+				provider := &sessionHookDocuments{modelTerminalDocuments: &modelTerminalDocuments{Service: persistence.NewService("test.hook-documents", filepath.Join(root, "documents"), "jsonl"), entered: make(chan context.Context, 1), release: make(chan struct{}), closed: make(chan struct{})}, logicalDone: make(chan struct{}), failReceipt: failReceipt}
+				close(provider.release)
+				modules := testStateModules()
+				modules[1] = provider.ID()
+				host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
+					&composition.Config{Version: composition.Version, Modules: &modules}, "",
+					NativeProviderFactory{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }})
+				if err != nil {
+					t.Fatal(err)
+				}
+				client := sessionHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{})}
+				unblock := sync.OnceFunc(func() { close(client.release) })
+				defer unblock()
+				cfg := config.Config{Hooks: map[string][]config.HookEntry{string(event): {{Type: "prompt", Prompt: "evaluate lifecycle event $ARGUMENTS"}}}}
+				// Replacement generations intentionally have no default hook journal.
+				dispatcher := buildHookDispatcher(cfg, nil, client, "fixture", nil)
+				generation := &PluginGeneration{id: "lifecycle-receipts", host: host, state: kernel.state, hooks: dispatcher}
+				generation.retain()
+				owner := &Session{RootDir: root, WuuHome: home, HomeDir: home, StateDir: workspace, PluginHost: host, HookDispatcher: dispatcher, pluginGeneration: generation}
+				kernel.bindStateGeneration(generation, owner)
+				if err := host.Activate(ctx); err != nil {
+					t.Fatal(err)
+				}
+				owner.Documents, owner.Sessions, owner.InferenceJournalRuntime = kernel.state.documents, kernel.state.sessions, kernel.state.journal
+				var cleanupOnce sync.Once
+				var cleanupErr error
+				cleanup := func() error {
+					cleanupOnce.Do(func() { _, cleanupErr = owner.Cleanup() })
+					return cleanupErr
+				}
+				t.Cleanup(func() { _ = cleanup() })
+				returned := make(chan error, 1)
+				go func() {
+					if event == hooks.SessionStart {
+						returned <- owner.SetSessionID("lifecycle-test")
+					} else {
+						returned <- cleanup()
+					}
+				}()
+				var request providers.ChatRequest
+				select {
+				case request = <-client.started:
+				case err := <-returned:
+					t.Fatalf("lifecycle hook returned before model admission: %v", err)
+				case <-time.After(10 * time.Second):
+					t.Fatal("lifecycle prompt did not reach its model")
+				}
+				admitted := request.Execution.Snapshot().Submissions
+				if len(admitted) != 1 {
+					t.Fatalf("physical submissions = %d", len(admitted))
+				}
+				var hookErr error
+				early := false
+				select {
+				case <-provider.logicalDone:
+				case hookErr = <-returned:
+					early = true
+					t.Errorf("lifecycle hook returned before selected logical accounting or physical receipts: %v", hookErr)
+				case <-time.After(10 * time.Second):
+					t.Fatal("lifecycle prompt did not complete its logical operation")
+				}
+				if event == hooks.SessionEnd {
+					select {
+					case <-provider.closed:
+						t.Error("SessionEnd retired its authority while the model receipt was pending")
+					default:
+					}
+				}
+				unblock()
+				if !early {
+					select {
+					case hookErr = <-returned:
+					case <-time.After(10 * time.Second):
+						t.Fatal("lifecycle hook did not finish after physical receipt release")
+					}
+				}
+				if failReceipt && (hookErr == nil || !strings.Contains(hookErr.Error(), "lifecycle receipt rejected")) {
+					t.Errorf("required lifecycle receipt failure was lost: %v", hookErr)
+				} else if !failReceipt && hookErr != nil {
+					t.Errorf("lifecycle hook cleanup: %v", hookErr)
+				}
+				if event == hooks.SessionStart {
+					_ = cleanup()
+				}
+				select {
+				case <-client.done:
+				case <-time.After(10 * time.Second):
+					t.Fatal("physical lifecycle receipt did not complete")
+				}
+				_, snapshot, err := persistence.Inspect(ctx, filepath.Join(root, "documents"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for _, document := range snapshot.Documents {
+					if document.Namespace != "wuu.inference_submissions.v1" {
+						continue
+					}
+					count++
+					var receipt providers.InferenceSubmissionJournalRecord
+					if err := json.Unmarshal(document.Value, &receipt); err != nil {
+						t.Fatal(err)
+					}
+					if receipt.ID != admitted[0].ID || receipt.OperationID != request.Operation.ID || receipt.AttemptID != request.Attempt.ID {
+						t.Errorf("lifecycle receipt changed physical identity: %+v", receipt)
+					}
+					if !failReceipt && (receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 31 || receipt.ReportedUsage.OutputTokens != 7) {
+						t.Errorf("lifecycle final checkpoint lost late usage: %+v", receipt)
+					}
+				}
+				if count != 1 {
+					t.Errorf("durable lifecycle receipts = %d, want one", count)
+				}
+			})
+		}
+	}
+}
+
 func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "events.log")
 	command := func(event string) string { return fmt.Sprintf("printf '%s\\n' >> %q", event, logPath) }
@@ -85,7 +281,16 @@ func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 		hooks.SessionStart: {{Command: command("start")}},
 		hooks.SessionEnd:   {{Command: command("end")}},
 	}))
-	session := &Session{RootDir: t.TempDir(), StateDir: t.TempDir(), HookDispatcher: dispatcher}
+	root, home := t.TempDir(), t.TempDir()
+	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	state, err := OpenState(context.Background(), StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	state.Generation.retain()
+	state.Generation.hooks = dispatcher
+	session := &Session{RootDir: root, WuuHome: home, StateDir: t.TempDir(), HookDispatcher: dispatcher, pluginGeneration: state.Generation, PluginHost: state.Host, Documents: state.Documents, Sessions: state.Sessions, InferenceJournalRuntime: state.InferenceJournalRuntime}
 	if err := session.SetSessionID("session-hooks"); err != nil {
 		t.Fatalf("SetSessionID: %v", err)
 	}
