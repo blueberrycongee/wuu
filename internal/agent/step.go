@@ -432,6 +432,9 @@ type LoopResult struct {
 	FinishReason  providers.FinishReason
 	StopReason    string
 	Truncated     bool
+	// ReceiptDiagnostic records post-run accounting failures independently
+	// of a successful reply. It belongs in diagnostics, not conversation errors.
+	ReceiptDiagnostic string
 	// Driver metadata is the versioned policy identity and terminal checkpoint
 	// associated with this result. The checkpoint is opaque to callers.
 	DriverID              string

@@ -155,6 +155,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Center the startup icon, title, and progress bar without reserving invisible space for the delayed loading hint; showing the hint keeps the startup content in place.
 
+- Keep successful replies completed when only post-run model receipt cleanup fails, retaining the failure in diagnostics without a conversation notice. Distinguish receipt lifecycle failures from user stops in live and restored error messages.
+
 - Show the right-sidebar toggle and workspace tool rail only on conversation pages, hiding them on catalog, settings, website, and plugin pages.
 
 - Align the workspace tool rail icons with the right-panel toggle across UI font sizes and window widths.

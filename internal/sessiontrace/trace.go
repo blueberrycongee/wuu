@@ -66,6 +66,7 @@ type TurnRecord struct {
 	DriverContract      int                 `json:"driver_contract,omitempty"`
 	DriverStatus        string              `json:"driver_status,omitempty"`
 	DriverCheckpoint    json.RawMessage     `json:"driver_checkpoint,omitempty"`
+	ReceiptDiagnostic   string              `json:"model_receipt_diagnostic,omitempty"`
 	Error               string              `json:"error,omitempty"`
 }
 
@@ -740,6 +741,7 @@ func TurnEvents(turn TurnRecord, final FinalRecord, inventory []tools.ToolInfo, 
 	} else if turn.StartedAt != nil {
 		createdAt = *turn.StartedAt
 	}
+	turn.ReceiptDiagnostic = redactAndTruncate(turn.ReceiptDiagnostic)
 	events := []Event{{
 		Type:      "turn",
 		ThreadID:  turn.ThreadID,

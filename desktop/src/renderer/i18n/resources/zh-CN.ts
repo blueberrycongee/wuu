@@ -1057,6 +1057,8 @@ export const zhCN = {
   "error.toolTitle": "工具调用失败",
   "error.localTitle": "本地操作失败",
   "error.internalTitle": "wuu 内部错误",
+  "error.sessionStateTitle": "会话状态异常",
+  "error.sessionStateDetail": "Wuu 无法确认本次会话的内部状态。诊断详情可用于排查。",
   "error.cancelledDetail": "这次请求已停止，可以继续发送消息。",
   "error.networkDetail": "请求未完成，可稍后重试。",
   "error.recoveryCounts": "本次失败的流请求：自动重试 {retries} 次（上限 {maxRetries} 次），实际发出 {requests} 次请求。请求次数不等于 token 计费量。",

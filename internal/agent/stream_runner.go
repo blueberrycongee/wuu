@@ -32,6 +32,21 @@ type BeginModelReceiptsFunc func(context.Context) (context.Context, func() error
 // failures that callers must not discard as best-effort model output failures.
 var ErrModelReceiptLifecycle = errors.New("model receipt lifecycle failed")
 
+// ModelReceiptCompletionError distinguishes post-run receipt cleanup from
+// admission and execution failures. Callers may retain it as a diagnostic when
+// the run otherwise succeeded; joined execution errors must still fail the run.
+type ModelReceiptCompletionError struct {
+	Err error
+}
+
+func (e *ModelReceiptCompletionError) Error() string {
+	return ErrModelReceiptLifecycle.Error() + "\n" + e.Err.Error()
+}
+
+func (e *ModelReceiptCompletionError) Unwrap() []error {
+	return []error{ErrModelReceiptLifecycle, e.Err}
+}
+
 const maxConsecutiveProactiveCompactFailures = 3
 
 // StreamRunner binds a selected driver to one execution and its model, tool,
@@ -338,7 +353,15 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 	if err != nil {
 		return LoopResult{}, err
 	}
-	defer func() { runErr = errors.Join(runErr, finishReceipts()) }()
+	defer func() {
+		if completionErr := finishReceipts(); completionErr != nil {
+			if runErr == nil {
+				runErr = completionErr
+			} else {
+				runErr = errors.Join(runErr, completionErr)
+			}
+		}
+	}()
 	var instance loopdriver.Instance
 	if resume != nil {
 		instance, err = driver.Resume(ctx, execution, input, *resume)
@@ -422,7 +445,7 @@ func BeginModelReceipts(ctx context.Context, begin BeginModelReceiptsFunc) (cont
 	}
 	return ctx, func() error {
 		if err := finish(); err != nil {
-			return errors.Join(ErrModelReceiptLifecycle, err)
+			return &ModelReceiptCompletionError{Err: err}
 		}
 		return nil
 	}, nil

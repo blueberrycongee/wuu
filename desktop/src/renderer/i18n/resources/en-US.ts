@@ -1060,6 +1060,8 @@ export const enUS = {
   "error.toolTitle": "Tool call failed",
   "error.localTitle": "Local operation failed",
   "error.internalTitle": "Internal Wuu error",
+  "error.sessionStateTitle": "Session state issue",
+  "error.sessionStateDetail": "Wuu could not confirm the internal state of this session. Diagnostic details are available for troubleshooting.",
   "error.cancelledDetail": "This request was stopped. You can send another message.",
   "error.networkDetail": "The request did not complete. Try again later.",
   "error.recoveryCounts": "Failed stream: {retries} automatic retries (limit {maxRetries}); {requests} requests sent. Request counts are not token charges.",

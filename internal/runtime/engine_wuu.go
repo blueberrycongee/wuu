@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/externalengine"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 )
 
 // WuuEngine is the built-in agent engine: the native StreamRunner loop that
@@ -379,6 +380,13 @@ func (w *wuuEngineSession) RunTurn(ctx context.Context, input agentengine.TurnIn
 		w.mu.Unlock()
 	}()
 	res, err := w.runner.RunWithCallback(ctx, input.History, agent.StreamCallback(sink))
+	// Only a sole post-run cleanup failure can leave the reply successful.
+	// Do not use errors.As: a joined execution or workflow failure must retain
+	// its failed outcome even when receipt cleanup also failed.
+	if receiptErr, ok := err.(*agent.ModelReceiptCompletionError); ok && res.DriverStatus == string(loopdriver.TerminalSucceeded) {
+		res.ReceiptDiagnostic = receiptErr.Error()
+		err = nil
+	}
 	return agentengine.TurnResult{Result: res}, err
 }
 

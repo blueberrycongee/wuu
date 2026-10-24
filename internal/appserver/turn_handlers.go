@@ -3676,6 +3676,7 @@ func (s *Server) persistTurnTrace(binding *runtime.State, threadRuntime *runtime
 		DriverContract:      res.DriverContractVersion,
 		DriverStatus:        res.DriverStatus,
 		DriverCheckpoint:    append(json.RawMessage(nil), res.DriverCheckpoint...),
+		ReceiptDiagnostic:   res.ReceiptDiagnostic,
 		Error:               errorText,
 	}
 	finalRecord := sessiontrace.FinalRecord{
