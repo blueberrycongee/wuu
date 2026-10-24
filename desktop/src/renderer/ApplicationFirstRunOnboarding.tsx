@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
-import type { ApplicationOnboardingV1, ApplicationOnboardingWorkflowV1 } from "../../../packages/plugin-sdk/src/ui-onboarding";
+import type { ApplicationOnboardingWorkflowV1 } from "../../../packages/plugin-sdk/src/ui-onboarding";
 import type { CatalogProviderSummary, EngineListResult, ExtensionInventoryRecord, ProviderSummary } from "../shared/protocol";
 import { FirstRunOnboarding, type FirstRunOnboardingState } from "./FirstRunOnboarding";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
@@ -12,7 +12,7 @@ function flowState(workflow: ApplicationOnboardingWorkflowV1 | undefined): First
 
 /** The default setup presentation consumes the same public services as another shell. */
 export function ApplicationFirstRunOnboarding({ application }: {
-  application: ApplicationServiceV1 & { readonly onboarding: ApplicationOnboardingV1 };
+  application: ApplicationServiceV1;
 }): JSX.Element {
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const setup = useSyncExternalStore(application.onboarding.subscribe, application.onboarding.getSnapshot);
