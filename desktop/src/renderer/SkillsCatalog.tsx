@@ -239,19 +239,17 @@ function SkillsCatalogView({
     plugins.find((record) => (record.provenance.plugin_id ?? record.id) === id)?.name ?? id;
 
   async function trySkill(skill: SkillSummary): Promise<void> {
-    const source = catalog.getSnapshot().contextKey;
-    if (!source) return;
+    if (!catalog.getSnapshot().contextKey) return;
+    const { activeTabId, navigationRevision } = application.getSnapshot().tabs;
     try {
-      await application.invoke("navigation.show-native", {});
-      if (catalog.getSnapshot().contextKey !== source) return;
-      await application.invoke("navigation.show-section", {section:"conversations"});
-      if (catalog.getSnapshot().contextKey !== source) return;
-      const {tabId} = await application.invoke("draft.start", {});
-      if (catalog.getSnapshot().contextKey !== source) return;
-      await application.invoke("composer.checkpoint", {activeTabId:tabId, primary:{ownerTabId:tabId,
-        text:composerSkillPrompt(skill), imageIds:[], fileIds:[], selections:[]}});
-      await application.invoke("navigation.focus-composer", {tabId});
-    } catch (error) { showErrorToast(error, translateCurrent("skills.loadFailed")); }
+      await application.invoke("draft.start-with-content", {
+        text: composerSkillPrompt(skill),
+        sourceTabId: activeTabId,
+        navigationRevision,
+      });
+    } catch (error) {
+      showErrorToast(error, translateCurrent("skills.loadFailed"));
+    }
   }
 
   async function refreshSkills(): Promise<void> {
