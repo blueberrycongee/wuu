@@ -187,18 +187,29 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		return nil, &pluginhost.HostServiceError{Code: "service_not_found", Message: "unknown tool service"}
 	}
 	switch p.Method {
-	case "list", "resolve", "execute", "freeze", "unfreeze", "prepare":
+	case "list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize":
 	default:
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown tool service method"}
 	}
 	var input CallRequest
 	var preparation PrepareRequest
+	var finalization FinalizeRequest
 	if p.Method == "resolve" || p.Method == "execute" {
 		if err := decode(p.Params, &input); err != nil {
 			return nil, err
 		}
 		if input.Call.Name == "" {
 			return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "tool name is required"}
+		}
+	} else if p.Method == "finalize" {
+		if err := decode(p.Params, &finalization); err != nil {
+			return nil, err
+		}
+		if finalization.Call.Name == "" || finalization.Result == nil {
+			return nil, &pluginhost.HostServiceError{Code: "invalid_request", Message: "finalize requires call and result"}
+		}
+		if err := finalization.Result.Validate(); err != nil {
+			return nil, err
 		}
 	} else if p.Method == "prepare" {
 		if err := decode(p.Params, &preparation); err != nil {
@@ -217,6 +228,12 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 	executor := backend.Executor
 	var result any
 	switch p.Method {
+	case "finalize":
+		value := *finalization.Result
+		if finalizer, ok := executor.(agent.ToolResultFinalizer); ok {
+			value = finalizer.FinalizeToolResult(finalization.Call, value)
+		}
+		result = ExecutionResult{Result: value}
 	case "prepare":
 		prepared := PrepareResult{Messages: []pluginprotocol.ModelMessageV1{}}
 		if preparer, ok := executor.(agent.ModelStepPreparer); ok {
@@ -295,9 +312,6 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		}
 		if err != nil {
 			return nil, err
-		}
-		if finalizer, ok := executor.(agent.ToolResultFinalizer); ok {
-			value = finalizer.FinalizeToolResult(input.Call, value)
 		}
 		execution := ExecutionResult{Result: value}
 		if discovery, ok := executor.(agent.ToolDiscoveryProvider); ok {

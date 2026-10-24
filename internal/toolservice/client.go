@@ -139,3 +139,24 @@ func (c *Client) Prepare(ctx context.Context, history []providers.ChatMessage) (
 	}
 	return messages, nil
 }
+
+// Finalize applies selected result settlement once, including normalized errors.
+func (c *Client) Finalize(ctx context.Context, call providers.ToolCall, result toolresult.Result) (toolresult.Result, error) {
+	raw, err := c.invoke(ctx, "finalize", FinalizeRequest{Call: call, Result: &result})
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	var wire struct {
+		Result *toolresult.Result `json:"result"`
+	}
+	if err = json.Unmarshal(raw, &wire); err != nil {
+		return toolresult.Result{}, err
+	}
+	if wire.Result == nil {
+		return toolresult.Result{}, fmt.Errorf("%s.finalize: missing result", ServiceName)
+	}
+	if err = wire.Result.Validate(); err != nil {
+		return toolresult.Result{}, err
+	}
+	return *wire.Result, nil
+}

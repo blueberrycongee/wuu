@@ -16,7 +16,7 @@ const DefaultModule = "wuu.tools.default"
 
 func Descriptor() pluginhost.ServiceDescriptor {
 	methods := make([]pluginhost.ServiceMethodDescriptor, 0, 3)
-	for _, name := range []string{"list", "resolve", "execute", "freeze", "unfreeze", "prepare"} {
+	for _, name := range []string{"list", "resolve", "execute", "freeze", "unfreeze", "prepare", "finalize"} {
 		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: ServiceName + "." + name + ".input.v1", OutputSchema: ServiceName + "." + name + ".output.v1"})
 	}
 	return pluginhost.ServiceDescriptor{Name: ServiceName, Version: "1.0.0", Methods: methods}
@@ -84,4 +84,11 @@ type PrepareRequest struct {
 // the selected provider has no additions. Missing/null messages are invalid.
 type PrepareResult struct {
 	Messages []pluginprotocol.ModelMessageV1 `json:"messages"`
+}
+
+// FinalizeRequest settles the normalized result after execution/hook errors
+// have been converted into ordinary tool results by the caller.
+type FinalizeRequest struct {
+	Call   providers.ToolCall `json:"call"`
+	Result *toolresult.Result `json:"result"`
 }

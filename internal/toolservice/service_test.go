@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -342,4 +343,63 @@ func TestPrepareUsesSelectedProviderAndRejectsIncompleteResponse(t *testing.T) {
 	if _, err := client.Prepare(context.Background(), history); !errors.Is(err, sentinel) {
 		t.Fatalf("lost selected error: %v", err)
 	}
+}
+
+func TestFinalizeRunsOnceAfterSuccessOrNormalizedFailure(t *testing.T) {
+	probe := &finalizationProbe{}
+	native := NewService()
+	ctx := context.Background()
+	if err := native.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer native.Close(ctx)
+	ctx = WithScope(ctx, NewScope(func(context.Context) (Backend, error) { return Backend{Executor: probe}, nil }))
+	client := NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+		return native.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: ServiceName, Method: method, Params: raw})
+	})
+	call := providers.ToolCall{Name: "probe", ID: "call"}
+	result, err := client.ExecuteResult(ctx, call)
+	if err != nil || probe.count != 0 {
+		t.Fatalf("execute finalized prematurely: %d %v", probe.count, err)
+	}
+	result, err = client.Finalize(ctx, call, result)
+	if err != nil || probe.count != 1 || result.ModelText == nil || *result.ModelText != "settled" {
+		t.Fatalf("finalize: %+v %v count=%d", result, err, probe.count)
+	}
+	probe.fail = true
+	if _, err = client.ExecuteResult(ctx, call); err == nil {
+		t.Fatal("missing execution error")
+	}
+	if probe.count != 1 {
+		t.Fatal("error path finalized before normalization")
+	}
+	result, err = client.Finalize(ctx, call, toolresult.FromErrorText("normalized error"))
+	if err != nil || !result.IsError || probe.count != 2 {
+		t.Fatalf("normalized failure: %+v %v count=%d", result, err, probe.count)
+	}
+	failed := NewClient(func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+		return nil, errors.New("selected finalizer unavailable")
+	})
+	if _, err := failed.Finalize(ctx, call, result); err == nil {
+		t.Fatal("selected finalization failure hidden")
+	}
+}
+
+type finalizationProbe struct {
+	count int
+	fail  bool
+}
+
+func (*finalizationProbe) Definitions() []providers.ToolDefinition { return nil }
+func (p *finalizationProbe) Execute(context.Context, providers.ToolCall) (string, error) {
+	if p.fail {
+		return "", errors.New("execution failed")
+	}
+	return "raw", nil
+}
+func (p *finalizationProbe) FinalizeToolResult(_ providers.ToolCall, result toolresult.Result) toolresult.Result {
+	p.count++
+	text := "settled"
+	result.ModelText = &text
+	return result
 }

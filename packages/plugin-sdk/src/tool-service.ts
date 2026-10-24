@@ -6,7 +6,7 @@ export const TOOL_SERVICE = 'agent.tools';
 export const TOOL_SERVICE_DESCRIPTOR: ServiceDescriptor = {
   name: TOOL_SERVICE,
   version: '1.0.0',
-  methods: ['list', 'resolve', 'execute', 'freeze', 'unfreeze', 'prepare'].map(name => ({
+  methods: ['list', 'resolve', 'execute', 'freeze', 'unfreeze', 'prepare', 'finalize'].map(name => ({
     name,
     input_schema: `${TOOL_SERVICE}.${name}.input.v1`,
     output_schema: `${TOOL_SERVICE}.${name}.output.v1`,
@@ -87,6 +87,10 @@ export interface ToolServiceMetadata {
 export type ToolServiceResolution =
   | { found: false; supports: boolean; metadata?: never; display?: ToolServiceDisplay }
   | { found: true; supports: boolean; metadata: ToolServiceMetadata; display?: ToolServiceDisplay };
+export interface ToolServiceFinalizeRequest {
+  call: ToolServiceCall;
+  result: ToolResult & { model_text?: string };
+}
 export interface ToolServiceExecution {
   result: ToolResult & { model_text?: string };
   discovered_tools?: { type: string; name: string; description?: string; input_schema?: Record<string, unknown>; defer_loading?: boolean }[];
@@ -108,5 +112,7 @@ export function toolService(host: RuntimeHost) {
     unfreeze: () => call<Record<string, never>>('unfreeze', {}),
     resolve: (input: ToolServiceCallRequest) => call<ToolServiceResolution>('resolve', input),
     execute: (input: ToolServiceCallRequest) => call<ToolServiceExecution>('execute', input),
+    /** Settle once after converting execution errors to a tool result. */
+    finalize: (input: ToolServiceFinalizeRequest) => call<ToolServiceExecution>('finalize', input),
   };
 }
