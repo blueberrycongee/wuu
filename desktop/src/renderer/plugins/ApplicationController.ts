@@ -270,14 +270,7 @@ export class ApplicationController implements HostApplicationService {
     });
   }
   private getSubmissionRuntime(ownerTabId: string) {
-    const owner = this.applicationComposerRuntime.getSnapshot().owners.find(owner => owner.ownerTabId === ownerTabId);
-    if (!owner) return { pending: true, params: {} };
-    const selection = owner.selection;
-    return { pending: !owner.available || owner.engineSelectionPending,
-      params: { engine: selection.engine, provider: selection.provider, model: selection.model,
-        effort: selection.engine === "wuu" ? selection.variant || selection.effort : selection.effort,
-        speed: selection.speed, model_options: { ...selection.modelOptions }, permission_mode: selection.permissionMode,
-        approve_for_me: selection.approveForMe }, worktree: owner.worktree.enabled ? { startBranch: owner.worktree.startBranch } : undefined };
+    return this.applicationComposerRuntime.getSubmissionRuntime(ownerTabId);
   }
   private getComposerDraft = (ownerTabId: string): ComposerDraftState => {
     const tab = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
