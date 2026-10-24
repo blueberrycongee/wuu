@@ -52,10 +52,11 @@ describe("application submission ownership",()=>{
     window.wuu={startThread:vi.fn(()=>creating.promise),startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn().mockResolvedValue({queued:{id:"queued"}})} as unknown as WuuDesktopApi;
     const f=fixture();f.submission.submit({ownerTabId:"draft:a"});f.submission.submit({ownerTabId:"draft:a",text:"second"});
     expect(f.pending.pendingComposerMessagesByThread["draft:a"].queued).toHaveLength(1);
-    creating.resolve({thread:thread()});await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalled());
+    creating.resolve({thread:{...thread(),cwd:"/worktree"}});await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalled());
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();starting.resolve({turn:{id:"first",status:"in_progress",items_view:"full",items:[]}});
     await vi.waitFor(()=>expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1));
     expect(f.pending.pendingComposerMessagesByThread.created.queued[0].id).toBe("queued");
+    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][8]).toMatchObject({cwd:"/worktree"});
   });
   it("does not replay an uncertain turn admission as a queue send and restores input",async()=>{
     window.wuu={startTurn:vi.fn().mockRejectedValue(new Error("request timed out")),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
@@ -63,4 +64,32 @@ describe("application submission ownership",()=>{
     await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0].phase).toBe("failed"));
     expect(window.wuu.queueTurn).not.toHaveBeenCalled();expect(f.getDraft("thread:created").prompt).toBe("hello");
   });
+  it("stops an accepted turn when cancellation arrives while startTurn is pending",async()=>{
+    const starting=deferred<{turn:Thread["turns"][number]}>();
+    window.wuu={startTurn:vi.fn(()=>starting.promise),interruptTurn:vi.fn().mockResolvedValue({ok:true})} as unknown as WuuDesktopApi;
+    const f=fixture(thread());const result=f.submission.submit({ownerTabId:"thread:created"});
+    await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalled());
+    f.submission.cancel(result.operationID!);expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
+    starting.resolve({turn:{id:"accepted",status:"in_progress",items_view:"full",items:[]}});
+    await vi.waitFor(()=>expect(window.wuu.interruptTurn).toHaveBeenCalledWith("created"));
+  });
+  it("routes question steer and interrupt through the same canonical pending owner",async()=>{
+    const target={...thread(),status:"in_progress" as const,turns:[{id:"running",status:"in_progress" as const,items_view:"full" as const,items:[]}]};
+    window.wuu={steerTurn:vi.fn().mockResolvedValue({}),interruptTurn:vi.fn().mockResolvedValue({ok:true})} as unknown as WuuDesktopApi;
+    const f=fixture(target);
+    expect(await f.submission.steerToThread({id:"answer",text:"answer",images:[],files:[]},target)).toBe(true);
+    expect(f.pending.pendingComposerMessagesByThread.created.guides[0].id).toBe("answer");
+    await f.submission.interruptThread("created");expect(window.wuu.interruptTurn).toHaveBeenCalledWith("created");
+  });
+  it("keeps an authoritative history edit result when Stop cancels its preparation",async()=>{
+    const preparing=deferred<Thread>();
+    window.wuu={startTurn:vi.fn(),interruptTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture(thread());
+    const sending=f.submission.submitToThread({id:"edited",text:"edited",images:[],files:[]},thread(),()=>preparing.promise);
+    await f.submission.stop("thread:created");
+    preparing.resolve(thread());expect(await sending).toBe(true);
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    expect(f.getState().threads[0].turns.at(-1)?.status).toBe("interrupted");
+  });
+
 });

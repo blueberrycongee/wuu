@@ -43,6 +43,7 @@ export interface ApplicationSubmissionSnapshotV1 {
   readonly operations: readonly ApplicationSubmissionOperationV1[];
   readonly pendingCreations: readonly { readonly ownerTabId: string; readonly operationID: string; readonly startedAtMs: number; readonly turn: ApplicationTurnV1 }[];
   readonly failedDraftTabIds: readonly string[];
+  readonly stopRequests: readonly { readonly threadId: string; readonly phase: "pending" | "retry" }[];
 }
 export interface ApplicationSubmissionActionMapV1 {
   "composer.submit": { input: ApplicationSubmissionInputV1; result: ApplicationSubmissionResultV1 };

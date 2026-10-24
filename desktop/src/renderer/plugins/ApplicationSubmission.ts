@@ -1,6 +1,6 @@
 import type { ApplicationSubmissionInputV1, ApplicationSubmissionResultV1, ApplicationSubmissionSnapshotV1, ApplicationSubmissionOperationV1 } from "../../../../packages/plugin-sdk/src/ui-submission";
 import type { MessageContentPart, ResponseSelection, RuntimeContext, Thread, ThreadStartParams, Turn } from "../../shared/protocol";
-import { activeThreadIDForState, activeTurnIDForThread, activeTurnIsAnswerReady, bindActiveSessionTabToThread, cloneComposerDraft, composerDraftHasContent, createDraftSessionTab, emptyComposerDraft, isThreadRunning, resolveComposerRunningAction, resolveThreadRuntimeContext, sameRuntimeContext, setThreadForPane, threadForTab, threadSessionTabID, updateThreadByID, upsertThread, upsertTurn, type AppState, type ComposerDraftState, type SessionTab } from "../AppState";
+import { activeThreadIDForState, activeTurnIDForThread, activeTurnIsAnswerReady, bindActiveSessionTabToThread, cloneComposerDraft, composerDraftHasContent, createDraftSessionTab, createThreadSessionTab, emptyComposerDraft, isThreadRunning, resolveComposerRunningAction, resolveThreadRuntimeContext, sameRuntimeContext, setThreadForPane, threadForTab, threadSessionTabID, updateThreadByID, upsertThread, upsertTurn, type AppState, type ComposerDraftState, type SessionTab } from "../AppState";
 import { awaitComposerFiles, awaitComposerImages, composerContextFromMessage, createComposerMessage, createOptimisticTurn, dropOptimisticTurn, inputFilesFromComposer, inputImagesFromComposer, interruptOptimisticTurn, isOptimisticTurnInterrupted, OPTIMISTIC_TURN_ID_PREFIX, replaceOptimisticTurn, threadHasAcceptedComposerMessage, type QueuedComposerMessage } from "../ComposerMessages";
 import type { ComposerPendingStateController } from "../ComposerPendingState";
 import type { ApplicationDraftResources } from "./ApplicationDrafts";
@@ -57,7 +57,7 @@ export class ApplicationSubmission {
   private readonly creations = new Map<string, Operation>();
   private readonly stopRequests = new Map<string, { target?: string; phase: "pending" | "retry"; delivery?: symbol }>();
   private readonly failedDrafts = new Set<string>();
-  private snapshot: ApplicationSubmissionSnapshotV1 = Object.freeze({ operations: Object.freeze([]), pendingCreations: Object.freeze([]), failedDraftTabIds: Object.freeze([]) });
+  private snapshot: ApplicationSubmissionSnapshotV1 = Object.freeze({ operations: Object.freeze([]), pendingCreations: Object.freeze([]), failedDraftTabIds: Object.freeze([]), stopRequests: Object.freeze([]) });
   private disposed = false;
   private readonly recoveryText = new Map<string, { prompt: string; text: string; hasReferences: boolean }>();
   private recoveryWarning = false;
@@ -74,7 +74,8 @@ export class ApplicationSubmission {
     this.snapshot = Object.freeze({ operations: Object.freeze([...this.operations.values()].map(operation => Object.freeze({ ...operation.view }))),
       pendingCreations: Object.freeze([...this.creations.values()].map(operation => Object.freeze({ ownerTabId: operation.source.id, operationID: operation.view.operationID, startedAtMs: operation.clickedAtMs,
         turn: Object.freeze({ id: operation.optimistic.id, status: "running" as const, items: Object.freeze(operation.optimistic.items.map(item => toConversationItemSnapshot(item, "user-message"))) }) }))),
-      failedDraftTabIds: Object.freeze([...this.failedDrafts]) });
+      failedDraftTabIds: Object.freeze([...this.failedDrafts]),
+      stopRequests: Object.freeze([...this.stopRequests].map(([threadId, request]) => Object.freeze({ threadId, phase: request.phase }))) });
     this.options.changed();
   }
   private phase(operation: Operation, phase: ApplicationSubmissionOperationV1["phase"], error?: string): void {
@@ -149,7 +150,7 @@ export class ApplicationSubmission {
     if (!operation || ["completed", "failed", "cancelled"].includes(operation.view.phase)) return false;
     operation.stopped = true; operation.cancelPreparation();
     if (this.creations.get(operation.source.id) === operation) { operation.creationCancelled = true; this.creations.delete(operation.source.id); }
-    if (operation.thread && operation.sent) void this.stop(threadSessionTabID(operation.thread.id));
+    if (operation.thread && operation.sent) void this.interruptThread(operation.thread.id);
     this.publish(); return true;
   }
 
@@ -171,6 +172,7 @@ export class ApplicationSubmission {
         this.options.pending.removePendingComposerMessageByID(pendingKey, operation.message.id, "queue");
         return !exists;
       }
+      operation.context = resolveThreadRuntimeContext(operation.thread, this.options.getState().projects);
       return await this.deliverPending(operation, "queue", () => lane.stopVersion !== version || Boolean(admission?.stopped) || operation.stopped);
     } finally { release(); if (lane.tail === tail) { this.lanes.delete(key); if (admission?.thread) this.lanes.delete(admission.thread.id); } }
   }
@@ -214,7 +216,9 @@ export class ApplicationSubmission {
     this.publish();
     let optimisticThreadID: string | undefined;
     try {
-      const runtime = this.options.getRuntime(source.id);
+      const runtime: ReturnType<ApplicationSubmissionOptions["getRuntime"]> = target
+        ? { pending: false, params: { engine: target.engine_id, permission_mode: target.permission_mode } }
+        : this.options.getRuntime(source.id);
       const projectDraft = !target && source.kind === "draft" && source.project && initial.initialized?.features?.project_agent && context.kind === "project";
       let thread = prepareThread ? await prepareThread() : target;
       if (!thread) {
@@ -331,7 +335,10 @@ export class ApplicationSubmission {
     const creation = this.creations.get(ownerTabId);
     if (creation) { this.cancel(creation.view.operationID); return; }
     if (tab?.kind !== "thread") return;
-    const thread = threadForTab(state, tab.threadID); if (!thread) return;
+    await this.interruptThread(tab.threadID);
+  }
+  async interruptThread(threadID: string): Promise<void> {
+    const thread = threadForTab(this.options.getState(), threadID); if (!thread) return;
     const admission = this.admissions.get(thread.id);
     if (admission) { admission.stopped = true; if (!admission.sent) admission.cancelPreparation(); }
     const lane = this.lanes.get(thread.id); if (lane) lane.stopVersion++;
@@ -349,10 +356,11 @@ export class ApplicationSubmission {
       if (!result.ok) throw new Error(t("composer.stopUnconfirmed"));
     } catch (error) {
       if (this.stopRequests.get(threadID)?.delivery !== delivery) return;
-      this.stopRequests.set(threadID, { ...request, phase: "retry", delivery: undefined }); this.report(error);
+      this.stopRequests.set(threadID, { ...request, phase: "retry", delivery: undefined }); this.publish(); this.report(error);
     }
   }
   reconcile(): void {
+    const beforeStops = this.stopRequests.size; const beforeFailures = this.failedDrafts.size;
     const state = this.options.getState();
     for (const [threadID, request] of this.stopRequests) {
       const thread = threadForTab(state, threadID);
@@ -362,6 +370,7 @@ export class ApplicationSubmission {
     }
     this.saveRecovery();
     for (const id of this.failedDrafts) if (id === state.activeSessionTabID || !state.sessionTabs.some(tab => tab.id === id)) this.failedDrafts.delete(id);
+    if (beforeStops !== this.stopRequests.size || beforeFailures !== this.failedDrafts.size) this.publish();
   }
   private recover(operation: Operation): void {
     const { message, source } = operation;
@@ -409,20 +418,32 @@ export class ApplicationSubmission {
       }
     }
     const saved = writeComposerDraftRecovery([...tabs.values()], state.activeSessionTabID);
-    if (!saved && !this.recoveryWarning) this.report(t("settings.draftRecoveryUnavailable"));
+    const warn = !saved && !this.recoveryWarning;
     this.recoveryWarning = !saved;
+    if (warn) this.report(t("settings.draftRecoveryUnavailable"));
   }
   private report(error: unknown): void { this.options.updateState(state => ({ ...state, status: rawErrorMessage(error, t("composer.sendFailed")) })); }
 
-  async submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {
-    const source = this.options.getState().sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id);
-    if (!source || source.kind === "skills" || this.disposed || thread.read_only) return false;
+  private async submitInternal(message: QueuedComposerMessage, thread: Thread, kind: "send" | "steer", prepareThread?: () => Promise<Thread>): Promise<boolean> {
+    if (this.disposed || thread.read_only || !threadForTab(this.options.getState(), thread.id)) return false;
+    const source = this.options.getState().sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id)
+      ?? createThreadSessionTab(thread, resolveThreadRuntimeContext(thread, this.options.getState().projects));
+    if (source.kind === "skills") return false;
     const operation = this.createOperation(message, source, thread);
     message.images.forEach(value => this.options.resources.remember("image", value));
     message.files.forEach(value => this.options.resources.remember("file", value));
     const release = this.options.resources.retain([...message.images, ...message.files].map(value => value.id));
-    try { const sent = await this.send(operation, prepareThread); this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error); return sent; }
-    finally { release(); }
+    try {
+      const sent = await (kind === "steer" ? this.steer(operation) : this.send(operation, prepareThread));
+      this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error);
+      return sent;
+    } finally { release(); }
+  }
+  submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {
+    return this.submitInternal(message, thread, "send", prepareThread);
+  }
+  steerToThread(message: QueuedComposerMessage, thread: Thread): Promise<boolean> {
+    return this.submitInternal(message, thread, "steer");
   }
   dispose(): void {
     this.disposed = true;
