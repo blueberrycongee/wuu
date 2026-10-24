@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot as createReactRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { RemoteItemContent } from "./RemoteItemContent";
 vi.mock("./i18n", () => ({useI18n: () => ({t:(key:string)=>key})}));
@@ -22,3 +25,9 @@ it("loads full content only on request and retries without losing its preview", 
     expect(container.querySelector("button")).toBeNull();
   } finally {act(() => root.unmount());container.remove();window.wuu=prior;}
 });
+
+function createRoot(container: HTMLElement) {
+  const root = createReactRoot(container);
+  const artifacts = new ApplicationArtifacts(window.wuu ?? {}, {resolveResourceURL: () => undefined, openFile: async () => {}});
+  return {...root, render: (children: ReactNode) => root.render(<ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider>), unmount: () => root.unmount()};
+}

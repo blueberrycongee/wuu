@@ -1,5 +1,8 @@
+import type { ReactNode } from "react";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import { act } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot as createReactRoot } from "react-dom/client";
 import { expect, it, vi } from "vitest";
 import { ArtifactPreview, collectTurnArtifacts, TurnEndArtifactOutputs, TurnInlineArtifactOutputs } from "./ArtifactOutputs";
 import { ArtifactPreviewContext, ArtifactThreadContext } from "./ArtifactPreviewContext";
@@ -287,3 +290,12 @@ it("renders deferred tool-result images as loadable attachments instead of unava
     expect(container.querySelector("img")?.src).toBe("data:image/png;base64,aW1hZ2U=");
   } finally {act(()=>root.unmount());container.remove();window.wuu=prior;}
 });
+
+function createRoot(container: HTMLElement) {
+  const root = createReactRoot(container);
+  let artifacts: ApplicationArtifacts;
+  return {render: (children: ReactNode) => {
+    artifacts ??= new ApplicationArtifacts(window.wuu ?? {}, {resolveResourceURL: ({source, cwd}) => `wuu-file://local/${btoa(`${cwd}/${source}`).replace(/=/g, "")}`, openFile: async () => {}});
+    root.render(<ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider>);
+  }, unmount: () => root.unmount()};
+}

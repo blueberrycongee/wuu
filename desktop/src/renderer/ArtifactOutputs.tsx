@@ -1,3 +1,5 @@
+import { useArtifacts } from "./ArtifactsContext";
+import type { ApplicationArtifactsV1 } from "../../../packages/plugin-sdk/src/ui-artifacts";
 import { lazy, Suspense, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { Archive, ChevronRight, Download, Ellipsis, FileDiff, FileText, Film, Images, LayoutGrid, X } from "./WuuIcons";
 
@@ -21,7 +23,6 @@ import {
   turnOutputSummaryVisible,
 } from "./TurnOutputSummaryCard";
 import { Tooltip } from "./Tooltip";
-import { hostSupports } from "./HostCapabilities";
 import { ThreadContextMenu } from "./ThreadContextMenu";
 import { showErrorToast } from "./Toast";
 import { TruncatedText } from "./TruncatedText";
@@ -122,15 +123,17 @@ function useArtifactPreview(
   fallback: (artifact: TurnArtifact) => void,
   cwd?: string,
 ): (artifact: TurnArtifact, origin?: HTMLElement) => void {
+  const service = useArtifacts();
+  const lifetime = useArtifactLifetime();
   const panel = useContext(ArtifactPreviewContext);
   const threadID = useContext(ArtifactThreadContext);
   const { openPreview } = useImagePreview();
   return (artifact, origin) => {
     if (artifact.mimeType.startsWith("image/")) {
       openPreview({
-        src: artifactSource(artifact, cwd) ?? "", alt: artifact.name, title: artifact.name,
+        src: service.resolveSource({...artifact, cwd}) ?? "", alt: artifact.name, title: artifact.name,
         loadSource: artifact.remoteRef && !artifact.data
-          ? async () => `data:${artifact.mimeType};base64,${await window.wuu.readRemoteAttachment!(artifact.remoteRef!)}`
+          ? async () => `data:${artifact.mimeType};base64,${await service.readAttachment({remoteRef: artifact.remoteRef!}, {signal: lifetime.current.signal})}`
           : undefined,
       }, origin);
     } else if (panel && threadID) {
@@ -235,6 +238,7 @@ export function TurnEndArtifactOutputs({
   stopped?: boolean;
 }): JSX.Element | null {
   const { t, formatNumber } = useI18n();
+  const service = useArtifacts();
   const [preview, setPreview] = useState<TurnArtifact>();
   const [visibleCount, setVisibleCount] = useState(TURN_OUTPUT_SUMMARY_BATCH_SIZE);
   const [expanded, setExpanded] = useState(false);
@@ -251,7 +255,7 @@ export function TurnEndArtifactOutputs({
   if (files.length === 0) return null;
 
   const openArtifact = (artifact: TurnArtifact, origin: HTMLElement): void => {
-    openArtifactFile(artifact, origin, cwd, onOpenFile, openPreview);
+    openArtifactFile(service, artifact, origin, cwd, openPreview);
   };
 
   if (compact) {
@@ -421,7 +425,7 @@ function InlineArtifact({ artifact, cwd }: { artifact: TurnArtifact; cwd?: strin
   const { t } = useI18n();
   const { openPreview } = useImagePreview();
   const [failedSource, setFailedSource] = useState<string>();
-  const source = artifactSource(artifact, cwd);
+  const source = useArtifacts().resolveSource({...artifact, cwd});
   const register = useImagePreviewRegistration(source && failedSource !== source && artifact.mimeType.startsWith("image/")
     ? { src: source, alt: artifact.name, title: artifact.name } : null);
   let image: ReactNode;
@@ -496,63 +500,52 @@ function ArtifactMetadata({ artifact }: { artifact: TurnArtifact }): JSX.Element
 }
 
 function openArtifactFile(
+  service: ApplicationArtifactsV1,
   artifact: TurnArtifact,
   origin: HTMLElement,
   cwd: string | undefined,
-  onOpenFile: ((path: string) => void) | undefined,
   onPreview: ((artifact: TurnArtifact, origin?: HTMLElement) => void) | undefined,
 ): void {
   const workspacePath = workspaceArtifactPath(artifact.uri, cwd);
   // Bare workspace references need the workspace reader. Managed deliveries
   // and embedded bytes must retain their own immutable preview source.
-  if (workspacePath && onOpenFile && !artifact.data && artifact.text === undefined && !artifactSource(artifact, cwd)) {
-    onOpenFile(workspacePath);
+  if (workspacePath && cwd && !artifact.data && artifact.text === undefined && !service.resolveSource({...artifact, cwd})) {
+    void service.openFile({...artifact, cwd, uri: workspacePath}).catch(showErrorToast);
   } else {
     onPreview?.(artifact, origin);
   }
 }
 
-function nativeArtifactActionsAvailable(artifact: TurnArtifact, threadID: string | undefined): boolean {
-  return Boolean(threadID && !artifact.remoteRef && /^wuu-artifact:/i.test(artifact.uri ?? "")
-    && hostSupports("showArtifactItemMenu") && typeof window.wuu?.showArtifactItemMenu === "function");
+function nativeArtifactActionsAvailable(service: ApplicationArtifactsV1, artifact: TurnArtifact, threadID: string | undefined): boolean {
+  return Boolean(threadID && !artifact.remoteRef && /^wuu-artifact:/i.test(artifact.uri ?? "") && service.capabilities.nativeItemMenu);
 }
 
-async function downloadArtifact(name: string, source: string): Promise<void> {
-  if (hostSupports("saveArtifactFile") && window.wuu?.saveArtifactFile) {
-    await window.wuu.saveArtifactFile(name, source);
-    return;
-  }
-  const anchor = document.createElement("a");
-  anchor.href = source;
-  anchor.download = name;
-  anchor.rel = "noopener";
-  anchor.click();
+function useArtifactLifetime(identity?: unknown) {
+  const lifetime = useRef(new AbortController());
+  useEffect(() => {
+    lifetime.current = new AbortController();
+    return () => lifetime.current.abort();
+  }, [identity]);
+  return lifetime;
 }
-
-// A native menu belongs to the window, not an individual mounted card. Ignore
-// repeated gestures while source verification or that menu is still pending.
-let nativeArtifactMenuPending = false;
 
 function useArtifactFileActions(cwd?: string, sourceThreadID?: string): {
   show: (artifact: TurnArtifact, event: MouseEvent<HTMLElement>) => void;
   menu: ReactNode;
 } {
+  const service = useArtifacts();
+  const lifetime = useArtifactLifetime(service);
   const contextThreadID = useContext(ArtifactThreadContext);
   const threadID = sourceThreadID ?? contextThreadID;
   const [menu, setMenu] = useState<{ artifact: TurnArtifact; x: number; y: number }>();
   const show = (artifact: TurnArtifact, event: MouseEvent<HTMLElement>): void => {
     event.preventDefault();
     event.stopPropagation();
-    if (nativeArtifactMenuPending) return;
-    if (nativeArtifactActionsAvailable(artifact, threadID)) {
-      nativeArtifactMenuPending = true;
+    if (nativeArtifactActionsAvailable(service, artifact, threadID)) {
       setMenu(undefined);
-      void window.wuu!.showArtifactItemMenu!({ uri: artifact.uri!, threadId: threadID! })
-        .then(async result => {
-          if (result.action === "save") await downloadArtifact(artifact.name, artifact.uri!);
-        })
-        .catch(error => showErrorToast(error))
-        .finally(() => { nativeArtifactMenuPending = false; });
+      const signal = lifetime.current.signal;
+      void service.showItemMenu({...artifact, cwd, threadId: threadID}, {signal})
+        .catch(error => { if (!signal.aborted) showErrorToast(error); });
     } else {
       const bounds = event.currentTarget.getBoundingClientRect();
       setMenu({ artifact, x: event.clientX || bounds.left, y: event.clientY || bounds.bottom });
@@ -560,20 +553,25 @@ function useArtifactFileActions(cwd?: string, sourceThreadID?: string): {
   };
   return {
     show,
-    menu: menu ? <ArtifactDownloadMenu key={menu.artifact.id} {...menu} cwd={cwd} onClose={() => setMenu(undefined)} /> : null,
+    menu: menu ? <ArtifactDownloadMenu key={menu.artifact.id} {...menu} cwd={cwd} threadID={threadID} onClose={() => setMenu(undefined)} /> : null,
   };
 }
 
-function ArtifactDownloadMenu({ artifact, cwd, x, y, onClose }: {
-  artifact: TurnArtifact; cwd?: string; x: number; y: number; onClose: () => void;
+function ArtifactDownloadMenu({ artifact, cwd, threadID, x, y, onClose }: {
+  artifact: TurnArtifact; cwd?: string; threadID?: string; x: number; y: number; onClose: () => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const service = useArtifacts();
+  const lifetime = useArtifactLifetime(artifact);
   const source = useArtifactPreviewSource(artifact, cwd);
   return <ThreadContextMenu x={x} y={y} onClose={onClose} items={[{
     label: t("artifacts.download"),
     icon: <Download className="icon" aria-hidden="true" />,
     disabled: !source,
-    onSelect: () => { if (source) void downloadArtifact(artifact.name, source).catch(error => showErrorToast(error)); },
+    onSelect: () => {
+      const signal = lifetime.current.signal;
+      if (source) void service.save({...artifact, cwd, threadId: threadID}, {signal}).catch(error => { if (!signal.aborted) showErrorToast(error); });
+    },
   }]} />;
 }
 
@@ -589,6 +587,7 @@ function ArtifactCard({
   onPreview?: (artifact: TurnArtifact, origin?: HTMLElement) => void;
 }): JSX.Element {
   const { t } = useI18n();
+  const service = useArtifacts();
   const fileActions = useArtifactFileActions(cwd);
   if (artifact.remoteRef && artifact.mimeType.startsWith("image/")) return <InlineArtifact artifact={artifact} cwd={cwd} />;
 
@@ -600,7 +599,7 @@ function ArtifactCard({
         title={artifact.name}
         subtitle={<ArtifactMetadata artifact={artifact} />}
         trailing={<TurnOutputSummaryChevron />}
-        onOpen={(event) => openArtifactFile(artifact, event.currentTarget, cwd, onOpenFile, onPreview)}
+        onOpen={(event) => openArtifactFile(service, artifact, event.currentTarget, cwd, onPreview)}
         onContextMenu={(event) => fileActions.show(artifact, event)}
         openLabel={t("artifacts.openNamed", { name: artifact.name })}
         wrapOverview={(overview) => <Tooltip content={artifact.name}>{overview}</Tooltip>}
@@ -630,11 +629,13 @@ export function ArtifactPreview({
   pageRequest?: string;
 }): JSX.Element {
   const { t } = useI18n();
+  const service = useArtifacts();
+  const lifetime = useArtifactLifetime(artifact);
   const source = useArtifactPreviewSource(artifact, cwd);
   const contextualThreadID = useContext(ArtifactThreadContext);
   const ownerThreadID = threadID ?? contextualThreadID;
   const fileActions = useArtifactFileActions(cwd, ownerThreadID);
-  const nativeActions = nativeArtifactActionsAvailable(artifact, ownerThreadID);
+  const nativeActions = nativeArtifactActionsAvailable(service, artifact, ownerThreadID);
   const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -682,7 +683,8 @@ export function ArtifactPreview({
   }, [onClose, mode]);
 
   const download = (): void => {
-    if (source) void downloadArtifact(artifact.name, source).catch(error => setDownloadError(String(error)));
+    const signal = lifetime.current.signal;
+    if (source) void service.save({...artifact, cwd, threadId: ownerThreadID}, {signal}).catch(error => { if (!signal.aborted) setDownloadError(String(error)); });
   };
 
   let body: ReactNode;
@@ -763,57 +765,21 @@ export function ArtifactPreview({
   );
 }
 
-const MAX_TEXT_PREVIEW_BYTES = 2 * 1024 * 1024;
-
 function ArtifactTextPreview({ artifact, source }: { artifact: TurnArtifact; source: string }): JSX.Element {
   const { t } = useI18n();
-  const [result, setResult] = useState<{ source: string; text?: string; failed?: boolean }>();
-  const inlineText = artifact.text ?? (artifact.data ? decodedArtifactText(artifact) : undefined);
+  const service = useArtifacts();
+  const [result, setResult] = useState<{ artifact: TurnArtifact; source: string; text?: string; failed?: boolean }>();
   useEffect(() => {
-    if (inlineText !== undefined) return;
     const controller = new AbortController();
-    let disposed = false;
-    const timeout = window.setTimeout(() => controller.abort(), 10_000);
-    void (async () => {
-      try {
-        const response = await fetch(source, { signal: controller.signal });
-        if (!response.ok || !response.body) {
-          await response.body?.cancel();
-          throw new Error("Preview unavailable");
-        }
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let size = 0;
-        let text = "";
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            size += value.byteLength;
-            if (size > MAX_TEXT_PREVIEW_BYTES) throw new Error("Preview too large");
-            text += decoder.decode(value, { stream: true });
-          }
-          text += decoder.decode();
-        } finally {
-          await reader.cancel();
-        }
-        if (!disposed) setResult(controller.signal.aborted ? { source, failed: true } : { source, text });
-      } catch {
-        if (!disposed) setResult({ source, failed: true });
-      } finally {
-        window.clearTimeout(timeout);
-      }
-    })();
-    return () => { disposed = true; controller.abort(); window.clearTimeout(timeout); };
-  }, [source, inlineText]);
-  const current = result?.source === source ? result : undefined;
-  const text = inlineText ?? current?.text;
-  if (text === undefined) {
-    return <div className="artifact-preview-empty">{t(current?.failed ? "artifacts.previewUnavailable" : "imagePreview.loading")}</div>;
-  }
-  return isMarkdownDocument(artifact.name, artifact.mimeType) ? (
-    <MarkdownDocumentReading text={text} />
-  ) : <pre className="artifact-preview-text">{text}</pre>;
+    void service.readText({...artifact, uri: source}, {signal: controller.signal}).then(text => {
+      if (!controller.signal.aborted) setResult({artifact, source, text});
+    }).catch(() => { if (!controller.signal.aborted) setResult({artifact, source, failed: true}); });
+    return () => controller.abort();
+  }, [service, artifact, source]);
+  const current = result?.source === source && result.artifact === artifact ? result : undefined;
+  if (current?.text === undefined) return <div className="artifact-preview-empty">{t(current?.failed ? "artifacts.previewUnavailable" : "imagePreview.loading")}</div>;
+  return isMarkdownDocument(artifact.name, artifact.mimeType)
+    ? <MarkdownDocumentReading text={current.text} /> : <pre className="artifact-preview-text">{current.text}</pre>;
 }
 
 function artifactFromContentPart(
@@ -880,46 +846,21 @@ function defaultContentPartPlacement(part: ToolResultContentPart): "inline" | "t
 }
 
 function useArtifactPreviewSource(artifact: TurnArtifact, cwd?: string): string | undefined {
-  const direct = artifactSource(artifact, cwd);
-  const [source, setSource] = useState<string | undefined>(direct);
+  const service = useArtifacts();
+  const direct = service.resolveSource({...artifact, cwd});
+  const [source, setSource] = useState<{artifact: TurnArtifact; cwd?: string; url: string}>();
   useEffect(() => {
-    const nextDirect = artifactSource(artifact, cwd);
-    if (nextDirect) {
-      setSource(nextDirect);
-      return undefined;
-    }
-    const bytes = decodedArtifactBytes(artifact);
-    if (!bytes && artifact.text === undefined) {
-      setSource(undefined);
-      return undefined;
-    }
-    let payload: BlobPart = artifact.text ?? "";
-    if (bytes) {
-      const copied = new Uint8Array(bytes.byteLength);
-      copied.set(bytes);
-      payload = copied.buffer;
-    }
-    const blob = new Blob([payload], { type: artifact.mimeType });
-    const objectURL = URL.createObjectURL(blob);
-    setSource(objectURL);
-    return () => URL.revokeObjectURL(objectURL);
-  }, [artifact, cwd]);
-  return source;
-}
-
-function artifactSource(artifact: TurnArtifact, cwd?: string): string | undefined {
-  if (artifact.data && (artifact.mimeType.startsWith("image/") || artifact.mimeType.startsWith("audio/"))) {
-    return `data:${artifact.mimeType};base64,${artifact.data}`;
-  }
-  if (artifact.text !== undefined && artifact.mimeType.startsWith("image/")) {
-    return `data:${artifact.mimeType};charset=utf-8,${encodeURIComponent(artifact.text)}`;
-  }
-  const uri = artifact.uri?.trim();
-  if (!uri) return undefined;
-  if (/^(https?:|data:|blob:|wuu-file:|wuu-artifact:)/i.test(uri)) return uri;
-  if (isHtmlMimeType(artifact.mimeType)) return undefined;
-  const path = absoluteArtifactPath(uri, cwd);
-  return path && isHostRenderableMimeType(artifact.mimeType) ? renderableFileURL(path) : undefined;
+    if (direct) return;
+    const abort = new AbortController();
+    let leaseId: string | undefined;
+    void service.acquireSource({...artifact, cwd}, {signal: abort.signal}).then(source => {
+      if (abort.signal.aborted) { if (source.leaseId) service.releaseSource(source.leaseId); return; }
+      leaseId = source.leaseId;
+      setSource({artifact, cwd, url: source.url});
+    }).catch(() => { /* Missing sources keep the existing unavailable presentation. */ });
+    return () => { abort.abort(); if (leaseId) service.releaseSource(leaseId); };
+  }, [service, artifact, cwd, direct]);
+  return direct ?? (source?.artifact === artifact && source.cwd === cwd ? source.url : undefined);
 }
 
 function workspaceArtifactPath(uri: string | undefined, cwd?: string): string | undefined {
@@ -949,38 +890,6 @@ function absoluteArtifactPath(uri: string, cwd?: string): string | undefined {
     else stack.push(segment);
   }
   return `/${stack.join("/")}`;
-}
-
-function renderableFileURL(path: string): string {
-  const encoded = base64URL(path);
-  return window.wuuRenderableFileURL?.(encoded) ?? `wuu-file://local/${encoded}`;
-}
-
-function base64URL(value: string): string {
-  const bytes = new TextEncoder().encode(value);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-function decodedArtifactBytes(artifact: TurnArtifact): Uint8Array | undefined {
-  if (!artifact.data) return undefined;
-  try {
-    const binary = atob(artifact.data);
-    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-  } catch {
-    return undefined;
-  }
-}
-
-function decodedArtifactText(artifact: TurnArtifact): string {
-  const bytes = decodedArtifactBytes(artifact);
-  if (!bytes) return "";
-  try {
-    return new TextDecoder().decode(bytes);
-  } catch {
-    return "";
-  }
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
@@ -1039,8 +948,4 @@ function artifactNameFromURI(uri: string | undefined): string | undefined {
 
 function isHtmlMimeType(mimeType: string): boolean {
   return mimeType === "text/html" || mimeType === "application/xhtml+xml";
-}
-
-function isHostRenderableMimeType(mimeType: string): boolean {
-  return mimeType.startsWith("image/") || mimeType.startsWith("video/") || mimeType === "application/pdf" || isHtmlMimeType(mimeType);
 }

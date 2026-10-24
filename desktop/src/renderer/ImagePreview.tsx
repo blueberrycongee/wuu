@@ -1,3 +1,4 @@
+import { useArtifacts } from "./ArtifactsContext";
 import {
   createContext,
   type CSSProperties,
@@ -75,6 +76,8 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   onClose: () => void;
 }): JSX.Element {
   const { t, formatNumber } = useI18n();
+  const artifacts = useArtifacts();
+  const lifetime = useRef(new AbortController());
   const [view, setView] = useState<View>(fittedView);
   const [rotation, setRotation] = useState(0);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
@@ -135,25 +138,26 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   }, []);
 
   const saveImage = useCallback(async () => {
-    if (!window.wuu?.saveArtifactFile || savingRef.current) return;
+    if (!artifacts.capabilities.save || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
     setSaveError("");
     const savedGeneration = generation.current;
     const saveSource = item.svg == null ? source! : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(item.svg)}`;
     try {
-      await window.wuu.saveArtifactFile(item.title || (item.svg == null ? "image" : "image.svg"), saveSource);
+      await artifacts.save({id: "image-preview", name: item.title || (item.svg == null ? "image" : "image.svg"), mimeType: item.svg == null ? "image/png" : "image/svg+xml", uri: saveSource}, {signal: lifetime.current.signal});
     } catch (error) {
       if (savedGeneration === generation.current) setSaveError(String(error));
     } finally {
-      savingRef.current = false;
-      setSaving(false);
+      if (savedGeneration === generation.current) { savingRef.current = false; setSaving(false); }
     }
-  }, [item, source]);
+  }, [item, source, artifacts]);
 
   useLayoutEffect(() => {
     let cancelled = false;
     generation.current++;
+    lifetime.current = new AbortController();
+    savingRef.current = false; setSaving(false);
     setView(fittedView);
     setRotation(0);
     setImageSize({ width: 0, height: 0 });
@@ -177,7 +181,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
         if (!cancelled) setLoadStatus("error");
       });
     }
-    return () => { cancelled = true; };
+    return () => { cancelled = true; generation.current++; lifetime.current.abort(); };
   }, [item, index]);
 
   useEffect(() => {
@@ -323,7 +327,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
           </button>
         </div>}
         <div className="image-preview-toolbar-actions">
-          {window.wuu?.saveArtifactFile && <button type="button" className="image-preview-toolbar-button"
+          {artifacts.capabilities.save && <button type="button" className="image-preview-toolbar-button"
             onClick={() => void saveImage()} disabled={!ready || saving}
             aria-label={t("imagePreview.saveAs")} title={t("imagePreview.saveAs")}>
             <Download className="icon" aria-hidden="true" />
