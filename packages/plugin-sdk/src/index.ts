@@ -2719,3 +2719,5 @@ export * from "./application-settings.js";
 export * from "./ui-preview.js";
 
 export * from "./title-service.js";
+export * from "./ui-settings-controls.js";
+export * from "./ui-navigation.js";
