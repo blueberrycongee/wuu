@@ -518,6 +518,12 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 		Type:          providers.EventProviderState,
 		ProviderState: state,
 	}) {
+		// The request is already on the wire, even before its first local event.
+		session.mu.Lock()
+		c.responsesWebSocketReleaseLocked(session, readCh)
+		c.responsesWebSocketAbortConnectionLocked(session)
+		session.mu.Unlock()
+		lease.FailError(ctx.Err())
 		return
 	}
 
