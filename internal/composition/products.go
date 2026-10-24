@@ -21,7 +21,7 @@ func productCatalog() (map[string]Profile, map[string]Bundle) {
 	base := map[string]bool{}
 	for _, id := range []string{
 		"kernel", "wuu.default-loop", "wuu.session-execution", "wuu.tool-execution",
-		"wuu.session.default", "wuu.tools.default",
+		"wuu.session.default", "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default",
 		"wuu.session-state", "wuu.state.sqlite", "wuu.state-consumer", "wuu.credentials.os",
 		"wuu.settings.local", "wuu.config.local", "wuu.permissions.default",
 		"wuu.artifacts.local", "wuu.index.trace",

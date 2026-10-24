@@ -108,3 +108,65 @@ func TestNullNonSelectionFieldsRemainCompatible(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPolicyProviderReplacementAcrossProductLayers(t *testing.T) {
+	for _, profile := range []string{"desktop", "headless", "custom"} {
+		t.Run(profile, func(t *testing.T) {
+			cfg := DefaultConfig(profile)
+			cfg.Profiles = map[string]Profile{"custom": {Bundles: []string{"wuu.base", "custom.policy"}}}
+			cfg.Bundles = map[string]Bundle{"custom.policy": {Patches: []Patch{{
+				Modules:  map[string]bool{"wuu.prompt.default": false, "example.prompt": true},
+				Services: []Binding{{Service: "agent.prompt", Major: 1, Provider: "example.prompt"}},
+			}}}}
+			before, err := cfg.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !before.Includes("wuu.compaction.default") || before.Includes("wuu.prompt.default") != (profile != "custom") {
+				t.Fatal("product did not apply base and custom policy layers")
+			}
+			cfg.Patches = []Patch{{
+				Modules: map[string]bool{"wuu.prompt.default": false, "example.prompt": false, "wuu.compaction.default": false, "replacement.policy": true},
+				Services: []Binding{
+					{Service: "agent.prompt", Major: 1, Provider: "replacement.policy"},
+					{Service: "agent.compaction", Major: 1, Provider: "replacement.policy"},
+				},
+			}}
+			data, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved Config
+			if err := json.Unmarshal(data, &saved); err != nil {
+				t.Fatal(err)
+			}
+			after, err := saved.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Includes("wuu.prompt.default") || after.Includes("wuu.compaction.default") || after.Includes("example.prompt") || !after.Includes("replacement.policy") {
+				t.Fatal("saved replacement restored a removed policy provider")
+			}
+			if len(after.Services) != 2 {
+				t.Fatalf("bindings: %+v", after.Services)
+			}
+			for _, binding := range after.Services {
+				if binding.Provider != "replacement.policy" || binding.Source != "composition:patch:0" {
+					t.Fatalf("wrong selected provider or provenance: %+v", binding)
+				}
+			}
+			saved.Patches = append(saved.Patches, Patch{Modules: map[string]bool{"replacement.policy": false}})
+			if _, err := saved.Resolve(); err == nil {
+				t.Fatal("removing bound policy silently restored a default")
+			}
+			saved.Patches[len(saved.Patches)-1].RemoveServices = []ServiceKey{{Service: "agent.prompt", Major: 1}, {Service: "agent.compaction", Major: 1}}
+			empty, err := saved.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(empty.Services) != 0 || empty.Includes("wuu.prompt.default") || empty.Includes("wuu.compaction.default") {
+				t.Fatal("explicit policy removal restored defaults")
+			}
+		})
+	}
+}
