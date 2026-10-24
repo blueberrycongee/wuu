@@ -876,6 +876,7 @@ export function WorkspaceFilePreview({
                   ref={markdownHostRef}
                   text={draftText}
                   cwd={activeContext.cwd}
+                  documentPath={file.path}
                   onOpenFile={onOpenFile}
                   allowRawHtml
                   sourceMapping

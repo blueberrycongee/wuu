@@ -22,6 +22,7 @@ import { useImagePreviewRegistration } from "./ImagePreviewGallery";
 import {
   formatWorkspaceFileTarget,
   parseLinkTarget,
+  resolveWorkspaceFileTarget,
   type WorkspaceFileLinkTarget,
 } from "./LinkTargets";
 import { MessageCopyButton } from "./MessageActions";
@@ -47,6 +48,8 @@ const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkMathDelimiters, rema
 type RichContentProps = {
   text?: string;
   cwd?: string;
+  /** Workspace-relative path of the source document, used to resolve file links. */
+  documentPath?: string;
   /** Legacy caller signature; public link actions are supplied by the service providers. */
   onOpenFile?: (path: string) => void;
   onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
@@ -159,6 +162,7 @@ export const RichContent = memo(function RichContent(props: RichContentProps): J
 function LegacyRichContent({
   text = "",
   cwd,
+  documentPath,
   onOpenFile,
   onOpenURL,
   allowRawHtml = false,
@@ -173,6 +177,7 @@ function LegacyRichContent({
       <MarkdownContent
         text={text}
         cwd={cwd}
+        documentPath={documentPath}
         onOpenFile={onOpenFile}
         onOpenURL={onOpenURL}
         allowRawHtml={allowRawHtml}
@@ -195,6 +200,7 @@ function LegacyRichContent({
 function MarkdownContentView({
   text,
   cwd,
+  documentPath,
   renderText,
   renderMermaid = true,
   mermaidStreaming = false,
@@ -205,6 +211,7 @@ function MarkdownContentView({
 }: {
   text: string;
   cwd?: string;
+  documentPath?: string;
   renderText?: RichTextRenderer;
   onOpenFile?: (path: string) => void;
   onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
@@ -220,8 +227,8 @@ function MarkdownContentView({
 }): JSX.Element {
   const publicFiles = Boolean(useOptionalPreviewContent());
   const components = useMemo(
-    () => markdownComponents(cwd, renderText, renderMermaid, sourceMapping, publicFiles),
-    [cwd, renderText, renderMermaid, sourceMapping, publicFiles]
+    () => markdownComponents(cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath),
+    [cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath]
   );
   const source = documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text;
   const sourceEnd = source.trimEnd().length;
@@ -266,6 +273,7 @@ function markdownComponents(
   renderMermaid: boolean,
   sourceMapping: boolean,
   publicFiles: boolean,
+  documentPath?: string,
 ): Components {
   const richTextOptions: RichTextRenderOptions = {
     renderText,
@@ -335,7 +343,7 @@ function markdownComponents(
             key={`a-${formatWorkspaceFileTarget(target)}`}
             display={inner}
             cwd={cwd}
-            target={target}
+            target={documentPath ? resolveWorkspaceFileTarget(documentPath, target) : target}
           />
         );
       }

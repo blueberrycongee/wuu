@@ -820,6 +820,26 @@ describe("WorkspaceFileTree", () => {
     expect(writeWorkspaceFile).not.toHaveBeenCalled();
   });
 
+  it("opens Markdown links relative to the loaded document through the public service", async () => {
+    const openFile = vi.fn();
+    previewContent = new ApplicationPreviewContent(window.wuu, { openFile });
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "docs/guide.md",
+      absolute_path: "/repo/docs/guide.md",
+      text: "[source](../src/App.tsx#L12) [section](./details.md#usage) [absolute](/repo/LICENSE)",
+    }));
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="/repo/docs/guide.md" />);
+    await settleDirectoryLoads();
+    const links = container.querySelectorAll<HTMLButtonElement>(".rich-file-link");
+    expect(links).toHaveLength(3);
+    await act(async () => { for (const link of links) link.click(); });
+    expect(openFile.mock.calls).toEqual([
+      [{ root: "/repo", path: "src/App.tsx#L12" }],
+      [{ root: "/repo", path: "docs/details.md#usage" }],
+      [{ root: "/repo", path: "/repo/LICENSE" }],
+    ]);
+  });
+
   it("opens a line-targeted Markdown file in Monaco at the requested position", async () => {
     readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
       path: "README.md",
