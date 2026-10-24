@@ -234,7 +234,7 @@ import { useArchiveDeletion } from "./useArchiveDeletion";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert, RefreshCw } from "./WuuIcons";
 import type { CodexPetCommand, CodexPetSubmitTarget } from "../shared/protocol";
-import { useSettingsRuntimeState } from "./SettingsRuntimeState";
+import { DefaultSettingsSurface } from "./modules/DefaultSettingsSurface";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { JumpToLatestPill } from "./JumpToLatestPill";
 import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
@@ -332,7 +332,6 @@ import {
   ConversationSplitLayoutRenderer,
   ConversationTitleActions,
   ConversationTitleContent,
-  SettingsShellRenderer,
 } from "./ConversationShellRenderers";
 import {
   runtimeViewForConversation,
@@ -782,16 +781,6 @@ export function App({ application: providedApplication }: { application?: Applic
   const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
     void application.invoke("settings.open", { pageId }).catch(showErrorToast);
   }, [application]);
-  const {
-    settingsUsage,
-    settingsUsageLoading,
-    settingsUsageError,
-    codexPets,
-    codexPetsLoading,
-    codexPetsError,
-    refreshCodexPets,
-    updateCodexPets,
-  } = useSettingsRuntimeState({ settingsOpen });
 
   const [workspaceFilter, setWorkspaceFilter] = useState("");
   const {
@@ -6450,36 +6439,24 @@ export function App({ application: providedApplication }: { application?: Applic
           onChoose={choosePendingFork}
         />
       ) : null}
-      {settingsOpen ? (
-        <div className={embeddedSettings ? "settings-workbench-layer" : "settings-standalone-layer"}>
-        <SettingsShellRenderer
+      <DefaultSettingsSurface
+          application={application}
           browserSettingsAllowed={!poppedOutMode}
           embedded={embeddedSettings}
           embeddedDrawerPhase={sidebarDrawerPhase}
           onSidebarPointerEnter={openSidebarDrawer}
           onSidebarPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
           initialized={state.initialized}
-          page={settingsInitialPage}
-          onPageChange={setSettingsInitialPage}
           running={viewContextSwitchPending}
           runningProviderNames={runningProviderNames}
-          usage={settingsUsage}
-          usageLoading={settingsUsageLoading}
-          usageError={settingsUsageError}
           engineInventory={engineInventory}
           engineInventoryError={engineInventoryError}
-          codexPets={codexPets}
-          codexPetsLoading={codexPetsLoading}
-          codexPetsError={codexPetsError}
           sidebarWidth={sidebarWidth}
           resizingSidebar={resizingSidebar}
           shellRef={settingsShellRef}
           sidebarCollapsed={sidebarCollapsed}
           sidebarAnimating={sidebarAnimating}
           onToggleSidebar={toggleSidebar}
-          onBack={() => {
-            setSettingsOpen(false);
-          }}
           onSave={updateProviderSettings}
           onRemoveProvider={removeProvider}
           onRefreshModelCatalog={refreshModelCatalog}
@@ -6493,8 +6470,6 @@ export function App({ application: providedApplication }: { application?: Applic
           onUpdateEngineInventory={updateEngineInventory}
           onAdvancedSave={updateAdvancedSettings}
           onGeneralSave={updateGeneralSettings}
-          onCodexPetsRefresh={refreshCodexPets}
-          onCodexPetsUpdate={updateCodexPets}
           onSidebarResizeStart={startSidebarResize}
           onSidebarResizerPointer={trackSidebarResizerPointer}
           onSidebarSeparatorKey={handleSidebarSeparatorKey}
@@ -6515,8 +6490,6 @@ export function App({ application: providedApplication }: { application?: Applic
           onDeleteAllArchivedThreads={() => void archiveDeletion.removeAll()}
           onRetryArchiveDeletion={() => void archiveDeletion.retry()}
         />
-        </div>
-      ) : null}
       {!poppedOutMode ? (
         <section className="web-workspace-stage" hidden={!showingWebsite || settingsOpen} aria-label={activeWebsite?.title}>
           <WebWorkspacePanel site={ribbonBrowser.state ? { id: WEB_WORKSPACE_RIBBON_ID, url: "about:blank", title: activeWebsite?.title } : undefined} active={showingWebsite && !settingsOpen && !accountOpen} tabs resizeWithWindow />
