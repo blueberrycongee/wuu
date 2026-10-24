@@ -1,3 +1,4 @@
+import type { ApplicationProjectsV1, ApplicationProjectCallOptionsV1 } from "./ui-projects.js";
 import type { ApplicationTerminalsV1 } from "./ui-terminals.js";
 export { scopeApplicationTerminals } from "./ui-terminals.js";
 import type { ApplicationSearchActionMapV1, ApplicationSearchViewV1 } from "./ui-search.js";
@@ -148,6 +149,7 @@ export interface ApplicationServiceV1 {
   readonly settingsControls: ApplicationSettingsControlsV1;
   readonly conversationText: ApplicationConversationTextV1;
   readonly previewContent: ApplicationPreviewContentV1;
+  readonly projects: ApplicationProjectsV1;
   readonly terminals: ApplicationTerminalsV1;
   readonly catalog: ApplicationCatalogV1;
   getSnapshot(): ApplicationSnapshotV1;
@@ -419,5 +421,27 @@ export function scopeApplicationCatalog(source: () => ApplicationCatalogV1,
     install: (options?: CatalogCallOptionsV1) => invoke(signal => source().install({ signal }), options),
     remove: (id: string, options?: CatalogCallOptionsV1) => invoke(signal => source().remove(id, { signal }), options),
     loadIcon: (id: string, fingerprint: string, path: string, options?: CatalogCallOptionsV1) => invoke(signal => source().loadIcon(id, fingerprint, path, { signal }), options),
+  });
+}
+
+/** Ledger observation ends with its UI scope; project execution stays in the core. */
+export function scopeApplicationProjects(source: () => ApplicationProjectsV1,
+  signal: AbortSignal, assertActive: () => void): ApplicationProjectsV1 {
+  const invoke = <T>(operation: (signal: AbortSignal) => Promise<T>, options?: ApplicationProjectCallOptionsV1) =>
+    invokeApplicationOperation(operation, signal, assertActive, options?.signal);
+  return Object.freeze<ApplicationProjectsV1>({
+    getSnapshot: projectId => { assertActive(); signal.throwIfAborted(); return source().getSnapshot(projectId); },
+    subscribe: (projectId, listener) => {
+      assertActive(); signal.throwIfAborted();
+      const stop = source().subscribe(projectId, () => { if (!signal.aborted) listener(); });
+      let stopped = false;
+      const dispose = () => { if (stopped) return; stopped = true; signal.removeEventListener("abort", dispose); stop(); };
+      signal.addEventListener("abort", dispose, { once: true });
+      if (signal.aborted) dispose();
+      return dispose;
+    },
+    refresh: (projectId, options) => invoke(signal => source().refresh(projectId, { signal }), options),
+    control: (input, options) => invoke(signal => source().control(input, { signal }), options),
+    releaseSession: (input, options) => invoke(signal => source().releaseSession(input, { signal }), options),
   });
 }

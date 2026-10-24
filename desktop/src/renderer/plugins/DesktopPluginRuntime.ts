@@ -32,6 +32,7 @@ export const desktopPluginHost = new PluginHost({
   react: React,
   application: {
     contractVersion: 1,
+    get projects() { return getDesktopApplication().projects; },
     get terminals() { return getDesktopApplication().terminals; },
     get catalog() { return getDesktopApplication().catalog; },
     get previewContent() { return getDesktopApplication().previewContent; },

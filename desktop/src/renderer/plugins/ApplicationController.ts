@@ -1,3 +1,4 @@
+import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
 import type { ApplicationSearchActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-search";
 import { ApplicationSearch, isApplicationSearchAction } from "./ApplicationSearch";
@@ -14,7 +15,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
-import { createThreadSessionTab, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
+import { createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
@@ -64,6 +65,17 @@ export class ApplicationController implements ApplicationServiceV1 {
     return this.composerRuntimeOwner ??= new ApplicationComposerRuntime({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
+  }
+  private projectsOwner?: ApplicationProjects;
+  get projects(): ApplicationProjects {
+    return this.projectsOwner ??= new ApplicationProjects({
+      getSource: () => ({ contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
+        enabled: Boolean(this.state.activeContext && this.state.initialized?.features?.project_agent) }),
+      updateThread: thread => {
+        this.updateState(state => updateThreadByID(state, thread.id, current => mergeSidebarThread(current, thread)));
+        this.sidebarCache.updateCachedSidebarThread(thread);
+      },
+    });
   }
   private terminalOwner?: ApplicationTerminals;
   get terminals(): ApplicationTerminals { return this.terminalOwner ??= new ApplicationTerminals(window.wuu); }
@@ -285,6 +297,7 @@ export class ApplicationController implements ApplicationServiceV1 {
 
     }
     this.state = next;
+    this.projectsOwner?.notifyChanged();
     this.pendingComposer.reconcilePendingComposerMessagesForState(next);
     this.rememberDraftResources();
     this.publish();
@@ -320,6 +333,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       this.submissionOwner = undefined;
       this.composerRuntimeOwner?.dispose();
       this.composerRuntimeOwner = undefined;
+      this.projectsOwner?.dispose();
+      this.projectsOwner = undefined;
       void this.terminalOwner?.dispose().catch(error => console.error("Terminal cleanup failed", error));
       this.terminalOwner = undefined;
       this.previewContentOwner?.dispose();

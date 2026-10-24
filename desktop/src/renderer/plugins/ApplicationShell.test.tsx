@@ -1,3 +1,4 @@
+import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
 import * as React from "react";
 import { act } from "react";
@@ -16,6 +17,7 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
     catalog: new ApplicationCatalog({ getSource: () => ({ contextKey: "test", inventory: [] }), assertActive: () => {} }),
+    projects: new ApplicationProjects({ getSource: () => ({ contextKey: "test", enabled: false }), updateThread: () => {} }),
     terminals: new ApplicationTerminals({ unsupportedMethods: ["startTerminalSession"] } as never),
     settingsControls: createApplicationSettingsControls(),
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },

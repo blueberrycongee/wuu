@@ -16,6 +16,18 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("reconciles released project membership into the shared thread and sidebar", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const thread = { id: "member", cwd: context.cwd, preview: "Member", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "",
+      status: "idle", turns: [], source: "project", project_id: "project" } as never;
+    window.wuu = { projectWork: vi.fn(), projectSession: vi.fn().mockResolvedValue({ thread: { ...thread as object, source: undefined, project_id: undefined } }) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: { ...submissionInitialized!, features: { project_agent: true } } as never,
+      activeContext: context, thread, threads: [thread] });
+    await controller.projects.releaseSession({ projectId: "project", threadId: "member" });
+    expect(controller.getSnapshot().navigationWorkspace.threads.find(row => row.id === "member")?.project_id).toBeUndefined();
+    expect(controller.getSnapshot().conversationWorkspace.threads.find(row => row.id === "member")?.project_id).toBeUndefined();
+  });
+
   it("resolves search through the shared navigation and rejects a superseded target", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     const thread = { id: "search", cwd: context.cwd, preview: "Found", title: "Found", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle", turns: [
