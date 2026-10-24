@@ -75,3 +75,30 @@ test('independent journal records transitions, rejects foreign handles and recon
   assert.deepEqual((await call('Journal.ReconcileOrphans', replacement.handle, '2026-02-01T00:00:00Z'))[0], []);
   provider.shutdown();
 });
+
+test('independent turn state fences controls, driver identity and held message bytes', {skip: !entry}, async () => {
+  const {createSessionProvider} = await import(pathToFileURL(entry));
+  const provider = createSessionProvider(); provider.initialize(); provider.activate();
+  const call = async (method, ...args) => (await provider.invokeService({service: 'session.domain', method, params: {args}, caller: 'owner'})).values;
+  await call('CreateWithMetadata', 'thread', '/synthetic');
+  const [control] = await call('ChangeControl', 'thread', 'manager', 'active', 0);
+  await call('AppendControlledHistoryRecord', 'thread', {role: 'assistant', content: 'allowed'}, control);
+  await call('ChangeControl', 'thread', 'manager', 'paused', 1);
+  await assert.rejects(call('AppendControlledHistoryRecord', 'thread', {role: 'assistant', content: 'rejected'}, control), error => error.code === 'control_changed');
+  assert.equal((await call('LoadHistoryRecords', 'thread', true))[0].length, 1);
+  const binding = {contract_version: 1, driver_id: 'custom', driver_version: '1', profile: 'test', provider_id: 'independent'};
+  await call('BindDriver', 'thread', binding);
+  await assert.rejects(call('BindDriver', 'thread', {...binding, driver_id: 'other'}), /binding conflict/);
+  const held = {ID: 'input-one', SessionID: 'thread', MessageJSON: 'eyJ0ZXh0IjoiYSJ9', RuntimeJSON: 'e30=', Origin: 'queue', Position: 0, DeliveryUnconfirmed: false};
+  await call('AcceptHeldUserWork', 'thread', held);
+  await assert.rejects(call('AppendAcceptedUserHistoryRecord', 'thread', {role: 'user', content: 'changed', client_id: held.ID}, {...held, MessageJSON: 'e30='}), /held input changed/);
+  assert.equal((await call('LoadHeldUserWork', 'thread'))[0].length, 1);
+  await call('AppendAcceptedUserHistoryRecord', 'thread', {role: 'user', content: 'accepted', client_id: held.ID}, held);
+  assert.equal((await call('LoadHeldUserWork', 'thread'))[0].length, 0);
+  assert.equal((await call('HasHeldUserWorkReceipt', 'thread', held.ID))[0], true);
+  await call('ReplaceHeldUserWork', 'thread', []);
+  assert.equal((await call('HasHeldUserWorkReceipt', 'thread', held.ID))[0], true);
+  await assert.rejects(call('AcceptHeldUserWork', 'thread', held), error => error.code === 'held_work_settled');
+  await assert.rejects(call('AppendAcceptedUserHistoryRecord', 'thread', {role: 'user', content: 'duplicate', client_id: held.ID}, held), error => error.code === 'held_work_settled');
+  provider.shutdown();
+});

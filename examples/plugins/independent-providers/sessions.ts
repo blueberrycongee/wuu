@@ -4,6 +4,7 @@ import {
   type SessionDomainHistoryRecord as HistoryRecord,
 } from '@wuu/plugin-sdk';
 
+import {createTurnState} from './turn-state.js';
 import {createJournal} from './journal.js';
 
 function checkedHistory(value: readonly HistoryRecord[]): HistoryRecord[] {
@@ -54,7 +55,9 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
     histories.set(id, [...history, ...batch.map((record, index) => ({...record, seq: start + index}))]);
     return batch.length ? [start, start + batch.length - 1] : [0, 0];
   };
+  const turnState = createTurnState(requireSession, append);
   const handlers: SessionDomainHandlers = {
+    ...turnState.handlers,
     ...journal.handlers,
     CreateWithMetadata: ([id, cwd]) => {
       if (typeof cwd !== 'string') throw new Error('cwd is required');
@@ -75,7 +78,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
     },
     Delete: ([id]) => {
       const current = requireSession(id);
-      sessions.delete(id); generations.delete(id); histories.delete(id);
+      sessions.delete(id); generations.delete(id); histories.delete(id); turnState.delete(id);
       return [structuredClone(current)];
     },
     SetEngine: ([id, engine]) => [update(id, {engine_id: engine})],
@@ -104,7 +107,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
       if (!active) throw new RuntimeHostServiceError({code: 'service_unavailable', message: 'session provider is not active'});
       return domain.invoke(request);
     },
-    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear(); journal.close();},
+    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear(); journal.close(); turnState.close();},
   };
 }
 export default createSessionProvider();

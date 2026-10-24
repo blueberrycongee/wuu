@@ -29,7 +29,7 @@ try {
     await symlink(join(sdk, 'node_modules', dependency), destination);
   }
   await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
-  for (const name of ['tools', 'sessions', 'journal']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
+  for (const name of ['tools', 'sessions', 'journal', 'turn-state']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
   for (const name of ['shell', 'navigation']) await cp(join(repo, `examples/plugins/independent-providers/${name}.tsx`), join(project, `${name}.tsx`));
   await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', 'shell.tsx', 'navigation.tsx', '--jsx', 'react', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
   const checked = await exec(process.execPath, ['--test', join(authorSDK, 'test/parity-tools.test.mjs'), join(authorSDK, 'test/parity-sessions.test.mjs')], {
