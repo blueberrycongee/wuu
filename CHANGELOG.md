@@ -141,6 +141,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Match sidebar group headings, including Workspaces and Recent, to the list text size and follow the saved UI font preference.
+
 - Hide the conversation composer on plugin and skill management pages while preserving unsent drafts and pending message recovery when returning to chat.
 
 - Distinguish the built-in interface modules and automation scheduler in the extension catalog.

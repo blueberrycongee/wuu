@@ -332,7 +332,7 @@
   --sidebar-row-radius: calc(var(--radius-xs) + 4px);
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
-  --sidebar-heading-size: max(12px, round(nearest, calc(var(--sidebar-label-size) - 2px), 1px));
+  --sidebar-heading-size: var(--sidebar-label-size);
   /* Comfortable rows remain distinct from the larger gaps between groups. */
   --sidebar-row-height: max(36px, round(up, calc(var(--sidebar-label-size) * 2.25), 4px));
   /* Labels keep readable ink; the filled row identifies the current location.
@@ -1374,8 +1374,7 @@ html[data-focus-modality="keyboard"] :is(
   flex: 0 1 auto;
   overflow: hidden;
   font-size: var(--sidebar-heading-size, var(--font-sm));
-  /* Size and ink already set the label below the rows; weight would make
-   * the structure louder than the conversations it groups. */
+  /* Ink distinguishes group headings from rows at the same UI size. */
   font-weight: var(--weight-regular);
   line-height: var(--line-ui);
   text-overflow: ellipsis;
