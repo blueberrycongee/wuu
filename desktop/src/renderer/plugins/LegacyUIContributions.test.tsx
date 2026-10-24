@@ -70,6 +70,18 @@ describe("legacy contributions in declared public slots", () => {
     expect(element.textContent).toBe("Native content");
   });
 
+  it("selects the conversation header tab with its public conversation action", async () => {
+    const { register, mount, invoke } = await fixture("header.workspace", { snapshot: {
+      contractVersion: 1, scope: "workspace", tabs: [{ id: "conversation", title: "Conversation", kind: "conversation" }],
+    } });
+    let api!: PresentationHost;
+    await register(plugin => { plugin.registerPresenter({ id: "header", target: "header.workspace", render: props => { api = props.host; return props.fallback; } }); });
+    mount(); await api.invoke("header.select-tab", { tabId: "conversation" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("preview.show-conversation", {});
+    await api.invoke("header.close-tab", { tabId: "conversation" });
+    expect(invoke).toHaveBeenCalledOnce();
+  });
+
   it("restores the supplied fallback after a presenter fails and recovers on reactivation", async () => {
     const { host, register, mount } = await fixture("header.workspace", { snapshot: { contractVersion: 1, scope: "workspace", tabs: [] } });
     const silence = vi.spyOn(console, "error").mockImplementation(() => {});

@@ -221,14 +221,22 @@ function RenderPresenter({ record, props }: { record: RegisteredPresenter; props
 function presenterActions(props: LegacyUIContributionsProps, target: string, value: unknown): Record<string, (input?: unknown) => unknown> {
   if (target === "header.workspace") {
     const header = value as HeaderSnapshotV1;
-    const tabId = (input: unknown) => {
+    const selectedTab = (input: unknown) => {
       const id = (input as { tabId?: unknown } | undefined)?.tabId;
-      if (typeof id !== "string" || !header.tabs?.some(tab => tab.id === id)) throw new Error("Header tab action requires an existing tabId");
-      return id;
+      const tab = header.tabs?.find(tab => tab.id === id);
+      if (typeof id !== "string" || !tab) throw new Error("Header tab action requires an existing tabId");
+      return tab;
     };
     return {
-      [HEADER_ACTIONS.selectTab]: input => props.application.invoke("preview.focus-tab", { tabId: tabId(input) }),
-      [HEADER_ACTIONS.closeTab]: input => props.application.invoke("preview.close-tab", { tabId: tabId(input) }),
+      [HEADER_ACTIONS.selectTab]: input => {
+        const tab = selectedTab(input);
+        return tab.kind === "conversation" ? props.application.invoke("preview.show-conversation", {})
+          : props.application.invoke("preview.focus-tab", { tabId: tab.id });
+      },
+      [HEADER_ACTIONS.closeTab]: input => {
+        const tab = selectedTab(input);
+        if (tab.kind !== "conversation") return props.application.invoke("preview.close-tab", { tabId: tab.id });
+      },
     };
   }
   if (target === "content.preview") {
