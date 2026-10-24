@@ -3,7 +3,9 @@ const startupEntryNs = process.hrtime.bigint();
 // Build Electron and the core first; WUU_DESKTOP_CORE selects the tested binary.
 // No external inference is sent. Timings are diagnostic, not hardware-dependent gates.
 // WUU_SWITCH_TURNS=3000 stresses history; WUU_SWITCH_VARIANT=narrow checks dark/20px.
-// WUU_SWITCH_SAFE_MODE=0 includes plugin startup; default 1 isolates transport costs.
+// Normal composition is required for selected state providers (safe mode defaults to 0).
+// Prior safe-mode transport samples are not comparable with this composition.
+// WUU_SESSION_FIXTURE selects a prebuilt shared session-fixture helper.
 // WUU_SWITCH_MAIN may select a separately built baseline main-process bundle.
 // WUU_SWITCH_STREAM=1 also streams 128 KiB from a local synthetic SSE provider
 // across workspace switches, through the real core, IPC, and renderer.
@@ -31,6 +33,7 @@ const { spawnSync } = require('node:child_process');
 const http = require('node:http');
 const childProcess = require('node:child_process');
 const { syncBuiltinESMExports } = require('node:module');
+const fixtureBuildEnv = { ...process.env };
 const prepareOnly = process.env.WUU_STARTUP_PREPARE_ONLY === '1';
 const startupOnly = prepareOnly || process.env.WUU_STARTUP_ONLY === '1';
 const preparedFixture = process.env.WUU_STARTUP_PREPARED;
@@ -50,14 +53,14 @@ childProcess.spawn = (...args) => {
 };
 syncBuiltinESMExports();
 const { pathToFileURL, fileURLToPath } = require('node:url');
-const { app, BrowserWindow, ipcMain, contentTracing } = require('electron');
+const { app, BrowserWindow, ipcMain, contentTracing } = prepareOnly ? {} : require('electron');
 const { budget, assertSample } = require('./session-switch-budget.cjs');
 const desktop = path.resolve(__dirname, '..');
 const mainBundle = path.resolve(process.env.WUU_SWITCH_MAIN || path.join(desktop, 'out/main/index.js'));
 const turns = Number(process.env.WUU_SWITCH_TURNS || budget.fixture.turns);
 const rounds = Number(process.env.WUU_SWITCH_ROUNDS || budget.fixture.rounds);
 const variant = process.env.WUU_SWITCH_VARIANT || budget.fixture.variant;
-const safeMode = process.env.WUU_SWITCH_SAFE_MODE || (startupOnly ? '0' : budget.fixture.safeMode);
+const safeMode = process.env.WUU_SWITCH_SAFE_MODE || budget.fixture.safeMode;
 const initDelayMs = Number(process.env.WUU_SWITCH_INIT_DELAY_MS || 0);
 const subscriptionTurns = Number(process.env.WUU_SWITCH_SUBSCRIPTION_TURNS || 0);
 const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
@@ -80,10 +83,13 @@ if (startupOnly) {
 const prepareDirectory = prepareOnly && process.env.WUU_STARTUP_PREPARE_DIR;
 if (prepareDirectory) fs.mkdirSync(prepareDirectory);
 const fixture = preparedFixture || prepareDirectory || fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-session-switch-'));
+let fixtureSeed;
 if (preparedFixture) {
   const marker = JSON.parse(fs.readFileSync(path.join(fixture, 'startup-fixture.json'), 'utf8'));
   assert.equal(marker.synthetic, true, 'Only generated synthetic fixtures are accepted');
+  assert.equal(marker.fixtureSeed?.api, 'captured-session-v1', 'Rebuild prepared data with the shared session fixture helper');
   assert.equal(fs.existsSync(path.join(fixture, 'profile')), false, 'Startup requires a fresh Electron profile');
+  fixtureSeed = marker.fixtureSeed;
 }
 const output = process.env.WUU_SWITCH_OUTPUT || fixture;
 fs.mkdirSync(output, { recursive: true });
@@ -105,7 +111,7 @@ if (checkBudget) {
 }
 const home = path.join(fixture, 'home');
 fs.mkdirSync(home, { recursive: true });
-app.setPath('userData', path.join(fixture, prepareOnly ? 'preparation-profile' : 'profile'));
+if (!prepareOnly) app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
 {
   // Never discover real subscription credentials or start installed engines.
@@ -148,46 +154,81 @@ fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provid
 }
 fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [...projects, ...sidebarProjects], active_context: { kind: 'project', project_id: projects[selectedIndex].id, cwd: projects[selectedIndex].path } }));
 fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: process.env.WUU_SWITCH_VARIANT === 'narrow' ? 'dark' : 'light' }));
-const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', projects[0].path], {
-  env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
+const fixtureHelper = process.env.WUU_SESSION_FIXTURE || path.join(fixture, 'session-fixture');
+if (!process.env.WUU_SESSION_FIXTURE) {
+  const built = spawnSync('go', ['build', '-o', fixtureHelper, './scripts/session-fixture'], {
+    cwd: path.resolve(desktop, '..'), env: fixtureBuildEnv, encoding: 'utf8',
+  });
+  assert.equal(built.status, 0, built.stderr || String(built.error));
+}
+fs.writeFileSync(path.join(home, '.wuu-session-fixture'), 'wuu-session-fixture-v1\n', { mode: 0o600 });
+let maxSeedRequestBytes = 0;
+const callFixture = request => {
+  const input = JSON.stringify({ home: fs.realpathSync(home), workdir: fs.realpathSync(projects[0].path), ...request });
+  maxSeedRequestBytes = Math.max(maxSeedRequestBytes, Buffer.byteLength(input));
+  const result = spawnSync(fixtureHelper, [], {
+    input,
+    env: process.env, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr || String(result.error));
+  return JSON.parse(result.stdout);
+};
+const stamp = '2026-01-01T00:00:00Z';
+const seeds = projects.map((project, index) => {
+  const count = index === 1 || index === 5 ? turns : 3;
+  const history = [];
+  for (let turn = 0; turn < count; turn++) {
+    history.push({ role: 'user', content: `Session ${index} question ${turn}`, at: stamp });
+    history.push({ role: 'assistant', content: (`## Result ${turn}\n\nA realistic paragraph with **formatting** and code.\n\n${'Example content for history measurement. '.repeat(30)}\n\n`).repeat(3), at: stamp });
+  }
+  return { session: {
+    id: `switch-thread-${index}`, title: `Switch session ${index}`, cwd: project.path, workspace_id: project.id,
+    provider: 'fixture', model: 'fixture', created_at: stamp, updated_at: stamp,
+    ...(startupOnly ? { permission_mode: 'standard' } : {}),
+  }, history };
 });
-assert.equal(boot.status, 0, boot.stderr);
-const seed = spawnSync('python3', ['-c', `
-import json, sqlite3, sys
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-home=Path(sys.argv[1]); projects=json.loads((home/'projects.json').read_text())['projects']
-db=sqlite3.connect(home/'sessions/sessions.sqlite3')
-db.execute('DELETE FROM sessions')
-for i,p in enumerate(projects[:6]):
-    turns=int(sys.argv[2]) if i in (1,5) else 3
-    sid='switch-thread-'+str(i)
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)', (sid,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','Switch session '+str(i),p['path'],p['id'],'fixture','fixture',turns*2))
-    for t in range(turns):
-        for r,role in enumerate(('user','assistant')):
-            text=('Session '+str(i)+' question '+str(t)) if r==0 else ('## Result '+str(t)+'\\n\\nA realistic paragraph with **formatting** and code.\\n\\n'+('Example content for history measurement. '*30)+'\\n\\n')*3
-            db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)',(sid,t*2+r+1,role,text,'2026-01-01T00:00:00Z'))
-for i in range(int(sys.argv[4])):
-    p=None if i%5==0 else projects[6+i%(len(projects)-6)]
-    created=(datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(minutes=i*997%int(sys.argv[4]))).isoformat()
-    updated=(datetime(2026,1,1,tzinfo=timezone.utc)+timedelta(minutes=i*991%int(sys.argv[4]))).isoformat()
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries,pinned_at,archived_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)', ('sidebar-thread-'+str(i),created,updated,'Sidebar history '+str(i),p['path'] if p else str(home/'scratch'/str(i)),p['id'] if p and i%3!=0 else '', 'fixture','fixture',0,created if i%40==0 else None,created if i%31==0 else None))
-if int(sys.argv[3]):
-    sid='unrelated-subscription-history'
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,provider,model) VALUES (?,?,?,?,?,?,?)', (sid,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','Unrelated history','/synthetic-unrelated','subscription-grok','fixture'))
-    for t in range(int(sys.argv[3])):
-        provider='subscription-grok' if t%2==0 else 'subscription-codex'
-        for r,(role,content,tokens) in enumerate([('user','Synthetic request',0),('assistant','Synthetic historical content. '*2300,0),('meta','token_usage',7),('meta','turn_terminal',7)]):
-            db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,provider,model,input_tokens,stop_reason) VALUES (?,?,?,?,?,?,?,?,?)', (sid,t*4+r+1,role,content,'2026-01-01T00:00:00Z',provider,'fixture',tokens,'completed' if r==3 else ''))
-if sys.argv[5]=='1': db.execute("UPDATE sessions SET permission_mode='standard'")
-db.commit()
-`, home, String(turns), String(subscriptionTurns), String(sidebarThreads), startupOnly ? '1' : '0'], { encoding: 'utf8' });
-assert.equal(seed.status, 0, seed.stderr);
+for (let index = 0; index < sidebarThreads; index++) {
+  const project = index % 5 === 0 ? null : sidebarProjects[index % sidebarProjects.length];
+  const created = new Date(Date.parse(stamp) + (index * 997 % sidebarThreads) * 60000).toISOString();
+  const updated = new Date(Date.parse(stamp) + (index * 991 % sidebarThreads) * 60000).toISOString();
+  seeds.push({ session: {
+    id: `sidebar-thread-${index}`, title: `Sidebar history ${index}`, cwd: project?.path || path.join(home, 'scratch', String(index)),
+    workspace_id: project && index % 3 !== 0 ? project.id : '', provider: 'fixture', model: 'fixture',
+    created_at: created, updated_at: updated,
+    ...(index % 40 === 0 ? { pinned_at: created } : {}), ...(index % 31 === 0 ? { archived_at: created } : {}),
+    ...(startupOnly ? { permission_mode: 'standard' } : {}),
+  }, history: [] });
+}
+assert.deepEqual(callFixture({ op: 'seed', sessions: seeds }).ids, seeds.map(seed => seed.session.id));
+if (subscriptionTurns) {
+  const id = 'unrelated-subscription-history';
+  assert.deepEqual(callFixture({ op: 'seed', sessions: [{ session: {
+    id, title: 'Unrelated history', cwd: '/synthetic-unrelated', provider: 'subscription-grok', model: 'fixture',
+    created_at: stamp, updated_at: stamp, entries: subscriptionTurns * 4,
+  }, history: [] }] }).ids, [id]);
+  // Reuse one captured authority: reopening it per batch would repeatedly
+  // export the growing history. The helper expands this pattern in bounded commits.
+  const history = [];
+  const content = 'Synthetic historical content. '.repeat(2300);
+  for (const provider of ['subscription-grok', 'subscription-codex']) {
+    for (const [index, [role, text, tokens]] of [
+      ['user', 'Synthetic request', 0], ['assistant', content, 0], ['meta', 'token_usage', 7], ['meta', 'turn_terminal', 7],
+    ].entries()) {
+      history.push({ role, content: text, at: stamp, provider, model: 'fixture', input_tokens: tokens, stop_reason: index === 3 ? 'completed' : '' });
+    }
+  }
+  const appended = callFixture({ op: 'append', id, history, repeat: subscriptionTurns / 2 });
+  assert.equal(appended.id, id);
+  assert.equal(appended.first_seq, 1);
+  assert.equal(appended.last_seq, subscriptionTurns * 4);
+  assert.equal(appended.entries, subscriptionTurns * 4);
+}
+fixtureSeed = { api: 'captured-session-v1', maxRequestBytes: maxSeedRequestBytes, helperSha256: createHash('sha256').update(fs.readFileSync(fixtureHelper)).digest('hex') };
 }
 if (prepareOnly) {
-  fs.writeFileSync(path.join(fixture, 'startup-fixture.json'), JSON.stringify({ synthetic: true, fixture, turns, sidebarThreads, selectedIndex, permissionMode: 'standard' }, null, 2));
+  fs.writeFileSync(path.join(fixture, 'startup-fixture.json'), JSON.stringify({ synthetic: true, fixture, turns, sidebarThreads, selectedIndex, permissionMode: 'standard', fixtureSeed }, null, 2));
   console.log('PREPARED_STARTUP', fixture);
-  app.exit(0);
+  process.exit(0);
 }
 startupProbe?.mark('fixture-ready');
 const timings = [];
@@ -877,7 +918,7 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   }
   await checkStartup(main, launchStart);
   if (startupProbe) {
-    await startupProbe.finish({ win: main, evaluate, output, fixture, projects, selectedIndex, turns, sidebarThreads, safeMode, mainBundle, harness: __filename, timings, startup });
+    await startupProbe.finish({ win: main, evaluate, output, fixture, projects, selectedIndex, turns, sidebarThreads, safeMode, mainBundle, harness: __filename, timings, startup, fixtureSeed });
     clearTimeout(timeout); app.quit(); return;
   }
   await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) { const button = group.querySelector('button[aria-expanded="false"]'); button?.click(); } });
@@ -958,7 +999,7 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   const rendererAssets = path.join(path.dirname(fileURLToPath(main.webContents.getURL())), 'assets');
   const metadata = {
     buildKind: process.env.WUU_SWITCH_BUILD_KIND || 'production-vite',
-    schemaVersion: 5, recordedAt: new Date().toISOString(), sourceCommit: process.env.WUU_SWITCH_SOURCE_COMMIT || git(['rev-parse', 'HEAD']),
+    schemaVersion: 6, recordedAt: new Date().toISOString(), sourceCommit: process.env.WUU_SWITCH_SOURCE_COMMIT || git(['rev-parse', 'HEAD']),
     sourceChanges: process.env.WUU_SWITCH_SOURCE_COMMIT ? (process.env.WUU_SWITCH_SOURCE_CHANGES ?? null) : git(['status', '--short']),
     productSourceCommit: process.env.WUU_SWITCH_BUILD_COMMIT || git(['-C', path.dirname(mainBundle), 'rev-parse', 'HEAD']),
     coreSourceCommit: process.env.WUU_SWITCH_CORE_BUILD_COMMIT || null,
@@ -970,9 +1011,13 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     })(), platform: process.platform, arch: process.arch,
     osRelease: os.release(), cpu: os.cpus()[0].model, cpuCount: os.cpus().length,
     versions: process.versions, turns, rounds, safeMode, variant, initDelayMs, subscriptionTurns, sidebarThreads, pacedStream, streamOnly,
+    fixtureSeed, compositionMigration: budget.compositionMigration,
     hostLoadAverage: os.loadavg(), totalMemoryBytes: os.totalmem(), freeMemoryBytes: os.freemem(),
     startupEndpoint: 'Main bundle import to restored conversation, then focused editable input, native inserted draft and enabled Send for two frames. Excludes synthetic data seeding and Electron executable startup; includes host polling and probe IPC. Cold profile with warm filesystem cache, not a physical-paint measurement.',
-    databaseBytes: fs.statSync(path.join(home, 'sessions/sessions.sqlite3')).size,
+    fixtureHomeBytes: fs.readdirSync(home, { recursive: true }).reduce((bytes, relative) => {
+      const stat = fs.statSync(path.join(home, relative), { throwIfNoEntry: false });
+      return bytes + (stat?.isFile() ? stat.size : 0);
+    }, 0),
     subscriptionEndpoint: 'Host CDP mouse dispatch to target workspace draft, focused editable input, inserted text and enabled Send plus two frames. Includes dispatch, polling and probe IPC overhead. Startup is measured separately from main import to the initial conversation frame, excluding fixture creation.',
     traceEnabled, cpuProfileEnabled, profileOnly: traceEnabled || cpuProfileEnabled, profilingScope: 'Post-startup journeys including enabled paced streaming; exclude profiled runs from timing comparisons', checkBudget, budget: checkBudget ? budget : null,
     zoomFactor: main.webContents.getZoomFactor(), windowSize: main.getSize(),
@@ -981,12 +1026,13 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
     preloadSha256: hash(path.resolve(path.dirname(mainBundle), '../preload/index.cjs')),
     rendererAssets: Object.fromEntries(fs.readdirSync(rendererAssets).sort().map(name => [name, hash(path.join(rendererAssets, name))])),
     endpoint: 'Native mousedown timestamp to target pane intersecting viewport for two animation frames; then native draft insertion, focus and enabled Send for two frames. Includes probe IPC overhead; frames do not prove physical display presentation.',
-    attribution: 'RPC durations are main handler envelopes (overlapping, not additive). Core stdout bytes include all clients/background work. Disk and network are not separately measured. No inference; safe mode excludes normal plugin startup. Interaction-window CDP counters are diagnostic. Settled work counters additionally cover background resume and two frames; only repeated large-fixture samples use the opt-in budget gate. Both include observer and draft-probe work.',
+    attribution: 'RPC durations are main handler envelopes (overlapping, not additive). Core stdout bytes include all clients/background work. Disk and network are not separately measured. No external inference; normal composition includes provider/plugin startup and excludes installed engines. Prior safe-mode samples are not comparable. Interaction-window CDP counters are diagnostic. Settled work counters additionally cover background resume and two frames; only repeated large-fixture samples use the opt-in budget gate. Both include observer and draft-probe work.',
   };
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ metadata, summary, results, startup, subscriptionResults, timings }, null, 2));
   const report = [
     '# Session switch baseline', '',
     `Source: ${metadata.sourceCommit}. ${metadata.platform}/${metadata.arch}; Electron ${process.versions.electron}; ${metadata.turns} turns; safe mode ${metadata.safeMode}; delay ${initDelayMs}ms.`, '',
+    'Composition migrated from safe mode 1 to normal composition 0. The budget workload and work-counter ceilings are unchanged; do not compare these timings directly with the former safe-mode baseline.', '',
     metadata.endpoint, '', metadata.attribution, '',
     `Work budget: ${checkBudget ? 'enforced' : 'diagnostic only'}. Trace: ${traceEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}. CPU profile: ${cpuProfileEnabled ? 'enabled; exclude from timing baselines' : 'disabled'}.`, '',
     '| Repeated large-fixture work | Observed maximum | Configured ceiling |',

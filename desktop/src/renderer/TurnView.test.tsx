@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { ASSISTANT_TURN_PRESENTATION_STABILIZE_MS } from "./AssistantTurnPresentation";
 import { PROCESS_NOTIFICATION_NAME } from "./InternalUserNotification";
@@ -20,6 +20,10 @@ vi.mock("./FeatureFlags", async (importOriginal) => ({
   ENABLE_TURN_EDIT_SUMMARY: true,
   ENABLE_TURN_ARTIFACT_SUMMARY: true,
 }));
+
+beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
+});
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -158,7 +162,7 @@ describe("TurnView", () => {
   );
 
   it("keeps the conversation timeline plugin surface on each real turn", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:turn-timeline",
       generation: "one",
       register(api) {
@@ -183,7 +187,7 @@ describe("TurnView", () => {
 
   it("exposes the active thread id on the conversation timeline surface", async () => {
     let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "test:turn-timeline",
       generation: "thread-id",
       register(api) {

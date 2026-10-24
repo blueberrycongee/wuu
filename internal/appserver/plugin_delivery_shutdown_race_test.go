@@ -10,7 +10,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // A dequeue response precedes its durable cancellation receipt. Pause at that
@@ -23,10 +22,11 @@ func TestClaimedPluginDeliveryCancellationSurvivesShutdownBeforeReceipt(t *testi
 	t.Cleanup(release)
 	client := &fakeClient{}
 	rt := newTestRuntime(t, client)
-	rt.PluginHost = pluginhost.New()
+	writeTargetedUpdateConfig(t, rt)
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	created, err := srv.createPluginSession(context.Background(), "messenger", pluginhost.SessionCreateParams{
+	created, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "messenger", pluginhost.SessionCreateParams{
 		RequestID: "target", Visibility: "user", ContextSource: "fresh",
 	})
 	if err != nil {
@@ -62,8 +62,8 @@ func TestClaimedPluginDeliveryCancellationSurvivesShutdownBeforeReceipt(t *testi
 	if !srv.enqueueQueuedUserTurn(created.SessionID, entry) {
 		t.Fatal("queue rejected")
 	}
-	srv.drainQueuedTurns(created.SessionID)
-	if receipt, found, err := session.FindPluginTurnLifecycle(rt.SessionDir, "messenger", requestID, created.SessionID, ""); err != nil {
+	srv.drainQueuedTurns(testRuntimeState(t, rt), created.SessionID)
+	if receipt, found, err := rt.Sessions.FindPluginTurnLifecycle("messenger", requestID, created.SessionID, ""); err != nil {
 		t.Error(err)
 	} else if found {
 		t.Errorf("shutdown published a receipt while explicit cancellation was pending: %s", receipt.Payload)
@@ -77,7 +77,7 @@ func TestClaimedPluginDeliveryCancellationSurvivesShutdownBeforeReceipt(t *testi
 	case <-time.After(10 * time.Second):
 		t.Fatal("dequeue did not finish")
 	}
-	receipt, found, err := session.FindPluginTurnLifecycle(rt.SessionDir, "messenger", requestID, created.SessionID, "")
+	receipt, found, err := rt.Sessions.FindPluginTurnLifecycle("messenger", requestID, created.SessionID, "")
 	if err != nil || !found {
 		t.Fatalf("cancellation receipt: %v %v", found, err)
 	}

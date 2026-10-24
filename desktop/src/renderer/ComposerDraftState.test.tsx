@@ -1,8 +1,12 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { ApplicationController } from "./plugins/ApplicationController";
 import type { ComposerDraftState } from "./AppState";
-import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, initialState, type AppState } from "./AppState";
+import { captureComposerDrafts, cloneSessionTabDraft, createDraftSessionTab, createThreadSessionTab, initialState, sessionTabDraftForThread, threadSessionTabID, type AppState } from "./AppState";
+import type { Thread } from "../shared/protocol";
+import { createConversationPaneActions } from "./ConversationPaneActions";
 import { createWorkspaceActions } from "./WorkspaceActions";
 import { awaitComposerFiles, type ComposerFile, type ComposerImage } from "./ComposerMessages";
 import {
@@ -33,13 +37,14 @@ async function flushEffects(): Promise<void> {
   await Promise.resolve();
 }
 
-async function renderComposerDraftState(): Promise<{
+async function renderComposerDraftState(application?: ApplicationServiceV1): Promise<{
+  unmount: () => void;
   get: () => ComposerDraftStateController;
 }> {
   let latest: ComposerDraftStateController | undefined;
 
   function Probe() {
-    latest = useComposerDraftState();
+    latest = useComposerDraftState(undefined, application);
     return null;
   }
 
@@ -54,6 +59,7 @@ async function renderComposerDraftState(): Promise<{
   });
 
   return {
+    unmount: () => { act(() => root.unmount()); mountedRoots = mountedRoots.filter(value => value !== root); },
     get: () => {
       if (!latest) {
         throw new Error("composer draft state was not rendered");
@@ -122,6 +128,51 @@ function stubFileReader(result: string): void {
 }
 
 describe("useComposerDraftState", () => {
+  it.each([
+    ["primary", "primary"], ["primary", "secondary"],
+    ["secondary", "primary"], ["secondary", "secondary"],
+  ] as const)("preserves both thread drafts when closing %s with %s active", async (closing, active) => {
+    const context = { kind: "no_project" as const, cwd: "/tmp" };
+    const makeThread = (id: string): Thread => ({
+      id, title: id, preview: "", cwd: context.cwd, status: "idle",
+      model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [],
+    });
+    const threads = { primary: makeThread("primary"), secondary: makeThread("secondary") };
+    const makeDraft = (id: string): ComposerDraftState => ({
+      prompt: `Keep my ${id} draft`, images: [encodedImage(`${id}-image`)], files: [pdfFile(`${id}-file`)],
+      selections: [{ id: `${id}-quote`, text: id, source: { thread_id: id, turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: id.length } }],
+    });
+    const drafts = { primary: makeDraft("primary"), secondary: makeDraft("secondary") };
+    const application = new ApplicationController({
+      ...initialState, activeContext: context, thread: threads.primary, secondaryThread: threads.secondary,
+      sessionTabs: [createThreadSessionTab(threads.primary, context, drafts.primary), createThreadSessionTab(threads.secondary, context)],
+      activeSessionTabID: threadSessionTabID("primary"), activePane: "primary",
+    });
+    const hook = await renderComposerDraftState(application);
+    await act(async () => hook.get().setSplitComposerDrafts(drafts));
+    const deps = {
+      setAppState: application.updateState,
+      getComposerDraftSnapshot: () => captureComposerDrafts(application.getState(), hook.get().splitComposerDrafts),
+      moveSplitDraftToGlobalComposer: (pane: "primary" | "secondary") => hook.get().moveSplitDraftToGlobalComposer(pane),
+    };
+    const actions = createConversationPaneActions(deps);
+    await act(async () => actions.activateConversationPane(active));
+    await act(async () => actions.closeConversationPane(closing));
+
+    const remaining = closing === "primary" ? "secondary" : "primary";
+    expect(application.getState().thread?.id).toBe(remaining);
+    expect(application.getState().secondaryThread).toBeUndefined();
+    expect(hook.get().currentPrimaryComposerDraft()).toEqual(drafts[remaining]);
+    for (const id of ["primary", "secondary"] as const) {
+      expect(sessionTabDraftForThread(application.getState(), id)).toEqual(drafts[id]);
+    }
+    await act(async () => hook.get().setSplitComposerDrafts({
+      primary: hook.get().currentPrimaryComposerDraft(),
+      secondary: sessionTabDraftForThread(application.getState(), closing),
+    }));
+    expect(hook.get().splitComposerDrafts.secondary).toEqual(drafts[closing]);
+  });
+
   it("persists the complete draft before opening skills and clears the primary composer", async () => {
     const hook = await renderComposerDraftState();
     const draft = { prompt: "Question", images: [], files: [], selections: [{ id: "quote", text: "Answer", source: { thread_id: "a", turn_id: "t", item_id: "i", start_offset: 0, end_offset: 6 } }] };
@@ -317,6 +368,29 @@ describe("useComposerDraftState", () => {
 
     expect(hook.get().prompt).toBe("abc");
     expect(hook.get().promptRevision).toBe(0);
+  });
+
+  it("retains rapid input across shell teardown without per-keystroke structural publication", async () => {
+    vi.useFakeTimers();
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const application = new ApplicationController({ ...initialState, activeSessionTabID: "draft", sessionTabs: [
+      createDraftSessionTab("draft", context),
+    ] });
+    const structural = vi.fn();
+    application.subscribeState(structural);
+    const hook = await renderComposerDraftState(application);
+    act(() => {
+      hook.get().setPromptFromInput("Keep");
+      hook.get().setPromptFromInput("Keep this draft");
+    });
+    expect(hook.get().prompt).toBe("");
+    expect(application.getSnapshot().composer.draftText).toBe("Keep this draft");
+    expect(structural).not.toHaveBeenCalled();
+    hook.unmount();
+    act(() => vi.advanceTimersByTime(COMPOSER_PROMPT_IDLE_COMMIT_MS));
+    expect(application.getSnapshot().composer.draftText).toBe("Keep this draft");
+    application.updateState(state => ({ ...state, status: "shell replaced" }));
+    expect(application.getState().sessionTabs[0]).toMatchObject({ prompt: "Keep this draft" });
   });
 
   it("does not let a pending input commit overwrite an immediate draft restore", async () => {

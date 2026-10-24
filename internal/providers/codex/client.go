@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/openai"
@@ -27,7 +27,7 @@ type ClientConfig struct {
 	BaseURL               string
 	APIKey                string
 	Headers               map[string]string
-	Home                  string
+	Credentials           credentialstore.Store
 	HTTPClient            *http.Client
 	StreamConfig          *providers.StreamTransportConfig
 	StreamTransport       providers.StreamTransportMode
@@ -73,10 +73,6 @@ func New(cfg ClientConfig) (*Client, error) {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	home := strings.TrimSpace(cfg.Home)
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
 	streamTransport := cfg.StreamTransport
 	if streamTransport == "" {
 		streamTransport = providers.StreamTransportAuto
@@ -88,7 +84,7 @@ func New(cfg ClientConfig) (*Client, error) {
 	streamConfig := providers.ResolveStreamTransportConfig(cfg.StreamConfig)
 	return &Client{
 		baseURL:          baseURL,
-		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, APIKey: cfg.APIKey, Home: home, HTTPClient: cfg.HTTPClient, ReuseCodexCredentials: cfg.ReuseCodexCredentials}),
+		auth:             NewOAuthSource(OAuthConfig{BaseURL: baseURL, APIKey: cfg.APIKey, Credentials: cfg.Credentials, HTTPClient: cfg.HTTPClient, ReuseCodexCredentials: cfg.ReuseCodexCredentials}),
 		headers:          cloneHeaders(cfg.Headers),
 		httpClient:       cfg.HTTPClient,
 		streamConfig:     streamConfig,
@@ -124,7 +120,16 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 
 // StreamChat opens a streaming Responses API call.
 func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	var err error
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			endReceipt(nil)
+		}
+	}()
 	req, err = c.PrepareInferenceRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -145,7 +150,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 		return ch, err
 	}
 	out := make(chan providers.StreamEvent, 64)
+	started = true
 	go func() {
+		defer endReceipt(nil)
 		defer close(out)
 		for event := range ch {
 			if event.Type == providers.EventError && providers.IsAuthError(event.Error) {

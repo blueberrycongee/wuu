@@ -13,6 +13,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -148,7 +149,7 @@ describe("PluginSettingsEditor", () => {
     const setPluginConflictPreference = vi.fn(async (key: string, pluginId: string) => ({ [key]: pluginId }));
     installAPI({ setPluginConflictPreference });
     for (const pluginId of ["alpha-conflict", "zeta-conflict"]) {
-      await desktopPluginHost.activateGeneration({
+      await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
         pluginId,
         generation: "sha256:generation-1",
         register(api) {
@@ -170,7 +171,7 @@ describe("PluginSettingsEditor", () => {
 
   it("shows isolated contribution diagnostics", async () => {
     installAPI();
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
       pluginId: "alpha-conflict",
       generation: "sha256:generation-1",
       register(api) {

@@ -50,7 +50,7 @@ func seedOrphanHarnessTask(t *testing.T, harnessDir, id string, status harness.T
 func reconcileTestControl(t *testing.T, dir string, client providers.StreamClient) *AgentControl {
 	t.Helper()
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        client,
 		DefaultModel:  "fake-model",
@@ -232,7 +232,7 @@ func TestNew_RestoreQueueFailureStopsBeforeOrphanReconcile(t *testing.T) {
 	}
 
 	control, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        &fakeClient{},
 		DefaultModel:  "fake-model",

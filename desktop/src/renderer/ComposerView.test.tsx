@@ -43,6 +43,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 
 beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
   container = document.createElement("div");
   document.body.appendChild(container);
 });
@@ -343,7 +344,7 @@ describe("attachment picker focus recovery", () => {
     const click = vi.spyOn(input, "click");
     let presenterHost: PresentationHost | undefined;
     try {
-      await act(async () => desktopPluginHost.activateGeneration({
+      await act(async () => desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
         pluginId: "composer-attachment-test", generation: "one", register(api) {
           api.registerPresenter({ id: "replacement", target: "conversation.composer", render: ({ host }) => {
             presenterHost = host;
@@ -1374,7 +1375,7 @@ describe("Composer send control", () => {
 
   it("updates split completion queue counts, aborts stale requests and preserves unknown counts", async () => {
     const observations: Array<{ context: unknown; signal: AbortSignal }> = [];
-    await desktopPluginHost.activateGeneration({ pluginId: "split-counts", generation: "one", register(api) {
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph", pluginId: "split-counts", generation: "one", register(api) {
       api.registerComposerInlineCompletionProvider({ id: "observe", provideCompletion(context, signal) {
         observations.push({ context, signal }); return new Promise(() => {});
       } });

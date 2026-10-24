@@ -154,7 +154,14 @@ export type InitializeParams = {
   };
 };
 
+export type ApplicationShellBinding = {
+  plugin_id: string;
+  generation: string;
+  provider_id: string;
+};
+
 export type InitializeResult = {
+  application_shell?: ApplicationShellBinding | null;
   speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
@@ -604,6 +611,7 @@ export type ExtensionInventoryRecord = {
   state: ExtensionState;
   executable?: boolean;
   fingerprint?: string;
+  graph_generation?: string;
   package_source?: "bundled" | "user" | "project" | "dev";
   grant_scope?: "action" | "session" | "project" | "user";
   requested_permissions?: string[];
@@ -635,11 +643,25 @@ export type ExtensionPackageAction =
   | "promote_update"
   | "reject_update";
 
-export type ExtensionPackageUpdateParams = {
+export type ExtensionPackageEnablementUpdate = {
   id: string;
   fingerprint?: string;
-  action: ExtensionPackageAction;
+  action: "enable" | "disable";
 };
+
+export type ExtensionPackageUpdateParams =
+  | {
+      id: string;
+      fingerprint?: string;
+      action: ExtensionPackageAction;
+      updates?: never;
+    }
+  | {
+      updates: ExtensionPackageEnablementUpdate[];
+      id?: never;
+      fingerprint?: never;
+      action?: never;
+    };
 
 export type ExtensionPackageUpdateResult = {
   extension_inventory: ExtensionInventoryRecord[];
@@ -652,6 +674,7 @@ export type ExtensionCatalogRefreshResult = {
 
 /** Published after the core atomically activates a new plugin generation. */
 export type PluginInventoryChangedNotification = {
+  application_shell?: ApplicationShellBinding | null;
   epoch: number;
   extension_inventory: ExtensionInventoryRecord[];
   skills: SkillSummary[];
@@ -705,6 +728,16 @@ export type PluginPackageRemoveResult = {
   extension_inventory: ExtensionInventoryRecord[];
   skills: SkillSummary[];
 };
+
+export interface PluginDesktopActivationParams {
+  id: string;
+  fingerprint: string;
+  graph_generation: string;
+  activation: number;
+  phase: "registration" | "render" | "cleanup";
+  status: "active" | "failed" | "disposed";
+  message?: string;
+}
 
 export interface PluginDesktopModuleReadParams {
   id: string;
@@ -798,6 +831,10 @@ export interface PluginStorageResult {
   value: string | null;
 }
 export interface PluginClientRequestParams extends PluginIdentityParams {
+  /** Exact admitted graph identity, independent of the plugin code fingerprint. */
+  graph_generation: string;
+  /** Declared service dependency. Omit to invoke the plugin's client capability. */
+  service?: string;
   /** Optional opaque ID enabling cancellation of this request. */
   request_id?: string;
   method: string;
@@ -809,7 +846,7 @@ export interface PluginClientRequestParams extends PluginIdentityParams {
   workspace_root?: string;
 }
 export interface PluginClientRequestResult { result?: unknown; }
-export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; }
+export interface PluginClientCancelParams extends PluginIdentityParams { request_id: string; graph_generation: string; }
 export interface PluginClientCancelResult { cancelled: boolean; }
 
 export type ConfigModelUpdateResult = {
@@ -3175,6 +3212,7 @@ export type WuuDesktopApi = {
   loadPluginDesktopModule: (
     params: PluginDesktopModuleReadParams,
   ) => Promise<PluginDesktopModuleLoadResult>;
+  reportPluginDesktopActivation: (params: PluginDesktopActivationParams) => Promise<void>;
   loadPluginIcon: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
   loadPluginSkinImage?: (params: PluginIconReadParams) => Promise<PluginIconLoadResult>;
   cacheShellImage?: (data: ArrayBuffer) => Promise<string>;

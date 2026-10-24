@@ -115,6 +115,12 @@ func applyRestrictedProjectLayers(basePath, projectRoot string, base Config) (Co
 }
 
 func applySettingsLayers(basePath string, base Config, layers []settingsLayer) (Config, []string, error) {
+	return applySettingsLayersSource(basePath, nil, base, layers)
+}
+
+// A supplied base source lets a selected provider validate a replacement before
+// committing it. Legacy file loaders read the base only when overlays exist.
+func applySettingsLayersSource(basePath string, baseData []byte, base Config, layers []settingsLayer) (Config, []string, error) {
 	type pendingLayer struct {
 		spec settingsLayer
 		data []byte
@@ -141,9 +147,12 @@ func applySettingsLayers(basePath string, base Config, layers []settingsLayer) (
 		return base, nil, nil
 	}
 
-	baseData, err := os.ReadFile(basePath)
-	if err != nil {
-		return Config{}, nil, fmt.Errorf("read config %s: %w", basePath, err)
+	if baseData == nil {
+		var err error
+		baseData, err = os.ReadFile(basePath)
+		if err != nil {
+			return Config{}, nil, fmt.Errorf("read config %s: %w", basePath, err)
+		}
 	}
 	merged, err := decodeRawObject(baseData)
 	if err != nil {

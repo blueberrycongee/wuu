@@ -16,10 +16,12 @@ import (
 // callback lifetime as an external driver. Failed calls must retain output
 // already accepted by the execution for final persistence.
 func TestDefaultDriverComposition(t *testing.T) {
-	for _, name := range []string{"success", "partial-failure", "cancel"} {
-		fail := name != "success"
+	for _, name := range []string{"success", "default-callback", "partial-failure", "cancel"} {
+		fail := name == "partial-failure" || name == "cancel"
 		t.Run(name, func(t *testing.T) {
-			host, kernel, err := buildPluginHost(nil, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, nil, "")
+			root := t.TempDir()
+			home, state := testWorkspaceState(t, root)
+			host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, nil, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -27,7 +29,7 @@ func TestDefaultDriverComposition(t *testing.T) {
 			if err := host.Activate(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			owner, found := host.ServiceRegistry().ProviderPluginID("driver.default", 1)
+			owner, found := host.ServiceRegistry().ProviderPluginID("driver.default", loopdriver.DriverServiceMajor)
 			if !found || owner != loopdriver.DefaultDriverID {
 				t.Fatalf("default binding = %q, %v", owner, found)
 			}
@@ -40,11 +42,23 @@ func TestDefaultDriverComposition(t *testing.T) {
 				// Embedded and evaluation callers have no app-server turn ID.
 				ctx = runCtx
 			}
-			result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Say hello"}}, func(event providers.StreamEvent) {
-				if name == "cancel" && event.Type == providers.EventContentDelta {
-					cancel()
+			deltas := 0
+			callback := func(event providers.StreamEvent) {
+				if event.Type == providers.EventContentDelta {
+					deltas++
+					if name == "cancel" {
+						cancel()
+					}
 				}
-			})
+			}
+			if name == "default-callback" {
+				runner.OnEvent = callback
+				callback = nil
+			}
+			result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "Say hello"}}, callback)
+			if deltas != 1 {
+				t.Fatalf("lost configured callback: deltas=%d", deltas)
+			}
 			if (err != nil) != fail || client.calls != 1 {
 				t.Fatalf("calls=%d result=%+v err=%v", client.calls, result, err)
 			}
@@ -66,9 +80,11 @@ func TestDefaultDriverComposition(t *testing.T) {
 		})
 	}
 	t.Run("removed", func(t *testing.T) {
-		modules := []string{kernelHostModule}
+		modules := append(testStateModules(), kernelHostModule)
 		selection := &composition.Config{Version: composition.Version, Modules: &modules}
-		host, kernel, err := buildPluginHost(nil, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, "")
+		root := t.TempDir()
+		home, state := testWorkspaceState(t, root)
+		host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, selection, "")
 		if err != nil {
 			t.Fatal(err)
 		}

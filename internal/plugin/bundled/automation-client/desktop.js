@@ -1,0 +1,837 @@
+export async function activate(api) {
+  const React = api.react;
+  const h = React.createElement;
+  const { Page, Button, TextInput, TextArea, Checkbox, EmptyState } = api.ui;
+  const requestScheduler = (method, input, options) => api.invokeService({
+    service: "automation.scheduler", method: "request", params: { method, input },
+  }, options);
+
+  api.registerLocale({ id: "automation-en", locale: "en-US", entries: {
+    "automation.save": "Save changes", "automation.saved": "Saved", "automation.unsaved": "Unsaved changes",
+    "automation.custom": "Custom", "automation.once": "Run once", "automation.day": "Day",
+    "automation.history": "Recent runs", "automation.more": "More actions",
+
+    "automation.title": "Automations",
+    "automation.sidebar.running": "Running now", "automation.sidebar.upcoming": "Up next",
+    "automation.sidebar.idle": "Nothing running right now", "automation.sidebar.unscheduled": "No upcoming runs",
+    "automation.sidebar.loading": "Loading schedules…", "automation.sidebar.refreshError": "Could not refresh schedules",
+    "automation.run.starting": "Starting",
+    "automation.new": "New automation", "automation.empty": "No automations yet",
+    "automation.search": "Search automations", "automation.search.empty": "No matching automations.",
+    "automation.enable": "Enabled", "automation.paused": "Paused", "automation.enableNamed": "Enable {name}",
+    "automation.name": "Name", "automation.prompt": "Instructions", "automation.schedule": "Cron schedule", "automation.timezone": "Timezone", "automation.workspace": "Workspace",
+    "automation.recurring": "Repeat", "automation.workspaceHelp": "Tasks and runs shown below belong to this workspace.", "automation.workspaceNone": "No available project workspaces",
+    "automation.isolation": "Run in an isolated git worktree", "automation.isolationHelp": "Each run executes in its own worktree instead of the live project directory.",
+    "automation.create": "Create", "automation.cancel": "Cancel", "automation.remove": "Delete",
+    "automation.next": "Next", "automation.run.completed": "Completed", "automation.run.failed": "Failed",
+    "automation.run.running": "Running", "automation.run.lastFailed": "Last run failed", "automation.run.queued": "Queued", "automation.run.interrupted": "Interrupted", "automation.run.never": "No runs yet",
+    "automation.schedule.daily": "Daily", "automation.schedule.weekdays": "Weekdays", "automation.schedule.weekly": "Weekly",
+    "automation.resize": "Resize automation editor", "automation.close": "Close", "automation.group.details": "Execution", "automation.group.schedule": "Schedule",
+    "automation.field.target": "Runs in", "automation.field.project": "Project", "automation.field.time": "Time", "automation.field.isolation": "Isolated run",
+    "automation.target.new": "New chat each run", "automation.target.thread": "Existing chat",
+    "automation.target.search": "Search chats", "automation.target.chats": "Chats", "automation.target.pinned": "Pinned", "automation.target.empty": "No matching chats",
+    "automation.placeholder.name": "Task title", "automation.placeholder.prompt": "What should this automation do?", "automation.placeholder.schedule": "0 9 * * 1-5",
+  }});
+  api.registerLocale({ id: "automation-zh", locale: "zh-CN", entries: {
+    "automation.save": "保存修改", "automation.saved": "已保存", "automation.unsaved": "修改未保存",
+    "automation.custom": "自定义", "automation.once": "仅执行一次", "automation.day": "星期",
+    "automation.history": "最近运行", "automation.more": "更多操作",
+
+    "automation.title": "自动化",
+    "automation.sidebar.running": "正在运行", "automation.sidebar.upcoming": "接下来",
+    "automation.sidebar.idle": "当前没有运行中的任务", "automation.sidebar.unscheduled": "暂无待触发的任务",
+    "automation.sidebar.loading": "正在加载调度…", "automation.sidebar.refreshError": "调度信息刷新失败",
+    "automation.run.starting": "正在启动",
+    "automation.new": "新建自动化", "automation.empty": "还没有自动化任务",
+    "automation.search": "搜索自动化", "automation.search.empty": "没有匹配的自动化。",
+    "automation.enable": "启用", "automation.paused": "已暂停", "automation.enableNamed": "启用 {name}",
+    "automation.name": "名称", "automation.prompt": "任务内容", "automation.schedule": "Cron 时间", "automation.timezone": "时区", "automation.workspace": "工作区",
+    "automation.recurring": "重复", "automation.workspaceHelp": "下方任务和运行记录都属于这个工作区。", "automation.workspaceNone": "没有可用的项目工作区",
+    "automation.isolation": "在独立 git worktree 中运行", "automation.isolationHelp": "每次运行都在自己的 worktree 中执行，不直接改动当前项目目录。",
+    "automation.create": "创建", "automation.cancel": "取消", "automation.remove": "删除",
+    "automation.next": "下次", "automation.run.completed": "已完成", "automation.run.failed": "失败",
+    "automation.run.running": "运行中", "automation.run.lastFailed": "上次运行失败", "automation.run.queued": "排队中", "automation.run.interrupted": "已中断", "automation.run.never": "暂无运行",
+    "automation.schedule.daily": "每天", "automation.schedule.weekdays": "工作日", "automation.schedule.weekly": "每周",
+    "automation.resize": "调整自动化编辑区宽度", "automation.close": "关闭", "automation.group.details": "执行设置", "automation.group.schedule": "时间安排",
+    "automation.field.target": "运行于", "automation.field.project": "项目", "automation.field.time": "时间", "automation.field.isolation": "隔离运行",
+    "automation.target.new": "每次新对话", "automation.target.thread": "指定对话",
+    "automation.target.search": "搜索对话", "automation.target.chats": "对话", "automation.target.pinned": "已置顶", "automation.target.empty": "没有匹配的对话",
+    "automation.placeholder.name": "任务标题", "automation.placeholder.prompt": "描述这次自动化要做什么", "automation.placeholder.schedule": "0 9 * * 1-5",
+  }});
+  api.registerStyle({ id: "automation-catalog", css: `
+    /* The page shares the host's control family: fields and buttons at the
+     * control height with control radii, list rows with the inner radius,
+     * section titles like settings sections, and the host's keyboard focus
+     * ring. Motion reads the host's panel tokens, which reduced motion
+     * already zeroes. */
+    .plugin-automation {
+      --automation-gap: var(--space-4);
+      --automation-inset: var(--space-6);
+      height:100%; min-height:0; container-type:inline-size;
+      color:var(--wuu-color-text, var(--ink));
+      font-size:var(--font-ui);
+    }
+    .plugin-automation *, .plugin-automation *::before { box-sizing:border-box; }
+    .plugin-automation .plugin-ui-page { width:100%; height:100%; max-width:none; padding:0; font-size:inherit; }
+    .plugin-automation-body { position:relative; display:grid; grid-template-columns:minmax(0, 1fr) 0px; height:100%; min-height:0; overflow:hidden; transition:grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing); }
+    .plugin-automation-body[data-panel="true"]:not([data-closing="true"]) { grid-template-columns:minmax(0, 1fr) var(--automation-detail-width); }
+    .plugin-automation-body[data-closing="true"] { transition-duration:var(--environment-panel-exit-duration); }
+    .plugin-automation-body[data-resizing="true"] { transition:none; }
+    .plugin-automation-main { min-width:0; overflow:auto; padding:var(--automation-inset); }
+    .plugin-automation-main > * { max-width:880px; margin-inline:auto; }
+    .plugin-automation-toolbar { display:flex; align-items:center; gap:var(--space-2); margin-bottom:var(--section-gap); }
+    .plugin-automation-toolbar .plugin-automation-create { display:inline-flex; flex:none; align-items:center; gap:var(--space-2); }
+    .plugin-automation-create svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-search { flex:1; min-width:0; display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-search-height); border:1px solid var(--field-border); border-radius:var(--radius-sm); padding:0 var(--control-padding-inline); color:var(--ink-muted); background:var(--field-bg); transition:background var(--motion-fast) var(--ease-out); }
+    .plugin-automation-search:hover { background:var(--field-hover-bg); }
+    .plugin-automation-search svg { width:var(--icon-size); height:var(--icon-size); flex:none; }
+    .plugin-automation-search input { width:100%; min-width:0; border:0; padding:0; outline:0; background:transparent; color:var(--ink); font:inherit; }
+    .plugin-automation-search input::placeholder { color:var(--ink-tertiary); }
+    .plugin-automation-workspace-picker { flex:0 1 auto; min-width:0; max-width:34%; }
+    .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
+    .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
+    .plugin-automation-list + .plugin-automation-group { margin-top:var(--section-gap); }
+    /* Rows start their text on the toolbar's edge; the hover and selection
+     * surfaces reach past it by the row inset. */
+    .plugin-automation-item { display:flex; align-items:center; gap:var(--space-3); min-width:0; margin-inline:calc(var(--compact-padding-inline) * -1); border-radius:var(--radius-xs); transition:background var(--motion-fast) var(--ease-out); }
+    .plugin-automation-item:hover { background:var(--surface-1); }
+    .plugin-automation-item[data-selected="true"] { background:var(--selection-surface); }
+    /* A row created on this page arrives where it will stay. */
+    .plugin-automation-item[data-entering="true"] { --enter-y:4px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
+    /* The state icon sits on the title line; title and meta share one column. */
+    .plugin-automation-item-main { flex:1; display:grid; grid-template-columns:var(--icon-size) minmax(0, 1fr); column-gap:var(--space-3); row-gap:2px; min-width:0; padding:var(--compact-padding-block) var(--compact-padding-inline); border:0; border-radius:inherit; text-align:left; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+    .plugin-automation-item-main > :not(.plugin-automation-item-icon) { grid-column:2; }
+    .plugin-automation-item-icon { grid-row:1; display:flex; align-items:center; height:calc(1em * 1.4); color:var(--ink-tertiary); transition:color var(--motion-fast) var(--ease-out); }
+    .plugin-automation-item-icon svg { width:var(--icon-size); height:var(--icon-size); }
+    .plugin-automation-item-icon[data-state="failed"] { color:var(--danger); }
+    .plugin-automation-item-icon[data-state="paused"] { color:var(--ink-faint); }
+    .plugin-automation-item-title { transition:color var(--motion-fast) var(--ease-out); }
+    .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
+    .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:var(--compact-padding-inline); }
+    .plugin-automation-item-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink); font-size:inherit; line-height:1.4; }
+    .plugin-automation-item-meta { display:flex; align-items:center; gap:var(--space-1); min-width:0; color:var(--ink-soft); font-size:var(--font-sm); line-height:1.5; }
+    .plugin-automation-item-meta > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-automation-group-title { margin:0 0 var(--space-3); color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
+    .plugin-automation-sidebar { display:flex; flex-direction:column; gap:var(--space-4); padding-block:var(--space-4); font-size:var(--font-ui); }
+    .plugin-automation-sidebar-workspace { margin:0; padding-inline:var(--sidebar-row-pad-x); color:var(--ink-soft); overflow-wrap:anywhere; }
+    .plugin-automation-sidebar-group { display:flex; flex-direction:column; gap:var(--sidebar-row-gap); }
+    .plugin-automation-sidebar-heading { display:flex; align-items:baseline; justify-content:space-between; gap:var(--space-2); }
+    .plugin-automation-sidebar-count { font-variant-numeric:tabular-nums; font-weight:var(--weight-regular); }
+    .plugin-automation-sidebar-item { align-items:flex-start; padding-block:var(--space-2); }
+    .plugin-automation-sidebar-item > svg { margin-top:calc((1em * var(--line-ui) - var(--sidebar-primary-icon-size)) / 2); color:var(--ink-tertiary); }
+    .plugin-automation-sidebar-item[data-status="running"] > svg, .plugin-automation-sidebar-item[data-status="starting"] > svg { color:var(--info); }
+    .plugin-automation-sidebar-item[aria-pressed="true"] { background:var(--sidebar-row-selected-bg); box-shadow:var(--sidebar-row-selected-shadow); }
+    .plugin-automation-sidebar-copy { display:flex; flex:1; flex-direction:column; gap:2px; min-width:0; }
+    .plugin-automation-sidebar-title { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:var(--line-ui); }
+    .plugin-automation-sidebar-meta { color:var(--ink-soft); font-size:var(--font-sm); line-height:var(--line-ui); overflow-wrap:anywhere; }
+    .plugin-automation-sidebar .plugin-automation-sidebar-item:focus-visible { outline-offset:-2px; }
+    .plugin-automation-sidebar-item:disabled { cursor:default; opacity:0.45; }
+    .plugin-automation-empty { min-height:160px; }
+    .plugin-automation-error { color:var(--danger); font-size:var(--font-sm); overflow-wrap:anywhere; }
+    .plugin-automation-filtered-empty { margin:0; color:var(--ink-tertiary); }
+    .plugin-automation-detail-title { flex:1; min-width:0; margin:0; color:var(--ink-strong); font-size:var(--font-ui); font-weight:var(--weight-semibold); line-height:1.4; }
+    .plugin-automation-detail-head > .plugin-automation-enable { flex:none; margin-inline-end:auto; justify-content:start; grid-template-columns:auto auto; gap:var(--space-3); }
+    .plugin-automation-detail { position:relative; display:flex; flex-direction:column; width:var(--automation-detail-width); min-width:var(--automation-detail-width); min-height:0; overflow:hidden; border-left:1px solid var(--hairline); transition:opacity var(--environment-panel-exit-duration) var(--ease-in), translate var(--environment-panel-exit-duration) var(--ease-in); }
+    /* Content enters from the edge the column opens toward and leaves the
+     * same way, shorter. Choosing another task while the panel stays open
+     * only swaps the content in place. */
+    .plugin-automation-detail-inner { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; --enter-x:16px; animation:wuu-enter var(--environment-panel-motion-duration) var(--environment-panel-motion-easing) both; }
+    .plugin-automation-detail[data-swap="true"] .plugin-automation-detail-inner { --enter-x:0px; --enter-y:4px; animation-duration:var(--content-swap-duration); animation-timing-function:var(--content-swap-easing); }
+    .plugin-automation-body[data-closing="true"] .plugin-automation-detail { opacity:0; translate:12px 0; pointer-events:none; }
+    .plugin-automation-detail-body { flex:1; display:flex; flex-direction:column; gap:var(--space-6); min-width:0; min-height:0; overflow:auto; padding:0 var(--automation-inset) var(--automation-inset); }
+    .plugin-automation-resizer { position:absolute; top:0; bottom:0; left:0; transform:translateX(-50%); width:10px; padding:0; border:0; outline:0; background:transparent; z-index:2; cursor:col-resize; touch-action:none; -webkit-app-region:no-drag; }
+    .plugin-automation-body[data-closing="true"] .plugin-automation-resizer { pointer-events:none; }
+    .plugin-automation-resizer::before { content:""; position:absolute; top:0; bottom:0; left:0; width:10px; }
+    .plugin-automation-resizer::after { content:""; position:absolute; top:0; bottom:0; left:50%; width:1px; }
+    .plugin-automation-resizer:hover::after, .plugin-automation-resizer:focus-visible::after, .plugin-automation-body[data-resizing="true"] .plugin-automation-resizer::after { background:var(--sidebar-resizer-hover-bg, var(--ink-overlay-18)); box-shadow:0 0 0 1px var(--sidebar-resizer-hover-ring, var(--ink-overlay-8)); }
+    .plugin-automation-body[data-resizing="true"], .plugin-automation-body[data-resizing="true"] * { cursor:col-resize !important; user-select:none; }
+    .plugin-automation-detail-head { flex:none; display:flex; align-items:center; gap:var(--space-2); min-height:var(--control-field-height); padding:var(--automation-inset) var(--automation-inset) var(--automation-gap); }
+    .plugin-automation-detail-status { flex:1; color:var(--ink-tertiary); font-size:var(--font-sm); }
+    .plugin-automation-detail-status[data-saved="true"] { display:inline-flex; align-items:center; gap:var(--space-1); color:var(--ink-soft); animation:wuu-fade-in var(--motion-base) var(--ease-out) both; }
+    .plugin-automation-detail-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation .plugin-automation-detail-close { display:grid; place-items:center; width:var(--control-field-height); padding:0; }
+    .plugin-automation-detail-close svg { width:var(--icon-size); height:var(--icon-size); }
+    .plugin-automation-form { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+    .plugin-automation-form-identity { display:grid; gap:var(--space-3); }
+    /* The name reads as the panel's heading and stays editable in place. */
+    .plugin-automation .plugin-automation-form-name { min-height:var(--control-field-height); margin-inline:calc(var(--space-2) * -1); border-color:transparent; padding-inline:var(--space-2); background:transparent; color:var(--ink-strong); font-size:var(--font-title); font-weight:var(--weight-semibold); }
+    .plugin-automation .plugin-automation-form-name:hover { background:var(--field-hover-bg); }
+    .plugin-automation .plugin-ui-field-label { font-size:inherit; font-weight:var(--weight-regular); }
+    .plugin-automation .plugin-ui-textarea { min-height:6.5em; max-height:20em; font-size:inherit; line-height:1.6; }
+    .plugin-automation-form-group { min-width:0; }
+    /* Settings live in bordered groups like Wuu's settings pages: one card
+     * per decision, rows divided by a soft hairline. */
+    .plugin-automation-form-card { display:flex; flex-direction:column; min-width:0; border:1px solid var(--hairline); border-radius:var(--radius-sm); padding-inline:var(--card-padding); }
+    .plugin-automation-form-card > .plugin-automation-form-row + .plugin-automation-form-row { border-top:1px solid var(--hairline-soft); }
+    .plugin-automation-form-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); min-height:calc(var(--control-field-height) + var(--space-3)); font-size:inherit; }
+    /* A row that a schedule choice reveals drops in under the one above. */
+    .plugin-automation-form-row[data-entering="true"] { --enter-y:-4px; animation:wuu-enter var(--motion-base) var(--ease-out) both; }
+    .plugin-automation-form-row > span:first-child { flex:none; }
+    .plugin-automation-form-row-control { display:flex; justify-content:flex-end; min-width:0; max-width:70%; }
+    .plugin-automation-form-row .plugin-ui-checkbox { width:100%; gap:var(--space-3); }
+    .plugin-automation-field { min-width:0; max-width:100%; width:12em; min-height:var(--control-field-height); border:1px solid transparent; border-radius:var(--radius-sm); padding:0 var(--space-2); background:transparent; color:inherit; font:inherit; text-align:right; }
+    .plugin-automation-field:hover { background:var(--field-hover-bg); }
+    .plugin-automation-field[type="time"] { width:8em; font-variant-numeric:tabular-nums; }
+    .plugin-automation-field::-webkit-calendar-picker-indicator { display:none; }
+    .plugin-automation-form-actions { flex:none; display:flex; align-items:center; justify-content:flex-end; gap:var(--space-2); padding:var(--space-3) var(--automation-inset); border-top:1px solid var(--hairline-soft); }
+    .plugin-automation-history { display:grid; gap:var(--space-2); font-size:var(--font-sm); }
+    .plugin-automation-history > .plugin-automation-group-title { margin-bottom:var(--space-1); font-size:var(--font-ui); }
+    .plugin-automation-history-row { display:flex; align-items:center; gap:var(--space-2); color:var(--ink-soft); font-variant-numeric:tabular-nums; }
+    .plugin-automation-history-row > span:last-child { color:var(--ink-tertiary); }
+    .plugin-automation-history-empty { margin:0; color:var(--ink-tertiary); }
+    .plugin-automation-history-status { display:inline-flex; color:var(--ink-muted); }
+    .plugin-automation-history-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-history-status[data-run="failed"] { color:var(--danger); }
+    /* A failed run's own message is detail under its date; the mark already says it failed. */
+    .plugin-automation-history-detail { margin:0; padding-inline-start:calc(var(--icon-size-sm) + var(--space-2)); color:var(--ink-soft); overflow-wrap:anywhere; user-select:text; }
+    .plugin-automation-more { position:relative; }
+    .plugin-automation-more summary { display:grid; place-items:center; list-style:none; cursor:pointer; width:var(--control-field-height); height:var(--control-field-height); border-radius:var(--radius-sm); color:var(--wuu-color-text-muted, var(--ink-soft)); }
+    .plugin-automation-more summary::-webkit-details-marker { display:none; }
+    .plugin-automation-more summary svg { width:var(--icon-size); height:var(--icon-size); }
+    .plugin-automation-more summary:hover, .plugin-automation-more[open] summary { color:var(--wuu-color-text, var(--ink)); background:var(--wuu-control-secondary-background, var(--surface-2)); }
+    .plugin-automation-more-menu { position:absolute; top:100%; right:0; z-index:5; width:max-content; margin-top:var(--space-1); padding:var(--menu-inset); background:var(--menu-bg); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); box-shadow:var(--menu-shadow); transform-origin:top right; }
+    /* Menus open with the host's menu motion, from the edge nearest their trigger. */
+    .plugin-automation-more[open] .plugin-automation-more-menu, .plugin-automation-picker-menu:popover-open { --enter-y:-4px; --enter-scale:0.985; animation:wuu-enter var(--menu-enter-duration) var(--menu-enter-easing) both; }
+    .plugin-automation-picker-menu[data-placement="above"]:popover-open { --enter-y:4px; transform-origin:bottom right; }
+    .plugin-automation-sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+    .plugin-automation-picker { display:inline-flex; min-width:0; max-width:100%; }
+    .plugin-automation .plugin-automation-picker-trigger { display:flex; align-items:center; justify-content:space-between; gap:var(--space-2); min-width:0; max-width:100%; border:1px solid transparent; color:var(--ink); background:transparent; font-weight:var(--weight-regular); padding:0 var(--space-2); }
+    .plugin-automation .plugin-automation-picker-trigger:hover, .plugin-automation .plugin-automation-picker-trigger[aria-expanded="true"] { background:var(--field-hover-bg); }
+    .plugin-automation-picker-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-automation-picker-trigger svg { flex:none; width:var(--icon-size-xs); height:var(--icon-size-xs); color:var(--ink-tertiary); }
+    .plugin-automation-picker-trigger svg { transition:transform var(--motion-fast) var(--ease-out); }
+    .plugin-automation-picker-trigger[aria-expanded="true"] svg { transform:rotate(180deg); }
+    .plugin-automation-picker-menu { position:fixed; inset:auto; margin:0; transform-origin:top right; padding:var(--menu-inset); border:1px solid var(--menu-border); border-radius:var(--menu-shell-radius); background:var(--menu-bg); box-shadow:var(--menu-shadow); color:var(--ink); font-size:var(--font-menu); overflow:hidden; }
+    .plugin-automation-picker-menu:popover-open { display:flex; flex-direction:column; gap:1px; }
+    .plugin-automation-picker-search { display:flex; align-items:center; flex:none; gap:var(--space-2); min-height:var(--control-row-height); padding:0 var(--space-2); color:var(--ink-tertiary); }
+    .plugin-automation-picker-search svg { flex:none; width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-picker-search input { flex:1; min-width:0; border:0; outline:0; background:transparent; color:var(--ink); font:inherit; }
+    .plugin-automation-picker-options { display:flex; flex-direction:column; gap:2px; min-height:0; overflow:auto; }
+    .plugin-automation-picker-option { display:flex; flex:none; align-items:center; justify-content:space-between; gap:var(--space-2); width:100%; min-width:0; min-height:var(--control-row-height); padding:var(--menu-item-padding-block) var(--space-2); border:0; border-radius:var(--radius-xs); color:var(--ink); background:transparent; font:inherit; font-weight:var(--weight-medium); line-height:1.4; text-align:left; cursor:pointer; }
+    .plugin-automation-picker-option:hover, .plugin-automation-picker-option:focus-visible, .plugin-automation-picker-option[aria-selected="true"] { background:var(--menu-hover); outline:0; }
+    .plugin-automation-picker-option-copy { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .plugin-automation-picker-option svg { flex:none; width:var(--icon-size-sm); height:var(--icon-size-sm); }
+    .plugin-automation-picker-empty { padding:var(--space-3); text-align:center; color:var(--ink-tertiary); }
+    @container (max-width: 760px) {
+      .plugin-automation-body { transition:none; }
+      .plugin-automation-body[data-panel="true"] .plugin-automation-main { display:none; }
+      .plugin-automation-body[data-panel="true"]:not([data-closing="true"]) { grid-template-columns:minmax(0, 1fr); }
+      .plugin-automation-resizer { display:none; }
+      .plugin-automation-detail { width:100%; min-width:0; max-width:none; border:0; }
+    }
+    @container (max-width: 420px) {
+      .plugin-automation { --automation-inset: var(--space-4); }
+    }
+  ` });
+
+  function shortTimezone(timezone) {
+    const parts = String(timezone || "").split("/");
+    return parts[parts.length - 1] || "UTC";
+  }
+
+  function workspaceName(root) {
+    const parts = String(root || "").split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || root || "—";
+  }
+
+  // Dates follow Wuu's language, not the system's, so a Chinese page never
+  // reads "Friday" or "AM".
+  function formatDateTime(iso, timezone, locale) {
+    if (!iso) return null;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return null;
+    const options = { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+    try {
+      return new Intl.DateTimeFormat(locale, { ...options, timeZone: timezone || undefined }).format(date);
+    } catch {
+      return new Intl.DateTimeFormat(locale, options).format(date);
+    }
+  }
+
+  // Cron fields already represent wall-clock time in the task's timezone.
+  function formatTime(hour, minute) {
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  const WEEKDAY_REFERENCE = ["2026-01-04", "2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09", "2026-01-10"];
+
+  function weekdayName(day, locale) {
+    return new Intl.DateTimeFormat(locale, { weekday: "long" }).format(new Date(`${WEEKDAY_REFERENCE[day]}T12:00:00`));
+  }
+
+  // Recognize the schedules people actually write (daily, weekdays, one
+  // weekday per week) and present them in words; anything more expressive
+  // stays as the raw cron expression.
+  function describeSchedule(cron, timezone, tr, locale) {
+    const fields = String(cron || "").trim().split(/\s+/);
+    if (fields.length !== 5) return null;
+    const [minute, hour, dom, month, dow] = fields;
+    if (dom !== "*" || month !== "*") return null;
+    if (!/^\d{1,2}$/.test(minute) || !/^\d{1,2}$/.test(hour)) return null;
+    const time = formatTime(Number(hour), Number(minute), timezone);
+    if (dow === "*") return `${tr("automation.schedule.daily")} ${time}`;
+    if (dow === "1-5") return `${tr("automation.schedule.weekdays")} ${time}`;
+    if (/^[0-7]$/.test(dow)) return `${tr("automation.schedule.weekly")} ${weekdayName(Number(dow) % 7, locale)} ${time}`;
+    return null;
+  }
+
+  function runStatus(run) {
+    if (!run) return null;
+    switch (run.status) {
+      case "completed": return "completed";
+      case "failed": return "failed";
+      case "running":
+      case "starting": return "running";
+      case "queued": return "queued";
+      case "interrupted":
+      case "discarded": return "interrupted";
+      default: return "queued";
+    }
+  }
+
+  function SearchIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
+      h("circle", { cx: "7", cy: "7", r: "4.5", stroke: "currentColor", strokeWidth: "1.5" }),
+      h("path", { d: "m13.5 13.5-3-3", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
+  }
+
+  function CloseIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
+      h("path", { d: "m4 4 8 8m0-8-8 8", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
+  }
+
+  function MoreIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "currentColor", "aria-hidden": true },
+      h("circle", { cx: "3.5", cy: "8", r: "1.25" }), h("circle", { cx: "8", cy: "8", r: "1.25" }), h("circle", { cx: "12.5", cy: "8", r: "1.25" }));
+  }
+
+  function CheckIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
+      h("path", { d: "m3 8.5 3.5 3.5L13 5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
+  }
+
+  function ChevronIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
+      h("path", { d: "m4.5 6.5 3.5 3.5 3.5-3.5", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round", strokeLinejoin: "round" }));
+  }
+
+  function PlusIcon() {
+    return h("svg", { viewBox: "0 0 16 16", fill: "none", "aria-hidden": true },
+      h("path", { d: "M8 3.5v9M3.5 8h9", stroke: "currentColor", strokeWidth: "1.5", strokeLinecap: "round" }));
+  }
+
+  function AlertIcon() {
+    return h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.75", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+      h("circle", { cx: "12", cy: "12", r: "9" }), h("path", { d: "M12 8v4.5M12 16h.01" }));
+  }
+
+  // One symbol per run outcome, beside the outcome in words.
+  function RunStatus({ status }) {
+    return h("span", { className: "plugin-automation-history-status", "data-run": status },
+      status === "completed" ? h(CheckIcon) : status === "failed" ? h(AlertIcon) : status === "interrupted" ? h(CloseIcon) : h(ClockIcon));
+  }
+
+  function PauseIcon() {
+    return h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.75", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+      h("circle", { cx: "12", cy: "12", r: "9" }), h("path", { d: "M10 9v6M14 9v6" }));
+  }
+
+  function ClockIcon() {
+    return h("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "1.75", strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true },
+      h("circle", { cx: "12", cy: "12", r: "9" }), h("path", { d: "M12 7v5l3 2" }));
+  }
+
+  // All automation choices share one menu. The browser's top layer lets a
+  // menu escape a scrolling detail pane without reaching into host internals.
+  function Picker({ label, value, options, onChange, disabled, searchable, placeholder }) {
+    const [open, setOpen] = React.useState(false);
+    const [query, setQuery] = React.useState("");
+    const trigger = React.useRef(null);
+    const menu = React.useRef(null);
+    const id = React.useId();
+    const visible = options.filter((item) => !query.trim() || item.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
+    const close = () => { setOpen(false); trigger.current?.focus(); };
+    React.useLayoutEffect(() => {
+      if (!open || !menu.current) return undefined;
+      const node = menu.current;
+      node.showPopover?.();
+      const position = () => {
+        const rect = trigger.current.getBoundingClientRect();
+        const width = Math.min(Math.max(rect.width, searchable ? 300 : 180), window.innerWidth - 24);
+        const below = window.innerHeight - rect.bottom - 12;
+        const above = rect.top - 12;
+        const flip = below < Math.min(node.scrollHeight, 300) && above > below;
+        node.style.width = `${width}px`;
+        node.style.maxHeight = `${Math.max(80, Math.min(360, flip ? above : below))}px`;
+        node.style.left = `${Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12))}px`;
+        node.style.top = `${flip ? Math.max(12, rect.top - node.offsetHeight - 6) : rect.bottom + 6}px`;
+        node.dataset.placement = flip ? "above" : "below";
+      };
+      position();
+      (node.querySelector("input") || node.querySelector('[aria-selected="true"]') || node.querySelector('[role="option"]'))?.focus();
+      const outside = (event) => { if (!node.contains(event.target) && !trigger.current?.contains(event.target)) setOpen(false); };
+      const scroll = (event) => { if (!node.contains(event.target)) position(); };
+      document.addEventListener("pointerdown", outside);
+      window.addEventListener("resize", position);
+      document.addEventListener("scroll", scroll, true);
+      return () => { node.hidePopover?.(); document.removeEventListener("pointerdown", outside); window.removeEventListener("resize", position); document.removeEventListener("scroll", scroll, true); };
+    }, [open]);
+    const keyDown = (event) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); return; }
+      if (event.key === "Tab") { setOpen(false); trigger.current?.focus(); return; }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Home" && event.key !== "End") return;
+      if ((event.key === "Home" || event.key === "End") && event.target.tagName === "INPUT") return;
+      event.preventDefault();
+      const items = [...menu.current.querySelectorAll('[role="option"]')];
+      const index = items.indexOf(document.activeElement);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : event.key === "ArrowDown" ? (index + 1) % items.length : (index < 0 ? items.length - 1 : (index - 1 + items.length) % items.length);
+      items[next]?.focus();
+    };
+    const selected = options.find((item) => item.value === value);
+    return h("div", { className: "plugin-automation-picker" },
+      h(Button, { className: "plugin-automation-picker-trigger", variant: "ghost", ref: trigger, disabled, "aria-label": label, "aria-haspopup": "listbox", "aria-expanded": open, "aria-controls": open ? id : undefined,
+        onClick: () => { setQuery(""); setOpen(!open); }, onKeyDown: (event) => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setOpen(true); } },
+      }, h("span", null, selected?.label || placeholder || value), h(ChevronIcon)),
+      open ? h("div", { id, ref: menu, popover: "manual", className: "plugin-automation-picker-menu", onKeyDown: keyDown },
+        searchable ? h("label", { className: "plugin-automation-picker-search" }, h(SearchIcon), h("input", { type: "search", "aria-label": searchable, placeholder: searchable, value: query, onChange: (event) => setQuery(event.target.value) })) : null,
+        h("div", { className: "plugin-automation-picker-options", role: "listbox", "aria-label": label }, visible.map((item) => h("button", { key: item.value, type: "button", role: "option", tabIndex: -1, "aria-selected": item.value === value, className: "plugin-automation-picker-option", onClick: () => { close(); setQuery(""); onChange(item.value); } },
+            h("span", { className: "plugin-automation-picker-option-copy", title: item.label }, item.label), item.value === value ? h(CheckIcon) : null)),
+          !visible.length ? h("div", { className: "plugin-automation-picker-empty" }, "—") : null)) : null);
+  }
+
+  function TargetPicker({ tr, value, threads, disabled, onSelect }) {
+    const sorted = [...threads].sort((a, b) => Number(b.pinned === true) - Number(a.pinned === true) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+    const options = [{ value: "", label: tr("automation.target.new") }, ...sorted.map((thread) => ({ value: thread.id, label: thread.title || thread.id }))];
+    return h(Picker, { label: tr("automation.field.target"), value: value.mode === "thread_heartbeat" ? value.threadId : "", options, disabled, searchable: tr("automation.target.search"), placeholder: value.threadTitle || tr("automation.target.thread"), onChange: (id) => onSelect(id ? { mode: "thread_heartbeat", threadId: id, threadTitle: threads.find((thread) => thread.id === id)?.title } : { mode: "new_thread" }) });
+  }
+
+  function scheduleParts(cron) {
+    const fields = String(cron || "").trim().split(/\s+/);
+    const [minute, hour, day, month, weekday] = fields;
+    if (fields.length === 5 && /^\d+$/.test(minute) && Number(minute) < 60 && /^\d+$/.test(hour) && Number(hour) < 24 && day === "*" && month === "*") {
+      const frequency = weekday === "*" ? "daily" : weekday === "1-5" ? "weekdays" : /^[0-7]$/.test(weekday) ? "weekly" : "custom";
+      return { frequency, time: formatTime(Number(hour), Number(minute)), day: /^[0-7]$/.test(weekday) ? String(Number(weekday) % 7) : "1" };
+    }
+    return { frequency: "custom", time: "09:00", day: "1" };
+  }
+
+  // "Run once" is one of the repeat choices: it fires at the next matching
+  // time and keeps that time's fields. A one-shot saved with a more specific
+  // expression keeps it editable as cron.
+  function ScheduleFields({ tr, locale, draft, onChange }) {
+    const parts = scheduleParts(draft.schedule);
+    const [custom, setCustom] = React.useState(parts.frequency === "custom");
+    const once = !draft.recurring;
+    const cron = custom || (once && parts.frequency !== "daily");
+    const update = (patch, recurring = draft.recurring) => {
+      const value = { ...parts, ...patch };
+      const [hour, minute] = value.time.split(":").map(Number);
+      const dow = value.frequency === "weekdays" ? "1-5" : value.frequency === "weekly" ? value.day : "*";
+      onChange({ ...draft, recurring, schedule: `${minute} ${hour} * * ${dow}` });
+    };
+    const entering = useAfterMount();
+    return h(React.Fragment, null,
+      h(FieldRow, { label: tr("automation.recurring") }, h(Picker, {
+        label: tr("automation.recurring"), value: once ? "once" : custom ? "custom" : parts.frequency,
+        onChange: (frequency) => {
+          setCustom(frequency === "custom");
+          if (frequency === "once") update({ frequency: "daily" }, false);
+          else if (frequency === "custom") onChange({ ...draft, recurring: true });
+          else update({ frequency }, true);
+        },
+        options: ["daily", "weekdays", "weekly", "once", "custom"].map((value) => ({ value, label: tr(value === "custom" ? "automation.custom" : value === "once" ? "automation.once" : `automation.schedule.${value}`) })),
+      })),
+      cron ? h(FieldRow, { key: "cron", label: tr("automation.schedule"), entering }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.schedule"), value: draft.schedule, required: true, onChange: (event) => onChange({ ...draft, schedule: event.target.value }) }))
+        : h(React.Fragment, null,
+          parts.frequency === "weekly" ? h(FieldRow, { key: "day", label: tr("automation.day"), entering }, h(Picker, { label: tr("automation.day"), value: parts.day, onChange: (day) => update({ day }), options: [1, 2, 3, 4, 5, 6, 0].map((day) => ({ value: String(day), label: weekdayName(day, locale) })) })) : null,
+          h(FieldRow, { key: "time", label: tr("automation.field.time"), entering }, h("input", { className: "plugin-automation-field", type: "time", required: true, "aria-label": tr("automation.field.time"), value: parts.time, onChange: (event) => { if (event.target.value) update({ time: event.target.value }); } }))),
+      h(FieldRow, { label: tr("automation.timezone") }, h("input", { className: "plugin-automation-field", "aria-label": tr("automation.timezone"), required: true, value: draft.timezone, onChange: (event) => onChange({ ...draft, timezone: event.target.value }) })));
+  }
+
+  // Undefined during the first render, true afterwards: rows that appear
+  // after their surface opened animate in, the surface's own entrance covers
+  // the rest.
+  function useAfterMount() {
+    const mounted = React.useRef(false);
+    React.useEffect(() => { mounted.current = true; }, []);
+    return mounted.current || undefined;
+  }
+
+  // Whether a row entered is fixed when it mounts; adding the animation to a
+  // row already on screen would replay it.
+  function FieldRow({ label, entering, children }) {
+    const [enter] = React.useState(entering);
+    return h("div", { className: "plugin-automation-form-row", "data-entering": enter },
+      ...(label === undefined ? [children] : [h("span", { key: "label" }, label), h("label", { key: "control", className: "plugin-automation-form-row-control" }, children)]));
+  }
+
+  function draftFor(task) {
+    return { title: task?.title || "", prompt: task?.prompt || "", schedule: task?.cron || "0 9 * * 1-5", timezone: task?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", mode: task?.mode || "new_thread", heartbeat_thread_id: task?.heartbeat_thread_id || "", recurring: task ? task.recurring === true : true, workspace: task?.workspace_mode || "shared" };
+  }
+
+  // Reduced motion, from the OS or Wuu's own preference, zeroes this token.
+  function panelMotionMs(token, fallback) {
+    const raw = typeof window === "undefined" ? "" : window.getComputedStyle?.(document.documentElement)?.getPropertyValue(token)?.trim() || "";
+    if (!raw) return fallback;
+    const value = Number.parseFloat(raw);
+    if (!Number.isFinite(value) || value < 0) return fallback;
+    if (value === 0) return 0;
+    return raw.endsWith("ms") ? value : raw.endsWith("s") ? value * 1000 : value;
+  }
+
+  // Escape and outside clicks dismiss only this menu; the editor's own Escape
+  // would otherwise close the panel and discard the draft.
+  function MoreMenu({ tr, busy, onRemove }) {
+    const menu = React.useRef(null);
+    React.useEffect(() => {
+      const outside = (event) => { if (menu.current?.open && !menu.current.contains(event.target)) menu.current.open = false; };
+      document.addEventListener("pointerdown", outside);
+      return () => document.removeEventListener("pointerdown", outside);
+    }, []);
+    return h("details", { className: "plugin-automation-more", ref: menu,
+      onKeyDown: (event) => { if (event.key !== "Escape" || !menu.current.open) return; event.stopPropagation(); menu.current.open = false; menu.current.querySelector("summary").focus(); } },
+      h("summary", { "aria-label": tr("automation.more"), title: tr("automation.more") }, h(MoreIcon)),
+      h("div", { className: "plugin-automation-more-menu" }, h(Button, { variant: "danger", disabled: busy, onClick: onRemove }, tr("automation.remove"))));
+  }
+
+  function Editor({ tr, locale, task, initial, workspace, threads, busy, error, onSave, onPause, onRemove, onClose, runs, readOnly, closing, swap, separator }) {
+    const [draft, setDraft] = React.useState(() => initial || draftFor(task));
+    const [saved, setSaved] = React.useState(() => initial || draftFor(task));
+    const [localError, setLocalError] = React.useState("");
+    const [justSaved, setJustSaved] = React.useState(false);
+    const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
+    const entering = useAfterMount();
+    const panelRef = React.useRef(null);
+    // A new automation starts in its title; an existing one on its first
+    // control, the enable switch, rather than the close button.
+    React.useEffect(() => {
+      const previous = document.activeElement;
+      panelRef.current?.querySelector(task ? ".plugin-automation-detail-head :is(input, button)" : "form :is(input, textarea)")?.focus();
+      return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+    }, []);
+    // The footer confirms a save where it was pressed, then goes quiet.
+    React.useEffect(() => {
+      if (!justSaved) return undefined;
+      const timer = window.setTimeout(() => setJustSaved(false), 2000);
+      return () => window.clearTimeout(timer);
+    }, [justSaved]);
+    const save = async (event) => {
+      event.preventDefault();
+      setLocalError("");
+      if (!draft.prompt.trim()) return;
+      try { new Intl.DateTimeFormat(undefined, { timeZone: draft.timezone }); }
+      catch { setLocalError(`${tr("automation.timezone")}: ${draft.timezone}`); return; }
+      const normalized = { ...draft, title: draft.title.trim() || draft.prompt.trim() };
+      if (await onSave(normalized)) { setSaved(normalized); setDraft(normalized); setJustSaved(true); }
+    };
+    const status = task && dirty ? tr("automation.unsaved") : justSaved ? h(React.Fragment, null, h(CheckIcon), tr("automation.saved")) : null;
+    return h("aside", { className: "plugin-automation-detail", ref: panelRef, inert: closing || undefined, "data-swap": swap || undefined, "aria-label": task?.title || tr("automation.new"), onKeyDown: (event) => { if (event.key === "Escape" && !busy && !closing) { event.stopPropagation(); onClose(); } } },
+      separator ? h("div", { ...separator, className: "plugin-automation-resizer", "aria-label": tr("automation.resize") }) : null,
+      h("div", { className: "plugin-automation-detail-inner" },
+        h("div", { className: "plugin-automation-detail-head" },
+          !task ? h("h2", { className: "plugin-automation-detail-title" }, tr("automation.new"))
+            : readOnly ? h("span", { className: "plugin-automation-detail-status" }, tr(`automation.run.${runStatus(runs[0]) || "never"}`))
+            : h(Checkbox, { className: "plugin-automation-enable", label: tr("automation.enable"), checked: !task.paused, disabled: busy, onChange: onPause }),
+          task && !readOnly ? h(MoreMenu, { tr, busy, onRemove }) : null,
+          h(Button, { className: "plugin-automation-detail-close", variant: "ghost", disabled: busy, "aria-label": tr("automation.close"), title: tr("automation.close"), onClick: onClose }, h(CloseIcon))),
+        // What the automation does, where it runs, when it runs, then what
+        // it has done; the actions stay pinned below the scrolling sections.
+        h("form", { className: "plugin-automation-form", onSubmit: save },
+          h("div", { className: "plugin-automation-detail-body" },
+            h("fieldset", { disabled: busy || readOnly, style: { border: 0, padding: 0, margin: 0, minWidth: 0, display: "contents" } },
+              h("div", { className: "plugin-automation-form-identity" },
+                h(TextInput, { className: "plugin-automation-form-name", "aria-label": tr("automation.name"), placeholder: tr("automation.placeholder.name"), value: draft.title, onChange: (event) => setDraft({ ...draft, title: event.target.value }) }),
+                h(TextArea, { className: "plugin-automation-form-prompt", "aria-label": tr("automation.prompt"), required: true, rows: 3, placeholder: tr("automation.placeholder.prompt"), value: draft.prompt, onChange: (event) => setDraft({ ...draft, prompt: event.target.value }) })),
+              h("section", { className: "plugin-automation-form-group" },
+                h("h3", { className: "plugin-automation-group-title" }, tr("automation.group.details")),
+                h("div", { className: "plugin-automation-form-card" },
+                  h(FieldRow, { label: tr("automation.field.target") }, h(TargetPicker, {
+                    tr, threads, disabled: busy || readOnly,
+                    value: { mode: draft.mode, threadId: draft.heartbeat_thread_id, threadTitle: threads.find((thread) => thread.id === draft.heartbeat_thread_id)?.title },
+                    onSelect: (target) => setDraft({ ...draft, mode: target.mode, heartbeat_thread_id: target.threadId || "", workspace: target.mode === "thread_heartbeat" ? "shared" : draft.workspace }),
+                  })),
+                  draft.mode !== "thread_heartbeat" ? h(FieldRow, { key: "isolation", entering }, h(Checkbox, { label: tr("automation.field.isolation"), title: tr("automation.isolationHelp"), checked: draft.workspace === "worktree", onChange: (event) => setDraft({ ...draft, workspace: event.target.checked ? "worktree" : "shared" }) })) : null)),
+              h("section", { className: "plugin-automation-form-group" },
+                h("h3", { className: "plugin-automation-group-title" }, tr("automation.group.schedule")),
+                h("div", { className: "plugin-automation-form-card" }, h(ScheduleFields, { tr, locale, draft, onChange: setDraft })))),
+            error || localError ? h("div", { className: "plugin-automation-error", role: "alert" }, error || localError) : null,
+            task ? h("section", { className: "plugin-automation-history" },
+              h("h3", { className: "plugin-automation-group-title" }, tr("automation.history")),
+              runs.length ? runs.slice(0, 5).map((run) => h("div", { key: run.id },
+                h("div", { className: "plugin-automation-history-row" }, h(RunStatus, { status: runStatus(run) }), h("time", null, formatDateTime(run.triggered_at, draft.timezone, locale)), h("span", null, tr(`automation.run.${runStatus(run)}`))),
+                run.error ? h("p", { className: "plugin-automation-history-detail" }, run.error) : null))
+                : h("p", { className: "plugin-automation-history-empty" }, tr("automation.run.never"))) : null),
+          !readOnly ? h("div", { className: "plugin-automation-form-actions" },
+            h("span", { className: "plugin-automation-detail-status", role: "status", "data-saved": !(task && dirty) && justSaved || undefined }, status),
+            h(Button, { variant: "ghost", disabled: busy, onClick: onClose }, tr("automation.cancel")),
+            h(Button, { type: "submit", variant: "primary", disabled: busy || !draft.prompt.trim() || (!!task && !dirty) }, tr(task ? "automation.save" : "automation.create"))) : null)));
+  }
+
+  function useEditorResize() {
+    const bodyRef = React.useRef(null);
+    const drag = React.useRef(null);
+    const [width, setWidth] = React.useState(null);
+    const [available, setAvailable] = React.useState(1000);
+    const [resizing, setResizing] = React.useState(false);
+    React.useLayoutEffect(() => {
+      const node = bodyRef.current;
+      const measure = () => setAvailable(node.clientWidth);
+      measure();
+      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
+      observer?.observe(node);
+      return () => observer?.disconnect();
+    }, []);
+    const maximum = Math.max(350, available - 280);
+    const clamp = (value) => Math.max(350, Math.min(maximum, value));
+    const current = clamp(width ?? Math.min(560, available * 0.48));
+    const end = () => { drag.current = null; setResizing(false); };
+    return {
+      bodyRef, resizing, width: current,
+      separator: {
+        role: "separator", tabIndex: 0, "aria-orientation": "vertical",
+        "aria-valuemin": 350, "aria-valuemax": maximum, "aria-valuenow": Math.round(current),
+        onPointerDown: (event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          event.currentTarget.focus();
+          const node = bodyRef.current;
+          // Pointer coordinates include the host's zoom; widths use layout pixels.
+          drag.current = { id: event.pointerId, x: event.clientX, width: current, scale: node.getBoundingClientRect().width / node.clientWidth || 1 };
+          event.currentTarget.setPointerCapture(event.pointerId);
+          setResizing(true);
+        },
+        onPointerMove: (event) => {
+          const session = drag.current;
+          if (session?.id === event.pointerId) setWidth(clamp(session.width - (event.clientX - session.x) / session.scale));
+        },
+        onPointerUp: (event) => {
+          if (drag.current?.id !== event.pointerId) return;
+          end();
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        },
+        onPointerCancel: end, onLostPointerCapture: end,
+        onDoubleClick: () => setWidth(null),
+        onKeyDown: (event) => {
+          const next = { ArrowLeft: current + 24, ArrowRight: current - 24, Home: 350, End: maximum }[event.key];
+          if (next === undefined) return;
+          event.preventDefault(); setWidth(clamp(next));
+        },
+      },
+    };
+  }
+
+  // The catalog owns fetching and selection. Its sidebar consumes the same
+  // render snapshot, so workspace changes and mutations never race a second poller.
+  // The host shares each view's immutable context with its contextual slot.
+  const sidebarSnapshots = new WeakMap();
+  const sidebarListeners = new Set();
+  const subscribeSidebar = (listener) => { sidebarListeners.add(listener); return () => sidebarListeners.delete(listener); };
+  function publishSidebar(context, snapshot) {
+    if (snapshot) sidebarSnapshots.set(context, snapshot);
+    else sidebarSnapshots.delete(context);
+    for (const listener of sidebarListeners) listener();
+  }
+
+  function ScheduleSidebar({ translate: tr, locale, viewContext }) {
+    const getSnapshot = React.useCallback(() => sidebarSnapshots.get(viewContext) || null, [viewContext]);
+    const snapshot = React.useSyncExternalStore(subscribeSidebar, getSnapshot);
+    if (!snapshot?.workspace) return null;
+    const { tasks, runs, workspace, loaded, error, selectedID, busy, choose } = snapshot;
+    const active = runs.filter((run) => ["starting", "running", "queued"].includes(run.status))
+      .sort((a, b) => Number(a.status === "queued") - Number(b.status === "queued") || Date.parse(a.triggered_at) - Date.parse(b.triggered_at));
+    const upcoming = tasks.filter((task) => !task.paused && Date.parse(task.next_run_at) > 0)
+      .sort((a, b) => Date.parse(a.next_run_at) - Date.parse(b.next_run_at));
+    const row = (task, key, status, time) => {
+      const title = task.title || task.prompt;
+      const timestamp = formatDateTime(time, task.timezone, locale);
+      const meta = status ? tr(`automation.run.${status}`) : `${timestamp} · ${shortTimezone(task.timezone)}`;
+      return h("button", { key, type: "button", className: "sidebar-section-item plugin-automation-sidebar-item", "data-status": status || "scheduled", "aria-pressed": selectedID === task.id, disabled: busy, title: `${title}\n${status ? `${meta} · ` : ""}${timestamp} · ${task.timezone}`, onClick: () => choose({ kind: "task", id: task.id }) },
+        h(ClockIcon), h("span", { className: "plugin-automation-sidebar-copy" },
+          h("span", { className: "plugin-automation-sidebar-title" }, title),
+          h("span", { className: "plugin-automation-sidebar-meta" }, meta)));
+    };
+    const group = (name, items, empty) => h("section", { className: "plugin-automation-sidebar-group", "aria-label": tr(name) },
+      h("h3", { className: "sidebar-subsection-title plugin-automation-sidebar-heading" }, tr(name), h("span", { className: "plugin-automation-sidebar-count", "aria-hidden": true }, items.length)),
+      items.length ? items : h("p", { className: "sidebar-subsection-empty" }, tr(empty)));
+    return h("div", { className: "plugin-automation-sidebar" },
+      h("p", { className: "plugin-automation-sidebar-workspace" }, workspace.name || workspaceName(workspace.root)),
+      error ? h("p", { className: "sidebar-subsection-empty", role: "status", title: error }, tr("automation.sidebar.refreshError")) : null,
+      !loaded ? (!error ? h("p", { className: "sidebar-subsection-empty", role: "status" }, tr("automation.sidebar.loading")) : null) : h(React.Fragment, null,
+        group("automation.sidebar.running", active.map((run) => row(run.task, run.id, run.status, run.triggered_at)), "automation.sidebar.idle"),
+        group("automation.sidebar.upcoming", upcoming.map((task) => row(task, task.id, null, task.next_run_at)), "automation.sidebar.unscheduled")));
+  }
+
+  function Catalog(props) {
+    const tr = props.translate;
+    const resize = useEditorResize();
+    const [tasks, setTasks] = React.useState([]);
+    const [runs, setRuns] = React.useState([]);
+    const [workspaces, setWorkspaces] = React.useState([]);
+    const [workspaceID, setWorkspaceID] = React.useState("");
+    const [selection, setSelection] = React.useState(null);
+    const [panelClosing, setPanelClosing] = React.useState(false);
+    // Choosing while the editor is open swaps its content instead of
+    // replaying the panel's entrance.
+    const [swap, setSwap] = React.useState(false);
+    const [loadedID, setLoadedID] = React.useState("");
+    const [refreshError, setRefreshError] = React.useState("");
+    const [busy, setBusy] = React.useState(false);
+    const [error, setError] = React.useState("");
+    const [query, setQuery] = React.useState("");
+    const [threads, setThreads] = React.useState([]);
+    const epoch = React.useRef(0);
+    const workspace = workspaces.find((item) => item.id === workspaceID);
+    const refresh = React.useCallback(async (id) => {
+      const current = ++epoch.current;
+      if (!id) return;
+      try {
+        const [list, history] = await Promise.all([requestScheduler("automation.list", {}, { workspaceId: id }), requestScheduler("automation.run.list", {}, { workspaceId: id })]);
+        if (current !== epoch.current) return;
+        if (list?.workspace?.id !== id) throw new Error("Automation runtime returned a different workspace");
+        setTasks(Array.isArray(list.tasks) ? list.tasks : []);
+        setRuns(Array.isArray(history?.runs) ? history.runs : []);
+        setLoadedID(id);
+        setRefreshError("");
+      } catch (reason) { if (current === epoch.current) setRefreshError(String(reason)); }
+    }, []);
+    React.useEffect(() => {
+      let cancelled = false;
+      api.listWorkspaces().then((snapshot) => {
+        if (cancelled) return;
+        const items = (snapshot?.workspaces || []).filter((item) => item.available !== false && item.id);
+        setWorkspaces(items);
+        setWorkspaceID(items.find((item) => item.id === snapshot.activeWorkspaceId)?.id || items[0]?.id || "");
+      }).catch((reason) => { if (!cancelled) setError(String(reason)); });
+      return () => { cancelled = true; epoch.current++; };
+    }, []);
+    React.useEffect(() => {
+      void refresh(workspaceID);
+      const refreshVisible = () => { if (!document.hidden) void refresh(workspaceID); };
+      const timer = setInterval(refreshVisible, 15000);
+      document.addEventListener("visibilitychange", refreshVisible);
+      return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refreshVisible); epoch.current++; };
+    }, [refresh, workspaceID]);
+    React.useEffect(() => {
+      let cancelled = false;
+      setThreads([]);
+      if (workspace?.root && typeof api.listThreads === "function") api.listThreads(workspace.root).then((items) => { if (!cancelled) setThreads(items || []); }).catch(() => {});
+      return () => { cancelled = true; };
+    }, [workspace?.root]);
+    // Tasks that appear after the workspace's first load arrive with motion;
+    // the initial list and periodic refreshes of it stay still.
+    const known = React.useRef(null);
+    const fresh = React.useRef(new Set());
+    const loaded = loadedID === workspaceID;
+    if (loaded && known.current) for (const task of tasks) if (!known.current.has(task.id)) fresh.current.add(task.id);
+    React.useEffect(() => {
+      known.current = loaded ? new Set(tasks.map((task) => task.id)) : null;
+      if (!loaded) fresh.current.clear();
+    }, [tasks, loaded]);
+    const act = async (method, input) => {
+      if (!workspace || busy) return null;
+      setBusy(true); setError("");
+      try {
+        const result = await requestScheduler(method, { ...input, workspace_id: workspace.id, workspace_root: workspace.root }, { workspaceId: workspace.id });
+        await refresh(workspace.id);
+        return result;
+      } catch (reason) { setError(String(reason)); return null; }
+      finally { setBusy(false); }
+    };
+    const sortedRuns = [...runs].sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at));
+    // One-shot tasks leave the schedule on dispatch. Their retained snapshots
+    // keep completed work reachable without changing scheduler persistence.
+    const completed = sortedRuns.filter((run) => !run.task?.recurring && run.status === "completed" && !tasks.some((task) => task.id === run.task_id));
+    const completedTasks = [...new Map(completed.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
+    const matchesQuery = (task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase());
+    // Scheduled work lists what runs next first. Pausing keeps a task's next
+    // run, so its switch never moves the row.
+    const scheduled = [...tasks].sort((a, b) => String(a.next_run_at || "").localeCompare(String(b.next_run_at || ""))).filter(matchesQuery);
+    const finished = completedTasks.filter(matchesQuery);
+    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || sortedRuns.find((run) => run.task_id === selection.id)?.task : null;
+    const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
+    const closePanel = () => {
+      setError("");
+      if (!selection || panelClosing) return;
+      if (panelMotionMs("--environment-panel-exit-duration", 220) === 0) {
+        setSelection(null);
+        setPanelClosing(false);
+        return;
+      }
+      setPanelClosing(true);
+    };
+    React.useEffect(() => {
+      if (!panelClosing) return undefined;
+      const timer = window.setTimeout(() => {
+        setSelection(null);
+        setPanelClosing(false);
+        setError("");
+      }, panelMotionMs("--environment-panel-exit-duration", 220));
+      return () => window.clearTimeout(timer);
+    }, [panelClosing]);
+    // Opening from a closed panel plays its entrance; choosing again while it
+    // stays open swaps the content in place.
+    const choose = (next) => { setError(""); setSwap(panelOpen && !panelClosing); setPanelClosing(false); setSelection(next); };
+    React.useEffect(() => {
+      publishSidebar(props.context, { tasks, runs, workspace, loaded, error: refreshError, selectedID: panelClosing ? null : selection?.id, busy, choose });
+    });
+    React.useEffect(() => () => publishSidebar(props.context, null), [props.context]);
+    // The row opens the editor; the switch pauses and resumes in place. A
+    // completed one-shot has nothing left to switch.
+    const taskRow = (task, done) => {
+      const lastRun = sortedRuns.find((run) => run.task_id === task.id);
+      const run = done ? null : runStatus(lastRun);
+      const paused = !done && task.paused;
+      const title = task.title || task.prompt;
+      const schedule = task.recurring === false ? tr("automation.once") : describeSchedule(task.cron, task.timezone, tr, props.locale) || task.cron;
+      // The icon carries the task's state at a glance; the line names an
+      // exception first (paused, failing, running), then when it runs.
+      const state = done ? "done" : paused ? "paused" : run === "failed" ? "failed" : "scheduled";
+      const meta = done
+        ? formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone, props.locale)
+        : [paused ? tr("automation.paused") : null, run === "failed" ? tr("automation.run.lastFailed") : run === "running" ? tr("automation.run.running") : null, schedule,
+          paused ? null : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone, props.locale) || "—"}`].filter(Boolean).join(" · ");
+      return h("div", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": paused, "data-entering": fresh.current.has(task.id) || undefined },
+        h("button", { type: "button", className: "plugin-automation-item-main", "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => choose({ kind: "task", id: task.id }) },
+          h("span", { className: "plugin-automation-item-icon", "data-state": state }, state === "done" ? h(CheckIcon) : state === "paused" ? h(PauseIcon) : state === "failed" ? h(AlertIcon) : h(ClockIcon)),
+          h("span", { className: "plugin-automation-item-title" }, title),
+          h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, h("span", null, meta))),
+        done ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
+    };
+    return h("main", { className: "plugin-automation" }, h(Page, null,
+      h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
+        h("section", { className: "plugin-automation-main", "aria-label": tr("automation.title") },
+          h("div", { className: "plugin-automation-toolbar" },
+            h("label", { className: "plugin-automation-search" }, h(SearchIcon), h("span", { className: "plugin-automation-sr" }, tr("automation.search")), h("input", { type: "search", value: query, placeholder: tr("automation.search"), onChange: (event) => setQuery(event.target.value) })),
+            h("div", { className: "plugin-automation-workspace-picker" }, h(Picker, {
+              label: tr("automation.workspace"), value: workspaceID, disabled: busy || !workspaces.length,
+              placeholder: tr("automation.workspaceNone"),
+              options: workspaces.map((item) => ({ value: item.id, label: item.name || workspaceName(item.root) })),
+              onChange: (id) => { epoch.current++; setWorkspaceID(id); setLoadedID(""); setPanelClosing(false); setSelection(null); setTasks([]); setRuns([]); setError(""); setRefreshError(""); },
+            })),
+            h(Button, { className: "plugin-automation-create", disabled: busy || !workspace, onClick: () => choose({ kind: "new", key: String(Date.now()), draft: draftFor() }) }, h(PlusIcon), tr("automation.new"))),
+          refreshError || (error && !panelOpen) ? h("p", { className: "plugin-automation-error", role: "alert" }, refreshError || error) : null,
+          !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.workspaceNone") })
+            : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
+            : loaded && !scheduled.length && !finished.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty") })
+            : h(React.Fragment, null,
+              scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false))) : null,
+              finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
+        panelOpen ? h(Editor, {
+          key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy, error,
+          readOnly: !!selectedTask && !tasks.some((task) => task.id === selectedTask.id),
+          closing: panelClosing, swap, separator: resize.separator,
+          runs: sortedRuns.filter((run) => run.task_id === selectedTask?.id), onClose: closePanel,
+          onPause: () => act("automation.update", { id: selectedTask.id, paused: !selectedTask.paused }),
+          onRemove: async () => { if (await act("automation.remove", { id: selectedTask.id })) { setPanelClosing(false); setSelection(null); } },
+          onSave: async (draft) => {
+            const result = await act(selectedTask ? "automation.update" : "automation.create", { ...draft, ...(selectedTask ? { id: selectedTask.id } : { durable: true }) });
+            if (!result) return false;
+            if (!selectedTask) { setSwap(true); setSelection({ kind: "task", id: result.id }); }
+            return true;
+          },
+        }) : null)));
+  }
+
+  api.registerSlot("sidebar.primary", { id: "automation.schedule", render: (context) => context.viewTypeId === "automation.catalog" ? h(ScheduleSidebar, context) : null });
+  api.registerViewType({ id: "automation.catalog", title: "Automations", icon: "clock", defaultRegion: "primary", persistence: "durable", render: (props) => h(Catalog, props) });
+}

@@ -164,8 +164,10 @@ func TestQueuedTurnCannotBeCancelledAfterCommit(t *testing.T) {
 func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 	const threadID = "thread-1"
 	const steerID = "steer-1"
+	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
 	th := &threadState{
+		state:       testRuntimeState(t, rt),
 		ID:          threadID,
 		running:     true,
 		currentTurn: "turn-1",
@@ -179,6 +181,7 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 		activeSteerDocument:   &ActiveDocument{Path: "docs/next.md"},
 	}
 	s := &Server{
+		rt:                  rt,
 		out:                 out,
 		threads:             map[string]*threadState{threadID: th},
 		pendingQueuedTurns:  make(map[string][]queuedTurn),
@@ -220,14 +223,17 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 func TestTurnRequeueSupersedesStaleQueueCancellation(t *testing.T) {
 	const threadID = "thread-1"
 	const steerID = "message-1"
+	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
 	th := &threadState{
-		ID: threadID,
+		ID:    threadID,
+		state: testRuntimeState(t, rt),
 		pendingSteers: []providers.ChatMessage{{
 			Role: "user", Content: "keep me", ClientID: steerID, Steered: true,
 		}},
 	}
 	s := &Server{
+		rt:                          rt,
 		out:                         out,
 		threads:                     map[string]*threadState{threadID: th},
 		pendingQueuedTurns:          make(map[string][]queuedTurn),
@@ -271,7 +277,7 @@ func TestCancelledLateQueueIsNotHeldDuringInterrupt(t *testing.T) {
 	if err := s.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatal(err)
 	}
-	held, err := s.loadHeldUserTurns(threadID)
+	held, err := s.loadHeldUserTurns(testRuntimeState(t, s.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +386,7 @@ func TestExplicitlyHeldQueueDoesNotStartAfterStopSettles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	held, err := s.loadHeldUserTurns(threadID)
+	held, err := s.loadHeldUserTurns(testRuntimeState(t, s.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +397,7 @@ func TestExplicitlyHeldQueueDoesNotStartAfterStopSettles(t *testing.T) {
 		t.Fatal("held input must not dispatch")
 	}
 	// The durable held input survives a new server instance.
-	restored, err := New(rt, &lockedBuffer{}).loadHeldUserTurns(threadID)
+	restored, err := New(rt, &lockedBuffer{}).loadHeldUserTurns(testRuntimeState(t, New(rt, &lockedBuffer{}).rt), threadID)
 	if err != nil || len(restored) != 2 {
 		t.Fatalf("held input not recoverable: %+v, %v", restored, err)
 	}
@@ -403,7 +409,9 @@ func TestQueuedAdmissionRejectionKeepsInputHeldWithReason(t *testing.T) {
 		hooks.UserPromptSubmit: {{Command: `echo 'prompt rejected by configured hook' >&2; exit 2`}},
 	}))
 	out := &lockedBuffer{}
+	attachTestHookGeneration(t, rt)
 	s := New(rt, out)
+	defer s.Close()
 	if err := s.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -414,9 +422,9 @@ func TestQueuedAdmissionRejectionKeepsInputHeldWithReason(t *testing.T) {
 		t.Fatal("withdraw queued turn")
 	}
 
-	s.drainQueuedTurns(threadID)
+	s.drainQueuedTurns(testRuntimeState(t, s.rt), threadID)
 
-	held, err := s.loadHeldUserTurns(threadID)
+	held, err := s.loadHeldUserTurns(testRuntimeState(t, s.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}

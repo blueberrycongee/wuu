@@ -9,10 +9,15 @@
  * @module
  */
 
+import type * as React from "react";
+import type { ApplicationGenerationAPI } from "./ui.js";
+export * from "./ui.js";
+
 import type { PluginDependency } from "./bundle-contract.js";
 import type { ModelAdapterDescriptor } from "./model.js";
 export * from "./process.js";
 export * from "./driver.js";
+export * from "./persistence.js";
 
 import type {
   PublicIconName,
@@ -97,7 +102,7 @@ export interface ViewTypeDefinition {
   icon?: PublicIconName;
   defaultRegion?: ViewPlacementRegion;
   persistence?: ViewPersistence;
-  render: unknown; // React.ComponentType<ViewRenderProps> — opaque in SDK
+  render: React.ComponentType<ViewRenderProps>;
 }
 
 export interface ViewRenderProps {
@@ -146,7 +151,7 @@ export interface ViewHostAPI {
 }
 
 export interface PluginUIContainerProps {
-  readonly children?: unknown;
+  readonly children?: React.ReactNode;
   readonly className?: string;
   readonly [property: string]: unknown;
 }
@@ -156,8 +161,8 @@ export interface PluginUIPageProps extends PluginUIContainerProps {
 }
 
 export interface PluginUISectionProps extends PluginUIContainerProps {
-  readonly title?: unknown;
-  readonly description?: unknown;
+  readonly title?: React.ReactNode;
+  readonly description?: React.ReactNode;
 }
 
 export interface PluginUIStackProps extends PluginUIContainerProps {
@@ -168,7 +173,7 @@ export interface PluginUIButtonProps extends PluginUIContainerProps {
   readonly variant?: "primary" | "secondary" | "ghost" | "danger";
   readonly type?: "button" | "submit" | "reset";
   readonly disabled?: boolean;
-  readonly onClick?: (event: unknown) => void;
+  readonly onClick?: React.MouseEventHandler<HTMLButtonElement>;
 }
 
 export interface PluginUIToolbarToggleProps extends PluginUIContainerProps {
@@ -177,61 +182,61 @@ export interface PluginUIToolbarToggleProps extends PluginUIContainerProps {
   readonly disabled?: boolean;
   readonly title?: string;
   readonly "aria-label": string;
-  readonly onClick?: (event: unknown) => void;
+  readonly onClick?: React.MouseEventHandler<HTMLButtonElement>;
 }
 
 export interface PluginUITextInputProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly value?: string | number;
   readonly defaultValue?: string | number;
   readonly placeholder?: string;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLInputElement>;
 }
 
 export interface PluginUITextAreaProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly value?: string;
   readonly placeholder?: string;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLTextAreaElement>;
 }
 
 export interface PluginUICheckboxProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly checked?: boolean;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLInputElement>;
 }
 
 export interface PluginUISelectProps extends PluginUIContainerProps {
-  readonly label: unknown;
-  readonly description?: unknown;
+  readonly label: React.ReactNode;
+  readonly description?: React.ReactNode;
   readonly value?: string | number;
   readonly defaultValue?: string | number;
   readonly disabled?: boolean;
-  readonly onChange?: (event: unknown) => void;
+  readonly onChange?: React.ChangeEventHandler<HTMLSelectElement>;
 }
 
 export interface PluginUIEmptyStateProps extends PluginUIContainerProps {
-  readonly title: unknown;
-  readonly description?: unknown;
-  readonly actions?: unknown;
+  readonly title: React.ReactNode;
+  readonly description?: React.ReactNode;
+  readonly actions?: React.ReactNode;
 }
 
 
 export interface PluginUILoadingStateProps extends PluginUIContainerProps {
-  readonly title?: unknown;
-  readonly description?: unknown;
+  readonly title?: React.ReactNode;
+  readonly description?: React.ReactNode;
 }
 
 export interface PluginUIErrorStateProps extends PluginUIContainerProps {
-  readonly title: unknown;
-  readonly description?: unknown;
-  readonly actions?: unknown;
+  readonly title: React.ReactNode;
+  readonly description?: React.ReactNode;
+  readonly actions?: React.ReactNode;
 }
 
 export interface PluginUILiveDurationProps extends PluginUIContainerProps {
@@ -247,7 +252,7 @@ export interface PluginUIWebPageProps {
   readonly title?: string;
 }
 
-export type HostUIComponent<Props> = (props: Props) => unknown;
+export type HostUIComponent<Props> = React.ComponentType<Props>;
 
 /** Composer accessory shell with shared sizing, scrolling and keyboard dismissal.
  * Render in composer.above. Empty-state visibility and expansion belong to the caller.
@@ -257,10 +262,10 @@ export interface PluginUIComposerDrawerProps extends PluginUIContainerProps {
   readonly onExpandedChange: (expanded: boolean) => void;
   readonly toggleLabel: string;
   /** Feedback displayed in both collapsed and expanded states. */
-  readonly notice?: unknown;
-  readonly icon?: unknown;
-  readonly summary: unknown;
-  readonly actions?: unknown;
+  readonly notice?: React.ReactNode;
+  readonly icon?: React.ReactNode;
+  readonly summary: React.ReactNode;
+  readonly actions?: React.ReactNode;
   readonly tone?: "default" | "muted" | "warning";
 }
 
@@ -487,7 +492,7 @@ export interface LocaleDefinition {
 // Plugin generation API
 // ---------------------------------------------------------------------------
 
-export interface PluginGenerationApi {
+export interface PluginGenerationApi extends ApplicationGenerationAPI {
   /** Host-owned React runtime. Executable desktop bundles must use this instance. */
   readonly react: HostReact;
   /** Host-owned primitives that inherit the active Wuu theme and spacing rhythm. */
@@ -498,6 +503,11 @@ export interface PluginGenerationApi {
   readonly signal: AbortSignal;
   /** Invoke one method owned by this plugin's active runtime generation. */
   invokeRuntime(method: string, input?: unknown, options?: PluginRuntimeInvokeOptions): Promise<unknown>;
+  /** Call a selected service through this desktop consumer's declared dependency.
+   * The host binds identity, generation and execution; callers cannot choose a
+   * provider. TOutput describes the service contract, not runtime validation.
+   */
+  invokeService<TOutput = unknown>(request: PluginServiceCall, options?: PluginRuntimeInvokeOptions): Promise<TOutput>;
   /** Read bounded, display-only completed turns from the addressed conversation. */
   readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   /** List registered project workspaces that a trusted extension may target. */
@@ -546,6 +556,15 @@ export interface PluginVisibleHistoryResult {
   }[];
 }
 
+/** Renderer request envelope. Major version comes from required_services;
+ * routing and execution identity remain host-owned.
+ */
+export interface PluginServiceCall {
+  readonly service: string;
+  readonly method: string;
+  readonly params?: unknown;
+}
+
 export interface PluginRuntimeInvokeOptions {
   readonly workspaceId?: string;
   readonly workspaceRoot?: string;
@@ -566,25 +585,8 @@ export interface PluginWorkspaceSnapshot {
   readonly activeRoot?: string;
 }
 
-/** Minimal type for the host-owned React instance; plugins never bundle React. */
-export interface HostReact {
-  readonly Fragment: unknown;
-  useState<T>(initial: T | (() => T)): [T, (next: T | ((current: T) => T)) => void];
-  useEffect(effect: () => void | (() => void), dependencies?: readonly unknown[]): void;
-  useMemo<T>(factory: () => T, dependencies: readonly unknown[]): T;
-  useCallback<T>(callback: T, dependencies: readonly unknown[]): T;
-  useRef<T>(initial: T): { current: T };
-  useSyncExternalStore<T>(
-    subscribe: (notify: () => void) => () => void,
-    getSnapshot: () => T,
-    getServerSnapshot?: () => T,
-  ): T;
-  createElement(
-    type: string | ((props: Readonly<Record<string, unknown>>) => unknown),
-    props: Readonly<Record<string, unknown>> | null,
-    ...children: unknown[]
-  ): unknown;
-}
+/** The host-owned React runtime. Plugins must not bundle a second instance. */
+export type HostReact = typeof React;
 
 // ---------------------------------------------------------------------------
 // Executable runtime contract
@@ -1254,7 +1256,7 @@ export interface HostServiceContracts {
         artifacts?: Array<{ id: string; label?: string }>;
         provenance: { producer: string; source_model?: string; created_at?: string };
       };
-      launch?: { revision?: number; kind?: string; intent?: string };
+      launch?: { revision?: number; kind?: string; intent?: string; prompt?: string };
     };
     result: { session_id: string; created: boolean; workspace_root?: string };
   };
@@ -1765,7 +1767,7 @@ export type RuntimeRequest =
 
 export type RuntimeResponse =
   | { id: string; result: unknown }
-  | { id: string; error: { message: string } };
+  | { id: string; error: { code?: string; message: string } };
 
 export async function handleRuntimeRequest(
   plugin: RuntimePlugin,
@@ -1813,7 +1815,13 @@ export async function handleRuntimeRequest(
         return { id: request.id, result: null };
     }
   } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+    const code = typeof error === "object" && error !== null && "code" in error
+      && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...(code ? { code } : {}),
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
+        ? error.message : String(error),
+    } };
   }
 }
 
@@ -2696,3 +2704,6 @@ export function createManifest(options: {
 export * from "./bundle-contract.js";
 
 export * from "./model.js";
+
+export * from "./providers.js";
+export * from "./coordination.js";

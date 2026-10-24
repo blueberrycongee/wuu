@@ -14,15 +14,21 @@ import (
 // cancellation. Model and tool events use the turn's existing event stream.
 type TurnGateway interface {
 	ReadTurn(context.Context) (providers.ChatRequest, error)
+	ReadSettings(context.Context) (pluginprotocol.DriverTurnSettings, error)
+	ReadContextState(context.Context) (pluginprotocol.DriverContextState, error)
+	SaveContextState(context.Context, pluginprotocol.DriverContextState) error
+	ReportTurn(context.Context, pluginprotocol.DriverTurnObservation) error
+	CompactContext(context.Context, []providers.ChatMessage, pluginprotocol.DriverCompactBudget) ([]providers.ChatMessage, error)
 	AdmitInput(context.Context) (InputAdmission, error)
 	ReadRequestContext(context.Context) ([]ContextSegment, error)
 	TransformRequest(context.Context, providers.ChatRequest) (providers.ChatRequest, error)
 	ReadContext(context.Context) (TurnContext, error)
+	ArchiveContext(context.Context) (ContextArchive, error)
 	ReplaceContext(context.Context, ContextReplacement) (TurnContext, error)
 	CallModel(context.Context, providers.ChatRequest) (ModelRound, error)
 	CallModelWithTools(context.Context, providers.ChatRequest, string) (ModelRound, error)
 	CallTools(context.Context, ToolBatch) ([]providers.ChatMessage, error)
-	CompleteTurn(context.Context, TurnResult) (ModelLoopReceipt, error)
+	CompleteTurn(context.Context, TurnResult) (TurnReceipt, error)
 }
 
 // TurnContext is the active model history, independent of the append-only
@@ -44,6 +50,14 @@ type TurnContext struct {
 type ContextReplacement struct {
 	Revision uint64
 	Messages []providers.ChatMessage
+	// Volatile explicitly requests an in-memory replacement when no durable
+	// checkpoint provider is configured. It never claims a committed checkpoint.
+	Volatile bool
+}
+
+type ContextArchive struct {
+	Messages []providers.ChatMessage
+	Head     int
 }
 
 // InputAdmission contains new durable input and the resulting active context.
@@ -73,20 +87,12 @@ type ModelRound struct {
 	ToolWorkStarted bool
 }
 
-// ModelRoundError retains the classified failure of a model operation. The
-// accompanying ModelRound still contains partial output.
-// Transport and authorization errors do not imply a completed model operation.
-type ModelRoundError struct {
-	Failure pluginprotocol.DriverModelFailure
-}
-
-func (e *ModelRoundError) Error() string { return e.Failure.Message }
-
 // ToolBatch.ID is unique within an execution. A duplicate is rejected, including
 // after a failed call; cancellation cannot undo external effects. A driver must
 // checkpoint its intent before submitting effects and resolve an interrupted
 // batch explicitly before attempting it again in a resumed execution. Call IDs
-// must also be unique within the execution. Calls may be chosen directly by the
+// must be unique within each model round; a new model operation can reuse a
+// provider's call ID after prior batches are joined. Calls may be chosen directly by the
 // driver; a missing assistant declaration is recorded before execution. Subsets
 // of the current pending declaration can be submitted in separate batches.
 // An ID returned by CallModelWithTools instead joins that entire model batch;
@@ -102,6 +108,9 @@ type ToolBatch struct {
 // It cannot overwrite the input transcript or discard accepted effects. Usage
 // comes from execution services, not from caller-supplied counters.
 type TurnResult struct {
-	Content  string
-	Messages []providers.ChatMessage
+	Content      string
+	Messages     []providers.ChatMessage
+	FinishReason providers.FinishReason
+	StopReason   string
+	Truncated    bool
 }

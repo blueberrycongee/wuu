@@ -67,7 +67,9 @@ func buildServiceTestHost(t *testing.T, clients map[string]pluginhost.Client, pl
 	start := func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		return clients[cfg.ID], nil
 	}
-	host, _, err := buildPluginHost(plugins, "", "", "", "", nil, start, nil, nil, nil, "")
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
+	host, _, err := buildPluginHost(plugins, root, "test-workspace", home, state, nil, start, nil, nil, nil, "")
 	if err != nil {
 		t.Fatalf("buildPluginHost() = %v", err)
 	}
@@ -349,7 +351,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
 				}
 				oldClient := &generationClient{id: "old"}
 				old := testPluginGeneration("old", oldClient)
-				session := testGenerationSession(old)
+				session := testGenerationSession(t, old)
 				session.RootDir, session.WorkspaceID = root, "workspace"
 				session.WuuHome, session.StateDir = t.TempDir(), t.TempDir()
 				defer session.Cleanup()
@@ -409,7 +411,7 @@ func TestCompositionPreparationFailurePreservesRunningGeneration(t *testing.T) {
 		t.Run(input, func(t *testing.T) {
 			oldClient := &generationClient{id: "old"}
 			old := testPluginGeneration("old", oldClient)
-			session := testGenerationSession(old)
+			session := testGenerationSession(t, old)
 			session.RootDir, session.HomeDir, session.WuuHome, session.StateDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 			defer session.Cleanup()
 			var selection composition.Config
@@ -624,7 +626,9 @@ func TestNativeProviderRetirementDrainsConsumers(t *testing.T) {
 			reader.SubjectID, reader.Fingerprint = "plugin:user:reader", "native-lifecycle"
 			consumer := &nativeLifecycleConsumer{fakeServicePluginClient: &fakeServicePluginClient{id: reader.ID,
 				required: pluginhost.KernelServiceRequirements(pluginhost.KernelStorageSetService)}}
-			host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil,
+			root := t.TempDir()
+			home, state := testWorkspaceState(t, root)
+			host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, root, "workspace", home, state, nil,
 				func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil, "")
 			if err != nil {
 				t.Fatal(err)
@@ -673,7 +677,8 @@ func TestCompositionRemovalRetiresNativeProviderInPinnedGeneration(t *testing.T)
 	reader.SubjectID, reader.Fingerprint = "plugin:user:reader", "profile-retirement"
 	consumer := &nativeLifecycleConsumer{fakeServicePluginClient: &fakeServicePluginClient{id: reader.ID,
 		required: pluginhost.KernelServiceRequirements(pluginhost.KernelStorageSetService)}}
-	root, home, state := t.TempDir(), t.TempDir(), t.TempDir()
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
 	host, native, err := buildPluginHost([]pluginpkg.Plugin{reader}, root, "workspace", home, state, nil,
 		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) { return consumer, nil }, nil, nil, nil, "")
 	if err != nil {
@@ -683,7 +688,7 @@ func TestCompositionRemovalRetiresNativeProviderInPinnedGeneration(t *testing.T)
 		t.Fatal(err)
 	}
 	old := &PluginGeneration{id: "old", active: []pluginpkg.Plugin{reader}, host: host, hooks: buildHookDispatcher(config.Config{}, nil, nil, "", nil)}
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	session.RootDir, session.HomeDir, session.WuuHome, session.StateDir = root, t.TempDir(), home, state
 	defer session.Cleanup()
 	pin := session.RetainPluginGeneration()
@@ -728,7 +733,7 @@ func TestCompositionRejectsDuplicateRuntimeIdentity(t *testing.T) {
 				plugins = append(plugins, testRuntimePlugin(id))
 			}
 			started := false
-			host, _, err := buildPluginHost(plugins, "", "", "", "", nil,
+			host, _, err := buildPluginHost(plugins, t.TempDir(), "test-workspace", t.TempDir(), t.TempDir(), nil,
 				func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 					started = true
 					return &fakeServicePluginClient{id: cfg.ID}, nil
@@ -747,7 +752,7 @@ func TestBuildPluginHostDuplicateProviderRejectsCandidate(t *testing.T) {
 	first := &fakeServicePluginClient{id: "search-a", provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.0.0")}}
 	second := &fakeServicePluginClient{id: "search-b", provided: []pluginhost.ServiceDescriptor{searchServiceDescriptor("1.1.0")}}
 	clients := map[string]pluginhost.Client{"search-a": first, "search-b": second}
-	host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("search-a"), testRuntimePlugin("search-b")}, "", "", "", "", nil,
+	host, _, err := buildPluginHost([]pluginpkg.Plugin{testRuntimePlugin("search-a"), testRuntimePlugin("search-b")}, t.TempDir(), "test-workspace", t.TempDir(), t.TempDir(), nil,
 		func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 			return clients[cfg.ID], nil
 		}, nil, nil, nil, "")

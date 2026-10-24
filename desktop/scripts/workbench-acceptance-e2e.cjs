@@ -9,11 +9,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const createSessionFixture = require('./session-fixture.cjs');
 const { createHash } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, nativeImage } = require('electron');
 const { validateCorpus } = require('./conversation-corpus.cjs');
-const { createWebsiteFixture, runWebsiteAcceptance } = require('./web-workspace-acceptance.cjs');
+const { createWebsiteFixture, runWebsiteAcceptance, readRibbonInteraction } = require('./web-workspace-acceptance.cjs');
 
 const desktop = path.resolve(__dirname, '..');
 const output = path.resolve(process.env.WUU_WORKBENCH_OUTPUT || path.join(desktop, 'out/e2e/workbench-acceptance'));
@@ -74,7 +75,7 @@ fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({
 }));
 
 const report = {
-  status: 'running', startedAt: new Date().toISOString(),
+  status: 'running', startedAt: new Date().toISOString(), timeoutMs: 12 * 60 * 1000,
   commit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: desktop, encoding: 'utf8' }).stdout.trim(),
   versions: { electron: process.versions.electron, chromium: process.versions.chrome, platform: process.platform },
   fixture: { corpusSha256: createHash('sha256').update(corpusBytes).digest('hex'), noInference: true, isolatedHome: true, safeMode: false, extensionSources: ['bundled', 'authored-local-fixture'] },
@@ -96,6 +97,12 @@ ipcMain.handle = (channel, handler) => originalHandle(channel, async (...args) =
     throw new Error(`Acceptance must never invoke inference: ${channel}`);
   }
   const entry = { channel, completed: false, ...(channel === 'wuu:browser-pip-host-layout' ? { payload: args[1] } : {}) };
+  const catalogLifecycle = ['wuu:initialize', 'wuu:extension-catalog-refresh', 'wuu:plugin-desktop-activation'].includes(channel);
+  if (catalogLifecycle) Object.assign(entry, { sender: args[0].sender.id, startedAtMs: Date.now() - started });
+  if (channel === 'wuu:plugin-desktop-activation') {
+    const { id, fingerprint, graph_generation, activation, phase, status } = args[1];
+    entry.activation = { id, fingerprint, graph_generation, activation, phase, status };
+  }
   rpc.push(entry);
   if (channel === 'wuu:web-workspace-bounds' && report.activeTabSwitchTrace) {
     report.activeTabSwitchTrace.boundsIPC.push({ id: args[1], bounds: args[2], atMs: Date.now() - started });
@@ -106,12 +113,22 @@ ipcMain.handle = (channel, handler) => originalHandle(channel, async (...args) =
   if (websiteSetting) (report.websiteSettingReads ||= []).push(websiteSetting);
   try {
     const value = await handler(...args); entry.completed = true;
+    // Retain only public lifecycle identities, never initialize configuration.
+    if (channel === 'wuu:initialize' && value.application_shell) {
+      const { plugin_id, generation, provider_id } = value.application_shell;
+      entry.applicationShell = { plugin_id, generation, provider_id };
+    }
+    if (channel === 'wuu:extension-catalog-refresh') {
+      entry.inventory = value.extension_inventory.map(({ id, fingerprint, graph_generation }) => ({ id, fingerprint, graph_generation }));
+    }
     if (websiteSetting) Object.assign(websiteSetting, { completedAtMs: Date.now() - started, value: value.value });
     return value;
   } catch (error) {
     entry.error = String(error);
     if (websiteSetting) websiteSetting.error = String(error);
     throw error;
+  } finally {
+    if (catalogLifecycle) entry.completedAtMs = Date.now() - started;
   }
 });
 let win;
@@ -133,15 +150,37 @@ async function evaluate(fn, arg) {
   return result.value;
 }
 async function waitFor(fn, arg, label = String(fn), timeout = 12000) {
+  // DOM elements and React-attached nodes are not structured-cloneable.
+  // Predicates cross the Electron bridge only as booleans.
+  return waitForValue(() => evaluate(`async argument => Boolean(await (${fn})(argument))`, arg), label, timeout);
+}
+async function waitForValue(read, label, timeout = 12000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    // DOM elements and React-attached nodes are not structured-cloneable.
-    // Predicates cross the Electron bridge only as booleans.
-    const value = await evaluate(`async argument => Boolean(await (${fn})(argument))`, arg);
+    const value = await read();
     if (value) return value;
     await delay(40);
   }
   throw new Error(`Timed out: ${label}`);
+}
+async function waitForCatalogRefreshRender(sender, binding, afterIPC) {
+  return waitForValue(() => {
+    const entries = rpc.slice(afterIPC).filter(entry => entry.sender === sender);
+    const refresh = entries.find(entry => entry.channel === 'wuu:extension-catalog-refresh');
+    if (refresh?.error) throw new Error(refresh.error);
+    if (!refresh?.completed) return;
+    const target = refresh.inventory.find(item => item.id === binding.plugin_id);
+    assert.ok(target?.fingerprint && target.graph_generation, 'Refresh publishes the selected shell identity');
+    const reports = entries.filter(entry => entry.channel === 'wuu:plugin-desktop-activation'
+      && entry.activation.id === target.id && entry.activation.fingerprint === target.fingerprint
+      && entry.activation.graph_generation === target.graph_generation);
+    const failure = reports.find(entry => entry.error || entry.activation.status === 'failed');
+    assert.ok(!failure, `Selected shell activation failed: ${JSON.stringify(failure)}`);
+    const render = reports.find(entry => entry.completed && entry.activation.phase === 'render' && entry.activation.status === 'active');
+    if (!render) return;
+    return { target, refreshStartedAtMs: refresh.startedAtMs, refreshCompletedAtMs: refresh.completedAtMs,
+      render: { ...render.activation, sender: render.sender, acknowledgedAtMs: render.completedAtMs } };
+  }, 'This window acknowledges rendering the refreshed shell graph');
 }
 async function settle() {
   await evaluate(async () => {
@@ -169,17 +208,18 @@ const activePane = '.cached-conversation-pane[data-active="true"]';
 const composer = '.conversation-pane .composer textarea';
 const scroller = '.conversation-pane > .scroll-region';
 const conversations = '[data-wuu-component="conversations-section"]';
-const settings = '.sidebar-ribbon button[aria-label="Settings"]';
+const settings = 'button[role="menuitem"][data-settings-page="providers"]';
 const plugins = '.sidebar-ribbon button[aria-label="Extensions"]';
 const leftToggle = '.section-sidebar-toggle';
 const rightToggle = '.shell-right-sidebar-toggle';
 function pick(selector, text) { return { selector, text }; }
 async function point(target, scroll = true) {
+  // Accessible names can include counts while the visible control label stays stable.
   const query = typeof target === 'string' ? { selector: target } : target;
   for (const view of [...win.contentView.children].reverse()) {
     if (!view.webContents || !view.getVisible() || !view.webContents.getURL().startsWith('wuu-chrome://ui/chrome-overlay.html')) continue;
     const p = await view.webContents.executeJavaScript(`(({selector,text}) => {
-      const node = [...document.querySelectorAll(selector)].find(n => (text === undefined || (n.getAttribute('aria-label') || n.textContent || '').trim() === text) && n.getBoundingClientRect().width > 0);
+      const node = [...document.querySelectorAll(selector)].find(n => (text === undefined || (n.getAttribute('aria-label') || '').trim() === text || (n.textContent || '').trim() === text) && n.getBoundingClientRect().width > 0);
       if (!node) return null;
       const r = node.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
       if (!node.contains(document.elementFromPoint(x,y)) || node.disabled) throw new Error('Native chrome target is occluded or disabled');
@@ -189,7 +229,7 @@ async function point(target, scroll = true) {
   }
   return evaluate(async ({ selector, text, scroll }) => {
     const nodes = [...document.querySelectorAll(selector)];
-    const node = nodes.find(n => (text === undefined || (n.getAttribute('aria-label') || n.textContent || '').trim() === text)
+    const node = nodes.find(n => (text === undefined || (n.getAttribute('aria-label') || '').trim() === text || (n.textContent || '').trim() === text)
       && n.getBoundingClientRect().width > 0 && !n.closest('[inert]'));
     if (!node) throw new Error(`Missing interactive target: ${selector} / ${text}`);
     if (scroll) node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
@@ -217,17 +257,20 @@ async function point(target, scroll = true) {
     return { x, y, rect: r.toJSON(), name: node.getAttribute('aria-label') || node.textContent?.trim() };
   }, { ...(typeof target === 'string' ? { selector: target } : target), scroll });
 }
-async function capture(label) {
+async function capture(label, afterPixels) {
   await settle();
   const name = `${String(report.screenshots.length + 1).padStart(3, '0')}-${label.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 90)}.png`;
+  const captureStartedAtMs = Date.now() - started;
   const screenshot = await win.webContents.capturePage();
   const png = screenshot.toPNG();
   fs.writeFileSync(path.join(output, name), png);
-  report.screenshots.push({ file: name, sha256: createHash('sha256').update(png).digest('hex'), atMs: Date.now() - started, image: screenshot.getSize(), window: win.getBounds(),
+  report.screenshots.push({ file: name, sha256: createHash('sha256').update(png).digest('hex'), captureStartedAtMs, atMs: Date.now() - started, image: screenshot.getSize(), window: win.getBounds(),
     viewport: await evaluate(() => ({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio, theme: document.documentElement.dataset.theme,
       uiSize: getComputedStyle(document.documentElement).getPropertyValue('--conversation-message-font-size').trim(),
-      activeElement: document.activeElement?.outerHTML.slice(0, 180) })) });
+      activeElement: document.activeElement?.outerHTML.slice(0, 180) })),
+    ribbonInteraction: await readRibbonInteraction(win) });
   save();
+  if (afterPixels) await afterPixels(report.screenshots.at(-1));
   // A short viewing hold makes the real-time recording readable; success is
   // always decided by observable state, never by this pacing delay.
   await delay(160);
@@ -285,6 +328,7 @@ async function fill(target, text) {
 }
 async function test(name, fn) {
   const start = Date.now();
+  report.activeCheck = name;
   try {
     const detail = await fn();
     report.checks.push({ name, status: 'passed', durationMs: Date.now() - start, detail });
@@ -332,6 +376,7 @@ async function test(name, fn) {
       failure.recovery = String(recoveryError.stack || recoveryError);
     }
   }
+  delete report.activeCheck;
   save();
 }
 async function goConversations() {
@@ -340,6 +385,7 @@ async function goConversations() {
   await waitFor(() => !document.querySelector('.settings-workbench-layer') && !document.querySelector('.catalog-section-pane:not([hidden])'));
 }
 async function goSettings(pageLabel) {
+  await click('.sidebar-account-trigger', 'account-menu');
   await click(settings, 'settings');
   await waitFor(() => document.querySelector('.settings-embedded'));
   if (pageLabel) await click(pick('.settings-nav-item', pageLabel), `settings-${pageLabel}`);
@@ -407,31 +453,29 @@ async function appearance(theme, size, width) {
   await settle();
 }
 const started = Date.now();
-const watchdog = setTimeout(() => { report.status = 'timed-out'; save(); app.exit(1); }, 480000);
+const watchdog = setTimeout(() => {
+  report.status = 'timed-out';
+  report.finishedAt = new Date().toISOString(); report.durationMs = Date.now() - started;
+  report.timeout = { budgetMs: report.timeoutMs, check: report.activeCheck || null };
+  console.error(`WORKBENCH timed out after ${report.durationMs}ms during ${report.timeout.check || 'setup or teardown'}`);
+  save(); app.exit(1);
+}, report.timeoutMs);
 async function run() {
   for (const file of [process.env.WUU_DESKTOP_CORE, path.join(desktop, 'out/main/index.js'), path.join(desktop, 'out/preload/index.cjs'), path.join(desktop, 'out/renderer/index.html')]) {
     assert.ok(fs.existsSync(file), `Build required: ${file}`);
   }
   report.buildSha256 = Object.fromEntries(['out/main/index.js', 'out/preload/index.cjs', 'out/renderer/index.html'].map(file =>
     [file, createHash('sha256').update(fs.readFileSync(path.join(desktop, file))).digest('hex')]));
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', project], {
-    env: process.env, input: '{"jsonrpc":"2.0","id":1,"method":"thread/start","params":{}}\n', encoding: 'utf8', timeout: 30000,
-  });
-  assert.equal(boot.status, 0, boot.stderr || String(boot.error));
-  const seed = spawnSync('python3', ['-c', `
-import json, sqlite3, sys
-from pathlib import Path
-home=Path(sys.argv[1]); project=sys.argv[2]
-db=sqlite3.connect(home/'sessions/sessions.sqlite3')
-db.execute('DELETE FROM session_messages'); db.execute('DELETE FROM sessions')
-for s in json.loads(sys.argv[3]):
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)', (s['id'],'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z',s['title'],project,'acceptance-project','fixture','fixture',s['turns']*2))
-    for turn in range(s['turns']):
-        for role,text in [('user','Synthetic acceptance question '+str(turn+1)),('assistant',s['text'])]:
-            seq=turn*2+(1 if role=='user' else 2)
-            db.execute('INSERT INTO session_messages (session_id,seq,role,content,at,phase) VALUES (?,?,?,?,?,?)', (s['id'],seq,role,text,'2026-01-01T00:00:00Z',''))
-db.commit()
-`, home, project, JSON.stringify(sessions)], { encoding: 'utf8', timeout: 30000 });
+  const sessionFixture = createSessionFixture(home, project);
+  const seededSessions = sessions.map(s => ({
+    session: { id: s.id, created_at: stamp, updated_at: '2026-01-02T00:00:00Z', title: s.title,
+      cwd: project, workspace_id: 'acceptance-project', provider: 'fixture', model: 'fixture' },
+    history: Array.from({ length: s.turns }, (_, turn) => [
+      { role: 'user', content: `Synthetic acceptance question ${turn + 1}`, at: stamp },
+      { role: 'assistant', content: s.text, at: stamp, phase: '' },
+    ]).flat(),
+  }));
+  const seed = sessionFixture({ op: 'seed', sessions: seededSessions });
   assert.equal(seed.status, 0, seed.stderr || String(seed.error));
   websiteFixture = await createWebsiteFixture(home);
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
@@ -468,7 +512,8 @@ db.commit()
     const reading = await geometry('conversations');
     await click(plugins, 'plugins');
     await waitFor(() => document.querySelector('.skills-catalog'));
-    assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-section-item').length), 2);
+    // Enabled extension shortcuts are a separate nested group, not primary catalog choices.
+    assert.equal(await evaluate(() => document.querySelectorAll('.sidebar-section-navigation > .sidebar-section-item').length), 2);
     await click(pick('.sidebar-section-item', 'Skills'), 'skills-context');
     await waitFor(() => document.querySelector('.catalog-tab[data-tab="skills"]')?.getAttribute('aria-selected') === 'true');
     await click(pick('.sidebar-section-item', 'Plugins'), 'plugins-context');
@@ -523,8 +568,113 @@ db.commit()
     await waitFor(() => document.querySelector('.skills-catalog .settings-group-empty'));
     await capture('catalog-empty-search');
     await fill('.catalog-toolbar input', '');
-    await click('.catalog-refresh', 'catalog-refresh');
-    await waitFor(() => document.querySelector('.catalog-refresh')?.getAttribute('aria-busy') === 'false');
+    await evaluate(() => {
+      const evidence = { timeOrigin: performance.timeOrigin, startedAt: performance.now(), frames: 0, mutations: 0, dropped: 0, samples: [] };
+      const identities = new WeakMap();
+      let sequence = 0, frame, previous;
+      const inspect = selector => {
+        const node = document.querySelector(selector);
+        if (!node) return null;
+        if (!identities.has(node)) identities.set(node, ++sequence);
+        const style = getComputedStyle(node), rect = node.getBoundingClientRect();
+        const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return { node: identities.get(node), rect: rect.toJSON(), display: style.display, visibility: style.visibility,
+          opacity: style.opacity, transform: style.transform, hidden: node.hidden, inert: node.inert,
+          hitWithin: Boolean(hit && node.contains(hit)), text: node.textContent.trim().slice(0, 100) };
+      };
+      const sample = (source, force = false) => {
+        const state = { shell: inspect('.app-shell'), main: inspect('.conversation-pane'),
+          title: inspect('.conversation-pane > .titlebar'), catalog: inspect('.catalog-section-pane:not([hidden])'),
+          page: inspect('.catalog-section-pane:not([hidden]) .settings-page'),
+          heading: inspect('.catalog-section-pane:not([hidden]) .settings-page-title'), toolbar: inspect('.catalog-toolbar'),
+          shellClass: document.querySelector('.app-shell')?.className ?? null,
+          busy: document.querySelector('.catalog-refresh')?.getAttribute('aria-busy') ?? null,
+          recovery: document.querySelector('.application-recovery')?.textContent ?? null,
+          animations: document.getAnimations().flatMap(animation => {
+            const target = animation.effect?.target, timing = animation.effect?.getComputedTiming();
+            if (!(target instanceof Element) || !target.closest('.conversation-pane') || !Number.isFinite(timing?.endTime)) return [];
+            return [{ target: target.className, name: animation.animationName ?? animation.transitionProperty ?? animation.id,
+              playState: animation.playState, currentTime: animation.currentTime, endTime: timing.endTime, progress: timing.progress }];
+          }).slice(0, 12) };
+        const key = JSON.stringify(state);
+        if (force || key !== previous) {
+          if (evidence.samples.length < 600) evidence.samples.push({ at: performance.now(), source, ...state });
+          else evidence.dropped++;
+          previous = key;
+        }
+      };
+      const observer = new MutationObserver(records => { evidence.mutations += records.length; sample('mutation'); });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+      const tick = () => { evidence.frames++; sample('frame'); frame = requestAnimationFrame(tick); };
+      sample('before-refresh', true); frame = requestAnimationFrame(tick);
+      const originalShell = inspect('.app-shell').node;
+      const catalogSnapshot = () => {
+        const catalog = document.querySelector('.catalog-section-pane:not([hidden])');
+        return { at: performance.now(), shell: inspect('.app-shell')?.node ?? null, originalShell,
+          catalogVisible: Boolean(catalog && !catalog.inert),
+          skillsSelected: catalog?.querySelector('.catalog-tab[data-tab="skills"]')?.getAttribute('aria-selected') === 'true',
+          busy: catalog?.querySelector('.catalog-refresh')?.getAttribute('aria-busy') ?? null,
+          row: Boolean(catalog?.querySelector('.catalog-row[aria-label="Preview acceptance-skill"]')),
+          error: catalog?.querySelector('.skills-catalog-error')?.textContent ?? null };
+      };
+      window.__wuuSkillsRefreshPresentation = { sample, catalogSnapshot, stop: () => {
+        sample('before-Escape', true); observer.disconnect(); cancelAnimationFrame(frame);
+        return { ...evidence, endedAt: performance.now() };
+      } };
+    });
+    const presentation = { pairs: [], reportEpochMs: started, clock: 'Capture intervals use report atMs; DOM samples use timeOrigin + performance.now().',
+      boundary: 'Sequential renderer and X11 captures are not atomic. A changed DOM/animation state or a gap between captures prevents a capture-only verdict. Layout sampling can affect rendering timing.' };
+    try {
+      const sender = win.webContents.id;
+      const binding = rpc.findLast(entry => entry.channel === 'wuu:initialize' && entry.sender === sender && entry.completed)?.applicationShell;
+      assert.ok(binding, 'This window initialized a selected application shell');
+      const afterIPC = rpc.length;
+      presentation.refresh = { sender, binding, afterIPC };
+      await click('.catalog-refresh', 'catalog-refresh');
+      Object.assign(presentation.refresh, await waitForCatalogRefreshRender(sender, binding, afterIPC));
+      const loadedCatalog = await waitForValue(async () => {
+        const snapshot = await evaluate(() => window.__wuuSkillsRefreshPresentation.catalogSnapshot());
+        presentation.refresh.latestCatalog = snapshot;
+        assert.ok(snapshot.shell && snapshot.shell !== snapshot.originalShell, 'Refresh renders a new shell activation');
+        assert.ok(snapshot.catalogVisible && snapshot.skillsSelected, 'Refreshing the catalog preserves the selected Skills page');
+        assert.ok(!snapshot.error, snapshot.error);
+        return snapshot.busy === 'false' ? snapshot : undefined;
+      }, 'The acknowledged shell finishes loading its Skills catalog');
+      presentation.refresh.loadedCatalog = loadedCatalog;
+      assert.ok(loadedCatalog.row, 'The refreshed Skills page retains acceptance-skill');
+      await capture('skills-after-catalog-refresh', async renderer => {
+        const pair = { renderer: { file: renderer.file, sha256: renderer.sha256, startedAtMs: renderer.captureStartedAtMs, endedAtMs: renderer.atMs } };
+        presentation.pairs.push(pair);
+        await evaluate(() => window.__wuuSkillsRefreshPresentation.sample('before-native-capture', true));
+        const nativeLayers = (parent = win.contentView, visible = true, prefix = 'root') => parent.children.flatMap((view, index) => [{
+          path: `${prefix}/${index}`, id: view.webContents?.id ?? null, visible: visible && view.getVisible(),
+          ownVisible: view.getVisible(), bounds: view.getBounds(),
+        }, ...nativeLayers(view, visible && view.getVisible(), `${prefix}/${index}`)]);
+        const bounds = win.getBounds();
+        pair.native = { file: 'skills-refresh-native-after-renderer.png', source: 'x11-whole-native-window', window: bounds,
+          layersBefore: nativeLayers(), startedAtMs: Date.now() - started };
+        // Capture before the existing viewing hold and before goConversations sends Escape.
+        const taken = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'x11grab', '-video_size', `${bounds.width}x${bounds.height}`, '-i', `${process.env.DISPLAY}+${bounds.x},${bounds.y}`, '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'png', 'pipe:1'], { timeout: 12000, maxBuffer: 24 * 1024 * 1024 });
+        Object.assign(pair.native, { endedAtMs: Date.now() - started, status: taken.status,
+          error: taken.status === 0 ? undefined : String(taken.stderr || taken.error), layersAfter: nativeLayers() });
+        await evaluate(() => window.__wuuSkillsRefreshPresentation.sample('after-native-capture', true));
+        assert.equal(taken.status, 0, pair.native.error);
+        const image = nativeImage.createFromBuffer(taken.stdout);
+        assert.ok(!image.isEmpty(), 'Skills refresh native-window PNG is readable');
+        fs.writeFileSync(path.join(output, pair.native.file), taken.stdout);
+        Object.assign(pair.native, { sha256: createHash('sha256').update(taken.stdout).digest('hex'), image: image.getSize() });
+      });
+    } finally {
+      presentation.dom = await evaluate(() => {
+        const result = window.__wuuSkillsRefreshPresentation.stop();
+        delete window.__wuuSkillsRefreshPresentation; return result;
+      }).catch(error => ({ unavailable: String(error) }));
+      report.skillsRefreshPresentation = presentation;
+      fs.writeFileSync(path.join(output, 'skills-refresh-presentation.json'), JSON.stringify(presentation, null, 2));
+      save();
+    }
+    assert.equal(presentation.dom.unavailable, undefined, 'Skills refresh presentation evidence is available');
+    assert.ok(presentation.dom.frames > 0, 'Skills refresh presentation spans renderer frames');
     await goConversations();
   });
 
@@ -811,8 +961,10 @@ db.commit()
     assert.deepEqual(report.errors, []);
     assert.ok(!rpc.some(r => ['wuu:turn-start', 'wuu:turn-queue', 'wuu:turn-steer'].includes(r.channel)));
   });
-  report.status = report.checks.some(c => c.status === 'failed') ? 'failed' : 'passed';
-  report.finishedAt = new Date().toISOString(); report.durationMs = Date.now() - started;
+  if (report.status !== 'timed-out') {
+    report.status = report.checks.some(c => c.status === 'failed') ? 'failed' : 'passed';
+    report.finishedAt = new Date().toISOString(); report.durationMs = Date.now() - started;
+  }
   report.ipc = rpc.map(({ channel, completed, error }) => ({ channel, completed, error }));
   save();
   console.log(`WORKBENCH ${report.status}: ${report.checks.filter(c => c.status === 'passed').length}/${report.checks.length} checks, ${report.screenshots.length} real-window captures`);
@@ -825,7 +977,9 @@ run().then(async () => {
   app.quit();
   setTimeout(() => app.exit(code), 1000).unref();
 }).catch(async error => {
-  clearTimeout(watchdog); websiteFixture?.close(); report.status = 'failed'; report.fatal = String(error.stack || error);
+  clearTimeout(watchdog); websiteFixture?.close();
+  if (report.status !== 'timed-out') report.status = 'failed';
+  report.fatal = String(error.stack || error);
   console.error(error);
   if (win && !win.isDestroyed()) { try { await capture('fatal'); } catch {} }
   save(); app.exit(1);

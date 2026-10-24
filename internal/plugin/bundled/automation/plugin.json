@@ -1,18 +1,29 @@
 {
   "schemaVersion": 1,
   "id": "automation",
-  "name": "Automation",
-  "description": "Scheduled Agent prompts and recurring work.",
+  "name": "Automation Scheduler",
+  "description": "Default scheduling provider for Agent prompts.",
   "icon": "clock",
   "version": "0.1.0",
-  "author": { "name": "Wuu" },
-  "minimumWuuVersion": "0.1.0",
-  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
-  "desktop": { "entry": "desktop.js" },
-  "contributes": {
-    "navigation": [
-      { "id": "automation", "title": "Automations", "view": "automation.catalog", "icon": "clock", "order": 40 }
-    ]
+  "author": {
+    "name": "Wuu"
   },
-  "interface": { "displayName": "Automation", "shortDescription": "Schedule prompts and recurring Agent work.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
+  "minimumWuuVersion": "2026.10.19",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "runtime.mjs"
+    ],
+    "timeout": 30
+  },
+  "interface": {
+    "displayName": "Automation",
+    "shortDescription": "Schedule prompts and recurring Agent work.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ]
+  }
 }

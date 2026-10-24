@@ -319,18 +319,10 @@ func isContextOverflowCode(code string) bool {
 	}
 }
 
-// IsContextOverflow returns true if err is an HTTPError flagged as
-// context overflow.
+// IsContextOverflow uses preserved provider classification, including errors
+// carried through a driver resource service.
 func IsContextOverflow(err error) bool {
-	var httpErr *HTTPError
-	if errors.As(err, &httpErr) {
-		return httpErr.ContextOverflow
-	}
-	var streamErr *StreamError
-	if errors.As(err, &streamErr) {
-		return streamErr.ContextOverflow
-	}
-	return false
+	return NormalizeFailure(err).ContextOverflow
 }
 
 // IsRetryable returns true if the error is worth retrying.

@@ -48,7 +48,7 @@ func TestInputFilesSubmissionRecoveryAndExpiry(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = waitForMethod(t, out, NotificationTurnCompleted)
-			loaded, err := loadChatMessages(rt.SessionDir, id)
+			loaded, err := loadChatMessages(rt.Sessions, id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestInputFilesSubmissionRecoveryAndExpiry(t *testing.T) {
 			if result, err := kit.Execute(context.Background(), providers.ToolCall{Name: "bash", Arguments: string(args)}); err != nil {
 				t.Fatalf("agent cannot save the attachment with file tools: %v (%s)", err, result)
 			}
-			if _, err := loadChatMessages(rt.SessionDir, id); err != nil {
+			if _, err := loadChatMessages(rt.Sessions, id); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -123,7 +123,7 @@ func TestInputFilesSubmissionRecoveryAndExpiry(t *testing.T) {
 			if data, err := os.ReadFile(kept); err != nil || !bytes.Equal(data, raw) {
 				t.Fatal("cleanup changed saved file")
 			}
-			if _, err := loadChatMessages(rt.SessionDir, id); err != nil {
+			if _, err := loadChatMessages(rt.Sessions, id); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -275,7 +275,7 @@ func TestPastedTextAttachmentSubmissionRecoveryAndExpiry(t *testing.T) {
 	if item.InputText != "" || item.ContentParts[0].Text != text || strings.Contains(item.Text, paths[0]) {
 		t.Fatalf("public input lost its snapshot or exposed a working path: %+v", item)
 	}
-	loaded, err := loadChatMessages(rt.SessionDir, threadID)
+	loaded, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestInputImagePathsStayOutOfInputText(t *testing.T) {
 				t.Fatalf("public input_text exposed the server-added image path: %q", item.InputText)
 			}
 
-			loaded, err := loadChatMessages(rt.SessionDir, threadID)
+			loaded, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatal(err)
 			}

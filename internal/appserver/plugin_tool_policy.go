@@ -11,15 +11,17 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
-func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *runtime.ThreadRuntime) error {
+func (s *Server) configureSessionToolPolicy(binding *runtime.State, sessionID string, threadRuntime *runtime.ThreadRuntime) error {
 	if s == nil || s.rt == nil || threadRuntime == nil {
 		return nil
 	}
-	metadata, ok, err := session.Find(s.rt.SessionDir, sessionID)
+	if threadRuntime.Sessions == nil {
+		return errors.New("session tool policy has no captured state")
+	}
+	metadata, ok, err := threadRuntime.Sessions.Find(sessionID)
 	if err != nil || !ok {
 		return err
 	}
@@ -37,8 +39,12 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 		return errors.New("the selected agent engine cannot enforce session tool_policy")
 	}
 	guarded := newSessionToolPolicyExecutor(threadRuntime.StreamRunner.Tools, policy)
-	if metadata.Source == projectSource {
-		guarded = newSessionToolPolicyExecutor(guarded, pluginhost.SessionToolPolicy{Allow: []string{"session", "notes"}})
+	if metadata.Source == projectSource || metadata.Source == projectSessionSource {
+		projectPolicy, err := ProjectToolConfiguration(s.projectServiceContext(context.Background(), binding), threadRuntime.PluginHost, metadata)
+		if err != nil {
+			return err
+		}
+		guarded = newSessionToolPolicyExecutor(guarded, projectPolicy)
 	}
 	if metadata.Source == projectSessionSource {
 		guard, ok := guarded.(*sessionToolPolicyExecutor)
@@ -47,7 +53,7 @@ func (s *Server) configureSessionToolPolicy(sessionID string, threadRuntime *run
 			guarded = guard
 		}
 		guard.acquire = func(call providers.ToolCall) (func(), error) {
-			return s.acquireProjectWorkTool(metadata, call, guard.base)
+			return s.acquireProjectWorkToolForBinding(binding, metadata, call, guard.base)
 		}
 	}
 	threadRuntime.StreamRunner.Tools = guarded

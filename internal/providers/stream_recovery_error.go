@@ -25,8 +25,9 @@ type StreamRecoveryError struct {
 	Recovery StreamRecoveryInfo
 }
 
-func (e *StreamRecoveryError) Error() string { return e.Cause.Error() }
-func (e *StreamRecoveryError) Unwrap() error { return e.Cause }
+func (e *StreamRecoveryError) Error() string                      { return e.Cause.Error() }
+func (e *StreamRecoveryError) Unwrap() error                      { return e.Cause }
+func (e *StreamRecoveryError) FailureEvidence() NormalizedFailure { return NormalizeFailure(e.Cause) }
 
 func streamRecoveryError(err error, req ChatRequest, attempts int, stopReason string) error {
 	failure := NormalizeFailure(err)

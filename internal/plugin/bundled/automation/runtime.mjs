@@ -145,6 +145,70 @@ var PUBLIC_ICON_NAME_SET = new Set(PUBLIC_ICON_NAMES);
 // packages/plugin-sdk/src/bundle-contract.ts
 var encoder = new TextEncoder();
 
+// packages/plugin-sdk/src/model.ts
+var BACKGROUND_SERVICE = "host.background";
+function requireBackgroundService() {
+  return { name: BACKGROUND_SERVICE, major_version: 1, required: true };
+}
+async function startBackground(host, input) {
+  return await host.call("host.service.call", { service: BACKGROUND_SERVICE, method: "start", params: input });
+}
+
+// packages/plugin-sdk/src/providers.ts
+var CREDENTIAL_STORE_SERVICE = "state.credentials";
+var CONFIG_SOURCE_SERVICE = "state.config";
+var PLUGIN_SETTINGS_STORE_SERVICE = "state.plugin-settings";
+var ARTIFACT_STORE_SERVICE = "state.artifacts";
+function descriptor(name, methods, preparation = []) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`,
+    ...preparation.includes(method) ? { preparation: true } : {}
+  })) };
+}
+var CREDENTIAL_STORE_DESCRIPTOR = descriptor(CREDENTIAL_STORE_SERVICE, ["get", "set", "delete", "compare-exchange"]);
+var CONFIG_SOURCE_DESCRIPTOR = descriptor(CONFIG_SOURCE_SERVICE, ["read", "compare-exchange"], ["read"]);
+var PLUGIN_SETTINGS_STORE_DESCRIPTOR = descriptor(PLUGIN_SETTINGS_STORE_SERVICE, ["read", "update", "read-state", "update-state"], ["read", "read-state"]);
+var ARTIFACT_STORE_DESCRIPTOR = {
+  ...descriptor(ARTIFACT_STORE_SERVICE, ["import", "resolve", "read", "fork", "delete-thread"]),
+  version: "1.1.0"
+};
+
+// packages/plugin-sdk/src/coordination.ts
+var PROJECT_COORDINATION_SERVICE = "project.coordination";
+var MANAGED_SESSION_SERVICE = "host.managed-session";
+function descriptor2(name, methods) {
+  return { name, version: "1.0.0", methods: methods.map((method) => ({
+    name: method,
+    input_schema: `${name}.${method}.input.v1`,
+    output_schema: `${name}.${method}.output.v1`
+  })) };
+}
+var PROJECT_COORDINATION_DESCRIPTOR = descriptor2(PROJECT_COORDINATION_SERVICE, [
+  "scheduler",
+  "session",
+  "work",
+  "membership",
+  "create",
+  "turn",
+  "user-input",
+  "inbox",
+  "schedule",
+  "recover",
+  "instructions",
+  "member-work",
+  "coordinator",
+  "enqueue",
+  "capacity",
+  "work-list",
+  "tool-policy",
+  "tool-validate",
+  "tool-config",
+  "admission"
+]);
+var MANAGED_SESSION_DESCRIPTOR = descriptor2(MANAGED_SESSION_SERVICE, ["create", "submit", "interrupt"]);
+
 // packages/plugin-sdk/src/index.ts
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
@@ -225,7 +289,11 @@ async function handleRuntimeRequest(plugin, request, host = unavailableRuntimeHo
         return { id: request.id, result: null };
     }
   } catch (error) {
-    return { id: request.id, error: { message: error instanceof Error ? error.message : String(error) } };
+    const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code.trim() : "";
+    return { id: request.id, error: {
+      ...code ? { code } : {},
+      message: typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)
+    } };
   }
 }
 function scopedRuntimeHost(host, execution) {
@@ -655,34 +723,21 @@ function restoreRun(raw) {
   for (const key of ["triggered_at", "completed_at"]) if (fields[key] !== void 0 && !Number.isFinite(Date.parse(fields[key]))) throw new Error(`invalid timestamp ${key}`);
   return { id: "", task_id: "", request_id: "", status: "", triggered_at: zeroTime, ...fields, task: restoreTask(value.task) };
 }
-var cronSchema = {
-  type: "object",
-  properties: {
-    action: { type: "string", enum: ["list", "add", "remove"] },
-    cron: { type: "string" },
-    prompt: { type: "string" },
-    title: { type: "string" },
-    timezone: { type: "string" },
-    mode: { type: "string", enum: ["new_thread", "thread_heartbeat"] },
-    heartbeat_thread_id: { type: "string" },
-    workspace: { type: "string", enum: ["shared", "worktree"] },
-    recurring: { type: "boolean" },
-    durable: { type: "boolean" },
-    id: { type: "string" }
-  },
-  required: ["action"]
-};
 function createAutomationPlugin() {
   let host;
-  let workspaceID = "", workspaceRoot = "";
+  let pluginID = "", workspaceID = "", workspaceRoot = "";
   let tasks = /* @__PURE__ */ new Map(), runs = [];
   let timer;
   let dispatch = Promise.resolve(), stateQueue = Promise.resolve();
-  let stopped = false;
+  let stopped = false, schedulingStopped = false;
   const abort = new AbortController();
+  function stopScheduling() {
+    schedulingStopped = true;
+    clearInterval(timer);
+  }
   function stop() {
     stopped = true;
-    clearInterval(timer);
+    stopScheduling();
     abort.abort();
   }
   function locked(fn) {
@@ -787,6 +842,7 @@ function createAutomationPlugin() {
     });
   }
   async function clientRequest(host2, method, input = {}) {
+    if (stopped) throw new Error("automation provider is stopped");
     switch (method.trim()) {
       case "automation.list":
         return locked(() => ({ tasks: snapshotTasks(), workspace: { id: workspaceID, root: workspaceRoot } }));
@@ -805,6 +861,7 @@ function createAutomationPlugin() {
   }
   async function consume(task, now) {
     await locked(async () => {
+      if (schedulingStopped) return;
       const existing = tasks.get(task.id);
       if (!existing || existing.paused || Date.parse(existing.next_run_at) !== Date.parse(task.next_run_at)) return;
       if (existing.recurring) {
@@ -824,15 +881,23 @@ function createAutomationPlugin() {
     const runID = `run-${task.id}-${Math.floor(scheduledAt / 1e3)}`, requestID = `automation-${runID}`;
     const settled = await locked(async () => {
       const existing = runs.find((run) => run.id === runID);
-      if (existing && terminal.has(existing.status)) return true;
+      if (existing) {
+        if (existing.status === "starting") {
+          existing.status = "uncertain";
+          existing.error = "Dispatch outcome is unknown; inspect the session before scheduling replacement work";
+          await save(host);
+        }
+        return true;
+      }
       if (!existing) {
         runs.push({ id: runID, task_id: task.id, task: structuredClone(task), request_id: requestID, status: "starting", triggered_at: now.toISOString() });
         if (runs.length > 500) runs = runs.slice(-500);
       }
-      await saveBestEffort(host);
+      await save(host);
       return false;
     });
     if (settled) return true;
+    if (schedulingStopped) return false;
     let sessionID = task.heartbeat_thread_id || "", executionRoot = "", error;
     const workspaceMode = task.workspace_mode || "shared";
     let sent;
@@ -860,27 +925,21 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
         sessionID = created.session_id;
         executionRoot = created.workspace_root || "";
       }
+      if (schedulingStopped) return false;
       sent = await send();
     } catch (cause) {
       error = cause;
     }
     return locked(async () => {
-      if (stopped) return false;
+      if (schedulingStopped) return false;
       const index = runs.findIndex((run2) => run2.id === runID), run = runs[index];
       if (!run) return true;
       if (terminal.has(run.status)) return true;
       const message = error instanceof Error ? error.message : String(error);
-      if (error && message.includes("session service is unavailable")) {
-        if (run.status !== "starting") return true;
-        runs.splice(index, 1);
-        await saveBestEffort(host);
-        return false;
-      }
       run.session_id = sessionID || void 0;
       run.workspace_root = executionRoot || void 0;
       if (error) {
-        run.status = "failed";
-        run.completed_at = (/* @__PURE__ */ new Date()).toISOString();
+        run.status = "uncertain";
         run.error = message;
       } else if (run.status === "running" && sent.state !== "running") {
         run.queue_id ||= sent.queue_id;
@@ -895,20 +954,21 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
   }
   function fireDue() {
     dispatch = dispatch.then(async () => {
-      if (stopped) return;
+      if (schedulingStopped) return;
       const now = /* @__PURE__ */ new Date();
       const due = await locked(() => [...tasks.values()].filter((task) => !task.paused && Date.parse(task.next_run_at || zeroTime) <= now.getTime()).map((task) => ({ ...task })));
       for (const task of due) {
-        if (stopped) break;
-        if (await fire(task, now) && !stopped) await consume(task, now);
+        if (schedulingStopped) break;
+        if (await fire(task, now) && !schedulingStopped) await consume(task, now);
       }
     }).catch((error) => {
       console.error("automation dispatch failed:", error);
     });
   }
   async function settle(host2, input) {
-    if (input.state !== "running" && !terminal.has(input.state)) return;
+    if (stopped || input.state !== "running" && !terminal.has(input.state)) return;
     await locked(async () => {
+      if (stopped) return;
       const run = runs.find((value) => value.request_id === input.request_id);
       if (!run) return;
       if (input.state === "running") {
@@ -929,17 +989,20 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
     });
   }
   return {
+    concurrentServices: ["automation.scheduler"],
     initialize(params, runtimeHost) {
       host = runtimeHost;
+      pluginID = params.plugin_id;
       workspaceID = params.workspace_id?.trim() || "";
       workspaceRoot = params.project_root.trim();
       tasks = /* @__PURE__ */ new Map();
       runs = [];
       stopped = false;
+      schedulingStopped = false;
       return {
-        tools: [{ id: "cron", description: "Manage scheduled Agent prompts. action=list returns tasks; action=add creates a one-shot or recurring task from a five-field cron expression; action=remove deletes a task. Use new_thread for an independent visible conversation and thread_heartbeat to wake an existing conversation. Set workspace=worktree so each triggered session runs in its own git worktree instead of the shared project directory.", input_schema: cronSchema, execution_scopes: ["root"] }],
-        capabilities: [{ id: "plugin.client.request", kind: "decision", version: 1 }, { id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
-        required_services: ["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)
+        provided_services: [{ name: "automation.scheduler", version: "1.0.0", methods: [{ name: "request", input_schema: "automation.scheduler.request.v1", output_schema: "automation.scheduler.response.v1" }, { name: "run", input_schema: "automation.scheduler.run.input.v1", output_schema: "automation.scheduler.run.output.v1" }] }],
+        capabilities: [{ id: "agent.turn.lifecycle", kind: "observe", version: 1, error_policy: "isolate" }],
+        required_services: [requireBackgroundService(), ...["host.session.create", "host.session.send", "host.storage.get", "host.storage.set"].map(requireKernelService)]
       };
     },
     async prepare() {
@@ -959,45 +1022,45 @@ triggered_at=${now.toISOString().replace(/\.\d{3}Z$/, "Z")}` }] },
         }
       }
     },
-    activate(_runtimeHost, lifecycle) {
+    async activate(activeHost, lifecycle) {
       if (lifecycle.signal.aborted) {
         stop();
         return;
       }
       lifecycle.signal.addEventListener("abort", stop, { once: true });
-      fireDue();
-      timer = setInterval(fireDue, 15e3);
+      await startBackground(activeHost, { key: "scheduler", service: "automation.scheduler", method: "run" });
     },
     async shutdown() {
       stop();
       await dispatch;
       await stateQueue;
     },
-    async executeTool(call, host2) {
-      const input = mutationInput(call.arguments);
-      let value;
-      switch (input.action?.trim()) {
-        case "list":
-          value = await locked(snapshotTasks);
-          break;
-        case "add":
-          input.heartbeat_thread_id ||= call.session_id || call.thread_id;
-          value = { action: "cron", task: await add(host2, input) };
-          break;
-        case "remove":
-          await remove(host2, input.id);
-          value = { action: "cron", removed: input.id?.trim() };
-          break;
-        default:
-          throw new Error("cron requires action=list, add, or remove");
+    async invokeService(call, scoped, execution) {
+      if (call.service !== "automation.scheduler") throw new Error("unknown automation service");
+      if (call.method === "run") {
+        if (call.caller !== pluginID) throw new Error("automation scheduler must be started by its owner");
+        if (!execution) throw new Error("automation scheduler execution is unavailable");
+        if (stopped || schedulingStopped || execution.signal.aborted) {
+          stopScheduling();
+          return {};
+        }
+        host = scoped;
+        const signal = AbortSignal.any([execution.signal, abort.signal]);
+        const cancelled = new Promise((resolve) => signal.addEventListener("abort", () => {
+          stopScheduling();
+          resolve();
+        }, { once: true }));
+        fireDue();
+        timer = setInterval(fireDue, 15e3);
+        await cancelled;
+        await dispatch;
+        return {};
       }
-      return { result: { content: [{ type: "text", text: JSON.stringify(value) }] } };
+      if (call.method !== "request") throw new Error("unknown automation service method");
+      const request = call.params;
+      return clientRequest(scoped, request.method, request.input);
     },
     async invokeCapability(call, host2) {
-      if (call.capability === "plugin.client.request") {
-        const request = call.input;
-        return { output: { result: await clientRequest(host2, request.method, request.input) } };
-      }
       if (call.capability === "agent.turn.lifecycle") {
         await settle(host2, call.input);
         return { output: {} };

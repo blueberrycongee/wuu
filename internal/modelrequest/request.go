@@ -105,6 +105,11 @@ type streamingTextClient struct {
 // Keep the unary executor's preparation, journal and retry ownership while
 // using a provider that requires a streaming wire request.
 func (c streamingTextClient) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	defer endReceipt(nil)
 	events, err := c.stream.StreamChat(ctx, request)
 	if err != nil {
 		return providers.ChatResponse{}, err

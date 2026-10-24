@@ -99,11 +99,17 @@ func workspaceGitList(ctx context.Context, root string, args ...string) ([]byte,
 }
 
 func (s *Server) handleWorkspaceGit(ctx context.Context, req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params workspaceViewParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	root, err := s.workspaceViewRoot(params.Root)
+	root, err := s.workspaceViewRoot(binding, params.Root)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -125,7 +131,7 @@ func (s *Server) handleWorkspaceGit(ctx context.Context, req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	root = strings.TrimSuffix(string(top), "\n")
-	root, err = s.workspaceViewRoot(root)
+	root, err = s.workspaceViewRoot(binding, root)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

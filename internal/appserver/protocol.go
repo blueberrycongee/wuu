@@ -41,6 +41,7 @@ const (
 	MethodPluginPackageInstall            = "plugin/package/install"
 	MethodPluginPackageRemove             = "plugin/package/remove"
 	MethodPluginDesktopModuleRead         = "plugin/desktop-module/read"
+	MethodPluginDesktopActivation         = "plugin/desktop-activation"
 	MethodPluginIconRead                  = "plugin/icon/read"
 	MethodPluginSettingGet                = "plugin/setting/get"
 	MethodPluginSettingSet                = "plugin/setting/set"
@@ -202,9 +203,10 @@ const (
 )
 
 type PluginInventoryChangedNotification struct {
-	Epoch              uint64                     `json:"epoch"`
-	ExtensionInventory []ExtensionInventoryRecord `json:"extension_inventory"`
-	Skills             []SkillSummary             `json:"skills"`
+	ApplicationShell   *runtime.ApplicationShellBinding `json:"application_shell"`
+	Epoch              uint64                           `json:"epoch"`
+	ExtensionInventory []ExtensionInventoryRecord       `json:"extension_inventory"`
+	Skills             []SkillSummary                   `json:"skills"`
 }
 
 type ConfigErrorNotification struct {
@@ -289,30 +291,31 @@ type ReverseRPCCapabilities struct {
 }
 
 type InitializeResult struct {
-	Status             string                       `json:"status"`
-	Issues             []RuntimeIssue               `json:"issues,omitempty"`
-	ProtocolVersion    string                       `json:"protocol_version"`
-	Core               CoreBuildInfo                `json:"core"`
-	Provider           string                       `json:"provider"`
-	Model              string                       `json:"model"`
-	Effort             string                       `json:"effort,omitempty"`
-	Variant            string                       `json:"variant,omitempty"`
-	MaxParallel        int                          `json:"max_parallel"`
-	RuntimeHost        RuntimeHostSummary           `json:"runtime_host"`
-	WorkspaceRoot      string                       `json:"workspace_root"`
-	Permissions        PermissionSummary            `json:"permissions"`
-	ExtensionTrust     ExtensionTrustSummary        `json:"extension_trust"`
-	ExtensionInventory []ExtensionInventoryRecord   `json:"extension_inventory,omitempty"`
-	ModelProfile       *ModelProfileSummary         `json:"model_profile,omitempty"`
-	ToolSurface        *ToolSurfaceSummary          `json:"tool_surface,omitempty"`
-	ModelRoles         []ModelRoleSummary           `json:"model_roles,omitempty"`
-	ModelAliases       map[string]ModelAliasSummary `json:"model_aliases,omitempty"`
-	ProjectModels      config.ProjectModelsConfig   `json:"project_models,omitempty"`
-	Providers          []ProviderSummary            `json:"providers,omitempty"`
-	AdvancedSettings   AdvancedSettingsSummary      `json:"advanced_settings"`
-	GeneralSettings    GeneralSettingsSummary       `json:"general_settings"`
-	CatalogProviders   []CatalogProviderSummary     `json:"catalog_providers"`
-	Features           FeatureFlags                 `json:"features"`
+	ApplicationShell   *runtime.ApplicationShellBinding `json:"application_shell"`
+	Status             string                           `json:"status"`
+	Issues             []RuntimeIssue                   `json:"issues,omitempty"`
+	ProtocolVersion    string                           `json:"protocol_version"`
+	Core               CoreBuildInfo                    `json:"core"`
+	Provider           string                           `json:"provider"`
+	Model              string                           `json:"model"`
+	Effort             string                           `json:"effort,omitempty"`
+	Variant            string                           `json:"variant,omitempty"`
+	MaxParallel        int                              `json:"max_parallel"`
+	RuntimeHost        RuntimeHostSummary               `json:"runtime_host"`
+	WorkspaceRoot      string                           `json:"workspace_root"`
+	Permissions        PermissionSummary                `json:"permissions"`
+	ExtensionTrust     ExtensionTrustSummary            `json:"extension_trust"`
+	ExtensionInventory []ExtensionInventoryRecord       `json:"extension_inventory,omitempty"`
+	ModelProfile       *ModelProfileSummary             `json:"model_profile,omitempty"`
+	ToolSurface        *ToolSurfaceSummary              `json:"tool_surface,omitempty"`
+	ModelRoles         []ModelRoleSummary               `json:"model_roles,omitempty"`
+	ModelAliases       map[string]ModelAliasSummary     `json:"model_aliases,omitempty"`
+	ProjectModels      config.ProjectModelsConfig       `json:"project_models,omitempty"`
+	Providers          []ProviderSummary                `json:"providers,omitempty"`
+	AdvancedSettings   AdvancedSettingsSummary          `json:"advanced_settings"`
+	GeneralSettings    GeneralSettingsSummary           `json:"general_settings"`
+	CatalogProviders   []CatalogProviderSummary         `json:"catalog_providers"`
+	Features           FeatureFlags                     `json:"features"`
 }
 
 type FeatureFlags struct {
@@ -866,7 +869,8 @@ type ExtensionPluginActivationIssue struct {
 }
 
 type ExtensionInventoryRecord struct {
-	ID string `json:"id"`
+	GraphGeneration string `json:"graph_generation,omitempty"`
+	ID              string `json:"id"`
 	// Name and Description are what people see: a plugin manifest's
 	// interface displayName and shortDescription, then its name and
 	// description, and the id when it names nothing.
@@ -915,6 +919,16 @@ const (
 )
 
 type ExtensionPackageUpdateParams struct {
+	ID          string                             `json:"id,omitempty"`
+	Fingerprint string                             `json:"fingerprint,omitempty"`
+	Action      ExtensionPackageAction             `json:"action,omitempty"`
+	Updates     []ExtensionPackageEnablementUpdate `json:"updates,omitempty"`
+}
+
+// ExtensionPackageEnablementUpdate changes one package's enabled override in
+// an atomic selection. Action accepts only enable or disable, never trust or
+// pending-package updates. A supplied fingerprint must match the catalog.
+type ExtensionPackageEnablementUpdate struct {
 	ID          string                 `json:"id"`
 	Fingerprint string                 `json:"fingerprint,omitempty"`
 	Action      ExtensionPackageAction `json:"action"`
@@ -2310,6 +2324,7 @@ type TurnErrorNotification struct {
 	Category   string `json:"category,omitempty"`
 	Provider   string `json:"provider,omitempty"`
 	StatusCode int    `json:"status_code,omitempty"`
+	IndexError string `json:"index_error,omitempty"`
 	Turn       Turn   `json:"turn"`
 }
 
@@ -2344,6 +2359,7 @@ type TurnCompletedNotification struct {
 	StopReason               string `json:"stop_reason,omitempty"`
 	Truncated                bool   `json:"truncated,omitempty"`
 	TracePath                string `json:"trace_path,omitempty"`
+	IndexError               string `json:"index_error,omitempty"`
 	AwaitingAutoContinuation bool   `json:"awaiting_auto_continuation,omitempty"`
 }
 

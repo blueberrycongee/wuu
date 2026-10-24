@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -45,7 +45,7 @@ func TestNoteOutputRecoveryInstallsCompleteCheckpoint(t *testing.T) {
 	} {
 		t.Run(string(first.finish)+"/"+first.body[:6], func(t *testing.T) {
 			client := &noteOutputClient{outputs: []noteOutput{first, {"Migration applied. Verify tests; do not reapply. [History Seq 41]", providers.FinishReasonStop}}}
-			runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
+			runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
 			history := []providers.ChatMessage{{Role: "user", Content: "finish migration", Seq: 1}, {Role: "assistant", Content: "Migration applied", Seq: 41}}
 			store := &cancellationNoteStore{}
 			ctx := context.WithValue(context.Background(), compactionNoteBudgetKey{}, 39936)
@@ -77,7 +77,7 @@ func TestNoteOutputExhaustionPreservesCheckpointAndContextRecovery(t *testing.T)
 	history = append(history, providers.ChatMessage{Role: "assistant", Content: "latest verified result", Seq: 41})
 	store := &cancellationNoteStore{note: previous}
 	client := &noteOutputClient{outputs: []noteOutput{{strings.Repeat("未完", 2000), providers.FinishReasonStop}}}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
 	ctx := context.WithValue(context.Background(), compactionNoteBudgetKey{}, 39936)
 	note, usage, err := generateCompactionNote(ctx, cancellationNoteProvider{}, store, runner.CompactionNoteFork(), "test", history, true)
 	if err == nil || note.Markdown != "" || store.note != previous || store.storeCalls != 0 || len(client.requests) != 3 {
@@ -101,7 +101,7 @@ func TestNoteOutputExhaustionPreservesCheckpointAndContextRecovery(t *testing.T)
 
 func TestNoteOutputExactUTF8LimitAndCancellation(t *testing.T) {
 	client := &noteOutputClient{outputs: []noteOutput{{strings.Repeat("中", 16), providers.FinishReasonStop}}}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, ProviderName: "test", Model: "test"}
 	result, err := runner.CompactionNoteFork()(context.Background(), nil, CompactionNotePlan{Prompt: "write brief", MaxBytes: 48})
 	if err != nil || len(result.Markdown) != 48 || len(client.requests) != 1 {
 		t.Fatalf("exact UTF-8 bound rejected: %+v %v", result, err)
@@ -129,5 +129,71 @@ func TestNoteOutputDoesNotRetryUnrelatedFailures(t *testing.T) {
 	})
 	if _, err := fork(context.Background(), nil, CompactionNotePlan{MaxBytes: 48}); !errors.Is(err, failure) || calls != 1 {
 		t.Fatalf("output repair multiplied unrelated retries: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestNoteOutputRetriesShareReceiptCompletion(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client := &noteOutputClient{outputs: []noteOutput{{"truncated", providers.FinishReasonLength}, {"complete", providers.FinishReasonStop}}}
+	completionErr := errors.New("final receipt failed")
+	entered, release := make(chan struct{}), make(chan struct{})
+	begins, finishes := 0, 0
+	var scope *providers.ModelReceiptScope
+	runner := &StreamRunner{Client: client, Model: "test"}
+	runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
+		begins++
+		ctx, scope = providers.NewModelReceiptScope(ctx)
+		return ctx, func() error {
+			finishes++
+			scope.Seal()
+			close(entered)
+			select {
+			case <-release:
+				return errors.Join(scope.Wait(ctx), completionErr)
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}, nil
+	}
+	runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
+		if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
+			return errors.New("note attempt lost its receipt owner")
+		}
+		return nil
+	}
+	fork := runner.CompactionNoteFork()
+	if begins != 0 {
+		t.Fatal("unused fork admitted receipt work")
+	}
+	type outcome struct {
+		result CompactionNoteForkResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, err := fork(ctx, nil, CompactionNotePlan{Prompt: "brief", MaxBytes: 100})
+		done <- outcome{result, err}
+	}()
+	select {
+	case <-entered:
+	case result := <-done:
+		t.Fatalf("fork skipped receipt completion: %+v", result)
+	case <-ctx.Done():
+		t.Fatal("fork never reached completion")
+	}
+	select {
+	case result := <-done:
+		t.Fatalf("fork returned before receipt completion: %+v", result)
+	default:
+	}
+	close(release)
+	select {
+	case result := <-done:
+		if !errors.Is(result.err, completionErr) || result.result.Markdown != "complete" || result.result.Usage == nil || result.result.Usage.InputTokens != 200 || len(client.requests) != 2 || begins != 1 || finishes != 1 {
+			t.Fatalf("fork lost retry results or shared completion: result=%+v calls=%d admissions=%d completions=%d err=%v", result.result, len(client.requests), begins, finishes, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("fork did not finish after receipt release")
 	}
 }

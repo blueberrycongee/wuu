@@ -12,64 +12,65 @@ import (
 // Admission is durable and immutable, races select one writer, checkpoints
 // cannot cross identities, and forks inherit identity without execution state.
 func TestDriverBindingAdmission(t *testing.T) {
-	dir := t.TempDir()
-	if _, err := Create(dir, "session"); err != nil {
-		t.Fatal(err)
-	}
-	bindings := []pluginprotocol.DriverBinding{
-		{Profile: "first", ProviderID: "one", ContractVersion: 1, DriverID: "loop", DriverVersion: "1.0.0"},
-		{Profile: "second", ProviderID: "two", ContractVersion: 1, DriverID: "other", DriverVersion: "2.0.0"},
-	}
-	start := make(chan struct{})
-	results := make([]error, 2)
-	var wg sync.WaitGroup
-	for i := range bindings {
-		wg.Go(func() { <-start; results[i] = BindDriver(context.Background(), dir, "session", bindings[i]) })
-	}
-	close(start)
-	wg.Wait()
-	if (results[0] == nil) == (results[1] == nil) {
-		t.Fatalf("concurrent bindings = %v", results)
-	}
-	winner, ok, err := LoadDriverBinding(dir, "session")
-	if err != nil || !ok {
-		t.Fatalf("load binding = %+v, %v, %v", winner, ok, err)
-	}
-	if err := BindDriver(context.Background(), dir, "session", winner); err != nil {
-		t.Fatalf("same binding is not idempotent: %v", err)
-	}
-	checkpoint := DriverCheckpointRecord{ContractVersion: winner.ContractVersion, DriverID: winner.DriverID, DriverVersion: winner.DriverVersion, State: []byte(`{"phase":"running"}`)}
-	if err := SaveDriverCheckpoint(dir, "session", checkpoint); err != nil {
-		t.Fatal(err)
-	}
-	checkpoint.DriverVersion = "9.0.0"
-	if err := SaveDriverCheckpoint(dir, "session", checkpoint); err == nil {
-		t.Fatal("checkpoint replaced another driver version")
-	}
-	if _, err := CreateForkWithMetadata(dir, "fork", "", ForkMetadata{ForkedFromID: "session"}); err != nil {
-		t.Fatal(err)
-	}
-	fork, ok, err := LoadDriverBinding(dir, "fork")
-	if err != nil || !ok || fork != winner {
-		t.Fatalf("fork binding = %+v, %v, %v", fork, ok, err)
-	}
-	if _, ok, err := LoadDriverCheckpoint(dir, "fork"); err != nil || ok {
-		t.Fatalf("fork copied live execution state: %v, %v", ok, err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := BindDriver(ctx, dir, "session", winner); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled admission = %v", err)
-	}
-	if err := BindDriver(context.Background(), dir, "missing", winner); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("missing admission = %v", err)
-	}
-	if _, err := Delete(dir, "fork"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := LoadDriverBinding(dir, "fork"); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("deleted binding survived = %v", err)
-	}
+	forEachSessionStore(t, func(t *testing.T, store *Store) {
+		if _, err := store.Create("session"); err != nil {
+			t.Fatal(err)
+		}
+		bindings := []pluginprotocol.DriverBinding{
+			{Profile: "first", ProviderID: "one", ContractVersion: 1, DriverID: "loop", DriverVersion: "1.0.0"},
+			{Profile: "second", ProviderID: "two", ContractVersion: 1, DriverID: "other", DriverVersion: "2.0.0"},
+		}
+		start := make(chan struct{})
+		results := make([]error, 2)
+		var wg sync.WaitGroup
+		for i := range bindings {
+			wg.Go(func() { <-start; results[i] = store.BindDriver("session", bindings[i]) })
+		}
+		close(start)
+		wg.Wait()
+		if (results[0] == nil) == (results[1] == nil) {
+			t.Fatalf("concurrent bindings = %v", results)
+		}
+		winner, ok, err := store.LoadDriverBinding("session")
+		if err != nil || !ok {
+			t.Fatalf("load binding = %+v, %v, %v", winner, ok, err)
+		}
+		if err := store.BindDriver("session", winner); err != nil {
+			t.Fatalf("same binding is not idempotent: %v", err)
+		}
+		checkpoint := DriverCheckpointRecord{ContractVersion: winner.ContractVersion, DriverID: winner.DriverID, DriverVersion: winner.DriverVersion, State: []byte(`{"phase":"running"}`)}
+		if err := store.SaveDriverCheckpoint("session", checkpoint); err != nil {
+			t.Fatal(err)
+		}
+		checkpoint.DriverVersion = "9.0.0"
+		if err := store.SaveDriverCheckpoint("session", checkpoint); err == nil {
+			t.Fatal("checkpoint replaced another driver version")
+		}
+		if _, err := store.CreateForkWithMetadata("fork", "", ForkMetadata{ForkedFromID: "session"}); err != nil {
+			t.Fatal(err)
+		}
+		fork, ok, err := store.LoadDriverBinding("fork")
+		if err != nil || !ok || fork != winner {
+			t.Fatalf("fork binding = %+v, %v, %v", fork, ok, err)
+		}
+		if _, ok, err := store.LoadDriverCheckpoint("fork"); err != nil || ok {
+			t.Fatalf("fork copied live execution state: %v, %v", ok, err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if err := store.WithContext(ctx).BindDriver("session", winner); !errors.Is(err, context.Canceled) {
+			t.Fatalf("canceled admission = %v", err)
+		}
+		if err := store.BindDriver("missing", winner); !errors.Is(err, ErrSessionNotFound) {
+			t.Fatalf("missing admission = %v", err)
+		}
+		if _, err := store.Delete("fork"); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := store.LoadDriverBinding("fork"); !errors.Is(err, ErrSessionNotFound) {
+			t.Fatalf("deleted binding survived = %v", err)
+		}
+	})
 }
 
 func TestDriverBindingLegacyMigration(t *testing.T) {

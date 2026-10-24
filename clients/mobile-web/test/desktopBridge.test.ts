@@ -19,6 +19,7 @@ vi.mock("@wuu/remote-core", () => ({
     suspend = remote.suspend;
     constructor(_credentials: Credentials, options: RemoteClientOptions) { remote.options = options; }
     isAttached = () => remote.attached;
+    rpc = () => ({ call: remote.call });
     start = () => remote.options.onAttach?.({ session: "first", resumed: false });
     waitAttached = async () => {};
     latestState = () => null;
@@ -144,6 +145,67 @@ function deferred<T>() {
   const promise = new Promise<T>((done) => { resolve = done; });
   return { promise, resolve };
 }
+
+describe("remote desktop activation ownership", () => {
+  const initialized = (graph: string) => ({ extension_inventory: [{ id: "shell", fingerprint: "source", desktop: {}, graph_generation: graph }] });
+  const report = (graph: string, activation = 1) => ({ id: "shell", fingerprint: "source", graph_generation: graph, activation, phase: "registration" as const, status: "active" as const });
+
+  it("routes ACKs to captured graph workspaces and strips caller-selected identities", async () => {
+    remote.call.mockResolvedValueOnce({ current: "/a", current_id: "a", workspaces: [{ id: "a", name: "A", path: "/a" }, { id: "b", name: "B", path: "/b" }] });
+    const bridge = await connectBridge();
+    remote.call.mockResolvedValueOnce(initialized("a"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation({ ...report("a"), renderer_id: "spoof", disconnected: true } as ReturnType<typeof report>);
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-activation", report("a"), 30_000, "/a");
+    await bridge.api.selectProject("b");
+    remote.call.mockResolvedValueOnce(initialized("b"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation({ ...report("a"), phase: "cleanup", status: "disposed" });
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-activation", { ...report("a"), phase: "cleanup", status: "disposed" }, 30_000, "/a");
+    remote.options.onNotification?.("plugin/inventory/changed", initialized("a-next"), "/a");
+    await bridge.api.reportPluginDesktopActivation(report("a-next", 2));
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-activation", report("a-next", 2), 30_000, "/a");
+    const count = remote.call.mock.calls.length;
+    await expect(bridge.api.reportPluginDesktopActivation(report("unknown"))).rejects.toThrow(/graph/i);
+    expect(remote.call).toHaveBeenCalledTimes(count);
+    await bridge.disconnect();
+  });
+
+  it("rejects old cleanup after a replacement attachment even when the graph is unchanged", async () => {
+    const bridge = await connectBridge();
+    remote.call.mockResolvedValueOnce(initialized("same"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation(report("same"));
+    remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    remote.call.mockResolvedValueOnce(initialized("same"));
+    await bridge.api.initialize();
+    const count = remote.call.mock.calls.length;
+    await expect(bridge.api.reportPluginDesktopActivation({ ...report("same"), phase: "cleanup", status: "disposed" })).rejects.toThrow(/connection/i);
+    expect(remote.call).toHaveBeenCalledTimes(count);
+    await bridge.api.reportPluginDesktopActivation(report("same", 2));
+    await bridge.api.reportPluginDesktopActivation({ ...report("same", 2), phase: "render" });
+    remote.call.mockRejectedValueOnce(new Error("ACK transport failed"));
+    await expect(bridge.api.reportPluginDesktopActivation({ ...report("same", 2), phase: "render", status: "failed" })).rejects.toThrow("ACK transport failed");
+    await bridge.disconnect();
+  });
+
+  it("keeps activation ownership on a resumed attachment and rejects in-flight replies from a replaced one", async () => {
+    const bridge = await connectBridge();
+    remote.call.mockResolvedValueOnce(initialized("same"));
+    await bridge.api.initialize();
+    await bridge.api.reportPluginDesktopActivation(report("same"));
+    remote.options.onAttach?.({ session: "first", resumed: true });
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    const pending = deferred<unknown>();
+    remote.call.mockReturnValueOnce(pending.promise);
+    const rendered = bridge.api.reportPluginDesktopActivation({ ...report("same"), phase: "render" });
+    remote.options.onAttach?.({ session: "replacement", resumed: false });
+    pending.resolve({ ok: true });
+    await expect(rendered).rejects.toThrow(/connection/i);
+    await bridge.disconnect();
+  });
+});
 
 describe("connection recovery", () => {
   it("invalidates event consumers immediately before the disconnect grace phase changes", async () => {

@@ -1,9 +1,12 @@
 import * as React from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtensionInventoryRecord, WuuDesktopApi } from "../../shared/protocol";
-import { DesktopPluginRuntime } from "./DesktopPluginRuntime";
+import { DesktopPluginRuntime, desktopPluginHost } from "./DesktopPluginRuntime";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
+import { ApplicationShellOutlet } from "./ApplicationShell";
 
 const originalWuu = window.wuu;
 
@@ -13,6 +16,179 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
+  // Failure cases: graph-only replacement removes the selected root while loading,
+  // failed staging loses last-good UI, or keeping it delays a real disable.
+  it.each(["bridge", "register"])("keeps the selected shell mounted during held %s after disabling an unrelated plugin", async (stage) => {
+    let release!: () => void;
+    let signalStarted!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { signalStarted = resolve; });
+    let replacing = false;
+    const suspend = async (point: string) => {
+      if (replacing && stage === point) { signalStarted(); await gate; }
+    };
+    installDesktopModuleLoader(async ({ id, fingerprint }) => {
+      if (id === "user:shell") await suspend("bridge");
+      return { id, fingerprint, digest: "a".repeat(64), url: id };
+    });
+    const host = new PluginHost({ react: React });
+    const handles: PluginGenerationApi[] = [];
+    const runtime = new DesktopPluginRuntime(host, async id => ({ async activate(api: PluginGenerationApi) {
+      if (id !== "user:shell") {
+        api.registerCommand({ id: "unrelated", title: "Unrelated", execute() {} });
+        return;
+      }
+      const activation = handles.push(api);
+      api.registerApplicationShell({ id: "ui.shell", render: () => React.createElement("main", null, `Shell ${activation}`) });
+      await suspend("register");
+    } }));
+    const shell = { ...dependencyPlugin("shell"), graph_generation: "first" };
+    const unrelated = { ...dependencyPlugin("unrelated"), graph_generation: "first" };
+    await runtime.sync([shell, unrelated]);
+    const element = document.createElement("div"), root = createRoot(element);
+    await act(async () => root.render(React.createElement(ApplicationShellOutlet, {
+      host, binding: { pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" },
+    })));
+    const available: boolean[] = [];
+    const unsubscribe = host.subscribe(() => available.push(host.getApplicationShells().some(item => item.pluginId === shell.id)));
+    let pending: ReturnType<DesktopPluginRuntime["sync"]> | undefined;
+    try {
+      replacing = true;
+      act(() => { pending = runtime.sync([{ ...shell, graph_generation: "second" }, { ...unrelated, enabled: false, graph_generation: "second" }]); });
+      await started;
+      expect(host.getCommands()).toEqual([]);
+      expect(element.querySelector("main")?.textContent).toBe("Shell 1");
+      expect(element.querySelector('[role="alert"]')).toBeNull();
+      expect(handles[0].signal.aborted).toBe(false);
+      await act(async () => { release(); expect(await pending).toEqual([]); });
+      expect(element.querySelector("main")?.textContent).toBe("Shell 2");
+      expect(available).not.toContain(false);
+      expect(handles[0].signal.aborted).toBe(true);
+      expect(handles[1].signal.aborted).toBe(false);
+      unsubscribe();
+      act(() => { pending = runtime.sync([{ ...shell, graph_generation: "second", enabled: false }]); });
+      expect(element.querySelector("main")).toBeNull();
+      expect(element.querySelector('[role="alert"]')).not.toBeNull();
+      expect(handles[1].signal.aborted).toBe(true);
+      await pending;
+    } finally {
+      unsubscribe();
+      act(() => root.unmount());
+      release();
+      await pending;
+      await runtime.sync([]);
+    }
+  });
+
+  it.each(["runtime", "service"])("fences %s requests and cancellation across same-source graph replacement", async (kind) => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: "fixture" }));
+    const request = vi.fn<WuuDesktopApi["requestPluginRuntime"]>();
+    const cancel = vi.fn<WuuDesktopApi["cancelPluginRuntime"]>(async () => ({ cancelled: true }));
+    window.wuu.reportPluginDesktopActivation = vi.fn(async () => {});
+    window.wuu.requestPluginRuntime = request;
+    window.wuu.cancelPluginRuntime = cancel;
+    let finish!: (value: { result: unknown }) => void;
+    request.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const handles: PluginGenerationApi[] = [];
+    const runtime = new DesktopPluginRuntime(desktopPluginHost, async () => ({ activate: (api: PluginGenerationApi) => { handles.push(api); } }));
+    const call = (api: PluginGenerationApi, signal?: AbortSignal) => kind === "runtime"
+      ? api.invokeRuntime("read", { item: "one" }, { workspaceId: "workspace", workspaceRoot: "/workspace", signal })
+      : api.invokeService({ service: "catalog", method: "read", params: { item: "one" } }, { workspaceId: "workspace", workspaceRoot: "/workspace", signal });
+    try {
+      await runtime.sync([{ ...inventoryPlugin(), graph_generation: "first" }]);
+      const pending = call(handles[0]);
+      expect(request).toHaveBeenCalledExactlyOnceWith({
+        id: "user:demo", fingerprint: "fingerprint-one", graph_generation: "first", request_id: expect.any(String),
+        ...(kind === "service" ? { service: "catalog" } : {}),
+        method: "read", input: { item: "one" }, workspace_id: "workspace", workspace_root: "/workspace",
+      });
+      await runtime.sync([{ ...inventoryPlugin(), graph_generation: "second" }]);
+      expect(handles).toHaveLength(2);
+      expect(handles[0].signal.aborted).toBe(true);
+      expect(handles[1].signal.aborted).toBe(false);
+      expect(cancel).toHaveBeenCalledExactlyOnceWith({ id: "user:demo", fingerprint: "fingerprint-one", graph_generation: "first", request_id: request.mock.calls[0][0].request_id });
+      finish({ result: "old result" });
+      await expect(pending).rejects.toThrow();
+      await expect(call(handles[0])).rejects.toThrow("no longer active");
+      request.mockResolvedValueOnce({ result: "new result" });
+      const controller = new AbortController();
+      await expect(call(handles[1], controller.signal)).resolves.toBe("new result");
+      expect(request.mock.calls[1][0]).toMatchObject({ graph_generation: "second" });
+      expect(request.mock.calls[1][0].request_id).not.toBe(request.mock.calls[0][0].request_id);
+      controller.abort();
+      expect(cancel).toHaveBeenCalledTimes(1);
+    } finally {
+      await runtime.sync([]);
+    }
+  });
+
+  it("preserves public manifest slot names across installed graph replacement", async () => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    const handles: PluginGenerationApi[] = [];
+    const runtime = new DesktopPluginRuntime(host, async () => ({ activate: (api: PluginGenerationApi) => {
+      handles.push(api);
+      api.registerUISlot({ id: "body", cardinality: "many" });
+    } }));
+    try {
+      await runtime.sync([{ ...dependencyPlugin("demo"), graph_generation: "first" }]);
+      await runtime.sync([{ ...dependencyPlugin("demo"), graph_generation: "second" }]);
+      expect(handles).toHaveLength(2);
+      expect(host.getUISlot("demo/body")?.pluginId).toBe("user:demo");
+      expect(handles[0].signal.aborted).toBe(true);
+      expect(handles[1].signal.aborted).toBe(false);
+    } finally {
+      await runtime.sync([]);
+    }
+  });
+
+  it.each(["connection", "graph"])("reactivates on a fresh %s after retained consumers finish cleanup", async (change) => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const report = vi.fn<WuuDesktopApi["reportPluginDesktopActivation"]>(async () => {});
+    const invoke = vi.fn(async () => "result");
+    const host = new PluginHost({ react: React, reportActivation: report, invokeRuntime: invoke });
+    const events: string[] = [];
+    const handles: PluginGenerationApi[] = [];
+    const runtime = new DesktopPluginRuntime(host, async (id) => ({ activate(api: PluginGenerationApi) {
+      handles.push(api);
+      events.push(`start:${id}`);
+      api.registerCleanup(() => { events.push(`stop:${id}`); });
+    } }));
+    const inventory = [dependencyPlugin("consumer", ["provider"]), dependencyPlugin("provider")].map(plugin => ({ ...plugin, graph_generation: "same-graph" }));
+    await runtime.sync(inventory, false, 0);
+    await host.flushActivationReports();
+    await runtime.sync(inventory, false, 0);
+    expect(handles).toHaveLength(2);
+    const release = host.retainGeneration("user:consumer", "fingerprint-one");
+    const connection = change === "connection" ? 1 : 0;
+    const replacement = inventory.map(plugin => ({ ...plugin, graph_generation: change === "graph" ? "new-graph" : "same-graph" }));
+    const reconnect = runtime.sync(replacement, false, connection);
+    await vi.waitFor(() => expect(handles[1].signal.aborted).toBe(true));
+    const overlapping = change === "connection" ? runtime.sync(replacement, false, connection) : Promise.resolve([]);
+    expect(handles[0].signal.aborted).toBe(false);
+    expect(handles).toHaveLength(2);
+    release();
+    expect(await reconnect).toEqual([]);
+    expect(await overlapping).toEqual([]);
+    await host.flushActivationReports();
+    if (change === "connection") {
+      expect(events).toEqual(["start:user:provider", "start:user:consumer", "stop:user:consumer", "stop:user:provider", "start:user:provider", "start:user:consumer"]);
+    } else {
+      expect(events.filter(event => event === "start:user:provider")).toHaveLength(2);
+      expect(events.filter(event => event === "stop:user:provider")).toHaveLength(1);
+      expect(events.indexOf("stop:user:consumer")).toBeLessThan(events.indexOf("stop:user:provider"));
+      expect(events.at(-1)).toBe("start:user:consumer");
+    }
+    expect(report.mock.calls.map(([value]) => [value.phase, value.activation, value.graph_generation])).toEqual([
+      ["registration", 1, "same-graph"], ["registration", 1, "same-graph"],
+      ["registration", 2, replacement[0].graph_generation], ["registration", 2, replacement[0].graph_generation],
+    ]);
+    await expect(handles[1].invokeService({ service: "catalog", method: "read" })).rejects.toThrow("no longer active");
+    expect(invoke).not.toHaveBeenCalled();
+    await expect(handles[3].invokeService({ service: "catalog", method: "read" })).resolves.toBe("result");
+    await runtime.sync([], false, connection);
+  });
+
   it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {
     let release!: () => void;
     let signalStarted!: () => void;
@@ -401,14 +577,18 @@ describe("DesktopPluginRuntime", () => {
     await runtime.sync([]);
   });
 
-  it.each(["import", "register", "timeout"])("keeps the last working generation after replacement %s fails", async (failure) => {
+  it.each([
+    ["import", "source"], ["register", "source"], ["timeout", "source"],
+    ["import", "graph"], ["register", "graph"], ["timeout", "graph"],
+  ])("keeps the last working generation after replacement %s fails on %s change", async (failure, change) => {
     vi.useFakeTimers();
     installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
       id, fingerprint, digest: "a".repeat(64), url: `wuu-plugin://module/${fingerprint}.js`,
     })));
     const cleanup = vi.fn();
-    const load = vi.fn(async (url: string) => {
-      if (url.includes("fingerprint-two")) {
+    let replacing = false;
+    const load = vi.fn(async () => {
+      if (replacing) {
         if (failure === "timeout") return { activate() { return new Promise<void>(() => {}); } };
         if (failure === "import") throw new Error("replacement import failed");
         return { activate() { throw new Error("replacement registration failed"); } };
@@ -425,11 +605,12 @@ describe("DesktopPluginRuntime", () => {
     const runtime = new DesktopPluginRuntime(host, load);
     const plugin = inventoryPlugin();
     expect(await runtime.sync([plugin])).toEqual([]);
-    const replacement = { ...plugin, fingerprint: "fingerprint-two" };
+    replacing = true;
+    const replacement = change === "graph" ? { ...plugin, graph_generation: "replacement-graph" } : { ...plugin, fingerprint: "fingerprint-two" };
     const pending = runtime.sync([replacement]);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(await pending).toEqual([
-      expect.objectContaining({ pluginId: plugin.id, fingerprint: "fingerprint-two" }),
+      expect.objectContaining({ pluginId: plugin.id, fingerprint: replacement.fingerprint }),
     ]);
     expect(cleanup).not.toHaveBeenCalled();
     expect(host.isGenerationActive(plugin.id, plugin.fingerprint!)).toBe(true);

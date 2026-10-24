@@ -17,12 +17,14 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/skills"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -36,7 +38,15 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
+	systemPrompt      string
+	models            *generationModelBindings
 	id                string
+	state             *runtimeState
+	credentials       credentialstore.Store
+	configClient      *config.Client
+	chatGPTManager    *siwc.Manager
+	artifactClient    *ArtifactClient
+	mcpOAuth          *mcp.OAuthManager
 	settings          config.Config
 	plugins           []pluginpkg.Plugin
 	active            []pluginpkg.Plugin
@@ -57,15 +67,127 @@ type PluginGeneration struct {
 	// table; executions registered here route only to this generation's
 	// kernel services.
 	driverGateways *driverGatewayTable
+	// The callback retains this generation's kernel authority for each turn.
+	beginModelReceipts agent.BeginModelReceiptsFunc
 	// refs counts the live Session plus any ThreadRuntime still bound to this
 	// generation. A retired generation stays open until the last conversation
 	// that started against it is released. A negative count seals retirement;
 	// zero is reserved for a prepared candidate that has not been published.
 	refs         atomic.Int32
 	revocationMu sync.Mutex
+	// Admission closes under modelMu before root shutdown starts Wait.
+	modelMu            sync.Mutex
+	modelStopped       bool
+	modelOwners        map[*modelInvocationOwner]struct{}
+	modelBodies        sync.WaitGroup
+	modelInvocations   sync.WaitGroup
+	modelCompletionErr error
 	// revokedMu also protects host detachment from read-only diagnostics.
 	revokedMu      sync.Mutex
 	revokedPlugins map[string]bool
+}
+
+// Keep only the first durability or authority-release failure. Provider
+// rejections and ordinary cancellation belong to the model result, not shutdown.
+func (g *PluginGeneration) recordModelCompletionError(err error) {
+	if err == nil {
+		return
+	}
+	g.modelMu.Lock()
+	if g.modelCompletionErr == nil {
+		g.modelCompletionErr = err
+	}
+	g.modelMu.Unlock()
+}
+
+const modelShutdownTimeout = 3 * time.Second
+
+// Root shutdown drains model effects separately from passive State references.
+// A retained document reader must not prevent exit or lose its provider early.
+func (s *Session) stopPluginModelInvocations() (err error) {
+	s.pluginGenerationMu.Lock()
+	var generations []*PluginGeneration
+	current := s.pluginGeneration
+	if current != nil {
+		current.retain()
+		generations = append(generations, current)
+	}
+	for generation := range s.retiredPluginGenerations {
+		if generation == current {
+			continue
+		}
+		for refs := generation.refs.Load(); refs > 0; refs = generation.refs.Load() {
+			if generation.refs.CompareAndSwap(refs, refs+1) {
+				generations = append(generations, generation)
+				break
+			}
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	defer func() {
+		for _, generation := range generations {
+			err = errors.Join(err, s.releasePluginGeneration(generation))
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), modelShutdownTimeout)
+	defer cancel()
+	var modelOwners []*modelInvocationOwner
+	for _, generation := range generations {
+		generation.modelMu.Lock()
+		generation.modelStopped = true
+		for owner := range generation.modelOwners {
+			modelOwners = append(modelOwners, owner)
+		}
+		generation.modelMu.Unlock()
+	}
+	for _, generation := range generations {
+		generation.host.StopBackground()
+	}
+	for _, owner := range modelOwners {
+		context.AfterFunc(ctx, func() { owner.abort(context.Cause(ctx)) })
+		owner.cancel()
+	}
+	bodiesDone := make(chan struct{})
+	go func() {
+		for _, generation := range generations {
+			generation.modelBodies.Wait()
+		}
+		close(bodiesDone)
+	}()
+	select {
+	case <-bodiesDone:
+	case <-ctx.Done():
+		err = fmt.Errorf("drain model invocations: %w", ctx.Err())
+	}
+	// Parent callbacks may await their execution's cancellation before returning.
+	// Revoke them even after a failed drain, then join deferred State releases
+	// with the remaining time from the same shutdown deadline.
+	for _, generation := range generations {
+		generation.host.CancelExecutions(context.Canceled)
+	}
+	releasesDone := make(chan struct{})
+	go func() {
+		for _, generation := range generations {
+			generation.modelInvocations.Wait()
+		}
+		close(releasesDone)
+	}()
+	select {
+	case <-releasesDone:
+	case <-ctx.Done():
+		if err == nil {
+			err = fmt.Errorf("drain model invocations: %w", ctx.Err())
+		}
+	}
+	for _, generation := range generations {
+		generation.modelMu.Lock()
+		completionErr := generation.modelCompletionErr
+		generation.modelMu.Unlock()
+		if completionErr != nil {
+			err = errors.Join(err, fmt.Errorf("model completion in generation %q: %w", generation.id, completionErr))
+		}
+	}
+	return err
 }
 
 // PreflightExtensions discovers and builds a replacement without changing the
@@ -113,7 +235,9 @@ func (s *Session) PluginGenerationNeedsRecovery() bool {
 // snapshots and its own admission mask; a crash in an older implementation does
 // not revoke the same package ID in a healthy replacement. Call outside thread
 // admission locks because shutdown may synchronously call host services.
-func (s *Session) RevokeFailedPluginDependencies() bool {
+// beforeRevoke runs once, before the first retirement effect, so callers can
+// fence admission before failed clients temporarily disappear from the host.
+func (s *Session) RevokeFailedPluginDependencies(beforeRevoke func()) bool {
 	if s == nil {
 		return false
 	}
@@ -160,6 +284,9 @@ func (s *Session) RevokeFailedPluginDependencies() bool {
 		}
 		generation.revokedMu.Unlock()
 		if invalidated {
+			if !changed && beforeRevoke != nil {
+				beforeRevoke()
+			}
 			generation.revokeMissingPlugins(activeIDs, s.TitleClient, s.Model)
 			if generation == current && s.HookDispatcher != nil && s.HookDispatcher != generation.hooks {
 				s.HookDispatcher.Replace(generation.hooks)
@@ -172,12 +299,17 @@ func (s *Session) RevokeFailedPluginDependencies() bool {
 }
 
 // PreflightExtensionPolicy builds a replacement from the current package set
-// without persisting the proposed grant/enable decisions.
-func (s *Session) PreflightExtensionPolicy(cfg config.Config) (*PluginGeneration, error) {
+// without persisting the proposed grant/enable decisions. Enabled, trusted
+// candidates named in requiredIDs must prepare successfully.
+func (s *Session) PreflightExtensionPolicy(cfg config.Config, requiredIDs ...string) (*PluginGeneration, error) {
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	return s.buildPluginGeneration(cfg, s.Plugins, nil, nil, startPluginClient)
+	required := make(map[string]bool, len(requiredIDs))
+	for _, id := range requiredIDs {
+		required[id] = true
+	}
+	return s.buildPluginGeneration(cfg, s.Plugins, required, nil, startPluginClient)
 }
 
 // PreflightPluginRemoval builds the generation that will remain after one
@@ -281,11 +413,22 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 }
 
 func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpkg.Plugin, required map[string]bool, ownedRoots []string, start pluginClientStarter) (*PluginGeneration, error) {
+	factories := withConfigurationProvider(s.nativeProviders, s.ConfigPath, s.RootDir, cfg, s.ConfigLoadMode)
 	var active []pluginpkg.Plugin
 	if !s.SafeMode {
-		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered)
+		activationPlan, err := ResolvePluginActivationPlan(cfg, discovered, factories...)
 		if err != nil {
 			return nil, err
+		}
+		for _, item := range discovered {
+			if !required[item.ID] {
+				continue
+			}
+			for _, issue := range activationPlan.Issues[item.ID] {
+				if issue.Kind == pluginpkg.ActivationIssueMissingRequirement || issue.Kind == pluginpkg.ActivationIssueVersionMismatch {
+					return nil, fmt.Errorf("plugin %q cannot activate: required plugin %q (%s)", item.ID, issue.RelatedPluginID, issue.Kind)
+				}
+			}
 		}
 		active = activationPlan.Plugins
 	}
@@ -311,7 +454,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 			}
 		}
 	}
-	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile)
+	host, kernel, err := buildPluginHost(active, s.RootDir, s.WorkspaceID, s.WuuHome, s.StateDir, requiredRuntimes, start, s.PluginSessionRouter, s.UserQuestions, runtimeComposition(cfg.Composition, s.SafeMode), s.DriverProfile, factories...)
 	if err != nil {
 		for _, root := range ownedRoots {
 			_ = os.RemoveAll(root)
@@ -347,6 +490,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
 		id:                generationID,
+		state:             kernel.state,
 		settings:          cfg,
 		plugins:           append([]pluginpkg.Plugin(nil), discovered...),
 		active:            append([]pluginpkg.Plugin(nil), active...),
@@ -361,7 +505,21 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		ownedRoots:        append([]string(nil), ownedRoots...),
 		driverGateways:    kernel.driverGateways,
 	}
-	generation.mcp, err = startMCPManager(cfg, active, required, s.mcpOAuth)
+	// Activation callbacks belong to this candidate before it is published.
+	// Materialize its prompt from prepared contributions, never the live runner.
+	s.pluginGenerationMu.Lock()
+	basePrompt := buildBaseSystemPromptContent(s.RootDir, s.SessionDate, config.DefaultSystemPrompt(), "", s.ProviderName, s.Model, activeSurfaceWithDeferredToolCatalog(s.Toolkit, s.DeferredToolCatalogPrompt), s.InstructionFiles, "", "", generation.skills)
+	generation.systemPrompt, _ = assemblePluginSystemPrompt(basePrompt, generation.systemPrompts)
+	s.pluginGenerationMu.Unlock()
+	kernel.bindStateGeneration(generation, s)
+	if kernel.selectedServices != nil {
+		generation.credentials = kernel.selectedServices.credentials
+		generation.configClient = kernel.selectedServices.config
+		generation.chatGPTManager = kernel.selectedServices.chatGPT
+		generation.artifactClient = kernel.selectedServices.artifacts
+		generation.mcpOAuth = kernel.selectedServices.oauth
+	}
+	generation.mcp, err = startMCPManager(cfg, active, required, generation.mcpOAuth)
 	if err != nil {
 		_ = generation.close()
 		s.persistRevocationReport(generation)
@@ -427,7 +585,11 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	old.host.StopBackground()
 	// Activation may synchronously call host services. Keep old bindings
 	// available until activation settles, without holding their lookup mutex.
+	// Own the candidate before effectful callbacks can retain its state.
+	candidate.retain()
 	activationErr := activatePluginHost(context.Background(), candidate.host)
+	modelErr := s.bindGenerationModels(candidate)
+	activationErr = errors.Join(activationErr, modelErr)
 	available := availablePluginPackages(candidate.active, candidate.host)
 	if len(available) != len(candidate.active) {
 		candidate.revokeMissingPlugins(candidate.availableModuleIDs(), s.TitleClient, s.Model)
@@ -457,7 +619,6 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 	s.pluginGenerationMu.Lock()
 	s.applyPluginGeneration(candidate)
 	s.pluginGeneration = candidate
-	candidate.retain()
 	// Conversations that already pinned the previous generation keep using it
 	// until they rebuild. The Session reference is released here; remaining
 	// thread runtimes keep the processes and tools alive.
@@ -743,16 +904,15 @@ func (s *Session) ReleasePluginGeneration(generation *PluginGeneration) {
 	s.releasePluginGeneration(generation)
 }
 
-func (s *Session) releasePluginGeneration(generation *PluginGeneration) {
-	if s == nil || generation == nil {
-		return
+func (s *Session) releasePluginGeneration(generation *PluginGeneration) error {
+	if s == nil || generation == nil || !generation.Release() {
+		return nil
 	}
-	if generation.Release() {
-		s.pluginGenerationMu.Lock()
-		delete(s.retiredPluginGenerations, generation)
-		s.pluginGenerationMu.Unlock()
-		s.persistRevocationReport(generation)
-	}
+	s.pluginGenerationMu.Lock()
+	delete(s.retiredPluginGenerations, generation)
+	s.pluginGenerationMu.Unlock()
+	s.persistRevocationReport(generation)
+	return generation.closeErr
 }
 
 func (s *Session) capturePluginGeneration() *PluginGeneration {
@@ -764,7 +924,10 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 	hookSnapshot.Replace(s.HookDispatcher)
 	generationID := newPluginGenerationID(s.WuuHome)
 	generation := &PluginGeneration{
-		id:                generationID,
+		models:      captureGenerationModelBindings(s),
+		id:          generationID,
+		credentials: s.credentials, configClient: s.configClient, chatGPTManager: s.chatGPTManager, artifactClient: s.artifactClient, mcpOAuth: s.mcpOAuth,
+		state:             &runtimeState{documents: s.Documents, sessions: s.Sessions, journal: s.InferenceJournalRuntime},
 		settings:          config.Config{Extensions: s.ExtensionSettings},
 		plugins:           append([]pluginpkg.Plugin(nil), s.Plugins...),
 		active:            append([]pluginpkg.Plugin(nil), s.ActivePlugins...),
@@ -778,6 +941,7 @@ func (s *Session) capturePluginGeneration() *PluginGeneration {
 		systemPrompts:     s.systemPrompts,
 	}
 	if s.StreamRunner != nil {
+		generation.systemPrompt = s.StreamRunner.SystemPrompt
 		generation.compactions = s.StreamRunner.CompactionRegistry
 	}
 	generation.bindActivityOwnership(s.ActivityRegistry)
@@ -796,6 +960,13 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 	s.ActivePlugins = append([]pluginpkg.Plugin(nil), generation.active...)
 	s.ExtensionSettings = generation.settings.Extensions
 	s.PluginHost = generation.host
+	s.applyGenerationModels(generation.models)
+	s.credentials, s.configClient, s.chatGPTManager, s.artifactClient, s.mcpOAuth = generation.credentials, generation.configClient, generation.chatGPTManager, generation.artifactClient, generation.mcpOAuth
+	if generation.state != nil {
+		s.Documents, s.Sessions, s.InferenceJournalRuntime = generation.state.documents, generation.state.sessions, generation.state.journal
+	} else {
+		s.Documents, s.Sessions, s.InferenceJournalRuntime = nil, nil, nil
+	}
 	s.systemPrompts = generation.systemPrompts
 	if s.StreamRunner != nil {
 		s.StreamRunner.Tools = replacePluginToolBindings(s.StreamRunner.Tools, generation.host, generation.hooks, "", s.RootDir)
@@ -804,6 +975,8 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
+		s.StreamRunner.InferenceJournal = s.InferenceJournalForOwner("workspace-runtime")
+		s.StreamRunner.BeginModelReceipts = generation.beginModelReceipts
 		// Only a managed composition owns this binding. Embedded runtimes keep
 		// the driver explicitly supplied with their runner.
 		if generation.driverGateways != nil {
@@ -821,7 +994,10 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.Toolkit.SetMCPManager(generation.mcp)
 		configureToolkitSecurityExtensions(s.Toolkit, generation.host)
 	}
-	s.refreshSystemPromptWithSkills(s.ProviderName, s.Model, generation.filterSkills(generation.skills))
+	prompt := s.refreshSystemPromptWithSkills(s.ProviderName, s.Model, generation.filterSkills(generation.skills))
+	generation.revokedMu.Lock()
+	generation.systemPrompt = prompt
+	generation.revokedMu.Unlock()
 }
 
 // close retires every generation-owned resource in reverse ownership order

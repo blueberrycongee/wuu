@@ -23,12 +23,12 @@ func TestSessionDriverComposition(t *testing.T) {
 			s.StreamRunner = &agent.StreamRunner{Client: model, Model: "controlled"}
 			id := "conversation"
 			if name != "missing-session" {
-				if _, err := session.Create(s.SessionDir, id); err != nil {
+				if _, err := s.Sessions.Create(id); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if name == "incompatible-checkpoint" {
-				if err := session.SaveDriverCheckpoint(s.SessionDir, id, session.DriverCheckpointRecord{ContractVersion: 1, DriverID: "other-driver", DriverVersion: "1.0.0", State: []byte(`{}`)}); err != nil {
+				if err := s.Sessions.SaveDriverCheckpoint(id, session.DriverCheckpointRecord{ContractVersion: 1, DriverID: "other-driver", DriverVersion: "1.0.0", State: []byte(`{}`)}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -52,7 +52,7 @@ func TestSessionDriverComposition(t *testing.T) {
 				t.Fatalf("initial turn: calls=%d err=%v", model.calls, err)
 			}
 			if name == "fork" {
-				if _, err := session.CreateForkWithMetadata(s.SessionDir, "fork", s.RootDir, session.ForkMetadata{ForkedFromID: id}); err != nil {
+				if _, err := s.Sessions.CreateForkWithMetadata("fork", s.RootDir, session.ForkMetadata{ForkedFromID: id}); err != nil {
 					t.Fatal(err)
 				}
 				id = "fork"
@@ -66,7 +66,7 @@ func TestSessionDriverComposition(t *testing.T) {
 }
 
 func TestSessionDriverCheckpointRejectsMissingOwner(t *testing.T) {
-	store := sessionDriverCheckpointStore{sessDir: t.TempDir(), sessionID: "missing"}
+	store := sessionDriverCheckpointStore{sessions: testSessionStore(t, t.TempDir()), sessionID: "missing"}
 	err := store.Save(context.Background(), loopdriver.Checkpoint{ContractVersion: 1, DriverID: loopdriver.DefaultDriverID, DriverVersion: loopdriver.DefaultDriverVersion, State: []byte(`{}`)})
 	if !errors.Is(err, session.ErrSessionNotFound) || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("checkpoint acknowledged a nonexistent owner: %v", err)

@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
@@ -131,6 +132,7 @@ if (liveLayout) {
 let submittedTurns = 0;
 
 const desktopAPI = {
+  initialLanguagePreference: process.env.WUU_RESIZE_E2E_LOCALE,
   listProjects: async () => projectList(),
   createBlankProject: async () => projectList(),
   chooseProjectFolder: async () => projectList(),
@@ -372,6 +374,7 @@ if (process.env.WUU_TITLEBAR_FIXTURE_PLATFORM) {
   desktopAPI.platform = process.env.WUU_TITLEBAR_FIXTURE_PLATFORM;
   desktopAPI.hostKind = "desktop";
   if (desktopAPI.platform === "darwin") {
+    desktopAPI.windowSetControls = async () => undefined;
     desktopAPI.windowClose = async () => undefined;
     desktopAPI.windowMinimize = async () => undefined;
     desktopAPI.windowToggleMaximize = async () => undefined;
@@ -383,4 +386,4 @@ if (process.env.WUU_TITLEBAR_FIXTURE_PLATFORM) {
 const extend = process.env.WUU_RENDERER_E2E_EXTENSION
   ? require(process.env.WUU_RENDERER_E2E_EXTENSION)
   : (api) => api;
-contextBridge.exposeInMainWorld("wuu", extend(desktopAPI));
+contextBridge.exposeInMainWorld("wuu", extend(withDefaultShell(desktopAPI)));

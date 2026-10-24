@@ -7,6 +7,7 @@
 package storelock
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -18,7 +19,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
-const fileName = ".store.lock"
+// FileName is the retained advisory-lock inode in a store directory.
+const FileName = ".store.lock"
 
 // Healthy transactions hold the lock for milliseconds; an owner that keeps it
 // past acquireTimeout is wedged, and waiting on it would wedge this process
@@ -43,17 +45,30 @@ type Lock struct {
 // or fails after acquireTimeout when another owner holds the lock for longer
 // than any healthy transaction can.
 func Acquire(dir string) (*Lock, error) {
+	return AcquireContext(context.Background(), dir)
+}
+
+// AcquireContext observes cancellation while waiting for another writer. A
+// successful acquisition belongs to the caller until Release, even if ctx ends.
+func AcquireContext(ctx context.Context, dir string) (*Lock, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
 		return nil, errors.New("store directory is required")
 	}
-	path := filepath.Join(dir, fileName)
+	path := filepath.Join(dir, FileName)
 	file, err := securefs.OpenFile(path, os.O_CREATE|os.O_RDWR, securefs.FileMode)
 	if err != nil {
 		return nil, fmt.Errorf("open store lock: %w", err)
 	}
 	deadline := time.Now().Add(acquireTimeout)
 	for {
+		if err := ctx.Err(); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
 		err := tryLockFile(file)
 		if err == nil {
 			return &Lock{file: file}, nil
@@ -66,7 +81,14 @@ func Acquire(dir string) (*Lock, error) {
 			_ = file.Close()
 			return nil, fmt.Errorf("lock store: %s held by another owner for over %s", path, acquireTimeout)
 		}
-		time.Sleep(acquireRetryDelay)
+		timer := time.NewTimer(acquireRetryDelay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = file.Close()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 }
 

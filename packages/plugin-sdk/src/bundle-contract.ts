@@ -21,6 +21,9 @@ export interface AgentDeclaration {
 
 export interface DesktopDeclaration {
   entry: string;
+  /** Public renderer service descriptors selected through the composition graph. */
+  services?: readonly import("./index.js").ServiceDescriptor[];
+  required_services?: readonly import("./index.js").ServiceRequirement[];
 }
 
 /** A package dependency; omitted version accepts any installed version. */

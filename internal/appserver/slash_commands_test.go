@@ -320,7 +320,7 @@ func TestProjectSkillCatalogOwnership(t *testing.T) {
 	other.Path = outside
 	other.Dir = foreign
 	kit.SetSkills([]skills.Skill{other})
-	srv.threads["foreign"] = &threadState{ID: "foreign", CWD: foreign, EngineID: "wuu", running: true, execRuntime: &runtime.ThreadRuntime{Toolkit: kit}}
+	srv.threads["foreign"] = &threadState{ID: "foreign", state: testRuntimeState(t, rt), CWD: foreign, EngineID: "wuu", running: true, execRuntime: &runtime.ThreadRuntime{Toolkit: kit}}
 	catalog, root, err := srv.skillCatalog("foreign")
 	if err != nil || len(catalog) != 1 || root != "" {
 		t.Fatalf("foreign checkout inherited ownership: root=%q catalog=%+v error=%v", root, catalog, err)

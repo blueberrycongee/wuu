@@ -58,9 +58,10 @@ function launchEnvironment(
     WUU_WEB_TLS_CERT: env.WUU_WEB_TLS_CERT,
     WUU_WEB_TLS_KEY: env.WUU_WEB_TLS_KEY,
   };
-  // LaunchServices does not inherit the invoking terminal's toolchain or
-  // explicit engine overrides. Preserve them for source development launches.
+  // LaunchServices does not inherit the invoking terminal's toolchain, engine
+  // overrides, or Go runtime settings. Preserve explicit values for development.
   for (const name of ["PATH", "SHELL", "NVM_DIR", "NVM_BIN", "MISE_DATA_DIR", "XDG_DATA_HOME",
+    "GOMEMLIMIT", "GOGC", "GOMAXPROCS",
     ...Object.keys(env).filter(name => /^WUU_[A-Z0-9_]+_BINARY$/.test(name))]) {
     if (env[name] !== undefined) values[name] = env[name];
   }

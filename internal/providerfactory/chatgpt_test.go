@@ -2,6 +2,9 @@ package providerfactory
 
 import (
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/siwc"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,5 +33,20 @@ func TestChatGPTNeverEnablesNativeToolSearch(t *testing.T) {
 		if SupportsNativeToolDiscovery(provider, "gpt-6.1-sol", options) || SupportsNativeToolDiscoveryByDefault(provider, "gpt-6.1-sol", options) {
 			t.Fatal("ChatGPT enables unsupported Responses tool_search")
 		}
+	}
+}
+
+func TestChatGPTRequiresExplicitGenerationManager(t *testing.T) {
+	provider := config.ProviderConfig{Type: "chatgpt", ChatGPTAccountID: "fixture-account"}
+	if _, err := BuildClient(provider, "chatgpt"); err == nil || !IsCredentialError(err) {
+		t.Fatalf("unbound ChatGPT client accepted: %v", err)
+	}
+	manager, err := siwc.NewBoundManager(t.TempDir(), credentialstore.NewFileStore(filepath.Join(t.TempDir(), "credentials.json")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if _, err := BuildClient(provider, "chatgpt", Bindings{ChatGPT: manager}); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("factory did not use injected account manager: %v", err)
 	}
 }

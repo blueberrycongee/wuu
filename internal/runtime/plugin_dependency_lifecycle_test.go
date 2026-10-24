@@ -30,7 +30,7 @@ func TestPackageDependencyFailureBlocksConsumers(t *testing.T) {
 			independent := testRuntimePlugin("independent")
 			clients := map[string]*preparedGenerationClient{}
 			var initialized []string
-			s := testGenerationSession(testPluginGeneration("old", &generationClient{id: "old"}))
+			s := testGenerationSession(t, testPluginGeneration("old", &generationClient{id: "old"}))
 			s.RootDir = t.TempDir()
 			defer s.Cleanup()
 			candidate, err := s.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{consumer, independent, bridge, provider}, nil, nil,

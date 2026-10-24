@@ -229,7 +229,7 @@ func TestPendingNestedCompletionRehydratesParentAfterRestart(t *testing.T) {
 	newControl := func(client providers.StreamClient) *AgentControl {
 		t.Helper()
 		control, err := New(Config{
-			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+			AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 			Client:       client,
 			DefaultModel: "nested-replay-test",

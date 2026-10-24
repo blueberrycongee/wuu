@@ -82,8 +82,78 @@ type serviceExecution struct {
 	autonomous   bool
 }
 
+type serviceCompletionKey struct{}
+
+type serviceCompletion struct {
+	mu         sync.Mutex
+	references int
+	closed     bool
+	finalizers []func() error
+}
+
+// DeferServiceCompletion releases native invocation resources after the entire
+// authenticated service chain has left the registry. It adds no wire authority.
+// False means there is no live completion boundary; the caller must release now.
+func DeferServiceCompletion(ctx context.Context, finalize func() error) bool {
+	completion, _ := ctx.Value(serviceCompletionKey{}).(*serviceCompletion)
+	if completion == nil {
+		return false
+	}
+	completion.mu.Lock()
+	defer completion.mu.Unlock()
+	if completion.closed {
+		return false
+	}
+	completion.finalizers = append(completion.finalizers, finalize)
+	return true
+}
+
+func retainServiceCompletion(ctx context.Context) context.Context {
+	if completion, _ := ctx.Value(serviceCompletionKey{}).(*serviceCompletion); completion != nil {
+		completion.mu.Lock()
+		if !completion.closed {
+			completion.references++
+			completion.mu.Unlock()
+			return ctx
+		}
+		completion.mu.Unlock()
+	}
+	return context.WithValue(ctx, serviceCompletionKey{}, &serviceCompletion{references: 1})
+}
+
+func (c *serviceCompletion) release() error {
+	c.mu.Lock()
+	c.references--
+	if c.references != 0 {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	finalizers := c.finalizers
+	c.finalizers = nil
+	c.mu.Unlock()
+	var err error
+	for i := len(finalizers) - 1; i >= 0; i-- {
+		err = errors.Join(err, finalizers[i]())
+	}
+	return err
+}
+
+func serviceCompletionError(callErr *HostServiceError, cleanupErr error) *HostServiceError {
+	if cleanupErr == nil {
+		return callErr
+	}
+	code := "service_unavailable"
+	if callErr != nil {
+		code = callErr.Code
+		cleanupErr = errors.Join(callErr, cleanupErr)
+	}
+	return &HostServiceError{Code: code, Message: fmt.Sprintf("service completion failed: %v", cleanupErr)}
+}
+
 // ServiceRegistry resolves and routes service calls for one generation.
 type ServiceRegistry struct {
+	renderers            map[string]*rendererRegistration
 	mu                   sync.RWMutex
 	active               bool
 	open                 bool
@@ -396,7 +466,7 @@ func (r *ServiceRegistry) allowShutdownCleanup(pluginID string) func() {
 	})
 }
 
-func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func(), *HostServiceError) {
+func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, caller string, key serviceKey, provider string, canStart bool) (context.Context, string, func() error, *HostServiceError) {
 	callerContext := ctx
 	if err := callerContext.Err(); err != nil {
 		return nil, "", nil, &HostServiceError{Code: "request_cancelled", Message: "calling transport was cancelled"}
@@ -442,7 +512,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 		callContext, cancel := context.WithCancel(execution.ctx)
 		stopCaller := context.AfterFunc(callerContext, cancel)
 		release := r.releaseExecution(id)
-		return callContext, id, func() { stopCaller(); cancel(); release() }, nil
+		return callContext, id, func() error { stopCaller(); cancel(); return release() }, nil
 	}
 	scoped := false
 	if r.scopeTracker != nil && id != "" {
@@ -483,7 +553,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 			parentContext = rootContext
 		}
 	}
-	execCtx, cancelRoot := context.WithCancel(parentContext)
+	execCtx, cancelRoot := context.WithCancel(retainServiceCompletion(parentContext))
 	stopCaller := context.AfterFunc(callerContext, cancelRoot)
 	cancel := func() { stopCaller(); cancelRoot() }
 	r.executions[id] = &serviceExecution{
@@ -495,11 +565,13 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	return execCtx, id, r.releaseExecution(id), nil
 }
 
-func (r *ServiceRegistry) releaseExecution(id string) func() {
+func (r *ServiceRegistry) releaseExecution(id string) func() error {
 	var once sync.Once
-	return func() {
+	var releaseErr error
+	return func() error {
 		once.Do(func() {
 			r.mu.Lock()
+			var completion *serviceCompletion
 			execution := r.executions[id]
 			if execution != nil {
 				execution.refs--
@@ -508,10 +580,17 @@ func (r *ServiceRegistry) releaseExecution(id string) func() {
 					execution.cancel()
 					close(r.executionChanged)
 					r.executionChanged = make(chan struct{})
+					completion, _ = execution.ctx.Value(serviceCompletionKey{}).(*serviceCompletion)
 				}
 			}
 			r.mu.Unlock()
+			// Finalizers may close this registry. Remove all chain executions
+			// and drop the mutex before allowing the final owner to do so.
+			if completion != nil {
+				releaseErr = completion.release()
+			}
 		})
+		return releaseErr
 	}
 }
 
@@ -519,7 +598,7 @@ func (r *ServiceRegistry) releaseExecution(id string) func() {
 // The caller's scope supplies cancellation and attribution, never tool authority
 // or an execution ID owned by a different plugin. Native and process providers
 // receive the same caller metadata and independently owned callback scope.
-func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
+func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (result json.RawMessage, invokeErr error) {
 	r.mu.RLock()
 	tracker := r.scopeTracker
 	r.mu.RUnlock()
@@ -537,7 +616,7 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 	if tracker == nil || cleanup {
 		return provider.invoker.InvokeService(ctx, params)
 	}
-	callbackParent, cancel := context.WithCancel(ctx)
+	callbackParent, cancel := context.WithCancel(retainServiceCompletion(ctx))
 	executionID, callbackCtx := tracker.begin(provider.pluginID, callbackParent, ToolExecuteInput{}, false)
 	r.mu.Lock()
 	r.executions[executionID] = &serviceExecution{
@@ -549,7 +628,7 @@ func (r *ServiceRegistry) invokeProvider(ctx context.Context, provider servicePr
 	defer func() {
 		tracker.End(executionID)
 		cancel()
-		release()
+		invokeErr = errors.Join(invokeErr, release())
 	}()
 	params.ExecutionID = executionID
 	return provider.invoker.InvokeService(callbackCtx, params)
@@ -657,7 +736,7 @@ func (r *ServiceRegistry) CheckSatisfaction(requirements []ServiceRequirement) e
 // Authority is exactly the consumer's explicit declaration captured during
 // initialize; the not-authorized check runs before existence checks so an
 // undeclared consumer cannot probe which services exist.
-func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, params ServiceCallParams) (json.RawMessage, *HostServiceError) {
+func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, params ServiceCallParams) (result json.RawMessage, callErr *HostServiceError) {
 	service := strings.TrimSpace(params.Service)
 	method := strings.TrimSpace(params.Method)
 	if service == "" || method == "" {
@@ -742,7 +821,7 @@ func (r *ServiceRegistry) Call(ctx context.Context, consumerPluginID string, par
 	if executionErr != nil {
 		return nil, executionErr
 	}
-	defer release()
+	defer func() { callErr = serviceCompletionError(callErr, release()) }()
 	result, err := r.invokeProvider(execCtx, provider, ServiceInvokeParams{
 		Service:     service,
 		Method:      method,
@@ -801,11 +880,12 @@ type CompositionSnapshot struct {
 }
 
 type CompositionModuleSnapshot struct {
-	ID      string `json:"id"`
-	Source  string `json:"source"`
-	Version string `json:"version,omitempty"`
-	State   State  `json:"state,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Renderer *RendererActivationSnapshot `json:"renderer,omitempty"`
+	ID       string                      `json:"id"`
+	Source   string                      `json:"source"`
+	Version  string                      `json:"version,omitempty"`
+	State    State                       `json:"state,omitempty"`
+	Error    string                      `json:"error,omitempty"`
 }
 
 // SetComposition binds diagnostic metadata before candidate preparation.
@@ -830,6 +910,9 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 		copy.Layers = append([]string(nil), copy.Layers...)
 		copy.Modules = append([]CompositionModuleSnapshot{}, copy.Modules...)
 		composition = &copy
+		for i := range composition.Modules {
+			composition.Modules[i].Renderer = r.rendererSnapshot(composition.Modules[i].ID)
+		}
 	}
 	moduleStatuses := r.moduleStatuses
 	entries := make([]ServiceRegistryEntry, 0, len(r.providers))

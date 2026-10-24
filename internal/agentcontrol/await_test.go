@@ -25,7 +25,7 @@ func TestAwaitAlwaysCarriesResultTextAfterConsumption(t *testing.T) {
 	initRepo(t, dir)
 
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "durable worker answer"}},
 		DefaultModel:  "fake-model",
@@ -86,7 +86,7 @@ func TestAwaitFromRehydratesAcrossRestart(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-await-restart", "harness")
 	config := func(client providers.StreamClient) Config {
 		return Config{
-			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+			AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 			Client:        client,
 			DefaultModel:  "fake-model",
@@ -183,7 +183,7 @@ func TestNoTargetAwaitDoesNotRejoinDeliveredCompletedWithoutReport(t *testing.T)
 	initRepo(t, dir)
 
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        &fakeClient{resp: providers.ChatResponse{Content: "raw worker answer"}},
 		DefaultModel:  "fake-model",
@@ -297,7 +297,7 @@ func (c *closingTurnBlockingClient) StreamChat(ctx context.Context, _ providers.
 func TestAwaitTreatsUnsettledRequiresReportCompletionAsActive(t *testing.T) {
 	dir := t.TempDir()
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        &fakeClient{},
 		DefaultModel:  "fake-model",
@@ -348,7 +348,7 @@ func TestAwaitWaitsOutRequiresReportClosingTurn(t *testing.T) {
 	client := newClosingTurnBlockingClient()
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-await-settle", "harness")
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        client,
 		DefaultModel:  "fake-model",
@@ -454,7 +454,7 @@ func TestAwaitSettlesRehydratedRunKilledMidClosingTurn(t *testing.T) {
 	harnessDir := filepath.Join(dir, ".wuu-state", "sessions", "sess-await-crash", "harness")
 	config := func(client providers.StreamClient) Config {
 		return Config{
-			AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+			AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 			Client:        client,
 			DefaultModel:  "fake-model",

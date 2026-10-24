@@ -1585,6 +1585,12 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 				current.Items = items
 				current.Status = status
 				current.Error = nil
+				current.ModelProvider = rec.Provider
+				current.Model = rec.Model
+				if rec.StartedAt != nil {
+					turnStartedAt[current.ID] = *rec.StartedAt
+				}
+				current.AnswerReadyAt = rec.AnswerReadyAt
 				setProjectedTurnTiming(current, turnStartedAt[current.ID], at)
 				if status == TurnStatusCompleted {
 					continue

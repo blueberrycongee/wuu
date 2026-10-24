@@ -2,7 +2,7 @@ package pluginprotocol
 
 const (
 	DriverTurnService = "driver.turn"
-	DriverTurnMajor   = 3
+	DriverTurnMajor   = 4
 )
 
 // DriverTurnScope identifies an active driver execution. The service also checks
@@ -64,6 +64,12 @@ type DriverTurnReplaceContextParams struct {
 	DriverTurnScope
 	Revision uint64            `json:"revision"`
 	Messages []DriverMessageV1 `json:"messages"`
+	Volatile bool              `json:"volatile,omitempty"`
+}
+
+type DriverTurnArchiveResult struct {
+	Messages []DriverMessageV1 `json:"messages"`
+	Head     int               `json:"head"`
 }
 
 type DriverTurnModelParams struct {
@@ -72,11 +78,13 @@ type DriverTurnModelParams struct {
 	BatchID string               `json:"batch_id,omitempty"`
 }
 
-// DriverModelFailure describes a completed model operation that failed. It does
+// DriverFailure describes a failed operation or terminal driver result. It does
 // not authorize another attempt: the driver must account for partial output,
 // accepted effects, and the recovery executor's stopping decision.
-type DriverModelFailure struct {
+type DriverFailure struct {
 	Message         string               `json:"message"`
+	Code            string               `json:"code,omitempty"`
+	StopReason      string               `json:"stop_reason,omitempty"`
 	Origin          string               `json:"origin"`
 	Category        string               `json:"category"`
 	ProviderCode    string               `json:"provider_code,omitempty"`
@@ -97,11 +105,11 @@ type DriverModelRecovery struct {
 }
 
 type DriverTurnModelResult struct {
-	Messages        []DriverMessageV1   `json:"messages"`
-	Usage           *ModelRequestUsage  `json:"usage,omitempty"`
-	Failure         *DriverModelFailure `json:"failure,omitempty"`
-	ToolBatchID     string              `json:"tool_batch_id,omitempty"`
-	ToolWorkStarted bool                `json:"tool_work_started,omitempty"`
+	Messages        []DriverMessageV1  `json:"messages"`
+	Usage           *ModelRequestUsage `json:"usage,omitempty"`
+	Failure         *DriverFailure     `json:"failure,omitempty"`
+	ToolBatchID     string             `json:"tool_batch_id,omitempty"`
+	ToolWorkStarted bool               `json:"tool_work_started,omitempty"`
 }
 
 type DriverTurnToolsParams struct {
@@ -117,8 +125,11 @@ type DriverTurnToolsResult struct {
 
 type DriverTurnCompleteParams struct {
 	DriverTurnScope
-	Content  string            `json:"content"`
-	Messages []DriverMessageV1 `json:"messages,omitempty"`
+	Content      string            `json:"content"`
+	Messages     []DriverMessageV1 `json:"messages,omitempty"`
+	FinishReason string            `json:"finish_reason,omitempty"`
+	StopReason   string            `json:"stop_reason,omitempty"`
+	Truncated    bool              `json:"truncated,omitempty"`
 }
 
 type DriverTurnCompleteResult struct {

@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/statepath"
 	worktreepkg "github.com/blueberrycongee/wuu/internal/worktree"
 )
 
@@ -63,7 +62,44 @@ type hostSessionLaunchParams struct {
 	Prompt   string
 }
 
-func (s *Server) createHostSessionThread(owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
+func (s *Server) createHostSessionThread(binding *runtime.State, owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
+	th, err := s.createHostSessionThreadWithStore(binding, binding.Sessions, owner, source, id, params)
+	if err != nil {
+		return nil, err
+	}
+	metadata, _, err := binding.Sessions.Find(th.ID)
+	if err != nil {
+		return nil, err
+	}
+	th.Instructions, err = ProjectInstructions(s.projectServiceContext(context.Background(), binding), binding.Host, metadata)
+	if err != nil {
+		return nil, err
+	}
+	th.state = binding
+	th, err = s.addLoadedThread(th)
+	if err != nil {
+		return nil, err
+	}
+	if params.ContextSource == sessionContextSeed {
+		if err := s.dispatchHandoffLaunchTurn(th, params); err != nil {
+			return nil, err
+		}
+	}
+	th.mu.Lock()
+	thread := th.snapshotLocked()
+	th.mu.Unlock()
+	if params.Visibility == sessionVisibilityUser && params.ContextSource != sessionContextSeed {
+		if err := s.notifyThreadStarted(binding, thread); err != nil {
+			providers.DebugLogf("notify created thread %q: %v", th.ID, err)
+		}
+	}
+	s.pruneCachedThreads(th.ID)
+	return th, nil
+}
+
+// Managed-session creation commits to the caller's captured store. Publication
+// and execution admission belong to the caller, after this durable operation.
+func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store *session.Store, owner, source, id string, params hostSessionCreateParams) (*threadState, error) {
 	if s.rt == nil || s.rt.StreamRunner == nil {
 		return nil, errors.New("runtime session is required")
 	}
@@ -77,7 +113,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 	cleanupWorktree := false
 	fork := session.ForkMetadata{}
 	if params.ContextSource == sessionContextFork {
-		parent, loadErr := s.loadPersistedThreadSnapshot(params.ParentSessionID)
+		parent, loadErr := s.loadPersistedThreadSnapshotWithStore(binding, store, params.ParentSessionID)
 		if loadErr != nil {
 			return nil, loadErr
 		}
@@ -89,7 +125,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		fork = session.ForkMetadata{ForkedFromID: params.ParentSessionID}
 	}
 	if params.ContextSource == sessionContextSeed && params.ParentSessionID != "" {
-		parent, loadErr := s.loadPersistedThreadSnapshot(params.ParentSessionID)
+		parent, loadErr := s.loadPersistedThreadSnapshotWithStore(binding, store, params.ParentSessionID)
 		if loadErr != nil {
 			return nil, loadErr
 		}
@@ -97,7 +133,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 	}
 	selection := s.currentSessionRuntimeSelection()
 	if params.ParentSessionID != "" {
-		parent, found, err := session.Find(s.rt.SessionDir, params.ParentSessionID)
+		parent, found, err := store.Find(params.ParentSessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -119,7 +155,15 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		}
 	}
 	if params.ModelAlias != "" {
-		resolved := s.resolveSubagentModelAlias(params.ModelAlias)
+		services, err := binding.Services()
+		if err != nil {
+			return nil, err
+		}
+		models, err := binding.Models()
+		if err != nil {
+			return nil, err
+		}
+		resolved := s.resolveSubagentModelAliasWithServices(services, models, params.ModelAlias)
 		if resolved.Err != nil {
 			return nil, resolved.Err
 		}
@@ -148,7 +192,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		threadCWD, workspaceID = root, resolvedID
 	}
 	if params.SharedWorkspaceSessionID != "" {
-		shared, found, err := session.Find(s.rt.SessionDir, params.SharedWorkspaceSessionID)
+		shared, found, err := store.Find(params.SharedWorkspaceSessionID)
 		if err != nil {
 			return nil, err
 		}
@@ -162,7 +206,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		history = make([]providers.ChatMessage, 0, 1)
 	}
 	if params.ContextSource != sessionContextSeed {
-		if prompt := strings.TrimSpace(s.rt.StreamRunner.SystemPrompt); prompt != "" && len(history) == 0 {
+		if prompt := strings.TrimSpace(binding.SystemPrompt); prompt != "" && len(history) == 0 {
 			history = append(history, providers.ChatMessage{Role: "system", Content: sessionSystemPrompt(prompt, params.Instructions)})
 		}
 	}
@@ -208,16 +252,18 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		ProjectRole: params.ProjectRole, Instructions: params.Instructions, ToolPolicyJSON: toolPolicyJSON,
 	}
 	var records []session.HistoryRecord
-	artifactStateDir := ""
+	var artifactServices *runtime.StateServices
 	if params.ContextSource == sessionContextFork {
 		stateDir, stateErr := s.workspaceStateDir()
 		if stateErr != nil {
 			return nil, stateErr
 		}
-		artifactStateDir = stateDir
-		if err := preserveForkArtifacts(artifactStateDir, params.ParentSessionID, id, history); err != nil {
-			_ = os.RemoveAll(statepath.SessionArtifactDir(artifactStateDir, id))
-			return nil, err
+		artifactServices, stateErr = binding.Services()
+		if stateErr != nil {
+			return nil, stateErr
+		}
+		if err := s.preserveForkArtifacts(artifactServices, stateDir, params.ParentSessionID, id, history); err != nil {
+			return nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err)
 		}
 		records = historyRecordsFromChatMessages(history)
 	}
@@ -249,24 +295,27 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 		}
 	}
 	if err := s.rt.PinExecutionEnvironment(id, params.ParentSessionID); err != nil {
+		if artifactServices != nil {
+			err = rollbackCreatedArtifacts(artifactServices.Artifacts, id, err)
+		}
 		return nil, err
 	}
 	var created *session.Session
 	var err error
 	if params.InitialInput != nil {
-		created, err = session.CreateInitializedWithInbox(s.rt.SessionDir, initial, records, seed, launch, *params.InitialInput)
+		created, err = store.CreateInitializedWithInbox(initial, records, seed, launch, *params.InitialInput)
 	} else {
-		created, err = session.CreateInitializedWithLaunch(s.rt.SessionDir, initial, records, seed, launch)
+		created, err = store.CreateInitializedWithLaunch(initial, records, seed, launch)
 	}
 	if err != nil {
-		if artifactStateDir != "" {
-			_ = os.RemoveAll(statepath.SessionArtifactDir(artifactStateDir, id))
+		if artifactServices != nil {
+			err = rollbackCreatedArtifacts(artifactServices.Artifacts, id, err)
 		}
 		return nil, err
 	}
 	cleanupWorktree = false
 	if params.ContextSource == sessionContextSeed {
-		if loaded, err := loadChatMessages(s.rt.SessionDir, id); err == nil {
+		if loaded, err := loadChatMessages(store, id); err == nil {
 			history = loaded
 		}
 	}
@@ -276,7 +325,7 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 	th.Title = params.Name
 	th.Owner = owner
 	th.Visibility = params.Visibility
-	th.Instructions = effectiveSessionInstructions(initial)
+	th.Instructions = initial.Instructions
 	if source == projectSessionSource {
 		th.ProjectID = params.ParentSessionID
 		th.ProjectRole = projectRoleForSession(initial)
@@ -294,23 +343,6 @@ func (s *Server) createHostSessionThread(owner, source, id string, params hostSe
 	if workspaceID != "" {
 		th.WorkspaceKind = WorkspaceKindProject
 	}
-	s.mu.Lock()
-	s.threads[id] = th
-	s.mu.Unlock()
-	if params.ContextSource == sessionContextSeed {
-		if err := s.dispatchHandoffLaunchTurn(th, params); err != nil {
-			return nil, err
-		}
-	}
-	th.mu.Lock()
-	thread := th.snapshotLocked()
-	th.mu.Unlock()
-	if params.Visibility == sessionVisibilityUser && params.ContextSource != sessionContextSeed {
-		if err := s.notifyThreadStarted(thread); err != nil {
-			providers.DebugLogf("notify created thread %q: %v", id, err)
-		}
-	}
-	s.pruneCachedThreads(id)
 	return th, nil
 }
 
@@ -383,4 +415,9 @@ func sessionSystemPrompt(prompt, instructions string) string {
 		return prompt
 	}
 	return strings.TrimSpace(prompt) + "\n\n# Session instructions\n\n" + instructions
+}
+
+func rollbackCreatedArtifacts(artifacts *runtime.ArtifactClient, threadID string, cause error) error {
+	_, cleanupErr := artifacts.DeleteThread(context.Background(), threadID)
+	return errors.Join(cause, cleanupErr)
 }

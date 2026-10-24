@@ -33,6 +33,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
@@ -48,6 +49,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/toolstate"
 	"github.com/coder/websocket"
 )
 
@@ -665,6 +667,19 @@ func TestServerInitializeHidesInactivePluginMCPOverrides(t *testing.T) {
 	}
 }
 
+func testProviderCredentials(t *testing.T, home string) credentialstore.Store {
+	t.Helper()
+	resolved, err := statepath.Home(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := authstorage.NewNativeStore(credentialstore.NewFileStore(filepath.Join(home, "test-credentials.json")), resolved, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return selected
+}
+
 func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 	cfg := config.Config{
 		DefaultProvider: "xiaomi",
@@ -691,7 +706,7 @@ func TestProviderSummariesExposeOpenCodeStyleVariants(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	var xiaomi, anthropic, openai, openrouter ProviderSummary
 	for _, summary := range summaries {
 		switch summary.Name {
@@ -809,7 +824,7 @@ func TestProviderHasAuthRequiresAvailableCredentials(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := providerHasAuth("provider", tt.provider, home); got != tt.want {
+			if got := providerHasSelectedAuth("provider", tt.provider, testProviderCredentials(t, home)); got != tt.want {
 				t.Fatalf("providerHasAuth() = %v, want %v", got, tt.want)
 			}
 		})
@@ -818,47 +833,43 @@ func TestProviderHasAuthRequiresAvailableCredentials(t *testing.T) {
 
 func TestProviderHasAuthUsesDefaultEnvironmentAndStoredCredentials(t *testing.T) {
 	home := t.TempDir()
+	selected := testProviderCredentials(t, home)
 	t.Setenv("OPENAI_API_KEY", "default-openai-key")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
 
-	if !providerHasAuth("openai", config.ProviderConfig{Type: "openai"}, home) {
+	if !providerHasSelectedAuth("openai", config.ProviderConfig{Type: "openai"}, selected) {
 		t.Fatal("expected the default OpenAI environment variable to be detected")
 	}
 
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := authstorage.NewBound(context.Background(), selected)
 	if err := store.Set("anthropic", authstorage.Credentials{AuthToken: "stored-token"}); err != nil {
 		t.Fatal(err)
 	}
-	if !providerHasAuth("anthropic", config.ProviderConfig{Type: "anthropic"}, home) {
+	if !providerHasSelectedAuth("anthropic", config.ProviderConfig{Type: "anthropic"}, selected) {
 		t.Fatal("expected the stored Anthropic auth token to be detected")
 	}
 }
 
 func TestProviderHasAuthChecksCodexOAuthAvailability(t *testing.T) {
 	home := t.TempDir()
+	selected := testProviderCredentials(t, home)
 	t.Setenv("WUU_TEST_MISSING_CODEX_KEY", "")
 	provider := config.ProviderConfig{
 		Type:                  "openai-codex",
 		APIKeyEnv:             "WUU_TEST_MISSING_CODEX_KEY",
 		ReuseCodexCredentials: true,
 	}
-	if providerHasAuth("codex-provider", provider, home) {
+	if providerHasSelectedAuth("codex-provider", provider, selected) {
 		t.Fatal("credential reuse and an env name must not report unavailable Codex credentials as configured")
 	}
 
-	store, err := authstorage.ForHome(home)
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := authstorage.NewBound(context.Background(), selected)
 	if err := store.Set("openai-codex", authstorage.Credentials{AccessToken: "stored-access-token"}); err != nil {
 		t.Fatal(err)
 	}
 	provider.ReuseCodexCredentials = false
-	if !providerHasAuth("codex-provider", provider, home) {
+	if !providerHasSelectedAuth("codex-provider", provider, selected) {
 		t.Fatal("expected Wuu Codex OAuth credentials to be detected without CLI credential reuse")
 	}
 }
@@ -901,6 +912,7 @@ func TestProviderSummariesExposeDiscoveredCodexCLILogin(t *testing.T) {
 	if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bindConfigSourceForTest(t, rt)
 	summaries := New(rt, &lockedBuffer{}).providerSummaries()
 	var discovered *ProviderSummary
 	for index := range summaries {
@@ -914,6 +926,9 @@ func TestProviderSummariesExposeDiscoveredCodexCLILogin(t *testing.T) {
 	}
 	if discovered.ReuseCodexCredentials {
 		t.Fatal("discovered Codex login must not imply reuse is already enabled")
+	}
+	if discovered.APIKeyConfigured {
+		t.Fatal("discovered Codex login must not authorize inference before reuse is enabled")
 	}
 	if discovered.CodexCredentialSource != "codex-cli" {
 		t.Fatalf("codex credential source = %q, want codex-cli", discovered.CodexCredentialSource)
@@ -938,7 +953,7 @@ func TestProviderSummariesExposeGrokBuildLoginAndModelDefaults(t *testing.T) {
 			Type: "grok-build", Model: "grok-4.5", ReuseGrokCredentials: true,
 		},
 	}}
-	summaries := providerSummariesFromConfig(cfg, home)
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, home))
 	if len(summaries) != 1 || !summaries[0].APIKeyConfigured || !summaries[0].ConnectionLocked {
 		t.Fatalf("summary = %+v", summaries)
 	}
@@ -980,6 +995,7 @@ func TestProviderSummariesAutoDiscoverLocalGrokBuildLogin(t *testing.T) {
 	if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bindConfigSourceForTest(t, rt)
 	summaries := New(rt, &lockedBuffer{}).providerSummaries()
 	var discovered *ProviderSummary
 	for index := range summaries {
@@ -1043,6 +1059,7 @@ func TestSelectingAutoDiscoveredGrokBuildPersistsProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	request := `{"id":"grok","method":"config/model/update","params":{"provider":"grok-build","model":"grok-4.6","variant":"xhigh"}}`
 	if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
@@ -1079,7 +1096,7 @@ func TestProviderSummariesExposeGPT56CatalogForCompatibleGateway(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1140,7 +1157,7 @@ func TestProviderSummariesExposeMiniMaxM31AndGemini4(t *testing.T) {
 				DefaultProvider: "service",
 				Providers:       map[string]config.ProviderConfig{"service": tc.provider},
 			}
-			summaries := providerSummariesFromConfig(cfg, t.TempDir())
+			summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 			if len(summaries) != 1 {
 				t.Fatalf("unexpected summaries: %+v", summaries)
 			}
@@ -1175,7 +1192,7 @@ func TestProviderSummariesEnrichPartialGPT56ConfigForCompatibleGateway(t *testin
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1215,7 +1232,7 @@ func TestProviderSummariesMergeConfiguredVariants(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 || len(summaries[0].Models) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1247,7 +1264,7 @@ func TestProviderSummariesPreferConfiguredVariantsOverCatalog(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	model := providerModelByID(t, summaries[0], "gpt-5.5")
 	if model.Source != "config" || model.DisplayName != "GPT-5.5" {
 		t.Fatalf("unexpected configured model summary: %+v", model)
@@ -1269,7 +1286,7 @@ func TestProviderSummariesDoNotShowOfficialModelsForCustomAnthropicEndpoint(t *t
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1290,7 +1307,7 @@ func TestProviderSummariesExposeCodexSubscriptionAliasesOnly(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1328,7 +1345,7 @@ func TestProviderSummariesClampCodexCatalogInputLimit(t *testing.T) {
 		},
 	}
 
-	summaries := providerSummariesFromConfig(cfg, t.TempDir())
+	summaries := selectedProviderSummariesFromConfig(cfg, testProviderCredentials(t, t.TempDir()))
 	if len(summaries) != 1 {
 		t.Fatalf("unexpected summaries: %+v", summaries)
 	}
@@ -1387,6 +1404,7 @@ func TestServerConfigModelUpdate(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"model":"new-model"}}`)); err != nil {
@@ -1450,14 +1468,14 @@ func TestCachedThreadRestoresPersistedModelSelection(t *testing.T) {
 }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "persisted-model-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("persisted-model-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.SetModelSelection(rt.SessionDir, "persisted-model-thread", rt.ProviderName, "persisted-model", ""); err != nil {
+	if _, err := rt.Sessions.SetModelSelection("persisted-model-thread", rt.ProviderName, "persisted-model", ""); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(rt, &lockedBuffer{})
-	th, err := srv.ensureThreadLoaded("persisted-model-thread")
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), "persisted-model-thread")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1496,14 +1514,15 @@ func TestServerConfigModelUpdateRejectsRunningTargetThread(t *testing.T) {
 	now := time.Now().UTC()
 
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
+	running.state = testRuntimeState(t, rt)
 	running.PermissionMode = config.PermissionModeReadOnly
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
 
-	if _, err := session.CreateWithMetadata(rt.SessionDir, running.ID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(running.ID, rt.RootDir); err != nil {
 		t.Fatalf("create running session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, running.ID, session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection(running.ID, session.RuntimeSelection{
 		Provider:       rt.ProviderName,
 		Model:          rt.Model,
 		PermissionMode: config.PermissionModeReadOnly,
@@ -1520,7 +1539,7 @@ func TestServerConfigModelUpdateRejectsRunningTargetThread(t *testing.T) {
 	if rt.Model != "fake-model" || rt.Permissions.Mode != config.PermissionModeReadOnly {
 		t.Fatalf("failed update changed workspace defaults: model=%q permission=%q", rt.Model, rt.Permissions.Mode)
 	}
-	metadata, ok, err := session.Find(rt.SessionDir, running.ID)
+	metadata, ok, err := rt.Sessions.Find(running.ID)
 	if err != nil || !ok {
 		t.Fatalf("find running session: ok=%v err=%v", ok, err)
 	}
@@ -1548,18 +1567,20 @@ func TestServerConfigModelUpdateWorkspaceDefaultsPreserveRunningSession(t *testi
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
+	running.state = testRuntimeState(t, rt)
 	running.PermissionMode = config.PermissionModeReadOnly
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
 
-	if _, err := session.CreateWithMetadata(rt.SessionDir, running.ID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(running.ID, rt.RootDir); err != nil {
 		t.Fatalf("create running session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, running.ID, session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection(running.ID, session.RuntimeSelection{
 		Provider:       rt.ProviderName,
 		Model:          rt.Model,
 		PermissionMode: config.PermissionModeReadOnly,
@@ -1576,7 +1597,7 @@ func TestServerConfigModelUpdateWorkspaceDefaultsPreserveRunningSession(t *testi
 	if rt.Model != "new-model" || running.Model != "fake-model" {
 		t.Fatalf("workspace/session selections were not isolated: workspace=%q session=%q", rt.Model, running.Model)
 	}
-	metadata, ok, err := session.Find(rt.SessionDir, running.ID)
+	metadata, ok, err := rt.Sessions.Find(running.ID)
 	if err != nil || !ok {
 		t.Fatalf("find running session: ok=%v err=%v", ok, err)
 	}
@@ -1599,17 +1620,17 @@ func TestServerConfigModelUpdateRejectsTargetOwnedByAnotherServer(t *testing.T) 
 }`), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "leased-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("leased-thread", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, "leased-thread", session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection("leased-thread", session.RuntimeSelection{
 		Provider:       rt.ProviderName,
 		Model:          rt.Model,
 		PermissionMode: config.PermissionModeStandard,
 	}); err != nil {
 		t.Fatalf("pin selection: %v", err)
 	}
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, "leased-thread")
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, "leased-thread")
 	if err != nil || !acquired {
 		t.Fatalf("acquire external lease: acquired=%v err=%v", acquired, err)
 	}
@@ -1651,17 +1672,20 @@ func TestServerConfigModelUpdateScopesSelectionToTargetOnly(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 	target := newThreadState("target-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
+	target.state = testRuntimeState(t, rt)
 	other := newThreadState("other-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
+	other.state = testRuntimeState(t, rt)
 	for _, th := range []*threadState{target, other} {
 		th.PermissionMode = config.PermissionModeReadOnly
 		srv.threads[th.ID] = th
-		if _, err := session.CreateWithMetadata(rt.SessionDir, th.ID, rt.RootDir); err != nil {
+		if _, err := rt.Sessions.CreateWithMetadata(th.ID, rt.RootDir); err != nil {
 			t.Fatalf("create %s: %v", th.ID, err)
 		}
-		if _, err := session.SetRuntimeSelection(rt.SessionDir, th.ID, session.RuntimeSelection{
+		if _, err := rt.Sessions.SetRuntimeSelection(th.ID, session.RuntimeSelection{
 			Provider:       rt.ProviderName,
 			Model:          rt.Model,
 			PermissionMode: config.PermissionModeReadOnly,
@@ -1690,7 +1714,7 @@ func TestServerConfigModelUpdateScopesSelectionToTargetOnly(t *testing.T) {
 		t.Fatalf("non-target selection changed: model=%q effort=%q permission=%q", other.Model, other.ModelEffort, other.PermissionMode)
 	}
 	other.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, other.ID)
+	metadata, ok, err := rt.Sessions.Find(other.ID)
 	if err != nil || !ok {
 		t.Fatalf("find non-target session: ok=%v err=%v", ok, err)
 	}
@@ -1709,13 +1733,14 @@ func TestServerConfigModelUpdateScopesSelectionToTargetOnly(t *testing.T) {
 func newTargetedUpdateFixture(t *testing.T, rt *runtime.Session, srv *Server) *threadState {
 	t.Helper()
 	target := newThreadState("target-thread", nil, rt.ProviderName, "thread-model", rt.RootDir, true, time.Now().UTC())
+	target.state = testRuntimeState(t, rt)
 	target.ModelEffort = "low"
 	target.PermissionMode = config.PermissionModeReadOnly
 	srv.threads[target.ID] = target
-	if _, err := session.CreateWithMetadata(rt.SessionDir, target.ID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(target.ID, rt.RootDir); err != nil {
 		t.Fatalf("create target session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, target.ID, session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection(target.ID, session.RuntimeSelection{
 		Provider:       rt.ProviderName,
 		Model:          "thread-model",
 		Effort:         "low",
@@ -1750,6 +1775,7 @@ func TestServerConfigModelUpdatePermissionOnlyTargetKeepsModelSelection(t *testi
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
@@ -1784,7 +1810,7 @@ func TestServerConfigModelUpdatePermissionOnlyTargetKeepsModelSelection(t *testi
 			target.Model, target.ModelEffort, target.ModelVariant, target.PermissionMode)
 	}
 	target.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, target.ID)
+	metadata, ok, err := rt.Sessions.Find(target.ID)
 	if err != nil || !ok {
 		t.Fatalf("find target session: ok=%v err=%v", ok, err)
 	}
@@ -1799,6 +1825,7 @@ func TestServerConfigModelUpdateModelOnlyTargetResetsUnsupportedEffortAndKeepsPe
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
@@ -1831,7 +1858,7 @@ func TestServerConfigModelUpdateModelOnlyTargetResetsUnsupportedEffortAndKeepsPe
 			target.Model, target.ModelEffort, target.PermissionMode)
 	}
 	target.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, target.ID)
+	metadata, ok, err := rt.Sessions.Find(target.ID)
 	if err != nil || !ok {
 		t.Fatalf("find target session: ok=%v err=%v", ok, err)
 	}
@@ -1846,6 +1873,7 @@ func TestServerConfigModelUpdateExplicitEmptyVariantClearsSelection(t *testing.T
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
@@ -1876,7 +1904,7 @@ func TestServerConfigModelUpdateExplicitEmptyVariantClearsSelection(t *testing.T
 			target.Model, target.ModelEffort, target.ModelVariant)
 	}
 	target.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, target.ID)
+	metadata, ok, err := rt.Sessions.Find(target.ID)
 	if err != nil || !ok {
 		t.Fatalf("find target session: ok=%v err=%v", ok, err)
 	}
@@ -1913,11 +1941,12 @@ func newForeignProviderTargetFixture(t *testing.T, rt *runtime.Session, srv *Ser
 	t.Helper()
 	target := newThreadState("foreign-thread", nil, "xiaomi", "mimo-v2.5-pro", rt.RootDir, true, time.Now().UTC())
 	target.PermissionMode = config.PermissionModeReadOnly
+	target.state = testRuntimeState(t, srv.rt)
 	srv.threads[target.ID] = target
-	if _, err := session.CreateWithMetadata(rt.SessionDir, target.ID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(target.ID, rt.RootDir); err != nil {
 		t.Fatalf("create target session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, target.ID, session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection(target.ID, session.RuntimeSelection{
 		Provider:       "xiaomi",
 		Model:          "mimo-v2.5-pro",
 		PermissionMode: config.PermissionModeReadOnly,
@@ -1937,6 +1966,7 @@ func TestServerConfigModelUpdateTargetedModelOnlyForeignProviderStaysThreadScope
 	rt.StreamRunner.Effort = "high"
 	writeForeignProviderUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newForeignProviderTargetFixture(t, rt, srv)
 
@@ -1969,7 +1999,7 @@ func TestServerConfigModelUpdateTargetedModelOnlyForeignProviderStaysThreadScope
 		t.Fatalf("target pin wrong: provider=%q model=%q", target.ModelProvider, target.Model)
 	}
 	target.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, target.ID)
+	metadata, ok, err := rt.Sessions.Find(target.ID)
 	if err != nil || !ok {
 		t.Fatalf("find target session: ok=%v err=%v", ok, err)
 	}
@@ -1987,6 +2017,7 @@ func TestServerConfigModelUpdateTargetedVariantOnlyValidatesAgainstThreadModel(t
 	rt.StreamRunner.Effort = "high"
 	writeForeignProviderUpdateConfig(t, rt)
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newForeignProviderTargetFixture(t, rt, srv)
 
@@ -2017,7 +2048,7 @@ func TestServerConfigModelUpdateTargetedVariantOnlyValidatesAgainstThreadModel(t
 			target.ModelProvider, target.Model, target.ModelVariant)
 	}
 	target.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, target.ID)
+	metadata, ok, err := rt.Sessions.Find(target.ID)
 	if err != nil || !ok {
 		t.Fatalf("find target session: ok=%v err=%v", ok, err)
 	}
@@ -2033,6 +2064,7 @@ func TestServerConfigModelUpdateConnectionOnlyTargetAllowedWhileRunning(t *testi
 	writeTargetedUpdateConfig(t, rt)
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newTargetedUpdateFixture(t, rt, srv)
 	target.mu.Lock()
@@ -2069,7 +2101,7 @@ func TestServerConfigModelUpdateConnectionOnlyTargetAllowedWhileRunning(t *testi
 			target.Model, target.ModelEffort, target.PermissionMode)
 	}
 	target.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, target.ID)
+	metadata, ok, err := rt.Sessions.Find(target.ID)
 	if err != nil || !ok {
 		t.Fatalf("find target session: ok=%v err=%v", ok, err)
 	}
@@ -2089,12 +2121,12 @@ func TestRunningTurnUsesModelSnapshotAfterConfigUpdate(t *testing.T) {
 	rt.StreamRunner.APIModel = "fake-model"
 	out := &lockedBuffer{}
 	srv := New(rt, out)
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "running-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("running-thread", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	threadRuntime := &runtime.ThreadRuntime{
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:   streamClient,
 			Model:    "fake-model",
@@ -2102,6 +2134,7 @@ func TestRunningTurnUsesModelSnapshotAfterConfigUpdate(t *testing.T) {
 		},
 	}
 	th := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	th.execRuntime = threadRuntime
 	userMsg := providers.ChatMessage{Role: "user", Content: "hello"}
 	turnID := "turn-snapshot"
@@ -2117,7 +2150,7 @@ func TestRunningTurnUsesModelSnapshotAfterConfigUpdate(t *testing.T) {
 		t.Fatalf("update workspace default: %v", err)
 	}
 
-	srv.runTurnWithRequestContext(context.Background(), th, threadRuntime, turnID, turnRuntime, []providers.ChatMessage{userMsg}, nil)
+	srv.runTurnWithRequestContext(testRuntimeState(t, srv.rt), context.Background(), th, threadRuntime, turnID, turnRuntime, []providers.ChatMessage{userMsg}, nil)
 
 	th.mu.Lock()
 	if len(th.Turns) != 1 || th.Turns[0].UsageModel != "fake-model" {
@@ -2127,7 +2160,7 @@ func TestRunningTurnUsesModelSnapshotAfterConfigUpdate(t *testing.T) {
 		t.Fatalf("workspace default update changed running thread: thread=%q runner=%q pending=%v", th.Model, th.execRuntime.StreamRunner.Model, th.pendingRuntimeReset)
 	}
 	th.mu.Unlock()
-	metas, err := loadMetaMessages(rt.SessionDir, th.ID)
+	metas, err := loadMetaMessages(rt.Sessions, th.ID)
 	if err != nil {
 		t.Fatalf("load meta messages: %v", err)
 	}
@@ -2158,6 +2191,7 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
@@ -2242,7 +2276,9 @@ func TestServerConfigGeneralUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	}
 	oldPrompt := rt.StreamRunner.SystemPrompt
 	th := newThreadState("thread-1", []providers.ChatMessage{{Role: "system", Content: oldPrompt}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: oldPrompt}}
+	bindConfigSourceForTest(t, rt)
+	th.state = testRuntimeState(t, rt)
+	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: oldPrompt}}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	srv.threads[th.ID] = th
@@ -2350,6 +2386,7 @@ func TestServerConfigModelUpdatePersistsPermissionMode(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"model":"fake-model","permission_mode":"unconfined"}}`
@@ -2403,6 +2440,7 @@ func TestServerConfigModelUpdateAppliesPermissionBoundary(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"model":"fake-model","permission_mode":"read_only"}}`
@@ -2424,7 +2462,6 @@ func TestServerConfigModelUpdateAppliesPermissionBoundary(t *testing.T) {
 }
 
 func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test-key")
 	rt := newTestRuntime(t, &fakeClient{})
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
@@ -2442,6 +2479,7 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
     "fake-provider": {
       "type": "openai-compatible",
       "base_url": "https://example.test/v1",
+      "api_key": "test-key",
       "model": "fake-model"
     }
   }
@@ -2450,20 +2488,22 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "thread-1", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("thread-1", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	thread := newThreadState("thread-1", nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	thread.state = testRuntimeState(t, rt)
 	thread.History = []providers.ChatMessage{
 		{Role: "system", Content: "old fake-model system prompt"},
 		{Role: "user", Content: "hello"},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, thread.ID, thread.History); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, thread.ID, thread.History); err != nil {
 		t.Fatalf("write thread history: %v", err)
 	}
 	thread.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "fake-model", APIModel: "fake-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "fake-model", APIModel: "fake-model"},
 		Toolkit:      threadKit,
 	}
 	srv.threads[thread.ID] = thread
@@ -2516,7 +2556,7 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(rt.RootDir, "switched.txt")); err != nil || string(data) != "after" {
 		t.Fatalf("model switch edit=%q err=%v", data, err)
 	}
-	persisted, err := loadChatMessages(rt.SessionDir, thread.ID)
+	persisted, err := loadChatMessages(rt.Sessions, thread.ID)
 	if err != nil {
 		t.Fatalf("load thread history: %v", err)
 	}
@@ -2547,6 +2587,7 @@ func TestServerConfigModelUpdateSwitchesProvider(t *testing.T) {
 	}
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"codex-provider","model":"new-codex-model"}}`)); err != nil {
@@ -2618,13 +2659,15 @@ func TestServerConfigModelUpdateRecomputesToolLoadingForSessionProviderSelection
 	rt.StreamRunner.NativeDeferredToolDiscovery = true
 
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	target := newThreadState("target-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	target.state = testRuntimeState(t, rt)
 	srv.threads[target.ID] = target
-	if _, err := session.CreateWithMetadata(rt.SessionDir, target.ID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(target.ID, rt.RootDir); err != nil {
 		t.Fatalf("create target session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, target.ID, session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection(target.ID, session.RuntimeSelection{
 		Provider: rt.ProviderName,
 		Model:    rt.Model,
 	}); err != nil {
@@ -2652,7 +2695,7 @@ func TestServerConfigModelUpdateRecomputesToolLoadingForSessionProviderSelection
 		t.Fatalf("target session pin not updated: provider=%q model=%q", target.ModelProvider, target.Model)
 	}
 	target.mu.Unlock()
-	metadata, ok, err := session.Find(rt.SessionDir, target.ID)
+	metadata, ok, err := rt.Sessions.Find(target.ID)
 	if err != nil || !ok {
 		t.Fatalf("find target session: ok=%v err=%v", ok, err)
 	}
@@ -2679,9 +2722,11 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 	}
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	idle := newThreadState("idle-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: rt.Model}}
+	idle.state = testRuntimeState(t, rt)
+	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: rt.Model}}
 	srv.threads[idle.ID] = idle
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"fake-provider","model":"new-model","base_url":"https://custom.example.test/v1","api_key":"new-key"}}`
@@ -2716,10 +2761,7 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 		!strings.Contains(string(data), `"model": "new-model"`) {
 		t.Fatalf("provider connection was not persisted: %s", data)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	credentials, err := store.Get("fake-provider")
 	if err != nil || credentials.APIKey != "new-key" {
 		t.Fatalf("provider key was not saved to auth store: credentials=%+v err=%v", credentials, err)
@@ -2784,6 +2826,7 @@ func TestServerConfigModelUpdateCreatesProvider(t *testing.T) {
 	}
 	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"custom-1","model":"custom-model","base_url":"https://custom.example.test/v1","api_key":"new-key","create_provider":true}}`
@@ -2824,10 +2867,7 @@ func TestServerConfigModelUpdateCreatesProvider(t *testing.T) {
 		!strings.Contains(string(data), `"default_provider": "custom-1"`) {
 		t.Fatalf("new provider was not persisted: %s", data)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	credentials, err := store.Get("custom-1")
 	if err != nil || credentials.APIKey != "new-key" {
 		t.Fatalf("provider key was not saved to auth store: credentials=%+v err=%v", credentials, err)
@@ -2851,6 +2891,7 @@ func TestServerConfigModelUpdateCreatesAnthropicProviderWithAuthToken(t *testing
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"anthropic-gateway","model":"claude-sonnet-4-6[1M]","base_url":"https://anthropic-gateway.example.test/","auth_token":"sk-token","type":"anthropic","create_provider":true}}`
@@ -2884,10 +2925,7 @@ func TestServerConfigModelUpdateCreatesAnthropicProviderWithAuthToken(t *testing
 		strings.Contains(string(data), `"api_key": "sk-token"`) {
 		t.Fatalf("anthropic provider was not persisted safely: %s", data)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	credentials, err := store.Get("anthropic-gateway")
 	if err != nil || credentials.AuthToken != "sk-token" {
 		t.Fatalf("provider auth token was not saved to auth store: credentials=%+v err=%v", credentials, err)
@@ -2911,6 +2949,7 @@ func TestServerConfigModelUpdateCreatesXAISubscriptionWithoutAPIKey(t *testing.T
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"xai-subscription","model":"grok-4.6","type":"xai-subscription","create_provider":true}}`
@@ -2966,6 +3005,7 @@ func TestServerXAILoginStartAndPoll(t *testing.T) {
 	t.Setenv("WUU_XAI_DEVICE_CODE_URL", server.URL+"/oauth2/device/code")
 	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/oauth2/token")
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"auth/xai/login/start"}`)); err != nil {
@@ -3019,6 +3059,7 @@ func TestServerConfigModelUpdateRejectsOAuthConnectionChanges(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"codex-provider","model":"new-codex-model","base_url":"https://custom.example.test/v1","api_key":"new-key"}}`
@@ -3061,6 +3102,7 @@ func TestServerConfigModelUpdatePersistsEffort(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"model":"fake-model","effort":"xhigh"}}`)); err != nil {
@@ -3105,6 +3147,7 @@ func TestServerConfigModelUpdatePersistsVariantOptions(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"xiaomi","model":"mimo-v2.5-pro","variant":"high"}}`)); err != nil {
@@ -3157,6 +3200,7 @@ func TestServerConfigModelUpdateUsesCatalogFastModelRuntime(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"openai","model":"gpt-5.5-fast"}}`)); err != nil {
@@ -3231,6 +3275,7 @@ func TestServerConfigCodexModels(t *testing.T) {
 	}
 
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/codex/models"}`)); err != nil {
 		t.Fatalf("config/codex/models: %v", err)
@@ -3323,6 +3368,7 @@ func TestGPT61SolSubscriptionModelSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	live := []codex.ModelInfo{{Slug: "gpt-6.1-sol", DefaultReasoningLevel: "medium", SupportedReasoning: []string{"low", "medium", "high", "xhigh", "max"}}}
 	summaries := codexModelSummaries(live)
@@ -3386,23 +3432,23 @@ func TestCachedCodexModelsReplaceCatalogOnlyReasoningLevels(t *testing.T) {
 	if model.ContextWindow != 1_050_000 || model.Limit == nil || model.Limit.Context != 1_050_000 || model.Limit.Input != 272_000 || model.Limit.Output != 128_000 {
 		t.Fatalf("live Codex model did not receive subscription limits: %+v", model)
 	}
-	summaries := providerSummariesFromConfig(config.Config{
+	summaries := selectedProviderSummariesFromConfig(config.Config{
 		DefaultProvider: "openai-codex",
 		Providers: map[string]config.ProviderConfig{
 			"openai-codex": merged,
 		},
-	}, t.TempDir())
+	}, testProviderCredentials(t, t.TempDir()))
 	summary := providerModelByID(t, summaries[0], "gpt-5.6-sol")
 	if summary.Capabilities.ContextWindow != 1_050_000 || summary.Capabilities.InputLimit != 272_000 {
 		t.Fatalf("Codex model summary exposed API limits instead of subscription limits: %+v", summary.Capabilities)
 	}
 	merged.ContextWindow = 922_000
-	overriddenSummaries := providerSummariesFromConfig(config.Config{
+	overriddenSummaries := selectedProviderSummariesFromConfig(config.Config{
 		DefaultProvider: "openai-codex",
 		Providers: map[string]config.ProviderConfig{
 			"openai-codex": merged,
 		},
-	}, t.TempDir())
+	}, testProviderCredentials(t, t.TempDir()))
 	overridden := providerModelByID(t, overriddenSummaries[0], "gpt-5.6-sol")
 	if overridden.Capabilities.ContextWindow != 922_000 || overridden.Capabilities.InputLimit != 0 {
 		t.Fatalf("explicit Codex context override was clamped in model summary: %+v", overridden.Capabilities)
@@ -3443,13 +3489,6 @@ func TestCachedCodexModelsKeepAstraCatalogWindow(t *testing.T) {
 
 func TestServerConfigProviderRemoveInactive(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Set("drop", authstorage.Credentials{Type: "api_key", APIKey: "drop-key"}); err != nil {
-		t.Fatal(err)
-	}
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{
   "default_provider": "keep",
   "providers": {
@@ -3477,6 +3516,11 @@ func TestServerConfigProviderRemoveInactive(t *testing.T) {
 	removedTitleClient := &fakeClient{}
 	rt.TitleClient = removedTitleClient
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
+	store := selectedAuthFixture(t, rt)
+	if err := store.Set("drop", authstorage.Credentials{Type: "api_key", APIKey: "drop-key"}); err != nil {
+		t.Fatal(err)
+	}
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"drop"}}`
@@ -3526,7 +3570,7 @@ func TestServerConfigProviderRemoveInactive(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := xaisub.PersistTokens(os.Getenv("HOME"), xaisub.TokenResponse{AccessToken: "synthetic-shared-token", ExpiresIn: time.Hour}, xaisub.DefaultBaseURL); err != nil {
+	if err := store.Set(xaisub.AuthProviderID, authstorage.Credentials{Type: "oauth", AccessToken: "synthetic-shared-token", ExpiresAt: time.Now().Add(time.Hour), BaseURL: xaisub.DefaultBaseURL}); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{xaisub.AuthProviderID, "supergrok-two"} {
@@ -3572,6 +3616,7 @@ func TestServerConfigProviderRemoveActiveSwapsDefault(t *testing.T) {
 	rt.ProviderName = "drop"
 	rt.Model = "drop-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	store, err := authstorage.ForHome(os.Getenv("HOME"))
@@ -3677,11 +3722,13 @@ func TestServerConfigProviderRemoveRejectsProviderUsedByRunningTurn(t *testing.T
 	rt.Model = "drop-model"
 	rt.StreamRunner.Model = "drop-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
+	running.state = testRuntimeState(t, rt)
 	running.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "drop-model", APIModel: "drop-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "drop-model", APIModel: "drop-model"},
 	}
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
@@ -3738,20 +3785,21 @@ func TestServerConfigProviderRemoveAllowsProviderPinnedByIdleArchivedSession(t *
 }`), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "pinned-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("pinned-thread", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, "pinned-thread", session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection("pinned-thread", session.RuntimeSelection{
 		Provider: "drop",
 		Model:    "drop-model",
 	}); err != nil {
 		t.Fatalf("pin session to provider: %v", err)
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, "pinned-thread", true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived("pinned-thread", true); err != nil {
 		t.Fatalf("archive session: %v", err)
 	}
 	rt.ProviderName, rt.Model = "keep", "keep-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"drop"}}`
@@ -3796,11 +3844,13 @@ func TestServerConfigProviderRemoveAllowsUnusedProviderWithRunningThread(t *test
 	rt.Model = "keep-model"
 	rt.StreamRunner.Model = "keep-model"
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
+	running.state = testRuntimeState(t, rt)
 	running.execRuntime = &runtime.ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "keep-model", APIModel: "keep-model"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "keep-model", APIModel: "keep-model"},
 	}
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, now)
 	srv.threads[running.ID] = running
@@ -3843,6 +3893,7 @@ func TestServerConfigProviderRemoveRejectsOAuth(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"codex"}}`
@@ -3881,6 +3932,7 @@ func TestServerConfigProviderRemoveRejectsLastProvider(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"only"}}`
@@ -4034,6 +4086,7 @@ func TestServerProcessTTYUsesThreadLocalWorktreeManager(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	th := newThreadState("thread-worktree", nil, rt.ProviderName, rt.Model, t.TempDir(), false, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	threadRuntime := &runtime.ThreadRuntime{ProcessManager: threadManager}
 	th.execRuntime = threadRuntime
 	srv.mu.Lock()
@@ -4224,10 +4277,10 @@ func TestServerThreadStartEphemeralDoesNotPersistSession(t *testing.T) {
 	if result.Thread.ID == "" || !result.Thread.Ephemeral {
 		t.Fatalf("expected ephemeral thread: %+v", result.Thread)
 	}
-	if _, ok, err := session.Find(rt.SessionDir, result.Thread.ID); err != nil || ok {
+	if _, ok, err := rt.Sessions.Find(result.Thread.ID); err != nil || ok {
 		t.Fatalf("ephemeral thread should not create a session, ok=%v err=%v", ok, err)
 	}
-	sessions, err := session.List(rt.SessionDir, 0)
+	sessions, err := rt.Sessions.List(0)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -4254,7 +4307,7 @@ func TestServerThreadStartPersistsInitialModelSelection(t *testing.T) {
 		t.Fatalf("thread/start: %v", err)
 	}
 	thread := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread
-	stored, ok, err := session.Find(rt.SessionDir, thread.ID)
+	stored, ok, err := rt.Sessions.Find(thread.ID)
 	if err != nil || !ok {
 		t.Fatalf("find session: ok=%v err=%v", ok, err)
 	}
@@ -4280,6 +4333,7 @@ func TestServerTurnStartRunsAgentLoop(t *testing.T) {
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -4411,7 +4465,7 @@ func TestServerTurnStartRunsAgentLoop(t *testing.T) {
 		t.Fatalf("unexpected agent-loop messages: %+v", messages)
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -4419,7 +4473,7 @@ func TestServerTurnStartRunsAgentLoop(t *testing.T) {
 	if len(visiblePersisted) != 2 || visiblePersisted[0].Role != "user" || visiblePersisted[0].Content != "hello" || visiblePersisted[1].Role != "assistant" || visiblePersisted[1].Content != "done" {
 		t.Fatalf("unexpected persisted history: %+v", persisted)
 	}
-	sessions, err := session.List(rt.SessionDir, 1)
+	sessions, err := rt.Sessions.List(1)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -4438,7 +4492,9 @@ func TestServerTurnDispatchesPromptAndStopHooksOnce(t *testing.T) {
 		hooks.Stop:             {{Command: command("stop")}},
 	}))
 	out := &lockedBuffer{}
+	attachTestHookGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
@@ -4470,7 +4526,9 @@ func TestServerUserPromptHookBlocksBeforeHistory(t *testing.T) {
 		hooks.UserPromptSubmit: {{Command: "exit 2"}},
 	}))
 	out := &lockedBuffer{}
+	attachTestHookGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
 	}
@@ -4529,6 +4587,7 @@ func TestServerThreadContextCompositionReturnsLatestRequest(t *testing.T) {
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	raw, err := json.Marshal(map[string]any{
@@ -4646,7 +4705,7 @@ func TestContextCompositionFromTraceExposesUnifiedContextCeiling(t *testing.T) {
 		}},
 	}
 
-	result := srv.contextCompositionFromTrace("thread-1", "trace.jsonl", summary)
+	result := srv.contextCompositionFromTrace(testRuntimeState(t, srv.rt), "thread-1", "trace.jsonl", summary)
 	if !result.Available {
 		t.Fatalf("expected context composition to be available: %+v", result)
 	}
@@ -4728,7 +4787,7 @@ func TestServerCodexWebSocketReplayAcrossThreadTurns(t *testing.T) {
 		ConfigPath:   filepath.Join(root, ".wuu.json"),
 		SessionDir:   filepath.Join(root, ".wuu-home", "sessions"),
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "gpt-5.5",
@@ -4897,6 +4956,7 @@ func TestServerTurnPermissionModeChangesExecutionWithoutCacheDrift(t *testing.T)
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -5031,6 +5091,7 @@ func TestServerQueuedTurnReResolvesPermissionsAtStart(t *testing.T) {
 	}
 	rt.Toolkit = kit
 	out := &lockedBuffer{}
+	bindNativeTraceForTest(t, rt)
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -5041,7 +5102,7 @@ func TestServerQueuedTurnReResolvesPermissionsAtStart(t *testing.T) {
 	// queued; the thread has since been tightened to read-only. Start-time
 	// re-resolution must ignore the frozen mode and run the turn read-only.
 	unconfined := config.ResolvedPermissions{Mode: config.PermissionModeUnconfined}
-	started, err := srv.startQueuedTurn(context.Background(), threadID, queuedTurn{
+	started, err := srv.startQueuedTurn(testRuntimeState(t, srv.rt), context.Background(), threadID, queuedTurn{
 		id:       "queued-stale-unconfined",
 		msg:      providers.ChatMessage{Role: "user", Content: "queued write"},
 		snapshot: turnRuntimeSnapshot{}.withPermissions(unconfined),
@@ -5117,14 +5178,14 @@ func TestServerTurnStartRendersLightweightSlashCommandForModel(t *testing.T) {
 		t.Fatalf("model prompt should not include raw slash command:\n%s", modelPrompt)
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
 	if len(persisted) < 1 || persisted[0].DisplayContent != "/debug login failure" || strings.Contains(persisted[0].Content, "/debug") {
 		t.Fatalf("persisted user message did not keep display/model split: %+v", persisted)
 	}
-	sessions, err := session.List(rt.SessionDir, 1)
+	sessions, err := rt.Sessions.List(1)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -5174,7 +5235,7 @@ func TestServerTurnStartLoadsExplicitSkillIdentity(t *testing.T) {
 				if !strings.Contains(modelPrompt, "selected instructions quarterly roadmap") || strings.HasPrefix(modelPrompt, "/skill ") {
 					t.Fatalf("selected instructions were not loaded: %s", modelPrompt)
 				}
-				persisted, err := loadChatMessages(rt.SessionDir, threadID)
+				persisted, err := loadChatMessages(rt.Sessions, threadID)
 				if err != nil || len(persisted) == 0 || persisted[0].DisplayContent != prompt || persisted[0].Content != modelPrompt {
 					t.Fatalf("skill identity and loaded instructions must survive persistence: %+v, %v", persisted, err)
 				}
@@ -5511,7 +5572,7 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 	if pendingSteers != 0 {
 		t.Fatalf("interrupt should move pending steers out of the active turn, got %d", pendingSteers)
 	}
-	held, err := srv.loadHeldUserTurns(threadID)
+	held, err := srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5547,7 +5608,7 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 	if releaseResponse["error"] != nil {
 		t.Fatalf("idle held turn/steer returned error: %+v", releaseResponse["error"])
 	}
-	held, err = srv.loadHeldUserTurns(threadID)
+	held, err = srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5556,7 +5617,7 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 	}
 	close(client.release)
 	waitForTurnCompletedCountForThread(t, out, threadID, 1)
-	held, err = srv.loadHeldUserTurns(threadID)
+	held, err = srv.loadHeldUserTurns(testRuntimeState(t, srv.rt), threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5610,7 +5671,7 @@ func TestServerInterruptPersistsPartialTurnMessages(t *testing.T) {
 	}
 	waitForMethod(t, out, NotificationTurnError)
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -5640,7 +5701,7 @@ func TestServerInterruptPersistsPartialTurnMessages(t *testing.T) {
 
 	// Reload-time repair must be idempotent: the persisted pair is already
 	// complete, so a second load returns the same validated history.
-	reloaded, err := loadChatMessages(rt.SessionDir, threadID)
+	reloaded, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("reload persisted history: %v", err)
 	}
@@ -5744,7 +5805,7 @@ func TestServerSteerWaitsForOrdinaryToolSafeBoundary(t *testing.T) {
 		t.Fatalf("second provider request missing completed tool result: %+v", requests[1].Messages)
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -5822,7 +5883,9 @@ func TestServerGeneratesThreadTitle(t *testing.T) {
 	rt := newTestRuntime(t, mainClient)
 	rt.TitleClient = titleClient
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
@@ -5846,7 +5909,7 @@ func TestServerGeneratesThreadTitle(t *testing.T) {
 	if updated.Thread.ID != threadID || updated.Thread.Preview != "Fix login crash" {
 		t.Fatalf("unexpected title update: %+v", updated)
 	}
-	sessions, err := session.List(rt.SessionDir, 1)
+	sessions, err := rt.Sessions.List(1)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -5870,9 +5933,11 @@ func TestServerGeneratesThreadTitleFromFirstTurnSnapshot(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.TitleClient = titleClient
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "snapshot-title-thread", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("snapshot-title-thread", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5883,13 +5948,14 @@ func TestServerGeneratesThreadTitleFromFirstTurnSnapshot(t *testing.T) {
 	}
 	currentHistory := append(cloneHistory(firstTurnHistory), providers.ChatMessage{Role: "user", Content: "second task"})
 	th := newThreadState(sess.ID, currentHistory, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	srv.mu.Lock()
 	srv.threads[th.ID] = th
 	srv.mu.Unlock()
 
-	srv.generateThreadTitle(th.ID, firstTurnHistory, nil)
+	srv.generateThreadTitle(testRuntimeState(t, srv.rt), th.ID, firstTurnHistory, nil)
 
-	sessions, err := session.List(rt.SessionDir, 1)
+	sessions, err := rt.Sessions.List(1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5931,9 +5997,11 @@ func TestServerGeneratesThreadTitleUsesTitleRoleSelection(t *testing.T) {
 		t.Fatalf("modelroles.Resolve: %v", err)
 	}
 	rt.ModelRoles = roles
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
 
-	result, err := srv.generateThreadTitleCore("title-role-thread", []providers.ChatMessage{
+	result, err := srv.generateThreadTitleCore(testRuntimeState(t, srv.rt), "title-role-thread", []providers.ChatMessage{
 		{Role: "system", Content: "system prompt"},
 		{Role: "user", Content: "make the title role explicit"},
 	}, false, false, true, nil)
@@ -5964,12 +6032,14 @@ func TestServerGeneratesThreadTitleInheritsPinnedThreadModel(t *testing.T) {
 	rt.ModelRoles = modelroles.Set{
 		Title: modelroles.Selection{Inherited: true, Model: "fake-model", APIModel: "fake-model"},
 	}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
 
 	threadClient := &fakeClient{response: providers.ChatResponse{Content: "Thread title"}}
 	threadRuntime := &runtime.ThreadRuntime{
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:   providers.AdaptStreamClient(threadClient),
 			Model:    "session-pinned-model",
@@ -5977,7 +6047,7 @@ func TestServerGeneratesThreadTitleInheritsPinnedThreadModel(t *testing.T) {
 		},
 	}
 
-	result, err := srv.generateThreadTitleCore("inherit-thread", []providers.ChatMessage{
+	result, err := srv.generateThreadTitleCore(testRuntimeState(t, srv.rt), "inherit-thread", []providers.ChatMessage{
 		{Role: "system", Content: "system prompt"},
 		{Role: "user", Content: "pin the session model"},
 	}, false, false, true, threadRuntime)
@@ -6034,7 +6104,7 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 		ConfigPath:   "/tmp/.wuu.json",
 		SessionDir:   t.TempDir() + "/.wuu-state/sessions",
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(mainClient),
 			Model:        "kimi-k2.6",
@@ -6044,7 +6114,9 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 	}
 	registerTestWuuEngine(t, rt)
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
@@ -6077,7 +6149,7 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 		t.Fatal("Preview should have been replaced by the LLM title, not the raw user prompt")
 	}
 
-	sessions, err := session.List(rt.SessionDir, 1)
+	sessions, err := rt.Sessions.List(1)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -6132,12 +6204,14 @@ func TestServerRegenerateTitle(t *testing.T) {
 	rt := newTestRuntime(t, mainClient)
 	rt.TitleClient = titleClient
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	// Seed an existing thread that is BEYOND its first turn. The first-turn
 	// auto title gen would skip this because history has > 1 user message;
 	// the explicit regenerate method must still work.
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "regen-thread-1", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("regen-thread-1", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -6147,10 +6221,10 @@ func TestServerRegenerateTitle(t *testing.T) {
 		{Role: "user", Content: "second task prompt"},
 		{Role: "assistant", Content: "second task answer"},
 	}
-	if err := session.UpdateIndex(rt.SessionDir, sess.ID, len(history), "first task prompt"); err != nil {
+	if err := rt.Sessions.UpdateIndex(sess.ID, len(history), "first task prompt"); err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, history); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, history); err != nil {
 		t.Fatal(err)
 	}
 
@@ -6167,10 +6241,10 @@ func TestServerRegenerateTitle(t *testing.T) {
 	// before asserting anything about persistence.
 	waitForResponseByID(t, out, "reg-1")
 	// Verify title was NOT persisted.
-	if _, ok, _ := session.Find(rt.SessionDir, sess.ID); !ok {
+	if _, ok, _ := rt.Sessions.Find(sess.ID); !ok {
 		t.Fatal("session should still exist")
 	}
-	persisted, _ := session.List(rt.SessionDir, 100)
+	persisted, _ := rt.Sessions.List(100)
 	for _, p := range persisted {
 		if p.ID == sess.ID && p.Title != "" {
 			t.Fatalf("dry-run must not persist, got Title=%q", p.Title)
@@ -6187,7 +6261,7 @@ func TestServerRegenerateTitle(t *testing.T) {
 		t.Fatalf("regenerate-title persist: %v", err)
 	}
 	waitForResponseByID(t, out, "reg-2")
-	persisted2, _ := session.List(rt.SessionDir, 100)
+	persisted2, _ := rt.Sessions.List(100)
 	var updated *session.Session
 	for i := range persisted2 {
 		if persisted2[i].ID == sess.ID {
@@ -6214,6 +6288,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 	}
 	rt := newTestRuntime(t, client)
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -6290,7 +6365,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 		t.Fatalf("unexpected fork turn items: %+v", fork.Turns[0].Items)
 	}
 
-	forkHistory, err := loadChatMessages(rt.SessionDir, fork.ID)
+	forkHistory, err := loadChatMessages(rt.Sessions, fork.ID)
 	if err != nil {
 		t.Fatalf("load fork history: %v", err)
 	}
@@ -6298,7 +6373,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 	if len(visibleForkHistory) != 2 || visibleForkHistory[0].Content != "first prompt" || visibleForkHistory[1].Content != "first answer" {
 		t.Fatalf("unexpected persisted fork history: %+v", forkHistory)
 	}
-	sourceHistory, err := loadChatMessages(rt.SessionDir, threadID)
+	sourceHistory, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load source history: %v", err)
 	}
@@ -6306,7 +6381,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 		t.Fatalf("source history should remain intact, got %+v", sourceHistory)
 	}
 
-	metadata, ok, err := session.Find(rt.SessionDir, fork.ID)
+	metadata, ok, err := rt.Sessions.Find(fork.ID)
 	if err != nil {
 		t.Fatalf("find fork metadata: %v", err)
 	}
@@ -6330,6 +6405,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 		{Role: "assistant", Content: "memory answer", Phase: providers.MessagePhaseFinalAnswer},
 	}, "fake-provider", "fake-model", rt.RootDir, false, time.Now())
 	srv.mu.Lock()
+	memorySource.state = testRuntimeState(t, srv.rt)
 	srv.threads[memorySource.ID] = memorySource
 	srv.mu.Unlock()
 	memoryTurn, memoryItem := finalAnswerItemForForkTest(t, memorySource.Turns, "memory answer")
@@ -6347,7 +6423,7 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 		t.Fatalf("fork in-memory source: %+v", memoryResponse["error"])
 	}
 	memoryFork := remarshal[ThreadForkResult](t, memoryResponse["result"]).Thread
-	memoryHistory, err := loadChatMessages(rt.SessionDir, memoryFork.ID)
+	memoryHistory, err := loadChatMessages(rt.Sessions, memoryFork.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -6361,32 +6437,21 @@ func TestServerThreadForkAtAssistantItem(t *testing.T) {
 
 func TestServerThreadForkDoesNotReuseSourceToolInvocationOwnership(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260718-000000-fork-tool-ledger", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260718-000000-fork-tool-ledger", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
-	db, err := session.OpenStore(rt.SessionDir)
-	if err != nil {
-		t.Fatalf("open session store: %v", err)
-	}
 	now := time.Now().UTC().UnixMilli()
-	if _, err := db.Exec(`
-INSERT INTO tool_batches (id, owner_id, operation_id, step_index, status, created_at, updated_at, terminal_at)
-VALUES ('fork-source-batch', ?, 'fork-source-operation', 1, 'settled', ?, ?, ?)`, sess.ID, now, now, now); err != nil {
-		db.Close()
-		t.Fatalf("insert source tool batch: %v", err)
-	}
-	if _, err := db.Exec(`
-INSERT INTO tool_invocations (
-  id, batch_id, provider_call_id, tool_name, arguments_json, replay_policy, state,
-  result_json, prepared_at, running_at, settled_at
-) VALUES ('fork-source-invocation', 'fork-source-batch', 'fork-source-call', 'read_file', '{}', 'at_most_once', 'succeeded', '{}', ?, ?, ?)`, now, now, now); err != nil {
-		db.Close()
-		t.Fatalf("insert source tool invocation: %v", err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatalf("close session store: %v", err)
+	if err := persistence.Update(context.Background(), rt.Documents, func(tx *persistence.Tx) error {
+		batch := toolstate.Batch{ID: "fork-source-batch", OwnerID: sess.ID, OperationID: "fork-source-operation", StepIndex: 1, Status: "settled", CreatedAt: now, UpdatedAt: now, TerminalAt: now, InvocationIDs: []string{"fork-source-invocation"}}
+		if err := tx.Put(toolstate.Batches, batch.ID, batch); err != nil {
+			return err
+		}
+		invocation := toolstate.Invocation{ID: "fork-source-invocation", BatchID: batch.ID, ProviderCallID: "fork-source-call", ToolName: "read_file", Arguments: "{}", ReplayPolicy: "at_most_once", State: "succeeded", PreparedAt: now, RunningAt: now, SettledAt: now}
+		return tx.Put(toolstate.Invocations, invocation.ID, invocation)
+	}); err != nil {
+		t.Fatalf("create source tool receipt: %v", err)
 	}
 
 	history := []providers.ChatMessage{
@@ -6404,11 +6469,12 @@ INSERT INTO tool_invocations (
 		{Role: "assistant", Content: "file read"},
 		{Role: "user", Content: "continue from here"},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, history); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, history); err != nil {
 		t.Fatalf("write source history: %v", err)
 	}
 
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	resumeReq := fmt.Sprintf(`{"id":"resume-tool-fork","method":%q,"params":{"session_id":%q}}`, MethodThreadResume, sess.ID)
 	if err := srv.handleLine(context.Background(), []byte(resumeReq)); err != nil {
@@ -6449,7 +6515,7 @@ INSERT INTO tool_invocations (
 		t.Fatalf("thread/fork returned error: %+v", forkResponse["error"])
 	}
 	fork := remarshal[ThreadForkResult](t, forkResponse["result"]).Thread
-	forkHistory, err := loadChatMessages(rt.SessionDir, fork.ID)
+	forkHistory, err := loadChatMessages(rt.Sessions, fork.ID)
 	if err != nil {
 		t.Fatalf("load fork history: %v", err)
 	}
@@ -6541,7 +6607,7 @@ func TestServerThreadStartInWorktree(t *testing.T) {
 		t.Fatalf("shared checkout moved to %q, want %q", got, mainBranch)
 	}
 
-	metadata, ok, err := session.Find(rt.SessionDir, thread.ID)
+	metadata, ok, err := rt.Sessions.Find(thread.ID)
 	if err != nil {
 		t.Fatalf("find thread metadata: %v", err)
 	}
@@ -6654,6 +6720,7 @@ func TestServerThreadForkToWorktree(t *testing.T) {
 	rt.ProcessManager = manager
 
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -6709,7 +6776,7 @@ func TestServerThreadForkToWorktree(t *testing.T) {
 		t.Fatalf("worktree .git missing: %v", err)
 	}
 
-	metadata, ok, err := session.Find(rt.SessionDir, fork.ID)
+	metadata, ok, err := rt.Sessions.Find(fork.ID)
 	if err != nil {
 		t.Fatalf("find fork metadata: %v", err)
 	}
@@ -6820,6 +6887,7 @@ func TestServerWorktreeBoundTurnExecutesInWorktree(t *testing.T) {
 	rt.ProcessManager = manager
 
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -6898,7 +6966,7 @@ func TestServerThreadEditMessageRewindsToUserMessage(t *testing.T) {
 	if err := os.MkdirAll(rt.SessionDir, 0o755); err != nil {
 		t.Fatalf("mkdir session dir: %v", err)
 	}
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260619-000000-edit", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260619-000000-edit", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -6913,10 +6981,10 @@ func TestServerThreadEditMessageRewindsToUserMessage(t *testing.T) {
 		{Role: "user", Content: "second prompt"},
 		{Role: "assistant", Content: "second answer"},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, history); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, history); err != nil {
 		t.Fatalf("write history: %v", err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, sess.ID, persistableMessageCount(history), threadPreview(history)); err != nil {
+	if err := rt.Sessions.UpdateIndex(sess.ID, persistableMessageCount(history), threadPreview(history)); err != nil {
 		t.Fatalf("update index: %v", err)
 	}
 
@@ -6965,7 +7033,7 @@ func TestServerThreadEditMessageRewindsToUserMessage(t *testing.T) {
 	if len(result.Thread.Turns) != 0 {
 		t.Fatalf("expected thread to rewind before first user message, got %+v", result.Thread.Turns)
 	}
-	persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+	persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -6983,7 +7051,7 @@ func TestServerThreadEditMessageRespectsCompactionBoundary(t *testing.T) {
 	if err := os.MkdirAll(rt.SessionDir, 0o755); err != nil {
 		t.Fatalf("mkdir session dir: %v", err)
 	}
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260619-000001-edit-compact", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260619-000001-edit-compact", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -6994,10 +7062,10 @@ func TestServerThreadEditMessageRespectsCompactionBoundary(t *testing.T) {
 		{Role: "user", Content: "latest prompt"},
 		{Role: "assistant", Content: "latest answer"},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, history); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, history); err != nil {
 		t.Fatalf("write history: %v", err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, sess.ID, persistableMessageCount(history), threadPreview(history)); err != nil {
+	if err := rt.Sessions.UpdateIndex(sess.ID, persistableMessageCount(history), threadPreview(history)); err != nil {
 		t.Fatalf("update index: %v", err)
 	}
 
@@ -7060,7 +7128,7 @@ func TestServerThreadEditMessageRespectsCompactionBoundary(t *testing.T) {
 	if result.Draft.Prompt != "after compact" {
 		t.Fatalf("unexpected restored draft: %+v", result.Draft)
 	}
-	persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+	persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -7071,7 +7139,7 @@ func TestServerThreadEditMessageRespectsCompactionBoundary(t *testing.T) {
 
 func TestServerThreadEditMessageAfterProviderCheckpointWithEarlierVisibleTurns(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260619-000002-edit-checkpoint", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260619-000002-edit-checkpoint", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -7079,13 +7147,11 @@ func TestServerThreadEditMessageAfterProviderCheckpointWithEarlierVisibleTurns(t
 		{Role: "user", Content: "older prompt"},
 		{Role: "assistant", Content: "older answer"},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(sess.ID, rec); err != nil {
 			t.Fatalf("append history: %v", err)
 		}
 	}
-	if _, err := session.StoreHistoryCheckpointAtBaseline(
-		rt.SessionDir,
-		sess.ID,
+	if _, err := rt.Sessions.StoreHistoryCheckpointAtBaseline(sess.ID,
 		session.HistoryCheckpointKindProviderRewrite,
 		[]session.HistoryRecord{
 			{Role: "system", Content: compact.BuildSummaryContent("older prompts are summarized")},
@@ -7105,7 +7171,7 @@ func TestServerThreadEditMessageAfterProviderCheckpointWithEarlierVisibleTurns(t
 			StopReason: string(TurnStatusInterrupted),
 		},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(sess.ID, rec); err != nil {
 			t.Fatalf("append retained history: %v", err)
 		}
 	}
@@ -7149,7 +7215,7 @@ func TestServerThreadEditMessageAfterProviderCheckpointWithEarlierVisibleTurns(t
 	if result.Draft.Prompt != "replace me" {
 		t.Fatalf("unexpected restored draft: %+v", result.Draft)
 	}
-	persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+	persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -7264,7 +7330,7 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 	if err := os.Remove(paths[0]); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -7281,7 +7347,7 @@ func TestServerTurnStartAcceptsImageOnlyPrompt(t *testing.T) {
 	if chatMessageDisplayContent(visiblePersisted[0]) != "" {
 		t.Fatalf("image-only restored prompt contains synthetic text: %q", chatMessageDisplayContent(visiblePersisted[0]))
 	}
-	sessions, err := session.List(rt.SessionDir, 1)
+	sessions, err := rt.Sessions.List(1)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -7359,7 +7425,7 @@ func TestServerTurnStartAcceptsPDFOnlyPrompt(t *testing.T) {
 		t.Fatal("PDF-only input must not expose its generated path as authored text")
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load persisted history: %v", err)
 	}
@@ -7367,7 +7433,7 @@ func TestServerTurnStartAcceptsPDFOnlyPrompt(t *testing.T) {
 	if len(visiblePersisted) != 2 || len(visiblePersisted[0].Files) != 1 {
 		t.Fatalf("unexpected persisted history: %+v", persisted)
 	}
-	sessions, err := session.List(rt.SessionDir, 1)
+	sessions, err := rt.Sessions.List(1)
 	if err != nil {
 		t.Fatalf("list sessions: %v", err)
 	}
@@ -7378,18 +7444,18 @@ func TestServerTurnStartAcceptsPDFOnlyPrompt(t *testing.T) {
 
 func TestServerThreadListUsesSessionIndexMetadata(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "old-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("old-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, "old-thread", 2, "old summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("old-thread", 2, "old summary"); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, "old-thread", session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord("old-thread", session.HistoryRecord{
 		Role: "meta", Content: turnTerminalHistoryRecord, ClientID: "old-thread-turn-0001", StopReason: string(TurnStatusCompleted),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, "old-thread", session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection("old-thread", session.RuntimeSelection{
 		Provider:       "anthropic",
 		Model:          "claude-sonnet-4-6",
 		Variant:        "high",
@@ -7398,22 +7464,22 @@ func TestServerThreadListUsesSessionIndexMetadata(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "new-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("new-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, "new-thread", 2, "new summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("new-thread", 2, "new summary"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "archived-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("archived-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, "archived-thread", true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived("archived-thread", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "other-thread", filepath.Join(rt.RootDir, "other")); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("other-thread", filepath.Join(rt.RootDir, "other")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.UpdatePinned(rt.SessionDir, "old-thread", true); err != nil {
+	if _, err := rt.Sessions.UpdatePinned("old-thread", true); err != nil {
 		t.Fatal(err)
 	}
 
@@ -7448,13 +7514,13 @@ func TestServerThreadListUsesSessionIndexMetadata(t *testing.T) {
 func TestServerThreadListCanTargetDifferentCWD(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	otherCWD := filepath.Join(rt.RootDir, "other")
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "root-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("root-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "other-thread", otherCWD); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("other-thread", otherCWD); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, "other-thread", 2, "other summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("other-thread", 2, "other summary"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -7477,20 +7543,20 @@ func TestServerThreadListCanTargetDifferentCWD(t *testing.T) {
 
 func TestServerThreadListOrdersSessionsByUpdatedAt(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "first-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("first-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, "first-thread", 2, "first summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("first-thread", 2, "first summary"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "second-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("second-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, "second-thread", 2, "second summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("second-thread", 2, "second summary"); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if err := session.UpdateIndex(rt.SessionDir, "first-thread", 4, "ignored later summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("first-thread", 4, "ignored later summary"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -7515,49 +7581,49 @@ func TestServerThreadListOrdersSessionsByUpdatedAt(t *testing.T) {
 
 func TestServerThreadSearchMatchesHistoryAcrossWorkspaces(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	userThread, err := session.CreateWithMetadata(rt.SessionDir, "user-thread", rt.RootDir)
+	userThread, err := rt.Sessions.CreateWithMetadata("user-thread", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, userThread.ID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, userThread.ID, []providers.ChatMessage{
 		{Role: "user", Content: "Investigate the delta-vector login failure"},
 		{Role: "assistant", Content: "The login failure comes from stale config."},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, userThread.ID, 2, "login summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex(userThread.ID, 2, "login summary"); err != nil {
 		t.Fatal(err)
 	}
-	assistantThread, err := session.CreateWithMetadata(rt.SessionDir, "assistant-thread", rt.RootDir)
+	assistantThread, err := rt.Sessions.CreateWithMetadata("assistant-thread", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, assistantThread.ID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, assistantThread.ID, []providers.ChatMessage{
 		{Role: "user", Content: "summarize the deploy"},
 		{Role: "assistant", Content: "The deploy note mentions orion-cache warming."},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, assistantThread.ID, 2, "deploy summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex(assistantThread.ID, 2, "deploy summary"); err != nil {
 		t.Fatal(err)
 	}
-	archivedThread, err := session.CreateWithMetadata(rt.SessionDir, "archived-thread", rt.RootDir)
+	archivedThread, err := rt.Sessions.CreateWithMetadata("archived-thread", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, archivedThread.ID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, archivedThread.ID, []providers.ChatMessage{
 		{Role: "user", Content: "delta-vector archived"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.UpdateArchived(rt.SessionDir, archivedThread.ID, true); err != nil {
+	if _, err := rt.Sessions.UpdateArchived(archivedThread.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	otherThread, err := session.CreateWithMetadata(rt.SessionDir, "other-thread", filepath.Join(rt.RootDir, "other"))
+	otherThread, err := rt.Sessions.CreateWithMetadata("other-thread", filepath.Join(rt.RootDir, "other"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, otherThread.ID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, otherThread.ID, []providers.ChatMessage{
 		{Role: "user", Content: "delta-vector other workspace"},
 	}); err != nil {
 		t.Fatal(err)
@@ -7619,13 +7685,13 @@ func TestServerThreadSearchMatchesHistoryAcrossWorkspaces(t *testing.T) {
 func TestServerThreadListIncludesDirectChildAgents(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StateDir = filepath.Join(rt.RootDir, ".wuu", "state")
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "root-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("root-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, "root-thread", 2, "root summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("root-thread", 2, "root summary"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "worker-1", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("worker-1", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -7708,10 +7774,10 @@ func TestServerThreadListIncludesDirectChildAgents(t *testing.T) {
 func TestServerThreadResumeLoadsChildAgentSession(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StateDir = filepath.Join(rt.RootDir, ".wuu", "state")
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "root-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("root-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, "root-thread", 2, "root summary"); err != nil {
+	if err := rt.Sessions.UpdateIndex("root-thread", 2, "root summary"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -7814,7 +7880,7 @@ func TestServerChildAgentSessionIsLiveWhileRunning(t *testing.T) {
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, rootID)
 	workerClient := newBlockingStreamClient("child live result")
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       workerClient,
 		DefaultModel: "fake-model",
@@ -7835,11 +7901,12 @@ func TestServerChildAgentSessionIsLiveWhileRunning(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	rootThread := newThreadState(rootID, nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	rootThread.state = testRuntimeState(t, rt)
 	rootThread.execRuntime = &runtime.ThreadRuntime{AgentControl: coord}
 	srv.mu.Lock()
 	srv.threads[rootID] = rootThread
 	srv.mu.Unlock()
-	srv.subscribeThreadRuntime(rootID, rootThread.execRuntime)
+	srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), rootID, rootThread.execRuntime)
 
 	spawned, err := coord.Spawn(context.Background(), agentcontrol.SpawnRequest{
 		Type:        agentcontrol.DefaultSubagentType,
@@ -7934,7 +8001,7 @@ func TestServerThreadPinAndArchive(t *testing.T) {
 	if pinResult.Thread.ID != threadID || !pinResult.Thread.Pinned {
 		t.Fatalf("unexpected pin result: %+v", pinResult)
 	}
-	pinned, ok, err := session.Find(rt.SessionDir, threadID)
+	pinned, ok, err := rt.Sessions.Find(threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -7957,7 +8024,7 @@ func TestServerThreadPinAndArchive(t *testing.T) {
 	if archiveResult.Thread.ID != threadID || !archiveResult.Thread.Archived || archiveResult.Thread.Pinned {
 		t.Fatalf("unexpected archive result: %+v", archiveResult)
 	}
-	archived, ok, err := session.Find(rt.SessionDir, threadID)
+	archived, ok, err := rt.Sessions.Find(threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -7993,7 +8060,7 @@ func TestServerThreadOrganizationUpdatesAreIndependentAndListsUsePersistedMetada
 	if startedNotification.Thread.WorkspaceID != rt.WorkspaceID {
 		t.Fatalf("thread/started lost stable workspace id: %+v", startedNotification.Thread)
 	}
-	folder, err := session.CreateFolder(rt.SessionDir, "Topic")
+	folder, err := rt.Sessions.CreateFolder("Topic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -8024,10 +8091,10 @@ func TestServerThreadOrganizationUpdatesAreIndependentAndListsUsePersistedMetada
 
 	// Change the database without touching this server's loaded thread. Global
 	// listing must still treat persisted organization metadata as authoritative.
-	if _, err := session.UpdateOrganization(rt.SessionDir, threadID, &folder.ID); err != nil {
+	if _, err := rt.Sessions.UpdateOrganization(threadID, &folder.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.notifyThreadUpdated(updated); err != nil {
+	if err := srv.notifyThreadUpdated(testRuntimeState(t, srv.rt), updated); err != nil {
 		t.Fatal(err)
 	}
 	notifications := notificationsByMethod(parseOutput(t, out.String()), NotificationThreadUpdated)
@@ -8056,7 +8123,7 @@ func TestServerThreadOrganizationUpdatesAreIndependentAndListsUsePersistedMetada
 	if list.Threads[0].WorkspaceID != rt.WorkspaceID {
 		t.Fatalf("listAll lost stable workspace id: %+v", list.Threads[0])
 	}
-	secondFolder, err := session.CreateFolder(rt.SessionDir, "Second topic")
+	secondFolder, err := rt.Sessions.CreateFolder("Second topic")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -8206,7 +8273,7 @@ func TestServerFailedTurnPersistsPairedToolHistoryAndReloadsFailure(t *testing.T
 		t.Fatalf("turn status = %q, want failed", failed.Turn.Status)
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load history: %v", err)
 	}
@@ -8292,24 +8359,25 @@ func TestServerInterruptedPartialTurnReloadsInterrupted(t *testing.T) {
 
 func TestServerRetriedInterruptedTurnReloadsCompleted(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260716-000002-retried", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260716-000002-retried", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "user", Content: "inspect"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "user", Content: "inspect"}); err != nil {
 		t.Fatalf("append user: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "assistant", Content: "partial answer"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "assistant", Content: "partial answer"}); err != nil {
 		t.Fatalf("append partial assistant: %v", err)
 	}
 
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState(sess.ID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	turnID := sess.ID + "-turn-0001"
 	if err := srv.persistTurnTerminal(th, turnID, TurnKindUser, TurnStatusInterrupted, &TurnError{Message: context.Canceled.Error()}, time.Now().UTC(), nil, "", "", providers.TokenUsage{}); err != nil {
 		t.Fatalf("persist interrupted terminal: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "assistant", Content: "final answer"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "assistant", Content: "final answer"}); err != nil {
 		t.Fatalf("append final assistant: %v", err)
 	}
 	completedAt := time.Date(2026, 7, 16, 11, 0, 0, 0, time.UTC)
@@ -8340,7 +8408,7 @@ func TestServerRetriedInterruptedTurnReloadsCompleted(t *testing.T) {
 
 func TestServerFailedInternalTurnReloadsOnVisibleAggregate(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260716-000003-internal", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260716-000003-internal", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -8349,13 +8417,14 @@ func TestServerFailedInternalTurnReloadsOnVisibleAggregate(t *testing.T) {
 		{Role: "assistant", Content: "initial answer"},
 		{Role: "assistant", Content: "partial continuation"},
 	} {
-		if _, err := appendChatMessage(rt.SessionDir, sess.ID, msg); err != nil {
+		if _, err := appendChatMessage(rt.Sessions, sess.ID, msg); err != nil {
 			t.Fatalf("append %s message: %v", msg.Role, err)
 		}
 	}
 
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState(sess.ID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	failedAt := time.Date(2026, 7, 16, 11, 30, 0, 0, time.UTC)
 	if err := srv.persistTurnTerminal(th, session.NewID(), TurnKindInternal, TurnStatusFailed, &TurnError{Message: "goal continuation failed"}, failedAt, nil, "", "", providers.TokenUsage{}); err != nil {
 		t.Fatalf("persist internal terminal: %v", err)
@@ -8382,19 +8451,20 @@ func TestServerFailedInternalTurnReloadsOnVisibleAggregate(t *testing.T) {
 
 func TestServerSettledStreamReconnectSurvivesReload(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260716-000005-reconnect", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260716-000005-reconnect", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "user", Content: "inspect"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "user", Content: "inspect"}); err != nil {
 		t.Fatalf("append user: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "assistant", Content: "partial answer"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "assistant", Content: "partial answer"}); err != nil {
 		t.Fatalf("append partial assistant: %v", err)
 	}
 
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState(sess.ID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	turnID := sess.ID + "-turn-0001"
 	reconnect := &ThreadItem{
 		Type:       ThreadItemStreamReconnect,
@@ -8436,12 +8506,13 @@ func TestServerSettledStreamReconnectSurvivesReload(t *testing.T) {
 
 func TestServerCompletedTurnSkipsStreamReconnectRecord(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260716-000006-reconnect-skip", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260716-000006-reconnect-skip", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState(sess.ID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	reconnect := &ThreadItem{
 		Type:       ThreadItemStreamReconnect,
 		Status:     ThreadItemStatusFailed,
@@ -8453,7 +8524,7 @@ func TestServerCompletedTurnSkipsStreamReconnectRecord(t *testing.T) {
 	if err := srv.persistTurnTerminal(th, sess.ID+"-turn-0001", TurnKindUser, TurnStatusCompleted, nil, time.Now().UTC(), reconnect, "", "", providers.TokenUsage{}); err != nil {
 		t.Fatalf("persist completed terminal: %v", err)
 	}
-	metas, err := loadMetaMessages(rt.SessionDir, sess.ID)
+	metas, err := loadMetaMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load meta messages: %v", err)
 	}
@@ -8466,12 +8537,13 @@ func TestServerCompletedTurnSkipsStreamReconnectRecord(t *testing.T) {
 
 func TestPersistFailedTurnResultRecordsUsageForNonPersistentThread(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260716-000004-ephemeral", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260716-000004-ephemeral", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	srv := New(rt, &lockedBuffer{})
 	th := newThreadState(sess.ID, nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
+	th.state = testRuntimeState(t, rt)
 	res := agent.LoopResult{
 		NewMessages:   []providers.ChatMessage{{Role: "assistant", Content: "partial answer"}},
 		InputTokens:   13,
@@ -8481,7 +8553,7 @@ func TestPersistFailedTurnResultRecordsUsageForNonPersistentThread(t *testing.T)
 	if err := srv.persistFailedTurnResultLocked(th, res, false, rt.ProviderName, rt.Model, 0); err != nil {
 		t.Fatalf("persist turn result: %v", err)
 	}
-	metas, err := loadMetaMessages(rt.SessionDir, sess.ID)
+	metas, err := loadMetaMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load meta messages: %v", err)
 	}
@@ -8533,7 +8605,7 @@ func TestServerFailedTurnPersistsCompactedHistoryRewrite(t *testing.T) {
 		{Role: "user", Content: strings.Repeat("older request ", 400)},
 		{Role: "assistant", Content: strings.Repeat("older answer ", 400)},
 	}
-	if err := appendChatMessages(rt.SessionDir, threadID, olderHistory); err != nil {
+	if err := appendChatMessages(rt.Sessions, threadID, olderHistory); err != nil {
 		t.Fatalf("persist older history: %v", err)
 	}
 	thread.mu.Lock()
@@ -8557,7 +8629,7 @@ func TestServerFailedTurnPersistsCompactedHistoryRewrite(t *testing.T) {
 		t.Fatalf("turn status = %q, want failed", failed.Turn.Status)
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load history: %v", err)
 	}
@@ -8623,11 +8695,11 @@ func TestServerTurnItemsIncludeReasoningAndAgentMessage(t *testing.T) {
 func TestServerThreadResumeLoadsSessionHistory(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	sessionID := "20260523-000000-test"
-	sess, err := session.CreateWithMetadata(rt.SessionDir, sessionID, rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata(sessionID, rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, []providers.ChatMessage{
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "done"},
 	}); err != nil {
@@ -8674,7 +8746,7 @@ func TestServerThreadResumeLoadsSessionHistory(t *testing.T) {
 func TestServerThreadResumeDisplaysHistoryBeforeProviderCheckpoint(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	sessionID := "20260523-000001-checkpoint-history"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, sessionID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(sessionID, rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	for _, rec := range []session.HistoryRecord{
@@ -8683,13 +8755,11 @@ func TestServerThreadResumeDisplaysHistoryBeforeProviderCheckpoint(t *testing.T)
 		{Role: "user", Content: "recent question"},
 		{Role: "assistant", Content: "recent answer"},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, sessionID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(sessionID, rec); err != nil {
 			t.Fatalf("append history: %v", err)
 		}
 	}
-	if _, err := session.StoreHistoryCheckpointAtBaseline(
-		rt.SessionDir,
-		sessionID,
+	if _, err := rt.Sessions.StoreHistoryCheckpointAtBaseline(sessionID,
 		session.HistoryCheckpointKindProviderRewrite,
 		[]session.HistoryRecord{
 			{Seq: 3, Role: "user", Content: "recent question"},
@@ -8737,7 +8807,7 @@ func TestServerThreadResumeDisplaysHistoryBeforeProviderCheckpoint(t *testing.T)
 
 func TestSQLiteHistoryRoundTripsMessagePayloads(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260523-000010-payloads", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260523-000010-payloads", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -8786,11 +8856,11 @@ func TestSQLiteHistoryRoundTripsMessagePayloads(t *testing.T) {
 			InputSchema: map[string]any{"type": "object"},
 		}},
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, msg); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, msg); err != nil {
 		t.Fatalf("append message: %v", err)
 	}
 
-	history, err := loadChatMessages(rt.SessionDir, sess.ID)
+	history, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load history: %v", err)
 	}
@@ -8820,33 +8890,33 @@ func TestSQLiteHistoryRoundTripsMessagePayloads(t *testing.T) {
 
 func TestSQLiteRewriteChatHistoryReplacesMessagesAndPreservesTokenUsage(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260523-000011-rewrite", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260523-000011-rewrite", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "user", Content: "old user"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "user", Content: "old user"}); err != nil {
 		t.Fatalf("append old user: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "assistant", Content: "old assistant"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "assistant", Content: "old assistant"}); err != nil {
 		t.Fatalf("append old assistant: %v", err)
 	}
-	if err := appendTokenUsage(rt.SessionDir, sess.ID, "anthropic", "claude-sonnet-4-6", providers.TokenUsage{InputTokens: 11, OutputTokens: 7, CacheCreationTokens: 5, CacheReadTokens: 3}, 18); err != nil {
+	if err := appendTokenUsage(rt.Sessions, sess.ID, "anthropic", "claude-sonnet-4-6", providers.TokenUsage{InputTokens: 11, OutputTokens: 7, CacheCreationTokens: 5, CacheReadTokens: 3}, 18); err != nil {
 		t.Fatalf("append token usage: %v", err)
 	}
 
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, []providers.ChatMessage{{Role: "user", Content: "new user"}}); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, []providers.ChatMessage{{Role: "user", Content: "new user"}}); err != nil {
 		t.Fatalf("rewrite history: %v", err)
 	}
 
-	visible, err := loadChatMessages(rt.SessionDir, sess.ID)
+	visible, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load visible history: %v", err)
 	}
 	if len(visible) != 1 || visible[0].Role != "user" || visible[0].Content != "new user" {
 		t.Fatalf("rewrite should replace old visible messages, got %+v", visible)
 	}
-	all, err := session.LoadHistoryRecords(rt.SessionDir, sess.ID, true)
+	all, err := rt.Sessions.LoadHistoryRecords(sess.ID, true)
 	if err != nil {
 		t.Fatalf("load raw history: %v", err)
 	}
@@ -8860,17 +8930,17 @@ func TestSQLiteRewriteChatHistoryReplacesMessagesAndPreservesTokenUsage(t *testi
 
 func TestServerThreadResumeRestoresTurnTokenUsage(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "20260523-000012-usage", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("20260523-000012-usage", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "user", Content: "inspect"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "user", Content: "inspect"}); err != nil {
 		t.Fatalf("append user: %v", err)
 	}
-	if _, err := appendChatMessage(rt.SessionDir, sess.ID, providers.ChatMessage{Role: "assistant", Content: "done"}); err != nil {
+	if _, err := appendChatMessage(rt.Sessions, sess.ID, providers.ChatMessage{Role: "assistant", Content: "done"}); err != nil {
 		t.Fatalf("append assistant: %v", err)
 	}
-	if err := appendTokenUsage(rt.SessionDir, sess.ID, rt.ProviderName, rt.Model, providers.TokenUsage{InputTokens: 19_600, CacheReadTokens: 113_000}, 88_000); err != nil {
+	if err := appendTokenUsage(rt.Sessions, sess.ID, rt.ProviderName, rt.Model, providers.TokenUsage{InputTokens: 19_600, CacheReadTokens: 113_000}, 88_000); err != nil {
 		t.Fatalf("append token usage: %v", err)
 	}
 
@@ -8906,7 +8976,7 @@ func TestServerCompactedTurnPersistsAndResumes(t *testing.T) {
 		t.Fatalf("mkdir session dir: %v", err)
 	}
 	sessionID := "20260527-000000-compact"
-	sess, err := session.CreateWithMetadata(rt.SessionDir, sessionID, rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata(sessionID, rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -8919,10 +8989,10 @@ func TestServerCompactedTurnPersistsAndResumes(t *testing.T) {
 		{Role: "tool", Name: "run_shell", ToolCallID: "call_1", Content: largeToolOutput},
 		{Role: "assistant", Content: "I found the first clue."},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, initialHistory); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, initialHistory); err != nil {
 		t.Fatalf("write initial history: %v", err)
 	}
-	if err := session.UpdateIndex(rt.SessionDir, sess.ID, persistableMessageCount(initialHistory), threadPreview(initialHistory)); err != nil {
+	if err := rt.Sessions.UpdateIndex(sess.ID, persistableMessageCount(initialHistory), threadPreview(initialHistory)); err != nil {
 		t.Fatalf("update index: %v", err)
 	}
 
@@ -8960,7 +9030,7 @@ func TestServerCompactedTurnPersistsAndResumes(t *testing.T) {
 		t.Fatal("expected compact event during resumed turn")
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+	persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load compacted history: %v", err)
 	}
@@ -9054,7 +9124,7 @@ func TestServerThreadCompactStartRunsCompactOnlyTurn(t *testing.T) {
 		providers.ChatMessage{Role: "user", Content: strings.Repeat("newer request ", 100)},
 		providers.ChatMessage{Role: "assistant", Content: strings.Repeat("newer answer ", 100)},
 	}
-	if err := appendChatMessages(rt.SessionDir, threadID, compactHistory); err != nil {
+	if err := appendChatMessages(rt.Sessions, threadID, compactHistory); err != nil {
 		t.Fatalf("persist compact history: %v", err)
 	}
 	th.mu.Lock()
@@ -9104,7 +9174,7 @@ func TestServerThreadCompactStartRunsCompactOnlyTurn(t *testing.T) {
 	}
 	assertFakeClientRequestCount(t, client, 1)
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load compacted history: %v", err)
 	}
@@ -9140,7 +9210,7 @@ func TestServerThreadCompactStartMarksFailedCompactItem(t *testing.T) {
 		providers.ChatMessage{Role: "user", Content: "newer request"},
 		providers.ChatMessage{Role: "assistant", Content: "newer answer"},
 	}
-	if err := appendChatMessages(rt.SessionDir, threadID, compactHistory); err != nil {
+	if err := appendChatMessages(rt.Sessions, threadID, compactHistory); err != nil {
 		t.Fatalf("persist compact history: %v", err)
 	}
 	th.mu.Lock()
@@ -9197,7 +9267,7 @@ func TestServerTurnStartSlashCompactRoutesToCompactOnlyTurn(t *testing.T) {
 		providers.ChatMessage{Role: "assistant", Content: strings.Repeat("old answer ", 100)},
 		providers.ChatMessage{Role: "user", Content: strings.Repeat("newer request ", 100)},
 	}
-	if err := appendChatMessages(rt.SessionDir, threadID, compactHistory); err != nil {
+	if err := appendChatMessages(rt.Sessions, threadID, compactHistory); err != nil {
 		t.Fatalf("persist compact history: %v", err)
 	}
 	th.mu.Lock()
@@ -9243,7 +9313,7 @@ func TestServerTurnStartSlashCompactRoutesToCompactOnlyTurn(t *testing.T) {
 	}
 	assertFakeClientRequestCount(t, client, 1)
 
-	persisted, err := loadChatMessages(rt.SessionDir, threadID)
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load compacted history: %v", err)
 	}
@@ -9293,7 +9363,7 @@ func TestServerRejectsSteerForCompactTurn(t *testing.T) {
 		t.Fatalf("thread/start: %v", err)
 	}
 	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
-	control, err := session.ChangeControl(rt.SessionDir, threadID, "manager", session.ControlActive, 0)
+	control, err := rt.Sessions.ChangeControl(threadID, "manager", session.ControlActive, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -9325,7 +9395,7 @@ func TestServerRejectsSteerForCompactTurn(t *testing.T) {
 	if !ok || !strings.Contains(fmt.Sprint(errObj["message"]), "cannot steer a compact turn") {
 		t.Fatalf("expected compact steer rejection, got %+v", resp)
 	}
-	current, _, err := session.ReadControl(rt.SessionDir, threadID)
+	current, _, err := rt.Sessions.ReadControl(threadID)
 	if err != nil || current != control {
 		t.Fatalf("rejected input took over session: %+v %v", current, err)
 	}
@@ -9376,11 +9446,14 @@ func TestServerPrunesIdleCachedThreads(t *testing.T) {
 	now := time.Now().UTC()
 
 	keep := newThreadState("thread-keep", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now.Add(-24*time.Hour))
+	keep.state = testRuntimeState(t, rt)
 	keep.LastAccessedAt = now.Add(-24 * time.Hour)
 	running := newThreadState("thread-running", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now.Add(-23*time.Hour))
+	running.state = testRuntimeState(t, rt)
 	running.LastAccessedAt = now.Add(-23 * time.Hour)
 	running.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "running"}, now)
 	queued := newThreadState("thread-queued", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now.Add(-22*time.Hour))
+	queued.state = testRuntimeState(t, rt)
 	queued.LastAccessedAt = now.Add(-22 * time.Hour)
 
 	srv.threads[keep.ID] = keep
@@ -9391,6 +9464,7 @@ func TestServerPrunesIdleCachedThreads(t *testing.T) {
 	for i := 0; i < cachedThreadLimit+4; i++ {
 		id := fmt.Sprintf("idle-%02d", i)
 		th := newThreadState(id, nil, rt.ProviderName, rt.Model, rt.RootDir, true, now.Add(time.Duration(i)*time.Minute))
+		th.state = testRuntimeState(t, rt)
 		th.LastAccessedAt = now.Add(time.Duration(i) * time.Minute)
 		srv.threads[id] = th
 	}
@@ -9419,10 +9493,10 @@ func TestServerTurnStartReloadsPrunedPersistentThread(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	threadID := "thread-pruned"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, threadID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(threadID, rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, threadID, []providers.ChatMessage{{Role: "user", Content: "hello"}}); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, threadID, []providers.ChatMessage{{Role: "user", Content: "hello"}}); err != nil {
 		t.Fatalf("write history: %v", err)
 	}
 
@@ -9447,11 +9521,11 @@ func TestServerTurnStartReloadsPrunedPersistentThread(t *testing.T) {
 func TestServerThreadResumeRepairsToolResultOrderWithoutWriting(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{response: providers.ChatResponse{Content: "done"}})
 	sessionID := "20260523-000001-tools"
-	sess, err := session.CreateWithMetadata(rt.SessionDir, sessionID, rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata(sessionID, rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, []providers.ChatMessage{
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, []providers.ChatMessage{
 		{Role: "user", Content: "inspect"},
 		{
 			Role: "assistant",
@@ -9497,7 +9571,7 @@ func TestServerThreadResumeRepairsToolResultOrderWithoutWriting(t *testing.T) {
 		t.Fatalf("unexpected resumed order: got %s want %s", got, want)
 	}
 
-	persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+	persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load rewritten session: %v", err)
 	}
@@ -9514,7 +9588,7 @@ func TestServerThreadResumeRepairsToolResultOrderWithoutWriting(t *testing.T) {
 		t.Fatalf("turn/start: %v", err)
 	}
 	waitForMethod(t, out, NotificationTurnCompleted)
-	persisted, err = loadChatMessages(rt.SessionDir, sess.ID)
+	persisted, err = loadChatMessages(rt.Sessions, sess.ID)
 	if err != nil {
 		t.Fatalf("load history after admission repair: %v", err)
 	}
@@ -9571,7 +9645,7 @@ func TestServerForwardsAgentNotifications(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9585,12 +9659,22 @@ func TestServerForwardsAgentNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatalf("coordinator: %v", err)
 	}
-	rt.AgentControl = coord
+	t.Cleanup(func() {
+		coord.BeginShutdown()
+		coord.StopAll()
+		coord.YieldWorkerTerminalFinalizations()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := coord.WaitOwnedWorkerExecutions(ctx); err != nil {
+			t.Error(err)
+		}
+		coord.Close()
+	})
 
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	threadID := "sess-agents"
-	srv.subscribeThreadRuntime(threadID, &runtime.ThreadRuntime{AgentControl: coord})
+	srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, &runtime.ThreadRuntime{AgentControl: coord})
 	res, err := coord.Spawn(context.Background(), agentcontrol.SpawnRequest{
 		Type:        agentcontrol.DefaultSubagentType,
 		TaskName:    "check_bridge",
@@ -9618,7 +9702,7 @@ func TestServerAutoResumesRootAgentOnAgentCompletion(t *testing.T) {
 	rt := newTestRuntime(t, mainClient)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9645,9 +9729,10 @@ func TestServerAutoResumesRootAgentOnAgentCompletion(t *testing.T) {
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
-	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(threadID, threadRuntime)
+	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)
 	t.Cleanup(func() { releaseThreadRuntime(rootThread) })
 
 	res, err := coord.Spawn(context.Background(), agentcontrol.SpawnRequest{
@@ -9712,7 +9797,7 @@ func TestServerQueuesAgentCompletionWhileRootTurnIsRunning(t *testing.T) {
 	rt.StreamRunner.Client = mainClient
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9739,9 +9824,10 @@ func TestServerQueuesAgentCompletionWhileRootTurnIsRunning(t *testing.T) {
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
-	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(threadID, threadRuntime)
+	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)
 	t.Cleanup(func() { releaseThreadRuntime(rootThread) })
 
 	req := fmt.Sprintf(`{"id":"1","method":"turn/start","params":{"thread_id":%q,"prompt":"keep working"}}`, threadID)
@@ -9785,7 +9871,7 @@ func TestServerSkipsDuplicateAgentCompletionNotificationsAfterAutoResume(t *test
 	rt := newTestRuntime(t, mainClient)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9813,9 +9899,10 @@ func TestServerSkipsDuplicateAgentCompletionNotificationsAfterAutoResume(t *test
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
-	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(threadID, threadRuntime)
+	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)
 	t.Cleanup(func() { releaseThreadRuntime(rootThread) })
 
 	res, err := coord.Spawn(context.Background(), agentcontrol.SpawnRequest{
@@ -9847,7 +9934,7 @@ func TestServerSkipsAutoResumeWhenAwaitAgentsAlreadyReturnedResult(t *testing.T)
 	rt.StreamRunner.Client = mainClient
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(workerClient),
 		DefaultModel: "fake-model",
@@ -9875,9 +9962,10 @@ func TestServerSkipsAutoResumeWhenAwaitAgentsAlreadyReturnedResult(t *testing.T)
 	}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	rootThread.execRuntime = threadRuntime
 	srv.mu.Lock()
+	rootThread.state = testRuntimeState(t, srv.rt)
 	srv.threads[threadID] = rootThread
 	srv.mu.Unlock()
-	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(threadID, threadRuntime)
+	rootThread.runtimeSubscription = srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), threadID, threadRuntime)
 	t.Cleanup(func() { releaseThreadRuntime(rootThread) })
 
 	req := fmt.Sprintf(`{"id":"1","method":"turn/start","params":{"thread_id":%q,"prompt":"keep working"}}`, threadID)
@@ -9931,7 +10019,7 @@ func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
 		SessionDir:     root + "/.wuu-state/sessions",
 		HookDispatcher: hooks.NewDispatcher(nil),
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "fake-model",
@@ -9948,6 +10036,19 @@ func newTestRuntime(t *testing.T, client *fakeClient) *runtime.Session {
 
 func registerTestWuuEngine(t *testing.T, rt *runtime.Session) {
 	t.Helper()
+	if rt.Documents == nil {
+		documents, err := persistence.Open(context.Background(), filepath.Join(rt.SessionDir, "documents"), "sqlite")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := documents.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		rt.Documents = documents
+		rt.Sessions = session.NewStore(context.Background(), documents)
+	}
 	registry := agentengine.NewRegistry()
 	if err := registry.Register(runtime.NewWuuEngine(rt)); err != nil {
 		t.Fatal(err)
@@ -10281,21 +10382,21 @@ func TestSettingsUsageAggregatesAcrossSessions(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	now := time.Now().UTC()
 
-	sess1, err := session.CreateWithMetadata(rt.SessionDir, "usage-anthropic", rt.RootDir)
+	sess1, err := rt.Sessions.CreateWithMetadata("usage-anthropic", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, sess1.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(sess1.ID, session.HistoryRecord{
 		Role: "user", Content: "anthropic session",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, sess1.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(sess1.ID, session.HistoryRecord{
 		Role: "user", Content: "follow up",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, sess1.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(sess1.ID, session.HistoryRecord{
 		Role: "meta", Content: "token_usage",
 		Provider: "anthropic", Model: "claude-sonnet-4-6",
 		At:          now.Add(-2 * time.Hour),
@@ -10305,21 +10406,21 @@ func TestSettingsUsageAggregatesAcrossSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sess2, err := session.CreateWithMetadata(rt.SessionDir, "usage-openai", rt.RootDir)
+	sess2, err := rt.Sessions.CreateWithMetadata("usage-openai", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, sess2.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(sess2.ID, session.HistoryRecord{
 		Role: "user", Content: "openai session",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, sess2.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(sess2.ID, session.HistoryRecord{
 		Role: "user", Content: "follow up",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := session.AppendHistoryRecord(rt.SessionDir, sess2.ID, session.HistoryRecord{
+	if err := rt.Sessions.AppendHistoryRecord(sess2.ID, session.HistoryRecord{
 		Role: "meta", Content: "token_usage",
 		Provider: "openai", Model: "gpt-4o",
 		At:          now.Add(-time.Hour),
@@ -10366,7 +10467,7 @@ func TestSettingsUsageModelBreakdownsSkipZeroUsageBuckets(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	now := time.Now().UTC()
 
-	sess1, err := session.CreateWithMetadata(rt.SessionDir, "usage-real", rt.RootDir)
+	sess1, err := rt.Sessions.CreateWithMetadata("usage-real", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -10377,7 +10478,7 @@ func TestSettingsUsageModelBreakdownsSkipZeroUsageBuckets(t *testing.T) {
 			At: now.Add(-time.Hour), InputTokens: 200, OutputTokens: 100, CacheReadTokens: 50,
 		},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, sess1.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(sess1.ID, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -10385,7 +10486,7 @@ func TestSettingsUsageModelBreakdownsSkipZeroUsageBuckets(t *testing.T) {
 	// Providers that never report usage (and compaction markers) persist
 	// token_usage rows with all-zero usage but a nonzero context size. A
 	// bucket made only of such rows must not surface as a 0/0 card.
-	sess2, err := session.CreateWithMetadata(rt.SessionDir, "usage-zero", rt.RootDir)
+	sess2, err := rt.Sessions.CreateWithMetadata("usage-zero", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -10396,7 +10497,7 @@ func TestSettingsUsageModelBreakdownsSkipZeroUsageBuckets(t *testing.T) {
 			At: now.Add(-time.Hour), ContextTokens: 4096,
 		},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, sess2.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(sess2.ID, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -10429,7 +10530,7 @@ func TestSettingsUsageModelBreakdownsCoverFullHistory(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	now := time.Now().UTC()
 
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "usage-full-history-models", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("usage-full-history-models", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -10444,7 +10545,7 @@ func TestSettingsUsageModelBreakdownsCoverFullHistory(t *testing.T) {
 			At: now.AddDate(0, 0, -20), InputTokens: 900, OutputTokens: 100, CacheReadTokens: 0,
 		},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(sess.ID, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -10491,7 +10592,7 @@ func TestUsageOverviewBucketsTokenUsageByRequestedTimeZone(t *testing.T) {
 	evening := time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC)
 	morning := time.Date(2026, time.March, 10, 18, 0, 0, 0, time.UTC)
 
-	first, err := session.CreateWithMetadata(rt.SessionDir, "usage-overview-first", rt.RootDir)
+	first, err := rt.Sessions.CreateWithMetadata("usage-overview-first", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -10508,11 +10609,11 @@ func TestUsageOverviewBucketsTokenUsageByRequestedTimeZone(t *testing.T) {
 			At: evening, InputTokens: 100, OutputTokens: 20,
 		},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, first.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(first.ID, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
-	second, err := session.CreateWithMetadata(rt.SessionDir, "usage-overview-second", rt.RootDir)
+	second, err := rt.Sessions.CreateWithMetadata("usage-overview-second", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -10523,7 +10624,7 @@ func TestUsageOverviewBucketsTokenUsageByRequestedTimeZone(t *testing.T) {
 			At: morning, InputTokens: 50, CacheReadTokens: 30,
 		},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, second.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(second.ID, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -10564,7 +10665,7 @@ func TestSettingsUsageBucketsDaysByRequestedTimeZone(t *testing.T) {
 	// 06:30 UTC on March 10 is still the evening of March 9 in Los Angeles
 	// (PDT, UTC-7), which is the day the desktop's calendar draws it on.
 	evening := time.Date(2026, time.March, 10, 6, 30, 0, 0, time.UTC)
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "usage-settings-zone", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("usage-settings-zone", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -10575,7 +10676,7 @@ func TestSettingsUsageBucketsDaysByRequestedTimeZone(t *testing.T) {
 			At: evening, InputTokens: 100, OutputTokens: 20,
 		},
 	} {
-		if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, rec); err != nil {
+		if err := rt.Sessions.AppendHistoryRecord(sess.ID, rec); err != nil {
 			t.Fatal(err)
 		}
 	}

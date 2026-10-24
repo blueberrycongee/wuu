@@ -264,7 +264,7 @@ func (t *BashTool) executeRun(ctx context.Context, args bashArgs) (toolresult.Re
 		timeout = maxShellTimeoutSeconds
 	}
 
-	revision := workspaceRevision(ctx, t.env.RevisionRoot(ctx))
+	revision := workspaceRevision(ctx, t.env.RevisionRoot(ctx), t.env.RuntimeHome)
 	// Identical commands in different directories verify different suites.
 	commandHash := sha256Hex([]byte(runCWD + "\x00" + command))
 	result, err := executeShellCommandInDir(ctx, t.env, command, timeout, runCWD)

@@ -58,13 +58,25 @@ func (s *Server) handleGitCommitMessage(req Request) error {
 	if len([]rune(diff)) > gitCommitMessageMaxDiffLength {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("diff exceeds %d characters", gitCommitMessageMaxDiffLength))
 	}
-	if s.rt == nil || s.rt.StreamRunner == nil || s.rt.StreamRunner.Client == nil {
+	if s.rt == nil {
 		return s.writeResponse(req.ID, nil, errors.New("BYOK model runtime is not available"))
 	}
-	runner := s.rt.StreamRunner
-	model := strings.TrimSpace(runner.APIModel)
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer binding.Close()
+	models, err := binding.Models()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("BYOK model runtime is not available: %w", err))
+	}
+	if models.Main == nil {
+		return s.writeResponse(req.ID, nil, errors.New("BYOK model runtime is not available"))
+	}
+	selection := models.Roles.Main
+	model := strings.TrimSpace(selection.APIModel)
 	if model == "" {
-		model = strings.TrimSpace(runner.Model)
+		model = strings.TrimSpace(selection.Model)
 	}
 	if model == "" {
 		return s.writeResponse(req.ID, nil, errors.New("no BYOK model is configured"))
@@ -85,24 +97,29 @@ func (s *Server) handleGitCommitMessage(req Request) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommitMessageTimeout)
 	defer cancel()
-	ctx = providers.WithInferenceJournal(ctx, s.rt.InferenceJournalForOwner("git-commit-message"))
+	ctx = providers.WithInferenceJournal(ctx, binding.InferenceJournalRuntime.ForOwner("git-commit-message"))
+	ctx, finishReceipts, err := binding.BeginModelReceipts(ctx)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	response, err := providers.ExecuteChat(
 		ctx,
-		runner.Client,
+		models.Main,
 		providers.ChatRequest{
-			Provider: runner.ProviderName,
+			Provider: selection.Provider,
 			Model:    model,
 			Messages: []providers.ChatMessage{
 				{Role: "system", Content: gitCommitMessageSystemPrompt},
 				{Role: "user", Content: user.String()},
 			},
-			Temperature:     runner.Temperature,
-			Effort:          runner.Effort,
-			ProviderOptions: provideroptions.Clone(runner.ProviderOptions),
+			Temperature:     models.Temperature,
+			Effort:          selection.LegacyEffort,
+			ProviderOptions: provideroptions.Clone(selection.ProviderOptions),
 		},
 		providers.InferenceOperationAuxiliary,
 		providers.InferenceProfileInteractive,
 	)
+	err = errors.Join(err, finishReceipts())
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("BYOK commit message generation failed: %w", err))
 	}

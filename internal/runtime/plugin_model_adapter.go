@@ -137,6 +137,16 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 	if err != nil {
 		return nil, err
 	}
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
+	streamOwnsReceipt := false
+	defer func() {
+		if !streamOwnsReceipt {
+			endReceipt(nil)
+		}
+	}()
 	req, err = providers.EnsureInferenceAttemptContext(ctx, req, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
 	if err != nil {
 		return nil, err
@@ -152,7 +162,9 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 		return nil, errors.Join(err, settlePluginModelSubmission(req, submission, nil, err))
 	}
 	out := make(chan providers.StreamEvent, 32)
+	streamOwnsReceipt = true
 	go func() {
+		defer func() { endReceipt(req.Attempt.JournalError()) }()
 		defer close(out)
 		settled := false
 		defer func() {
@@ -164,7 +176,17 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 				_ = settlePluginModelSubmission(req, submission, nil, cause)
 			}
 		}()
-		for event := range stream {
+		for {
+			var event providers.StreamEvent
+			var open bool
+			select {
+			case event, open = <-stream:
+				if !open {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
 			// Usage is recorded at the sink before buffering. Replaying it here
 			// could replace a newer receipt with an older queued event.
 			observation := event
@@ -185,11 +207,6 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 					settled = true
 					_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()})
 				}
-				// The sink already owns receipts; only release its producer.
-				go func() {
-					for range stream {
-					}
-				}()
 				return
 			}
 		}
@@ -200,72 +217,72 @@ func (c *modelAdapterClient) StreamChat(ctx context.Context, req providers.ChatR
 // Native streams are observed at the selected physical provider boundary,
 // including continuations that deliberately bypass a second retry executor.
 func (c *modelAdapterClient) nativeModelStream(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	stream, err := c.inner.StreamChat(ctx, req)
 	if err == nil && stream == nil {
 		err = errors.New("native model stream is unavailable")
 	}
 	if err != nil {
-		return nil, errors.Join(err, req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: err}))
+		err = errors.Join(err, req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: err}))
+		endReceipt(req.Attempt.JournalError())
+		return nil, err
 	}
 	out := make(chan providers.StreamEvent, 32)
 	go func() {
-		defer close(out)
-		terminal := false
-		defer func() {
-			if !terminal {
-				cause := ctx.Err()
-				if cause == nil {
-					cause = providers.NewIncompleteStreamError("native model stream ended without a terminal event")
+		defer func() { endReceipt(req.Attempt.JournalError()) }()
+		done := false
+		func() {
+			defer close(out)
+			terminal := false
+			defer func() {
+				if !terminal {
+					cause := ctx.Err()
+					if cause == nil {
+						cause = providers.NewIncompleteStreamError("native model stream ended without a terminal event")
+					}
+					_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: cause})
 				}
-				_ = req.Attempt.ObserveStreamEvent(providers.StreamEvent{Type: providers.EventError, Error: cause})
-			}
-		}()
-		for {
-			var event providers.StreamEvent
-			var open bool
-			select {
-			case event, open = <-stream:
-				if !open {
+			}()
+			for {
+				var event providers.StreamEvent
+				var open bool
+				select {
+				case event, open = <-stream:
+					if !open {
+						return
+					}
+				case <-ctx.Done():
 					return
 				}
-			case <-ctx.Done():
-				drainModelReceipt(stream, req.Attempt, false)
-				return
+				if err := req.Attempt.ObserveStreamEvent(event); err != nil {
+					event = providers.StreamEvent{Type: providers.EventError, Error: err}
+				}
+				terminal = event.Type == providers.EventDone || event.Type == providers.EventError
+				done = event.Type == providers.EventDone
+				select {
+				case out <- event:
+				case <-ctx.Done():
+					return
+				}
+				if terminal {
+					return
+				}
 			}
-			if err := req.Attempt.ObserveStreamEvent(event); err != nil {
-				event = providers.StreamEvent{Type: providers.EventError, Error: err}
-			}
-			if event.Type == providers.EventDone || event.Type == providers.EventError {
-				terminal = true
-			}
-			select {
-			case out <- event:
-			case <-ctx.Done():
-				drainModelReceipt(stream, req.Attempt, false)
-				return
-			}
-			if event.Type == providers.EventDone || event.Type == providers.EventError {
-				drainModelReceipt(stream, req.Attempt, event.Type == providers.EventDone)
-				return
-			}
-		}
-	}()
-	return out, nil
-}
-
-// Cancellation must release the logical consumer immediately. Continue draining
-// the physical producer so buffered usage is retained and its lease can finish;
-// transport clients close promptly on cancellation under the stream contract.
-func drainModelReceipt(stream <-chan providers.StreamEvent, attempt providers.InferenceAttempt, done bool) {
-	go func() {
+		}()
+		// Logical delivery closes promptly; the same registered observer owns
+		// the remaining physical stream until all accepted receipts are read.
 		for event := range stream {
 			if done {
 				continue
 			}
-			_ = attempt.ObserveStreamEvent(event)
+			_ = req.Attempt.ObserveStreamEvent(event)
 			done = event.Type == providers.EventDone
 		}
 	}()
+	return out, nil
 }
 
 // Direct adapters receive durable, potentially billable admission before any
@@ -314,8 +331,13 @@ func invokePluginModelStream(ctx context.Context, host *pluginhost.Host, capabil
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make(chan providers.StreamEvent, 32)
 	go func() {
+		defer endReceipt(nil)
 		defer close(out)
 		var mu sync.Mutex
 		var terminal *providers.StreamEvent
@@ -430,7 +452,11 @@ func (k *modelEmitInvoker) InvokeService(ctx context.Context, params pluginhost.
 	if err := decodeServiceParams(params.Params, &event); err != nil {
 		return nil, err
 	}
-	if err := host.EmitModelEvent(ctx, params.Caller, params.ExecutionID, event); err != nil {
+	scope, scopeErr := params.CallerExecution(false)
+	if scopeErr != nil {
+		return nil, scopeErr
+	}
+	if err := host.EmitModelEvent(ctx, scope.PluginID, scope.ID, event); err != nil {
 		var serviceErr *pluginhost.HostServiceError
 		if errors.As(err, &serviceErr) {
 			return nil, serviceErr

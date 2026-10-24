@@ -1,9 +1,10 @@
 package appserver
 
 import (
-	"database/sql"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/codexengine"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -61,6 +63,7 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 		}
 	}
 	writeConfig(firstToken)
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -118,6 +121,7 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	restartedRuntime.WuuHome, restartedRuntime.SessionDir = rt.WuuHome, rt.SessionDir
 	rt = restartedRuntime
 	out = &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv = New(rt, out)
 	t.Cleanup(srv.Close)
 	if restarted := quota(list("restart", true), "first"); restarted.Status != "stale" || restarted.ObservedAt != first.ObservedAt {
@@ -146,13 +150,17 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{"default_provider":"grok","providers":{"grok":{"type":"grok-build","model":"grok-4.5"},"codex":{"type":"openai-codex","model":"gpt-5","reuse_codex_credentials":true}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bindConfigSourceForTest(t, rt)
+	documents := &subscriptionHistoryDocuments{Documents: rt.Documents}
+	rt.Documents = documents
+	rt.Sessions = session.NewStore(context.Background(), documents)
 	for _, source := range []string{"grok", "codex", "external"} {
-		sess, err := session.CreateWithMetadata(rt.SessionDir, source, t.TempDir())
+		sess, err := rt.Sessions.CreateWithMetadata(source, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
 		if source == "external" {
-			if _, err := session.SetEngine(rt.SessionDir, sess.ID, "codex"); err != nil {
+			if _, err := rt.Sessions.SetEngine(sess.ID, "codex"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -160,7 +168,7 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 			{Role: "meta", Content: "token_usage", Provider: source, InputTokens: 12},
 			{Role: "meta", Content: "turn_terminal", Provider: source, StopReason: "completed", InputTokens: 12},
 		} {
-			if err := session.AppendHistoryRecord(rt.SessionDir, sess.ID, record); err != nil {
+			if err := rt.Sessions.AppendHistoryRecord(sess.ID, record); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -176,7 +184,11 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 		if response["error"] != nil {
 			t.Fatalf("initialize: %+v", response)
 		}
-		for _, raw := range response["result"].(map[string]any)["providers"].([]any) {
+		providers, ok := response["result"].(map[string]any)["providers"].([]any)
+		if !ok || len(providers) != 2 {
+			t.Fatalf("initialize inventory: %+v", response)
+		}
+		for _, raw := range providers {
 			provider := raw.(map[string]any)
 			if provider["latest_request"] != nil || provider["local_usage"] != nil {
 				t.Fatalf("navigation loaded historical statistics: %+v", provider)
@@ -224,14 +236,7 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 	}
 	// A dashboard snapshot must not contaminate the cached config summaries.
 	initialize("after")
-	db, err := sql.Open("sqlite", filepath.Join(rt.SessionDir, "sessions.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err := db.Exec(`UPDATE session_messages SET input_tokens = 'invalid'`); err != nil {
-		t.Fatal(err)
-	}
+	documents.fail = true
 	failed := list("failed-history", true)
 	if len(failed.SubscriptionProviders) != 2 {
 		t.Fatal("failed history scan removed service inventory")
@@ -299,4 +304,17 @@ func TestSubscriptionQuotaGoesOnlyToEnginesAdvertisingIt(t *testing.T) {
 	if quoted == 0 {
 		t.Fatal("no engine received quota")
 	}
+}
+
+// Fault injection stays at the selected document boundary used by history.
+type subscriptionHistoryDocuments struct {
+	persistence.Documents
+	fail bool
+}
+
+func (d *subscriptionHistoryDocuments) Read(ctx context.Context, query persistence.Query) (persistence.View, error) {
+	if d.fail {
+		return persistence.View{}, errors.New("history provider unavailable")
+	}
+	return d.Documents.Read(ctx, query)
 }

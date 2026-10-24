@@ -261,7 +261,7 @@ export function useConversationScrollState({
   jumpToLatest: () => void;
   jumpToUserMessage: (turnID: string, itemID: string, options?: { highlight?: boolean }) => void;
   jumpToConversationMessage: (turnID: string, item: ThreadItem, query?: string) => () => void;
-  captureConversationScrollIntent: () => () => boolean;
+  captureConversationScrollIntent: (options?: { forHandoff?: boolean }) => () => boolean;
   /** Position this submission once its optimistic bubble has mounted. */
   requestSubmittedQueryScroll: (messageID: string, sourceID?: string) => void;
   acknowledgeSubmittedMessage: (pendingID: string, messageID: string) => void;
@@ -1014,7 +1014,9 @@ export function useConversationScrollState({
       streamScrollFrameRef.current = undefined;
     }
   }, [activeThreadID, activePane, splitConversation, cancelScrollMotion]);
-  useLayoutEffect(() => cancelScrollMotion, [cancelScrollMotion]);
+  // Disposal stops motion, but is not a new reading choice. A replacement
+  // shell may still need to distinguish prior input from lifecycle cleanup.
+  useLayoutEffect(() => () => cancelScrollMotion({ preserveIntent: true }), [cancelScrollMotion]);
 
   useEffect(() => {
     const stopReducedMotion = subscribeReducedMotion((reduced) => { if (reduced) cancelScrollMotion(); });
@@ -1107,11 +1109,11 @@ export function useConversationScrollState({
 
   // A search may still be loading its message after the destination mounts.
   // Capture the current owner without starting or reserving a scroll.
-  const captureConversationScrollIntent = useCallback((): (() => boolean) => {
+  const captureConversationScrollIntent = useCallback((options?: { forHandoff?: boolean }): (() => boolean) => {
     const viewport = conversationViewport();
     const binding = bindingGenerationRef.current;
     const intent = scrollIntentGenerationRef.current;
-    return () => Boolean(viewport) && conversationViewport() === viewport &&
+    return () => (options?.forHandoff || (Boolean(viewport) && conversationViewport() === viewport)) &&
       bindingGenerationRef.current === binding && scrollIntentGenerationRef.current === intent;
   }, [activePane, splitConversation]);
 
@@ -1544,6 +1546,10 @@ export function useConversationScrollState({
         if (!submissionPhase()) setAutoFollow(true);
         return undefined;
       }
+
+      // Composer/status refs can rerun restoration after search reserves the
+      // viewport. Let that jump finish against the newly measured layout.
+      if (messageJumpCancelRef.current) return;
 
       if (adoptingSubmission && submissionRef.current) {
         submissionRef.current.threadID = activeThreadID;

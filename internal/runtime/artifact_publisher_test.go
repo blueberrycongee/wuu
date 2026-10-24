@@ -60,12 +60,12 @@ func TestPresentArtifactSnapshotsSurviveEditsAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	kit.SetArtifactPublisher(newArtifactPublisher(home))
+	kit.SetArtifactPublisher(newTestArtifactPublisher(t, home, state))
 	kit.SetStateDir(state)
 	kit.SetSessionID("thread")
 	kit.SetSessionDir(statepath.SessionArtifactDir(state, "thread"))
 	changed := false
-	kit.SetOnFileChanged(func(string) { changed = true })
+	kit.SetOnFileChanged(func(context.Context, string) { changed = true })
 	source := filepath.Join(root, "chart.svg")
 	firstSVG := `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="80"><rect width="200" height="80" fill="red"/></svg>`
 	if err := os.WriteFile(source, []byte(firstSVG), 0o600); err != nil {
@@ -151,7 +151,7 @@ func TestPresentArtifactSnapshotsSurviveEditsAndReplay(t *testing.T) {
 func TestArtifactPublisherTypesAndFailures(t *testing.T) {
 	home, root := t.TempDir(), t.TempDir()
 	state := filepath.Join(home, "workspaces", "workspace")
-	publish := newArtifactPublisher(home)
+	publish := newTestArtifactPublisher(t, home, filepath.Join(home, "workspaces", "workspace"))
 	png, _ := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")
 	for _, tc := range []struct {
 		name            string
@@ -207,4 +207,14 @@ func TestArtifactPublisherTypesAndFailures(t *testing.T) {
 	if _, err := publish(context.Background(), tools.ArtifactPublishRequest{Path: large, ThreadID: "../escape", StateDir: state}); err == nil {
 		t.Fatal("accepted unsafe thread")
 	}
+}
+
+func newTestArtifactPublisher(t *testing.T, home, state string) tools.ArtifactPublisher {
+	t.Helper()
+	provider := NewArtifactService(ArtifactModule, home, state)
+	if err := provider.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { provider.Close(context.Background()) })
+	return NewArtifactPublisher(artifactProviderClient(provider))
 }

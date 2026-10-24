@@ -52,10 +52,10 @@ func writeTwoProviderSelectionConfig(t *testing.T, path string) {
 
 func cachedForeignPinnedThread(t *testing.T, srv *Server, rt *runtime.Session, id string) *threadState {
 	t.Helper()
-	if _, err := session.CreateWithMetadata(rt.SessionDir, id, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, id, session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection(id, session.RuntimeSelection{
 		Provider: "alt-provider",
 		Model:    "alt-model",
 	}); err != nil {
@@ -90,7 +90,7 @@ func TestSubscribeThreadRuntimeKeepsForeignPinWorkerProvider(t *testing.T) {
 
 	dir := t.TempDir()
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       providers.AdaptStreamClient(&fakeClient{}),
 		ProviderName: "alt-provider", // the conversation's own worker provider, set at construction
@@ -113,7 +113,7 @@ func TestSubscribeThreadRuntimeKeepsForeignPinWorkerProvider(t *testing.T) {
 		t.Fatalf("precondition: constructed worker provider = %q, want alt-provider", control.WorkerProviderName())
 	}
 
-	sub := srv.subscribeThreadRuntime("foreign-thread", &runtime.ThreadRuntime{AgentControl: control})
+	sub := srv.subscribeThreadRuntime(testRuntimeState(t, srv.rt), "foreign-thread", &runtime.ThreadRuntime{AgentControl: control})
 	if sub != nil {
 		t.Cleanup(sub.stop)
 	}
@@ -181,10 +181,10 @@ func TestEnsureThreadRuntimeRestoresPinnedVariantEffortPermission(t *testing.T) 
 	writeSelectionTestConfig(t, rt.ConfigPath)
 	srv := New(rt, &lockedBuffer{})
 
-	if _, err := session.CreateWithMetadata(rt.SessionDir, "resume-thread", rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata("resume-thread", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if _, err := session.SetRuntimeSelection(rt.SessionDir, "resume-thread", session.RuntimeSelection{
+	if _, err := rt.Sessions.SetRuntimeSelection("resume-thread", session.RuntimeSelection{
 		Provider:       "fake-provider",
 		Model:          "fake-model",
 		Variant:        "high",
@@ -227,6 +227,7 @@ func TestServerThreadForkInheritsSourceSelection(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{{Content: "answer"}}}
 	rt := newTestRuntime(t, client)
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
@@ -277,7 +278,7 @@ func TestServerThreadForkInheritsSourceSelection(t *testing.T) {
 			fork.ModelVariant, fork.ModelEffort, fork.PermissionMode)
 	}
 	// The persisted session row carries the inherited pins too.
-	sess, ok, err := session.Find(rt.SessionDir, fork.ID)
+	sess, ok, err := rt.Sessions.Find(fork.ID)
 	if err != nil || !ok {
 		t.Fatalf("find fork session: ok=%v err=%v", ok, err)
 	}
@@ -444,7 +445,7 @@ func TestServerInitializePreservesExternalNativeDefault(t *testing.T) {
 			if thread.EngineID != "cursor" || thread.ModelProvider != "cursor" || thread.Model != "" || thread.ModelEffort != "" || thread.Speed != "" || len(thread.ModelOptions) != 0 {
 				t.Fatalf("initialize/resume replaced native defaults: %+v", thread)
 			}
-			persisted, ok, err := session.Find(rt.SessionDir, id)
+			persisted, ok, err := rt.Sessions.Find(id)
 			if err != nil || !ok || persisted.Provider != "cursor" || persisted.Model != "" || len(persisted.ModelOptions) != 0 {
 				t.Fatalf("native defaults changed on disk: %+v, found=%v err=%v", persisted, ok, err)
 			}
@@ -457,17 +458,18 @@ func TestServerThreadForkPreservesExternalNativeSelection(t *testing.T) {
 		t.Run("model="+model, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
 			out := &lockedBuffer{}
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 			const sourceID = "external-fork-source"
-			if _, err := session.CreateWithMetadata(rt.SessionDir, sourceID, rt.RootDir); err != nil {
+			if _, err := rt.Sessions.CreateWithMetadata(sourceID, rt.RootDir); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := session.SetEngine(rt.SessionDir, sourceID, "cursor"); err != nil {
+			if _, err := rt.Sessions.SetEngine(sourceID, "cursor"); err != nil {
 				t.Fatal(err)
 			}
 			options := map[string]string{"context_mode": "long"}
-			if _, err := session.SetRuntimeSelection(rt.SessionDir, sourceID, session.RuntimeSelection{Provider: "cursor", Model: model, ModelOptions: options, PermissionMode: config.PermissionModeUnconfined}); err != nil {
+			if _, err := rt.Sessions.SetRuntimeSelection(sourceID, session.RuntimeSelection{Provider: "cursor", Model: model, ModelOptions: options, PermissionMode: config.PermissionModeUnconfined}); err != nil {
 				t.Fatal(err)
 			}
 			// Empty native threads can fork safely without inventing context. A
@@ -484,7 +486,7 @@ func TestServerThreadForkPreservesExternalNativeSelection(t *testing.T) {
 			if fork.EngineID != "cursor" || fork.ModelProvider != "cursor" || fork.Model != model || !reflect.DeepEqual(fork.ModelOptions, options) {
 				t.Fatalf("fork lost native selection: %+v", fork)
 			}
-			persisted, ok, err := session.Find(rt.SessionDir, fork.ID)
+			persisted, ok, err := rt.Sessions.Find(fork.ID)
 			if err != nil || !ok || persisted.EngineID != "cursor" || persisted.Model != model || !reflect.DeepEqual(persisted.ModelOptions, options) {
 				t.Fatalf("fork selection did not persist: %+v, found=%v err=%v", persisted, ok, err)
 			}

@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 // Only the transport is synthetic. The shipped React renderer, Selection/Range,
@@ -27,7 +28,7 @@ const projectList = () => ({ projects: [], active_context: { kind: "no_project",
 function record(method, args) {
   ipcRenderer.send("selection:bridge-call", { method, args });
 }
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   initialize: async () => ({ protocol_version: "e2e", general_settings: settings, provider: "e2e", model: "mock-selection", workspace_root: cwd, providers: [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true, api_key_configured: true }] }),
   listProjects: async () => projectList(), selectNoProject: async () => projectList(),
   updateGeneralSettings: async value => ({ general_settings: settings = { ...settings, ...value } }),
@@ -51,4 +52,4 @@ contextBridge.exposeInMainWorld("wuu", {
   interruptTurn: async () => ({ ok: true }),
   onServerEvent: listener => { listeners.add(listener); return () => listeners.delete(listener); },
   onWindowResizeState: () => () => undefined,
-});
+}));

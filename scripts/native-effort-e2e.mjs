@@ -42,7 +42,7 @@ async function scenario(configuredEffort) {
     skills: { enabled: false }, ptc: { enabled: false }, agent: { permission_mode: "standard" } }));
   const events = new EventEmitter(), transcript = [], requests = [], observations = [];
   let sequence = 0, stderr = "";
-  const child = spawn(binary, ["app-server", "--safe-mode", "--workdir", home], { env, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(binary, ["app-server", "--workdir", home], { env, stdio: ["pipe", "pipe", "pipe"] });
   child.stderr.setEncoding("utf8").on("data", text => { stderr += text; });
   child.on("error", error => { stderr += String(error); });
   createInterface({ input: child.stdout }).on("line", line => {

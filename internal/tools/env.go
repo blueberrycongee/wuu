@@ -128,6 +128,7 @@ type Env struct {
 	RootDir              string
 	WorkspaceID          string
 	StateDir             string
+	RuntimeHome          string
 	// Unconfined is the explicit escape hatch for lifting path confinement.
 	// Default false means file tools stay inside FileScopeRoots/RootDir.
 	Unconfined     bool
@@ -153,10 +154,6 @@ type Env struct {
 	SessionDir string // absolute session artifact path for result budgeting
 	// CodeModeStateOwner can bind attached side-chat state to its parent lifetime.
 	CodeModeStateOwner string
-	// SessionsDir overrides the user-level SQLite session store location for
-	// tools that read conversations by ID. Empty keeps the canonical WUU_HOME
-	// lookup used by ordinary runtimes.
-	SessionsDir string
 	// WorkingNotesHome binds working memory to the runtime's resolved Wuu home.
 	WorkingNotesHome string
 	// ToolResultProjectionMode selects stable tool-result projection behavior
@@ -231,7 +228,7 @@ type Env struct {
 	// OnFileChanged is called after write_file/edit_file successfully
 	// modifies a file. Enables FileChanged hook dispatch without
 	// coupling the tools package to the hooks package.
-	OnFileChanged func(absPath string)
+	OnFileChanged func(context.Context, string)
 	// OnSessionWorkspaceChanged persists and broadcasts an explicit main-agent
 	// workspace move before subsequent tools start resolving paths there.
 	OnSessionWorkspaceChanged func(root string) error

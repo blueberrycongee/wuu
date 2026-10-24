@@ -11,10 +11,8 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 )
 
-// driverGatewayTable tracks the live kernel gateways of in-flight remote
-// driver runs, keyed by execution id. The kernel's driver.model-loop and
-// driver.checkpoint services route through it; entries are removed when the
-// run invoke returns.
+// driverGatewayTable routes turn resources and checkpoints by execution ID and
+// provider identity. Entries exist only while the owning driver is running.
 type driverGatewayTable struct {
 	mu       sync.Mutex
 	gateways map[string]driverGatewayEntry
@@ -66,36 +64,6 @@ func (t *driverGatewayTable) authorizedGateway(callerPluginID string, executionI
 		return nil, &pluginhost.HostServiceError{Code: "execution_not_authorized", Message: fmt.Sprintf("plugin %q does not own the driver run for execution %s", callerPluginID, strings.TrimSpace(executionID))}
 	}
 	return entry.gateway, nil
-}
-
-type driverModelLoopInvoker struct {
-	parent *kernelHostServices
-}
-
-func (k *driverModelLoopInvoker) ID() string                { return k.parent.ID() }
-func (k *driverModelLoopInvoker) Status() pluginhost.Status { return k.parent.Status() }
-func (k *driverModelLoopInvoker) Close(context.Context) error {
-	return nil
-}
-
-func (k *driverModelLoopInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
-	var decoded loopdriver.DriverModelLoopParams
-	if err := json.Unmarshal(params.Params, &decoded); err != nil {
-		return nil, serviceError("invalid_request", "driver.model-loop params: "+err.Error())
-	}
-	gateway, hostErr := k.parent.driverGateways.authorizedGateway(params.Caller, decoded.ExecutionID)
-	if hostErr != nil {
-		return nil, hostErr
-	}
-	receipt, err := gateway.ExecuteModelLoop(ctx, decoded.Input, decoded.Policy)
-	if err != nil {
-		return nil, err
-	}
-	result, err := json.Marshal(loopdriver.DriverModelLoopResult{ReceiptID: receipt.ID})
-	if err != nil {
-		return nil, serviceError("service_unavailable", "encode driver.model-loop result: "+err.Error())
-	}
-	return result, nil
 }
 
 type driverCheckpointInvoker struct {

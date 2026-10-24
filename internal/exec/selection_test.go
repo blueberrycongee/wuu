@@ -49,7 +49,7 @@ func TestRunResumedAndForkedSelectionReachesProvider(t *testing.T) {
 		"first":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-5.5"},
 		"second":{"type":"openai-compatible","base_url":%q,"api_key":"synthetic","model":"gpt-5.4"}
 	},"agent":{"permission_mode":"read_only","effort":"high"},
-	"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution"]}}`, server.URL+"/first", server.URL+"/second"))
+	"composition":{"version":1,"modules":["kernel","wuu.default-loop","wuu.session-execution","wuu.tool-execution","wuu.session-state","wuu.state.sqlite","wuu.state-consumer","wuu.credentials.file","wuu.settings.local","wuu.config.local","wuu.permissions.default","wuu.artifacts.local","wuu.index.trace"]}}`, server.URL+"/first", server.URL+"/second"))
 	if err := os.WriteFile(configPath, config, 0o600); err != nil {
 		t.Fatal(err)
 	}

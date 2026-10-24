@@ -442,8 +442,8 @@ async function run() {
   assert.ok(!storedSecrets().includes('sk-e2e-deepseek'), 'Removing a service removes its saved key.');
 
   // Back in the app, a new conversation starts on the new default.
-  await click(main, '[data-ribbon-id="conversations"]');
-  await waitFor(main, () => !document.querySelector('.settings-page') && document.querySelector('.composer textarea'));
+  await click(main, '[data-wuu-component="conversations-section"]');
+  await waitFor(main, () => !document.querySelector('.app-shell[data-settings-open]') && document.querySelector('.composer textarea'));
   await type(main, '.composer textarea', 'Which model answers this?');
   await click(main, '.composer-send-button');
   await waitFor(main, () => [...document.querySelectorAll('[data-thread-id] .session-flow')].some(flow => flow.textContent.includes('Model services fixture answer.')), undefined, 60000);

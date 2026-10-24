@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,8 +19,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/activity"
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/extensions"
@@ -28,7 +31,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -77,6 +82,332 @@ func TestSessionCleanupClosesMCPManager(t *testing.T) {
 	}
 }
 
+type sessionHookReceiptClient struct {
+	started  chan providers.ChatRequest
+	release  chan struct{}
+	done     chan struct{}
+	observed chan context.Context
+}
+
+func (c sessionHookReceiptClient) Chat(ctx context.Context, request providers.ChatRequest) (providers.ChatResponse, error) {
+	if c.observed != nil {
+		c.observed <- ctx
+	}
+	_, end, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return providers.ChatResponse{}, err
+	}
+	submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Protocol: "fixture", Transport: "http", Mode: "chat"})
+	if err != nil {
+		end(nil)
+		return providers.ChatResponse{}, err
+	}
+	go func() {
+		defer close(c.done)
+		defer func() { end(request.Execution.JournalError()) }()
+		<-c.release
+		submission.CompleteSuccess(&providers.TokenUsage{InputTokens: 31, OutputTokens: 7})
+	}()
+	c.started <- request
+	return providers.ChatResponse{Content: `{"ok":true}`}, nil
+}
+
+// Successful file mutations keep their result while the enclosing owner is
+// responsible for prompt-hook receipts, including required late-write errors.
+func TestFileChangedPromptReceiptsUseCapturedTurn(t *testing.T) {
+	for _, toolName := range []string{"write_file", "edit_file"} {
+		for _, failReceipt := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail_receipt_%t", toolName, failReceipt), func(t *testing.T) {
+				root, home := t.TempDir(), t.TempDir()
+				t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+				provider := &sessionHookDocuments{modelTerminalDocuments: &modelTerminalDocuments{Service: persistence.NewService("test.file-hook-documents", filepath.Join(root, "documents"), "jsonl"), entered: make(chan context.Context, 1), release: make(chan struct{}), closed: make(chan struct{})}, logicalDone: make(chan struct{}), failReceipt: failReceipt}
+				close(provider.release)
+				modules := testStateModules()
+				modules[1] = provider.ID()
+				modules = append(modules, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, loopdriver.DefaultDriverID)
+				cfg := config.Config{
+					Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
+					DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "fixture", Model: "portable-coder"}},
+					Hooks: map[string][]config.HookEntry{string(hooks.FileChanged): {{Type: "prompt", Prompt: "$ARGUMENTS"}}},
+				}
+				rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg, NativeProviders: []NativeProviderFactory{{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _, _ = rt.Cleanup() })
+				client := sessionHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{}), observed: make(chan context.Context, 1)}
+				unblock := sync.OnceFunc(func() { close(client.release) })
+				defer unblock()
+				dispatcher := buildHookDispatcher(cfg, nil, client, "fixture", nil)
+				rt.HookDispatcher.Replace(dispatcher)
+				rt.pluginGeneration.hooks.Replace(dispatcher)
+				threadRoot := filepath.Join(root, "thread")
+				if err := os.MkdirAll(threadRoot, 0700); err != nil {
+					t.Fatal(err)
+				}
+				thread, err := rt.NewThreadRuntimeForRoot("file-hook-thread", threadRoot)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer rt.ReleasePluginGeneration(thread.PluginGeneration)
+				defer thread.AgentControl.Close()
+				thread.Toolkit.SetBoundary(tools.UnconfinedBoundary())
+				args := `{"path":"value.txt","content":"after\n"}`
+				if toolName == "edit_file" {
+					if err := os.WriteFile(filepath.Join(threadRoot, "value.txt"), []byte("before\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					args = `{"path":"value.txt","old_text":"before","new_text":"after"}`
+				}
+				type contextKey struct{}
+				ctx, finish, err := agent.BeginModelReceipts(context.WithValue(context.Background(), contextKey{}, "captured-turn"), thread.StreamRunner.BeginModelReceipts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx = providers.WithInferenceJournal(ctx, shutdownCheckpointJournal{thread.StreamRunner.InferenceJournal})
+				text, toolErr := thread.Toolkit.Execute(ctx, providers.ToolCall{ID: "file-change", Name: toolName, Arguments: args})
+				if toolErr != nil {
+					t.Fatalf("completed mutation failed: %v", toolErr)
+				}
+				var result struct{ Action, Path string }
+				if err := json.Unmarshal([]byte(text), &result); err != nil || result.Action == "" || result.Path == "" {
+					t.Fatalf("successful mutation result = %q, %v", text, err)
+				}
+				data, err := os.ReadFile(filepath.Join(threadRoot, "value.txt"))
+				if err != nil || string(data) != "after\n" {
+					t.Fatalf("completed write = %q, %v", data, err)
+				}
+				var request providers.ChatRequest
+				select {
+				case request = <-client.started:
+				default:
+					t.Fatal("FileChanged did not reach its prompt model")
+				}
+				hookCtx := <-client.observed
+				if hookCtx.Value(contextKey{}) != "captured-turn" || providers.ModelReceiptScopeFromContext(hookCtx) != providers.ModelReceiptScopeFromContext(ctx) {
+					t.Error("FileChanged dropped the actual tool receipt context")
+				}
+				var input hooks.Input
+				if err := json.Unmarshal([]byte(request.Messages[len(request.Messages)-1].Content), &input); err != nil {
+					t.Fatal(err)
+				}
+				if input.SessionID != "file-hook-thread" || input.AgentID != "file-hook-thread" || input.CWD != thread.Toolkit.RootDir() {
+					t.Errorf("FileChanged used another toolkit identity: %+v", input)
+				}
+				admitted := request.Execution.Snapshot().Submissions
+				if len(admitted) != 1 {
+					t.Fatalf("physical admissions = %d", len(admitted))
+				}
+				completed := make(chan error, 1)
+				go func() { completed <- finish() }()
+				unblock()
+				select {
+				case finishErr := <-completed:
+					if failReceipt {
+						if !errors.Is(finishErr, agent.ErrModelReceiptLifecycle) || !strings.Contains(finishErr.Error(), "lifecycle receipt rejected") {
+							t.Errorf("required receipt failure was swallowed: %v", finishErr)
+						}
+					} else if finishErr != nil {
+						t.Errorf("receipt completion: %v", finishErr)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("receipt owner did not finish")
+				}
+				<-client.done
+				if !failReceipt {
+					_, snapshot, err := persistence.Inspect(context.Background(), filepath.Join(root, "documents"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					found := false
+					for _, document := range snapshot.Documents {
+						if document.Namespace != "wuu.inference_submissions.v1" {
+							continue
+						}
+						var receipt providers.InferenceSubmissionJournalRecord
+						if err := json.Unmarshal(document.Value, &receipt); err != nil {
+							t.Fatal(err)
+						}
+						if receipt.ID == admitted[0].ID && receipt.OperationID == request.Operation.ID && receipt.AttemptID == request.Attempt.ID {
+							found = receipt.ReportedUsage != nil && receipt.ReportedUsage.InputTokens == 31 && receipt.ReportedUsage.OutputTokens == 7
+						}
+					}
+					if !found {
+						t.Error("captured journal lost the original physical receipt or late usage")
+					}
+				}
+			})
+		}
+	}
+}
+
+type sessionHookDocuments struct {
+	*modelTerminalDocuments
+	logicalDone chan struct{}
+	logicalOnce sync.Once
+	failReceipt bool
+}
+
+func (p *sessionHookDocuments) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	terminal := false
+	if params.Method == "commit" {
+		var tx persistence.Transaction
+		if err := json.Unmarshal(params.Params, &tx); err != nil {
+			return nil, err
+		}
+		for _, write := range tx.Writes {
+			if write.Namespace == "wuu.inference_operations.v1" {
+				var operation struct{ Status string }
+				if err := json.Unmarshal(write.Value, &operation); err != nil {
+					return nil, err
+				}
+				terminal = operation.Status != "active"
+			}
+			if p.failReceipt && write.Namespace == "wuu.inference_submissions.v1" {
+				var receipt providers.InferenceSubmissionJournalRecord
+				if err := json.Unmarshal(write.Value, &receipt); err != nil {
+					return nil, err
+				}
+				if receipt.ReportedUsage != nil {
+					return nil, &pluginhost.HostServiceError{Code: "receipt_checkpoint_rejected", Message: "lifecycle receipt rejected"}
+				}
+			}
+		}
+	}
+	result, err := p.modelTerminalDocuments.InvokeService(ctx, params)
+	if terminal && err == nil {
+		p.logicalOnce.Do(func() { close(p.logicalDone) })
+	}
+	return result, err
+}
+
+// Detached lifecycle prompt hooks need the selected journal and must finish
+// physical receipt accounting before their caller can retire that generation.
+func TestSessionLifecyclePromptReceiptsFinishBeforeAuthorityRelease(t *testing.T) {
+	for _, event := range []hooks.Event{hooks.SessionStart, hooks.SessionEnd} {
+		for _, failReceipt := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail_receipt_%t", event, failReceipt), func(t *testing.T) {
+				ctx := context.Background()
+				root := t.TempDir()
+				home, workspace := testWorkspaceState(t, root)
+				provider := &sessionHookDocuments{modelTerminalDocuments: &modelTerminalDocuments{Service: persistence.NewService("test.hook-documents", filepath.Join(root, "documents"), "jsonl"), entered: make(chan context.Context, 1), release: make(chan struct{}), closed: make(chan struct{})}, logicalDone: make(chan struct{}), failReceipt: failReceipt}
+				close(provider.release)
+				modules := testStateModules()
+				modules[1] = provider.ID()
+				host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
+					&composition.Config{Version: composition.Version, Modules: &modules}, "",
+					NativeProviderFactory{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }})
+				if err != nil {
+					t.Fatal(err)
+				}
+				client := sessionHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{})}
+				unblock := sync.OnceFunc(func() { close(client.release) })
+				defer unblock()
+				cfg := config.Config{Hooks: map[string][]config.HookEntry{string(event): {{Type: "prompt", Prompt: "evaluate lifecycle event $ARGUMENTS"}}}}
+				// Replacement generations intentionally have no default hook journal.
+				dispatcher := buildHookDispatcher(cfg, nil, client, "fixture", nil)
+				generation := &PluginGeneration{id: "lifecycle-receipts", host: host, state: kernel.state, hooks: dispatcher}
+				generation.retain()
+				owner := &Session{RootDir: root, WuuHome: home, HomeDir: home, StateDir: workspace, PluginHost: host, HookDispatcher: dispatcher, pluginGeneration: generation}
+				kernel.bindStateGeneration(generation, owner)
+				if err := host.Activate(ctx); err != nil {
+					t.Fatal(err)
+				}
+				owner.Documents, owner.Sessions, owner.InferenceJournalRuntime = kernel.state.documents, kernel.state.sessions, kernel.state.journal
+				var cleanupOnce sync.Once
+				var cleanupErr error
+				cleanup := func() error {
+					cleanupOnce.Do(func() { _, cleanupErr = owner.Cleanup() })
+					return cleanupErr
+				}
+				t.Cleanup(func() { _ = cleanup() })
+				returned := make(chan error, 1)
+				go func() {
+					if event == hooks.SessionStart {
+						returned <- owner.SetSessionID("lifecycle-test")
+					} else {
+						returned <- cleanup()
+					}
+				}()
+				var request providers.ChatRequest
+				select {
+				case request = <-client.started:
+				case err := <-returned:
+					t.Fatalf("lifecycle hook returned before model admission: %v", err)
+				case <-time.After(10 * time.Second):
+					t.Fatal("lifecycle prompt did not reach its model")
+				}
+				admitted := request.Execution.Snapshot().Submissions
+				if len(admitted) != 1 {
+					t.Fatalf("physical submissions = %d", len(admitted))
+				}
+				var hookErr error
+				early := false
+				select {
+				case <-provider.logicalDone:
+				case hookErr = <-returned:
+					early = true
+					t.Errorf("lifecycle hook returned before selected logical accounting or physical receipts: %v", hookErr)
+				case <-time.After(10 * time.Second):
+					t.Fatal("lifecycle prompt did not complete its logical operation")
+				}
+				if event == hooks.SessionEnd {
+					select {
+					case <-provider.closed:
+						t.Error("SessionEnd retired its authority while the model receipt was pending")
+					default:
+					}
+				}
+				unblock()
+				if !early {
+					select {
+					case hookErr = <-returned:
+					case <-time.After(10 * time.Second):
+						t.Fatal("lifecycle hook did not finish after physical receipt release")
+					}
+				}
+				if failReceipt && (hookErr == nil || !strings.Contains(hookErr.Error(), "lifecycle receipt rejected")) {
+					t.Errorf("required lifecycle receipt failure was lost: %v", hookErr)
+				} else if !failReceipt && hookErr != nil {
+					t.Errorf("lifecycle hook cleanup: %v", hookErr)
+				}
+				if event == hooks.SessionStart {
+					_ = cleanup()
+				}
+				select {
+				case <-client.done:
+				case <-time.After(10 * time.Second):
+					t.Fatal("physical lifecycle receipt did not complete")
+				}
+				_, snapshot, err := persistence.Inspect(ctx, filepath.Join(root, "documents"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				count := 0
+				for _, document := range snapshot.Documents {
+					if document.Namespace != "wuu.inference_submissions.v1" {
+						continue
+					}
+					count++
+					var receipt providers.InferenceSubmissionJournalRecord
+					if err := json.Unmarshal(document.Value, &receipt); err != nil {
+						t.Fatal(err)
+					}
+					if receipt.ID != admitted[0].ID || receipt.OperationID != request.Operation.ID || receipt.AttemptID != request.Attempt.ID {
+						t.Errorf("lifecycle receipt changed physical identity: %+v", receipt)
+					}
+					if !failReceipt && (receipt.ReportedUsage == nil || receipt.ReportedUsage.InputTokens != 31 || receipt.ReportedUsage.OutputTokens != 7) {
+						t.Errorf("lifecycle final checkpoint lost late usage: %+v", receipt)
+					}
+				}
+				if count != 1 {
+					t.Errorf("durable lifecycle receipts = %d, want one", count)
+				}
+			})
+		}
+	}
+}
+
 func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "events.log")
 	command := func(event string) string { return fmt.Sprintf("printf '%s\\n' >> %q", event, logPath) }
@@ -84,7 +415,16 @@ func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 		hooks.SessionStart: {{Command: command("start")}},
 		hooks.SessionEnd:   {{Command: command("end")}},
 	}))
-	session := &Session{RootDir: t.TempDir(), StateDir: t.TempDir(), HookDispatcher: dispatcher}
+	root, home := t.TempDir(), t.TempDir()
+	modules := []string{sessionStateConsumer, persistence.JSONLModule}
+	state, err := OpenState(context.Background(), StateOptions{RootDir: root, HomeDir: home, Config: config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	state.Generation.retain()
+	state.Generation.hooks = dispatcher
+	session := &Session{RootDir: root, WuuHome: home, StateDir: t.TempDir(), HookDispatcher: dispatcher, pluginGeneration: state.Generation, PluginHost: state.Host, Documents: state.Documents, Sessions: state.Sessions, InferenceJournalRuntime: state.InferenceJournalRuntime}
 	if err := session.SetSessionID("session-hooks"); err != nil {
 		t.Fatalf("SetSessionID: %v", err)
 	}
@@ -100,7 +440,7 @@ func TestSessionLifecycleHooksDispatchOnce(t *testing.T) {
 	}
 }
 
-func TestSessionCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *testing.T) {
+func TestOwnedThreadCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *testing.T) {
 	control, worktreePath := newRuntimeCleanupWorktree(t, "pending-terminal-cleanup")
 	// The control's harness path is stable under the repository state root used
 	// by newRuntimeCleanupWorktree. Derive it from the worker's session ID via
@@ -113,8 +453,8 @@ func TestSessionCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *t
 		t.Fatalf("write pending terminal finalization: %v", err)
 	}
 
-	rt := &Session{AgentControl: control}
-	if _, err := rt.Cleanup(); err == nil || !strings.Contains(err.Error(), "preserving session worktrees") {
+	engine := &wuuEngineSession{owner: &Session{}, ownedRuntime: &ThreadRuntime{AgentControl: control}}
+	if err := engine.Close(context.Background()); err == nil || !strings.Contains(err.Error(), "preserving session worktrees") {
 		t.Fatalf("Cleanup error = %v, want pending-terminal diagnostic", err)
 	}
 	if _, err := os.Stat(worktreePath); err != nil {
@@ -122,10 +462,10 @@ func TestSessionCleanupPreservesWorktreesWhileTerminalFinalizationIsPending(t *t
 	}
 }
 
-func TestSessionCleanupRemovesWorktreesWithoutPendingTerminalFinalization(t *testing.T) {
+func TestOwnedThreadCleanupRemovesWorktreesWithoutPendingTerminalFinalization(t *testing.T) {
 	control, worktreePath := newRuntimeCleanupWorktree(t, "settled-terminal-cleanup")
-	rt := &Session{AgentControl: control}
-	if _, err := rt.Cleanup(); err != nil {
+	engine := &wuuEngineSession{owner: &Session{}, ownedRuntime: &ThreadRuntime{AgentControl: control}}
+	if err := engine.Close(context.Background()); err != nil {
 		t.Fatalf("Cleanup: %v", err)
 	}
 	if _, err := os.Stat(worktreePath); !errors.Is(err, os.ErrNotExist) {
@@ -154,7 +494,7 @@ func newRuntimeCleanupWorktree(t *testing.T, sessionID string) (*agentcontrol.Ag
 	stateRoot := filepath.Join(t.TempDir(), "state")
 	artifactDir := filepath.Join(stateRoot, "sessions", sessionID)
 	control, err := agentcontrol.New(agentcontrol.Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       &sessionRecordingClient{},
 		DefaultModel: "runtime-cleanup-test",
@@ -244,16 +584,15 @@ func (c *sessionQueueBlockingClient) StreamChat(ctx context.Context, _ providers
 	return events, nil
 }
 
-func TestNewSessionStartsLegacyAgentControlQueue(t *testing.T) {
+func TestOwnedThreadStartsQueuedWorkers(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -273,23 +612,21 @@ func TestNewSessionStartsLegacyAgentControlQueue(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = rt.Cleanup()
 	})
-	if rt.AgentControl == nil {
-		t.Fatal("NewSession did not build the legacy AgentControl")
-	}
-	rt.AgentControl.UpdateWorkerDefaults(client, "gpt-test", subagent.ManagerOptions{})
-	if err := rt.SetSessionID("legacy-queue-session"); err != nil {
-		t.Fatalf("SetSessionID: %v", err)
-	}
+	rt.WorkerClient = client
+	engine, thread := openOwnedRuntimeTestThread(t, rt, "owned-queue-session")
+	control := thread.AgentControl
+	control.StartWorkerTerminalRecovery()
+	control.StartQueuedWork()
 
 	var firstWorkerID string
 	for i := 0; i < 5; i++ {
-		result, spawnErr := rt.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{
+		result, spawnErr := control.Spawn(context.Background(), agentcontrol.SpawnRequest{
 			Type:     agentcontrol.DefaultSubagentType,
-			TaskName: "legacy_queue_" + string(rune('a'+i)),
-			Prompt:   "hold root runtime capacity",
+			TaskName: "owned_queue_" + string(rune('a'+i)),
+			Prompt:   "hold thread runtime capacity",
 		})
 		if spawnErr != nil {
-			t.Fatalf("spawn root worker %d: %v", i, spawnErr)
+			t.Fatalf("spawn thread worker %d: %v", i, spawnErr)
 		}
 		if i == 0 {
 			firstWorkerID = result.AgentID
@@ -297,46 +634,45 @@ func TestNewSessionStartsLegacyAgentControlQueue(t *testing.T) {
 		select {
 		case <-client.started:
 		case <-time.After(2 * time.Second):
-			t.Fatalf("root worker %d did not start", i)
+			t.Fatalf("thread worker %d did not start", i)
 		}
 	}
-	queued, err := rt.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{
+	queued, err := control.Spawn(context.Background(), agentcontrol.SpawnRequest{
 		Type:     agentcontrol.DefaultSubagentType,
-		TaskName: "legacy_queue_waiter",
-		Prompt:   "run when root capacity frees",
+		TaskName: "owned_queue_waiter",
+		Prompt:   "run when thread capacity frees",
 	})
 	if err != nil {
-		t.Fatalf("queue root worker: %v", err)
+		t.Fatalf("queue thread worker: %v", err)
 	}
 	if queued.Status != string(subagent.StatusQueued) {
-		t.Fatalf("root queued worker status = %q, want queued", queued.Status)
+		t.Fatalf("thread queued worker status = %q, want queued", queued.Status)
 	}
-	if !rt.AgentControl.Stop(firstWorkerID) {
-		t.Fatalf("stop root worker %s", firstWorkerID)
+	if !control.Stop(firstWorkerID) {
+		t.Fatalf("stop thread worker %s", firstWorkerID)
 	}
 	select {
 	case <-client.started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("legacy root AgentControl did not drain its queue")
+		t.Fatal("owned thread AgentControl did not drain its queue")
 	}
-	if _, err := rt.Cleanup(); err != nil {
-		t.Fatalf("Cleanup: %v", err)
+	if err := engine.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
 	}
-	if rt.AgentControl != nil {
-		t.Fatal("Cleanup retained the legacy AgentControl")
+	if control.HasOwnedWorkerExecutions() {
+		t.Fatal("owned thread cleanup left a physical worker running")
 	}
 }
 
-func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
+func TestOwnedThreadRestoresQueueAndTerminalRecovery(t *testing.T) {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -353,16 +689,16 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 	client := &sessionQueueBlockingClient{started: make(chan struct{}, 2), release: make(chan struct{})}
-	rt.AgentControl.UpdateWorkerDefaults(client, "gpt-test", subagent.ManagerOptions{})
+	rt.WorkerClient = client
 	t.Cleanup(func() {
 		close(client.release)
 		_, _ = rt.Cleanup()
 	})
 
 	const (
-		sessionID        = "legacy-restored-session"
-		queuedWorkerID   = "legacy-restored-queued-worker"
-		terminalWorkerID = "legacy-restored-terminal-worker"
+		sessionID        = "owned-restored-session"
+		queuedWorkerID   = "owned-restored-queued-worker"
+		terminalWorkerID = "owned-restored-terminal-worker"
 	)
 	artifactDir := statepath.SessionArtifactDir(rt.StateDir, sessionID)
 	harnessDir := filepath.Join(artifactDir, "harness")
@@ -406,8 +742,10 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 		t.Fatalf("persist queue payload: %v", err)
 	}
 	terminalPath := writeRuntimeTerminalFinalization(t, harnessDir, terminalWorkerID)
+	_, thread := openOwnedRuntimeTestThread(t, rt, sessionID)
+	control := thread.AgentControl
 	finalized := make(chan subagent.Notification, 1)
-	unsubscribe := rt.AgentControl.SubscribeWorkerTerminalFinalizer(func(n subagent.Notification) error {
+	unsubscribe := control.SubscribeWorkerTerminalFinalizer(func(n subagent.Notification) error {
 		if n.AgentID == terminalWorkerID {
 			finalized <- n
 		}
@@ -417,16 +755,15 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 
 	select {
 	case <-client.started:
-		t.Fatal("legacy queue started before the real session was bound")
+		t.Fatal("owned thread queue started before explicit admission")
 	case <-time.After(100 * time.Millisecond):
 	}
-	if err := rt.SetSessionID(sessionID); err != nil {
-		t.Fatalf("SetSessionID: %v", err)
-	}
+	control.StartWorkerTerminalRecovery()
+	control.StartQueuedWork()
 	select {
 	case <-client.started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("bound legacy runtime did not start its restored queue")
+		t.Fatal("owned thread runtime did not start its restored queue")
 	}
 	select {
 	case notification := <-finalized:
@@ -434,7 +771,7 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 			t.Fatalf("recovered terminal notification = %+v", notification)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("bound legacy runtime did not recover its terminal intent")
+		t.Fatal("owned thread runtime did not recover its terminal intent")
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -449,35 +786,22 @@ func TestSetSessionIDRestoresLegacyQueueAndTerminalRecovery(t *testing.T) {
 	}
 }
 
-func TestSetSessionIDReturnsQueueRestoreFailure(t *testing.T) {
-	root := t.TempDir()
-	home := t.TempDir()
-	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
-	t.Setenv("TEST_WUU_KEY", "abc")
-	rt, err := NewSession(Options{
-		RootDir: root,
-		HomeDir: home,
-		Config: config.Config{
-			DefaultProvider: "test",
-			Providers: map[string]config.ProviderConfig{
-				"test": {Type: "openai-compatible", BaseURL: "https://example.test/v1", APIKeyEnv: "TEST_WUU_KEY", Model: "gpt-test"},
-			},
-		},
-	})
+func openOwnedRuntimeTestThread(t *testing.T, workspace *Session, id string) (agentengine.Session, *ThreadRuntime) {
+	t.Helper()
+	engine, err := NewWuuEngine(workspace).Open(context.Background(), agentengine.OpenRequest{ThreadID: id, RootDir: workspace.RootDir})
 	if err != nil {
-		t.Fatalf("NewSession: %v", err)
+		t.Fatalf("Open: %v", err)
 	}
-	t.Cleanup(func() { _, _ = rt.Cleanup() })
-	harnessDir := filepath.Join(statepath.SessionArtifactDir(rt.StateDir, "corrupt-legacy-queue"), "harness")
-	if err := os.MkdirAll(harnessDir, 0o755); err != nil {
-		t.Fatalf("mkdir harness: %v", err)
+	t.Cleanup(func() {
+		if err := engine.Close(context.Background()); err != nil {
+			t.Errorf("Close owned runtime: %v", err)
+		}
+	})
+	thread := engine.(*wuuEngineSession).ownedRuntime
+	if _, err := thread.Sessions.CreateWithMetadata(id, workspace.RootDir); err != nil {
+		t.Fatalf("create captured thread metadata: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(harnessDir, "queue.json"), []byte("{"), 0o600); err != nil {
-		t.Fatalf("write corrupt queue: %v", err)
-	}
-	if err := rt.SetSessionID("corrupt-legacy-queue"); err == nil || !strings.Contains(err.Error(), "restore queued spawns") {
-		t.Fatalf("SetSessionID error = %v, want queue restore failure", err)
-	}
+	return engine, thread
 }
 
 func writeRuntimeTerminalFinalization(t *testing.T, harnessDir, workerID string) string {
@@ -623,9 +947,8 @@ func TestNewSessionUsesUserStateNotWorkspaceDotWuu(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -680,9 +1003,8 @@ func TestNewSessionKeepsGitContextOutOfBaseSystemPrompt(t *testing.T) {
 	writeSessionTestFile(t, filepath.Join(root, "changed.txt"), "dirty\n")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -772,10 +1094,9 @@ func TestApplyGeneralConfigRefreshesPromptAndGitAttribution(t *testing.T) {
 		},
 	}
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     baseConfig,
+		RootDir: root,
+		HomeDir: home,
+		Config:  baseConfig,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -894,10 +1215,9 @@ Brainstorm options.
 	}
 	grantSessionTestPlugin(t, &cfg, root, filepath.Join(home, "state"), "compose-kit")
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     cfg,
+		RootDir: root,
+		HomeDir: home,
+		Config:  cfg,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -1002,10 +1322,9 @@ Review the change.
 	}
 	grantSessionTestPlugin(t, &cfg, root, filepath.Join(home, "state"), "codex-kit")
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     cfg,
+		RootDir: root,
+		HomeDir: home,
+		Config:  cfg,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -1149,10 +1468,9 @@ func TestNewSessionWiresPluginHooks(t *testing.T) {
 	}
 	grantSessionTestPlugin(t, &cfg, root, filepath.Join(home, "state"), "hook-kit")
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
-		Config:     cfg,
+		RootDir: root,
+		HomeDir: home,
+		Config:  cfg,
 	})
 	if err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -1218,9 +1536,8 @@ func TestNewThreadRuntimeOrdinarySpawnIsMemoryless(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -1268,9 +1585,8 @@ func TestNewThreadRuntimePropagatesQueuedSpawnRestoreFailure(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -1287,9 +1603,6 @@ func TestNewThreadRuntimePropagatesQueuedSpawnRestoreFailure(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 	defer func() { _, _ = rt.Cleanup() }()
-	if rt.AgentControl != nil {
-		defer rt.AgentControl.Close()
-	}
 	rt.WorkerClient = &sessionRecordingClient{}
 
 	threadID := "thread-corrupt-queue"
@@ -1320,9 +1633,8 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -1339,10 +1651,6 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 		t.Fatalf("NewSession: %v", err)
 	}
 	defer func() {
-		if rt.AgentControl != nil {
-			rt.AgentControl.StopAll()
-			rt.AgentControl.Close()
-		}
 		_, _ = rt.Cleanup()
 	}()
 	rt.WorkerClient = &sessionRecordingClient{}
@@ -1399,7 +1707,7 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 	// Force the root ToolLedger preflight to fail. AgentControl must not be
 	// created, because its constructor immediately restores and starts queued
 	// workers.
-	rt.SessionDir = ""
+	rt.Documents = nil
 	threadRuntime, err := rt.NewThreadRuntime(threadID)
 	if threadRuntime != nil {
 		if threadRuntime.AgentControl != nil {
@@ -1440,7 +1748,113 @@ func TestNewThreadRuntimeToolLedgerFailureDoesNotTouchRestoredQueue(t *testing.T
 	}
 }
 
+func TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity(t *testing.T) {
+	root, home := t.TempDir(), t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+	logA, logB := filepath.Join(root, "hooks-a.json"), filepath.Join(root, "hooks-b.json")
+	entries := func(path string) map[string][]config.HookEntry {
+		command := "cat >> '" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+		return map[string][]config.HookEntry{
+			string(hooks.PermissionRequest): {{Command: command}},
+			// A FileChanged block is advisory after the write has succeeded.
+			string(hooks.FileChanged): {{Command: command + "; exit 2"}},
+		}
+	}
+	cfg := config.Config{DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "fixture", Model: "portable-coder"}}, Hooks: entries(logA)}
+	rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	newThread := func(id string) *ThreadRuntime {
+		t.Helper()
+		thread, err := rt.NewThreadRuntime(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		thread.Toolkit.SetBoundary(tools.UnconfinedBoundary())
+		t.Cleanup(func() { thread.AgentControl.Close(); rt.ReleasePluginGeneration(thread.PluginGeneration) })
+		return thread
+	}
+	a := newThread("thread-a")
+	cfg.Hooks = entries(logB)
+	candidate, err := rt.PreflightExtensions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	worker := &sessionRecordingClient{}
+	call := providers.ToolCall{ID: "worker-write", Name: "write_file", Arguments: `{"path":"worker.txt","content":"worker"}`}
+	worker.streamBatches = [][]providers.StreamEvent{{{Type: providers.EventToolUseStart, ToolCall: &call}, {Type: providers.EventToolUseDelta, Content: call.Arguments}, {Type: providers.EventToolUseEnd, ToolCall: &call}, {Type: providers.EventDone}}}
+	rt.WorkerClient = worker
+	b := newThread("thread-b")
+	// Removing hooks from C must not leave A/B callbacks on new clones.
+	cfg.Hooks = nil
+	candidate, err = rt.PreflightExtensions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
+		t.Fatal(err)
+	}
+	c := newThread("thread-c")
+	for _, thread := range []*ThreadRuntime{a, b, c} {
+		text, err := thread.Toolkit.Execute(context.Background(), providers.ToolCall{ID: thread.Toolkit.SessionID(), Name: "write_file", Arguments: fmt.Sprintf(`{"path":%q,"content":"written"}`, thread.Toolkit.SessionID()+".txt")})
+		if err != nil || !strings.Contains(text, `"action":"create"`) {
+			t.Fatalf("completed file write changed by advisory hook: %s, %v", text, err)
+		}
+	}
+	spawn, err := b.AgentControl.Spawn(context.Background(), agentcontrol.SpawnRequest{Type: agentcontrol.DefaultSubagentType, TaskName: "write", Prompt: "write worker.txt", Synchronous: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "worker.txt"))
+	if err != nil || string(data) != "worker" {
+		t.Fatalf("worker write = %q, %v", data, err)
+	}
+	for _, tc := range []struct {
+		path   string
+		actors map[string]string
+	}{
+		{logA, map[string]string{"thread-a": "thread-a"}},
+		{logB, map[string]string{"thread-b": "thread-b", spawn.AgentID: "thread-b"}},
+	} {
+		file, err := os.Open(tc.path)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		decoder := json.NewDecoder(file)
+		seen := map[string]map[hooks.Event]int{}
+		for {
+			var input hooks.Input
+			if err := decoder.Decode(&input); errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			sessionID, expected := tc.actors[input.AgentID]
+			if !expected || input.SessionID != sessionID || input.CWD != b.Toolkit.RootDir() {
+				t.Errorf("callback used wrong captured generation or identity: %+v", input)
+			}
+			if seen[input.AgentID] == nil {
+				seen[input.AgentID] = map[hooks.Event]int{}
+			}
+			seen[input.AgentID][input.Event]++
+		}
+		_ = file.Close()
+		for actor := range tc.actors {
+			if seen[actor][hooks.PermissionRequest] != 1 || seen[actor][hooks.FileChanged] != 1 {
+				t.Errorf("captured hook calls for %q = %+v", actor, seen[actor])
+			}
+		}
+	}
+}
+
 func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
+	const temperature = 0.37
 	for _, tc := range []struct{ model, api string }{
 		{"claude-sonnet-4-5", "anthropic"},
 		{"gpt-5.5", "openai-compatible"},
@@ -1454,9 +1868,8 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 			t.Setenv("TEST_ANTHROPIC_KEY", "abc")
 
 			rt, err := NewSession(Options{
-				RootDir:    root,
-				HomeDir:    home,
-				ConfigPath: filepath.Join(root, ".wuu.json"),
+				RootDir: root,
+				HomeDir: home,
 				Config: config.Config{
 					DefaultProvider: "openai",
 					Providers: map[string]config.ProviderConfig{
@@ -1474,6 +1887,7 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 						},
 					},
 					Agent: config.AgentConfig{
+						Temperature: temperature,
 						ModelRoles: config.ModelRolesConfig{
 							Worker: config.ModelRoleConfig{Provider: "worker", Model: tc.model},
 						},
@@ -1520,6 +1934,9 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 			}
 
 			req := client.LastRequest()
+			if req.Temperature != temperature {
+				t.Fatalf("worker temperature = %v, want captured value %v", req.Temperature, temperature)
+			}
 			toolNames := map[string]bool{}
 			for _, def := range req.Tools {
 				toolNames[def.Name] = true
@@ -1562,9 +1979,8 @@ func TestNewThreadRuntimeLocalWorkerDoesNotTeachTerminalPaths(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "ollama",
 			Providers: map[string]config.ProviderConfig{
@@ -1651,9 +2067,8 @@ func TestNewSessionResolvesConfiguredVariantOptions(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "xiaomi",
 			Providers: map[string]config.ProviderConfig{
@@ -1695,9 +2110,8 @@ func TestNewSessionUsesConfiguredModelLimitForContextWindow(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -1741,9 +2155,8 @@ func TestNewSessionUnknownModelDisablesProactiveContextWindow(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -1776,9 +2189,8 @@ func TestNewSessionUsesCatalogModelAPIIDAndOptions(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1820,9 +2232,8 @@ func TestNewSessionAutoUsesNativeDeferredForFirstPartyAnthropic(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "anthropic",
 			Providers: map[string]config.ProviderConfig{
@@ -1855,9 +2266,8 @@ func TestNewSessionAutoUsesNativeDeferredForFirstPartyOpenAIResponses(t *testing
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1894,9 +2304,8 @@ func TestReconfigureToolLoadingClearsNativeDiscoveryForCompatibleProvider(t *tes
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1938,9 +2347,8 @@ func TestNewSessionAutoUsesClientDiscoveryForUnsupportedFirstPartyOpenAIResponse
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{
@@ -1986,9 +2394,8 @@ func TestNewSessionAutoProgressivelyLoadsCompatibleOpenAIResponses(t *testing.T)
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "compatible",
 			Providers: map[string]config.ProviderConfig{
@@ -2032,9 +2439,8 @@ func TestNewSessionAllowsCompatibleEndpointToOptIntoNativeDeferred(t *testing.T)
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "anthropic",
 			Providers: map[string]config.ProviderConfig{
@@ -2065,9 +2471,8 @@ func TestNewSessionAllowsCompatibleOpenAIResponsesToOptIntoNativeDeferred(t *tes
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "compatible",
 			Providers: map[string]config.ProviderConfig{
@@ -2122,9 +2527,8 @@ func TestNewSessionExplicitNativeFallsBackToClientForUnsupportedOpenAIResponsesM
 	defer restore()
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "compatible",
 			Providers: map[string]config.ProviderConfig{
@@ -2191,9 +2595,8 @@ func TestNewSessionTreatsRetiredWuuToolSearchConfigAsAuto(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "generic",
 			Providers: map[string]config.ProviderConfig{
@@ -2240,9 +2643,8 @@ func TestNewSessionFlattensToolSurfaceWhenToolLoadingFlat(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "generic",
 			Providers: map[string]config.ProviderConfig{
@@ -2275,9 +2677,8 @@ func TestNewSessionResolvesRoleModelSelections(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -2335,9 +2736,8 @@ func TestNewSessionAppliesPermissionBoundary(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "custom",
 			Providers: map[string]config.ProviderConfig{
@@ -2361,7 +2761,7 @@ func TestNewSessionAppliesPermissionBoundary(t *testing.T) {
 		Name:      "write_file",
 		Arguments: `{"path":"blocked.txt","content":"nope"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "error_kind=boundary_denied") {
+	if err == nil || !strings.Contains(err.Error(), "error_kind=authorization_denied") {
 		t.Fatalf("expected read-only runtime boundary, got %v", err)
 	}
 }
@@ -2373,9 +2773,8 @@ func TestNewThreadRuntimeWorkerInheritsCurrentPermissionBoundary(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -2435,7 +2834,7 @@ func TestNewThreadRuntimeWorkerInheritsCurrentPermissionBoundary(t *testing.T) {
 		joined.WriteByte('\n')
 	}
 	content := joined.String()
-	if !strings.Contains(content, "boundary_denied") ||
+	if !strings.Contains(content, "authorization_denied") ||
 		!strings.Contains(content, "this agent is read-only") {
 		t.Fatalf("worker did not inherit read-only permission boundary:\n%s", content)
 	}
@@ -2456,9 +2855,8 @@ func TestThreadWorkerWakeAppliesCurrentPermissionBoundary(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -2539,7 +2937,7 @@ func TestThreadWorkerWakeAppliesCurrentPermissionBoundary(t *testing.T) {
 		joined.WriteByte('\n')
 	}
 	content := joined.String()
-	if !strings.Contains(content, "boundary_denied") ||
+	if !strings.Contains(content, "authorization_denied") ||
 		!strings.Contains(content, "this agent is read-only") {
 		t.Fatalf("woken worker kept its spawn-time writable boundary:\n%s", content)
 	}
@@ -2578,7 +2976,7 @@ func TestSessionRefreshSystemPromptUpdatesRunnerPrompt(t *testing.T) {
 	kit.ConfigureSurfaceForProviderModel("openai", "gpt-5-codex", false)
 	rt := &Session{
 		RootDir:      root,
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, SystemPrompt: "old prompt"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: "old prompt"},
 		Toolkit:      kit,
 	}
 
@@ -2997,9 +3395,8 @@ func TestNewThreadRuntimeCreatesIsolatedMutableRuntime(t *testing.T) {
 	t.Setenv("TEST_WUU_KEY", "abc")
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "test",
 			Providers: map[string]config.ProviderConfig{
@@ -3068,9 +3465,8 @@ func TestNewSessionAutoUsesNativeDeferredForKimiK3(t *testing.T) {
 	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
 
 	rt, err := NewSession(Options{
-		RootDir:    root,
-		HomeDir:    home,
-		ConfigPath: filepath.Join(root, ".wuu.json"),
+		RootDir: root,
+		HomeDir: home,
 		Config: config.Config{
 			DefaultProvider: "openai",
 			Providers: map[string]config.ProviderConfig{

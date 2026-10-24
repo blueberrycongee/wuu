@@ -7,6 +7,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const createSessionFixture = require('./session-fixture.cjs');
 const { pathToFileURL } = require('node:url');
 const { app } = require('electron');
 const desktop = path.resolve(__dirname, '..');
@@ -21,7 +22,7 @@ process.env.WUU_HOME = home;
 process.env.HOME = userHome;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_DOCUMENT_CORE || process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
 
@@ -499,21 +500,19 @@ async function run() {
   // history through Go before the message action opens the split.
   const splitID = 'document-split-fixture';
   const relatedID = 'document-related-fixture';
-  const seed = spawnSync('python3', ['-c', `
-import sqlite3, sys
-from pathlib import Path
-home, main_id, related_id, cwd = sys.argv[1:]
-db = sqlite3.connect(Path(home)/'sessions/sessions.sqlite3')
-stamp = '2026-01-01T00:00:00Z'
-for sid, title, entries in [(main_id,'Split PDF fixture',2),(related_id,'Related PDF fixture',0)]:
-    db.execute('INSERT INTO sessions (id,created_at,updated_at,title,cwd,workspace_id,provider,model,entries) VALUES (?,?,?,?,?,?,?,?,?)',
-        (sid,stamp,stamp,title,cwd,'repo','fixture','fixture',entries))
-db.execute('INSERT INTO session_messages (session_id,seq,role,content,origin,presentation_kind,related_session_id,read_only,name,at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-    (main_id,1,'user','Related PDF context fixture','host','session_message',related_id,1,'Related PDF fixture',stamp))
-db.execute('INSERT INTO session_messages (session_id,seq,role,content,at) VALUES (?,?,?,?,?)',
-    (main_id,2,'assistant','Workspace file: [working PDF](guide.pdf).',stamp))
-db.commit()
-`, home, splitID, relatedID, project], { encoding: 'utf8', timeout: 10000 });
+  const sessionFixture = createSessionFixture(home, project);
+  const stamp = '2026-01-01T00:00:00Z';
+  const seededSessions = [
+    { session: { id: splitID, created_at: stamp, updated_at: stamp, title: 'Split PDF fixture', cwd: project,
+      workspace_id: 'repo', provider: 'fixture', model: 'fixture' }, history: [
+      { role: 'user', content: 'Related PDF context fixture', origin: 'host', presentation_kind: 'session_message',
+        related_session_id: relatedID, read_only: true, name: 'Related PDF fixture', at: stamp },
+      { role: 'assistant', content: 'Workspace file: [working PDF](guide.pdf).', at: stamp },
+    ] },
+    { session: { id: relatedID, created_at: stamp, updated_at: stamp, title: 'Related PDF fixture', cwd: project,
+      workspace_id: 'repo', provider: 'fixture', model: 'fixture' }, history: [] },
+  ];
+  const seed = sessionFixture({ op: 'seed', sessions: seededSessions });
   assert.equal(seed.status, 0, seed.stderr);
   main.setSize(1380, 1000);
   await main.loadFile(path.join(buildDir, 'renderer/index.html'));

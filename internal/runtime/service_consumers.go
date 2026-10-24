@@ -5,7 +5,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 )
 
 const (
@@ -21,13 +25,14 @@ type runtimeServiceConsumer struct {
 	requirements []pluginhost.ServiceRequirement
 	mu           sync.Mutex
 	state        pluginhost.State
+	cleanup      func(context.Context) error
 }
 
 func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 	tool := &runtimeServiceConsumer{
 		id: toolExecutionConsumer, state: pluginhost.StatePrepared,
 		requirements: []pluginhost.ServiceRequirement{
-			{Name: pluginhost.SecurityAuthorizeService, MajorVersion: pluginhost.SecurityServiceMajor},
+			{Name: pluginhost.SecurityAuthorizeService, MajorVersion: pluginhost.SecurityServiceMajor, Required: true},
 			{Name: pluginhost.ProcessSandboxService, MajorVersion: pluginhost.SecurityServiceMajor},
 		},
 	}
@@ -36,9 +41,16 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		profile = "default"
 	}
 	loop := &runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared,
-		requirements: []pluginhost.ServiceRequirement{{Name: DriverServicePrefix + profile, MajorVersion: 1, Required: true}},
+		requirements: []pluginhost.ServiceRequirement{{Name: DriverServicePrefix + profile, MajorVersion: loopdriver.DriverServiceMajor, Required: true}},
 	}
-	return []pluginhost.Client{tool, loop}
+	state := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{
+		{Name: credentialstore.ServiceName, MajorVersion: 1, Required: true},
+		{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true},
+		{Name: config.ServiceName, MajorVersion: 1, Required: true},
+		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
+		{Name: pluginhost.KernelDataQueryService, MajorVersion: pluginhost.DataQueryServiceMajor, Required: true},
+	}}
+	return []pluginhost.Client{tool, loop, state}
 }
 
 func (c *runtimeServiceConsumer) ID() string { return c.id }
@@ -57,9 +69,13 @@ func (c *runtimeServiceConsumer) Activate(context.Context) error {
 	c.state = pluginhost.StateActive
 	return nil
 }
-func (c *runtimeServiceConsumer) Close(context.Context) error {
+func (c *runtimeServiceConsumer) Close(ctx context.Context) error {
+	var err error
+	if c.cleanup != nil {
+		err = c.cleanup(ctx)
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.state = pluginhost.StateStopped
-	return nil
+	return err
 }

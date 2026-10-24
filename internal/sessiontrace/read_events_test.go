@@ -3,6 +3,7 @@ package sessiontrace
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -40,5 +41,22 @@ func TestReadEventsMissingFile(t *testing.T) {
 	_, err := ReadEvents(filepath.Join(t.TempDir(), "missing.jsonl"))
 	if err == nil || !os.IsNotExist(err) {
 		t.Fatalf("ReadEvents error = %v, want not-exist", err)
+	}
+}
+
+func TestTurnEventsReplayWithoutLocalStorage(t *testing.T) {
+	events, err := TurnEvents(TurnRecord{ThreadID: "thread", TurnID: "turn", Status: "completed", InputTokens: 17}, FinalRecord{Status: "completed", FinalAnswerPreview: "access_token=private-value"}, nil, nil, []RequestContextRecord{{StepIndex: 1, InputTokens: 17}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, err := ReplayEvents(events)
+	if err != nil || !summary.Complete || len(summary.Turns) != 1 || len(summary.ContextRequests) != 1 || summary.ContextRequests[0].InputTokens != 17 {
+		t.Fatalf("pure replay lost facts: %+v %v", summary, err)
+	}
+	if summary.Path != "" || strings.Contains(summary.Final.FinalAnswerPreview, "private-value") {
+		t.Fatal("pure event batch exposed a local path or unredacted credential")
+	}
+	if _, err := ReplayEvents(nil); err == nil {
+		t.Fatal("empty events reported a completed replay")
 	}
 }

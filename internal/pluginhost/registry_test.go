@@ -516,6 +516,83 @@ func TestServiceRegistryCloseCancelsExecutionAtDeadline(t *testing.T) {
 	}
 }
 
+func TestServiceCompletionWaitsForNestedExecutionChain(t *testing.T) {
+	for _, transport := range []string{"native", "wire-context", "background"} {
+		t.Run(transport, func(t *testing.T) {
+			service := func(name string) ServiceDescriptor {
+				return ServiceDescriptor{Name: name, Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "run"}}}
+			}
+			inner := &fakeServiceProcess{id: "inner", state: StateActive, provided: []ServiceDescriptor{service("inner")}}
+			outer := &fakeServiceProcess{id: "outer", state: StateActive, provided: []ServiceDescriptor{service("outer")},
+				required: []ServiceRequirement{{Name: "inner", MajorVersion: 1, Required: true}}}
+			caller := &fakeServiceProcess{id: "caller", state: StateActive, required: []ServiceRequirement{{Name: "outer", MajorVersion: 1, Required: true}}}
+			registry, conflicts := BuildServiceRegistry(inner, outer, caller)
+			if len(conflicts) != 0 {
+				t.Fatal(conflicts)
+			}
+			host := New(inner, outer, caller)
+			host.AttachServiceRegistry(registry, conflicts)
+			if err := host.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			defer host.Close(context.Background())
+			var order []string
+			var completedContext context.Context
+			finalize := func(name string) error {
+				registry.mu.RLock()
+				active := len(registry.executions)
+				registry.mu.RUnlock()
+				if active != 0 {
+					t.Errorf("%s cleanup ran with %d service executions still active", name, active)
+				}
+				order = append(order, name+"-cleanup")
+				return errors.New(name + " cleanup failed")
+			}
+			inner.invoke = func(ctx context.Context, _ ServiceInvokeParams) (json.RawMessage, error) {
+				completedContext = ctx
+				if !DeferServiceCompletion(ctx, func() error { return finalize("inner") }) {
+					t.Fatal("inner invocation has no completion boundary")
+				}
+				order = append(order, "inner-return")
+				return json.RawMessage(`{}`), nil
+			}
+			outer.invoke = func(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
+				if !DeferServiceCompletion(ctx, func() error { return finalize("outer") }) {
+					t.Fatal("outer invocation has no completion boundary")
+				}
+				if transport != "native" {
+					// A process sends only its authenticated execution identity.
+					ctx = context.Background()
+				}
+				if _, err := registry.Call(ctx, outer.id, ServiceCallParams{Service: "inner", Method: "run", ExecutionID: params.ExecutionID}); err != nil {
+					t.Fatalf("nested call finalized its parent: %v", err)
+				}
+				order = append(order, "outer-return")
+				return nil, errors.New("operation failed")
+			}
+			var err *HostServiceError
+			if transport == "background" {
+				key, provider, targetErr := registry.backgroundTarget(outer.id, "outer", "run")
+				if targetErr != nil {
+					t.Fatal(targetErr)
+				}
+				_, err = registry.invokeBackground(context.Background(), outer.id, key, provider, "run", json.RawMessage(`{}`), "")
+			} else {
+				_, err = host.CallService(context.Background(), caller.id, "outer", "run", json.RawMessage(`{}`))
+			}
+			if err == nil || !strings.Contains(err.Message, "operation failed") || !strings.Contains(err.Message, "inner cleanup failed") || !strings.Contains(err.Message, "outer cleanup failed") {
+				t.Fatalf("lost call or cleanup error: %v", err)
+			}
+			if want := []string{"inner-return", "outer-return", "inner-cleanup", "outer-cleanup"}; !reflect.DeepEqual(order, want) {
+				t.Fatalf("completion order = %v, want %v", order, want)
+			}
+			if DeferServiceCompletion(completedContext, func() error { return nil }) {
+				t.Fatal("completed invocation accepted another finalizer")
+			}
+		})
+	}
+}
+
 func TestServiceRegistrySnapshot(t *testing.T) {
 	providerZeta := &fakeServiceProcess{id: "zeta", state: StateActive, provided: []ServiceDescriptor{searchService("1.2.0")}}
 	providerAlpha := &fakeServiceProcess{id: "alpha", state: StateActive, provided: []ServiceDescriptor{{

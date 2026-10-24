@@ -13,7 +13,7 @@ import (
 
 // DriverServicePrefix is the service-namespace convention a loop driver
 // plugin contributes under: a driver profile resolves to the versioned
-// service "driver.<profile>" major 1.
+// service "driver.<profile>" major 2.
 const DriverServicePrefix = "driver."
 
 // registryDriverInvoker adapts the service registry to loopdriver.RemoteInvoker.
@@ -55,8 +55,7 @@ func (s *Session) currentDriverGatewayTable() *driverGatewayTable {
 }
 
 // driverResolver retains the selected generation through execution cleanup.
-// Root workers acquire the current generation at each execution boundary;
-// conversations and their workers inherit the thread's retained generation.
+// Conversations and their workers inherit the thread's captured generation.
 func (s *Session) driverResolver(parent *PluginGeneration) loopdriver.AcquireFunc {
 	return func(ctx context.Context, expected *loopdriver.Binding) (driver loopdriver.Driver, binding loopdriver.Binding, release func(), err error) {
 		generation := parent
@@ -85,7 +84,7 @@ func (s *Session) driverResolver(parent *PluginGeneration) loopdriver.AcquireFun
 		if generation != nil && generation.driverGateways != nil {
 			driver = resolveLoopDriver(profile, generation.host, generation.driverGateways)
 			if generation.host != nil && generation.host.ServiceRegistry() != nil {
-				providerID, _ = generation.host.ServiceRegistry().ProviderPluginID(DriverServicePrefix+profile, 1)
+				providerID, _ = generation.host.ServiceRegistry().ProviderPluginID(DriverServicePrefix+profile, loopdriver.DriverServiceMajor)
 			}
 		} else if s.StreamRunner != nil {
 			// Embedded callers own their explicit driver and its lifetime.
@@ -127,9 +126,9 @@ func resolveLoopDriver(profile string, host *pluginhost.Host, table *driverGatew
 	if registry == nil {
 		return loopdriver.FailClosedDriver{Profile: profile, Reason: "service registry is unavailable"}
 	}
-	ownerPluginID, found := registry.ProviderPluginID(service, 1)
+	ownerPluginID, found := registry.ProviderPluginID(service, loopdriver.DriverServiceMajor)
 	if !found {
-		return loopdriver.FailClosedDriver{Profile: profile, Reason: fmt.Sprintf("no provider for service %s major version 1", service)}
+		return loopdriver.FailClosedDriver{Profile: profile, Reason: fmt.Sprintf("no provider for service %s major version %d", service, loopdriver.DriverServiceMajor)}
 	}
 	if table == nil {
 		return loopdriver.FailClosedDriver{Profile: profile, Reason: "driver gateway table is unavailable"}

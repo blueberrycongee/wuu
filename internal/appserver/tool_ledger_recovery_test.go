@@ -6,18 +6,20 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
+	"github.com/blueberrycongee/wuu/internal/toolstate"
 )
 
 func TestThreadRuntimeOnlyReconcilesToolLedgerAfterExecutionAdmission(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "ledger-admission", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("ledger-admission", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ledger, err := toolledger.New(rt.SessionDir, sess.ID)
+	ledger, err := toolledger.New(rt.Documents, sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,17 +43,17 @@ func TestThreadRuntimeOnlyReconcilesToolLedgerAfterExecutionAdmission(t *testing
 
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	th, err := srv.ensureThreadLoaded(sess.ID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := srv.ensureThreadRuntime(th); err != nil {
 		t.Fatal(err)
 	}
-	assertToolInvocationState(t, rt.SessionDir, invocation.ID, toolledger.InvocationRunning)
+	assertToolInvocationState(t, rt.Documents, invocation.ID, toolledger.InvocationRunning)
 
 	th.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
 	th.mu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -67,22 +69,24 @@ func TestThreadRuntimeOnlyReconcilesToolLedgerAfterExecutionAdmission(t *testing
 	if _, err := srv.ensureThreadRuntimeAfterAdmission(th); err != nil {
 		t.Fatal(err)
 	}
-	assertToolInvocationState(t, rt.SessionDir, invocation.ID, toolledger.InvocationInterruptedUnknown)
+	assertToolInvocationState(t, rt.Documents, invocation.ID, toolledger.InvocationInterruptedUnknown)
 }
 
-func assertToolInvocationState(t *testing.T, sessDir, invocationID string, want toolledger.InvocationState) {
+func assertToolInvocationState(t *testing.T, documents persistence.Documents, invocationID string, want toolledger.InvocationState) {
 	t.Helper()
-	db, err := session.OpenStore(sessDir)
+	var got toolstate.Invocation
+	err := persistence.Update(context.Background(), documents, func(tx *persistence.Tx) error {
+		found, err := tx.Get(toolstate.Invocations, invocationID, &got)
+		if err == nil && !found {
+			t.Fatalf("missing tool invocation %s", invocationID)
+		}
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	var got string
-	if err := db.QueryRow(`SELECT state FROM tool_invocations WHERE id = ?`, invocationID).Scan(&got); err != nil {
-		t.Fatal(err)
-	}
-	if got != string(want) {
-		t.Fatalf("tool invocation state = %q, want %q", got, want)
+	if got.State != string(want) {
+		t.Fatalf("tool invocation state = %q, want %q", got.State, want)
 	}
 }
 
@@ -111,13 +115,13 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	client := &lateTurnClient{started: make(chan struct{}), release: make(chan struct{})}
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "late-turn", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("late-turn", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	th, err := srv.ensureThreadLoaded(sess.ID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, rt), sess.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +129,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	turnID := session.NewID()
 	userMessage := providers.ChatMessage{Role: "user", Content: "start"}
 	th.mu.Lock()
-	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
+	acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
 	if err == nil && acquired {
 		th.startTurnLocked(turnID, userMessage, time.Now().UTC())
 	}
@@ -147,7 +151,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		srv.runTurn(context.Background(), th, threadRuntime, turnID, turnRuntimeSnapshot{
+		srv.runTurn(th.state, context.Background(), th, threadRuntime, turnID, turnRuntimeSnapshot{
 			ProviderName: rt.ProviderName,
 			Model:        rt.Model,
 		}, []providers.ChatMessage{userMessage})

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/codexengine"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/anthropic"
@@ -26,6 +27,16 @@ const subscriptionQuotaFreshness = 5 * time.Minute
 func (s *Server) attachSubscriptionQuotas(engines []EngineInfo, configured []ProviderSummary) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
+	services, release, serviceErr := s.rt.RetainStateServices()
+	if serviceErr == nil {
+		defer release()
+	}
+	var cfg config.Config
+	configErr := serviceErr
+	if configErr == nil {
+		view, err := services.Config.Read(ctx)
+		cfg, configErr = view.Config, err
+	}
 	var wg sync.WaitGroup
 	for i := range engines {
 		engine := &engines[i]
@@ -55,9 +66,17 @@ func (s *Server) attachSubscriptionQuotas(engines []EngineInfo, configured []Pro
 					err = providers.NewQuotaError(providers.QuotaErrorUnsupported)
 				}
 			case "claude":
-				quota, err = anthropic.ReadLocalQuota(ctx, os.Getenv("HOME"))
+				if serviceErr != nil {
+					err = providers.NewQuotaError(providers.QuotaErrorSignIn)
+					break
+				}
+				quota, err = anthropic.ReadSelectedQuota(ctx, services.Credentials)
 			case "grok":
-				client, buildErr := grokbuild.New(grokbuild.ClientConfig{Home: os.Getenv("HOME"), ReuseGrokCredentials: true})
+				if serviceErr != nil {
+					err = providers.NewQuotaError(providers.QuotaErrorSignIn)
+					break
+				}
+				client, buildErr := grokbuild.New(grokbuild.ClientConfig{Credentials: services.Credentials, ReuseGrokCredentials: true})
 				if buildErr != nil {
 					err = providers.NewQuotaError(providers.QuotaErrorSignIn)
 				} else {
@@ -69,7 +88,6 @@ func (s *Server) attachSubscriptionQuotas(engines []EngineInfo, configured []Pro
 			engine.Quota = s.subscriptionQuotaSnapshot(quota, err)
 		})
 	}
-	cfg, _, configErr := s.rt.LoadEffectiveConfig()
 	for i := range configured {
 		service := &configured[i]
 		wg.Go(func() {
@@ -79,13 +97,13 @@ func (s *Server) attachSubscriptionQuotas(engines []EngineInfo, configured []Pro
 			}
 			provider, exists := cfg.Providers[service.Name]
 			if !exists {
-				provider, exists = localGrokBuildProvider(cfg, service.Name, os.Getenv("HOME"))
+				provider, exists = selectedGrokBuildProvider(cfg, service.Name, services.Credentials)
 			}
 			if !exists {
 				service.Quota = s.subscriptionQuotaSnapshot(providers.Quota{}, providers.NewQuotaError(providers.QuotaErrorUnsupported))
 				return
 			}
-			client, err := providerfactory.BuildClient(provider, service.Name)
+			client, err := providerfactory.BuildClient(provider, service.Name, providerfactory.Bindings{Credentials: services.Credentials, ChatGPT: services.ChatGPT})
 			if err != nil {
 				service.Quota = s.subscriptionQuotaSnapshot(providers.Quota{}, providers.NewQuotaError(providers.QuotaErrorSignIn))
 				return

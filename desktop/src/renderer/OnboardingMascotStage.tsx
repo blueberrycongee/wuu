@@ -65,7 +65,7 @@ function CompanionEquipment({
   engineMark?: string;
   engineID?: string;
 }): JSX.Element {
-  const hasBelt = ["todo", "automation", "memory", "dream", "peers"].some((id) => worn.has(id));
+  const hasBelt = ["todo", "automation", "automation-client", "memory", "dream", "peers"].some((id) => worn.has(id));
   const hasPocket = worn.has("memory") || worn.has("dream");
   function capability(id: OnboardingPluginID, content: ReactNode): ReactNode {
     if (!worn.has(id)) return null;
@@ -130,6 +130,14 @@ function CompanionEquipment({
           <circle className="equipment-shell" cx="22" cy="69" r="6" />
           <path className="equipment-seam" d="M22 64 V65 M27 69 H26 M22 74 V73 M17 69 H18" />
           <path className="equipment-detail equipment-clock-hand" d="M22 65.5 V69 L24.5 70" />
+        </>)}
+        {capability("automation-client", <>
+          {/* The schedule card distinguishes management controls from the scheduler clock. */}
+          <rect className="equipment-edge" x="36" y="63" width="17" height="13" rx="2.5" />
+          <rect className="equipment-shell" x="37.5" y="64.5" width="14" height="10" rx="1.2" />
+          <path className="equipment-seam" d="M37.5 67 H51.5 M40.5 62 V65 M47.5 62 V65" />
+          <path className="equipment-detail" d="M40 69.5 H43 M40 72 H46" />
+          <rect className="equipment-bookmark" x="47.5" y="69" width="2.5" height="3.5" rx="0.6" />
         </>)}
         {hasPocket ? <path className="equipment-edge" d="M65 61 L82 59 Q87 59 86 65 L84 79 Q82 84 70 84 Q65 83 65 79 Z" /> : null}
         {capability("memory", <g className="equipment-notebook">

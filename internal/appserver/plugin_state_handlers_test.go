@@ -8,9 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 func TestPluginSettingsValidateOwnershipTypeScopeAndGeneration(t *testing.T) {
@@ -57,7 +60,7 @@ func TestPluginDiagnosticsExposeIsolatedCapabilityFailures(t *testing.T) {
 	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
 		return &isolatedFailureClient{id: id, invokeErr: errors.New("observer boom")}
 	})
-	if err := srv.notifyPluginTurnCompleted(context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
+	if err := srv.notifyPluginTurnCompleted(testRuntimeState(t, srv.rt), context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
 		t.Fatal(err)
 	}
 	callPluginPackageRPC(t, srv, "diagnostics", MethodPluginDiagnosticsList, PluginDiagnosticsParams{
@@ -67,6 +70,48 @@ func TestPluginDiagnosticsExposeIsolatedCapabilityFailures(t *testing.T) {
 	if result.ID != item.SubjectID || len(result.Diagnostics) != 1 || result.Diagnostics[0].Contribution != pluginhost.CapabilityAgentTurnCompleted || !strings.Contains(result.Diagnostics[0].Message, "observer boom") {
 		t.Fatalf("diagnostics result = %+v", result)
 	}
+}
+
+func TestPluginDiagnosticsKeepAdmissionGeneration(t *testing.T) {
+	var observer *diagnosticAdmissionClient
+	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
+		observer = &diagnosticAdmissionClient{isolatedFailureClient: &isolatedFailureClient{id: id, invokeErr: errors.New("original observer failure")}}
+		return observer
+	})
+	if err := srv.notifyPluginTurnCompleted(testRuntimeState(t, srv.rt), context.Background(), pluginhost.AgentTurnCompletedInput{}); err != nil {
+		t.Fatal(err)
+	}
+	// Exercise dispatch deterministically without concurrent discovery watchers.
+	srv.Close()
+	srv = &Server{rt: srv.rt, out: out}
+	original := srv.rt.PluginHost
+	replacement := pluginhost.New()
+	defer replacement.Close(context.Background())
+	defer func() { srv.rt.PluginHost = original }()
+	// Publish another host after fingerprint admission has captured the original.
+	observer.onStatus = func() { srv.rt.PluginHost = replacement }
+	callPluginPackageRPC(t, srv, "diagnostics", MethodPluginDiagnosticsList, PluginDiagnosticsParams{ID: item.SubjectID, Fingerprint: item.Fingerprint})
+	response := responseByID(t, parseOutput(t, out.String()), "diagnostics")
+	if response["error"] != nil {
+		t.Fatalf("diagnostics failed: %+v", response)
+	}
+	result := remarshal[PluginDiagnosticsResult](t, response["result"])
+	if len(result.Diagnostics) != 1 || !strings.Contains(result.Diagnostics[0].Message, "original observer failure") {
+		t.Fatalf("diagnostics escaped their admission generation: %+v", result)
+	}
+}
+
+type diagnosticAdmissionClient struct {
+	*isolatedFailureClient
+	onStatus func()
+}
+
+func (c *diagnosticAdmissionClient) Status() pluginhost.Status {
+	if callback := c.onStatus; callback != nil {
+		c.onStatus = nil
+		callback()
+	}
+	return c.isolatedFailureClient.Status()
 }
 
 type isolatedFailureClient struct {
@@ -136,8 +181,16 @@ func newPluginStateTestServer(t *testing.T, runtimeClients ...func(string) plugi
 	for _, create := range runtimeClients {
 		clients = append(clients, create(item.ID))
 	}
-	if len(clients) > 0 {
-		rt.PluginHost = pluginhost.New(clients...)
+	settings := pluginsettings.NewService(pluginsettings.Module, rt.WuuHome, rt.RootDir)
+	credentials := credentialstore.NewService(credentialstore.FileModule, func() (credentialstore.Store, error) {
+		return credentialstore.NewFileStore(filepath.Join(rt.WuuHome, "test-credentials.json")), nil
+	})
+	clients = append(clients, settings, credentials, &stateHandlerConsumer{})
+	rt.PluginHost = pluginhost.New(clients...)
+	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
+	rt.PluginHost.AttachServiceRegistry(registry, conflicts)
+	if err := rt.PluginHost.Activate(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -148,6 +201,7 @@ func newPluginStateTestServer(t *testing.T, runtimeClients ...func(string) plugi
 func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -183,6 +237,7 @@ func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {
 func TestPluginExecutionsListReturnsLiveTable(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -201,4 +256,48 @@ func TestPluginExecutionsListReturnsLiveTable(t *testing.T) {
 	if result.Executions == nil {
 		t.Fatal("executions must be an empty list, not null")
 	}
+}
+
+type stateHandlerConsumer struct{}
+
+func (*stateHandlerConsumer) ID() string { return runtime.StateServicesConsumer }
+func (*stateHandlerConsumer) Status() pluginhost.Status {
+	return pluginhost.Status{ID: runtime.StateServicesConsumer, State: pluginhost.StateActive}
+}
+func (*stateHandlerConsumer) Close(context.Context) error                      { return nil }
+func (*stateHandlerConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
+func (*stateHandlerConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true}, {Name: credentialstore.ServiceName, MajorVersion: 1, Required: true}}
+}
+
+func TestPluginStateHandlersStopWhenSelectedProviderIsRevoked(t *testing.T) {
+	srv, item, out := newPluginStateTestServer(t)
+	callPluginPackageRPC(t, srv, "before", MethodPluginStorageSet, PluginStorageSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: PluginValueScopeUser, Key: "entry", Value: "old"})
+	if responseByID(t, parseOutput(t, out.String()), "before")["error"] != nil {
+		t.Fatal("initial selected write failed")
+	}
+	srv.rt.PluginHost.ServiceRegistry().RevokePlugin(context.Background(), pluginsettings.Module)
+	callPluginPackageRPC(t, srv, "after", MethodPluginStorageSet, PluginStorageSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: PluginValueScopeUser, Key: "entry", Value: "new"})
+	if responseByID(t, parseOutput(t, out.String()), "after")["error"] == nil {
+		t.Fatal("revoked provider fell back to local settings")
+	}
+	document, err := pluginsettings.ReadState(srv.rt.WuuHome, srv.rt.RootDir, item.SubjectID, pluginsettings.ScopeUser)
+	if err != nil || document.Values["entry"] != "old" {
+		t.Fatalf("disabled provider wrote local state: %+v %v", document, err)
+	}
+}
+
+func TestDesktopInventoryKeepsAdmittedGraphGeneration(t *testing.T) {
+	srv, item, _ := newPluginStateTestServer(t)
+	snapshot := srv.rt.ExtensionSnapshot()
+	snapshot.GenerationID = "admitted-graph"
+	for _, record := range srv.extensionInventory(snapshot) {
+		if record.ID == item.SubjectID && record.Desktop != nil {
+			if record.GraphGeneration != "admitted-graph" {
+				t.Fatal("desktop record lost its snapshot graph identity")
+			}
+			return
+		}
+	}
+	t.Fatal("desktop inventory record missing")
 }

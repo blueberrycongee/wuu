@@ -24,7 +24,7 @@ process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_FAST_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 const requests = [];
 const server = http.createServer((req, res) => {
@@ -156,7 +156,7 @@ async function run() {
   }));
   fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [{ id: 'fixture', name: 'Fast mode fixture', path: project, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }], active_context: { kind: 'project', project_id: 'fixture', cwd: project } }));
   fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: 'light' }));
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', project], { env: process.env, input: '{"id":1,"method":"thread/start","params":{"engine":"wuu","provider":"fixture","model":"fixture","effort":"high","speed":"standard"}}\n', encoding: 'utf8', timeout: 30000 });
+  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', project], { env: process.env, input: '{"id":1,"method":"thread/start","params":{"engine":"wuu","provider":"fixture","model":"fixture","effort":"high","speed":"standard"}}\n', encoding: 'utf8', timeout: 30000 });
   assert.equal(boot.status, 0, boot.stderr);
   const response = boot.stdout.split('\n').filter(Boolean).map(line => JSON.parse(line)).find(item => item.id === 1);
   assert.ok(response?.result?.thread, boot.stdout);
@@ -246,7 +246,11 @@ async function run() {
   }
   await turn('fast-mode-fast', 'priority');
   async function openPanel(fastSupported = true) {
-    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) {
+      // Workspace switching keeps the trigger disabled until its runtime is ready.
+      await waitFor(main, () => document.querySelector('.codex-runtime-trigger:not(:disabled)'));
+      await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    }
     await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
     if (fastSupported) await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
     // Opening schedules model autofocus; finish that frame before choosing a
@@ -398,8 +402,12 @@ async function run() {
   main.setContentSize(1380, 860);
   await waitFor(main, () => document.querySelector('.project-row-new-thread'));
   await evaluate(main, () => document.querySelector('.project-row-new-thread').click());
-  await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  // The conversation and draft share the runtime trigger. Wait for the draft
+  // commit that closes the old menu before opening the new one.
+  await waitFor(main, () => document.querySelector('.empty-scroll-region')
+    && document.querySelector('.codex-runtime-trigger[aria-expanded="false"]:not(:disabled)')
+    && !document.querySelector('.runtime-panel'));
+  await openPanel(false);
   await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)'));
   for (const engine of ['Wuu', 'Codex']) {
     await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());

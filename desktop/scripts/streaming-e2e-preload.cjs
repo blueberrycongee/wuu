@@ -1,3 +1,4 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
 const { contextBridge, ipcRenderer } = require("electron");
 
 const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
@@ -85,7 +86,8 @@ function workspaceDemoPath(path) {
   return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
 }
 
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
+  initialLanguagePreference: process.env.WUU_STREAM_E2E_LOCALE,
   projectWork: async (params) => {
     const work = projectWorks.get(params.project_id);
     if (params.operation === "list") return { project_id: params.project_id, works: work ? [work] : [], usage: [] };
@@ -137,6 +139,7 @@ contextBridge.exposeInMainWorld("wuu", {
       id: "user:workspace-e2e", name: "Workspace E2E", kind: "plugin",
       provenance: { kind: "plugin", source: "user", scope: "user" },
       state: "granted", approval_state: "granted", enabled: true, fingerprint: "workspace-e2e",
+      graph_generation: "default-shell-e2e-graph",
       desktop: { entry: "desktop.js" },
       contributions: { workspace_tools: [{
         id: "notes", view: "notes", title: "Workspace notes with a long descriptive title",
@@ -271,4 +274,4 @@ contextBridge.exposeInMainWorld("wuu", {
     return () => ipcRenderer.removeListener("test:server-event", listener);
   },
   onWindowResizeState: () => () => undefined
-});
+}));

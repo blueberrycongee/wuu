@@ -11,6 +11,7 @@ import {
   type PluginGenerationApi,
 } from "./PluginHost";
 import { settleOnAbort } from "./activation";
+import { getDesktopApplication } from "./ApplicationController";
 import { WorkbenchController } from "./Workbench";
 import { PluginHostService, WorkbenchService, createDesktopCompositionRoot } from "./composition";
 
@@ -27,16 +28,25 @@ export interface DesktopPluginFailure {
 }
 
 export const desktopPluginHost = new PluginHost({
+  reportActivation: params => window.wuu.reportPluginDesktopActivation(params),
   react: React,
-  invokeRuntime: async ({ pluginId, generation, method, input, workspaceId, workspaceRoot, signal }) => {
+  application: {
+    contractVersion: 1,
+    getSnapshot: () => getDesktopApplication().getSnapshot(),
+    subscribe: listener => getDesktopApplication().subscribe(listener),
+    invoke: (action, input, options) => getDesktopApplication().invoke(action, input, options),
+  },
+  invokeRuntime: async ({ pluginId, generation, graphGeneration, service, method, input, workspaceId, workspaceRoot, signal }) => {
     signal?.throwIfAborted();
     const bridge = window.wuu;
     if (!bridge?.requestPluginRuntime || !bridge.cancelPluginRuntime) {
       throw new Error("Plugin runtime requests are unavailable");
     }
-    const identity = { id: pluginId, fingerprint: generation, request_id: crypto.randomUUID() };
+    // Desktop activation requires a committed graph before admitting requests.
+    const identity = { id: pluginId, fingerprint: generation, graph_generation: graphGeneration!, request_id: crypto.randomUUID() };
     const response = bridge.requestPluginRuntime({
       ...identity,
+      ...(service !== undefined ? { service } : {}),
       method,
       input,
       ...(workspaceId ? { workspace_id: workspaceId } : {}),
@@ -100,6 +110,8 @@ export class DesktopPluginRuntime {
   private readonly pendingDependencies = new Map<string, { signature: string }>();
   private syncEpoch = 0;
   private syncController?: AbortController;
+  private connectionGeneration = 0;
+  private connectionReset?: Promise<void>;
 
   constructor(
     readonly host: PluginHost,
@@ -109,11 +121,42 @@ export class DesktopPluginRuntime {
   async sync(
     inventory: readonly ExtensionInventoryRecord[],
     safeMode = false,
+    connectionGeneration = 0,
   ): Promise<readonly DesktopPluginFailure[]> {
     const epoch = ++this.syncEpoch;
     this.syncController?.abort();
     const controller = new AbortController();
     this.syncController = controller;
+    const unload = (id: string): Promise<void> | undefined => {
+      const cleanup = this.host.unloadAndWait(id);
+      this.activeGenerations.delete(id);
+      this.activeDependencies.delete(id);
+      this.pendingDependencies.delete(id);
+      return cleanup;
+    };
+    if (this.connectionGeneration !== connectionGeneration) {
+      this.connectionGeneration = connectionGeneration;
+      this.host.setInventoryGraphs([]);
+      const previousReset = this.connectionReset;
+      this.connectionReset = (async () => {
+        await previousReset;
+        // Overlapping restores must share teardown, including retained React consumers.
+        const previousOrder = dependencyOrder(this.desiredPlugins).reverse();
+        for (const pluginId of new Set([...previousOrder, ...this.activeGenerations.keys(), ...this.pendingDependencies.keys()])) {
+          const cleanup = unload(pluginId);
+          if (cleanup) await cleanup;
+        }
+        // Drain obsolete ACKs while no graph is admitted on the new connection.
+        await this.host.flushActivationReports();
+      })();
+    }
+    if (this.connectionReset) {
+      const reset = this.connectionReset;
+      await reset;
+      if (epoch !== this.syncEpoch) return [];
+      if (this.connectionReset === reset) this.connectionReset = undefined;
+    }
+    this.host.setInventoryGraphs(inventory);
     const candidates = new Map(
       (safeMode ? [] : inventory).filter(isAvailablePlugin).map((plugin) => [plugin.id, plugin] as const),
     );
@@ -147,8 +190,8 @@ export class DesktopPluginRuntime {
         const generation = this.activeGenerations.get(provider);
         // A never-started optional provider may keep failing without disturbing
         // consumers. Replacing a live provider still fences its consumers first.
-        const available = !plugin.desktop || (live ? generation === plugin.fingerprint : generation !== undefined);
-        graph.set(provider, [provider, available ? plugin.fingerprint : null, providers]);
+        const available = !plugin.desktop || (live ? generation === desktopGeneration(plugin) : generation !== undefined);
+        graph.set(provider, [provider, available ? desktopGeneration(plugin) : null, providers]);
         providers.forEach(visit);
       };
       const providers = dependencies.get(id) ?? [];
@@ -163,12 +206,6 @@ export class DesktopPluginRuntime {
       return (active !== undefined && active !== signature) || (pending !== undefined && pending !== signature);
     };
 
-    const unload = (id: string): void => {
-      this.host.unload(id);
-      this.activeGenerations.delete(id);
-      this.activeDependencies.delete(id);
-      this.pendingDependencies.delete(id);
-    };
     const previousDesired = this.desiredPlugins;
     this.desiredPlugins = desired;
     // Dependents release resources before a provider can replace or dispose them.
@@ -178,7 +215,9 @@ export class DesktopPluginRuntime {
     for (const pluginId of knownPluginIds) {
       const plugin = desired.get(pluginId);
       if (!plugin?.desktop || dependenciesChanged(pluginId)) {
-        unload(pluginId);
+        const cleanup = unload(pluginId);
+        if (cleanup) await cleanup;
+        if (epoch !== this.syncEpoch) return [];
       }
     }
 
@@ -204,12 +243,19 @@ export class DesktopPluginRuntime {
         const ready = await Promise.all(providerIds.map(activate));
         if (epoch !== this.syncEpoch) return false;
         if (providerIds.some((provider, index) => !ready[index] && requiredDependencies.get(id)?.includes(provider))) {
-          if (plugin.desktop) failures.push({ pluginId: id, fingerprint: plugin.fingerprint!, error: new Error("Required desktop dependency failed to activate") });
+          if (plugin.desktop) {
+            const error = new Error("Required desktop dependency failed to activate");
+            try {
+              await this.host.activateGeneration({ pluginId: id, generation: plugin.fingerprint!, graphGeneration: plugin.graph_generation, register: () => { throw error; } });
+            } catch (failure: unknown) {
+              failures.push({ pluginId: id, fingerprint: plugin.fingerprint!, error: failure });
+            }
+          }
           return false;
         }
         if (!plugin.desktop) return true;
         const fingerprint = plugin.fingerprint;
-        if (!fingerprint || this.activeGenerations.get(plugin.id) === fingerprint) {
+        if (!fingerprint || this.activeGenerations.get(plugin.id) === desktopGeneration(plugin)) {
           return true;
         }
         // Staging callbacks can already own provider resources before activation commits.
@@ -219,7 +265,9 @@ export class DesktopPluginRuntime {
           if (epoch !== this.syncEpoch) return false;
           await this.host.activateGeneration({
             pluginId: plugin.id,
+            manifestId: plugin.provenance.plugin_id ?? plugin.id,
             generation: fingerprint,
+            graphGeneration: plugin.graph_generation,
             contributions: desktopContributionDeclarations(plugin),
             signal: controller.signal,
             register: async (api) => {
@@ -236,13 +284,15 @@ export class DesktopPluginRuntime {
             },
           });
           if (epoch === this.syncEpoch) {
-            this.activeGenerations.set(plugin.id, fingerprint);
+            this.activeGenerations.set(plugin.id, desktopGeneration(plugin));
             this.activeDependencies.set(plugin.id, dependencySignature(plugin.id, true));
             // Recovery changes availability without changing inventory. Fence
             // every affected consumer in reverse order before any can restart.
             for (const dependent of dependencyOrder(desired).reverse()) {
               if (dependenciesChanged(dependent, true)) {
-                unload(dependent);
+                const cleanup = unload(dependent);
+                if (cleanup) await cleanup;
+                if (epoch !== this.syncEpoch) return false;
               }
             }
           }
@@ -268,6 +318,10 @@ export class DesktopPluginRuntime {
   }
 }
 
+function desktopGeneration(plugin: ExtensionInventoryRecord): string {
+  return JSON.stringify([plugin.graph_generation, plugin.fingerprint]);
+}
+
 function desktopContributionDeclarations(
   plugin: ExtensionInventoryRecord,
 ): PluginContributionDeclarations {
@@ -288,6 +342,7 @@ export const desktopPluginRuntime = new DesktopPluginRuntime(desktopPluginHost);
 export function useDesktopPluginRuntime(
   inventory: readonly ExtensionInventoryRecord[] | undefined,
   safeMode = false,
+  connectionGeneration = 0,
 ): void {
   useEffect(() => window.wuu?.onServerEvent?.((event) => {
     desktopPluginHost.publishHostEvent(event);
@@ -297,13 +352,13 @@ export function useDesktopPluginRuntime(
     syncShellSkins(inventory, safeMode);
     const syncThemeFromOtherWindow = (): void => syncExtensionTheme(safeMode ? [] : inventory);
     window.addEventListener("storage", syncThemeFromOtherWindow);
-    void desktopPluginRuntime.sync(inventory ?? [], safeMode).then((failures) => {
+    void desktopPluginRuntime.sync(inventory ?? [], safeMode, connectionGeneration).then((failures) => {
       for (const failure of failures) {
         console.error(`Desktop plugin ${failure.pluginId} failed to activate`, failure.error);
       }
-    });
+    }).catch((error: unknown) => console.error("Desktop plugin synchronization failed", error));
     return () => window.removeEventListener("storage", syncThemeFromOtherWindow);
-  }, [inventory, safeMode]);
+  }, [inventory, safeMode, connectionGeneration]);
 }
 
 function isAvailablePlugin(plugin: ExtensionInventoryRecord): boolean {
@@ -348,5 +403,6 @@ function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
 }
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {
+  if (url === "wuu-builtin:default-shell") return import("./DefaultApplicationShell");
   return import(/* @vite-ignore */ url);
 }

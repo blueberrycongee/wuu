@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
 	"github.com/blueberrycongee/wuu/internal/remote/phone"
@@ -69,7 +70,7 @@ func newRemoteTestRuntime(t *testing.T, client providers.Client) *runtime.Sessio
 	if err != nil {
 		t.Fatalf("tools.New: %v", err)
 	}
-	return &runtime.Session{
+	rt := &runtime.Session{
 		ProviderName:   "fake-provider",
 		Model:          "fake-model",
 		RootDir:        root,
@@ -78,13 +79,29 @@ func newRemoteTestRuntime(t *testing.T, client providers.Client) *runtime.Sessio
 		HookDispatcher: hooks.NewDispatcher(nil),
 		Toolkit:        kit,
 		StreamRunner: &agent.StreamRunner{
-			LoopDriver: loopdriver.DefaultDriver{},
+			LoopDriver: agent.DefaultDriver{},
 
 			Client:       providers.AdaptStreamClient(client),
 			Model:        "fake-model",
 			SystemPrompt: "system prompt",
 		},
 	}
+	documents, err := persistence.Open(context.Background(), filepath.Join(rt.SessionDir, "documents"), "sqlite")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := documents.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	rt.Documents, rt.Sessions = documents, session.NewStore(context.Background(), documents)
+	registry := agentengine.NewRegistry()
+	if err := registry.Register(runtime.NewWuuEngine(rt)); err != nil {
+		t.Fatal(err)
+	}
+	rt.SetEnginesForTest(registry)
+	return rt
 }
 
 // TestRemoteControlEndToEnd drives the full main chain with real components
@@ -218,7 +235,7 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 
 	// The turn is persisted in the shared session store: the desktop would
 	// see exactly this thread.
-	records, err := session.LoadHistoryRecords(rt.SessionDir, tid, false)
+	records, err := rt.Sessions.LoadHistoryRecords(tid, false)
 	if err != nil {
 		t.Fatalf("LoadHistoryRecords: %v", err)
 	}

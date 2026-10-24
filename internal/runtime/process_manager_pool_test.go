@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -24,7 +23,7 @@ func processTestSession(t *testing.T) *Session {
 	return &Session{
 		ProviderName: "primary", Model: "gpt-test", RootDir: root,
 		WuuHome: home, SessionDir: statepath.SessionsDir(home), Toolkit: kit,
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: &sessionRecordingClient{}, ProviderName: "primary", Model: "gpt-test"},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: &sessionRecordingClient{}, ProviderName: "primary", Model: "gpt-test"},
 	}
 }
 

@@ -13,12 +13,14 @@ import (
 const maxPluginClientPayloadBytes = 1 << 20
 
 // PluginClientRequestParams is a generation-bound opaque request from a Wuu
-// client to one plugin runtime. Method and input are plugin-owned contracts.
+// client to a plugin runtime or one of its declared service dependencies.
 type PluginClientRequestParams struct {
-	ID          string          `json:"id"`
-	Fingerprint string          `json:"fingerprint"`
-	Method      string          `json:"method"`
-	Input       json.RawMessage `json:"input,omitempty"`
+	ID              string          `json:"id"`
+	Fingerprint     string          `json:"fingerprint"`
+	GraphGeneration string          `json:"graph_generation"`
+	Service         string          `json:"service,omitempty"`
+	Method          string          `json:"method"`
+	Input           json.RawMessage `json:"input,omitempty"`
 	// RequestID opts into independently cancellable, asynchronous admission.
 	// It is scoped to this connection and exact plugin/fingerprint pair.
 	RequestID string `json:"request_id,omitempty"`
@@ -29,9 +31,10 @@ type PluginClientRequestResult struct {
 }
 
 type PluginClientCancelParams struct {
-	ID          string `json:"id"`
-	Fingerprint string `json:"fingerprint"`
-	RequestID   string `json:"request_id"`
+	ID              string `json:"id"`
+	Fingerprint     string `json:"fingerprint"`
+	GraphGeneration string `json:"graph_generation"`
+	RequestID       string `json:"request_id"`
 }
 
 type PluginClientCancelResult struct {
@@ -39,9 +42,10 @@ type PluginClientCancelResult struct {
 }
 
 type pluginClientRequestKey struct {
-	pluginID    string
-	fingerprint string
-	requestID   string
+	pluginID        string
+	fingerprint     string
+	graphGeneration string
+	requestID       string
 }
 
 type pluginClientRequest struct {
@@ -55,6 +59,14 @@ func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) err
 	}
 	params.ID = strings.TrimSpace(params.ID)
 	params.Fingerprint = strings.TrimSpace(params.Fingerprint)
+	params.GraphGeneration = strings.TrimSpace(params.GraphGeneration)
+	service := strings.TrimSpace(params.Service)
+	if params.GraphGeneration == "" {
+		return s.writeResponse(req.ID, nil, errors.New("plugin graph_generation is required"))
+	}
+	if len(service) > 128 || (params.Service != "" && service == "") {
+		return s.writeResponse(req.ID, nil, errors.New("plugin service must contain 1-128 bytes"))
+	}
 	method := strings.TrimSpace(params.Method)
 	if method == "" {
 		return s.writeResponse(req.ID, nil, errors.New("plugin client method is required"))
@@ -78,12 +90,16 @@ func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) err
 	if s.closed.Load() {
 		return s.writeResponse(req.ID, nil, errServerClosed)
 	}
-	generation := s.rt.RetainPluginGeneration()
-	releaseGeneration := func() { s.rt.ReleasePluginGeneration(generation) }
-	plugin, host, err := s.requireActiveDesktopPluginHost(params.ID, params.Fingerprint)
-	if err == nil && generation != nil && !s.rt.IsCurrentPluginGeneration(generation) {
-		err = errors.New("plugin generation changed during request admission")
+	services, releaseGeneration, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
+	if params.GraphGeneration != services.GenerationID {
+		releaseGeneration()
+		return s.writeResponse(req.ID, nil, errors.New("plugin graph generation is no longer active"))
+	}
+	plugin, err := s.requireActiveDesktopPluginIn(services.Snapshot, params.ID, params.Fingerprint)
+	host := services.Snapshot.PluginHost
 	if err != nil {
 		releaseGeneration()
 		return s.writeResponse(req.ID, nil, err)
@@ -92,20 +108,34 @@ func (s *Server) handlePluginClientRequest(ctx context.Context, req Request) err
 		releaseGeneration()
 		return s.writeResponse(req.ID, nil, errors.New("plugin runtime is unavailable"))
 	}
-	capability, ok := host.Capability(plugin.ID, pluginhost.CapabilityPluginClientRequest)
-	if !ok {
-		releaseGeneration()
-		return s.writeResponse(req.ID, nil, errors.New("plugin does not accept client requests"))
+	var capability pluginhost.RegisteredCapability
+	if service == "" {
+		var ok bool
+		capability, ok = host.Capability(plugin.ID, pluginhost.CapabilityPluginClientRequest)
+		if !ok {
+			releaseGeneration()
+			return s.writeResponse(req.ID, nil, errors.New("plugin does not accept client requests"))
+		}
 	}
 	invoke := func(callCtx context.Context) error {
 		defer releaseGeneration()
+		if service != "" {
+			result, callErr := host.CallService(callCtx, plugin.ID, service, method, params.Input)
+			if err := callCtx.Err(); err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+			if callErr != nil {
+				return s.writeResponse(req.ID, nil, callErr)
+			}
+			return s.writePluginClientResult(req.ID, result)
+		}
 		return s.invokePluginClientRequest(callCtx, req.ID, host, capability, method, params.Input)
 	}
 	if requestID == "" {
 		return invoke(ctx)
 	}
 
-	key := pluginClientRequestKey{pluginID: params.ID, fingerprint: params.Fingerprint, requestID: requestID}
+	key := pluginClientRequestKey{pluginID: params.ID, fingerprint: params.Fingerprint, graphGeneration: params.GraphGeneration, requestID: requestID}
 	callCtx, cancel := context.WithCancel(ctx)
 	request := &pluginClientRequest{cancel: cancel}
 	s.pluginClientMu.Lock()
@@ -168,13 +198,17 @@ func (s *Server) invokePluginClientRequest(ctx context.Context, id json.RawMessa
 	if err := ctx.Err(); err != nil {
 		return s.writeResponse(id, nil, err)
 	}
-	if len(output.Result) > maxPluginClientPayloadBytes {
+	return s.writePluginClientResult(id, output.Result)
+}
+
+func (s *Server) writePluginClientResult(id json.RawMessage, result json.RawMessage) error {
+	if len(result) > maxPluginClientPayloadBytes {
 		return s.writeResponse(id, nil, errors.New("plugin client result exceeds 1048576 bytes"))
 	}
-	if len(output.Result) != 0 && !json.Valid(output.Result) {
+	if len(result) != 0 && !json.Valid(result) {
 		return s.writeResponse(id, nil, errors.New("plugin client result must be valid JSON"))
 	}
-	return s.writeResponse(id, PluginClientRequestResult{Result: output.Result}, nil)
+	return s.writeResponse(id, PluginClientRequestResult{Result: result}, nil)
 }
 
 func (s *Server) handlePluginClientCancel(req Request) error {
@@ -183,10 +217,10 @@ func (s *Server) handlePluginClientCancel(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	key := pluginClientRequestKey{
-		pluginID: strings.TrimSpace(params.ID), fingerprint: strings.TrimSpace(params.Fingerprint), requestID: strings.TrimSpace(params.RequestID),
+		pluginID: strings.TrimSpace(params.ID), fingerprint: strings.TrimSpace(params.Fingerprint), graphGeneration: strings.TrimSpace(params.GraphGeneration), requestID: strings.TrimSpace(params.RequestID),
 	}
-	if key.pluginID == "" || key.fingerprint == "" || key.requestID == "" || len(key.requestID) > 128 {
-		return s.writeResponse(req.ID, nil, errors.New("plugin id, fingerprint and request_id (1-128 bytes) are required"))
+	if key.pluginID == "" || key.fingerprint == "" || key.graphGeneration == "" || key.requestID == "" || len(key.requestID) > 128 {
+		return s.writeResponse(req.ID, nil, errors.New("plugin id, fingerprint, graph_generation and request_id (1-128 bytes) are required"))
 	}
 	// Do not require the fingerprint to remain current: callers must be able
 	// to cancel their old generation after a reload or disable has started.

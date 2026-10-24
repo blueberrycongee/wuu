@@ -461,7 +461,7 @@ func TestDriverTurnDoesNotDispatchSteeringWhenArchiveFails(t *testing.T) {
 
 func TestDriverTurnRecoversSettledResultsOnce(t *testing.T) {
 	ctx := context.Background()
-	ledger, err := toolledger.New(t.TempDir(), "driver-recovery")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "driver-recovery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,7 +567,7 @@ func TestDriverTurnExecutesPendingSubsetsWithoutDuplicateDeclarations(t *testing
 
 func TestDriverTurnRecoversPartiallyProjectedBatch(t *testing.T) {
 	ctx := context.Background()
-	ledger, err := toolledger.New(t.TempDir(), "driver-partial-recovery")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "driver-partial-recovery")
 	if err != nil {
 		t.Fatal(err)
 	}

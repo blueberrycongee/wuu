@@ -168,7 +168,7 @@ func (s *Session) newSideThreadBaseRunner(selected ThreadModelSelection) *agent.
 	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
 		providers.DebugLogf("side thread speed unavailable: %v", err)
 	}
-	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName)
+	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		providers.DebugLogf("side thread base runner falling back to workspace model (build client for %q failed): %v", resolvedName, err)
 		return cloneStreamRunnerForThread(s.StreamRunner, nil)

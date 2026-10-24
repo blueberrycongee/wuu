@@ -36,13 +36,19 @@ func textSnapshot(thread Thread) conversations.Thread {
 }
 
 func (s *Server) handleThreadTextSnapshot(req Request) error {
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
+
 	var params struct {
 		ThreadID string `json:"thread_id"`
 	}
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	th, err := s.historyThread(params.ThreadID)
+	th, err := s.historyThread(binding, params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

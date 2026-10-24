@@ -1,6 +1,7 @@
 package grokbuild
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,12 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
 )
 
 type credentialSource struct {
 	explicitToken string
-	home          string
+	credentials   credentialstore.Store
 	reuseCLI      bool
 }
 
@@ -23,14 +26,21 @@ type authEntry struct {
 	AccessToken string `json:"access_token"`
 }
 
-func (s credentialSource) token() (string, error) {
+func (s credentialSource) token(ctx context.Context) (string, error) {
 	if token := strings.TrimSpace(s.explicitToken); token != "" {
 		return token, nil
 	}
 	if !s.reuseCLI {
 		return "", errors.New("no Grok Build credential configured; set reuse_grok_credentials to true to read the local Grok CLI login")
 	}
-	return loadCLIToken(s.home)
+	record, err := authstorage.ReadCLI(ctx, s.credentials, "grok")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(record.AccessToken) == "" {
+		return "", errors.New("Grok CLI login token is empty; run `grok login`")
+	}
+	return strings.TrimSpace(record.AccessToken), nil
 }
 
 func loadCLIToken(home string) (string, error) {
@@ -94,4 +104,12 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// OAuthStatus checks the selected CLI record without refreshing or writing it.
+func OAuthStatus(ctx context.Context, selected credentialstore.Store) (string, error) {
+	if _, err := (credentialSource{credentials: selected, reuseCLI: true}).token(ctx); err != nil {
+		return "", err
+	}
+	return "grok-cli", nil
 }

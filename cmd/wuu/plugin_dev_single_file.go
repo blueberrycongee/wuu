@@ -94,7 +94,7 @@ func prepareSingleFilePlugin(ctx context.Context, source string) (string, func()
 	command.Env = runtime.Env
 	command.Dir = root
 	if output, err := command.CombinedOutput(); err != nil {
-		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w: %s", err, strings.TrimSpace(string(output))))
+		return fail(fmt.Errorf("load TypeScript plugin (Node.js 22.7+ required): %w: %s", err, strings.ReplaceAll(strings.TrimSpace(string(output)), filepath.Join(root, "extension.ts"), abs)))
 	}
 	if _, err := pluginpkg.InspectPackage(root); err != nil {
 		return fail(err)

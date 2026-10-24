@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
@@ -63,6 +64,8 @@ func fillCloneGuardValue(t *testing.T, path string, v reflect.Value, depth int) 
 		switch v.Type() {
 		case reflect.TypeOf((*providers.StreamClient)(nil)).Elem():
 			v.Set(reflect.ValueOf(cloneGuardStreamClient{}))
+		case reflect.TypeOf((*persistence.Documents)(nil)).Elem():
+			v.Set(reflect.ValueOf(testSessionDocuments(t, t.TempDir())))
 		case reflect.TypeOf((*providers.Client)(nil)).Elem():
 			v.Set(reflect.ValueOf(cloneGuardClient{}))
 		default:

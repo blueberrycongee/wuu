@@ -102,7 +102,7 @@ func TestActivatePluginGenerationPersistsRevocationReports(t *testing.T) {
 	wuuHome := t.TempDir()
 	oldClient := &generationClient{id: "old"}
 	old := testPluginGeneration("old", oldClient)
-	session := testGenerationSession(old)
+	session := testGenerationSession(t, old)
 	session.WuuHome = wuuHome
 
 	broken := &preparedGenerationClient{

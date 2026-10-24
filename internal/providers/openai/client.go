@@ -425,13 +425,21 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	// Let the caller's ctx and the idle watchdog own cancellation instead.
 	// Use the single-attempt request — ReliableStreamClient handles retries
 	// with proper UI feedback at the caller layer.
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		return nil, err
+	}
 	resp, lease, err := c.doSingleChatCompletionsRequest(ctx, c.streamHTTPClient, body, true, req.Attempt)
 	if err != nil {
+		endReceipt(nil)
 		return nil, err
 	}
 
 	ch := make(chan providers.StreamEvent, 64)
-	go c.readSSE(ctx, resp, lease, ch)
+	go func() {
+		defer endReceipt(nil)
+		c.readSSE(ctx, resp, lease, ch)
+	}()
 	return ch, nil
 }
 
@@ -617,6 +625,8 @@ func (c *Client) readSSE(ctx context.Context, resp *http.Response, lease *provid
 
 		if chunk.Usage != nil {
 			lastUsage = chunk.Usage.asTokenUsage()
+			// Delivery can lose to cancellation after the receipt was decoded.
+			lease.ObserveUsage(lastUsage)
 			if !emit.Send(providers.StreamEvent{Type: providers.EventUsage, Usage: lastUsage}) {
 				return
 			}

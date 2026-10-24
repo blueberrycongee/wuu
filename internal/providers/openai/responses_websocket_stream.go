@@ -278,6 +278,18 @@ func (c *Client) responsesStreamChatWebSocketAttempt(ctx context.Context, payloa
 }
 
 func (c *Client) responsesStreamChatWebSocketWithSessionLocked(ctx context.Context, session, fallbackSession *responsesWebSocketSession, wsURL string, payload responsesRequest, transport providers.StreamTransportMode, cacheConnection bool, lease *providers.ProviderLease) (<-chan providers.StreamEvent, error) {
+	ctx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		session.mu.Unlock()
+		lease.Release()
+		return nil, err
+	}
+	started := false
+	defer func() {
+		if !started {
+			endReceipt(nil)
+		}
+	}()
 	// Reserve the session before dropping the lock for network IO. busy=true
 	// diverts concurrent same-session requests to transient connections and
 	// keeps idle expiry away; holding session.mu across a dial or a write
@@ -406,7 +418,11 @@ func (c *Client) responsesStreamChatWebSocketWithSessionLocked(ctx context.Conte
 	})
 
 	ch := make(chan providers.StreamEvent, 64)
-	go c.readResponsesWebSocket(ctx, session, fallbackSession, generation, readCh, fullPayload, requestPayload, transport, useCachedContext, cacheConnection, lease, state, ch)
+	started = true
+	go func() {
+		defer endReceipt(nil)
+		c.readResponsesWebSocket(ctx, session, fallbackSession, generation, readCh, fullPayload, requestPayload, transport, useCachedContext, cacheConnection, lease, state, ch)
+	}()
 	return ch, nil
 }
 
@@ -502,6 +518,12 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 		Type:          providers.EventProviderState,
 		ProviderState: state,
 	}) {
+		// The request is already on the wire, even before its first local event.
+		session.mu.Lock()
+		c.responsesWebSocketReleaseLocked(session, readCh)
+		c.responsesWebSocketAbortConnectionLocked(session)
+		session.mu.Unlock()
+		lease.FailError(ctx.Err())
 		return
 	}
 

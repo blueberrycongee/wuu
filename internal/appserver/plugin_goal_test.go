@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 // Keep the existing app-server behavioral tests connected to the shipped
@@ -49,6 +50,7 @@ func startBundledPluginTestProcess(t *testing.T, id string, router pluginhost.Se
 // settled-turn broadcast; storage writes signal completion without polling.
 type goalBridge struct {
 	server  *Server
+	state   *runtime.State
 	mu      sync.Mutex
 	value   *string
 	settled chan struct{}
@@ -61,6 +63,7 @@ type goalSnapshot struct {
 }
 
 func (b *goalBridge) RouteServiceCall(ctx context.Context, id string, call pluginhost.ServiceCallParams) (json.RawMessage, *pluginhost.HostServiceError) {
+	ctx = runtime.WithInvocationState(ctx, b.state)
 	var result any
 	var err error
 	switch call.Service {
@@ -130,6 +133,7 @@ func TestGoalExtensionContinuesUserSessionThroughRealTurnLifecycle(t *testing.T)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	bridge.server = srv
+	bridge.state = testRuntimeState(t, rt)
 	t.Cleanup(srv.Close)
 	if err := client.Activate(context.Background()); err != nil {
 		t.Fatal(err)
@@ -171,9 +175,10 @@ func TestSharedSessionPluginCanInspectAndCancelOnlyItsOwnWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "shared")["result"]).Thread.ID
+	ctx := pluginInvocationContext(t, rt, context.Background())
 	send := func(plugin, request string) pluginhost.SessionSendResult {
 		t.Helper()
-		r, err := srv.sendPluginSession(context.Background(), plugin, pluginhost.SessionSendParams{RequestID: request, SessionID: id, Input: pluginhost.SessionInput{Prompt: "work"}})
+		r, err := srv.sendPluginSession(ctx, plugin, pluginhost.SessionSendParams{RequestID: request, SessionID: id, Input: pluginhost.SessionInput{Prompt: "work"}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,29 +191,29 @@ func TestSharedSessionPluginCanInspectAndCancelOnlyItsOwnWork(t *testing.T) {
 		t.Fatal("not started")
 	}
 	queued := send("workflow", "queued")
-	inspected, err := srv.inspectPluginSession(context.Background(), "workflow", pluginhost.SessionInspectParams{SessionID: id, RequestID: "queued"})
+	inspected, err := srv.inspectPluginSession(ctx, "workflow", pluginhost.SessionInspectParams{SessionID: id, RequestID: "queued"})
 	if err != nil || inspected.Turn == nil || inspected.Turn.QueueID != queued.QueueID {
 		t.Fatalf("inspect = %+v %v", inspected, err)
 	}
-	other, err := srv.inspectPluginSession(context.Background(), "other", pluginhost.SessionInspectParams{SessionID: id, RequestID: "queued"})
+	other, err := srv.inspectPluginSession(ctx, "other", pluginhost.SessionInspectParams{SessionID: id, RequestID: "queued"})
 	if err != nil || other.Turn != nil {
 		t.Fatalf("leaked other plugin request: %+v %v", other, err)
 	}
-	if _, err := srv.cancelPluginSession(context.Background(), "workflow", pluginhost.SessionCancelParams{SessionID: id}); err == nil {
+	if _, err := srv.cancelPluginSession(ctx, "workflow", pluginhost.SessionCancelParams{SessionID: id}); err == nil {
 		t.Fatal("unscoped cancellation accepted")
 	}
-	if _, err := srv.cancelPluginSession(context.Background(), "workflow", pluginhost.SessionCancelParams{SessionID: id, TurnID: running.TurnID}); err == nil {
+	if _, err := srv.cancelPluginSession(ctx, "workflow", pluginhost.SessionCancelParams{SessionID: id, TurnID: running.TurnID}); err == nil {
 		t.Fatal("other plugin turn cancelled")
 	}
-	cancelled, err := srv.cancelPluginSession(context.Background(), "other", pluginhost.SessionCancelParams{SessionID: id, QueueID: queued.QueueID})
+	cancelled, err := srv.cancelPluginSession(ctx, "other", pluginhost.SessionCancelParams{SessionID: id, QueueID: queued.QueueID})
 	if err != nil || cancelled.Cancelled {
 		t.Fatal("other plugin queue cancelled")
 	}
-	cancelled, err = srv.cancelPluginSession(context.Background(), "workflow", pluginhost.SessionCancelParams{SessionID: id, QueueID: queued.QueueID})
+	cancelled, err = srv.cancelPluginSession(ctx, "workflow", pluginhost.SessionCancelParams{SessionID: id, QueueID: queued.QueueID})
 	if err != nil || !cancelled.Cancelled {
 		t.Fatalf("owned queue cancellation: %+v %v", cancelled, err)
 	}
-	cancelled, err = srv.cancelPluginSession(context.Background(), "scheduler", pluginhost.SessionCancelParams{SessionID: id, TurnID: running.TurnID})
+	cancelled, err = srv.cancelPluginSession(ctx, "scheduler", pluginhost.SessionCancelParams{SessionID: id, TurnID: running.TurnID})
 	if err != nil || !cancelled.Cancelled {
 		t.Fatalf("owned running cancellation: %+v %v", cancelled, err)
 	}

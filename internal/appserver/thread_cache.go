@@ -71,7 +71,7 @@ func (s *Server) pruneCachedThreads(keepIDs ...string) {
 		if current == nil || current != candidate.thread {
 			continue
 		}
-		if !cachedThreadStillIdle(current) {
+		if s.activeExecutionRunID(current.ID) != "" || !cachedThreadStillIdle(current) {
 			continue
 		}
 		delete(s.threads, candidate.id)
@@ -82,11 +82,14 @@ func (s *Server) pruneCachedThreads(keepIDs ...string) {
 
 	for _, th := range evicted {
 		s.releaseThreadRuntime(th)
+		if th.state != nil {
+			_ = th.state.Close()
+		}
 	}
 }
 
 func (s *Server) cachedThreadCandidateLocked(id string, th *threadState) (cachedThreadCandidate, bool) {
-	if th == nil {
+	if th == nil || s.activeExecutionRunID(id) != "" {
 		return cachedThreadCandidate{}, false
 	}
 	th.mu.Lock()

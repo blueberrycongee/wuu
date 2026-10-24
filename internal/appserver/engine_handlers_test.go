@@ -1,19 +1,23 @@
 package appserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -60,7 +64,7 @@ func TestUnavailableSelectedEngineRejectsNewThreads(t *testing.T) {
 			if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), id) {
 				t.Fatalf("unavailable selection did not produce its diagnostic: %+v", response)
 			}
-			threads, err := session.List(rt.SessionDir, 100)
+			threads, err := rt.Sessions.List(100)
 			if err != nil || len(threads) != 0 {
 				t.Fatalf("rejected selection created threads: %+v, %v", threads, err)
 			}
@@ -121,7 +125,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if terminals != 1 {
 		t.Fatalf("completed notifications = %d, want one", terminals)
 	}
-	history, err := loadChatMessages(rt.SessionDir, threadID)
+	history, err := loadChatMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +141,7 @@ func TestClaudeBackgroundContinuationPersistsOneCompletedTurn(t *testing.T) {
 	if !found {
 		t.Fatalf("final summary absent from durable history: %+v", history)
 	}
-	metas, err := loadMetaMessages(rt.SessionDir, threadID)
+	metas, err := loadMetaMessages(rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +215,7 @@ func TestClaudeProviderErrorStaysOutOfAssistantHistory(t *testing.T) {
 			if liveText.String() != want || failures != 1 {
 				t.Fatalf("live assistant text = %q, failures = %d", liveText.String(), failures)
 			}
-			history, err := loadChatMessages(rt.SessionDir, threadID)
+			history, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -409,6 +413,7 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
+	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	if err := rt.RefreshEngineSettings(); err != nil {
@@ -772,4 +777,213 @@ func testCodexConcurrentHostReplacement(t *testing.T, binary string) {
 		t.Fatalf("host replacement left subprocesses alive: started=%d, exited=%d", starts, exits)
 	}
 	t.Log("concurrent settings preserved the admitted turn; three subsequent turns reused one replacement; both native processes exited")
+}
+
+// Failure cases: selected-state I/O holding the stream projection lock, losing
+// native items during that stall, settings prepending or renumbering the admitted
+// user row, and clearing admission before durable settlement.
+func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
+	binary := os.Getenv("WUU_E2E_CODEX")
+	if binary == "" {
+		binary = filepath.Join(t.TempDir(), "fakecodex")
+		build := exec.Command("go", "build", "-o", binary, "../codexengine/testdata/fakecodex")
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build fixture: %v\n%s", err, output)
+		}
+	}
+	for _, scenario := range []struct {
+		name                       string
+		reset, noPrompt, priorTurn bool
+	}{
+		{name: "boundary_io"},
+		{name: "settings_prepend", reset: true, noPrompt: true},
+		{name: "settings_after_prior_turn", reset: true, priorTurn: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("WUU_TEST_CODEX_HISTORY", filepath.Join(root, "native.json"))
+			control := filepath.Join(root, "control.json")
+			t.Setenv("WUU_TEST_CODEX_HISTORY_CONTROL", control)
+			rt := newTestRuntime(t, &fakeClient{})
+			if scenario.noPrompt {
+				rt.StreamRunner.SystemPrompt = ""
+			}
+			rt.SetEnginesForTest(agentengine.NewRegistry())
+			rt.RebuildCodexEngine(true, binary)
+			blocked := &nativeBoundaryDocuments{Documents: rt.Documents, entered: make(chan struct{}), release: make(chan struct{}), progress: make(chan struct{})}
+			rt.Documents = blocked
+			rt.Sessions = session.NewStore(context.Background(), blocked)
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(blocked.release) }) }
+			defer release()
+			out := &nativeBurstOutput{documents: blocked, terminal: make(chan Turn, 1)}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := srv.handleLine(ctx, []byte(`{"id":"native-burst-thread","method":"thread/start","params":{"engine":"codex"}}`)); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.buffer.String()), "native-burst-thread")
+			if response["error"] != nil {
+				t.Fatalf("thread/start: %+v", response)
+			}
+			threadID := remarshal[ThreadStartResult](t, response["result"]).Thread.ID
+			startTurn := func(prompt string) {
+				t.Helper()
+				request, _ := json.Marshal(map[string]any{"id": prompt, "method": "turn/start", "params": TurnStartParams{ThreadID: threadID, Prompt: prompt}})
+				if err := srv.handleLine(ctx, request); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario.priorTurn {
+				startTurn("first prompt")
+				select {
+				case turn := <-out.terminal:
+					if turn.Status != TurnStatusCompleted {
+						t.Fatalf("prior native turn: %+v", turn)
+					}
+				case <-ctx.Done():
+					t.Fatal("prior native turn did not settle")
+				}
+			}
+			if err := os.WriteFile(control, []byte(`{"mode":"long-turn"}`), 0600); err != nil {
+				t.Fatal(err)
+			}
+			blocked.armed.Store(true)
+			startTurn("many-large-tool-results")
+			select {
+			case <-blocked.entered:
+			case <-ctx.Done():
+				t.Fatal("native boundary persistence was not reached")
+			}
+			stalled := false
+			started := time.Now()
+			select {
+			case <-blocked.progress:
+			case <-time.After(2 * time.Second):
+				stalled = true
+				release()
+			}
+			th := srv.thread(threadID)
+			th.mu.Lock()
+			admittedSeq := 0
+			for _, msg := range th.History {
+				if msg.Role == "user" && !msg.Steered {
+					admittedSeq = msg.Seq
+				}
+			}
+			if scenario.noPrompt && th.History[0].Role != "user" {
+				t.Error("fixture did not reach native admission without a base system prompt")
+			}
+			th.mu.Unlock()
+			if scenario.reset {
+				before, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				srv.resetThreadRuntimesForGeneralSettings("updated runtime system prompt")
+				after, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !reflect.DeepEqual(before, after) {
+					t.Error("runtime settings changed durable history while native admission was pending")
+				}
+			}
+			boundaryWait := time.Since(started)
+			release()
+			var terminal Turn
+			select {
+			case terminal = <-out.terminal:
+			case <-ctx.Done():
+				t.Fatal("native turn did not settle")
+			}
+			tools := 0
+			for _, item := range terminal.Items {
+				if item.Type == ThreadItemToolCall {
+					tools++
+				}
+			}
+			t.Logf("boundary_wait=%s through_terminal=%s stream_stalled=%v terminal=%s visible_tools=%d", boundaryWait, time.Since(started), stalled, terminal.Status, tools)
+			if stalled {
+				t.Error("selected Documents persistence blocked stream projection")
+			}
+			if terminal.Status != TurnStatusCompleted || tools != 302 {
+				t.Errorf("long native turn lost output: status=%s tools=%d want completed/302", terminal.Status, tools)
+			}
+			history, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, record := range history {
+				if record.Role != "user" {
+					continue
+				}
+				if record.EngineTurnID == "" || record.EngineTurnPending {
+					t.Errorf("native completion not durably settled: seq=%d native=%q pending=%v", record.Seq, record.EngineTurnID, record.EngineTurnPending)
+				}
+				if record.Content == "many-large-tool-results" && record.Seq != admittedSeq {
+					t.Errorf("settings changed durable prompt identity: seq=%d want %d", record.Seq, admittedSeq)
+				}
+			}
+			th.mu.Lock()
+			defer th.mu.Unlock()
+			for _, msg := range th.History {
+				if msg.Role == "system" && (msg.EngineTurnID != "" || msg.EngineTurnPending) {
+					t.Errorf("native user boundary moved to runtime system prompt: native=%q pending=%v", msg.EngineTurnID, msg.EngineTurnPending)
+				}
+			}
+		})
+	}
+}
+
+type nativeBoundaryDocuments struct {
+	persistence.Documents
+	entered, release, progress chan struct{}
+	once, progressOnce         sync.Once
+	armed, active              atomic.Bool
+}
+
+func (d *nativeBoundaryDocuments) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	for _, write := range tx.Writes {
+		if write.Namespace != "wuu.session_messages.v1" {
+			continue
+		}
+		var record session.HistoryRecord
+		if err := json.Unmarshal(write.Value, &record); err != nil {
+			return persistence.Receipt{}, err
+		}
+		if d.armed.Load() && record.EngineTurnID != "" && record.EngineTurnPending {
+			d.once.Do(func() { d.active.Store(true); close(d.entered); <-d.release; d.active.Store(false) })
+		}
+	}
+	return d.Documents.Commit(ctx, tx)
+}
+
+type nativeBurstOutput struct {
+	buffer    lockedBuffer
+	documents *nativeBoundaryDocuments
+	terminal  chan Turn
+}
+
+func (w *nativeBurstOutput) Write(data []byte) (int, error) {
+	var envelope struct {
+		Method string
+		Params json.RawMessage
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return 0, err
+	}
+	if w.documents.active.Load() && bytes.Contains(data, []byte(`"type":"tool_call"`)) {
+		w.documents.progressOnce.Do(func() { close(w.documents.progress) })
+	}
+	if envelope.Method == NotificationTurnCompleted || envelope.Method == NotificationTurnError {
+		var params struct{ Turn Turn }
+		if err := json.Unmarshal(envelope.Params, &params); err != nil {
+			return 0, err
+		}
+		w.terminal <- params.Turn
+	}
+	return w.buffer.Write(data)
 }

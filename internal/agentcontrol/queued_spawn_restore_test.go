@@ -73,7 +73,7 @@ func pinAgentControl(t *testing.T, dir string, defaultClient providers.StreamCli
 	threadDir := filepath.Join(dir, "threads")
 	historyDir := filepath.Join(dir, "history")
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:       defaultClient,
 		DefaultModel: "default-worker-model",

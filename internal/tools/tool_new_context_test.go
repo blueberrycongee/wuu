@@ -16,7 +16,7 @@ func TestContextRequestsDoNotRequireWorkspaceMutations(t *testing.T) {
 	}
 	kit.SetContextWindowToolsEnabled(true)
 	ctx := context.Background()
-	before := workspaceRevision(ctx, kit.env.RootDir)
+	before := workspaceRevision(ctx, kit.env.RootDir, kit.env.RuntimeHome)
 	if before == "" {
 		t.Fatal("test needs a stable workspace revision")
 	}
@@ -32,7 +32,7 @@ func TestContextRequestsDoNotRequireWorkspaceMutations(t *testing.T) {
 			t.Fatalf("request %d lost control signal: %+v %v", i, result, err)
 		}
 	}
-	if after := workspaceRevision(ctx, kit.env.RootDir); after != before {
+	if after := workspaceRevision(ctx, kit.env.RootDir, kit.env.RuntimeHome); after != before {
 		t.Fatal("context requests mutated the workspace")
 	}
 }

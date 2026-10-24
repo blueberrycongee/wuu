@@ -1,19 +1,15 @@
 # 桌面插件快速上手
 
-本教程在输入框工具栏中添加一个小开关，演示组件本地状态和宿主 UI 注册。它不会改变模型行为，也不会保存设置。需要 Wuu Desktop、`wuu` CLI、Node.js 22 或更高版本，以及匹配的 Wuu 源码检出目录，用于获取 SDK 类型。
+本教程在输入框工具栏中添加一个小开关，演示组件本地状态和宿主 UI 注册。它不会改变模型行为，也不会保存设置。需要 Wuu Desktop、`wuu` CLI、Node.js 22 或更高版本，以及与 Wuu 构建匹配的公开 SDK tarball。作者目录无需 Wuu 源码 checkout。
 
 ## 创建插件包
 
-修改 SDK 源码路径，然后在准备存放插件项目的目录中执行：
+修改 SDK tarball 路径，然后在准备存放插件项目的目录中执行：
 
 ```bash
-WUU_SOURCE=/absolute/path/to/wuu
-npm ci --prefix "$WUU_SOURCE/packages/plugin-sdk"
-npm run build --prefix "$WUU_SOURCE/packages/plugin-sdk"
 wuu plugin create --type desktop toolbar-demo
 cd toolbar-demo
-npm pkg set "devDependencies.@wuu/plugin-sdk=file:$WUU_SOURCE/packages/plugin-sdk"
-npm install
+npm install --save-dev /absolute/path/to/wuu-plugin-sdk-0.1.0.tgz
 ```
 
 生成的 `plugin.json` 将 `desktop.entry` 指向 `dist/index.js`。桌面模块导出 `activate(api)`，宿主启动对应 generation 时调用它。本例只导入 SDK 类型，因此 TypeScript 会生成没有运行时 import 的独立 ESM 入口。
@@ -27,8 +23,7 @@ import type { PluginGenerationApi } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const Toggle = api.ui.ToolbarToggle as unknown as
-    (props: Readonly<Record<string, unknown>>) => unknown;
+  const Toggle = api.ui.ToolbarToggle;
 
   function DemoToggle() {
     const [enabled, setEnabled] = React.useState(false);
@@ -75,3 +70,5 @@ wuu plugin approve toolbar-demo
 当前 CLI 将暂存包与启用执行的信任决定分开。开发授权保留在本机，不随 zip 分发。桌面插件是受信任的 renderer 代码，不是沙箱中的网页内容。
 
 较大的扩展边界见 [UI 扩展地图](desktop-plugins.md)，动作和视图示例见[插件配方](plugin-recipes.md)，包和生命周期契约见[编写插件](plugin-authoring.md)。
+
+单文件 TSX 组件、完整 Shell 与嵌套贡献，参见[直接 TSX 预览和公开 UI SDK](ui-sdk.md)。

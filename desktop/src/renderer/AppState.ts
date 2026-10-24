@@ -3,7 +3,6 @@ import type {
   AppServerNotification,
   ConfigChangedNotification,
   DesktopProject,
-  ExtensionInventoryRecord,
   GitStatusResult,
   InitializeResult,
   TodoUpdate,
@@ -13,6 +12,7 @@ import type {
   ServerEvent,
   Thread,
   ThreadItem,
+  ThreadSearchResultItem,
   Turn,
 } from "../shared/protocol";
 import {
@@ -22,9 +22,12 @@ import {
   type ComposerImage,
 } from "./ComposerMessages";
 import { parseRequestedHandoffIntent } from "./HandoffDraft";
+import { userMessageBodyText } from "./ThreadItemText";
 import { localTurnTiming } from "./LocalTurnTiming";
 import { isInternalUserNotificationItem } from "./InternalUserNotification";
 import { threadDisplayTitle } from "./ThreadTitles";
+import type { FirstRunOnboardingState } from "./FirstRunOnboarding";
+import type { CodexRuntimeMenu, PermissionMode } from "./ComposerTypes";
 import { sortChildAgents } from "./ThreadAgents";
 import {
   hasAuthoritativeTurnItems,
@@ -132,6 +135,22 @@ type SessionTab =
 type AppState = {
   configError?: string;
   initialized?: InitializeResult;
+  runtimeConnectionGeneration?: number;
+  // Page selection outlives shell activations, including catalog refreshes.
+  nativeSection?: "conversations" | "catalog";
+  catalogSection?: "plugins" | "skills";
+  catalogPluginID?: string;
+  // Composer choices survive graph-only shell replacement within this session.
+  codexRuntimeMenu?: CodexRuntimeMenu;
+  draftWorktree?: { cwd: string; startBranch: string };
+  draftPermissionMode?: PermissionMode | "";
+  onboarding?: FirstRunOnboardingState;
+  onboardingComplete?: boolean;
+  // Pending search addresses survive shell replacement during workspace activation.
+  conversationSearchTarget?: {
+    id: string; result: ThreadSearchResultItem; query: string; ready: boolean;
+    isReadingIntentCurrent?: () => boolean;
+  };
   projects: DesktopProject[];
   activeContext?: RuntimeContext;
   activeProjectId?: string;
@@ -697,6 +716,7 @@ function reduceNotification(
         initialized: {
           ...state.initialized,
           extension_inventory: params.extension_inventory,
+          ...("application_shell" in params ? { application_shell: params.application_shell } : {}),
         },
       };
     }
@@ -1307,7 +1327,10 @@ function updateThreadByID(
       ...patch,
       thread: primaryActive ? thread : state.thread,
       secondaryThread: secondaryActive ? thread : state.secondaryThread,
-      threads: upsertThread(state.threads, thread),
+      // Explicit updates, including title rollback, must reach every projection.
+      // Incoming snapshots reconcile their titles before entering this callback.
+      threads: replaceThreadPreservingOrder(state.threads, thread)
+        ?? sortThreads([...state.threads.filter((item) => item.id !== thread.id), thread]),
       sessionTabs: syncThreadSessionTabTitle(state.sessionTabs, thread),
     };
   }
@@ -2537,7 +2560,9 @@ function bindActiveSessionTabToThread(
   thread: Thread,
   context: RuntimeContext,
 ): SessionTab[] {
-  const threadTab = createThreadSessionTab(thread, context);
+  // Binding the server identity keeps input entered while creation was pending.
+  const sourceTab = tabs.find((tab) => tab.id === activeTabID);
+  const threadTab = createThreadSessionTab(thread, context, sourceTab ? cloneSessionTabDraft(sourceTab) : undefined);
   const existingThreadTab = tabs.find((tab) => tab.id === threadTab.id);
   if (existingThreadTab) {
     return tabs
@@ -2829,23 +2854,6 @@ function sameRuntimeContext(
   return left.cwd === right.cwd;
 }
 
-function withExtensionInventoryForContext(
-  state: AppState,
-  sourceContext: RuntimeContext | undefined,
-  extensionInventory: ExtensionInventoryRecord[],
-): AppState {
-  if (!state.initialized || !sameRuntimeContext(state.activeContext, sourceContext)) {
-    return state;
-  }
-  return {
-    ...state,
-    initialized: {
-      ...state.initialized,
-      extension_inventory: extensionInventory,
-    },
-  };
-}
-
 function threadMatchesActiveContext(
   thread: Thread,
   context: RuntimeContext | undefined,
@@ -3101,7 +3109,7 @@ function turnPreview(turn: Turn): string {
   if (!userItem) {
     return "";
   }
-  const text = userItem.text?.trim();
+  const text = userMessageBodyText(userItem.text ?? "", userItem.content_parts).trim();
   if (text) {
     return text;
   }
@@ -3809,7 +3817,6 @@ export {
   upsertThreadChildAgent,
   upsertTurn,
   upsertTurnItem,
-  withExtensionInventoryForContext,
   withLoadedRuntimeSessionTab,
 };
 

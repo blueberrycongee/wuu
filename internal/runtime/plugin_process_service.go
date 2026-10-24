@@ -117,6 +117,8 @@ type processServiceInvoker struct{ parent *kernelHostServices }
 func (k *processServiceInvoker) ID() string                { return k.parent.ID() }
 func (k *processServiceInvoker) Status() pluginhost.Status { return k.parent.Status() }
 func (k *processServiceInvoker) InvokeService(ctx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	ctx, releaseState := k.parent.captureInvocationState(ctx)
+	defer releaseState()
 	k.parent.mu.RLock()
 	s := k.parent.services[params.Caller]
 	k.parent.mu.RUnlock()
@@ -180,6 +182,16 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 		if running >= 64 {
 			return nil, serviceError("limit_exceeded", "at most 64 extension processes may run")
 		}
+		binding, err := RetainInvocationState(ctx)
+		if err != nil {
+			return nil, err
+		}
+		watchStarted := false
+		defer func() {
+			if !watchStarted {
+				_ = binding.Close()
+			}
+		}()
 		startCtx, cancel := context.WithCancel(scope.Context)
 		stopTransport := context.AfterFunc(ctx, cancel)
 		stopGeneration := context.AfterFunc(generation, cancel)
@@ -209,7 +221,11 @@ func (k *processServiceInvoker) InvokeService(ctx context.Context, params plugin
 			s.processes = make(map[string]*pluginProcess)
 		}
 		s.processes[p.id] = p
-		go p.watchSession(generation, s.turnRouter)
+		watchStarted = true
+		go func() {
+			defer binding.Close()
+			p.watchSession(WithInvocationState(generation, binding), s.turnRouter)
+		}()
 		return processServiceSnapshot(p)
 	}
 	var input struct {

@@ -1,16 +1,318 @@
 package appserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+func TestExtensionPackageBatchProcess(t *testing.T) {
+	role := os.Getenv("WUU_BATCH_POLICY_ROLE")
+	if role == "" {
+		return
+	}
+	scanner, encoder := bufio.NewScanner(os.Stdin), json.NewEncoder(os.Stdout)
+	for scanner.Scan() {
+		var req struct{ ID, Method string }
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			os.Exit(2)
+		}
+		var result any = map[string]any{}
+		switch req.Method {
+		case "initialize":
+			definition := pluginhost.CapabilityInitializeResult{
+				ProtocolVersion: pluginhost.CapabilityProtocolVersion, LifecycleVersion: pluginhost.RuntimeLifecycleVersion,
+				InitializeResult: pluginhost.InitializeResult{Tools: []pluginhost.ToolRegistration{{ID: "probe", Description: "Probe selected fixture", InputSchema: map[string]any{"type": "object"}}}},
+			}
+			if role == "provider" {
+				definition.ProvidedServices = []pluginhost.ServiceDescriptor{{Name: "fixture.scheduler", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "probe", InputSchema: "fixture.probe.input.v1", OutputSchema: "fixture.probe.output.v1"}}}}
+			} else if role == "consumer" {
+				definition.RequiredServices = []pluginhost.ServiceRequirement{{Name: "fixture.scheduler", MajorVersion: 1, Required: true}}
+			}
+			result = definition
+		case "tool.execute":
+			result = map[string]any{"result": map[string]any{"content": []map[string]string{{"type": "text", "text": role}}}}
+		case "activate":
+			if err := os.WriteFile(os.Getenv("WUU_BATCH_POLICY_SHUTDOWN")+".active", []byte(fmt.Sprint(os.Getpid())), 0600); err != nil {
+				os.Exit(2)
+			}
+		case "shutdown":
+			if err := os.WriteFile(os.Getenv("WUU_BATCH_POLICY_SHUTDOWN"), []byte(fmt.Sprint(os.Getpid())), 0600); err != nil {
+				os.Exit(2)
+			}
+		}
+		if err := encoder.Encode(map[string]any{"id": req.ID, "result": result}); err != nil {
+			os.Exit(2)
+		}
+		if req.Method == "shutdown" {
+			os.Exit(0)
+		}
+	}
+	os.Exit(0)
+}
+
+// Failure cases: a selection publishes an invalid intermediate graph, a later
+// invalid entry partly writes policy, or disabled providers survive a retained
+// generation. The real process contract keeps the graph checks in this test.
+func TestExtensionPackageBatchPublishesDependencyCompletePolicy(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
+	cfg, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Extensions = &extensions.Settings{}
+	cfg.Extensions.SetEnabled("plugin:user:unrelated", false)
+	control := t.TempDir()
+	items := make(map[string]pluginpkg.Plugin)
+	for _, role := range []string{"provider", "consumer", "independent"} {
+		manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "batch-" + role, Runtime: &pluginpkg.RuntimeSpec{
+			Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestExtensionPackageBatchProcess$"},
+			Env: map[string]string{"WUU_BATCH_POLICY_ROLE": role, "WUU_BATCH_POLICY_SHUTDOWN": filepath.Join(control, role)},
+		}}
+		if role == "consumer" {
+			manifest.Desktop = &pluginpkg.DesktopSpec{Entry: "desktop.js", RequiredServices: []pluginhost.ServiceRequirement{{Name: "fixture.scheduler", MajorVersion: 1, Required: true}}}
+		}
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(rt.WuuHome, "plugins", manifest.ID, "plugin.json")
+		writePluginPackageFile(t, path, string(raw))
+		if role == "consumer" {
+			writePluginPackageFile(t, filepath.Join(filepath.Dir(path), "desktop.js"), "export function activate() {}")
+		}
+		item, err := pluginpkg.LoadManifest(path, "user")
+		if err != nil {
+			t.Fatal(err)
+		}
+		items[role] = item
+		if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePluginPackageFile(t, rt.ConfigPath, string(raw))
+	if err := rt.RefreshExtensions(cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = rt.Cleanup() })
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	oldHost := rt.PluginHost
+	pinned := rt.RetainPluginGeneration()
+	defer rt.ReleasePluginGeneration(pinned)
+	activePIDs := make(map[string]string)
+	for _, role := range []string{"provider", "consumer"} {
+		pid, err := os.ReadFile(filepath.Join(control, role+".active"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		activePIDs[role] = string(pid)
+	}
+	call := func(id string, params any) map[string]any {
+		t.Helper()
+		callPluginPackageRPC(t, srv, id, MethodExtensionPackageUpdate, params)
+		return responseByID(t, parseOutput(t, out.String()), id)
+	}
+	change := func(role, action string) map[string]any {
+		item := items[role]
+		return map[string]any{"id": item.SubjectID, "fingerprint": item.Fingerprint, "action": action}
+	}
+	assertUnchanged := func() {
+		t.Helper()
+		current, err := os.ReadFile(rt.ConfigPath)
+		if err != nil || string(current) != string(raw) || rt.PluginHost != oldHost {
+			t.Fatalf("rejected choice changed config or generation: %s, %v", current, err)
+		}
+	}
+	response := call("single-provider", change("provider", "disable"))
+	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "fixture.scheduler") {
+		t.Fatalf("single provider disable did not reject incomplete graph: %+v", response)
+	}
+	assertUnchanged()
+	for _, test := range []struct {
+		name   string
+		params any
+	}{
+		{"empty", map[string]any{"updates": []any{}}},
+		{"null", map[string]any{"updates": nil}},
+		{"mixed", map[string]any{"id": items["provider"].SubjectID, "action": "disable", "updates": []any{change("consumer", "disable")}}},
+		{"mixed-empty-field", map[string]any{"id": "", "updates": []any{change("consumer", "disable")}}},
+		{"missing-id", map[string]any{"updates": []any{change("provider", "disable"), map[string]any{"action": "disable"}}}},
+		{"unknown", map[string]any{"updates": []any{change("provider", "disable"), map[string]any{"id": "plugin:user:missing", "action": "disable"}}}},
+		{"stale", map[string]any{"updates": []any{change("provider", "disable"), map[string]any{"id": items["consumer"].SubjectID, "fingerprint": "stale", "action": "disable"}}}},
+		{"duplicate", map[string]any{"updates": []any{change("provider", "disable"), map[string]any{"id": " " + items["provider"].SubjectID + " ", "action": "disable"}}}},
+		{"trust-action", map[string]any{"updates": []any{change("provider", "disable"), change("consumer", "grant")}}},
+		{"incomplete", map[string]any{"updates": []any{change("provider", "disable")}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if response := call(test.name, test.params); response["error"] == nil {
+				t.Fatalf("invalid batch succeeded: %+v", response)
+			}
+			assertUnchanged()
+		})
+	}
+	initialEpoch, err := session.ReadPluginGenerationEpoch(rt.WuuHome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response = call("disable-together", map[string]any{"updates": []any{change("provider", "disable"), change("consumer", "disable")}})
+	if response["error"] != nil {
+		t.Fatalf("complete selection failed: %+v", response)
+	}
+	result := remarshal[ExtensionPackageUpdateResult](t, response["result"])
+	for _, role := range []string{"provider", "consumer"} {
+		record := findExtensionRecord(t, result.ExtensionInventory, items[role].SubjectID)
+		if record.Enabled == nil || *record.Enabled || record.EnabledOverride == nil || *record.EnabledOverride || record.RuntimeState != ExtensionRuntimeInactive {
+			t.Fatalf("disabled %s: %+v", role, record)
+		}
+		if data, err := os.ReadFile(filepath.Join(control, role)); err != nil || string(data) != activePIDs[role] {
+			t.Fatalf("retained %s process did not stop: %s, %v", role, data, err)
+		}
+	}
+	if oldHost.ServiceRegistry().HasProvider("fixture.scheduler", 1) || rt.PluginHost.ServiceRegistry().HasProvider("fixture.scheduler", 1) {
+		t.Fatal("disabled scheduler remained available")
+	}
+	if independent := findExtensionRecord(t, result.ExtensionInventory, items["independent"].SubjectID); independent.RuntimeState != ExtensionRuntimeActive {
+		t.Fatalf("unrelated plugin stopped: %+v", independent)
+	}
+	epoch, err := session.ReadPluginGenerationEpoch(rt.WuuHome)
+	if err != nil || epoch != initialEpoch+1 || strings.Count(out.String(), NotificationPluginInventoryChanged) != 1 {
+		t.Fatalf("batch did not publish once: epoch=%d, %v", epoch, err)
+	}
+	disabledConfig, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabledHost := rt.PluginHost
+	for index, params := range []any{map[string]any{"updates": []any{change("consumer", "enable")}}, change("consumer", "enable")} {
+		response = call(fmt.Sprintf("enable-without-provider-%d", index), params)
+		if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "fixture.scheduler") {
+			t.Fatalf("explicit enable without its provider did not fail preparation: %+v", response)
+		}
+		current, err := os.ReadFile(rt.ConfigPath)
+		if err != nil || string(current) != string(disabledConfig) || rt.PluginHost != disabledHost {
+			t.Fatalf("failed enable changed config or generation: %s, %v", current, err)
+		}
+	}
+	response = call("enable-together", map[string]any{"updates": []any{change("consumer", "enable"), change("provider", "enable")}})
+	if response["error"] != nil {
+		t.Fatalf("complete enable selection failed: %+v", response)
+	}
+	result = remarshal[ExtensionPackageUpdateResult](t, response["result"])
+	for _, role := range []string{"provider", "consumer", "independent"} {
+		if record := findExtensionRecord(t, result.ExtensionInventory, items[role].SubjectID); record.RuntimeState != ExtensionRuntimeActive {
+			t.Fatalf("enabled %s: %+v", role, record)
+		}
+	}
+	persisted, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil || persisted.Extensions == nil || !reflect.DeepEqual(persisted.Extensions.Grants, cfg.Extensions.Grants) || persisted.Extensions.IsEnabled("plugin:user:unrelated", true) {
+		t.Fatalf("batch changed unrelated policy or grants: %+v, %v", persisted.Extensions, err)
+	}
+}
+
+// Package planning can exclude a consumer before it has a runtime status.
+// Explicit enable must reject that selection without publishing its policy.
+func TestExtensionPackageExplicitEnableRejectsUnavailablePackageDependency(t *testing.T) {
+	for _, versioned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("versioned-%t", versioned), func(t *testing.T) {
+			rt := newTestRuntime(t, &fakeClient{})
+			rt.WuuHome = retryingTempDir(t)
+			preparePluginRuntimePathsForTest(t, rt)
+			cfg, _, err := config.LoadPath(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Extensions = &extensions.Settings{}
+			consumer := pluginpkg.Manifest{SchemaVersion: 1, ID: "package-consumer", Requires: []string{"package-provider"}}
+			if versioned {
+				consumer.Requires = nil
+				consumer.Dependencies = []pluginpkg.Dependency{{ID: "package-provider", Version: ">=2.0.0"}}
+			}
+			var consumerPackage, providerPackage pluginpkg.Plugin
+			for _, manifest := range []pluginpkg.Manifest{{SchemaVersion: 1, ID: "package-provider", Version: "1.0.0"}, consumer} {
+				raw, err := json.Marshal(manifest)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(rt.WuuHome, "plugins", manifest.ID, "plugin.json")
+				writePluginPackageFile(t, path, string(raw))
+				item, err := pluginpkg.LoadManifest(path, "user")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint, Permissions: item.EffectivePermissions}); err != nil {
+					t.Fatal(err)
+				}
+				cfg.Extensions.SetEnabled(item.SubjectID, versioned && manifest.ID == "package-provider")
+				if manifest.ID == consumer.ID {
+					consumerPackage = item
+				} else {
+					providerPackage = item
+				}
+			}
+			raw, err := json.Marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writePluginPackageFile(t, rt.ConfigPath, string(raw))
+			if err := rt.RefreshExtensions(cfg); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _, _ = rt.Cleanup() })
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			oldHost := rt.PluginHost
+			enable := map[string]any{"id": consumerPackage.SubjectID, "fingerprint": consumerPackage.Fingerprint, "action": "enable"}
+			for index, params := range []any{map[string]any{"updates": []any{enable}}, enable} {
+				id := fmt.Sprintf("enable-consumer-%d", index)
+				callPluginPackageRPC(t, srv, id, MethodExtensionPackageUpdate, params)
+				response := responseByID(t, parseOutput(t, out.String()), id)
+				if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), providerPackage.ID) {
+					t.Fatalf("explicit enable accepted unavailable package dependency: error=%v", response["error"])
+				}
+				current, err := os.ReadFile(rt.ConfigPath)
+				if err != nil || string(current) != string(raw) || rt.PluginHost != oldHost {
+					t.Fatalf("failed enable changed config or generation: %v", err)
+				}
+			}
+			if !versioned {
+				callPluginPackageRPC(t, srv, "enable-both", MethodExtensionPackageUpdate, map[string]any{"updates": []any{enable, map[string]any{"id": providerPackage.SubjectID, "action": "enable"}}})
+				if response := responseByID(t, parseOutput(t, out.String()), "enable-both"); response["error"] != nil {
+					t.Fatalf("complete package dependency selection failed: %v", response["error"])
+				}
+				active := false
+				for _, item := range rt.ActivePlugins {
+					active = active || item.ID == consumer.ID
+				}
+				if !active {
+					t.Fatal("complete selection did not activate the consumer")
+				}
+			}
+		})
+	}
+}
 
 func TestExtensionPackageGrantEnablesDefaultDisabledPackage(t *testing.T) {
 	disabled := false
@@ -78,8 +380,26 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 		EffectivePermissions: []string{extensions.PermCommandsExecute},
 	}}
 
+	preparePluginRuntimePathsForTest(t, rt)
+	source := config.NewService(config.Module, filepath.Join(wuuHome, "config.json"), rt.RootDir)
+	credentials := credentialstore.NewService("test.package-credentials", func() (credentialstore.Store, error) {
+		return nativeCredentialFixture(t, home), nil
+	})
+	consumer := &configSourceConsumer{}
+	host := pluginhost.New(source, credentials, consumer)
+	registry, conflicts := pluginhost.BuildServiceRegistry(source, credentials, consumer)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rt.PluginHost = host
+	t.Cleanup(func() { _ = host.Close(context.Background()) })
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	grant := `{"id":"grant","method":"extension/package/update","params":{"id":"plugin:project:prompt-kit","fingerprint":"sha256:prompt-kit","action":"grant"}}`
 	if err := srv.handleLine(context.Background(), []byte(grant)); err != nil {
 		t.Fatalf("grant package: %v", err)
@@ -172,6 +492,8 @@ func TestExtensionCatalogRefreshRediscoversPackages(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	preparePluginRuntimePathsForTest(t, rt)
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()

@@ -1,9 +1,11 @@
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { ApplicationController, getDesktopApplication } from "./plugins/ApplicationController";
 import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { usePageHistory } from "./PageHistory";
 import { PageHistoryControls } from "./PageHistoryControls";
 import { visibleWorkbenchView } from "./plugins/Workbench";
 import { useAppContextDraftTarget } from "./AppContextCapture";
-import { readComposerDraftRecovery, sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
+import { sameRecoveryContext, writeComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { validPdfSelectionReference } from "./PdfSelection";
 import { createArtifactComposerFile } from "./ArtifactComposerFile";
 import { SideConversationAvailableContext } from "./ResponseSelection";
@@ -14,7 +16,7 @@ import { AccountScreen } from "./AccountScreen";
 import { hostSupports } from "./HostCapabilities";
 import { isCodexSubscription, isGrokBuild } from "./SubscriptionSources";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
-import { readThreadReadState, writeThreadReadState } from "./ThreadReadState";
+import { writeThreadReadState } from "./ThreadReadState";
 import { FileSelectionProvider, type FileSelectionPart } from "./FileSelectionContext";
 import { readCollapsedPromptParts, rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
 /// <reference path="../shared/jsx-compat.d.ts" />
@@ -23,6 +25,7 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
+  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -136,9 +139,7 @@ import {
   emptyComposerDraft,
   ensureSessionTab,
   handleStreamingNotification,
-  isCoalescedBackgroundThreadEvent,
   initialSplitComposerDrafts,
-  initialState,
   isStateActiveThreadRunning,
   isThreadExecuting,
   isThreadRunning,
@@ -152,7 +153,6 @@ import {
   SCRATCH_PSEUDO_PROJECT_ID,
   scratchThreadSummaries,
   requestedHandoffIntentForThread,
-  reduceServerEvent,
   reconcileListedThreadState,
   resolveComposerRunningAction,
   resolveThreadRuntimeContext,
@@ -176,7 +176,6 @@ import {
   updateThreadByID,
   upsertThread,
   upsertTurn,
-  withExtensionInventoryForContext,
   withLoadedRuntimeSessionTab,
   workspaceNameForContext,
   workspacePanelContext,
@@ -272,7 +271,6 @@ import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation"
 import {
   desktopPluginHost,
   desktopWorkbenchController,
-  useDesktopPluginRuntime,
 } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench } from "./plugins";
 import { WebWorkspacePanel } from "./WebWorkspace";
@@ -298,11 +296,8 @@ import {
   serverEventCarriesActivitySessionUpdate,
 } from "./ActivitySessions";
 import {
-  loadPopOutRuntime,
   loadRuntime,
-  loadRuntimeRestore,
   loadThreadListRefresh,
-  applyRuntimeRestore,
   selectRuntimeContext,
 } from "./RuntimeLoadState";
 import { createWorkspaceRuntimeActions } from "./WorkspaceRuntimeActions";
@@ -470,16 +465,16 @@ function projectNameFromGoal(goal: string): string {
   return line.length > 48 ? `${line.slice(0, 47)}…` : line;
 }
 
-export function App(): JSX.Element {
+export function App({ application: providedApplication }: { application?: ApplicationServiceV1 } = {}): JSX.Element {
+  const [applicationController] = useState(() => providedApplication ? getDesktopApplication() : new ApplicationController());
+  const application = providedApplication ?? applicationController;
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
-  const [recoveredDrafts] = useState(readComposerDraftRecovery);
-  const [state, setState] = useState<AppState>(() => ({
-    ...initialState,
-    sessionTabs: recoveredDrafts.tabs,
-    lastViewedTurnByThreadID: readThreadReadState(),
-  }));
+  const recoveredDrafts = applicationController.recoveredDrafts;
+  const state = useSyncExternalStore(applicationController.subscribeState, applicationController.getState, applicationController.getState);
+  const setState = applicationController.updateState;
+  useEffect(() => applicationController.start(), [applicationController]);
   useEffect(() => {
     writeThreadReadState(state.lastViewedTurnByThreadID);
   }, [state.lastViewedTurnByThreadID]);
@@ -489,10 +484,6 @@ export function App(): JSX.Element {
     typeof window.wuu.listUserQuestions === "function" &&
     typeof window.wuu.answerUserQuestion === "function" &&
     typeof window.wuu.cancelUserQuestion === "function";
-  useDesktopPluginRuntime(
-    state.initialized?.extension_inventory,
-    state.initialized?.features?.safe_mode,
-  );
   const projectAgentEnabled = state.initialized?.features?.project_agent === true;
   const {
     prompt,
@@ -527,7 +518,7 @@ export function App(): JSX.Element {
       return sessionTabs.every((tab, index) => tab === current.sessionTabs[index])
         ? current : { ...current, sessionTabs };
     });
-  });
+  }, application);
   useEffect(() => {
     const addSelection = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
@@ -568,7 +559,10 @@ export function App(): JSX.Element {
   const closeWorkspaceMenu = useCallback(() => setWorkspaceMenuOpen(false), []);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOpen = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.open);
+  const setSettingsOpen = useCallback((open: boolean): void => {
+    void application.invoke(open ? "settings.open" : "settings.close", {}).catch(showErrorToast);
+  }, [application]);
   const ribbonWidth = useNavigationRibbonPreferences().width ?? SIDEBAR_RIBBON_WIDTH;
   const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
   const [nativeRibbonExpanded, setNativeRibbonExpanded] = useState(false);
@@ -734,15 +728,32 @@ export function App(): JSX.Element {
   const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
-  const [codexRuntimeMenu, setCodexRuntimeMenu] =
-    useState<CodexRuntimeMenu>(null);
+  const codexRuntimeMenu = state.codexRuntimeMenu ?? null;
+  const runtimeMenuOwner = useRef(true);
+  useLayoutEffect(() => {
+    runtimeMenuOwner.current = true;
+    return () => { runtimeMenuOwner.current = false; };
+  }, []);
+  const setCodexRuntimeMenu = useCallback((update: SetStateAction<CodexRuntimeMenu>) => {
+    // A checkout started by the retired shell may finish after its replacement.
+    // Its menu cleanup must retain React's former unmounted-setter behavior.
+    if (!runtimeMenuOwner.current) return;
+    setState(current => {
+      const previous = current.codexRuntimeMenu ?? null;
+      const next = typeof update === "function" ? update(previous) : update;
+      return next === previous ? current : { ...current, codexRuntimeMenu: next };
+    });
+  }, [setState]);
   const [codexModels, setCodexModels] = useState<CodexModelLoadState>({
     loading: false,
     error: "",
     models: [],
   });
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [nativeSection, setNativeSection] = useState<"conversations" | "catalog">("conversations");
+  const nativeSection = state.nativeSection ?? "conversations";
+  const setNativeSection = useCallback((nativeSection: "conversations" | "catalog") => {
+    setState(current => ({ ...current, nativeSection }));
+  }, [setState]);
   const ribbonBrowser = useRibbonBrowserTabs(!poppedOutMode);
   const [activeWebsiteID, setActiveWebsiteID] = useState<string>();
   const activeWebsite = ribbonBrowser.state?.tabs?.find((website) => website.id === ribbonBrowser.state?.activeTabId);
@@ -750,7 +761,13 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (ribbonBrowser.state && !ribbonBrowser.state.tabs?.length) setActiveWebsiteID(undefined);
   }, [ribbonBrowser.state]);
-  const [catalogSection, setCatalogSection] = useState<SkillsCatalogSection>("plugins");
+  const catalogSection = state.catalogSection ?? "plugins";
+  const setCatalogSection = useCallback((catalogSection: SkillsCatalogSection) => {
+    setState(current => ({ ...current, catalogSection }));
+  }, [setState]);
+  const setCatalogPluginID = useCallback((catalogPluginID: string) => {
+    setState(current => ({ ...current, catalogPluginID }));
+  }, [setState]);
   const [catalogPluginRequest, setCatalogPluginRequest] = useState<{ id: string; request: number }>();
   const [catalogVisited, setCatalogVisited] = useState(false);
   const pageWorkbench = useSyncExternalStore(desktopWorkbenchController.subscribe,
@@ -760,12 +777,12 @@ export function App(): JSX.Element {
   const showingPluginWebPage = Boolean(primaryPageView && pageWorkbench.webPageViewIds.includes(primaryPageView.view.id));
   const showingWebPage = showingWebsite || showingPluginWebPage;
   const [accountOpen, setAccountOpen] = useState(false);
-  const [onboardingComplete, setOnboardingComplete] = useState(
-    () => window.wuu?.initialOnboardingComplete ?? true,
-  );
+  const onboardingComplete = state.onboardingComplete ?? window.wuu?.initialOnboardingComplete ?? true;
 
-  const [settingsInitialPage, setSettingsInitialPage] =
-    useState<SettingsPage>("providers");
+  const settingsInitialPage = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.activePageId ?? "providers") as SettingsPage;
+  const setSettingsInitialPage = useCallback((pageId: SettingsPage): void => {
+    void application.invoke("settings.open", { pageId }).catch(showErrorToast);
+  }, [application]);
   const {
     settingsUsage,
     settingsUsageLoading,
@@ -1457,11 +1474,21 @@ export function App(): JSX.Element {
   // Switching the parent engine in the picker must not discard that engine's
   // child model/effort choice when the user switches back within the draft.
   const draftEngineRuntimeByID = useRef<Record<string, EngineRuntimeSelection>>({});
-  const [draftPermissionMode, setDraftPermissionMode] = useState<PermissionMode | "">("");
+  const draftPermissionMode = state.draftPermissionMode ?? "";
+  const setDraftPermissionMode = useCallback((update: SetStateAction<PermissionMode | "">) => {
+    setState(current => {
+      const previous = current.draftPermissionMode ?? "";
+      const next = typeof update === "function" ? update(previous) : update;
+      return next === previous ? current : { ...current, draftPermissionMode: next };
+    });
+  }, [setState]);
   // Present while the next conversation starts in its own worktree. It belongs
   // to one project root, so switching projects never carries one repository's
   // start branch into another. An empty start branch means the project's HEAD.
-  const [draftWorktree, setDraftWorktree] = useState<{ cwd: string; startBranch: string }>();
+  const draftWorktree = state.draftWorktree;
+  const setDraftWorktree = useCallback((draftWorktree: AppState["draftWorktree"]) => {
+    setState(current => current.draftWorktree === draftWorktree ? current : { ...current, draftWorktree });
+  }, [setState]);
   const draftWorktreeFor = (context: RuntimeContext | undefined, gitStatus: GitStatusResult | undefined) =>
     draftWorktree && gitStatus?.is_repo && draftWorktree.cwd === context?.cwd ? draftWorktree : undefined;
   const draftEngineSeed = useRef<{ threadID?: string; done: boolean }>({
@@ -1473,8 +1500,6 @@ export function App(): JSX.Element {
       draftEngineSeed.current = { threadID: activeThreadID, done: false };
       setDraftEngine("");
       setDraftEngineRuntime({ model: "", effort: "" });
-      setDraftPermissionMode("");
-      setDraftWorktree(undefined);
     }
     // Only a brand-new conversation seeds from memory. An open thread is
     // already bound to its engine, and a seeded draft would otherwise win the
@@ -1497,7 +1522,7 @@ export function App(): JSX.Element {
       speed: remembered.speed,
       model_options: remembered.model_options,
     };
-    setDraftPermissionMode(remembered.engine === "wuu" ? "" : "unconfined");
+    setDraftPermissionMode(current => current || (remembered.engine === "wuu" ? "" : "unconfined"));
   }, [activeThreadID, engineInventory]);
   const selectDraftEngine = useCallback((id: string) => {
     const runtime = draftEngineRuntimeByID.current[id]
@@ -1943,26 +1968,6 @@ export function App(): JSX.Element {
     };
   }, []);
 
-  const pendingBackgroundThreadEventsRef = useRef<ServerEvent[]>([]);
-  const backgroundThreadEventTimerRef = useRef<number | undefined>(undefined);
-  const flushBackgroundThreadEventsRef = useRef<() => void>(() => {});
-  flushBackgroundThreadEventsRef.current = () => {
-    if (backgroundThreadEventTimerRef.current !== undefined) {
-      window.clearTimeout(backgroundThreadEventTimerRef.current);
-      backgroundThreadEventTimerRef.current = undefined;
-    }
-    const pending = pendingBackgroundThreadEventsRef.current;
-    if (pending.length === 0) {
-      return;
-    }
-    pendingBackgroundThreadEventsRef.current = [];
-    setState((current) => pending.reduce(reduceServerEvent, current));
-  };
-  useLayoutEffect(() => {
-    // Opening a session has to see the tool rows that were still queued.
-    flushBackgroundThreadEventsRef.current();
-  }, [activeThreadID, state.secondaryThread?.id]);
-
   useEffect(() => {
     let mounted = true;
     const off = subscribeServerEvents((event) => {
@@ -2067,55 +2072,22 @@ export function App(): JSX.Element {
       if (handling === "skip") {
         return;
       }
-      // A background ACP session emits a tool row for every harness call.
-      // Fold those into one update so the open conversation is not reconciled
-      // on each of them. The sort key of a running session does not change.
-      if (isCoalescedBackgroundThreadEvent(event, appStateRef.current)) {
-        pendingBackgroundThreadEventsRef.current.push(event);
-        if (backgroundThreadEventTimerRef.current === undefined) {
-          backgroundThreadEventTimerRef.current = window.setTimeout(() => {
-            backgroundThreadEventTimerRef.current = undefined;
-            flushBackgroundThreadEventsRef.current();
-          }, 150);
-        }
-        return;
-      }
-      flushBackgroundThreadEventsRef.current();
       if (serverEventShouldRefreshGit(event)) {
         scheduleGitStatusRefresh(600);
       }
-      setState((current) => reduceServerEvent(current, event));
+
     });
 
     void (async () => {
       try {
-        if (popOutInit?.kind && popOutInit.context) {
-          const loadedState = await loadPopOutRuntime(popOutInit);
-          if (!mounted) {
-            return;
-          }
-          const { heldComposerMessages, ...runtimeAppState } = loadedState;
-          restoreInitialComposerRuntime(runtimeAppState);
-          if (loadedState.thread) {
-            seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
-          }
-          return;
-        }
-        const listedWorkspaces = await window.wuu.listProjects();
-        const runtimeState = listedWorkspaces.active_context
-          ? listedWorkspaces
-          : await window.wuu.selectNoProject(false);
-        const activeRecovery = recoveredDrafts.tabs.find((tab) => tab.id === recoveredDrafts.activeTabID &&
-          runtimeState.active_context && sameRecoveryContext(tab.context, runtimeState.active_context));
-        const loadedState = await loadRuntime(runtimeState, {
-          resumeLatestThread: activeRecovery?.kind !== "draft",
-          resumeThreadID: activeRecovery?.kind === "thread" ? activeRecovery.threadID : undefined,
-        });
+        const loadedState = await applicationController.initialize();
         if (!mounted) {
           return;
         }
-        const { heldComposerMessages, ...runtimeAppState } = loadedState;
-        restoreInitialComposerRuntime(runtimeAppState);
+        const { heldComposerMessages } = loadedState;
+        // A replacement shell can consume navigation while initialize resolves.
+        // Restore the composer from live state, not the earlier snapshot.
+        restoreInitialComposerRuntime(applicationController.getState());
         if (loadedState.thread) {
           seedHeldComposerMessages(loadedState.thread.id, heldComposerMessages ?? []);
         }
@@ -2133,11 +2105,6 @@ export function App(): JSX.Element {
     return () => {
       mounted = false;
       off();
-      if (backgroundThreadEventTimerRef.current !== undefined) {
-        window.clearTimeout(backgroundThreadEventTimerRef.current);
-        backgroundThreadEventTimerRef.current = undefined;
-      }
-      pendingBackgroundThreadEventsRef.current = [];
       if (gitRefreshTimerRef.current !== undefined) {
         window.clearTimeout(gitRefreshTimerRef.current);
         gitRefreshTimerRef.current = undefined;
@@ -2148,17 +2115,8 @@ export function App(): JSX.Element {
   useEffect(() => {
     let mounted = true;
     const unsubscribe = window.wuu.onRuntimeRestore?.(async () => {
-      const snapshot = await loadRuntimeRestore(appStateRef.current);
       const questions = await window.wuu.listUserQuestions();
       if (!mounted) return;
-      setState((current) => applyRuntimeRestore(current, snapshot));
-      for (const resumed of snapshot.resumed) {
-        syncPendingComposerMessagesFromServerEvent({
-          workdir: resumed.thread.cwd,
-          kind: "notification",
-          message: { method: "thread/resumed", params: resumed },
-        });
-      }
       setUserQuestions(questions.questions.filter(
         (request) => !resolvedUserQuestionIDsRef.current.has(request.request_id),
       ));
@@ -3926,6 +3884,7 @@ export function App(): JSX.Element {
 
   const openSearchResult = useConversationSearchNavigation({
     thread: activeThread,
+    target: state.conversationSearchTarget,
     switching: viewSwitchPending,
     activateThread,
     captureConversationScrollIntent,
@@ -4339,9 +4298,7 @@ export function App(): JSX.Element {
   async function updateExtensionPackage(
     update: ExtensionPackageUpdateParams,
   ): Promise<void> {
-    const context = appStateRef.current.activeContext;
-    const result = await window.wuu.updateExtensionPackage(update);
-    setState((current) => withExtensionInventoryForContext(current, context, result.extension_inventory));
+    await window.wuu.updateExtensionPackage(update);
   }
 
   async function refreshExtensionCatalog(): Promise<SkillSummary[] | undefined> {
@@ -4350,7 +4307,6 @@ export function App(): JSX.Element {
     if (!sameRuntimeContext(appStateRef.current.activeContext, context)) {
       return undefined;
     }
-    setState((current) => withExtensionInventoryForContext(current, context, result.extension_inventory));
     return result.skills;
   }
 
@@ -4360,9 +4316,6 @@ export function App(): JSX.Element {
     if (!result || !sameRuntimeContext(appStateRef.current.activeContext, context)) {
       return undefined;
     }
-    setState((current) =>
-      withExtensionInventoryForContext(current, context, result.extension_inventory),
-    );
     return result;
   }
 
@@ -4374,9 +4327,6 @@ export function App(): JSX.Element {
     if (!sameRuntimeContext(appStateRef.current.activeContext, context)) {
       return undefined;
     }
-    setState((current) =>
-      withExtensionInventoryForContext(current, context, result.extension_inventory),
-    );
     return result;
   }
 
@@ -4508,6 +4458,7 @@ export function App(): JSX.Element {
 
   const { activateConversationPane, closeConversationPane } = createConversationPaneActions({
     setAppState: setState,
+    getComposerDraftSnapshot: currentComposerDraftSnapshot,
     moveSplitDraftToGlobalComposer,
   });
 
@@ -5774,6 +5725,11 @@ export function App(): JSX.Element {
     return (
       <WuuMascotRuntimeProvider>
         <FirstRunOnboarding
+          state={state.onboarding}
+          onStateChange={update => setState(current => {
+            const onboarding = typeof update === "function" ? update(current.onboarding) : update;
+            return onboarding === current.onboarding ? current : { ...current, onboarding };
+          })}
           onProvidersChanged={updateConnectionProviders}
           inventory={state.initialized?.extension_inventory}
           providers={state.initialized?.providers}
@@ -5800,7 +5756,7 @@ export function App(): JSX.Element {
               throw new Error(t("onboarding.finishFailed"));
             }
             await window.wuu.completeOnboarding();
-            setOnboardingComplete(true);
+            setState(current => ({ ...current, onboardingComplete: true, onboarding: undefined }));
           }}
         />
       </WuuMascotRuntimeProvider>
@@ -6174,6 +6130,8 @@ export function App(): JSX.Element {
               active={!settingsOpen && showingManagementCatalog && !showingPrimaryPluginView}
               section={catalogSection}
               onSectionChange={setCatalogSection}
+              selectedPluginID={state.catalogPluginID ?? ""}
+              onSelectPlugin={setCatalogPluginID}
               activeContext={state.activeContext}
               extensionInventory={state.initialized.extension_inventory}
               onTrySkill={trySkillFromCatalog}

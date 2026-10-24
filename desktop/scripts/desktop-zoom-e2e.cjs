@@ -19,7 +19,7 @@ Object.defineProperty(app, 'isPackaged', { get: () => true });
 Object.assign(process.env, {
   HOME: home, WUU_HOME: home, CODEX_HOME: path.join(home, '.codex'),
   WUU_DESKTOP_CORE: path.join(desktop, 'build/bin/wuu-core'),
-  WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_SAFE_MODE: '1',
+  WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_SAFE_MODE: '0',
 });
 delete process.env.ELECTRON_RENDERER_URL;
 fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({

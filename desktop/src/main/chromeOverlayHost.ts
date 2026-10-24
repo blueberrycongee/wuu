@@ -153,7 +153,9 @@ export class ChromeOverlayHost {
     // Native-tree mutation in a blur callback can invalidate Chromium's focus
     // traversal. Defer dismissal, and never pull focus away from its new owner.
     contents.on("blur", () => queueMicrotask(() => {
-      if (!surface.request || surface.menu || contents.isDestroyed() || contents.isFocused()) return;
+      // Hidden views can blur during initialization, before the paint handshake
+      // gives them keyboard focus. Only a presented surface can lose that focus.
+      if (!surface.request || !surface.view.getVisible() || surface.menu || contents.isDestroyed() || contents.isFocused()) return;
       if (kind === "account") this.dismiss(surface, "outside");
       else if (kind === "ribbon") { surface.retained = false; this.dismissOutsideRibbon(surface); }
     }));

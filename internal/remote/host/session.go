@@ -130,7 +130,7 @@ func (s *deviceSession) newAppConnLocked(profile string) *appConn {
 				s.h.logf("remote app-server connection: %v", err)
 			}
 		} else {
-			_ = appserver.RunStdioForDevice(ctx, s.h.rt, serverInR, serverOutW, devicePushRegistrar{store: s.h.store, devPub: s.devPub})
+			_ = appserver.RunStdioForDevice(ctx, s.h.rt, serverInR, serverOutW, devicePushRegistrar{store: s.h.store, devPub: s.devPub}, s.h.appServerOptions...)
 		}
 		_ = serverOutW.Close()
 	}()

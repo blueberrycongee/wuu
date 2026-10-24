@@ -26,13 +26,11 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			lead := startProject(t, client, "Schema continuation")
 			worker := capacityWorker(t, srv, lead.ID, "schema-worker", "worker")
 			holder := capacityWorker(t, srv, lead.ID, "schema-holder", "worker")
-			journal, err := session.NewInferenceJournalRuntime(rt.SessionDir, "schema-capacity-test")
+			rt.ActivityRegistry = activity.NewRegistry()
+			runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer journal.Close()
-			rt.InferenceJournalRuntime = journal
-			rt.ActivityRegistry = activity.NewRegistry()
 
 			type scheduled struct {
 				delay   time.Duration
@@ -40,7 +38,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				stopped *atomic.Bool
 			}
 			timers := make(chan scheduled, 16)
-			srv.projectInboxAfterFunc = func(delay time.Duration, fire func()) func() {
+			projectFixtureProvider(srv).lifetime.projectInboxAfterFunc = func(delay time.Duration, fire func()) func() {
 				stopped := &atomic.Bool{}
 				timers <- scheduled{delay, fire, stopped}
 				return func() { stopped.Store(true) }
@@ -50,8 +48,8 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				ThreadID: worker.ID, Prompt: "Return schema-capacity JSON", OutputSchema: json.RawMessage(`{"type":"object","required":["ok"]}`),
 				Request: execution.Request{Mode: execution.ModeStart},
 			}, &started)
-			initial := calls.next(t, "schema-capacity JSON")
-			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
+			initial := calls.next(t, worker.ID, "schema-capacity JSON")
+			lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
 			if err != nil || !acquired {
 				t.Fatalf("hold capacity: acquired=%v error=%v", acquired, err)
 			}
@@ -64,13 +62,13 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 			select {
 			case timer = <-timers:
 			case <-time.After(gatedProviderTimeout):
-				run, _ := srv.runStore.Get(context.Background(), started.Run.ID)
+				run, _ := runStore.Get(context.Background(), started.Run.ID)
 				t.Fatalf("schema continuation was not retained for retry: %+v", run)
 			}
 			if timer.delay != threadExecutionLeaseRetryDelay {
 				t.Fatalf("initial retry delay=%v", timer.delay)
 			}
-			run, err := srv.runStore.Get(context.Background(), started.Run.ID)
+			run, err := runStore.Get(context.Background(), started.Run.ID)
 			if err != nil || run.Status.Terminal() || len(run.Turns) != 1 || !srv.executionRunAttached(run.ID) {
 				t.Fatalf("capacity-blocked Run=%+v error=%v", run, err)
 			}
@@ -100,14 +98,20 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				}
 			case "turn_interrupt":
 				client.rpc(t, MethodTurnInterrupt, TurnInterruptParams{ThreadID: worker.ID}, nil)
-				interrupted, err := srv.runStore.Get(context.Background(), run.ID)
+				interrupted, err := runStore.Get(context.Background(), run.ID)
 				if err != nil || interrupted.Status != execution.StatusInterrupted {
 					t.Fatalf("thread stop left Run=%+v error=%v", interrupted, err)
 				}
 			case "close":
 				srv.Close()
+				interrupted, err := runStore.Get(context.Background(), run.ID)
+				if err != nil || interrupted.Status != execution.StatusInterrupted || srv.executionRunAttached(run.ID) {
+					t.Fatalf("server close left Run=%+v error=%v", interrupted, err)
+				}
+				// Project timers belong to the provider, which can serve another connection.
+				stopProjectFixture(srv)
 				if !timer.stopped.Load() {
-					t.Fatal("Close did not cancel the schema capacity timer")
+					t.Fatal("provider Close did not cancel the schema capacity timer")
 				}
 			}
 			if err := lease.Release(); err != nil {
@@ -122,11 +126,11 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				calls.assertIdle(t)
 				return
 			}
-			retry := calls.next(t, "schema-capacity JSON")
+			retry := calls.next(t, worker.ID, "schema-capacity JSON")
 			retry.response <- providersResponse(`{"ok":true}`)
 			deadline := time.Now().Add(gatedProviderTimeout)
 			for time.Now().Before(deadline) {
-				run, err = srv.runStore.Get(context.Background(), run.ID)
+				run, err = runStore.Get(context.Background(), run.ID)
 				if err == nil && run.Status.Terminal() {
 					break
 				}
@@ -144,7 +148,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 
 func assertSchemaUserTurns(t *testing.T, srv *Server, threadID string, want int) {
 	t.Helper()
-	history, err := loadChatMessages(srv.rt.SessionDir, threadID)
+	history, err := loadChatMessages(srv.rt.Sessions, threadID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,31 +182,29 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			var control session.Control
 			var err error
 			if adoptWhileRunning {
-				if _, err = session.SetProjectMembership(rt.SessionDir, worker.ID, "", "", ""); err != nil {
+				if _, err = rt.Sessions.SetProjectMembership(worker.ID, "", "", ""); err != nil {
 					t.Fatal(err)
 				}
 			} else {
-				control, err = session.ChangeControl(rt.SessionDir, worker.ID, lead.ID, session.ControlActive, 0)
+				control, err = rt.Sessions.ChangeControl(worker.ID, lead.ID, session.ControlActive, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
 			// Keep result reporting durable but out of the model so the only eligible
 			// inference in this test is the schema Run under examination.
-			leadLease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
+			leadLease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, lead.ID)
 			if err != nil || !acquired {
 				t.Fatalf("hold coordinator: %v %v", acquired, err)
 			}
 			defer leadLease.Release()
-			journal, err := session.NewInferenceJournalRuntime(rt.SessionDir, "schema-stop-test")
+			rt.ActivityRegistry = activity.NewRegistry()
+			runStore, err := execution.NewStore(testRuntimeState(t, rt).Documents)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer journal.Close()
-			rt.InferenceJournalRuntime = journal
-			rt.ActivityRegistry = activity.NewRegistry()
 			timers := make(chan func(), 16)
-			srv.projectInboxAfterFunc = func(_ time.Duration, fire func()) func() {
+			projectFixtureProvider(srv).lifetime.projectInboxAfterFunc = func(_ time.Duration, fire func()) func() {
 				timers <- fire
 				return func() {}
 			}
@@ -211,17 +213,17 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 				ThreadID: worker.ID, Prompt: "Return stopped-schema JSON", OutputSchema: json.RawMessage(`{"type":"object","required":["ok"]}`),
 				Request: execution.Request{Mode: execution.ModeStart},
 			}, &started)
-			initial := calls.next(t, "stopped-schema JSON")
+			initial := calls.next(t, worker.ID, "stopped-schema JSON")
 			if adoptWhileRunning {
-				if _, err := session.SetProjectMembership(rt.SessionDir, worker.ID, projectSessionSource, lead.ID, ""); err != nil {
+				if _, err := rt.Sessions.SetProjectMembership(worker.ID, projectSessionSource, lead.ID, ""); err != nil {
 					t.Fatal(err)
 				}
-				control, err = session.ChangeControl(rt.SessionDir, worker.ID, lead.ID, session.ControlActive, 0)
+				control, err = rt.Sessions.ChangeControl(worker.ID, lead.ID, session.ControlActive, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
 			}
-			lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
+			lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
 			if err != nil || !acquired {
 				t.Fatalf("hold worker: %v %v", acquired, err)
 			}
@@ -251,7 +253,7 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			if !deferred {
 				t.Fatal("schema correction never entered its capacity wait")
 			}
-			if _, err := session.ChangeControl(rt.SessionDir, worker.ID, lead.ID, session.ControlActive, control.Revision); err != nil {
+			if _, err := rt.Sessions.ChangeControl(worker.ID, lead.ID, session.ControlActive, control.Revision); err != nil {
 				t.Fatal(err)
 			}
 			// Agent/process completion continuations retain the Run ID but build
@@ -268,7 +270,7 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 			deadline = time.Now().Add(gatedProviderTimeout)
 			var run execution.Run
 			for time.Now().Before(deadline) {
-				run, err = srv.runStore.Get(context.Background(), started.Run.ID)
+				run, err = runStore.Get(context.Background(), started.Run.ID)
 				if err == nil && run.Status.Terminal() {
 					break
 				}

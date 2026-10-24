@@ -16,11 +16,13 @@ import type {
   ChatGPTAccount,
   DesktopPlatform,
   DesktopProject,
+  ExtensionInventoryRecord,
   InitializeResult,
   LanguagePreference,
   MessageFlowFontSize,
   PluginConflictPreferences,
   PluginClientCancelResult,
+  PluginDesktopActivationParams,
   ProjectListResult,
   ProviderModelSummary,
   ProviderSummary,
@@ -51,6 +53,7 @@ type ThreadLocation = Pick<Thread, "id" | "cwd" | "workspace_id" | "worktree">;
 type ServerEventListener = (event: ServerEvent) => void;
 type RunningListener = (snapshot: RunningThreadSnapshot[]) => void;
 type PreferenceListener<T> = (value: T) => void;
+type DesktopGraphRoute = { workdir: string; connection: number; rpc: NonNullable<ReturnType<RemoteClient["rpc"]>> };
 
 const THEME_KEY = "wuu.web.theme";
 const MESSAGE_SIZE_KEY = "wuu.web.message-size";
@@ -192,6 +195,10 @@ export class RemoteDesktopBridge {
   // fresh work from replay, including notifications during runtime restoration.
   private liveNotifications = false;
   private readonly snapshotReads = new Map<string, Promise<unknown>>();
+  private attachmentGeneration = 0;
+  private readonly desktopWorkdirs = new Map<string, DesktopGraphRoute>();
+  private readonly desktopGraphs = new Map<string, DesktopGraphRoute>();
+  private readonly desktopActivations = new Map<string, { activation: number; route: DesktopGraphRoute }>();
 
   getConnectionSnapshot = (): WebConnectionSnapshot => this.connection;
   subscribeConnection = (listener: () => void): (() => void) => {
@@ -362,6 +369,8 @@ export class RemoteDesktopBridge {
         const first = !this.attachedOnce;
         this.attachedOnce = true;
         if (!resumed) {
+          this.attachmentGeneration++;
+          this.desktopWorkdirs.clear();
           for(const id of this.terminalIDs)for(const listener of this.terminalListeners)listener({type:'error',id,message:'Connection restarted. Reopen the terminal.',finished_at:new Date().toISOString()});
           this.terminalIDs.clear();
           this.clearPendingRequests();
@@ -589,6 +598,11 @@ export class RemoteDesktopBridge {
   }
 
   private emitServerEvent(event: ServerEvent): void {
+    if (event.kind === "notification" && event.message.method === "plugin/inventory/changed") {
+      const route = this.desktopWorkdirs.get(event.workdir);
+      const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
+      if (route && params?.extension_inventory) this.bindDesktopGraphs(route, params.extension_inventory);
+    }
     if (event.kind === "notification" && !this.liveNotifications) event = { ...event, replayed: true };
     for (const listener of this.serverListeners) listener(event);
   }
@@ -612,6 +626,37 @@ export class RemoteDesktopBridge {
   }
 
   private applyProjectState(state:ProjectListResult):ProjectListResult {this.projects=state.projects;this.activeContext=state.active_context;return state;}
+
+  private bindDesktopGraphs(route: DesktopGraphRoute, inventory: readonly ExtensionInventoryRecord[]): void {
+    for (const plugin of inventory) {
+      if (plugin.desktop && plugin.graph_generation && this.desktopGraphs.get(plugin.graph_generation)?.connection !== route.connection) {
+        this.desktopGraphs.set(plugin.graph_generation, route);
+      }
+    }
+  }
+
+  private async reportDesktopActivation(params: PluginDesktopActivationParams): Promise<void> {
+    this.assertAvailable(true);
+    const { id, fingerprint, graph_generation, activation, phase, status, message } = params;
+    const key = JSON.stringify([graph_generation, id]);
+    let owner = this.desktopActivations.get(key);
+    if (phase === "registration" && (!owner || activation > owner.activation)) {
+      const route = this.desktopGraphs.get(graph_generation);
+      if (!route) throw new Error("Desktop activation graph has no owning connection");
+      owner = { activation, route };
+      this.desktopActivations.set(key, owner);
+    }
+    if (!owner || owner.activation !== activation) throw new Error("Desktop activation has no matching registration");
+    const { route } = owner;
+    if (route.connection !== this.attachmentGeneration) throw new Error("Desktop activation belongs to a replaced remote connection");
+    // Capture the protocol client itself: RemoteClient.call waits for attach,
+    // which could deliver a late cleanup to a replacement execution service.
+    await route.rpc.call("plugin/desktop-activation", {
+      id, fingerprint, graph_generation, activation, phase, status,
+      ...(message === undefined ? {} : { message }),
+    }, 30_000, route.workdir);
+    if (this.stopped || route.connection !== this.attachmentGeneration) throw new Error("Remote connection changed while reporting desktop activation");
+  }
   private async chooseComputerFolder(create:boolean,id?:string):Promise<ProjectListResult>{
    const path=await pickComputerFolder((method,params)=>this.call(method,params),create);
    if(!path)return this.projectState();
@@ -696,9 +741,15 @@ export class RemoteDesktopBridge {
       },
 
       initialize: async () => {
+        this.assertAvailable(true);
+        const rpc = this.client.rpc();
+        if (!rpc) throw new Error("Remote host is disconnected");
+        const route: DesktopGraphRoute = { workdir: this.workdir(), connection: this.attachmentGeneration, rpc };
+        this.desktopWorkdirs.set(route.workdir, route);
         const result = await this.call<InitializeResult>("initialize", {
           client: { name: "wuu-web", version: "0.1" },
-        });
+        }, route.workdir);
+        this.bindDesktopGraphs(route, result.extension_inventory ?? []);
         return {
           ...result,
           features: { ...result.features, browser: false },
@@ -861,6 +912,7 @@ export class RemoteDesktopBridge {
       cancelEngineAuth: (engineID) => this.call("engine/auth/cancel", { engine_id: engineID }),
       updateExtensionPackage: (params) => this.call("extension/package/update", params),
       loadPluginDesktopModule: async (params) => this.pluginAssets.module(await this.call("plugin/desktop-module/read",params)),
+      reportPluginDesktopActivation: (params) => this.reportDesktopActivation(params),
       loadPluginIcon: async (params) => this.pluginAssets.icon(await this.call("plugin/icon/read",params)),
       getPluginSetting: (params) => this.call("plugin/setting/get", params),
       setPluginSetting: (params) => this.call("plugin/setting/set", params),

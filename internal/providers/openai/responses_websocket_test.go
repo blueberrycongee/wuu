@@ -16,7 +16,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/coder/websocket"
 )
@@ -881,7 +880,7 @@ func TestResponsesStreamChatWebSocket_RunnerKeepsDeltaAcrossTurnsWithChangingCon
 	}
 	state := "alpha"
 	runner := agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client: client, Model: "gpt-test", PromptCacheKey: "runner-cross-turn-context",
 		BeforeRequestContext: func() []agent.ContextSegment {
@@ -1250,7 +1249,7 @@ func TestResponsesStreamChatWebSocket_AgentLoopPreservesDeltaWithChangingHiddenC
 
 	contextCalls := 0
 	runner := agent.StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: agent.DefaultDriver{},
 
 		Client:         client,
 		Model:          "gpt-test",
@@ -1730,6 +1729,100 @@ func TestResponsesStreamChatWebSocket_WaitsForSlowConsumerWithoutDroppingFrames(
 	}
 	if deltas != deltaCount || !sawDone {
 		t.Fatalf("stream deltas/done = %d/%v, want %d/true", deltas, sawDone, deltaCount)
+	}
+}
+
+func TestResponsesStreamChatWebSocket_CancelBeforeProviderStateReleasesSession(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	peerClosed := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		if err != nil {
+			t.Errorf("accept websocket: %v", err)
+			return
+		}
+		defer conn.CloseNow()
+		readWSRequest(t, r.Context(), conn, requests)
+		// A silent peer leaves the native pump blocked in its actual socket read.
+		_, _, err = conn.Read(r.Context())
+		peerClosed <- err
+	}))
+	defer server.Close()
+	client := coordinatedResponsesWebSocketClient(t, server, nil, NewResponsesWebSocketCache())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx, scope := providers.NewModelReceiptScope(ctx)
+	readerCtx, endReceipt, err := providers.BeginModelReceipt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endReceipt(nil)
+	conn, err := client.responsesWebSocketDial(ctx, "ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	readCh := make(chan responsesWebSocketReadEvent, 64)
+	activeDone := make(chan struct{})
+	session := &responsesWebSocketSession{id: "cancel-before-state", conn: conn, generation: 1, busy: true, active: readCh, activeDone: activeDone, activeCtxDone: ctx.Done()}
+	pumpDone := make(chan struct{})
+	go func() {
+		defer close(pumpDone)
+		client.responsesWebSocketReadPump(session, conn, 1)
+	}()
+	if err := conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-test","input":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-requests:
+	case <-time.After(5 * time.Second):
+		t.Fatal("peer did not receive the request before cancellation")
+	}
+	// Enter the actual request reader only after write success. No receiver on
+	// the unbuffered output makes canceled first-state delivery deterministic.
+	out := make(chan providers.StreamEvent)
+	cancel()
+	scope.Seal()
+	go func() {
+		defer endReceipt(nil)
+		client.readResponsesWebSocket(readerCtx, session, session, 1, readCh, responsesRequest{}, responsesRequest{}, providers.StreamTransportWebSocket, false, true, &providers.ProviderLease{}, nil, out)
+	}()
+	waitCtx, stopWait := context.WithTimeout(context.Background(), 5*time.Second)
+	defer stopWait()
+	if err := scope.Wait(waitCtx); err != nil {
+		t.Fatal(err)
+	}
+	session.mu.Lock()
+	busy, active, connected := session.busy, session.active != nil, session.conn != nil
+	session.mu.Unlock()
+	if busy || active || connected {
+		t.Fatalf("receipt completed before request cleanup: busy=%v active=%v connected=%v", busy, active, connected)
+	}
+	select {
+	case <-activeDone:
+	default:
+		t.Fatal("receipt completed before releasing the request waiter")
+	}
+	select {
+	case _, open := <-out:
+		if open {
+			t.Fatal("canceled first state was delivered")
+		}
+	default:
+		t.Fatal("receipt completed before closing the output")
+	}
+	select {
+	case err := <-peerClosed:
+		if err == nil {
+			t.Fatal("peer received another model request instead of connection close")
+		}
+	case <-waitCtx.Done():
+		t.Fatal("canceled reader left the peer connection open")
+	}
+	select {
+	case <-pumpDone:
+	case <-waitCtx.Done():
+		t.Fatal("canceled reader left the native socket pump blocked")
 	}
 }
 

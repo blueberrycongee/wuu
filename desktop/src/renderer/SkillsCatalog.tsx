@@ -81,6 +81,8 @@ export function SkillsCatalog({
   active = true,
   section,
   onSectionChange,
+  selectedPluginID: selectedPluginIDProp,
+  onSelectPlugin,
   activeContext,
   extensionInventory = [],
   onTrySkill,
@@ -93,6 +95,8 @@ export function SkillsCatalog({
   active?: boolean;
   section?: SkillsCatalogSection;
   onSectionChange?: (section: SkillsCatalogSection) => void;
+  selectedPluginID?: string;
+  onSelectPlugin?: (id: string) => void;
   activeContext?: RuntimeContext;
   extensionInventory?: ExtensionInventoryRecord[];
   onTrySkill?: (skill: SkillSummary) => void;
@@ -110,12 +114,18 @@ export function SkillsCatalog({
   const [state, setState] = useState<LoadState>(initialLoadState);
   const [filter, setFilter] = useState("");
   const [previewSkill, setPreviewSkill] = useState<SkillSummary | null>(null);
-  const [selectedPluginID, setSelectedPluginID] = useState("");
+  const [localSelectedPluginID, setLocalSelectedPluginID] = useState("");
+  const selectedPluginID = selectedPluginIDProp ?? localSelectedPluginID;
+  const setSelectedPluginID = onSelectPlugin ?? setLocalSelectedPluginID;
   const [chosenTab, setActiveTab] = useState<SkillsCatalogSection>("plugins");
+  const previousSection = useRef(section);
   useEffect(() => {
+    // A new shell can restore an open detail; only navigation clears it.
+    if (previousSection.current === section) return;
+    previousSection.current = section;
     setSelectedPluginID("");
     setPreviewSkill(null);
-  }, [section]);
+  }, [section, setSelectedPluginID]);
   useEffect(() => {
     if (!openPluginRequest) return;
     setSelectedPluginID(openPluginRequest.id);

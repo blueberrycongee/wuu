@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -40,25 +41,10 @@ func TestServiceRegistryRoutesBetweenProcessesAndConvergesAfterClose(t *testing.
 		return
 	}
 
-	start := func(id, role string, router ServiceRouter) *ProcessClient {
-		t.Helper()
-		root := t.TempDir()
-		client, err := Start(context.Background(), ProcessConfig{
-			ID: id, Command: os.Args[0], Args: []string{"-test.run=TestServiceRegistryRoutesBetweenProcessesAndConvergesAfterClose"},
-			Env: map[string]string{serviceProcessHelperEnv: role}, PluginRoot: root,
-			ProjectRoot: filepath.Dir(root), WuuHome: t.TempDir(), Timeout: 2 * time.Second,
-			ServiceRouter: router, PrepareOnly: true,
-		})
-		if err != nil {
-			t.Fatalf("start %s: %v", id, err)
-		}
-		return client
-	}
-
-	provider := start("search-provider", "provider", nil)
+	provider := startServiceProcess(t, "search-provider", "provider", nil)
 	defer provider.Close(context.Background())
 	router := &serviceRegistryRouter{}
-	consumer := start("search-consumer", "consumer", router)
+	consumer := startServiceProcess(t, "search-consumer", "consumer", router)
 	defer consumer.Close(context.Background())
 
 	registry, conflicts := BuildServiceRegistry(provider, consumer)
@@ -84,11 +70,100 @@ func TestServiceRegistryRoutesBetweenProcessesAndConvergesAfterClose(t *testing.
 	}
 }
 
+func TestProcessServicePreservesProviderErrorsWithoutRegistry(t *testing.T) {
+	for _, code := range []string{"invalid_request", "state_conflict", "state_operation_conflict", "state_io_error", "provider_specific_failure", ""} {
+		name := code
+		if name == "" {
+			name = "missing-code"
+		}
+		t.Run(name, func(t *testing.T) {
+			provider := startServiceProcess(t, "search-provider", "provider", nil)
+			defer provider.Close(context.Background())
+			if err := provider.Prepare(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if err := provider.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			message := "provider rejection (" + code + ")"
+			result, err := provider.InvokeService(context.Background(), ServiceInvokeParams{
+				Service: "search.provider", Method: "query", Caller: "direct-consumer", ExecutionID: "rejected-call",
+				Params: mustRaw(map[string]any{"error": HostServiceError{Code: code, Message: message}}),
+			})
+			if err == nil || err.Error() != message || result != nil {
+				t.Fatalf("provider failure = %s, %v", result, err)
+			}
+			var serviceErr *HostServiceError
+			if code == "" {
+				if errors.As(err, &serviceErr) {
+					t.Fatalf("unclassified remote failure became a service rejection: %+v", serviceErr)
+				}
+			} else if !errors.As(err, &serviceErr) || serviceErr.Code != code || serviceErr.Message != message {
+				t.Fatalf("structured provider failure was lost: %T %v, service=%+v", err, err, serviceErr)
+			}
+			if provider.Status().State != StateActive {
+				t.Fatalf("domain failure retired provider: %+v", provider.Status())
+			}
+			result, err = provider.InvokeService(context.Background(), ServiceInvokeParams{
+				Service: "search.provider", Method: "query", Caller: "direct-consumer", ExecutionID: "next-call",
+				Params: json.RawMessage(`{"query":"after rejection"}`),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var next serviceConsumerResult
+			if err := json.Unmarshal(result, &next); err != nil || next.Query != "after rejection" || next.Calls != 2 {
+				t.Fatalf("provider did not resume without replay: %s, %v", result, err)
+			}
+		})
+	}
+}
+
+func TestProcessServiceTransportLossDoesNotImplyRejection(t *testing.T) {
+	provider := startServiceProcess(t, "search-provider", "provider", nil)
+	defer provider.Close(context.Background())
+	if err := provider.Prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	effect := filepath.Join(t.TempDir(), "applied.json")
+	result, err := provider.InvokeService(context.Background(), ServiceInvokeParams{
+		Service: "search.provider", Method: "query", Caller: "direct-consumer", ExecutionID: "lost-response",
+		Params: mustRaw(map[string]any{"drop_response_after_write": effect}),
+	})
+	var serviceErr *HostServiceError
+	if err == nil || result != nil || errors.As(err, &serviceErr) {
+		t.Fatalf("transport loss was classified as a provider response: %s, %v", result, err)
+	}
+	applied, readErr := os.ReadFile(effect)
+	if readErr != nil || string(applied) != "1" {
+		t.Fatalf("side effect was not retained exactly once: %s, %v", applied, readErr)
+	}
+}
+
+func startServiceProcess(t *testing.T, id, role string, router ServiceRouter) *ProcessClient {
+	t.Helper()
+	root := t.TempDir()
+	client, err := Start(context.Background(), ProcessConfig{
+		ID: id, Command: os.Args[0], Args: []string{"-test.run=^TestServiceRegistryRoutesBetweenProcessesAndConvergesAfterClose$"},
+		Env: map[string]string{serviceProcessHelperEnv: role}, PluginRoot: root,
+		ProjectRoot: filepath.Dir(root), WuuHome: t.TempDir(), Timeout: 2 * time.Second,
+		ServiceRouter: router, PrepareOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("start %s: %v", id, err)
+	}
+	return client
+}
+
 type serviceConsumerResult struct {
 	Caller        string `json:"caller,omitempty"`
 	Query         string `json:"query,omitempty"`
 	Code          string `json:"code,omitempty"`
 	ChangedReason string `json:"changed_reason,omitempty"`
+	Calls         int    `json:"calls,omitempty"`
 }
 
 func invokeServiceConsumer(t *testing.T, consumer *ProcessClient) serviceConsumerResult {
@@ -112,6 +187,7 @@ func runServiceProcessHelper(role string) {
 	scanner := bufio.NewScanner(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
 	changedReason := ""
+	serviceCalls := 0
 	for scanner.Scan() {
 		var request struct {
 			ID     string          `json:"id"`
@@ -140,17 +216,32 @@ func runServiceProcessHelper(role string) {
 		case "prepare", "activate":
 			writeServiceHelperResult(encoder, request.ID, struct{}{})
 		case ServiceInvokeMethod:
+			serviceCalls++
 			var params ServiceInvokeParams
 			if role != "provider" || json.Unmarshal(request.Params, &params) != nil || params.Service != "search.provider" || params.Method != "query" {
 				os.Exit(3)
 			}
 			var input struct {
-				Query string `json:"query"`
+				Query                  string            `json:"query"`
+				Error                  *HostServiceError `json:"error"`
+				DropResponseAfterWrite string            `json:"drop_response_after_write"`
 			}
 			if json.Unmarshal(params.Params, &input) != nil {
 				os.Exit(4)
 			}
-			writeServiceHelperResult(encoder, request.ID, serviceConsumerResult{Caller: params.Caller, Query: input.Query})
+			if input.DropResponseAfterWrite != "" {
+				if os.WriteFile(input.DropResponseAfterWrite, mustRaw(serviceCalls), 0600) != nil {
+					os.Exit(11)
+				}
+				os.Exit(0)
+			}
+			if input.Error != nil {
+				if encoder.Encode(rpcResponse{ID: request.ID, Error: &rpcError{Code: input.Error.Code, Message: input.Error.Message}}) != nil {
+					os.Exit(12)
+				}
+				continue
+			}
+			writeServiceHelperResult(encoder, request.ID, serviceConsumerResult{Caller: params.Caller, Query: input.Query, Calls: serviceCalls})
 		case ServiceChangedMethod:
 			var params ServiceChangedParams
 			if role != "consumer" || json.Unmarshal(request.Params, &params) != nil || params.Service != "search.provider" {

@@ -20,7 +20,7 @@ process.env.CODEX_HOME = path.join(fixture, 'native-home');
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_INPUT_CORE || path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
 const nativeLog = path.join(fixture, 'native.jsonl');
@@ -98,7 +98,7 @@ async function control(started, action) {
 }
 const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, 180000);
 async function run() {
-  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--safe-mode', '--workdir', project], { env: process.env, input: '{"id":1,"method":"thread/start","params":{"engine":"codex","model":"fixture","effort":"high","speed":"standard","permission_mode":"standard"}}\n', encoding: 'utf8', timeout: 30000 });
+  const boot = spawnSync(process.env.WUU_DESKTOP_CORE, ['app-server', '--workdir', project], { env: process.env, input: '{"id":1,"method":"thread/start","params":{"engine":"codex","model":"fixture","effort":"high","speed":"standard","permission_mode":"standard"}}\n', encoding: 'utf8', timeout: 30000 });
   assert.equal(boot.status, 0, boot.stderr);
   threadID = boot.stdout.split('\n').filter(Boolean).map(JSON.parse).find(row => row.id === 1)?.result?.thread?.id;
   assert(threadID, boot.stdout);

@@ -23,15 +23,8 @@ type LoadOptions struct {
 	CreateConfigIfMissing bool
 }
 
-// Overrides contains process-scoped agent settings. These values affect the
-// runtime being built and are never persisted back to the config file.
-type Overrides struct {
-	AgentProfile   string
-	MaxTurns       int
-	Effort         string
-	Variant        string
-	PermissionMode string
-}
+// Overrides contains process-scoped settings shared with the runtime.
+type Overrides = runtime.ConfigOverrides
 
 // Load resolves a runtime config and records the source model that must be used
 // for later reloads.
@@ -59,31 +52,7 @@ func Load(opts LoadOptions) (config.Config, string, runtime.ConfigLoadMode, erro
 
 // ApplyOverrides applies process-scoped settings to a loaded config.
 func ApplyOverrides(cfg *config.Config, overrides Overrides) error {
-	if cfg == nil {
-		return nil
-	}
-	if strings.TrimSpace(overrides.Effort) != "" {
-		cfg.Agent.Effort = strings.TrimSpace(overrides.Effort)
-		if strings.TrimSpace(overrides.Variant) == "" {
-			cfg.Agent.Variant = ""
-		}
-	}
-	if strings.TrimSpace(overrides.Variant) != "" {
-		cfg.Agent.Variant = strings.TrimSpace(overrides.Variant)
-	}
-	if strings.TrimSpace(overrides.AgentProfile) != "" {
-		cfg.Agent.Name = strings.TrimSpace(overrides.AgentProfile)
-	}
-	if overrides.MaxTurns < 0 {
-		return errors.New("max turns must be non-negative")
-	}
-	if overrides.MaxTurns > 0 {
-		cfg.Agent.MaxSteps = overrides.MaxTurns
-	}
-	if strings.TrimSpace(overrides.PermissionMode) != "" {
-		cfg.Agent.PermissionMode = config.NormalizePermissionMode(overrides.PermissionMode)
-	}
-	return nil
+	return overrides.Apply(cfg)
 }
 
 // ResolveHost validates immutable process identity and the inputs required by

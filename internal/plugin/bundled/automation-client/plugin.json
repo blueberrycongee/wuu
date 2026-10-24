@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "automation-client",
+  "name": "Automation",
+  "description": "Automation catalog and cron tool for the selected scheduling provider.",
+  "icon": "clock",
+  "version": "0.1.0",
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "2026.10.19",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "runtime.mjs"
+    ],
+    "timeout": 30
+  },
+  "desktop": {
+    "entry": "desktop.js",
+    "required_services": [
+      {
+        "name": "automation.scheduler",
+        "major_version": 1,
+        "required": true
+      }
+    ]
+  },
+  "contributes": {
+    "navigation": [
+      {
+        "id": "automation",
+        "title": "Automations",
+        "view": "automation.catalog",
+        "icon": "clock",
+        "order": 40
+      }
+    ]
+  },
+  "interface": {
+    "displayName": "Automation",
+    "shortDescription": "Schedule prompts and recurring Agent work.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ]
+  }
+}

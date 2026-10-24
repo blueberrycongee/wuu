@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer reproduces the
@@ -23,11 +22,12 @@ import (
 func TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
 	sourceID := "20260910-010827-checkpoint-fork-source"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, sourceID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(sourceID, rt.RootDir); err != nil {
 		t.Fatalf("create source session: %v", err)
 	}
 
@@ -43,16 +43,16 @@ func TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer(t *testing.
 		{Seq: 6, Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call-read", Name: "read_file", Arguments: `{"path":"README.md"}`}}},
 		{Seq: 7, Role: "tool", ToolCallID: "call-read", Name: "read_file", Content: "file contents"},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sourceID, full); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sourceID, full); err != nil {
 		t.Fatalf("write source durable history: %v", err)
 	}
 	// The provider checkpoint keeps only the active model context; the older turn
 	// survives only in the durable transcript.
-	if err := rewriteChatHistoryAtBaseline(rt.SessionDir, sourceID, full[2:], 2); err != nil {
+	if err := rewriteChatHistoryAtBaseline(rt.Sessions, sourceID, full[2:], 2); err != nil {
 		t.Fatalf("write provider checkpoint: %v", err)
 	}
 
-	display, err := loadPersistedMessages(rt.SessionDir, sourceID, true)
+	display, err := loadPersistedMessages(rt.Sessions, sourceID, true)
 	if err != nil {
 		t.Fatalf("load source display history: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer(t *testing.
 	}
 	fork := remarshal[ThreadForkResult](t, response["result"]).Thread
 
-	history, err := loadChatMessages(rt.SessionDir, fork.ID)
+	history, err := loadChatMessages(rt.Sessions, fork.ID)
 	if err != nil {
 		t.Fatalf("load fork history: %v", err)
 	}
@@ -108,11 +108,12 @@ func TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer(t *testing.
 func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
 	sourceID := "20260910-010827-live-prefix-source"
-	if _, err := session.CreateWithMetadata(rt.SessionDir, sourceID, rt.RootDir); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(sourceID, rt.RootDir); err != nil {
 		t.Fatalf("create source session: %v", err)
 	}
 
@@ -126,7 +127,7 @@ func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing
 		{Seq: 4, Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call-live", Name: "read_file", Arguments: `{"path":"a.txt"}`}}},
 		{Seq: 5, Role: "tool", ToolCallID: "call-live", Name: "read_file", Content: "live contents"},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sourceID, durable); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sourceID, durable); err != nil {
 		t.Fatalf("write source durable history: %v", err)
 	}
 
@@ -170,6 +171,7 @@ func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing
 		},
 	}
 	srv.mu.Lock()
+	th.state = testRuntimeState(t, srv.rt)
 	srv.threads[sourceID] = th
 	srv.mu.Unlock()
 
@@ -196,7 +198,7 @@ func TestServerThreadForkLiveAnswerDoesNotDuplicateArchivedToolPrefix(t *testing
 	}
 	fork := remarshal[ThreadForkResult](t, response["result"]).Thread
 
-	history, err := loadChatMessages(rt.SessionDir, fork.ID)
+	history, err := loadChatMessages(rt.Sessions, fork.ID)
 	if err != nil {
 		t.Fatalf("load fork history: %v", err)
 	}
@@ -228,25 +230,26 @@ func TestServerThreadForkPublishesPersistedWorkspaceIdentity(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WorkspaceID = "project-stable"
 	out := &lockedBuffer{}
+	bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	sourceID := "fork-workspace-source"
 	// A local fork can live outside the project's root, including in a worktree.
 	sourceCWD := t.TempDir()
-	if _, err := session.CreateWithMetadata(rt.SessionDir, sourceID, sourceCWD); err != nil {
+	if _, err := rt.Sessions.CreateWithMetadata(sourceID, sourceCWD); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := session.SetWorkspaceID(rt.SessionDir, sourceID, rt.WorkspaceID); err != nil {
+	if _, err := rt.Sessions.SetWorkspaceID(sourceID, rt.WorkspaceID); err != nil {
 		t.Fatal(err)
 	}
 	history := []providers.ChatMessage{
 		{Seq: 1, Role: "user", Content: "prompt"},
 		{Seq: 2, Role: "assistant", Content: "answer", Phase: providers.MessagePhaseFinalAnswer},
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sourceID, history); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sourceID, history); err != nil {
 		t.Fatal(err)
 	}
-	display, err := loadPersistedMessages(rt.SessionDir, sourceID, true)
+	display, err := loadPersistedMessages(rt.Sessions, sourceID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,6 +349,7 @@ func TestServerThreadForkLiveAnswerAfterInterleavedThinking(t *testing.T) {
 			rt.StreamRunner.Client = providers.AdaptStreamClient(client)
 			rt.StreamRunner.Tools = fastToolExecutor{}
 			out := &lockedBuffer{}
+			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
 
@@ -361,7 +365,7 @@ func TestServerThreadForkLiveAnswerAfterInterleavedThinking(t *testing.T) {
 			if answer.Seq <= 0 {
 				t.Fatalf("completed answer has no durable identity: %+v", answer)
 			}
-			sourceHistory, err := loadChatMessages(rt.SessionDir, threadID)
+			sourceHistory, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatalf("load completed source history: %v", err)
 			}
@@ -393,7 +397,7 @@ func TestServerThreadForkLiveAnswerAfterInterleavedThinking(t *testing.T) {
 				t.Fatalf("thread/fork returned error: %+v", response["error"])
 			}
 			fork := remarshal[ThreadForkResult](t, response["result"]).Thread
-			history, err := loadChatMessages(rt.SessionDir, fork.ID)
+			history, err := loadChatMessages(rt.Sessions, fork.ID)
 			if err != nil {
 				t.Fatalf("load fork history: %v", err)
 			}

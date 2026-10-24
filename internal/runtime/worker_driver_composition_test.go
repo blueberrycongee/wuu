@@ -186,19 +186,21 @@ func workerCompositionSession(t *testing.T, removed bool) (*Session, *PluginGene
 	t.Helper()
 	var selection *composition.Config
 	if removed {
-		modules := []string{kernelHostModule}
+		modules := append(testStateModules(), kernelHostModule)
 		selection = &composition.Config{Version: composition.Version, Modules: &modules}
 	}
-	host, kernel, err := buildPluginHost(nil, t.TempDir(), "workspace", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, "")
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
+	host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, selection, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	generation := &PluginGeneration{host: host, driverGateways: kernel.driverGateways}
+	generation := &PluginGeneration{host: host, driverGateways: kernel.driverGateways, state: kernel.state}
 	generation.retain()
-	s := &Session{pluginGeneration: generation}
+	s := &Session{pluginGeneration: generation, Documents: kernel.state.documents, Sessions: kernel.state.sessions, InferenceJournalRuntime: kernel.state.journal}
 	t.Cleanup(func() { s.releasePluginGeneration(s.pluginGeneration) })
 	return s, generation
 }

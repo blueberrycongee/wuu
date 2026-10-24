@@ -21,8 +21,9 @@ import (
 
 	"github.com/blueberrycongee/wuu/clients/native/testsupport"
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
@@ -30,7 +31,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/remote/secure"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 type provider struct{ release chan struct{} }
@@ -55,6 +55,7 @@ func main() {
 	must(err)
 	defer os.RemoveAll(root)
 	must(os.Setenv("HOME", root))
+	must(os.Setenv("WUU_HOME", filepath.Join(root, ".wuu")))
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	registry, err := relay.OpenRegistry("")
@@ -68,17 +69,22 @@ func main() {
 	b64 := base64.RawURLEncoding.EncodeToString
 	must(store.AddDevice(phone.Public(), "Native test phone", time.Now()))
 	must(registry.AddDevice(b64(store.Identity().Public()), b64(phone.Public()), "Native test phone", time.Now()))
-	kit, err := tools.New(root)
-	must(err)
 	gate := &provider{release: make(chan struct{}, 8)}
 	must(testsupport.WriteConfig(filepath.Join(root, "config.json"), "native-test"))
-	rt := &runtime.Session{
-		ProviderName: "native-test", Model: "native-test", RootDir: root,
-		WuuHome: root, StateDir: filepath.Join(root, "workspaces", "fixture"),
-		ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, HomeDir: root, SessionDir: filepath.Join(root, "sessions"),
-		HookDispatcher: hooks.NewDispatcher(nil), Toolkit: kit, UserQuestions: pluginhost.NewUserQuestionBroker(),
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: providers.AdaptStreamClient(gate), Model: "native-test", SystemPrompt: "test"},
-	}
+	cfg, _, err := config.LoadPath(filepath.Join(root, "config.json"))
+	must(err)
+	bindings := appserver.NewRuntimeBindings()
+	factories := append(bindings.NativeProviders(), runtime.NativeProviderFactory{ID: credentialstore.OSModule, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+		return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) {
+			return credentialstore.NewFileStore(filepath.Join(root, "credentials.json")), nil
+		}), nil
+	}})
+	rt, err := runtime.NewSession(runtime.Options{RootDir: root, HomeDir: root, ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg, NativeProviders: factories})
+	must(err)
+	defer rt.Cleanup()
+	rt.StreamRunner.Client = providers.AdaptStreamClient(gate)
+	rt.TitleClient = nil
+
 	ready := make(chan struct{}, 1)
 	// Persisted history uses the same reconstruction and paging as an old conversation.
 	var records []session.HistoryRecord
@@ -90,16 +96,16 @@ func main() {
 		records = append(records, session.HistoryRecord{Role: "user", Content: fmt.Sprintf("message %d", i)},
 			session.HistoryRecord{Role: "assistant", Content: reply})
 	}
-	paged, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: session.NewID(), CWD: root, Title: "Long history"}, records)
+	paged, err := rt.Sessions.CreateInitialized(session.Session{ID: session.NewID(), CWD: root, Title: "Long history"}, records)
 	must(err)
-	toolHistory, err := session.CreateInitialized(rt.SessionDir, session.Session{ID: session.NewID(), CWD: root, Title: "Tool history"}, []session.HistoryRecord{
+	toolHistory, err := rt.Sessions.CreateInitialized(session.Session{ID: session.NewID(), CWD: root, Title: "Tool history"}, []session.HistoryRecord{
 		{Role: "user", Content: "inspect fixture"},
 		{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"large-tool","name":"read_file","arguments":"{\"path\":\"fixture.txt\"}"}]`)},
 		{Role: "tool", Name: "read_file", ToolCallID: "large-tool", Content: strings.Repeat("工具结果🌱\n", 20_000)},
 		{Role: "assistant", Content: "inspected"},
 	})
 	must(err)
-	h, err := host.New(host.Options{Runtime: rt, Store: store,
+	h, err := host.New(host.Options{Runtime: rt, Store: store, AppServerOptions: []appserver.ServerOption{appserver.WithRuntimeBindings(bindings)},
 		RelayURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/v1/connect",
 		Pairing: &host.PairingConfig{Once: true, OnURI: func(string) {
 			select {
@@ -139,7 +145,7 @@ func main() {
 	must(err)
 	publishedJSON, err := json.Marshal(published)
 	must(err)
-	_, err = session.CreateInitialized(rt.SessionDir, session.Session{ID: artifactID, CWD: root, Title: "Published image"}, []session.HistoryRecord{
+	_, err = rt.Sessions.CreateInitialized(session.Session{ID: artifactID, CWD: root, Title: "Published image"}, []session.HistoryRecord{
 		{Role: "user", Content: "publish the fixture"},
 		{Role: "assistant", ToolCalls: json.RawMessage(`[{"id":"publish","name":"present_artifact","arguments":"{\"path\":\"published.png\"}"}]`)},
 		{Role: "tool", Name: "present_artifact", ToolCallID: "publish", ToolResult: publishedJSON},

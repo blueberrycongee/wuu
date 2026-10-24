@@ -20,6 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/executionworker"
 	"github.com/blueberrycongee/wuu/internal/gitattribution"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/runtimeconfig"
@@ -64,6 +65,11 @@ func run(args []string) error {
 			return executionworker.ServeSocket(context.Background(), *socket, *idle)
 		}
 		return executionworker.Serve(context.Background(), os.Stdin, os.Stdout)
+	}
+
+	// Explicit store maintenance must not initialize or alter the app home.
+	if args[0] == "state" {
+		return runState(args[1:])
 	}
 
 	// Pre-launch installs left credential-bearing files at 0o644 / 0o755.
@@ -160,7 +166,7 @@ func runVersion(args []string) error {
 	return nil
 }
 
-func runExecutionRuns(args []string) error {
+func runExecutionRuns(args []string) (err error) {
 	fs := flag.NewFlagSet("runs", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output runs as JSON")
@@ -185,11 +191,12 @@ func runExecutionRuns(args []string) error {
 	} else if fs.NArg() != 0 {
 		return errors.New("usage: wuu runs [read RUN_ID] [flags]")
 	}
-	home, err := statepath.Home("")
+	state, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
-	store, err := execution.NewStore(statepath.SessionsDir(home))
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store, err := execution.NewStore(state.Documents)
 	if err != nil {
 		return err
 	}
@@ -336,11 +343,20 @@ func runModels(args []string) error {
 	if err != nil {
 		return err
 	}
-	cfg, configPath, err := config.LoadFrom(rootDir, os.Getenv("HOME"))
+	state, err := openCommandState(context.Background(), rootDir)
 	if err != nil {
 		return err
 	}
-	providerCfg, resolvedName, err := cfg.ResolveProvider(*providerName)
+	defer state.Close()
+	services, err := state.Services()
+	if err != nil {
+		return err
+	}
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	providerCfg, resolvedName, err := view.Config.ResolveProvider(*providerName)
 	if err != nil {
 		return err
 	}
@@ -349,6 +365,7 @@ func runModels(args []string) error {
 	}
 
 	client, err := codex.New(codex.ClientConfig{
+		Credentials:           services.Credentials,
 		BaseURL:               providerCfg.BaseURL,
 		APIKey:                explicitProviderAPIKey(providerCfg),
 		Headers:               providerCfg.Headers,
@@ -370,14 +387,14 @@ func runModels(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("provider: %s\nconfig: %s\n\n", resolvedName, configPath)
+	fmt.Printf("provider: %s\n\n", resolvedName)
 	for _, model := range models {
 		fmt.Println(model.Slug)
 	}
 	return nil
 }
 
-func runSessionShow(args []string) error {
+func runSessionShow(args []string) (err error) {
 	fs := flag.NewFlagSet("session-show", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	threadID := fs.String("thread", "", "thread (session) ID; defaults to the most recent session")
@@ -387,18 +404,16 @@ func runSessionShow(args []string) error {
 		return err
 	}
 
-	home, err := statepath.Home("")
+	state, err := openCommandState(context.Background(), "")
 	if err != nil {
-		return fmt.Errorf("resolve wuu home: %w", err)
+		return err
 	}
-	sessDir := statepath.SessionsDir(home)
-	if sessDir == "" {
-		return errors.New("sessions dir is empty")
-	}
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
 
 	id := strings.TrimSpace(*threadID)
 	if id == "" {
-		recent, err := session.MostRecent(sessDir)
+		recent, err := store.MostRecent()
 		if err != nil {
 			return fmt.Errorf("find most recent session: %w", err)
 		}
@@ -408,14 +423,14 @@ func runSessionShow(args []string) error {
 		id = recent
 	}
 
-	meta, ok, err := session.Find(sessDir, id)
+	meta, ok, err := store.Find(id)
 	if err != nil {
 		return fmt.Errorf("lookup %q: %w", id, err)
 	}
 	if !ok {
 		return fmt.Errorf("%w: %q", session.ErrSessionNotFound, id)
 	}
-	records, err := session.LoadHistoryRecords(sessDir, id, true)
+	records, err := store.LoadHistoryRecords(id, true)
 	if err != nil {
 		return fmt.Errorf("load history %q: %w", id, err)
 	}
@@ -568,7 +583,7 @@ func runSession(args []string) error {
 	}
 }
 
-func runSessionList(args []string) error {
+func runSessionList(args []string) (err error) {
 	fs := flag.NewFlagSet("session list", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output as JSON")
@@ -580,19 +595,21 @@ func runSessionList(args []string) error {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
 	}
 
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
 	var sessions []session.Session
 	if *allWorkdirs {
-		sessions, err = session.List(sessDir, *limit)
+		sessions, err = store.List(*limit)
 	} else {
 		rootDir, werr := resolveWorkdir(*workdir)
 		if werr != nil {
 			return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, werr)
 		}
-		sessions, err = session.ListForCWD(sessDir, rootDir, "", *limit)
+		sessions, err = store.ListForCWD(rootDir, "", *limit)
 	}
 	if err != nil {
 		return fmt.Errorf("list sessions: %w", err)
@@ -608,7 +625,7 @@ func runSessionList(args []string) error {
 	return nil
 }
 
-func runSessionShowSubcommand(args []string) error {
+func runSessionShowSubcommand(args []string) (err error) {
 	fs := flag.NewFlagSet("session show", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output as JSON")
@@ -623,18 +640,20 @@ func runSessionShowSubcommand(args []string) error {
 	if !*last && id == "" && len(fs.Args()) > 0 {
 		id = strings.TrimSpace(fs.Args()[0])
 	}
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
 	rootDir, err := resolveWorkdir(*workdir)
 	if err != nil {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
 	}
-	return printSession(sessDir, id, rootDir, *jsonOutput, *limit)
+	return printSession(store, id, rootDir, *jsonOutput, *limit)
 }
 
-func runSessionTrace(args []string) error {
+func runSessionTrace(args []string) (err error) {
 	fs := flag.NewFlagSet("session trace", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output as JSON")
@@ -648,16 +667,18 @@ func runSessionTrace(args []string) error {
 	if !*last && id == "" && len(fs.Args()) > 0 {
 		id = strings.TrimSpace(fs.Args()[0])
 	}
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
 	rootDir, err := resolveWorkdir(*workdir)
 	if err != nil {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
 	}
 	if id == "" {
-		id, err = session.MostRecentForCWD(sessDir, rootDir, "")
+		id, err = store.MostRecentForCWD(rootDir, "")
 		if err != nil {
 			return fmt.Errorf("find most recent session: %w", err)
 		}
@@ -665,7 +686,7 @@ func runSessionTrace(args []string) error {
 			return errors.New("no sessions found")
 		}
 	}
-	meta, ok, err := session.Find(sessDir, id)
+	meta, ok, err := store.Find(id)
 	if err != nil {
 		return fmt.Errorf("lookup %q: %w", id, err)
 	}
@@ -704,7 +725,7 @@ type sessionSearchResult struct {
 	Snippet  string          `json:"snippet,omitempty"`
 }
 
-func runSessionSearch(args []string) error {
+func runSessionSearch(args []string) (err error) {
 	fs := flag.NewFlagSet("session search", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output as JSON")
@@ -719,24 +740,20 @@ func runSessionSearch(args []string) error {
 	if query == "" {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, errors.New("search query is required"))
 	}
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
-	var sessions []session.Session
-	if *allWorkdirs {
-		sessions, err = session.List(sessDir, 0)
-	} else {
-		rootDir, werr := resolveWorkdir(*workdir)
-		if werr != nil {
-			return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, werr)
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
+	cwd := ""
+	if !*allWorkdirs {
+		cwd, err = resolveWorkdir(*workdir)
+		if err != nil {
+			return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
 		}
-		sessions, err = session.ListForCWD(sessDir, rootDir, "", 0)
 	}
-	if err != nil {
-		return fmt.Errorf("list sessions: %w", err)
-	}
-	results, err := searchSessions(sessDir, filterArchivedSessions(sessions, *includeArchived), query, *limit)
+	results, err := searchSessions(store, cwd, *includeArchived, query, *limit)
 	if err != nil {
 		return err
 	}
@@ -754,7 +771,7 @@ func runSessionSearch(args []string) error {
 	return nil
 }
 
-func runSessionArchive(args []string) error {
+func runSessionArchive(args []string) (err error) {
 	fs := flag.NewFlagSet("session archive", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output as JSON")
@@ -766,11 +783,13 @@ func runSessionArchive(args []string) error {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, errors.New("thread id is required"))
 	}
 	threadID := strings.TrimSpace(fs.Args()[0])
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), "")
 	if err != nil {
 		return err
 	}
-	meta, err := session.UpdateArchived(sessDir, threadID, !*unarchive)
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
+	meta, err := store.UpdateArchived(threadID, !*unarchive)
 	if err != nil {
 		return fmt.Errorf("archive %q: %w", threadID, err)
 	}
@@ -789,7 +808,7 @@ func runSessionArchive(args []string) error {
 	return nil
 }
 
-func runSessionDelete(args []string) error {
+func runSessionDelete(args []string) (err error) {
 	fs := flag.NewFlagSet("session delete", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output as JSON")
@@ -800,11 +819,13 @@ func runSessionDelete(args []string) error {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, errors.New("thread id is required"))
 	}
 	threadID := strings.TrimSpace(fs.Args()[0])
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), "")
 	if err != nil {
 		return err
 	}
-	deleted, err := session.Delete(sessDir, threadID)
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
+	deleted, err := store.Delete(threadID)
 	if err != nil {
 		return fmt.Errorf("delete %q: %w", threadID, err)
 	}
@@ -829,7 +850,7 @@ func runSessionDelete(args []string) error {
 	return nil
 }
 
-func runSessionExport(args []string) error {
+func runSessionExport(args []string) (err error) {
 	fs := flag.NewFlagSet("session export", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output metadata as JSON wrapper instead of JSONL")
@@ -847,10 +868,12 @@ func runSessionExport(args []string) error {
 		id = strings.TrimSpace(fs.Args()[0])
 	}
 
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
 
 	rootDir, err := resolveWorkdir(*workdir)
 	if err != nil {
@@ -859,7 +882,7 @@ func runSessionExport(args []string) error {
 
 	// Find the session ID
 	if id == "" {
-		id, err = session.MostRecentForCWD(sessDir, rootDir, "")
+		id, err = store.MostRecentForCWD(rootDir, "")
 		if err != nil {
 			return fmt.Errorf("find most recent session: %w", err)
 		}
@@ -869,7 +892,7 @@ func runSessionExport(args []string) error {
 	}
 
 	// Load session metadata and history
-	meta, ok, err := session.Find(sessDir, id)
+	meta, ok, err := store.Find(id)
 	if err != nil {
 		return fmt.Errorf("lookup %q: %w", id, err)
 	}
@@ -877,7 +900,7 @@ func runSessionExport(args []string) error {
 		return fmt.Errorf("%w: %q", session.ErrSessionNotFound, id)
 	}
 
-	records, err := session.LoadHistoryRecords(sessDir, id, true)
+	records, err := store.LoadHistoryRecords(id, true)
 	if err != nil {
 		return fmt.Errorf("load history %q: %w", id, err)
 	}
@@ -980,39 +1003,59 @@ func deleteSessionArtifacts(sess session.Session) (string, bool, error) {
 	return artifactPath, true, nil
 }
 
-func searchSessions(sessDir string, sessions []session.Session, query string, limit int) ([]sessionSearchResult, error) {
+func searchSessions(store *session.Store, cwd string, includeArchived bool, query string, limit int) ([]sessionSearchResult, error) {
 	normalizedQuery := normalizeSessionSearchText(query)
 	if normalizedQuery == "" {
 		return nil, nil
 	}
-	results := make([]sessionSearchResult, 0, minPositive(limit, len(sessions)))
-	for _, sess := range sessions {
-		snippet, err := sessionSearchSnippet(sessDir, sess, normalizedQuery)
-		if err != nil {
-			return nil, err
-		}
-		if snippet == "" {
-			continue
-		}
-		results = append(results, sessionSearchResult{
-			ThreadID: sess.ID,
-			Session:  sess,
-			Snippet:  snippet,
-		})
-		if limit > 0 && len(results) >= limit {
-			break
-		}
+	pageSize := 256
+	if limit > 0 {
+		pageSize = min(pageSize, limit)
 	}
-	return results, nil
+	for {
+		results := make([]sessionSearchResult, 0, pageSize)
+		pageQuery := session.SessionListQuery{CWD: cwd, Limit: pageSize}
+		for {
+			page, err := store.ListPage(pageQuery)
+			if errors.Is(err, persistence.ErrConflict) {
+				break
+			}
+			if err != nil {
+				return nil, err
+			}
+			for _, sess := range page.Sessions {
+				if !includeArchived && sess.ArchivedAt != nil {
+					continue
+				}
+				snippet, err := sessionSearchSnippet(store, sess, normalizedQuery)
+				if err != nil {
+					return nil, err
+				}
+				if snippet == "" {
+					continue
+				}
+				results = append(results, sessionSearchResult{ThreadID: sess.ID, Session: sess, Snippet: snippet})
+				if limit > 0 && len(results) == limit {
+					return results, nil
+				}
+			}
+			if page.Next == nil {
+				return results, nil
+			}
+			pageQuery.Cursor = page.Next
+		}
+		// The search has no external effects; discard partial results and restart
+		// if a concurrent write invalidates the captured listing revision.
+	}
 }
 
-func sessionSearchSnippet(sessDir string, sess session.Session, normalizedQuery string) (string, error) {
+func sessionSearchSnippet(store *session.Store, sess session.Session, normalizedQuery string) (string, error) {
 	for _, candidate := range []string{sess.Title, sess.Summary, sess.ID, sess.CWD} {
 		if sessionSearchMatches(candidate, normalizedQuery) {
 			return compactSessionSearchSnippet(candidate), nil
 		}
 	}
-	records, err := session.LoadHistoryRecords(sessDir, sess.ID, true)
+	records, err := store.LoadHistoryRecords(sess.ID, true)
 	if err != nil {
 		return "", fmt.Errorf("load history %q: %w", sess.ID, err)
 	}
@@ -1038,21 +1081,11 @@ func compactSessionSearchSnippet(value string) string {
 	return strings.Join(strings.Fields(value), " ")
 }
 
-func minPositive(a, b int) int {
-	if a <= 0 {
-		return b
-	}
-	if b <= 0 || a < b {
-		return a
-	}
-	return b
-}
-
-func printSession(sessDir, id, rootDir string, jsonOutput bool, limit int) error {
+func printSession(store *session.Store, id, rootDir string, jsonOutput bool, limit int) error {
 	var err error
 	id = strings.TrimSpace(id)
 	if id == "" {
-		id, err = session.MostRecentForCWD(sessDir, rootDir, "")
+		id, err = store.MostRecentForCWD(rootDir, "")
 		if err != nil {
 			return fmt.Errorf("find most recent session: %w", err)
 		}
@@ -1061,14 +1094,14 @@ func printSession(sessDir, id, rootDir string, jsonOutput bool, limit int) error
 		}
 	}
 
-	meta, ok, err := session.Find(sessDir, id)
+	meta, ok, err := store.Find(id)
 	if err != nil {
 		return fmt.Errorf("lookup %q: %w", id, err)
 	}
 	if !ok {
 		return fmt.Errorf("%w: %q", session.ErrSessionNotFound, id)
 	}
-	records, err := session.LoadHistoryRecords(sessDir, id, true)
+	records, err := store.LoadHistoryRecords(id, true)
 	if err != nil {
 		return fmt.Errorf("load history %q: %w", id, err)
 	}
@@ -1109,18 +1142,6 @@ func printSession(sessDir, id, rootDir string, jsonOutput bool, limit int) error
 		fmt.Printf("  [%d] %s: %s\n", i+1, role, content)
 	}
 	return nil
-}
-
-func resolveSessionsDir() (string, error) {
-	home, err := statepath.Home("")
-	if err != nil {
-		return "", fmt.Errorf("resolve wuu home: %w", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if sessDir == "" {
-		return "", errors.New("sessions dir is empty")
-	}
-	return sessDir, nil
 }
 
 func filterArchivedSessions(sessions []session.Session, includeArchived bool) []session.Session {
@@ -1373,15 +1394,17 @@ func newLocalDebugAppServerClient(ctx context.Context, opts debugAppServerOption
 	if err != nil {
 		return nil, err
 	}
+	bindings := appserver.NewRuntimeBindings()
 	rt, err := runtime.NewSession(runtime.Options{
-		RootDir:       rootDir,
-		HomeDir:       homeDir,
-		ConfigPath:    configPath,
-		Config:        cfg,
-		ProviderName:  opts.provider,
-		ModelOverride: opts.model,
-		DriverProfile: opts.driver,
-		NoTools:       opts.noTools,
+		NativeProviders: bindings.NativeProviders(),
+		RootDir:         rootDir,
+		HomeDir:         homeDir,
+		ConfigPath:      configPath,
+		Config:          cfg,
+		ProviderName:    opts.provider,
+		ModelOverride:   opts.model,
+		DriverProfile:   opts.driver,
+		NoTools:         opts.noTools,
 	})
 	if err != nil {
 		return nil, err
@@ -1397,7 +1420,7 @@ func newLocalDebugAppServerClient(ctx context.Context, opts debugAppServerOption
 		pipes:  []io.Closer{serverInR, serverInW, serverOutR, serverOutW},
 	}
 	go func() {
-		client.done <- appserver.RunStdio(serverCtx, rt, serverInR, serverOutW)
+		client.done <- appserver.RunStdio(serverCtx, rt, serverInR, serverOutW, appserver.WithRuntimeBindings(bindings))
 	}()
 	return client, nil
 }
@@ -1477,7 +1500,7 @@ func runDebugProtocol(args []string) error {
 	}
 }
 
-func runDebugProtocolEvents(args []string) error {
+func runDebugProtocolEvents(args []string) (err error) {
 	fs := flag.NewFlagSet("debug protocol events", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	jsonOutput := fs.Bool("json", false, "output as one JSON object")
@@ -1490,15 +1513,17 @@ func runDebugProtocolEvents(args []string) error {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, errors.New("thread id is required"))
 	}
 	threadID := strings.TrimSpace(remaining[0])
-	sessDir, err := resolveSessionsDir()
+	state, err := openCommandState(context.Background(), *workdir)
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
 	rootDir, err := resolveWorkdir(*workdir)
 	if err != nil {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
 	}
-	meta, ok, err := session.Find(sessDir, threadID)
+	meta, ok, err := store.Find(threadID)
 	if err != nil {
 		return fmt.Errorf("lookup %q: %w", threadID, err)
 	}
@@ -1734,16 +1759,18 @@ func runExecReview(args []string) error {
 	return wuuexec.Run(ctx, opts)
 }
 
-func runExecShowSessions() error {
-	sessDir, err := resolveSessionsDir()
+func runExecShowSessions() (err error) {
+	state, err := openCommandState(context.Background(), "")
 	if err != nil {
 		return err
 	}
+	defer func() { err = errors.Join(err, state.Close()) }()
+	store := state.Sessions
 	rootDir, err := resolveWorkdir("")
 	if err != nil {
 		return wuuexec.WithExitCode(wuuexec.ExitInvalidInput, err)
 	}
-	sessions, err := session.ListForCWD(sessDir, rootDir, "", 50)
+	sessions, err := store.ListForCWD(rootDir, "", 50)
 	if err != nil {
 		return fmt.Errorf("list sessions: %w", err)
 	}
@@ -2104,7 +2131,7 @@ func valueOfIntFlag(v *int) int {
 	return *v
 }
 
-func runAppServer(args []string) error {
+func runAppServer(args []string) (runErr error) {
 	fs := flag.NewFlagSet("app-server", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -2152,7 +2179,7 @@ func runAppServer(args []string) error {
 		return err
 	}
 	defer func() {
-		_ = rt.Close()
+		runErr = errors.Join(runErr, rt.Close())
 	}()
 
 	return rt.Serve(context.Background(), os.Stdin, os.Stdout)
@@ -2269,6 +2296,7 @@ Usage:
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]
   wuu plugin dev [--watch=false] [--poll DURATION] FILE.ts|DIRECTORY
+  wuu state check|export|import|migrate --dir DIRECTORY [flags]
   wuu debug app-server initialize [flags]
   wuu debug app-server send [flags] METHOD [JSON]
   wuu debug protocol events [flags] THREAD_ID

@@ -46,7 +46,7 @@ app.setPath('userData', path.join(fixture, 'profile'));
 process.env.WUU_HOME = home;
 process.env.WUU_DESKTOP_CORE = process.env.WUU_CONCURRENT_SEND_CORE || path.join(desktop, 'build/bin/wuu-core');
 process.env.WUU_ENABLE_BROWSER = '0';
-process.env.WUU_SAFE_MODE = '1';
+process.env.WUU_SAFE_MODE = '0';
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = '1';
 delete process.env.ELECTRON_RENDERER_URL;
 

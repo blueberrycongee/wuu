@@ -11,11 +11,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 )
 
-func (s *Server) forwardAgentNotifications(threadID string, control *agentcontrol.AgentControl, ch <-chan subagent.Notification, done <-chan struct{}) {
+func (s *Server) forwardAgentNotifications(binding *runtime.State, threadID string, control *agentcontrol.AgentControl, ch <-chan subagent.Notification, done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
@@ -29,14 +30,14 @@ func (s *Server) forwardAgentNotifications(threadID string, control *agentcontro
 				// the reliable terminal finalizer was attached. In the normal path
 				// AgentControl already ran the same finalizer synchronously while it
 				// still owned the cross-process worker execution lease.
-				if err := s.finalizeAgentTerminal(threadID, control, n); err != nil {
+				if err := s.finalizeAgentTerminal(binding, threadID, control, n); err != nil {
 					providers.DebugLogf("finalize terminal agent %s fallback: %v", n.AgentID, err)
 				}
 				continue
 			}
 			now := time.Now().UTC()
 			if n.Status == subagent.StatusRunning {
-				_, turn, started := s.ensureLiveAgentThread(threadID, control, n.Snapshot, now)
+				_, turn, started := s.ensureLiveAgentThread(binding, threadID, control, n.Snapshot, now)
 				if started {
 					_ = s.writeNotification(NotificationTurnStarted, TurnStartedNotification{
 						ThreadID: n.Snapshot.ID,
@@ -46,13 +47,14 @@ func (s *Server) forwardAgentNotifications(threadID string, control *agentcontro
 			}
 			_ = s.writeNotification(NotificationAgentUpdated, AgentUpdatedNotification{
 				ThreadID: threadID,
-				Agent:    s.agentFromSnapshot(control, n.Snapshot),
+				Agent:    s.agentFromSnapshot(binding, control, n.Snapshot),
 			})
 		}
 	}
 }
 
 type agentTerminalFinalizationKey struct {
+	store       *session.Store
 	threadID    string
 	agentID     string
 	status      subagent.Status
@@ -64,13 +66,13 @@ const (
 	participantRunCompletionRetryDelay  = 10 * time.Millisecond
 )
 
-type participantRunCompleter func(sessDir, participantID, agentID, outcome, summary string) error
+type participantRunCompleter func(participantID, agentID, outcome, summary string) error
 
-func (s *Server) finalizeAgentTerminal(threadID string, control *agentcontrol.AgentControl, n subagent.Notification) error {
-	return s.finalizeAgentTerminalWithCompleter(threadID, control, n, session.CompleteParticipantRun)
+func (s *Server) finalizeAgentTerminal(binding *runtime.State, threadID string, control *agentcontrol.AgentControl, n subagent.Notification) error {
+	return s.finalizeAgentTerminalWithCompleter(binding, threadID, control, n, binding.Sessions.CompleteParticipantRun)
 }
 
-func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *agentcontrol.AgentControl, n subagent.Notification, complete participantRunCompleter) error {
+func (s *Server) finalizeAgentTerminalWithCompleter(binding *runtime.State, threadID string, control *agentcontrol.AgentControl, n subagent.Notification, complete participantRunCompleter) error {
 	if s == nil || !subagent.IsTerminal(n.Status) {
 		return nil
 	}
@@ -79,6 +81,7 @@ func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *ag
 		agentID = strings.TrimSpace(n.AgentID)
 	}
 	key := agentTerminalFinalizationKey{
+		store:       binding.Sessions,
 		threadID:    strings.TrimSpace(threadID),
 		agentID:     agentID,
 		status:      n.Status,
@@ -112,7 +115,6 @@ func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *ag
 		var err error
 		for attempt := 1; attempt <= participantRunCompletionMaxAttempts; attempt++ {
 			err = complete(
-				s.rt.SessionDir,
 				participantID,
 				agentID,
 				string(n.Status),
@@ -129,7 +131,7 @@ func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *ag
 	}
 
 	// Commit the in-memory dedupe only after the durable core succeeds. Two
-	// concurrent replays may both issue the idempotent SQLite update, but only
+	// concurrent replays may both issue the idempotent document update, but only
 	// the winner below is allowed to publish terminal side effects.
 	s.agentTerminalFinalizationMu.Lock()
 	if _, finalized := s.agentTerminalFinalizations[key]; finalized {
@@ -144,9 +146,9 @@ func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *ag
 		now := time.Now().UTC()
 		_ = s.writeNotification(NotificationAgentUpdated, AgentUpdatedNotification{
 			ThreadID: threadID,
-			Agent:    s.agentFromSnapshot(control, n.Snapshot),
+			Agent:    s.agentFromSnapshot(binding, control, n.Snapshot),
 		})
-		s.completeLiveAgentThread(threadID, control, n.Snapshot, now)
+		s.completeLiveAgentThread(binding, threadID, control, n.Snapshot, now)
 	}
 	if closed {
 		return nil
@@ -165,8 +167,8 @@ func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *ag
 			msg := control.AgentCompletionChatMessage(n.Snapshot, agentthread.RootPath)
 			consumer, _ := control.AgentResultDeliveryConsumer(resultID)
 			if consumer == "" {
-				if !s.steerAgentCompletion(threadID, resultID, msg) {
-					s.enqueueAgentCompletionTurn(threadID, n.Snapshot.ID, resultID, msg, &n.Snapshot)
+				if !s.steerAgentCompletion(binding, threadID, resultID, msg) {
+					s.enqueueAgentCompletionTurn(binding, threadID, n.Snapshot.ID, resultID, msg, &n.Snapshot)
 				}
 			}
 		}
@@ -174,7 +176,7 @@ func (s *Server) finalizeAgentTerminalWithCompleter(threadID string, control *ag
 	return nil
 }
 
-func (s *Server) forwardAgentStreamNotifications(threadID string, control *agentcontrol.AgentControl, ch <-chan subagent.StreamNotification, done <-chan struct{}) {
+func (s *Server) forwardAgentStreamNotifications(binding *runtime.State, threadID string, control *agentcontrol.AgentControl, ch <-chan subagent.StreamNotification, done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
@@ -184,7 +186,7 @@ func (s *Server) forwardAgentStreamNotifications(threadID string, control *agent
 				return
 			}
 			now := time.Now().UTC()
-			th, turn, started := s.ensureLiveAgentThread(threadID, control, n.Snapshot, now)
+			th, turn, started := s.ensureLiveAgentThread(binding, threadID, control, n.Snapshot, now)
 			if th == nil {
 				continue
 			}
@@ -197,7 +199,7 @@ func (s *Server) forwardAgentStreamNotifications(threadID string, control *agent
 			th.mu.Lock()
 			batch := th.applyStreamEventLocked(turn.ID, n.Event, now)
 			th.mu.Unlock()
-			s.notifyOutboundBatch(batch)
+			s.notifyOutboundBatch(binding, batch)
 			_ = s.writeNotification(NotificationTurnEvent, TurnEventNotification{
 				ThreadID: th.ID,
 				TurnID:   turn.ID,
@@ -227,11 +229,11 @@ func isRunningSubAgentStatus(status subagent.Status) bool {
 	}
 }
 
-func (s *Server) ensureLiveAgentThread(rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) (*threadState, Turn, bool) {
+func (s *Server) ensureLiveAgentThread(binding *runtime.State, rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) (*threadState, Turn, bool) {
 	if strings.TrimSpace(snap.ID) == "" {
 		return nil, Turn{}, false
 	}
-	th, created := s.ensureAgentThreadState(rootThreadID, control, snap, now)
+	th, created := s.ensureAgentThreadState(binding, rootThreadID, control, snap, now)
 	if th == nil {
 		return nil, Turn{}, false
 	}
@@ -245,14 +247,14 @@ func (s *Server) ensureLiveAgentThread(rootThreadID string, control *agentcontro
 	return th, turn, started
 }
 
-func (s *Server) ensureAgentThreadState(rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) (*threadState, bool) {
-	if th := s.thread(snap.ID); th != nil {
+func (s *Server) ensureAgentThreadState(binding *runtime.State, rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) (*threadState, bool) {
+	if th := s.threadForState(binding, snap.ID); th != nil {
 		return th, false
 	}
 
 	history := s.agentSnapshotHistory(control, snap)
 	providerName, inheritedModel := s.rt.ProviderName, s.rt.Model
-	if root := s.thread(rootThreadID); root != nil {
+	if root := s.threadForState(binding, rootThreadID); root != nil {
 		root.mu.Lock()
 		providerName = firstNonEmpty(root.ModelProvider, providerName)
 		inheritedModel = firstNonEmpty(root.Model, inheritedModel)
@@ -261,7 +263,7 @@ func (s *Server) ensureAgentThreadState(rootThreadID string, control *agentcontr
 	if pinnedProvider, _ := parseParticipantModelPin(snap.ModelPin); strings.TrimSpace(pinnedProvider) != "" {
 		providerName = strings.TrimSpace(pinnedProvider)
 	}
-	th := newThreadState(snap.ID, history, providerName, firstNonEmpty(snap.Model, inheritedModel), firstNonEmpty(snapCWD(rootThreadID, s), s.rt.RootDir), false, now)
+	th := newThreadState(snap.ID, history, providerName, firstNonEmpty(snap.Model, inheritedModel), firstNonEmpty(snapCWD(binding, rootThreadID, s), s.rt.RootDir), false, now)
 	th.ParentID = strings.TrimSpace(rootThreadID)
 	th.AgentPath = snap.AgentPath
 	th.ReadOnly = true
@@ -271,8 +273,16 @@ func (s *Server) ensureAgentThreadState(rootThreadID string, control *agentcontr
 	s.mu.Lock()
 	if existing := s.threads[snap.ID]; existing != nil {
 		s.mu.Unlock()
-		return existing, false
+		if existing.state != nil && existing.state.Sessions == binding.Sessions {
+			return existing, false
+		}
+		return nil, false
 	}
+	if s.closed.Load() {
+		s.mu.Unlock()
+		return nil, false
+	}
+	th.state = binding.Retain()
 	s.threads[snap.ID] = th
 	s.mu.Unlock()
 	return th, true
@@ -313,8 +323,8 @@ func (s *Server) applyAgentSnapshotLocked(th *threadState, rootThreadID string, 
 	}
 }
 
-func (s *Server) completeLiveAgentThread(rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) {
-	th, turn, status, turnErr := s.syncFinalAgentThread(rootThreadID, control, snap, now)
+func (s *Server) completeLiveAgentThread(binding *runtime.State, rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) {
+	th, turn, status, turnErr := s.syncFinalAgentThread(binding, rootThreadID, control, snap, now)
 	if th == nil {
 		return
 	}
@@ -343,8 +353,8 @@ func (s *Server) completeLiveAgentThread(rootThreadID string, control *agentcont
 	})
 }
 
-func (s *Server) syncFinalAgentThread(rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) (*threadState, Turn, TurnStatus, error) {
-	th, _ := s.ensureAgentThreadState(rootThreadID, control, snap, now)
+func (s *Server) syncFinalAgentThread(binding *runtime.State, rootThreadID string, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot, now time.Time) (*threadState, Turn, TurnStatus, error) {
+	th, _ := s.ensureAgentThreadState(binding, rootThreadID, control, snap, now)
 	if th == nil {
 		return nil, Turn{}, "", nil
 	}
@@ -388,11 +398,11 @@ func turnStatusForSubAgentSnapshot(snap subagent.SubAgentSnapshot) (TurnStatus, 
 	}
 }
 
-func snapCWD(rootThreadID string, s *Server) string {
+func snapCWD(binding *runtime.State, rootThreadID string, s *Server) string {
 	if s == nil {
 		return ""
 	}
-	if root := s.thread(rootThreadID); root != nil {
+	if root := s.threadForState(binding, rootThreadID); root != nil {
 		root.mu.Lock()
 		defer root.mu.Unlock()
 		return root.CWD
@@ -409,7 +419,7 @@ func firstNonZeroTime(values ...time.Time) time.Time {
 	return time.Time{}
 }
 
-func (s *Server) agentFromSnapshot(control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot) Agent {
+func (s *Server) agentFromSnapshot(binding *runtime.State, control *agentcontrol.AgentControl, snap subagent.SubAgentSnapshot) Agent {
 	ref := agentcontrol.AgentResultReference{}
 	if control != nil {
 		ref = control.AgentResultReference(snap)
@@ -443,7 +453,7 @@ func (s *Server) agentFromSnapshot(control *agentcontrol.AgentControl, snap suba
 		CacheReadTokens:     snap.CacheReadTokens,
 		StartedAt:           snap.StartedAt,
 		CompletedAt:         snap.CompletedAt,
-		Participant:         s.participantSummaryForSnapshot(snap),
+		Participant:         s.participantSummaryForSnapshot(binding, snap),
 	}
 	if snap.Error != nil {
 		out.Error = snap.Error.Error()
@@ -457,8 +467,8 @@ func (s *Server) agentFromSnapshot(control *agentcontrol.AgentControl, snap suba
 // snapshots, missing store row, or lookup error — falls back to a summary
 // synthesized from the snapshot's type/task name so display attribution is
 // never absent.
-func (s *Server) participantSummaryForSnapshot(snap subagent.SubAgentSnapshot) *participant.Summary {
-	if summary, ok := s.resolveParticipantSummary(snap.ParticipantID); ok {
+func (s *Server) participantSummaryForSnapshot(binding *runtime.State, snap subagent.SubAgentSnapshot) *participant.Summary {
+	if summary, ok := s.resolveParticipantSummary(binding, snap.ParticipantID); ok {
 		return &summary
 	}
 	fallback := participant.Summary{
@@ -472,20 +482,20 @@ func (s *Server) participantSummaryForSnapshot(snap subagent.SubAgentSnapshot) *
 
 // resolveParticipantSummary looks up a participant summary by ID through
 // the in-memory cache, falling back to the session store on miss.
-func (s *Server) resolveParticipantSummary(id string) (participant.Summary, bool) {
+func (s *Server) resolveParticipantSummary(binding *runtime.State, id string) (participant.Summary, bool) {
 	id = strings.TrimSpace(id)
 	if id == "" || s == nil || s.rt == nil || strings.TrimSpace(s.rt.SessionDir) == "" {
 		return participant.Summary{}, false
 	}
 
 	s.participantMu.Lock()
-	summary, ok := s.participantSummaryCache[id]
+	summary, ok := s.participantSummaryCache[sessionCacheKey{binding.Sessions, id}]
 	s.participantMu.Unlock()
 	if ok {
 		return summary, true
 	}
 
-	p, err := session.GetParticipant(s.rt.SessionDir, id)
+	p, err := binding.Sessions.GetParticipant(id)
 	if err != nil {
 		return participant.Summary{}, false
 	}
@@ -498,9 +508,9 @@ func (s *Server) resolveParticipantSummary(id string) (participant.Summary, bool
 
 	s.participantMu.Lock()
 	if s.participantSummaryCache == nil {
-		s.participantSummaryCache = make(map[string]participant.Summary)
+		s.participantSummaryCache = make(map[sessionCacheKey]participant.Summary)
 	}
-	s.participantSummaryCache[id] = summary
+	s.participantSummaryCache[sessionCacheKey{binding.Sessions, id}] = summary
 	s.participantMu.Unlock()
 	return summary, true
 }
@@ -511,4 +521,9 @@ func agentResultPreview(control *agentcontrol.AgentControl, snap subagent.SubAge
 		return preview
 	}
 	return control.AgentResultReference(snap).Preview
+}
+
+// Each callback resolves against the same authority as its transcript.
+func (s *Server) participantResolver(binding *runtime.State) participantSummaryResolver {
+	return func(id string) (participant.Summary, bool) { return s.resolveParticipantSummary(binding, id) }
 }

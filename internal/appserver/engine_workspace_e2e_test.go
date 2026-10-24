@@ -68,12 +68,12 @@ func testCodexWorkspaceFidelity(t *testing.T, binary string) {
 					PermissionMode: config.PermissionModeReadOnly, PermissionExplicit: true,
 				},
 			}
-			if ok, err := srv.startQueuedTurn(ctx, threadID, entry); err != nil || !ok {
+			if ok, err := srv.startQueuedTurn(testRuntimeState(t, srv.rt), ctx, threadID, entry); err != nil || !ok {
 				t.Fatalf("queued turn: %v, %v", ok, err)
 			}
 		} else if entrypoint == "completion" {
 			msg := providers.ChatMessage{Role: "user", Content: string(prompt)}
-			if ok, err := srv.startSyntheticTurn(ctx, threadID, msg, []agentCompletionTurn{{msg: msg}}); err != nil || !ok {
+			if ok, err := srv.startSyntheticTurn(testRuntimeState(t, srv.rt), ctx, threadID, msg, []agentCompletionTurn{{msg: msg}}); err != nil || !ok {
 				t.Fatalf("completion turn: %v, %v", ok, err)
 			}
 		} else {
@@ -123,14 +123,14 @@ func testCodexWorkspaceFidelity(t *testing.T, binary string) {
 				t.Errorf("turn %d write %q: result=%v exists=%v, want %v", turns, path, probe.Writes[path], written, want)
 			}
 		}
-		stored, found, err := session.Find(rt.SessionDir, threadID)
+		stored, found, err := rt.Sessions.Find(threadID)
 		if err != nil || !found || stored.EngineRef != "workspace-native" {
 			t.Fatalf("native identity not preserved: %+v, %v", stored, err)
 		}
 		t.Logf("turn %d: cwd=%q marker=%q policy=%q native-history=%d roots=%v", turns, probe.CWD, probe.Marker, probe.Policy, probe.Turns, probe.WritableRoots)
 	}
 	run(project, "project", "workspaceWrite", "direct")
-	if err := srv.rebindThreadWorkspace(threadID, linked); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threadID, linked); err != nil {
 		t.Fatal(err)
 	}
 	run(linked, "linked", "workspaceWrite", "direct")
@@ -141,17 +141,17 @@ func testCodexWorkspaceFidelity(t *testing.T, binary string) {
 	rt.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}
 	run(linked, "linked", "readOnly", "direct")
 	rt.PermissionModeExplicit = false
-	if err := srv.rebindThreadWorkspace(threadID, repo); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threadID, repo); err != nil {
 		t.Fatal(err)
 	}
 	run(project, "project", "workspaceWrite", "direct")
-	if err := srv.rebindThreadWorkspace(threadID, linked); err != nil {
+	if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threadID, linked); err != nil {
 		t.Fatal(err)
 	}
 	// Exercise the existing deterministic admission/background boundary.
 	// A later metadata refresh must not change this already-admitted turn.
 	srv.beforeQueuedTurnBackgroundForTest = func() {
-		if err := srv.rebindThreadWorkspace(threadID, project); err != nil {
+		if err := srv.rebindThreadWorkspace(testRuntimeState(t, srv.rt), threadID, project); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -170,11 +170,11 @@ func testCodexWorkspaceFidelity(t *testing.T, binary string) {
 	// before choosing the effective policy for both direct and queued turns.
 	setDurablePermission := func(mode string) {
 		t.Helper()
-		stored, found, err := session.Find(rt.SessionDir, threadID)
+		stored, found, err := rt.Sessions.Find(threadID)
 		if err != nil || !found {
 			t.Fatalf("find session for permission update: found=%v err=%v", found, err)
 		}
-		_, err = session.SetRuntimeSelection(rt.SessionDir, threadID, session.RuntimeSelection{
+		_, err = rt.Sessions.SetRuntimeSelection(threadID, session.RuntimeSelection{
 			Provider: stored.Provider, Model: stored.Model, Variant: stored.Variant,
 			Effort: stored.Effort, Speed: stored.Speed, ModelOptions: stored.ModelOptions,
 			PermissionMode: mode, ApproveForMe: stored.ApproveForMe,
@@ -196,7 +196,7 @@ func testCodexWorkspaceFidelity(t *testing.T, binary string) {
 	rt.PermissionModeExplicit = true
 	rt.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}
 	run(project, "project", "readOnly", "completion")
-	stored, found, err := session.Find(rt.SessionDir, threadID)
+	stored, found, err := rt.Sessions.Find(threadID)
 	if err != nil || !found || stored.PermissionMode != config.PermissionModeStandard {
 		t.Fatalf("process override changed the saved pin: %+v, %v", stored, err)
 	}

@@ -7,10 +7,13 @@
  * keys whenever the project list got a fresh array identity (any runtime
  * reload), silently re-expanding those sections.
  */
+import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
+  ExtensionCatalogRefreshResult,
+  ExtensionInventoryRecord,
   InitializeResult,
   ServerEvent,
   Thread,
@@ -40,6 +43,10 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 
 import { App } from "./App";
 import { translateCurrent } from "./i18n";
+import * as applicationState from "./plugins/ApplicationController";
+import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
+import { PluginHost } from "./plugins/PluginHost";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -195,6 +202,252 @@ describe("sidebar collapse-state independence", () => {
     delete document.documentElement.dataset.theme;
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  it("keeps the draft worktree base through shell replacement without applying it to another project", async () => {
+    installWuuApi();
+    const projects = ["first", "second"].map(id => ({
+      id, name: id, path: `${workspace}/${id}`,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
+    }));
+    let activeContext = { kind: "project" as const, project_id: "first", cwd: projects[0].path };
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: activeContext }));
+    window.wuu.selectProject = vi.fn(async id => {
+      activeContext = { kind: "project", project_id: id, cwd: projects.find(project => project.id === id)!.path };
+      return { projects, active_context: activeContext };
+    });
+    window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: activeContext.cwd }));
+    window.wuu.listThreads = vi.fn(async () => ({ threads: [] }));
+    window.wuu.gitStatus = vi.fn(async () => ({ is_repo: true, branch: "main", branches: ["main", "feature"], dirty_count: 0, files: [] }));
+    const controller = new applicationState.ApplicationController();
+    const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    let release!: () => void, started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let pending: ReturnType<PluginHost["activateGeneration"]> | undefined;
+    const click = async (selector: string) => {
+      const button = document.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+      expect(button!.closest("[inert]")).toBeNull();
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    try {
+      await host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: "first", register: activateDefaultShell });
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+      });
+      await flushAsync();
+      act(() => {
+        pending = host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: "second", register: async api => {
+          activateDefaultShell(api);
+          started();
+          await gate;
+        } });
+      });
+      await ready;
+      const oldToggle = container.querySelector(".composer-worktree-toggle")!;
+      await click(".composer-worktree-toggle");
+      expect(oldToggle.getAttribute("aria-pressed")).toBe("true");
+      await click(".composer-git-controls .hero-project-pill");
+      await click('.composer-branch-menu button[title="feature"]');
+      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
+      await act(async () => { release(); await pending; });
+      await flushAsync();
+      expect(oldToggle.isConnected).toBe(false);
+      expect(container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed")).toBe("true");
+      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
+      await click(".composer-project-control .hero-project-pill");
+      await click('.composer-project-menu button[title="second"]');
+      expect(controller.getState().activeContext?.cwd).toBe(projects[1].path);
+      expect(container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed")).toBe("false");
+      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("main");
+    } finally {
+      release();
+      await pending;
+      act(() => { root?.unmount(); });
+      root = null;
+      await host.unloadAndWait("shell");
+      shared.mockRestore();
+    }
+  });
+
+  it("clears worktree selection when threads change without a mounted shell before the next draft submits", async () => {
+    installWuuApi();
+    const context = { kind: "project" as const, project_id: "worktree-project", cwd: workspace };
+    const projects = [{ id: context.project_id, name: "Worktree project", path: workspace,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }];
+    const thread: Thread = { id: "selected-thread", preview: "Existing conversation", model_provider: "fake", model: "fake-model",
+      cwd: workspace, workspace_id: context.project_id, workspace_kind: "project", status: "idle",
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", turns: [] };
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
+    window.wuu.selectProject = vi.fn(async () => ({ projects, active_context: context }));
+    window.wuu.listThreads = vi.fn(async () => ({ threads: [] }));
+    window.wuu.resumeThread = vi.fn(async () => ({ thread }));
+    window.wuu.startThread = vi.fn(async () => ({ thread: { ...thread, id: "submitted-draft" } }));
+    window.wuu.startTurn = vi.fn(async () => ({ turn: { id: "submitted-turn", status: "completed" as const, items_view: "full" as const, items: [] } }));
+    window.wuu.gitStatus = vi.fn(async () => ({ is_repo: true, branch: "main", dirty_count: 0, files: [] }));
+    const controller = new applicationState.ApplicationController();
+    const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    // DesktopApplicationRoot retains the controller independently of its shell.
+    const stopController = controller.start();
+    const host = new PluginHost({ react: React, application: controller });
+    const activate = (graph: string) => host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: graph, register: activateDefaultShell });
+    const render = () => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+    try {
+      await activate("first");
+      await act(async () => { root = createRoot(container); render(); });
+      await flushAsync();
+      const toggle = container.querySelector<HTMLButtonElement>(".composer-worktree-toggle")!;
+      expect(toggle.disabled).toBe(false);
+      await act(async () => toggle.click());
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      await act(async () => root!.render(null));
+      await act(async () => { await controller.invoke("thread.select", { threadId: thread.id }); });
+      expect(controller.getState().thread?.id).toBe(thread.id);
+      await act(async () => { await controller.invoke("workspace.select", { workspaceId: context.project_id }); });
+      expect(controller.getState().thread).toBeUndefined();
+      await activate("second");
+      await act(async () => render());
+      await flushAsync();
+      const nextDraftPressed = container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed");
+      const textarea = container.querySelector<HTMLTextAreaElement>(".composer textarea")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Next draft after navigation");
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await flushAsync();
+      const send = container.querySelector<HTMLButtonElement>('.composer-send-button[data-wuu-state="send"]')!;
+      expect(send.disabled).toBe(false);
+      await act(async () => send.click());
+      await flushAsync();
+      expect(window.wuu.startThread).toHaveBeenCalledOnce();
+      expect(vi.mocked(window.wuu.startThread).mock.calls[0][0]?.workspace).not.toBe("worktree");
+      expect(nextDraftPressed).toBe("false");
+    } finally {
+      act(() => { root?.unmount(); });
+      root = null;
+      await host.unloadAndWait("shell");
+      stopController();
+      shared.mockRestore();
+    }
+  });
+
+  // A refresh replaces the shell activation even when its code fingerprint is
+  // unchanged. Preserve the selected catalog, but never replay stale navigation.
+  it.each([
+    { section: "skills", leave: false },
+    { section: "plugins", leave: false },
+    { section: "skills", leave: true },
+  ] as const)("retains the latest route during $section refresh (leave=$leave)", async ({ section, leave }) => {
+    installWuuApi();
+    window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
+    let finishRefresh!: (value: ExtensionCatalogRefreshResult) => void;
+    window.wuu.refreshExtensionCatalog = vi.fn(() => new Promise<ExtensionCatalogRefreshResult>(resolve => { finishRefresh = resolve; }));
+    const controller = new applicationState.ApplicationController();
+    const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
+    const click = async (selector: string) => {
+      const button = container.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    try {
+      await activate();
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+      });
+      await flushAsync();
+      await click('[data-ribbon-id="catalog"]');
+      await click(`.sidebar-section-navigation > button:nth-of-type(${section === "skills" ? 2 : 1})`);
+      const selectedLabel = container.querySelector('.sidebar-section-item[aria-current="page"]')?.getAttribute("aria-label");
+      expect(selectedLabel).toBeTruthy();
+      await click('.catalog-refresh');
+      expect(container.querySelector('.catalog-refresh')?.getAttribute("aria-busy")).toBe("true");
+      if (leave) await click('[data-wuu-component="conversations-section"]');
+      const previousShell = container.querySelector('.app-shell');
+      await act(async () => { await activate(); });
+      await act(async () => { finishRefresh({ skills: [], extension_inventory: [] }); });
+      await flushAsync();
+      expect(window.wuu.refreshExtensionCatalog).toHaveBeenCalledOnce();
+      expect(container.querySelector('.app-shell')).not.toBe(previousShell);
+      if (leave) {
+        expect(container.querySelector('.catalog-section-pane:not([hidden])')).toBeNull();
+        await click('[data-ribbon-id="catalog"]');
+      }
+      expect(container.querySelector('.catalog-section-pane:not([hidden])')).not.toBeNull();
+      expect(container.querySelector('.sidebar-section-item[aria-current="page"]')?.getAttribute("aria-label")).toBe(selectedLabel);
+      expect(container.querySelector('.catalog-refresh')?.getAttribute("aria-busy")).toBe("false");
+    } finally {
+      act(() => { root?.unmount(); });
+      root = null;
+      await host.unloadAndWait("shell");
+      shared.mockRestore();
+    }
+  });
+
+  it("keeps plugin details actionable through disable and re-enable shell activations", async () => {
+    installWuuApi();
+    let record: ExtensionInventoryRecord = {
+      id: "plugin:user:route-probe", name: "Route probe", kind: "plugin", state: "active",
+      fingerprint: "unchanged", enabled: true, approval_state: "granted", runtime_state: "active",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "route-probe" },
+    };
+    vi.mocked(window.wuu.initialize).mockResolvedValue({ ...initialized(), extension_inventory: [record] });
+    window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
+    const controller = new applicationState.ApplicationController();
+    const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
+    window.wuu.updateExtensionPackage = vi.fn(async ({ action }) => {
+      record = { ...record, enabled: action === "enable", runtime_state: action === "enable" ? "active" : "inactive" };
+      controller.updateState(current => ({ ...current, initialized: { ...current.initialized!, extension_inventory: [record] } }));
+      await activate();
+      return { extension_inventory: [record], skills: [] };
+    });
+    const click = async (selector: string) => {
+      const button = container.querySelector<HTMLButtonElement>(selector);
+      expect(button).not.toBeNull();
+      expect(button!.disabled).toBe(false);
+      await act(async () => button!.click());
+      await flushAsync();
+    };
+    try {
+      await activate();
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+      });
+      await flushAsync();
+      await click('[data-ribbon-id="catalog"]');
+      await click('.catalog-row-open');
+      for (const [action, checked] of [["disable", "false"], ["enable", "true"]] as const) {
+        await click('[data-wuu-component="plugin-detail"] [role="switch"]');
+        expect(window.wuu.updateExtensionPackage).toHaveBeenLastCalledWith({ id: record.id, fingerprint: record.fingerprint, action });
+        expect(container.querySelector('[data-wuu-component="plugin-detail"]')?.getAttribute("aria-label")).toBe(record.name);
+        expect(container.querySelector('[data-wuu-component="plugin-detail"] [role="switch"]')?.getAttribute("aria-checked")).toBe(checked);
+      }
+      await click('.sidebar-section-navigation > button:nth-of-type(2)');
+      await click('.sidebar-section-navigation > button:nth-of-type(1)');
+      expect(container.querySelector('[data-wuu-component="plugin-detail"]')).toBeNull();
+      await click('.catalog-row-open');
+      await click('[data-testid="plugin-page-back"]');
+      await act(async () => { await activate(); });
+      expect(container.querySelector('[data-wuu-component="plugin-detail"]')).toBeNull();
+      expect(container.querySelector('.catalog-row-open')).not.toBeNull();
+    } finally {
+      act(() => { root?.unmount(); });
+      root = null;
+      await host.unloadAndWait("shell");
+      shared.mockRestore();
+    }
   });
 
   it("keeps the account control available and dismisses its menu on collapse", async () => {

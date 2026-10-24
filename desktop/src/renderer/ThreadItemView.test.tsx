@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ThreadItem, Turn } from "../shared/protocol";
 import { streamTextKey, streamTextStore } from "./StreamText";
 import { ImagePreviewProvider } from "./ImagePreview";
@@ -14,6 +14,10 @@ import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
 import type { ResponseSelection } from "../shared/protocol";
+
+beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
+});
 
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
@@ -108,6 +112,8 @@ afterEach(() => {
   desktopPluginHost.unload("thread-item-production-test");
   desktopPluginHost.setActiveConversationThread(undefined);
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  delete document.documentElement.dataset.messageStyle;
   if (rangeBoundsDescriptor) Object.defineProperty(Range.prototype, "getBoundingClientRect", rangeBoundsDescriptor);
   else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
   root = undefined;
@@ -115,10 +121,64 @@ afterEach(() => {
 });
 
 describe("ThreadItemView", () => {
+  it("measures action placement only in IM mode and resumes after appearance changes", () => {
+    let resizeActions: ResizeObserverCallback | undefined;
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(node: Element): void {
+        if (node.classList.contains("user-message-block")) resizeActions = this.callback;
+      }
+      unobserve(): void {}
+      disconnect(): void {}
+    });
+    let lastGlyphLeft = 50;
+    const measureGlyph = vi.fn(() => new DOMRect(lastGlyphLeft, 20, 8, 20));
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: measureGlyph });
+    document.documentElement.dataset.messageStyle = "bubble";
+    render({ item: makeUserMessage("A short question"), turnStatus: "completed", streaming: false });
+    const block = container!.querySelector<HTMLElement>(".user-message-block")!;
+    const message = block.querySelector<HTMLElement>(".user-message")!;
+    const actions = block.querySelector<HTMLElement>(".user-message-actions")!;
+    expect(actions.querySelector("button")).not.toBeNull();
+    expect(measureGlyph).not.toHaveBeenCalled();
+
+    message.getBoundingClientRect = () => new DOMRect(0, 0, 300, 60);
+    Object.defineProperty(actions, "offsetWidth", { configurable: true, value: 64 });
+    const computedStyle = window.getComputedStyle.bind(window);
+    vi.spyOn(window, "getComputedStyle").mockImplementation(node => {
+      if (node === message) return { paddingBottom: "20px", paddingRight: "12px" } as CSSStyleDeclaration;
+      if (node.classList.contains("rich-paragraph")) return { lineHeight: "24px" } as CSSStyleDeclaration;
+      return computedStyle(node);
+    });
+    const resize = () => act(() => resizeActions!([], {} as ResizeObserver));
+    document.documentElement.dataset.messageStyle = "im";
+    resize();
+    expect(measureGlyph).toHaveBeenCalledOnce();
+    expect(actions.dataset.placement).toBe("inline");
+    // Reflow or font changes can move the last glyph without resizing the row.
+    lastGlyphLeft = 250;
+    act(() => block.dispatchEvent(new Event("pointerenter")));
+    expect(actions.dataset.placement).toBe("below");
+    lastGlyphLeft = 50;
+    act(() => block.dispatchEvent(new Event("focusin")));
+    expect(actions.dataset.placement).toBe("inline");
+
+    document.documentElement.dataset.messageStyle = "bubble";
+    measureGlyph.mockClear();
+    resize();
+    act(() => block.dispatchEvent(new Event("pointerenter")));
+    expect(measureGlyph).not.toHaveBeenCalled();
+    document.documentElement.dataset.messageStyle = "im";
+    lastGlyphLeft = 250;
+    resize();
+    expect(measureGlyph).toHaveBeenCalledOnce();
+    expect(actions.dataset.placement).toBe("below");
+  });
+
   it.each(["user_message", "agent_message"] as const)("mounts plugin actions for %s with only the public message snapshot", async (type) => {
     const execute = vi.fn();
     desktopPluginHost.setActiveConversationThread("another-active-thread");
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test", generation: "actions-one",
       register(api) {
         api.registerCommand({ id: "message.inspect", title: "Inspect plugin message", placements: ["conversation.message.actions"], execute });
@@ -365,7 +425,7 @@ describe("ThreadItemView", () => {
 
   it("mounts sanitized frozen context before and after each conversation message", async () => {
     const contexts: Array<Readonly<Record<string, unknown>>> = [];
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "one",
       register(api) {
@@ -404,7 +464,7 @@ describe("ThreadItemView", () => {
   });
 
   it("uses a conversation item presenter for the complete production item root", async () => {
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-1",
       register: (api) => {
@@ -432,7 +492,7 @@ describe("ThreadItemView", () => {
 
   it("uses the legacy message surface as the exact native fallback with a sanitized context", async () => {
     let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-1",
       register: (api) => {
@@ -474,7 +534,7 @@ describe("ThreadItemView", () => {
 
   it("exposes the active thread id on the conversation message surface", async () => {
     let received: Readonly<Record<string, unknown>> | undefined;
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-thread-id",
       register: (api) => {
@@ -499,7 +559,7 @@ describe("ThreadItemView", () => {
 
   it("lets the keyed presenter replace the legacy surface and native fallback coherently", async () => {
     const legacyRender = vi.fn(() => <section data-legacy-message />);
-    await desktopPluginHost.activateGeneration({
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",
       pluginId: "thread-item-production-test",
       generation: "gen-1",
       register: (api) => {

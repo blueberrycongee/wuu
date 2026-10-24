@@ -91,21 +91,31 @@ jobs:
         with:
           node-version-file: .node-version
 
-      - name: Install plugin build dependencies
-        run: npm ci --prefix plugins
+      - name: Install plugin and SDK dependencies
+        run: |
+          npm ci --prefix packages/plugin-sdk
+          npm ci --prefix plugins
 
       - name: Check
         run: make check-go check-plugins
+
+      - name: Guard generation admission under race detector
+        timeout-minutes: 10
+        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
+
+      - name: Guard shared authority and model receipt lifecycle under race detector
+        timeout-minutes: 10
+        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
 
       - name: Test
         run: make test-go test-plugins
 
       - name: Build plugin model acceptance prerequisites
         run: |
-          npm ci --prefix packages/plugin-sdk
           npm --prefix packages/plugin-sdk run build
           mkdir -p .tmp/bin
-          go build -o .tmp/bin/wuu ./cmd/wuu
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o .tmp/bin/wuu ./cmd/wuu
 
       - name: Guard one-shot plugin model requests
         timeout-minutes: 3
@@ -291,6 +301,12 @@ jobs:
       - name: Install fonts for multilingual selection captures
         if: ${{ matrix.suite != 'unit' && (!cancelled() && steps.build-renderer.outcome == 'success') }}
         run: |
+          # Hosted images can select the slow Azure archive through a mirror list.
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y fonts-noto-cjk fonts-noto-color-emoji xdotool
 
@@ -604,7 +620,9 @@ jobs:
       - name: Build desktop fixture core
         if: ${{ contains(fromJSON('["corpus","session"]'), matrix.suite) }}
         id: build-fixture-core
-        run: go build -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
+        run: |
+          fixture_version="$(make -s print-version)"
+          go build -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" -o "${{ runner.temp }}/wuu-session-switch-core" ./cmd/wuu
 
       - name: Validate shareable conversation corpus
         if: ${{ matrix.suite == 'corpus' }}
@@ -825,7 +843,7 @@ jobs:
           retention-days: 14
 
       - name: Guard request lifecycle
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5
         shell: bash
         env:
@@ -887,7 +905,7 @@ jobs:
           retention-days: 14
 
       - name: Check session switch budget ratchet
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         env:
           PERF_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
@@ -896,7 +914,7 @@ jobs:
           node desktop/scripts/session-switch-budget.cjs "$PERF_BASE_SHA"
 
       - name: Guard session switch work
-        if: ${{ matrix.suite == 'session' }}
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         # Preserve Electron failures through the evidence log pipeline.
         shell: bash
         env:
@@ -1097,6 +1115,11 @@ jobs:
       - name: Build headless workspace acceptance prerequisites
         run: |
           npm --prefix desktop run build:remote
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           clients/mobile-web/node_modules/.bin/playwright install --with-deps chromium
           sudo apt-get update
           sudo apt-get install -y openssh-server
@@ -1258,6 +1281,11 @@ jobs:
           cache-dependency-path: go.sum
       - name: Install Linux packaging dependencies
         run: |
+          for apt_source in /etc/apt/sources.list /etc/apt/apt-mirrors.txt; do
+            if [ -f "$apt_source" ]; then
+              sudo sed -i 's|http://azure\.archive\.ubuntu\.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$apt_source"
+            fi
+          done
           sudo apt-get update
           sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2
           npm ci --prefix desktop

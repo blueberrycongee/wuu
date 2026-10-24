@@ -41,7 +41,8 @@ func TestPeerReplyUsesNativeCompletion(t *testing.T) {
 	for _, resolution := range []string{"empty", "reply", "unknown_stop", "provider_failure"} {
 		t.Run(resolution, func(t *testing.T) {
 			srv, provider, owner, out, threadID := newPeerCompletionFixture(t)
-			sent, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+			ctx := pluginInvocationContext(t, srv.rt, context.Background())
+			sent, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "peer.reply:test", SessionID: threadID, Cause: "peer.reply",
 				Input: pluginhost.SessionInput{Prompt: "The peer confirms the result already reported to the user."},
 			})
@@ -99,7 +100,7 @@ func TestPeerReceiptCancellationPreventsRedelivery(t *testing.T) {
 	for _, mode := range []string{pluginhost.SessionIfRunningQueue, pluginhost.SessionIfRunningSteer} {
 		t.Run(mode, func(t *testing.T) {
 			srv, provider, owner, _, threadID := newPeerCompletionFixture(t)
-			ctx := context.Background()
+			ctx := pluginInvocationContext(t, srv.rt, context.Background())
 			initial, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "work", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Review the files"},
 			})
@@ -114,14 +115,14 @@ func TestPeerReceiptCancellationPreventsRedelivery(t *testing.T) {
 			if _, err := srv.sendPluginSession(ctx, owner.id, params); err != nil {
 				t.Fatal(err)
 			}
-			if interrupted, err := srv.interruptThreadExecution(threadID, "", initial.TurnID); err != nil || !interrupted {
+			if interrupted, err := srv.interruptThreadExecution(testRuntimeState(t, srv.rt), threadID, "", initial.TurnID); err != nil || !interrupted {
 				t.Fatalf("interrupt: %v, %v", interrupted, err)
 			}
 			inspected, err := srv.inspectPluginSession(ctx, owner.id, pluginhost.SessionInspectParams{SessionID: threadID, RequestID: params.RequestID})
 			if err != nil || inspected.Turn == nil || inspected.Turn.State != pluginhost.TurnLifecycleDiscarded || inspected.Turn.Retryable {
 				t.Fatalf("user cancellation lost its durable discard receipt: %+v, %v", inspected, err)
 			}
-			waitForThreadLeaseRelease(t, srv.rt.SessionDir, threadID)
+			waitForThreadLeaseRelease(t, srv.rt.Sessions, srv.rt.SessionDir, threadID)
 			retried, err := srv.sendPluginSession(ctx, owner.id, params)
 			if err != nil || retried.State != pluginhost.TurnLifecycleDiscarded {
 				t.Fatalf("cancelled receipt was admitted again: %+v, %v", retried, err)
@@ -143,7 +144,8 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			srv, provider, owner, _, threadID := newPeerCompletionFixture(t)
-			initial, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+			ctx := pluginInvocationContext(t, srv.rt, context.Background())
+			initial, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "work", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Review the files"},
 			})
 			if err != nil {
@@ -151,7 +153,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 			}
 			first := provider.next(t)
 			for _, id := range []string{"receipt-one", "receipt-one", "receipt-two"} {
-				sent, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+				sent, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 					RequestID: id, SessionID: threadID, Cause: "peer.reply", IfRunning: pluginhost.SessionIfRunningSteer,
 					Input: pluginhost.SessionInput{Prompt: id},
 				})
@@ -198,7 +200,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 				}
 			}
 			for _, requestID := range []string{"receipt-one", "receipt-two"} {
-				inspected, err := srv.inspectPluginSession(context.Background(), owner.id, pluginhost.SessionInspectParams{
+				inspected, err := srv.inspectPluginSession(ctx, owner.id, pluginhost.SessionInspectParams{
 					SessionID: threadID, RequestID: requestID,
 					Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
 				})
@@ -222,7 +224,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 
 			// A later provider checkpoint can remove the receipt turn from model
 			// context while retaining it in the durable display transcript.
-			later, err := srv.sendPluginSession(context.Background(), owner.id, pluginhost.SessionSendParams{
+			later, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{
 				RequestID: "later", SessionID: threadID, Input: pluginhost.SessionInput{Prompt: "Later work"},
 			})
 			if err != nil {
@@ -244,7 +246,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 					t.Fatal("later turn did not settle")
 				}
 			}
-			records, head, err := loadProviderPersistedMessages(srv.rt.SessionDir, threadID, true)
+			records, head, err := loadProviderPersistedMessages(srv.rt.Sessions, threadID, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -257,7 +259,7 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 			if len(retained) == 0 {
 				t.Fatal("later turn missing from provider history")
 			}
-			if _, err := session.StoreHistoryCheckpointAtBaseline(srv.rt.SessionDir, threadID,
+			if _, err := srv.rt.Sessions.StoreHistoryCheckpointAtBaseline(threadID,
 				session.HistoryCheckpointKindProviderRewrite, retained, head); err != nil {
 				t.Fatal(err)
 			}
@@ -274,12 +276,12 @@ func TestPeerReceiptsJoinActiveWorkOrOneLateFollowup(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := session.PutPluginTurnLifecycleOutbox(srv.rt.SessionDir, owner.id, "receipt-two", payload); err != nil {
+					if err := srv.rt.Sessions.PutPluginTurnLifecycleOutbox(owner.id, "receipt-two", payload); err != nil {
 						t.Fatal(err)
 					}
 				}
 				for _, requestID := range []string{"receipt-one", "receipt-two"} {
-					inspected, err := fresh.inspectPluginSession(context.Background(), owner.id, pluginhost.SessionInspectParams{
+					inspected, err := fresh.inspectPluginSession(pluginInvocationContext(t, fresh.rt, context.Background()), owner.id, pluginhost.SessionInspectParams{
 						SessionID: threadID, RequestID: requestID,
 						Wait: pluginhost.SessionInspectWaitTerminal, TimeoutMS: 20,
 					})

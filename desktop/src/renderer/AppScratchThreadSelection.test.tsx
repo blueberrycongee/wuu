@@ -49,6 +49,9 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { App } from "./App";
+import { initialState } from "./AppState";
+import { mockAnimationFrames } from "./AnimationFrameTestHarness";
+import { getDesktopApplication } from "./plugins/ApplicationController";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -223,6 +226,62 @@ describe("对话 (scratch) sidebar thread selection", () => {
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("finishes a pending historical message jump while a replacement shell initializes", async () => {
+    vi.useFakeTimers();
+    const frames = mockAnimationFrames();
+    const matchMedia = vi.mocked(window.matchMedia).getMockImplementation()!;
+    vi.mocked(window.matchMedia).mockImplementation(query => ({
+      ...matchMedia(query), matches: query.includes("prefers-reduced-motion"),
+    }));
+    const thread: Thread = { ...scratchThreadB(), turns: Array.from({ length: 45 }, (_, index) => ({
+      id: `turn-${index + 1}`, status: "completed", items_view: "full", items: [
+        { id: `answer-${index + 1}`, type: "agent_message", seq: index + 1,
+          text: index === 4 ? "historical needle" : `answer ${index + 1}` },
+      ],
+    })) };
+    installWuuApi([thread]);
+    // jsdom has no Range geometry; keep the real match and reveal behavior.
+    let viewport: HTMLElement | null = null;
+    const matchBounds = () => new DOMRect(0, 500 - (viewport?.scrollTop ?? 0), 10, 10);
+    const createRange = document.createRange.bind(document);
+    vi.spyOn(document, "createRange").mockImplementation(() => {
+      const range = createRange();
+      range.getBoundingClientRect = matchBounds;
+      return range;
+    });
+    const application = getDesktopApplication();
+    // Workspace activation has completed. The replacement shell must consume
+    // its pending message address without replaying it from an init snapshot.
+    application.updateState({ ...initialState, initialized: initialized(SCRATCH_CWD_B),
+      activeContext: { kind: "no_project", cwd: SCRATCH_CWD_B }, threads: [thread], thread,
+      conversationSearchTarget: { id: "pending-search", ready: true, query: "historical needle",
+        result: { thread, message_seq: 5, snippet: "historical needle" } },
+    });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<App application={application} />);
+    });
+    viewport = container.querySelector<HTMLElement>(".scroll-region")!;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 6000 },
+    });
+    viewport.getBoundingClientRect = () => new DOMRect(0, 0, 800, 600);
+    viewport.scrollTop = 5400;
+    await frames.flush();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+
+    const match = container.querySelector("#message-turn-5-answer-5");
+    expect(match?.textContent).toContain("historical needle");
+    expect(match?.classList.contains("user-message-jump-flash")).toBe(true);
+    expect(matchBounds().top).toBeGreaterThanOrEqual(0);
+    expect(matchBounds().bottom).toBeLessThanOrEqual(viewport.clientHeight);
+    expect(application.getState().conversationSearchTarget).toBeUndefined();
   });
 
   it("resumes a scratch thread from another scratch cwd and switches activeContext to it", async () => {

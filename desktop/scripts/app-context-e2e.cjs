@@ -31,9 +31,10 @@ for (const operation of ['state', 'recording', 'save', 'permission', 'discard'])
 ipcMain.on('snapshot:subscribe', () => snapshotCalls.push('subscribe'));
 ipcMain.on('snapshot:send', () => sends++);
 let preload = fs.readFileSync(path.join(__dirname, 'streaming-e2e-preload.cjs'), 'utf8');
-preload = preload.replace('contextBridge.exposeInMainWorld("wuu", {', `
+preload = preload.replace('const withDefaultShell = require("./default-shell-e2e.cjs");', `const withDefaultShell = ${require('./default-shell-e2e.cjs')};`);
+preload = preload.replace('contextBridge.exposeInMainWorld("wuu", withDefaultShell({', `
 ipcRenderer.on('snapshot:changed', () => ipcRenderer.send('snapshot:delivered'));
-contextBridge.exposeInMainWorld("wuu", {
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   platform: 'darwin',
   getBuildInfo: async () => ({ core: undefined, desktop: { version: 'app-snapshot-e2e', date: '2026-10-09' } }),
   listMCPServers: async () => ({ servers: [] }),

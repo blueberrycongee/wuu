@@ -171,6 +171,21 @@ func (r *TurnToolRuntime) Close() {
 	r.workers.Wait()
 }
 
+func (r *TurnToolRuntime) HasAcceptedCalls() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.runs) > 0
+}
+
+func (r *TurnToolRuntime) Join(ctx context.Context, calls []providers.ToolCall, stepIndex int, onDetail func(providers.ToolCall, toolresult.Result), onResult func(providers.ToolCall, string), onRejected func(ToolBatchRejectionInfo)) ([]providers.ChatMessage, error) {
+	r.SetStepIndex(stepIndex)
+	r.SetResultCallback(onDetail)
+	return r.ExecuteFinalCalls(ctx, calls, onResult, onRejected)
+}
+
 func (r *TurnToolRuntime) HasStartedWork() bool {
 	if r == nil {
 		return false

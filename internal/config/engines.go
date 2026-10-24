@@ -3,11 +3,9 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
-	"github.com/blueberrycongee/wuu/internal/securefs"
 )
 
 // EnginesConfig configures external agent engines in the
@@ -110,13 +108,15 @@ type EnginesSettingsUpdate struct {
 // UpdateEnginesSettings persists engine settings into the config JSON,
 // following the same raw-map merge pattern as UpdateGeneralSettings.
 func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) error {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return err
-	}
+	return updateConfigSourceFile(configPath, func(source []byte) ([]byte, error) { return UpdateEnginesSettingsSource(source, update) })
+}
+
+// UpdateEnginesSettingsSource validates an engine settings edit without choosing
+// or writing its persistence backend.
+func UpdateEnginesSettingsSource(data []byte, update EnginesSettingsUpdate) ([]byte, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
+		return nil, err
 	}
 
 	engines, _ := raw["engines"].(map[string]any)
@@ -146,17 +146,17 @@ func UpdateEnginesSettings(configPath string, update EnginesSettingsUpdate) erro
 
 	out, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal config: %w", err)
+		return nil, fmt.Errorf("marshal config: %w", err)
 	}
 	var cfg Config
 	if err := json.Unmarshal(out, &cfg); err != nil {
-		return err
+		return nil, err
 	}
 	applyDefaults(&cfg)
 	if err := cfg.Validate(); err != nil {
-		return err
+		return nil, err
 	}
-	return securefs.WriteFileAtomic(configPath, append(out, '\n'))
+	return append(out, '\n'), nil
 }
 
 func applyEngineBinaryUpdate(engines map[string]any, name string, update *EngineBinaryUpdate) {

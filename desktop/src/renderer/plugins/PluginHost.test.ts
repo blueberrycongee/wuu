@@ -269,7 +269,7 @@ describe("PluginHost", () => {
     host.unload("pending");
   });
 
-  it.each(["runtime", "workspaces", "threads"])("rejects stale %s results even when the replacement reuses the same fingerprint", async (operation) => {
+  it.each(["runtime", "service", "workspaces", "threads"])("rejects stale %s results even when the replacement reuses the same fingerprint", async (operation) => {
     let finish!: () => void;
     const gate = new Promise<void>((resolve) => { finish = resolve; });
     const host = new PluginHost({
@@ -281,6 +281,7 @@ describe("PluginHost", () => {
     let api!: PluginGenerationApi;
     await host.activateGeneration({ pluginId: "async", generation: "same", register(value) { api = value; } });
     const request = operation === "runtime" ? api.invokeRuntime("read")
+      : operation === "service" ? api.invokeService({ service: "catalog", method: "read" })
       : operation === "workspaces" ? api.listWorkspaces() : api.listThreads("/workspace");
     await host.activateGeneration({ pluginId: "async", generation: "same", register() {} });
     finish();
@@ -852,36 +853,72 @@ describe("PluginHost", () => {
     expect(host.getPresenters("conversation.item")).toEqual([]);
   });
 
-  it("binds runtime requests to the active plugin generation", async () => {
-    const requests: unknown[] = [];
-    const host = new PluginHost({
-      react: React,
-      invokeRuntime: async (request) => {
-        requests.push(request);
-        return { ok: true };
-      },
+  it.each(["runtime", "service"])("binds %s requests to the captured plugin and graph generation", async (kind) => {
+    const invoke = vi.fn(async (_request: unknown) => ({ ok: true }));
+    const host = new PluginHost({ react: React, invokeRuntime: invoke });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "consumer", generation: "same", graphGeneration: "graph-one", register(value) { api = value; } });
+    const request = {
+      service: "catalog", method: "read", params: { item: "one" },
+      pluginId: "forged", generation: "forged", graphGeneration: "forged", execution_id: "forged", provider: "forged",
+    };
+    const options = { workspaceId: "workspace", workspaceRoot: "/workspace" };
+    await expect(kind === "runtime" ? api.invokeRuntime("read", request.params, options) : api.invokeService(request, options)).resolves.toEqual({ ok: true });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith({
+      pluginId: "consumer", generation: "same", graphGeneration: "graph-one",
+      ...(kind === "service" ? { service: "catalog" } : {}),
+      method: "read", input: request.params, ...options, signal: expect.any(AbortSignal),
     });
-    let firstApi: Parameters<Parameters<typeof host.activateGeneration>[0]["register"]>[0] | undefined;
-    await host.activateGeneration({
-      pluginId: "runtime-owner",
-      generation: "one",
-      register(api) { firstApi = api; },
-    });
-    await expect(firstApi?.invokeRuntime("summary.get", { threadId: "thread-1" })).resolves.toEqual({ ok: true });
-    expect(requests).toEqual([{
-      pluginId: "runtime-owner",
-      generation: "one",
-      method: "summary.get",
-      input: { threadId: "thread-1" },
-      signal: expect.any(AbortSignal),
-    }]);
+    await host.activateGeneration({ pluginId: "consumer", generation: "same", graphGeneration: "graph-two", register() {} });
+    await expect(kind === "runtime" ? api.invokeRuntime("read") : api.invokeService(request)).rejects.toThrow("no longer active");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    host.unload("consumer");
+  });
 
-    await host.activateGeneration({
-      pluginId: "runtime-owner",
-      generation: "two",
-      register() {},
-    });
-    await expect(firstApi?.invokeRuntime("summary.get")).rejects.toThrow("no longer active");
+  it.each(["runtime", "service"])("cancels %s calls and removes settled caller abort listeners", async (kind) => {
+    let finish!: (result: unknown) => void;
+    const invoke = vi.fn((_request: { signal?: AbortSignal }) => new Promise(resolve => { finish = resolve; }));
+    const host = new PluginHost({ react: React, invokeRuntime: invoke });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "consumer", generation: "one", register(value) { api = value; } });
+    const call = (signal: AbortSignal) => kind === "runtime"
+      ? api.invokeRuntime("read", undefined, { signal })
+      : api.invokeService({ service: "catalog", method: "read" }, { signal });
+    const controller = new AbortController();
+    controller.abort(new Error("already cancelled"));
+    await expect(call(controller.signal)).rejects.toThrow("already cancelled");
+    expect(invoke).not.toHaveBeenCalled();
+    const pendingController = new AbortController();
+    const pending = call(pendingController.signal);
+    pendingController.abort(new Error("caller cancelled"));
+    expect(invoke.mock.calls[0][0].signal?.aborted).toBe(true);
+    finish({ ok: true });
+    await expect(pending).rejects.toThrow("caller cancelled");
+    const settledController = new AbortController();
+    const settled = call(settledController.signal);
+    finish({ ok: true });
+    await expect(settled).resolves.toEqual({ ok: true });
+    settledController.abort();
+    expect(invoke.mock.calls[1][0].signal?.aborted).toBe(false);
+    const closing = call(new AbortController().signal);
+    host.unload("consumer");
+    expect(invoke.mock.calls[2][0].signal?.aborted).toBe(true);
+    finish({ ok: true });
+    await expect(closing).rejects.toThrow("no longer active");
+  });
+
+  it("preserves service failures without retrying or falling back to a private runtime call", async () => {
+    const error = Object.assign(new Error("Dependency is unavailable"), { code: "service_unavailable" });
+    const invoke = vi.fn(async (_request: unknown) => { throw error; });
+    const host = new PluginHost({ react: React, invokeRuntime: invoke });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "consumer", generation: "one", register(value) { api = value; } });
+    await expect(api.invokeService({ service: "catalog", method: "read" })).rejects.toBe(error);
+    expect(invoke).toHaveBeenCalledTimes(1);
+    await expect(api.invokeService({ service: " ", method: "read" })).rejects.toThrow("must not be empty");
+    await expect(api.invokeService({ service: "catalog", method: " " })).rejects.toThrow("must not be empty");
+    expect(invoke).toHaveBeenCalledTimes(1);
+    host.unload("consumer");
   });
 
   it("delivers host events only to the active generation", async () => {

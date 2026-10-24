@@ -1,7 +1,8 @@
-import { createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
+import { createComposerMessage, createOptimisticTurn, replaceOptimisticTurn } from "./ComposerMessages";
 import { localTurnTiming, forgetLocalTurnTiming } from "./LocalTurnTiming";
 import { upsertTurn } from "./AppState";
 import { projectDirectory } from "./ProjectSessions";
+import { buildFileSelectionPart } from "./FileSelectionContext";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   Agent,
@@ -68,7 +69,6 @@ import {
   threadSessionTabID,
   turnStreamStatusForThread,
   turnPreview,
-  withExtensionInventoryForContext,
   workspacePanelContext,
   type AppState,
   type ComposerDraftState,
@@ -3698,6 +3698,51 @@ it("keeps conversation state intact across a transport-only connection reset", (
   expect(reduceServerEvent(state, { kind: "connection-reset", workdir: "" })).toBe(state);
 });
 
+describe("turnPreview structured input", () => {
+  it("derives the thread title from the visible question without changing sent references", () => {
+    const comment = buildFileSelectionPart({ workspace: "/repo", path: "review.md", start_line: 1,
+      start_column: 1, end_line: 1, end_column: 9, quote: "document", revision: "review-version" },
+    "comment", "Original comment");
+    const parts = [comment, { type: "pasted_text" as const, text: "Attached notes" },
+      { type: "text" as const, text: "Original question" }];
+    const selection = { id: "quote", text: "Earlier answer", source: {
+      thread_id: "thread", turn_id: "turn", item_id: "answer", start_offset: 0, end_offset: 14,
+    } };
+    const message = createComposerMessage(parts.map(part => part.text).join(""), [], [], parts, [selection])!;
+    const turn = createOptimisticTurn(message, 1000);
+    const before = structuredClone(turn.items[0]);
+    try {
+      expect(turnPreview(turn)).toBe("Original question");
+      const next = upsertTurn({ ...threadWithUserTexts([]), preview: "", turns: [] }, turn);
+      expect(next.preview).toBe("Original question");
+      expect(next.turns[0].items[0]).toEqual(before);
+    } finally {
+      forgetLocalTurnTiming(turn.id);
+    }
+  });
+
+  it("uses the attachment summary when structured input has no visible question", () => {
+    const comment = buildFileSelectionPart({ workspace: "/repo", path: "review.md", start_line: 1,
+      start_column: 1, end_line: 1, end_column: 9, quote: "document", revision: "review-version" }, "comment", "Review this");
+    const turn: Turn = { id: "attachments", status: "completed", items_view: "full", items: [{
+      id: "user", type: "user_message", text: comment.text, content_parts: [comment],
+      files: [{ filename: "context.pdf", media_type: "application/pdf", data: "JVBERg==" }],
+    }] };
+    const fileOnlyPreview = turnPreview({ ...turn, items: [{ ...turn.items[0], text: "", content_parts: undefined }] });
+    expect(fileOnlyPreview).not.toBe("");
+    expect(turnPreview(turn)).toBe(fileOnlyPreview);
+    turn.items[0].files = [];
+    expect(turnPreview(turn)).toBe("");
+  });
+
+  it.each([undefined, []])("preserves plain message previews with content parts %j", (parts) => {
+    const turn: Turn = { id: "plain", status: "completed", items_view: "full", items: [{
+      id: "user", type: "user_message", text: "  Original question  ", content_parts: parts,
+    }] };
+    expect(turnPreview(turn)).toBe("Original question");
+  });
+});
+
 describe("AppState English localization", () => {
   it("localizes generated labels while preserving project data", () => {
     setActiveLocale("en-US");
@@ -3873,7 +3918,6 @@ describe("threadNeedsResumeOnReselect", () => {
 });
 
 describe("extension inventory context", () => {
-  const workspaceA: RuntimeContext = { kind: "project", project_id: "a", cwd: "/a" };
   const workspaceB: RuntimeContext = { kind: "project", project_id: "b", cwd: "/b" };
   const oldInventory: ExtensionInventoryRecord[] = [{
     id: "old",
@@ -3890,18 +3934,7 @@ describe("extension inventory context", () => {
     state: "pending",
   }];
 
-  it("applies inventory only to the runtime that requested it", () => {
-    const state = {
-      ...initialState,
-      activeContext: workspaceB,
-      initialized: { extension_inventory: oldInventory },
-    } as AppState;
-
-    expect(withExtensionInventoryForContext(state, workspaceA, nextInventory)).toBe(state);
-    expect(withExtensionInventoryForContext(state, workspaceB, nextInventory).initialized?.extension_inventory).toEqual(nextInventory);
-  });
-
-  it("applies a live plugin generation inventory notification", () => {
+  it.each([null, { plugin_id: "research", generation: "source", provider_id: "ui.shell" }])("publishes inventory and selected shell coherently (%j)", (selection) => {
     const state = {
       ...initialState,
       activeContext: workspaceB,
@@ -3915,13 +3948,14 @@ describe("extension inventory context", () => {
         method: "plugin/inventory/changed",
         params: {
           epoch: 2,
+          application_shell: selection,
           extension_inventory: nextInventory,
           skills: [],
         },
       },
     });
 
-    expect(next.initialized?.extension_inventory).toEqual(nextInventory);
+    expect(next.initialized).toMatchObject({ extension_inventory: nextInventory, application_shell: selection });
   });
 
   it("ignores malformed live plugin inventory notifications", () => {

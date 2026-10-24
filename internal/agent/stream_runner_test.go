@@ -13,7 +13,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compact"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -164,7 +163,7 @@ func (c *streamOnlyNoteClient) StreamChat(_ context.Context, req providers.ChatR
 
 func TestCompactionNoteForkUsesStreamingProviderPath(t *testing.T) {
 	client := &streamOnlyNoteClient{}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "test", Model: "test-model"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, ProviderName: "test", Model: "test-model"}
 	result, err := runner.compactionNoteFork(nil)(context.Background(), []providers.ChatMessage{{Seq: 42, Role: "user", Content: "history"}}, CompactionNotePlan{
 		Prompt: "write the note", MaxBytes: 24_000,
 	})
@@ -195,7 +194,7 @@ func TestStreamRunnerNoteCompactionEmitsOneCompletedEvent(t *testing.T) {
 	registry := NewCompactionRegistry()
 	registry.Register(replacementNoteProvider{})
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:              &mockStreamClient{},
 		Model:               "test-model",
@@ -241,7 +240,7 @@ func TestStreamRunnerUsesCompactionRegistry(t *testing.T) {
 	registry := NewCompactionRegistry()
 	registry.Register(provider)
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:              &mockStreamClient{},
 		Model:               "test-model",
@@ -338,7 +337,7 @@ func TestStreamRunnerUsesAPIModelForProviderRequest(t *testing.T) {
 		events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "ok"}, {Type: providers.EventDone}},
 	}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:   client,
 		Model:    "gpt-5.5-fast",
@@ -364,7 +363,7 @@ func TestStreamRunnerRecordsProviderProvenanceForNativeState(t *testing.T) {
 		},
 	}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:       client,
 		ProviderName: "gateway-a",
@@ -393,7 +392,7 @@ func TestStreamRunner_AfterTurnRunsAfterSuccess(t *testing.T) {
 	}
 	called := false
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -420,10 +419,130 @@ func TestStreamRunner_AfterTurnRunsAfterSuccess(t *testing.T) {
 	}
 }
 
+func TestStreamRunnerModelReceiptCompletion(t *testing.T) {
+	for _, canceled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("canceled-%t", canceled), func(t *testing.T) {
+			deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			completionErr := errors.New("receipt checkpoint failed")
+			client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "accepted output"}, {Type: providers.EventDone}}}
+			journal := &workflowRecordingJournal{}
+			tools := &driverStreamingTools{}
+			runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", Tools: tools, InferenceJournal: journal}
+			begins, finishes := 0, 0
+			for turn := 1; turn <= 2; turn++ {
+				ctx, cancel := context.WithCancel(deadline)
+				defer cancel()
+				tools.unfrozen.Store(false)
+				entered := make(chan struct{})
+				var scope *providers.ModelReceiptScope
+				var endReceipt func(error)
+				runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
+					begins++
+					ctx, scope = providers.NewModelReceiptScope(ctx)
+					return ctx, func() error {
+						finishes++
+						if !tools.unfrozen.Load() || len(journal.completed) != turn {
+							return errors.New("receipt completion preceded gateway or workflow cleanup")
+						}
+						scope.Seal()
+						close(entered)
+						return errors.Join(scope.Wait(deadline), completionErr)
+					}, nil
+				}
+				runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
+					if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
+						return errors.New("model request lost its receipt owner")
+					}
+					var err error
+					_, endReceipt, err = providers.BeginModelReceipt(ctx)
+					return err
+				}
+				type outcome struct {
+					result LoopResult
+					err    error
+				}
+				done := make(chan outcome, 1)
+				go func() {
+					result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "work"}}, func(event providers.StreamEvent) {
+						if canceled && event.Type == providers.EventContentDelta {
+							cancel()
+						}
+					})
+					done <- outcome{result, err}
+				}()
+				select {
+				case <-entered:
+				case result := <-done:
+					t.Fatalf("turn returned before receipt completion: %+v", result)
+				case <-deadline.Done():
+					t.Fatal("turn never reached receipt completion")
+				}
+				select {
+				case result := <-done:
+					t.Fatalf("turn released pending receipt: %+v", result)
+				default:
+				}
+				endReceipt(nil)
+				select {
+				case result := <-done:
+					if !errors.Is(result.err, completionErr) || errors.Is(result.err, context.Canceled) != canceled || result.result.Content != "accepted output" {
+						t.Fatalf("completion lost errors or partial output: %+v", result)
+					}
+				case <-deadline.Done():
+					t.Fatal("turn did not finish after receipt release")
+				}
+				if begins != turn || finishes != turn {
+					t.Fatalf("turn %d: admissions=%d completions=%d", turn, begins, finishes)
+				}
+			}
+		})
+	}
+}
+
+func TestStreamRunnerModelReceiptAdmissionRejectsEffects(t *testing.T) {
+	client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "unexpected"}, {Type: providers.EventDone}}}
+	admissionErr := errors.New("generation stopped")
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+		return ctx, nil, admissionErr
+	}}
+	if _, err := runner.Run(context.Background(), "work"); !errors.Is(err, admissionErr) || len(client.requests) != 0 {
+		t.Fatalf("rejected owner admitted model work: requests=%d err=%v", len(client.requests), err)
+	}
+	if _, err := runner.CompactionNoteFork()(context.Background(), nil, CompactionNotePlan{Prompt: "brief"}); !errors.Is(err, admissionErr) || len(client.requests) != 0 {
+		t.Fatalf("rejected fork admitted model work: requests=%d err=%v", len(client.requests), err)
+	}
+}
+
+func TestStreamRunnerNoteCompactionReusesReceiptOwner(t *testing.T) {
+	registry := NewCompactionRegistry()
+	registry.Register(replacementNoteProvider{})
+	client := &streamOnlyNoteClient{}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", CompactionRegistry: registry, CompactionNoteStore: &cancellationNoteStore{}, ForceInitialCompact: true, CompactOnly: true}
+	var scope *providers.ModelReceiptScope
+	begins, finishes := 0, 0
+	runner.BeginModelReceipts = func(ctx context.Context) (context.Context, func() error, error) {
+		begins++
+		ctx, scope = providers.NewModelReceiptScope(ctx)
+		return ctx, func() error { finishes++; scope.Seal(); return scope.Wait(context.Background()) }, nil
+	}
+	runner.BeforeRequest = func(ctx context.Context, _ *providers.ChatRequest) error {
+		if scope == nil || providers.ModelReceiptScopeFromContext(ctx) != scope {
+			return errors.New("compaction lost the turn receipt owner")
+		}
+		return nil
+	}
+	history := []providers.ChatMessage{{Role: "user", Content: strings.Repeat("older request ", 100)}, {Role: "assistant", Content: strings.Repeat("older response ", 100)}}
+	result, err := runner.RunWithCallback(context.Background(), history, nil)
+	if err != nil || !result.HistoryRewritten || client.streamCalls != 1 || begins != 1 || finishes != 1 {
+		t.Fatalf("compaction did not share one turn owner: rewritten=%v streams=%d admissions=%d completions=%d err=%v", result.HistoryRewritten, client.streamCalls, begins, finishes, err)
+	}
+}
+
 func TestStreamRunner_AfterTurnDoesNotRunAfterSetupError(t *testing.T) {
 	called := false
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Model: "test-model",
 		AfterTurn: func(context.Context, *StreamRunner, []providers.ChatMessage, LoopResult) {
@@ -450,7 +569,7 @@ func TestStreamRunner_SimpleContent(t *testing.T) {
 
 	var received []providers.StreamEvent
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -499,7 +618,7 @@ func TestStreamRunner_EventUsageUpdatesResultUsage(t *testing.T) {
 		},
 	}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -524,7 +643,7 @@ func TestStreamRunnerCarriesStreamedMessagePhaseToCommittedMessage(t *testing.T)
 
 	var committed *providers.ChatMessage
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -587,7 +706,7 @@ func TestStreamRunner_EmitsTodoUpdateEventAfterUpdateTodo(t *testing.T) {
 	}
 	var todoUpdate *providers.TodoUpdate
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -661,7 +780,7 @@ func TestStreamRunner_EnrichesToolCallDisplay(t *testing.T) {
 	}
 	var seen []*providers.ToolCall
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -743,7 +862,7 @@ func TestStreamRunnerAnnotatesProviderStateWithStepIndex(t *testing.T) {
 	}
 	var states []providers.ProviderStateSummary
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -779,7 +898,7 @@ func TestStreamRunner_AllowsNaturalEmptyCompletionWithoutPersistingAssistantMess
 
 	var received []providers.StreamEvent
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -817,33 +936,33 @@ func TestStreamRunnerRequiresExplicitDriver(t *testing.T) {
 
 func TestStreamRunner_ValidationErrors(t *testing.T) {
 	// Run validates blank prompt.
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Model: "m"}
 	_, err := runner.Run(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error for nil client")
 	}
 
 	client := &mockStreamClient{events: []providers.StreamEvent{{Type: providers.EventDone}}}
-	runner = StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client}
+	runner = StreamRunner{LoopDriver: DefaultDriver{}, Client: client}
 	_, err = runner.Run(context.Background(), "hi")
 	if err == nil {
 		t.Fatal("expected error for empty model")
 	}
 
-	runner = StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner = StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 	_, err = runner.Run(context.Background(), "  ")
 	if err == nil {
 		t.Fatal("expected error for blank prompt")
 	}
 
 	// RunWithCallback validates client and model but not prompt.
-	runner = StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "m"}
+	runner = StreamRunner{LoopDriver: DefaultDriver{}, Model: "m"}
 	_, err = runner.RunWithCallback(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for nil client in RunWithCallback")
 	}
 
-	runner = StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client}
+	runner = StreamRunner{LoopDriver: DefaultDriver{}, Client: client}
 	_, err = runner.RunWithCallback(context.Background(), nil, nil)
 	if err == nil {
 		t.Fatal("expected error for empty model in RunWithCallback")
@@ -860,7 +979,7 @@ func TestStreamRunner_StreamError(t *testing.T) {
 		},
 	}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 	result, err := runner.RunWithCallback(
 		context.Background(),
 		[]providers.ChatMessage{{Role: "user", Content: "hi"}},
@@ -882,7 +1001,7 @@ func TestStreamRunner_RetryOnMidStreamError(t *testing.T) {
 	}}
 
 	var reconnectMsgs []string
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
 		if ev.Type == providers.EventReconnect {
 			reconnectMsgs = append(reconnectMsgs, ev.Content)
 		}
@@ -907,7 +1026,7 @@ func TestStreamRunner_RetryOnInitialConnectError(t *testing.T) {
 	}}
 
 	var reconnectMsgs []string
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
 		if ev.Type == providers.EventReconnect {
 			reconnectMsgs = append(reconnectMsgs, ev.Content)
 		}
@@ -935,7 +1054,7 @@ func TestStreamRunner_RetriesOnIncompleteStreamBeforeOutput(t *testing.T) {
 	}}
 
 	var reconnectMsgs []string
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
 		if ev.Type == providers.EventReconnect {
 			reconnectMsgs = append(reconnectMsgs, ev.Content)
 		}
@@ -963,7 +1082,7 @@ func TestStreamRunner_EmitsStructuredLifecycleEvents(t *testing.T) {
 	}}
 
 	var lifecycle []*providers.StreamLifecycle
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m", OnEvent: func(ev providers.StreamEvent) {
 		if ev.Type == providers.EventLifecycle && ev.Lifecycle != nil {
 			lifecycle = append(lifecycle, ev.Lifecycle)
 		}
@@ -1005,7 +1124,7 @@ func TestStreamRunner_RetryOnInitialConnectHTTP500(t *testing.T) {
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "recovered"}, {Type: providers.EventDone}}},
 	}}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 
 	result, err := runner.Run(context.Background(), "hi")
 	if err != nil {
@@ -1045,7 +1164,7 @@ func TestStreamRunnerToleratesUnansweredNetworkReplaysAcrossAgentRounds(t *testi
 	}})
 	client := &mockStreamClient{attempts: attempts}
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "m",
@@ -1083,7 +1202,7 @@ func TestStreamRunner_DoesNotRetryTerminalUsageLimit(t *testing.T) {
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "should not run"}, {Type: providers.EventDone}}},
 	}}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 
 	_, err := runner.Run(context.Background(), "hi")
 	if err == nil {
@@ -1100,7 +1219,7 @@ func TestStreamRunner_RetryOnEarlyStreamErrorEvent(t *testing.T) {
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "ok"}, {Type: providers.EventDone}}},
 	}}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 
 	result, err := runner.Run(context.Background(), "hi")
 	if err != nil {
@@ -1120,7 +1239,7 @@ func TestStreamRunner_RetryAfterPartialOutput(t *testing.T) {
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "second"}, {Type: providers.EventDone}}},
 	}}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 	var contentEvents []providers.StreamEvent
 	runner.OnEvent = func(event providers.StreamEvent) {
 		if event.Type == providers.EventContentDelta || event.Type == providers.EventContentReplace {
@@ -1149,7 +1268,7 @@ func TestStreamRunner_RetryIncompleteStreamAfterPartialOutput(t *testing.T) {
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "second"}, {Type: providers.EventDone}}},
 	}}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 	var contentEvents []providers.StreamEvent
 	runner.OnEvent = func(event providers.StreamEvent) {
 		if event.Type == providers.EventContentDelta || event.Type == providers.EventContentReplace {
@@ -1195,7 +1314,7 @@ func TestStreamRunner_AcceptsHistory(t *testing.T) {
 		{Role: "user", Content: "follow up"},
 	}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "test-model"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test-model"}
 	res, err := runner.RunWithCallback(context.Background(), history, nil)
 	if err != nil {
 		t.Fatalf("RunWithCallback: %v", err)
@@ -1251,7 +1370,7 @@ func TestStreamRunner_FiltersSystemReminderHistoryAndEvents(t *testing.T) {
 
 	var received []providers.StreamEvent
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -1316,7 +1435,7 @@ func TestStreamRunner_ReusesUsageAcrossTurnsForPreRequestCompact(t *testing.T) {
 	}
 
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                client,
 		Model:                 "gpt-4-turbo",
@@ -1365,7 +1484,7 @@ func TestStreamRunner_ExpandedDurableHistoryKeepsLastProviderBaseline(t *testing
 		{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: 190_100}},
 	}}}}
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                 client,
 		ProviderName:           "openai-codex",
@@ -1474,7 +1593,7 @@ func TestStreamRunner_PreRequestCompactUsesColdStartEstimate(t *testing.T) {
 	}
 
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                 client,
 		Model:                  "gpt-4-turbo",
@@ -1535,7 +1654,7 @@ func TestStreamRunner_ProactiveCompactFailureEmitsVisibleEvent(t *testing.T) {
 	var events []providers.StreamEvent
 	var attempts []CompactAttemptInfo
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                client,
 		Model:                 "gpt-4-turbo",
@@ -1636,7 +1755,7 @@ func TestStreamRunner_StopsProactiveCompactAfterRepeatedFailures(t *testing.T) {
 		},
 	}
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                client,
 		Model:                 "gpt-4-turbo",
@@ -1681,7 +1800,7 @@ func TestStreamRunner_CompactedHistoryDoesNotTriggerImmediateSecondCompact(t *te
 	}
 
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                 client,
 		Model:                  "gpt-4-turbo",
@@ -1767,12 +1886,12 @@ func TestStreamRunner_ContextOverflowRecoversWithIdleToolLedger(t *testing.T) {
 			{Content: "summarized ledger overflow"},
 		},
 	}
-	ledger, err := toolledger.New(t.TempDir(), "thread-overflow-ledger")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-overflow-ledger")
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                  client,
 		Model:                   "test-model",
@@ -1838,7 +1957,7 @@ func TestStreamRunner_ContextOverflowStreamErrorCompactsSingleUserTurn(t *testin
 	}
 
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                  client,
 		Model:                   "test-model",
@@ -1917,7 +2036,7 @@ func TestStreamRunner_CancelledCtxStopsRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 	_, err := runner.Run(ctx, "hi")
 	if err == nil {
 		t.Fatal("expected error on cancelled context")
@@ -1933,7 +2052,7 @@ func TestStreamRunner_RetryOnDeadlineExceeded(t *testing.T) {
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "recovered"}, {Type: providers.EventDone}}},
 	}}
 
-	runner := StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "m"}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "m"}
 	result, err := runner.Run(context.Background(), "hi")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -1983,7 +2102,7 @@ func TestStreamRunner_ZeroMaxStepsIsUnlimited(t *testing.T) {
 	client := &mockStreamClient{attempts: attempts}
 	tools := &fakeTools{}
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Tools:  tools,
@@ -2038,7 +2157,7 @@ func TestStreamRunner_ReplaysReasoningContentAfterToolCall(t *testing.T) {
 	}
 
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Tools:  &fakeTools{},
@@ -2086,7 +2205,7 @@ func TestStreamRunner_OutputTruncationCompletesTurn(t *testing.T) {
 	}
 
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "test-model",
@@ -2131,7 +2250,7 @@ func TestStreamRunner_MaxStepsExceeded(t *testing.T) {
 
 	tools := &fakeTools{}
 	runner := StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:   client,
 		Tools:    tools,
@@ -2161,7 +2280,7 @@ func TestStreamRunner_NonStreamingFallbackOnEmptyStream(t *testing.T) {
 			{Content: "fallback answer", StopReason: "stop"},
 		},
 	}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "test"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test"}
 	result, err := runner.Run(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2191,7 +2310,7 @@ func TestStreamRunner_NoFallbackOnNormalStop(t *testing.T) {
 			}},
 		},
 	}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "test"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test"}
 	_, err := runner.Run(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("normal empty completion must not recover or fail: %v", err)
@@ -2212,7 +2331,7 @@ func TestStreamRunner_NoFallbackOnEmptyLengthFinish(t *testing.T) {
 			{Content: "fallback should not run", StopReason: "stop"},
 		},
 	}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "test"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test"}
 	res, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{userMsg("hello")}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2280,7 +2399,7 @@ func TestStreamRunner_StreamStartedToolSurvivesStreamCompletion(t *testing.T) {
 	}}
 	tools := &slowStreamedRuntimeTools{}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                 client,
 		Model:                  "test",
@@ -2331,7 +2450,7 @@ func TestStreamRunner_CancelsOrphanStreamingToolWhenNoFinalToolCalls(t *testing.
 		canceled: make(chan struct{}),
 	}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                 client,
 		Model:                  "test",
@@ -2389,12 +2508,12 @@ func TestStreamRunner_BlocksReplayAfterDurableToolAdmission(t *testing.T) {
 		started:  make(chan struct{}),
 		canceled: make(chan struct{}),
 	}
-	ledger, err := toolledger.New(t.TempDir(), "thread-replay-fence")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-replay-fence")
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client:                 client,
 		Model:                  "test",
@@ -2432,7 +2551,7 @@ func TestStreamRunner_BlocksReplayAfterDurableToolAdmission(t *testing.T) {
 
 func TestStreamRunnerRecoversSettledUnprojectedToolResult(t *testing.T) {
 	ctx := context.Background()
-	ledger, err := toolledger.New(t.TempDir(), "thread-recovery")
+	ledger, err := toolledger.New(agentTestDocuments(t, t.TempDir()), "thread-recovery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2459,7 +2578,7 @@ func TestStreamRunnerRecoversSettledUnprojectedToolResult(t *testing.T) {
 	client := &mockStreamClient{attempts: []mockStreamAttempt{{events: []providers.StreamEvent{
 		{Type: providers.EventContentDelta, Content: "continued"}, {Type: providers.EventDone},
 	}}}}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "test", ToolLedger: ledger}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test", ToolLedger: ledger}
 	result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "continue"}}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -2510,7 +2629,7 @@ func TestStreamRunnerRecoversSettledUnprojectedToolResult(t *testing.T) {
 // size immediately, instead of carrying the inflated pre-compaction estimate
 // until the length heuristic in prepareUsageTracker happens to fire.
 func TestStreamRunner_ResetConversationUsageReflectsCompaction(t *testing.T) {
-	r := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	r := &StreamRunner{LoopDriver: DefaultDriver{}}
 
 	preCompact := make([]providers.ChatMessage, 0, 40)
 	for i := 0; i < 40; i++ {
@@ -2557,7 +2676,7 @@ func TestStreamRunner_ResetConversationUsageReflectsCompaction(t *testing.T) {
 // rebuilt runner primes its baseline from persisted ground truth exactly once,
 // and never clobbers live tracker state.
 func TestSeedConversationUsageBaseline(t *testing.T) {
-	r := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	r := &StreamRunner{LoopDriver: DefaultDriver{}}
 	r.SeedConversationUsageBaseline(54_000, 30)
 	r.usageMu.Lock()
 	tracker := r.conversationUsage
@@ -2577,7 +2696,7 @@ func TestSeedConversationUsageBaseline(t *testing.T) {
 	}
 
 	// Live state also wins when pending estimates already accumulated.
-	fresh := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	fresh := &StreamRunner{LoopDriver: DefaultDriver{}}
 	fresh.usageMu.Lock()
 	fresh.conversationUsage = NewUsageTracker()
 	fresh.conversationUsage.RecordPendingMessages([]providers.ChatMessage{{Role: "user", Content: "hello there"}})
@@ -2589,7 +2708,7 @@ func TestSeedConversationUsageBaseline(t *testing.T) {
 	}
 
 	// Zero/negative totals are ignored.
-	empty := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	empty := &StreamRunner{LoopDriver: DefaultDriver{}}
 	empty.SeedConversationUsageBaseline(0, 3)
 	empty.usageMu.Lock()
 	seeded := empty.conversationUsage
@@ -2610,7 +2729,7 @@ func TestStreamRunner_PauseTurnContinuesTheTurn(t *testing.T) {
 			{Type: providers.EventDone, StopReason: "end_turn"},
 		}},
 	}}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Model: "test"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test"}
 	result, err := runner.Run(context.Background(), "hello")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -2629,7 +2748,7 @@ func TestStreamRunner_PauseTurnContinuesTheTurn(t *testing.T) {
 // ResetConversationUsage. That reseed must not discard the cross-turn
 // request-context state, or prompt-cache continuity breaks on every turn.
 func TestStreamRunner_ResetConversationUsagePreservesRetainedContext(t *testing.T) {
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: &mockStreamClient{}, Model: "m"}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: &mockStreamClient{}, Model: "m"}
 	state := &RetainedRequestContextState{
 		Messages: []RetainedContextMessage{{
 			AfterDurable: 1,
@@ -2642,14 +2761,14 @@ func TestStreamRunner_ResetConversationUsagePreservesRetainedContext(t *testing.
 
 	runner.ResetConversationUsage([]providers.ChatMessage{userMsg("reconstructed history")})
 
-	if got := runner.takeRetainedRequestContext(); got != state {
+	if got := runner.snapshotRetainedRequestContext(); !reflect.DeepEqual(got, state) {
 		t.Fatalf("ResetConversationUsage must not clear retained request context: got %v", got)
 	}
 }
 
 func TestStreamRunner_SynchronizeConversationUsagePreservesMatchingGroundTruth(t *testing.T) {
 	history := []providers.ChatMessage{userMsg("ask"), {Role: "assistant", Content: "answer"}}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}}
 	tracker := NewUsageTracker()
 	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 50_000, OutputTokens: 2_000})
 	runner.commitUsageTracker(tracker, history)
@@ -2665,7 +2784,7 @@ func TestStreamRunner_SynchronizeConversationUsagePreservesMatchingGroundTruth(t
 func TestStreamRunner_SynchronizeConversationUsageAdoptsExternalRewrite(t *testing.T) {
 	oldHistory := []providers.ChatMessage{userMsg("old"), {Role: "assistant", Content: "old answer"}}
 	newHistory := []providers.ChatMessage{userMsg("rewritten"), {Role: "assistant", Content: "new answer"}}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}}
 	tracker := NewUsageTracker()
 	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 50_000, OutputTokens: 2_000})
 	runner.commitUsageTracker(tracker, oldHistory)
@@ -2684,7 +2803,7 @@ func TestStreamRunner_SynchronizeConversationUsageAdoptsExternalCompletedTurn(t 
 		userMsg("external ask"),
 		providers.ChatMessage{Role: "assistant", Content: "external answer"},
 	)
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}}
 	tracker := NewUsageTracker()
 	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 50_000, OutputTokens: 2_000})
 	runner.commitUsageTracker(tracker, oldHistory)
@@ -2706,7 +2825,7 @@ func TestStreamRunner_SynchronizeConversationUsageRejectsRepeatedTailAnchor(t *t
 		userMsg("external ask"),
 		providers.ChatMessage{Role: "assistant", Content: "Done", ProviderItemID: "msg-new", ProviderItemProvider: "openai-codex", ProviderItemModel: "gpt-test"},
 	)
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}}
 	tracker := NewUsageTracker()
 	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 50_000, OutputTokens: 2_000})
 	runner.commitUsageTracker(tracker, oldHistory)
@@ -2731,7 +2850,7 @@ func TestStreamRunner_SynchronizeConversationUsageAllowsEarlierMatchingContent(t
 		userMsg("current ask"),
 		current,
 	}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}}
 	tracker := NewUsageTracker()
 	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 50_000, OutputTokens: 2_000})
 	runner.commitUsageTracker(tracker, oldHistory)
@@ -2750,7 +2869,7 @@ func TestStreamRunner_SynchronizeConversationUsageDoesNotDoubleCountPendingToolD
 	toolCall := providers.ChatMessage{Role: "assistant", ToolCalls: []providers.ToolCall{{ID: "call-1", Name: "read_file", Arguments: `{}`}}}
 	toolResult := providers.ChatMessage{Role: "tool", Name: "read_file", ToolCallID: "call-1", Content: "result"}
 	newHistory := append(providers.CloneChatMessages(oldHistory), toolCall, toolResult)
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}}
 	tracker := NewUsageTracker()
 	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 50_000})
 	tracker.RecordPendingMessages([]providers.ChatMessage{toolCall, toolResult})
@@ -2769,7 +2888,7 @@ func TestStreamRunner_SynchronizeConversationUsageDoesNotDoubleCountPendingToolD
 func TestStreamRunner_PrepareUsageTrackerResetsSameLengthRewrite(t *testing.T) {
 	original := []providers.ChatMessage{userMsg("old"), {Role: "assistant", Content: "old answer"}}
 	rewritten := []providers.ChatMessage{userMsg("new"), {Role: "assistant", Content: "new answer"}}
-	runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}}
+	runner := &StreamRunner{LoopDriver: DefaultDriver{}}
 	tracker := NewUsageTracker()
 	tracker.RecordResponse(&providers.TokenUsage{InputTokens: 50_000, OutputTokens: 2_000})
 	runner.commitUsageTracker(tracker, original)
@@ -2812,7 +2931,7 @@ func TestStreamRunner_CrossTurnContinuitySurvivesUsageSynchronization(t *testing
 		},
 	}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client,
 		Model:  "m",
@@ -2873,7 +2992,7 @@ func TestStreamRunner_DerivedLedgersDoNotReappearAcrossTurns(t *testing.T) {
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "turn two"}, {Type: providers.EventDone}}},
 	}}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: client, Model: "m",
 		BeforeRequestContext: func() []ContextSegment { return RequestOnlyContextBlocks([]wuucontext.Block{ledger}) },
@@ -2910,7 +3029,7 @@ func TestStreamRunner_CanceledTurnRetainsPrefixForRetry(t *testing.T) {
 		{Type: providers.EventContentDelta, Content: "turn one"}, {Type: providers.EventDone},
 	}}}}
 	runner := &StreamRunner{
-		LoopDriver: loopdriver.DefaultDriver{},
+		LoopDriver: DefaultDriver{},
 
 		Client: firstClient, Model: "m",
 		BeforeRequestContext: func() []ContextSegment { return RequestOnlyContextBlocks([]wuucontext.Block{block}) },
@@ -2981,7 +3100,7 @@ func TestStreamRunnerRestoresRequestPrefixAfterRestart(t *testing.T) {
 			guidance := func() []ContextSegment {
 				return RequestOnlyContextMessages([]providers.ChatMessage{contextWindowReminder("stable guidance")})
 			}
-			runner := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "gateway", Model: "m", RequestContextStore: store, BeforeRequestContext: guidance}
+			runner := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, ProviderName: "gateway", Model: "m", RequestContextStore: store, BeforeRequestContext: guidance}
 			history := []providers.ChatMessage{{Role: "user", Content: "first"}}
 			result, err := runner.RunWithCallback(context.Background(), history, nil)
 			if err != nil {
@@ -2990,7 +3109,7 @@ func TestStreamRunnerRestoresRequestPrefixAfterRestart(t *testing.T) {
 			first := providers.CloneChatMessages(client.requests[0].Messages)
 			history = append(history, result.NewMessages...)
 			history = append(history, providers.ChatMessage{Role: "user", Content: "second"})
-			restarted := &StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, ProviderName: "gateway", Model: "m", RequestContextStore: store, BeforeRequestContext: guidance}
+			restarted := &StreamRunner{LoopDriver: DefaultDriver{}, Client: client, ProviderName: "gateway", Model: "m", RequestContextStore: store, BeforeRequestContext: guidance}
 			switch change {
 			case "edited history":
 				history[0].Content = "edited"

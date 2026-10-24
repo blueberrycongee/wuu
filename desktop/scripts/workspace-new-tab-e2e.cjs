@@ -409,8 +409,8 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
   });
-  // Measure the real document editor rather than its stylesheet: short drafts
-  // share a row with send; wrapped drafts and attachments restore editing space.
+  // Measure the real document editor: text keeps its reading row above the
+  // toolbar at every width, while wrapped drafts and attachments retain space.
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap textarea')));
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-context-meter'))
     && Boolean(document.querySelector('.document-composer-wrap .codex-runtime-effort')));
@@ -442,7 +442,9 @@ app.whenReady().then(async () => {
         return box(node).width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
           - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
       };
-      return { frame: box(frame), input: box(input), send: box(send),
+      return { frame: box(frame), input: box(input), send: box(send), toolbar: box(toolbar),
+        toolbarControls: [...toolbar.querySelectorAll('button')].map(box)
+          .filter(control => control.width > 0 && control.height > 0),
         frameRadius: parseFloat(getComputedStyle(frame).borderTopLeftRadius),
         fontSize: parseFloat(getComputedStyle(input).fontSize), lineHeight: parseFloat(getComputedStyle(input).lineHeight),
         clientHeight: input.clientHeight, scrollHeight: input.scrollHeight,
@@ -470,23 +472,16 @@ app.whenReady().then(async () => {
     return geometry;
   };
   const assertReadableEditor = (geometry, name) => {
-    const sameRow = Math.abs(geometry.input.y + geometry.input.height / 2 - geometry.send.y - geometry.send.height / 2) <= 2;
-    if (sameRow) assert.ok(geometry.frameRadius >= geometry.frame.height / 2 - 1,
-      name + ': a one-row document input reads as a capsule');
     assert.ok(geometry.input.width >= geometry.fontSize * 8,
       name + ': input retains room to read and edit a short phrase');
-    if (geometry.composerWidth >= 680) assert.ok(sameRow, name + ': wide short drafts retain the compact single row');
-    if (sameRow) {
-      assert.ok(geometry.frame.height <= Math.max(44, geometry.lineHeight + 12) + 4,
-        name + ': wide short editor stays compact at the selected font size');
-      assert.ok(geometry.input.right <= geometry.runtime.left + 1,
-        name + ': inline runtime controls do not overlap the text');
-    } else {
-      assert.ok(geometry.input.bottom <= geometry.send.top + 1,
-        name + ': narrow input has its own row above the send controls');
-      assert.ok(geometry.input.width >= geometry.frame.width * 0.8,
-        name + ': stacked input uses the available reading width');
-    }
+    assert.ok(geometry.toolbar.height > 0 && geometry.input.bottom <= geometry.toolbar.top + 1,
+      name + ': input has its own row above the toolbar at every width');
+    assert.ok(geometry.input.width >= geometry.frame.width * 0.8,
+      name + ': input uses the available reading width');
+    assert.ok(geometry.toolbarControls.length > 0 && geometry.toolbarControls.every(control =>
+      control.top >= geometry.toolbar.top - 1 && control.bottom <= geometry.frame.bottom + 1
+      && control.left >= geometry.frame.left - 1 && control.right <= geometry.frame.right + 1),
+      name + ': toolbar controls stay below the text and inside the editor');
     assert.ok(geometry.runtime.width > 0 && geometry.runtime.right <= geometry.send.left + 1,
       name + ': model menu and send remain available without overlap');
     if (geometry.toolbarWidth <= 560) {
@@ -497,7 +492,7 @@ app.whenReady().then(async () => {
       if (geometry.toolbarWidth <= 680) assert.equal(geometry.contextLabel.width, 0,
         name + ': medium toolbar keeps the context ring without its verbose label');
     }
-    if (geometry.toolbarWidth <= 420 || (sameRow && geometry.composerWidth <= 680)) assert.equal(geometry.effort.width, 0,
+    if (geometry.toolbarWidth <= 420) assert.equal(geometry.effort.width, 0,
       name + ': constrained toolbar folds effort without stealing the input lane');
     assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': short draft and placeholder are not clipped');
   };

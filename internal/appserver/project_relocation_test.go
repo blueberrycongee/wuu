@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -45,6 +46,13 @@ func TestRelocatedProjectUsesNewDirectory(t *testing.T) {
 				rt.RootDir, rt.WorkspaceID, rt.WuuHome = root, "audit-project", wuuHome
 				rt.SessionDir = filepath.Join(wuuHome, "sessions")
 				rt.StateDir = filepath.Join(wuuHome, "state")
+				documents, err := persistence.Open(context.Background(), filepath.Join(wuuHome, "documents"), "sqlite")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = documents.Close() })
+				rt.Documents = documents
+				rt.Sessions = session.NewStore(context.Background(), documents)
 				kit, err := tools.New(root)
 				if err != nil {
 					t.Fatal(err)
@@ -76,7 +84,7 @@ func TestRelocatedProjectUsesNewDirectory(t *testing.T) {
 				if name == "linked_worktree" {
 					worktreePath, baseRepo = expectedRoot, oldRoot
 				}
-				if _, err := session.UpdateWorkspaceBinding(filepath.Join(wuuHome, "sessions"), created.ID, expectedRoot, worktreePath, "", baseRepo); err != nil {
+				if _, err := before.rt.Sessions.UpdateWorkspaceBinding(created.ID, expectedRoot, worktreePath, "", baseRepo); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -131,7 +139,7 @@ func TestRelocatedProjectUsesNewDirectory(t *testing.T) {
 			oldData, oldErr := os.ReadFile(filepath.Join(oldRoot, "audit-written.txt"))
 			newData, newErr := os.ReadFile(filepath.Join(expectedRoot, "audit-written.txt"))
 			t.Logf("old_path_written=%v old_content=%q new_path_written=%v new_content=%q", oldErr == nil, oldData, newErr == nil, newData)
-			persisted, ok, err := session.Find(filepath.Join(wuuHome, "sessions"), created.ID)
+			persisted, ok, err := after.rt.Sessions.Find(created.ID)
 			if err != nil || !ok || persisted.CWD != expectedRoot {
 				t.Fatalf("binding not persisted: %+v err=%v", persisted, err)
 			}

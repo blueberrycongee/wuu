@@ -6,6 +6,7 @@ module.exports = (api) => {
   let enabled = false;
   let generation = 1;
   const listeners = new Set();
+  let baseInventory = [];
   const cwd = process.env.WUU_RESIZE_E2E_CWD || process.cwd();
   const inventory = () => enabled ? [{
     id: "user:inline-completion-e2e",
@@ -13,6 +14,7 @@ module.exports = (api) => {
     kind: "plugin",
     provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "inline-completion-e2e" },
     state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+    graph_generation: "default-shell-e2e-graph",
     fingerprint: `inline-completion-e2e-${generation}`,
     desktop: { entry: "desktop.js" },
   }] : [];
@@ -21,12 +23,16 @@ module.exports = (api) => {
     generation = change.generation ?? generation;
     for (const listener of listeners) listener({
       kind: "notification", workdir: cwd,
-      message: { method: "plugin/inventory/changed", params: { epoch: generation, extension_inventory: inventory(), skills: [] } },
+      message: { method: "plugin/inventory/changed", params: { epoch: generation, extension_inventory: [...baseInventory, ...inventory()], skills: [] } },
     });
   });
   return {
     ...api,
-    initialize: async () => ({ ...await api.initialize(), extension_inventory: inventory() }),
+    initialize: async () => {
+      const initialized = await api.initialize();
+      baseInventory = initialized.extension_inventory;
+      return { ...initialized, extension_inventory: [...baseInventory, ...inventory()] };
+    },
     startTurn: async (...args) => {
       const response = await api.startTurn(...args);
       ipcRenderer.send("test:inline-submitted", { threadId: args[0], text: args[1], response });
@@ -35,7 +41,8 @@ module.exports = (api) => {
     getPluginConflictPreferences: async () => ({}),
     requestPluginRuntime: (params) => ipcRenderer.invoke("test:inline-runtime", params),
     cancelPluginRuntime: (params) => ipcRenderer.invoke("test:inline-runtime-cancel", params),
-    loadPluginDesktopModule: async ({ id, fingerprint }) => ({
+    loadPluginDesktopModule: async ({ id, fingerprint }) => id !== "user:inline-completion-e2e"
+      ? api.loadPluginDesktopModule({ id, fingerprint }) : ({
       id, fingerprint, digest: "0".repeat(64), url: `wuu-plugin://inline-completion/${fingerprint}/desktop.js`,
     }),
     onServerEvent: (listener) => {

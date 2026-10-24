@@ -1,0 +1,141 @@
+const { app, BrowserWindow } = require('electron');
+const { readFile, writeFile, appendFile } = require('node:fs/promises');
+const { join } = require('node:path');
+const assert = require('node:assert/strict');
+const [url, fixture, output] = process.argv.slice(-3);
+const report = { cases: [], screenshots: [], errors: [] };
+let window;
+let phase = 'startup';
+const trace = async (message) => { phase = message; await appendFile(join(output, 'ui-progress.log'), message + '\n'); };
+const watchdog = setTimeout(async () => { await writeFile(join(output, 'report.json'), JSON.stringify({...report, passed:false, failure:`Timed out during ${phase}`, argv:process.argv},null,2)); app.exit(1); }, 120000);
+const evaluate = (source) => window.webContents.executeJavaScript(source, true);
+const waitFor = async (condition, description) => {
+  await evaluate(`new Promise((accept,reject)=>{const start=performance.now();function check(){try {if(${condition}){accept(true);return}}catch{}if(performance.now()-start>20000){reject(new Error(${JSON.stringify(description)}));return}requestAnimationFrame(check)}check()})`);
+};
+const button = (text) => `[...document.querySelectorAll('button')].find(node=>node.textContent.trim()===${JSON.stringify(text)})`;
+const field = (label) => `[...document.querySelectorAll('label')].find(node=>node.firstChild?.textContent===${JSON.stringify(label)})?.querySelector('input,textarea,select')`;
+const click = async (expression) => {
+  await waitFor(`(${expression})?.getBoundingClientRect().width > 0`, `Clickable target: ${expression}`);
+  const rect = await evaluate(`(()=>{const node=${expression};if(!node)throw new Error('Missing target');node.scrollIntoView({block:'nearest'});const r=node.getBoundingClientRect();return{x:r.x+r.width/2,y:r.y+r.height/2}})()`);
+  window.webContents.sendInputEvent({ type: 'mouseDown', x: Math.round(rect.x), y: Math.round(rect.y), button: 'left', clickCount: 1 });
+  window.webContents.sendInputEvent({ type: 'mouseUp', x: Math.round(rect.x), y: Math.round(rect.y), button: 'left', clickCount: 1 });
+  await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+};
+const type = async (label, text) => {
+  await click(field(label));
+  assert.equal(await evaluate(`document.activeElement===${field(label)}`), true, `Native focus: ${label}`);
+  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'a', modifiers: ['control'] });
+  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'a', modifiers: ['control'] });
+  await waitFor(`${field(label)}.selectionStart===0 && ${field(label)}.selectionEnd===${field(label)}.value.length`, `Native select-all: ${label}`);
+  await window.webContents.insertText(text);
+  await waitFor(`${field(label)}?.value===${JSON.stringify(text)}`, `Native typing: ${label}`);
+};
+const screenshot = async (name) => {
+  await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  await writeFile(join(output, `${name}.png`), (await window.webContents.capturePage()).toPNG());
+  const geometry = await evaluate(`(()=>{const bad=[];for(const node of document.querySelectorAll('.research-shell button,.research-shell input,.research-shell textarea,.research-shell select')){const r=node.getBoundingClientRect();if(!r.width||!r.height)continue;if(r.left<-.5||r.right>innerWidth+.5)bad.push({text:node.textContent,rect:{left:r.left,right:r.right}})}const panes=[...document.querySelectorAll('.research-sidebar,.research-main,.research-evidence')].map(node=>({name:node.className,rect:node.getBoundingClientRect()})).filter(({rect})=>rect.width&&rect.height);const overlaps=[];for(let i=0;i<panes.length;i++)for(let j=i+1;j<panes.length;j++){const a=panes[i],b=panes[j];if(Math.min(a.rect.right,b.rect.right)-Math.max(a.rect.left,b.rect.left)>1&&Math.min(a.rect.bottom,b.rect.bottom)-Math.max(a.rect.top,b.rect.top)>1)overlaps.push([a.name,b.name])}const paneOverflow=[...document.querySelectorAll('.research-sidebar,.research-main,.research-evidence')].filter(node=>node.clientWidth>0&&node.scrollWidth>node.clientWidth+1).map(node=>node.className);return{viewport:{width:innerWidth,height:innerHeight},pageOverflow:document.documentElement.scrollWidth>innerWidth+1,bad,overlaps,paneOverflow}})()`);
+  assert.equal(geometry.pageOverflow, false, `Page overflow ${name}`);
+  assert.deepEqual(geometry.bad, [], `Control overflow ${name}`);
+  assert.deepEqual(geometry.overlaps, [], `Pane overlap ${name}`);
+  assert.deepEqual(geometry.paneOverflow, [], `Pane horizontal overflow ${name}`);
+  report.screenshots.push({ name: `${name}.png`, ...geometry });
+};
+(async () => {
+  await trace(`launch ${JSON.stringify(process.argv)}`);
+  await app.whenReady();
+  window = new BrowserWindow({ width: 1440, height: 1000, show: true, webPreferences: { contextIsolation: true, nodeIntegration: false } });
+  window.webContents.on('console-message', (_event, level, message) => { if (level >= 3) report.errors.push(message); });
+  await trace(`load ${url}`);
+  await window.loadURL(url);
+  await trace('wait for shell');
+  await waitFor(`document.querySelector('.research-shell') && document.querySelector('.research-notebook')`, 'Research shell and third-plugin view');
+  report.cases.push('packed-sdk-only author typecheck and activation');
+  await trace('capture and type');
+  await click(button('Capture latest answer'));
+  await waitFor(`document.querySelector('.research-notebook blockquote')`, 'Capture evidence');
+  await waitFor(`document.querySelector('.research-notebook').textContent.includes('1 captured excerpts')`, 'Second-level nested contribution');
+  await type('Working notes', 'Verify the methods and limitations.');
+  await type('Message', 'Compare both methods with explicit uncertainty.');
+  await click(button('Send'));
+  await waitFor(`document.querySelector('.research-timeline').textContent.includes('No model request was sent.')`, 'Typed application submit');
+  report.cases.push('native focus and typing, submit action, shared subscription, evidence capture');
+  await trace('rename and settings');
+  await click(button('Rename'));
+  await type('Thread title', 'A long research title to inspect navigation wrapping and active state');
+  await click(button('Save'));
+  await waitFor(`document.querySelector('.research-threadbar').textContent.includes('A long research title')`, 'Thread rename action');
+  await click(button('Settings'));
+  await waitFor(`document.querySelector('[aria-label="Workbench settings"]')`, 'Settings action');
+  await screenshot('settings-light-wide');
+  await click(button('Settings'));
+  await trace('visual matrix');
+  for (const width of [1440, 720, 480]) {
+    window.setSize(width, 1000);
+    for (const font of [15, 20]) {
+      if ((await evaluate('Number.parseInt(getComputedStyle(document.documentElement).fontSize)')) !== font) await click(button(`Text ${font === 15 ? 20 : 15}px`));
+      for (const theme of ['light', 'dark']) {
+        const current = await evaluate('getComputedStyle(document.documentElement).colorScheme');
+        if (current !== theme) await click(button('Toggle theme'));
+        await screenshot(`${theme}-${font}-${width}`);
+      }
+    }
+  }
+  await click(button('Settings'));
+  await screenshot('settings-dark-narrow');
+  await click(button('Settings'));
+  await click(button('Threads'));
+  await screenshot('narrow-navigation-open');
+  await click(button('Threads'));
+  await click(button('Evidence'));
+  await screenshot('narrow-evidence-open');
+  await click(button('Evidence'));
+  window.setSize(1440, 1000);
+  await trace('new thread and return');
+  await click(button('New research'));
+  await waitFor(`document.querySelector('.research-timeline').textContent.includes('Start with a question')`, 'Empty conversation');
+  assert.equal(await evaluate(`${field('Working notes')}.value`), '');
+  await screenshot('empty-dark-wide');
+  await click(`[...document.querySelectorAll('.research-nav button')].find(node=>node.textContent.includes('A long research title'))`);
+  await waitFor(`${field('Working notes')}?.value==='Verify the methods and limitations.'`, 'Thread-specific evidence');
+  report.cases.push('rename, settings, empty/new thread, retained per-thread evidence, 12 visual combinations');
+  await trace('error, repair and unload');
+  const shellPath = join(fixture, 'shell.tsx');
+  const evidencePath = join(fixture, 'evidence.tsx');
+  const shell = await readFile(shellPath, 'utf8');
+  const evidence = await readFile(evidencePath, 'utf8');
+  let revision = await evaluate('document.documentElement.dataset.previewRevision');
+  await writeFile(shellPath, 'export function activate() { const broken = <');
+  await waitFor(`document.querySelector('#preview-diagnostics')?.textContent.includes('shell.tsx')`, 'Located source diagnostic');
+  assert.equal(await evaluate('document.documentElement.dataset.previewRevision'), revision);
+  assert.ok(await evaluate(`document.querySelector('.research-shell')`));
+  await screenshot('source-error-retains-shell');
+  await writeFile(shellPath, shell.replace('Research workbench</h1>', 'Research workbench reloaded</h1>'));
+  await waitFor(`document.documentElement.dataset.previewRevision!==${JSON.stringify(revision)} && document.querySelector('h1')?.textContent.includes('reloaded')`, 'Repair hot reload');
+  assert.ok(await evaluate(`document.querySelector('.research-timeline').textContent.includes('Compare both methods')`));
+  report.cases.push('source diagnostic retains last good generation; repair reload retains application state');
+  revision = await evaluate('document.documentElement.dataset.previewRevision');
+  const conflict = shell.replace("cardinality: 'many'", "cardinality: 'one'").replace("api.registerApplicationShell({ id: 'ui.shell', render: Shell });", "api.registerUIContribution({id:'conflicting-child',target:'research-workbench/evidence',render:()=>null}); api.registerApplicationShell({ id: 'ui.shell', render: Shell });");
+  await writeFile(shellPath, conflict);
+  await waitFor(`document.querySelector('#preview-diagnostics')?.textContent.includes('accepts one contribution')`, 'Single-slot ownership conflict');
+  assert.equal(await evaluate('document.documentElement.dataset.previewRevision'), revision);
+  assert.ok(await evaluate(`document.querySelector('.research-notebook')`));
+  await writeFile(shellPath, shell);
+  await waitFor(`!document.querySelector('#preview-diagnostics') && document.documentElement.dataset.previewRevision!==${JSON.stringify(revision)}`, 'Conflict repair');
+  report.cases.push('single-slot conflict rejects candidate without removing the active generation');
+  revision = await evaluate('document.documentElement.dataset.previewRevision');
+  await writeFile(evidencePath, `export const descriptor={id:'research-evidence'}; export function activate() {}`);
+  await waitFor(`document.documentElement.dataset.previewRevision!==${JSON.stringify(revision)} && !document.querySelector('.research-notebook')`, 'Third-plugin unload');
+  assert.ok(await evaluate(`document.querySelector('.research-evidence').textContent.includes('Enable an evidence extension')`));
+  await writeFile(evidencePath, evidence);
+  await waitFor(`document.querySelector('.research-notebook')`, 'Third-plugin reload');
+  report.cases.push('third-plugin unloading removes owned child UI and reload restores it');
+  assert.deepEqual(report.errors, []);
+  await writeFile(join(output, 'report.json'), JSON.stringify({ ...report, passed: true }, null, 2));
+  console.log(JSON.stringify({ passed: true, cases: report.cases.length, screenshots: report.screenshots.length, output }));
+  clearTimeout(watchdog); app.exit(0);
+})().catch(async (error) => {
+  report.failure = error.stack ?? String(error);
+  if (window) { try { await writeFile(join(output, 'failure.png'), (await window.webContents.capturePage()).toPNG()); } catch {} }
+  await writeFile(join(output, 'report.json'), JSON.stringify({ ...report, passed: false }, null, 2));
+  clearTimeout(watchdog); console.error(error); app.exit(1);
+});

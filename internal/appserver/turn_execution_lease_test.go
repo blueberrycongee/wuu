@@ -69,6 +69,59 @@ func TestThreadRuntimeGenerationInvalidatedByRuntimeRecovery(t *testing.T) {
 	}
 }
 
+func TestServerTurnStartDuringUnchangedGenerationObservation(t *testing.T) {
+	for _, externalOwner := range []bool{false, true} {
+		t.Run(fmt.Sprintf("external_owner_%t", externalOwner), func(t *testing.T) {
+			client := &fakeClient{response: providers.ChatResponse{Content: "admitted once"}}
+			rt := newTestRuntime(t, client)
+			rt.WuuHome = retryingTempDir(t)
+			out := &lockedBuffer{}
+			srv := New(rt, out)
+			t.Cleanup(srv.Close)
+			dispatchPayload(t, srv, "thread", MethodThreadStart, ThreadStartParams{})
+			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
+			if externalOwner {
+				lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, threadID)
+				if err != nil || !acquired {
+					t.Fatalf("acquire external thread lease: acquired=%t err=%v", acquired, err)
+				}
+				defer lease.Release()
+			}
+			// A watcher can hold this mutex while reading an unchanged epoch.
+			// Keep that observation in progress through the actual RPC admission.
+			srv.pluginGenerationRefreshMu.Lock()
+			func() {
+				defer srv.pluginGenerationRefreshMu.Unlock()
+				dispatchPayload(t, srv, "turn", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first user input"})
+			}()
+			response := responseByID(t, parseOutput(t, out.String()), "turn")
+			if externalOwner {
+				if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "another app-server") {
+					t.Fatalf("actual thread owner must reject admission: %+v", response)
+				}
+				assertFakeClientRequestCount(t, client, 0)
+				records, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+				if err != nil || len(records) != 0 {
+					t.Fatalf("rejected admission changed history: records=%+v err=%v", records, err)
+				}
+				probe, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, threadID)
+				if probe != nil {
+					_ = probe.Release()
+				}
+				if err != nil || acquired {
+					t.Fatalf("rejected admission displaced the actual owner: acquired=%t err=%v", acquired, err)
+				}
+				return
+			}
+			if response["error"] != nil {
+				t.Fatalf("unchanged generation observation rejected the first user turn: %+v", response)
+			}
+			waitForMethod(t, out, NotificationTurnCompleted)
+			assertFakeClientRequestCount(t, client, 1)
+		})
+	}
+}
+
 func TestServerThreadExecutionLeaseReleasesBeforeTerminalNotification(t *testing.T) {
 	holderClient := &fakeClient{response: providers.ChatResponse{Content: "holder finished"}}
 	holderRuntime := newTestRuntime(t, holderClient)
@@ -85,6 +138,7 @@ func TestServerThreadExecutionLeaseReleasesBeforeTerminalNotification(t *testing
 	contenderClient := &fakeClient{response: providers.ChatResponse{Content: "contender finished"}}
 	contenderRuntime := newTestRuntime(t, contenderClient)
 	contenderRuntime.SessionDir = holderRuntime.SessionDir
+	contenderRuntime.Documents, contenderRuntime.Sessions = holderRuntime.Documents, holderRuntime.Sessions
 	contenderOut := &lockedBuffer{}
 	contender := New(contenderRuntime, contenderOut)
 	t.Cleanup(contender.Close)
@@ -113,7 +167,7 @@ func TestServerThreadExecutionLeaseReleasesBeforeTerminalNotification(t *testing
 	}
 	waitForMethod(t, contenderOut, NotificationTurnCompleted)
 	assertFakeClientRequestCount(t, contenderClient, 1)
-	persisted, err := loadChatMessages(holderRuntime.SessionDir, threadID)
+	persisted, err := loadChatMessages(holderRuntime.Sessions, threadID)
 	if err != nil {
 		t.Fatalf("load history after contender turn: %v", err)
 	}
@@ -178,7 +232,7 @@ func TestServerAppliesCrossProcessThreadExecutionReset(t *testing.T) {
 		t.Fatal("provider did not start")
 	}
 
-	requested, err := session.RequestThreadExecutionReset(rt.SessionDir, threadID)
+	requested, err := rt.Sessions.RequestThreadExecutionReset(rt.SessionDir, threadID)
 	if err != nil {
 		t.Fatalf("request reset: %v", err)
 	}
@@ -187,7 +241,7 @@ func TestServerAppliesCrossProcessThreadExecutionReset(t *testing.T) {
 	}
 	waitForMethod(t, out, NotificationTurnError)
 
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, threadID)
+	lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, threadID)
 	if err != nil {
 		t.Fatalf("acquire after reset: %v", err)
 	}
@@ -202,19 +256,19 @@ func TestServerAppliesCrossProcessThreadExecutionReset(t *testing.T) {
 func TestServerThreadExecutionLeaseGuardsUserAndCompactTurnEntrypoints(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "must not run"}}
 	rt := newTestRuntime(t, client)
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-entrypoints", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("lease-entrypoints", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	th, err := srv.ensureThreadLoaded(sess.ID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), sess.ID)
 	if err != nil {
 		t.Fatalf("load thread: %v", err)
 	}
 
-	external, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, sess.ID)
+	external, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, sess.ID)
 	if err != nil {
 		t.Fatalf("acquire external lease: %v", err)
 	}
@@ -244,7 +298,7 @@ func TestServerThreadExecutionLeaseGuardsUserAndCompactTurnEntrypoints(t *testin
 	}
 
 	assertFakeClientRequestCount(t, client, 0)
-	records, err := session.LoadHistoryRecords(rt.SessionDir, sess.ID, true)
+	records, err := rt.Sessions.LoadHistoryRecords(sess.ID, true)
 	if err != nil {
 		t.Fatalf("load blocked-entrypoint history: %v", err)
 	}
@@ -256,19 +310,19 @@ func TestServerThreadExecutionLeaseGuardsUserAndCompactTurnEntrypoints(t *testin
 func TestServerQueuedTurnWaitsForExternalThreadExecutionLease(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "queued turn finished"}}
 	rt := newTestRuntime(t, client)
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-queued-turn", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("lease-queued-turn", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	th, err := srv.ensureThreadLoaded(sess.ID)
+	th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), sess.ID)
 	if err != nil {
 		t.Fatalf("load thread: %v", err)
 	}
 
-	external, acquired, err := session.TryAcquireThreadExecutionLease(rt.SessionDir, sess.ID)
+	external, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, sess.ID)
 	if err != nil {
 		t.Fatalf("acquire external lease: %v", err)
 	}
@@ -276,7 +330,7 @@ func TestServerQueuedTurnWaitsForExternalThreadExecutionLease(t *testing.T) {
 		t.Fatal("expected external lease acquisition")
 	}
 	t.Cleanup(func() { _ = external.Release() })
-	if err := appendChatMessages(rt.SessionDir, sess.ID, []providers.ChatMessage{
+	if err := appendChatMessages(rt.Sessions, sess.ID, []providers.ChatMessage{
 		{Role: "user", Content: "remote owner prompt"},
 		{Role: "assistant", Content: "remote owner result"},
 	}); err != nil {
@@ -287,7 +341,7 @@ func TestServerQueuedTurnWaitsForExternalThreadExecutionLease(t *testing.T) {
 		id:  "queued-behind-owner",
 		msg: providers.ChatMessage{Role: "user", Content: "run after ownership is free"},
 	})
-	srv.kickQueuedTurnDrain(sess.ID)
+	srv.kickQueuedTurnDrain(testRuntimeState(t, srv.rt), sess.ID)
 	waitForQueuedTurnRequeue(t, srv, sess.ID)
 	th.mu.Lock()
 	blockedRuntime := th.execRuntime
@@ -323,7 +377,7 @@ func TestServerQueuedTurnWaitsForExternalThreadExecutionLease(t *testing.T) {
 func TestServerThreadExecutionLeaseRefreshDropsRemovedDurableTail(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "fresh result"}}
 	rt := newTestRuntime(t, client)
-	sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-shorter-history", rt.RootDir)
+	sess, err := rt.Sessions.CreateWithMetadata("lease-shorter-history", rt.RootDir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -333,17 +387,17 @@ func TestServerThreadExecutionLeaseRefreshDropsRemovedDurableTail(t *testing.T) 
 		{Role: "user", Content: "removed prompt"},
 		{Role: "assistant", Content: "removed result"},
 	}
-	if err := appendChatMessages(rt.SessionDir, sess.ID, durable); err != nil {
+	if err := appendChatMessages(rt.Sessions, sess.ID, durable); err != nil {
 		t.Fatalf("persist initial history: %v", err)
 	}
 
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	if _, err := srv.ensureThreadLoaded(sess.ID); err != nil {
+	if _, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), sess.ID); err != nil {
 		t.Fatalf("load stale thread: %v", err)
 	}
-	if err := rewriteChatHistory(rt.SessionDir, sess.ID, durable[:2]); err != nil {
+	if err := rewriteChatHistory(rt.Sessions, sess.ID, durable[:2]); err != nil {
 		t.Fatalf("shorten durable history: %v", err)
 	}
 
@@ -372,11 +426,11 @@ func TestServerThreadExecutionLeaseRefreshDropsRemovedDurableTail(t *testing.T) 
 func TestServerDestructiveThreadMutationsRespectExternalExecutionLease(t *testing.T) {
 	t.Run("edit history", func(t *testing.T) {
 		rt := newTestRuntime(t, &fakeClient{})
-		sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-edit-history", rt.RootDir)
+		sess, err := rt.Sessions.CreateWithMetadata("lease-edit-history", rt.RootDir)
 		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
-		if err := appendChatMessages(rt.SessionDir, sess.ID, []providers.ChatMessage{
+		if err := appendChatMessages(rt.Sessions, sess.ID, []providers.ChatMessage{
 			{Role: "user", Content: "editable prompt"},
 			{Role: "assistant", Content: "editable result"},
 		}); err != nil {
@@ -391,7 +445,7 @@ func TestServerDestructiveThreadMutationsRespectExternalExecutionLease(t *testin
 			t.Fatalf("unexpected resumed history: %+v", resumed.Thread.Turns)
 		}
 
-		external := acquireExternalThreadLease(t, rt.SessionDir, sess.ID)
+		external := acquireExternalThreadLease(t, rt.Sessions, rt.SessionDir, sess.ID)
 		defer external.Release()
 		dispatchPayload(t, srv, "edit", MethodThreadEditMessage, ThreadEditMessageParams{
 			ThreadID: sess.ID,
@@ -399,7 +453,7 @@ func TestServerDestructiveThreadMutationsRespectExternalExecutionLease(t *testin
 			ItemID:   resumed.Thread.Turns[0].Items[0].ID,
 		})
 		assertCrossServerBusyResponse(t, out, "edit")
-		persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+		persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 		if err != nil {
 			t.Fatalf("load history after rejected edit: %v", err)
 		}
@@ -410,36 +464,36 @@ func TestServerDestructiveThreadMutationsRespectExternalExecutionLease(t *testin
 
 	t.Run("delete", func(t *testing.T) {
 		rt := newTestRuntime(t, &fakeClient{})
-		sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-delete", rt.RootDir)
+		sess, err := rt.Sessions.CreateWithMetadata("lease-delete", rt.RootDir)
 		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
 		out := &lockedBuffer{}
 		srv := New(rt, out)
 		t.Cleanup(srv.Close)
-		external := acquireExternalThreadLease(t, rt.SessionDir, sess.ID)
+		external := acquireExternalThreadLease(t, rt.Sessions, rt.SessionDir, sess.ID)
 		defer external.Release()
 		dispatchPayload(t, srv, "delete", MethodThreadDelete, ThreadDeleteParams{ThreadID: sess.ID})
 		assertCrossServerBusyResponse(t, out, "delete")
-		if _, ok, err := session.Find(rt.SessionDir, sess.ID); err != nil || !ok {
+		if _, ok, err := rt.Sessions.Find(sess.ID); err != nil || !ok {
 			t.Fatalf("rejected delete removed session: ok=%t err=%v", ok, err)
 		}
 	})
 
 	t.Run("archive", func(t *testing.T) {
 		rt := newTestRuntime(t, &fakeClient{})
-		sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-archive", rt.RootDir)
+		sess, err := rt.Sessions.CreateWithMetadata("lease-archive", rt.RootDir)
 		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
 		out := &lockedBuffer{}
 		srv := New(rt, out)
 		t.Cleanup(srv.Close)
-		external := acquireExternalThreadLease(t, rt.SessionDir, sess.ID)
+		external := acquireExternalThreadLease(t, rt.Sessions, rt.SessionDir, sess.ID)
 		defer external.Release()
 		dispatchPayload(t, srv, "archive", MethodThreadArchive, ThreadArchiveParams{ThreadID: sess.ID, Archived: true})
 		assertCrossServerBusyResponse(t, out, "archive")
-		metadata, ok, err := session.Find(rt.SessionDir, sess.ID)
+		metadata, ok, err := rt.Sessions.Find(sess.ID)
 		if err != nil || !ok {
 			t.Fatalf("load session after rejected archive: ok=%t err=%v", ok, err)
 		}
@@ -453,14 +507,14 @@ func TestServerThreadExecutionLeaseRollsBackPrelaunchFailures(t *testing.T) {
 	t.Run("response write", func(t *testing.T) {
 		client := &fakeClient{response: providers.ChatResponse{Content: "must not run"}}
 		rt := newTestRuntime(t, client)
-		sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-write-failure", rt.RootDir)
+		sess, err := rt.Sessions.CreateWithMetadata("lease-write-failure", rt.RootDir)
 		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
 		writeErr := errors.New("transport unavailable")
 		srv := New(rt, errorWriter{err: writeErr})
 		t.Cleanup(srv.Close)
-		th, err := srv.ensureThreadLoaded(sess.ID)
+		th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), sess.ID)
 		if err != nil {
 			t.Fatalf("load thread: %v", err)
 		}
@@ -473,21 +527,21 @@ func TestServerThreadExecutionLeaseRollsBackPrelaunchFailures(t *testing.T) {
 			t.Fatalf("turn start error = %v, want transport error", err)
 		}
 		assertThreadStartRolledBack(t, th)
-		assertThreadLeaseAvailable(t, rt.SessionDir, sess.ID)
+		assertThreadLeaseAvailable(t, rt.Sessions, rt.SessionDir, sess.ID)
 		assertFakeClientRequestCount(t, client, 0)
 		assertPersistedPrelaunchTurnFailed(t, srv, sess.ID, writeErr.Error())
 	})
 
 	t.Run("compact response write", func(t *testing.T) {
 		rt := newTestRuntime(t, &fakeClient{})
-		sess, err := session.CreateWithMetadata(rt.SessionDir, "lease-compact-write-failure", rt.RootDir)
+		sess, err := rt.Sessions.CreateWithMetadata("lease-compact-write-failure", rt.RootDir)
 		if err != nil {
 			t.Fatalf("create session: %v", err)
 		}
 		writeErr := errors.New("transport unavailable")
 		srv := New(rt, errorWriter{err: writeErr})
 		t.Cleanup(srv.Close)
-		th, err := srv.ensureThreadLoaded(sess.ID)
+		th, err := srv.ensureThreadLoaded(testRuntimeState(t, srv.rt), sess.ID)
 		if err != nil {
 			t.Fatalf("load thread: %v", err)
 		}
@@ -496,7 +550,7 @@ func TestServerThreadExecutionLeaseRollsBackPrelaunchFailures(t *testing.T) {
 			t.Fatalf("compact start error = %v, want transport error", err)
 		}
 		assertThreadStartRolledBack(t, th)
-		assertThreadLeaseAvailable(t, rt.SessionDir, sess.ID)
+		assertThreadLeaseAvailable(t, rt.Sessions, rt.SessionDir, sess.ID)
 	})
 
 	t.Run("durable append", func(t *testing.T) {
@@ -505,6 +559,7 @@ func TestServerThreadExecutionLeaseRollsBackPrelaunchFailures(t *testing.T) {
 		t.Cleanup(srv.Close)
 		threadID := "missing-durable-session"
 		th := newThreadState(threadID, nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
+		th.state = testRuntimeState(t, rt)
 		if _, started, err := srv.startThreadUserTurn(
 			context.Background(),
 			th,
@@ -515,17 +570,17 @@ func TestServerThreadExecutionLeaseRollsBackPrelaunchFailures(t *testing.T) {
 		); err == nil || started {
 			t.Fatalf("missing-session turn started=%t err=%v, want append failure", started, err)
 		}
-		assertThreadLeaseAvailable(t, rt.SessionDir, threadID)
+		assertThreadLeaseAvailable(t, rt.Sessions, rt.SessionDir, threadID)
 	})
 }
 
 func assertPersistedPrelaunchTurnFailed(t *testing.T, srv *Server, threadID, message string) {
 	t.Helper()
-	records, _, err := loadProviderPersistedMessages(srv.rt.SessionDir, threadID, true)
+	records, _, err := loadProviderPersistedMessages(srv.rt.Sessions, threadID, true)
 	if err != nil {
 		t.Fatalf("load persisted prelaunch turn: %v", err)
 	}
-	turns := turnsFromPersistedHistory(threadID, records, time.Now().UTC(), srv.resolveParticipantSummary)
+	turns := turnsFromPersistedHistory(threadID, records, time.Now().UTC(), srv.participantResolver(testRuntimeState(t, srv.rt)))
 	if len(turns) != 1 || turns[0].Status != TurnStatusFailed || turns[0].Error == nil || !strings.Contains(turns[0].Error.Message, message) {
 		t.Fatalf("persisted prelaunch turn = %+v, want one failed turn containing %q", turns, message)
 	}
@@ -546,9 +601,9 @@ func assertThreadStartRolledBack(t *testing.T, th *threadState) {
 	}
 }
 
-func assertThreadLeaseAvailable(t *testing.T, sessDir, threadID string) {
+func assertThreadLeaseAvailable(t *testing.T, store *session.Store, sessDir, threadID string) {
 	t.Helper()
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(sessDir, threadID)
+	lease, acquired, err := store.TryAcquireThreadExecutionLease(sessDir, threadID)
 	if err != nil {
 		t.Fatalf("acquire released lease: %v", err)
 	}
@@ -560,9 +615,9 @@ func assertThreadLeaseAvailable(t *testing.T, sessDir, threadID string) {
 	}
 }
 
-func acquireExternalThreadLease(t *testing.T, sessDir, threadID string) *session.ThreadExecutionLease {
+func acquireExternalThreadLease(t *testing.T, store *session.Store, sessDir, threadID string) *session.DocumentThreadExecutionLease {
 	t.Helper()
-	lease, acquired, err := session.TryAcquireThreadExecutionLease(sessDir, threadID)
+	lease, acquired, err := store.TryAcquireThreadExecutionLease(sessDir, threadID)
 	if err != nil {
 		t.Fatalf("acquire external execution lease: %v", err)
 	}
@@ -580,11 +635,11 @@ func assertCrossServerBusyResponse(t *testing.T, out *lockedBuffer, id string) {
 	}
 }
 
-func waitForThreadLeaseRelease(t *testing.T, sessDir, threadID string) {
+func waitForThreadLeaseRelease(t *testing.T, store *session.Store, sessDir, threadID string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		lease, acquired, err := session.TryAcquireThreadExecutionLease(sessDir, threadID)
+		lease, acquired, err := store.TryAcquireThreadExecutionLease(sessDir, threadID)
 		if err != nil {
 			t.Fatalf("probe released lease: %v", err)
 		}

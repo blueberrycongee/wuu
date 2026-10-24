@@ -9,6 +9,37 @@ const { createHash } = require('node:crypto');
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session, webContents } = require('electron');
 const { prepareMediaFixture, serveMediaFixture, runBrowserMediaAcceptance } = require('./browser-media-acceptance.cjs');
 
+async function readRibbonInteraction(win) {
+  const snapshot = { ownerFocused: win.isFocused(), focusedContentsID: webContents.getFocusedWebContents()?.id ?? null };
+  snapshot.shell = await win.webContents.executeJavaScript(`(() => {
+    const rail = document.querySelector('.sidebar-ribbon'), active = document.activeElement;
+    return { modality: document.documentElement.dataset.focusModality ?? null, documentFocused: document.hasFocus(),
+      mounted: Boolean(rail), expanded: rail?.dataset.expanded ?? null, docked: rail?.dataset.docked ?? null,
+      focusedWithin: Boolean(rail?.contains(active)), activeElement: active ? { tag: active.tagName, className: active.className,
+        ribbonID: active.getAttribute('data-ribbon-id'), role: active.getAttribute('role') } : null,
+      accountExpanded: document.querySelector('.sidebar-account-trigger')?.getAttribute('aria-expanded') ?? null };
+  })()`).catch(error => ({ unavailable: String(error) }));
+  snapshot.native = await Promise.all(['ribbon', 'account'].map(async kind => {
+    const view = win.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed()
+      && view.webContents.getURL() === `wuu-chrome://ui/chrome-overlay.html?surface=${kind}`);
+    if (!view) return { kind, mounted: false };
+    const state = { kind, contentsID: view.webContents.id, visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds() };
+    state.renderer = await view.webContents.executeJavaScript(`(async () => {
+      const mounted = Boolean(document.querySelector('.sidebar-ribbon, .sidebar-account-menu'));
+      // A mounted native surface has already completed ready(); do not
+      // initialize unpainted chrome merely to collect diagnostics.
+      const request = mounted ? await window.wuuChromeOverlay.ready() : null;
+      const active = document.activeElement;
+      return { mounted, modality: document.documentElement.dataset.focusModality ?? null, documentFocused: document.hasFocus(),
+        activeElement: active ? { tag: active.tagName, className: active.className,
+          ribbonID: active.getAttribute('data-ribbon-id'), role: active.getAttribute('role') } : null,
+        request: request ? { token: request.token, generation: request.generation, focus: request.focus, focusTarget: request.model.focusTarget } : null };
+    })()`).catch(error => ({ unavailable: String(error) }));
+    return state;
+  }));
+  return snapshot;
+}
+
 async function createWebsiteFixture(home) {
   const requests = [];
   const controls = { offline: true };
@@ -292,7 +323,8 @@ async function runWebsiteAcceptance(h, fixture) {
       nativeFocus: { ownerFocused: win.isFocused(), ownerFullscreen: win.isFullScreen(), focusedContentsID: webContents.getFocusedWebContents()?.id ?? null },
       nativeViews: win.contentView.children.filter(view => view.webContents && !view.webContents.isDestroyed()).map(view => ({ id: view.webContents.id, url: view.webContents.getURL(), visible: view.getVisible(), focused: view.webContents.isFocused(), bounds: view.getBounds(), zoom: view.webContents.getZoomFactor() })),
       visibleNativeLayers: nativeLayers().map(({ view, x, y, top }) => ({ id: view.webContents.id, url: view.webContents.getURL(), focused: view.webContents.isFocused(), x, y, bounds: view.getBounds(), clip: top.getBounds() })),
-      activeElement: await evaluate(() => document.activeElement?.outerHTML.slice(0, 240)) });
+      activeElement: await evaluate(() => document.activeElement?.outerHTML.slice(0, 240)),
+      ribbonInteraction: await readRibbonInteraction(win) });
     save(); await delay(160);
   }
   function xinput(args) {
@@ -316,9 +348,36 @@ async function runWebsiteAcceptance(h, fixture) {
       }), 'Native hover rail acknowledges pointer leave and finishes motion', 4000);
   }
   async function hoverTab(id) {
+    assert.equal(await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true'), false, 'Pointer-only hover starts with a compact rail');
+    const before = await evaluate(() => document.querySelector('.sidebar-ribbon').getBoundingClientRect().toJSON());
+    const focused = webContents.getFocusedWebContents()?.id;
     const p = await chromePoint(tabButton(id)), outer = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
     xinput(['mousemove', String(Math.round(outer.x + 26 * zoom)), String(Math.round(outer.y + p.y * zoom))]);
+    await waitFor(selector => document.querySelector(selector)?.matches(':hover'), tabButton(id));
+    await settle();
+    assert.equal(await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true'), false, 'Pointer hover keeps the rail compact');
+    assert.ok(!chromeView('ribbon')?.getVisible(), 'Pointer hover does not open native ribbon chrome');
+    assert.deepEqual(await evaluate(() => document.querySelector('.sidebar-ribbon').getBoundingClientRect().toJSON()), before, 'Pointer hover does not move or resize the compact rail');
+    assert.equal(webContents.getFocusedWebContents()?.id, focused, 'Pointer hover preserves native keyboard ownership');
+  }
+  async function expandTabRail(id) {
+    if (!await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true')) {
+      // Hover intentionally keeps the rail compact. Enter from the visible
+      // browser input with real keyboard traversal, without selecting a tab.
+      if (await evaluate(selector => document.querySelector(selector)?.getBoundingClientRect().width > 0, startInput)) {
+        await click(startInput, 'anchor-ribbon-keyboard-in-new-tab', false);
+      } else await focusAddress('anchor-ribbon-keyboard-in-address');
+      await until(() => win.webContents.isFocused(), 'Browser input owns native keyboard focus before entering the rail');
+      const stops = await evaluate(() => [...document.querySelectorAll('a[href],button,input,select,textarea,[tabindex]')]
+        .filter(node => node.tabIndex >= 0 && !node.disabled && node.getBoundingClientRect().width > 0).length);
+      for (let step = 0; step < stops; step++) {
+        xinput(['key', '--clearmodifiers', 'shift+Tab']);
+        await settle();
+        if (await evaluate(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true')) break;
+      }
+    }
     await waitFor(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded === 'true');
+    const zoom = win.webContents.getZoomFactor();
     await until(() => chromeView('ribbon')?.getVisible(), 'Native expanded ribbon paints');
     await until(async () => {
       const shell = await evaluate(() => {
@@ -336,8 +395,11 @@ async function runWebsiteAcceptance(h, fixture) {
         if (!node || node.disabled || Math.abs(innerWidth - width) > 1) return false;
         const rect = node.getBoundingClientRect();
         return rect.width > 0 && rect.height > 0 && node.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
-      }, { selector: tabButton(id), width: view.getBounds().width / view.webContents.getZoomFactor() }, 'hoverTab native reveal readiness');
-    }, 'Native hover reveal reaches the click targets');
+      }, { selector: tabButton(id), width: view.getBounds().width / view.webContents.getZoomFactor() }, 'expandTabRail native reveal readiness');
+    }, 'Native keyboard reveal reaches the click targets');
+    const p = await chromePoint(tabButton(id)), outer = win.getContentBounds();
+    xinput(['mousemove', String(Math.round(outer.x + p.x * zoom)), String(Math.round(outer.y + p.y * zoom))]);
+    await until(() => evaluateRibbon(selector => document.querySelector(selector)?.matches(':hover'), tabButton(id)), 'Native expanded rail acknowledges the pointer target');
   }
   async function finishRailInteraction(wc, label) {
     await leaveRail(false);
@@ -347,6 +409,7 @@ async function runWebsiteAcceptance(h, fixture) {
       await focusAddress(`${label}-return-to-browser-chrome`);
     }
     await waitFor(() => document.querySelector('.sidebar-ribbon')?.dataset.expanded !== 'true');
+    await until(() => !chromeView('ribbon')?.getVisible(), `${label}: native rail finishes dismissal`, 4000);
     if (wc) await until(() => !wc.isDestroyed() && win.contentView.children.some(view => view.webContents === wc && view.getVisible()), `${label}: leaving rail restores the same native page`);
   }
   async function focusAddress(label) {
@@ -606,6 +669,19 @@ async function runWebsiteAcceptance(h, fixture) {
   }
   async function traceLoadedTabSwitches() {
     const traces = [], originalBounds = win.getBounds();
+    const fixtureIDs = [siteIDs.get('Fixture Alpha'), siteIDs.get('Fixture Beta')];
+    const before = await readSite();
+    assert.ok(fixtureIDs.every(id => before.tabs.some(tab => tab.id === id)), 'Both loaded fixture tabs exist before isolating the switch circuit');
+    // Earlier failed journeys may leave a blank tab in the native cycle. This
+    // independent trace needs exactly two loaded pages for frame sampling.
+    const removed = before.tabs.filter(tab => !fixtureIDs.includes(tab.id));
+    for (const tab of removed) await evaluate(({ id, tabId }) => window.wuu.webWorkspace.closeTab(id, tabId), { id: ribbonGroup, tabId: tab.id });
+    await until(async () => {
+      const tabs = (await readSite()).tabs;
+      return tabs.length === fixtureIDs.length && tabs.every(tab => fixtureIDs.includes(tab.id));
+    }, 'Independent switch circuit contains only Alpha and Beta');
+    report.actions.push({ label: 'isolate-loaded-tab-switch-fixtures', setupOnly: true,
+      before: before.tabs.map(tab => tab.id), removed: removed.map(tab => tab.id), after: (await readSite()).tabs.map(tab => tab.id), atMs: Date.now() - started }); save();
     let current = await openSite('Fixture Alpha', '/alpha');
     try {
       for (const [pathname, width, mode] of [['/beta', 1280, 'keyboard'], ['/alpha', 1280, 'keyboard'], ['/beta', 960, 'keyboard'], ['/alpha', 960, 'pointer']]) {
@@ -637,9 +713,17 @@ async function runWebsiteAcceptance(h, fixture) {
         }
         report.activeTabSwitchTrace = trace;
         try {
-          if (mode === 'keyboard') xinput(['key', '--clearmodifiers', 'ctrl+Tab']);
+          if (mode === 'keyboard') {
+            const state = await readSite();
+            trace.tabOrder = state.tabs.map(tab => ({ id: tab.id, url: tab.url }));
+            const index = state.tabs.findIndex(tab => tab.id === state.activeTabId);
+            assert.equal(state.tabs[index]?.url, current.getURL(), 'Native shortcut starts from the focused fixture page');
+            assert.equal(state.tabs[(index + 1) % state.tabs.length]?.url, origin + pathname, 'Actual Ctrl+Tab successor is the sampled incoming page');
+            xinput(['key', '--clearmodifiers', 'ctrl+Tab']);
+          }
           else {
             const before = win.contentView.children.find(view => view.webContents === current).getBounds();
+            await expandTabRail(alphaID);
             await click(tabButton(alphaID), 'pointer-switch-loaded-tab', false, true);
             await verticalTabGeometry(true);
             await liveChrome('ribbon', incoming.webContents, 'hovered incoming tab');
@@ -751,14 +835,14 @@ async function runWebsiteAcceptance(h, fixture) {
     report.actions.push({ label: `${label}-live-popover`, contentsID: layer.view.webContents.id, pageID: wc.id, bounds, clip: layer.top.getBounds(), atMs: Date.now() - started }); save();
   }
   async function profileMenu(label, wc) {
-    if (label === 'narrow-new-tab') await hoverTab((await readSite()).activeTabId);
+    if (label === 'narrow-new-tab') await expandTabRail((await readSite()).activeTabId);
     if (label === 'narrow-new-tab') {
       const alignment = await evaluateRibbon(() => {
         const center = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return r.x + r.width / 2; };
         return { rows: { upper: center('.sidebar-ribbon-main [data-ribbon-id="conversations"]'),
-          settings: center('.sidebar-ribbon-footer .sidebar-ribbon-button'), account: center('.sidebar-ribbon-footer .sidebar-account-trigger') },
+          account: center('.sidebar-ribbon-footer .sidebar-account-trigger') },
         icons: { upper: center('.sidebar-ribbon-main [data-ribbon-id="conversations"] > svg'),
-          settings: center('.sidebar-ribbon-footer .sidebar-ribbon-button > svg'), account: center('.sidebar-ribbon-footer .sidebar-account-avatar') } };
+          account: center('.sidebar-ribbon-footer .sidebar-account-avatar') } };
       });
       assert.ok([alignment.rows, alignment.icons].every(group => Object.values(group).every(x => Math.abs(x - group.upper) <= 0.5))
         && alignment.icons.upper < alignment.rows.upper - 16,
@@ -831,7 +915,7 @@ async function runWebsiteAcceptance(h, fixture) {
     await until(() => nativeView(pathname)?.getVisible() && !nativeView(pathname).webContents.isLoading(), `native address navigation ${pathname}`);
   }
   async function tabMenu(id, label) {
-    await hoverTab(id);
+    await expandTabRail(id);
     const p = await chromePoint(tabButton(id)), bounds = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
     const wc = chromeView('ribbon').webContents, trace = { label, id, point: p, commands: [] };
     const observe = (event, message) => {
@@ -862,7 +946,7 @@ async function runWebsiteAcceptance(h, fixture) {
     const index = before.tabs.findIndex(tab => tab.id === id);
     const remaining = before.tabs.filter(tab => tab.id !== id);
     const expected = remaining[Math.min(index, remaining.length - 1)]?.id ?? '';
-    await hoverTab(id);
+    await expandTabRail(id);
     await click(`.sidebar-ribbon-close[data-ribbon-close-id="${id}"]`, label);
     await until(async () => !(await readSite()).tabs.some(tab => tab.id === id), 'Direct close button removes the web tab from the ribbon');
     await until(async () => (await readSite()).activeTabId === expected, 'Closing the active left tab selects its adjacent surviving tab');
@@ -919,18 +1003,31 @@ async function runWebsiteAcceptance(h, fixture) {
     report.actions.push({ label: 'restore-independent-synthetic-cookie', setupOnly: true, journey, reason: 'The earlier cookie journey did not pass', atMs: Date.now() - started }); save();
   }
   const testNative = (name, action) => test(name, async () => {
+    let actionFailed = false;
     try {
       if (independentFixtures) await ensureIndependentFixtures(name);
       return await action();
     }
     catch (error) {
+      actionFailed = true;
       try { await capture(`failure-${name}`); } catch {}
       // Keep the original failure, then dismiss only this fixture's popups.
-      for (const popup of BrowserWindow.getAllWindows()) {
-        if (popup !== win && (popup.webContents.getURL().startsWith(origin) || popup.webContents.getURL() === 'about:blank')) popup.close();
+      try {
+        for (const popup of BrowserWindow.getAllWindows()) {
+          if (popup !== win && (popup.webContents.getURL().startsWith(origin) || popup.webContents.getURL() === 'about:blank')) popup.close();
+        }
+        win.focus();
+      } catch (recoveryError) {
+        report.errors.push({ kind: 'website-recovery', journey: name, message: String(recoveryError.stack || recoveryError) });
       }
-      win.focus(); throw error;
-    } finally { await evaluate(() => window.__wuuMascotAcceptance?.cleanup()); }
+      throw error;
+    } finally {
+      try { await evaluate(() => window.__wuuMascotAcceptance?.cleanup()); }
+      catch (cleanupError) {
+        if (!actionFailed) throw cleanupError;
+        report.errors.push({ kind: 'website-cleanup', journey: name, message: String(cleanupError.stack || cleanupError) });
+      }
+    }
   });
   let alphaID, savedOrder;
 
@@ -1007,7 +1104,7 @@ async function runWebsiteAcceptance(h, fixture) {
       await click(pick('.sidebar-section-item', 'Plugins'), 'notion-plugin-list');
       await waitFor(() => document.querySelector('.catalog-row-open[aria-label*="Notion"]'));
       await click('.catalog-row-open[aria-label*="Notion"]', 'review-optional-notion');
-      await click(pick('.settings-detail-actions button', 'Approve and enable'), 'approve-optional-notion');
+      await click(pick('.plugin-page-actions button', 'Approve and enable'), 'approve-optional-notion');
       await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]'), undefined, 'optional Notion ribbon activation', 20000);
       diagnostic.ribbonID = await evaluate(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]').dataset.ribbonId);
       assert.ok(diagnostic.ribbonID.startsWith('plugin:'), 'Notion is a registered plugin destination, not a website shortcut');
@@ -1087,9 +1184,18 @@ async function runWebsiteAcceptance(h, fixture) {
       // external activity cannot contaminate unrelated local fixture journeys.
       await click(plugins, 'notion-diagnostic-return-to-inventory');
       await click(pick('.sidebar-section-item', 'Plugins'), 'notion-diagnostic-plugin-list');
+      if (await evaluate(() => Boolean(document.querySelector('[data-testid="plugin-page-back"]')))) {
+        await click('[data-testid="plugin-page-back"]', 'notion-diagnostic-back-to-list');
+      }
+      await waitFor(selector => document.querySelector(selector), pluginRow);
       if (await evaluate(selector => document.querySelector(`${selector} [role="switch"]`)?.getAttribute('aria-checked') === 'true', pluginRow)) {
         await click(`${pluginRow} [role="switch"]`, 'disable-diagnostic-notion');
       }
+      await waitFor(selector => {
+        const row = document.querySelector(selector);
+        return row && !row.hasAttribute('data-on');
+      }, pluginRow, 'optional Notion is inactive');
+      await waitFor(() => !document.querySelector('.sidebar-ribbon-main button[aria-label="Notion"]'), undefined, 'optional Notion ribbon is removed');
       await goConversations();
     }
   });
@@ -1133,15 +1239,20 @@ async function runWebsiteAcceptance(h, fixture) {
       const viewportBefore = await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})');
       const focusBeforeHover = nativeView('/alpha').webContents.isFocused();
       await hoverTab(siteIDs.get('Fixture Beta'));
-      vertical.expanded = await verticalTabGeometry(true);
-      await liveChrome('ribbon', nativeView('/alpha').webContents, 'hover rail');
       assert.equal(nativeView('/alpha').webContents.isFocused(), focusBeforeHover, 'Pointer hover preserves existing native keyboard focus');
-      assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Hover expansion does not resize the native website');
-      assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Hover expansion leaves the page viewport unchanged');
+      assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Compact hover does not resize the native website');
+      assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Compact hover leaves the page viewport unchanged');
+      await expandTabRail(siteIDs.get('Fixture Beta'));
+      vertical.expanded = await verticalTabGeometry(true);
+      assert.deepEqual(nativeView('/alpha').getBounds(), hostBefore, 'Keyboard expansion does not resize the native website');
+      assert.deepEqual(await nativeView('/alpha').webContents.executeJavaScript('({width:innerWidth,height:innerHeight})'), viewportBefore, 'Keyboard expansion leaves the page viewport unchanged');
       await until(() => evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, siteIDs.get('Fixture Beta')), 'Hovered native tab exposes its close control after its reveal transition', 4000);
       await capture('vertical-left-tabs-with-hover-close');
-      await leaveRail();
-      await until(() => nativeView('/alpha')?.getVisible() && !chromeView('ribbon')?.getVisible(), 'Pointer leave dismisses chrome while retaining the same live page');
+      await leaveRail(false);
+      await liveChrome('ribbon', nativeView('/alpha').webContents, 'keyboard-retained rail after pointer leave');
+      assert.ok(chromeView('ribbon').webContents.isFocused(), 'Pointer departure preserves keyboard ownership of the expanded rail');
+      await finishRailInteraction(nativeView('/alpha').webContents, 'expanded-tab-geometry');
+      await until(() => nativeView('/alpha')?.getVisible() && !chromeView('ribbon')?.getVisible(), 'Explicit browser focus dismisses keyboard chrome while retaining the same live page');
       vertical.restored = await verticalTabGeometry();
       await capture('collapsed-left-tabs-unchanged-web-viewport');
       return { alphaID, betaID: siteIDs.get('Fixture Beta'), options, tabs: (await readSite()).tabs, vertical };
@@ -1161,9 +1272,9 @@ async function runWebsiteAcceptance(h, fixture) {
   });
 
   independentFixtures = true;
-  await testNative('hover ribbon stays open across website and app destinations', async () => {
+  await testNative('keyboard-opened ribbon stays open across website and app destinations', async () => {
     await openSite('Fixture Alpha', '/alpha');
-    await hoverTab(alphaID);
+    await expandTabRail(alphaID);
     const retainedRibbon = chromeView('ribbon');
     const width = retainedRibbon.getBounds().width;
     const trace = report.hoverRibbonSelectionTrace = { commands: [], forwarded: [], models: [], nativeInput: [] };
@@ -1221,12 +1332,15 @@ async function runWebsiteAcceptance(h, fixture) {
       const selections = [
         { target: tabButton(siteIDs.get('Fixture Beta')), id: siteIDs.get('Fixture Beta'), label: 'beta' },
         { target: conversations, id: 'conversations', label: 'conversations' },
-        { target: '.sidebar-ribbon-footer button[aria-label="Settings"]', label: 'settings' },
+        { target: 'button[role="menuitem"][data-settings-page="providers"]', label: 'settings' },
         { target: tabButton(alphaID), id: alphaID, label: 'alpha' },
       ];
       for (const { target, id, label } of selections) {
+        if (label === 'settings') await click('.sidebar-account-trigger', 'retained-hover-account-menu', true, true);
         await click(target, `retained-hover-${label}`, true, true);
-        await until(() => evaluateRibbon(({ target, id }) => document.querySelector(id ? `[data-ribbon-id="${id}"]` : target)?.getAttribute('aria-current') === 'page', { target, id }), `Selected ${label}`);
+        await until(() => label === 'settings'
+          ? evaluate(() => Boolean(document.querySelector('.app-shell[data-settings-open] .settings-embedded')))
+          : evaluateRibbon(id => document.querySelector(`[data-ribbon-id="${id}"]`)?.getAttribute('aria-current') === 'page', id), `Selected ${label}`);
         assert.equal(chromeView('ribbon'), retainedRibbon, 'Navigation reuses the current native ribbon');
         assert.equal(retainedRibbon.getVisible(), true, 'Selecting a destination does not dismiss the hovered ribbon');
         assert.equal(retainedRibbon.getBounds().width, width, 'Selection does not start a collapse or reopen animation');
@@ -1638,7 +1752,7 @@ async function runWebsiteAcceptance(h, fixture) {
     xinput(['key', 'Home', 'key', 'Return']);
     await waitFor(id => { const button = document.querySelector(`[data-ribbon-id="${id}"]`); return button && button.dataset.pinned !== 'true'; }, alphaID);
     assert.equal((await readSite()).activeTabId, siteIDs.get('Fixture Beta'), 'Unpinning a background tab preserves the active Beta tab');
-    await hoverTab(alphaID);
+    await expandTabRail(alphaID);
     try {
       await until(() => evaluateRibbon(id => { const close = document.querySelector(`[data-ribbon-close-id="${id}"]`); return close && getComputedStyle(close).visibility === 'visible' && Number(getComputedStyle(close).opacity) > 0.95; }, alphaID), 'Native background close control settles before clicking', 4000);
     } catch (error) {
@@ -1712,7 +1826,7 @@ async function runWebsiteAcceptance(h, fixture) {
     await click(pick('.sidebar-section-item', 'Plugins'), 'select-plugin-inventory');
     await waitFor(() => document.querySelector('.catalog-row-open[aria-label*="Acceptance Webpage"]'));
     await click('.catalog-row-open[aria-label*="Acceptance Webpage"]', 'review-authored-extension');
-    await click(pick('.settings-detail-actions button', 'Approve and enable'), 'approve-authored-local-fixture');
+    await click(pick('.plugin-page-actions button', 'Approve and enable'), 'approve-authored-local-fixture');
     await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]'), undefined, 'production extension activation', 20000);
     const wc = await openSite('Fixture Website', '/extension');
     security(wc);
@@ -1740,17 +1854,60 @@ async function runWebsiteAcceptance(h, fixture) {
     await click(plugins, 'disable-extension-inventory');
     await click(pick('.sidebar-section-item', 'Plugins'), 'plugin-details-for-disable');
     if (await evaluate(() => !!document.querySelector('.catalog-row-open[aria-label*="Acceptance Webpage"]'))) await click('.catalog-row-open[aria-label*="Acceptance Webpage"]', 'open-enabled-fixture');
-    await click('button[role="switch"][aria-label="Turn off Acceptance Webpage"]', 'disable-authored-extension');
-    await waitFor(() => !document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]'));
-    await until(() => !contents('/extension'), 'disabled extension native contents destroyed');
-    await capture('extension-disabled-cleanly');
-    assert.ok(wc.isDestroyed());
+    await evaluate(() => {
+      const evidence = { startedAt: performance.now(), frames: 0, mutations: 0, failures: [], transitions: [] };
+      let previous, frame;
+      const sample = source => {
+        const recovery = document.querySelector('.application-recovery');
+        const toggle = document.querySelector('button[role="switch"][aria-label="Turn on Acceptance Webpage"]');
+        const state = { mounted: Boolean(document.querySelector('.app-shell')), recovery: recovery?.textContent ?? null,
+          disabled: Boolean(toggle && !toggle.disabled && toggle.getAttribute('aria-checked') === 'false') };
+        const key = JSON.stringify(state);
+        if (key !== previous) {
+          const snapshot = { at: performance.now(), source, ...state };
+          evidence.transitions.push(snapshot);
+          if (!state.mounted || recovery) evidence.failures.push({ ...snapshot, html: document.body.innerHTML.slice(0, 12000) });
+          previous = key;
+        }
+      };
+      const observer = new MutationObserver(records => { evidence.mutations += records.length; sample('mutation'); });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+      const tick = () => { evidence.frames++; sample('frame'); frame = requestAnimationFrame(tick); };
+      sample('before-disable'); frame = requestAnimationFrame(tick);
+      window.__wuuExtensionDisableContinuity = { stop: () => {
+        sample('after-disable'); observer.disconnect(); cancelAnimationFrame(frame);
+        return { ...evidence, endedAt: performance.now() };
+      } };
+    });
+    let continuity;
+    try {
+      await click('button[role="switch"][aria-label="Turn off Acceptance Webpage"]', 'disable-authored-extension');
+      await waitFor(() => {
+        const toggle = document.querySelector('button[role="switch"][aria-label="Turn on Acceptance Webpage"]');
+        return toggle && !toggle.disabled && toggle.getAttribute('aria-checked') === 'false'
+          && !document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]');
+      }, undefined, 'Disabled extension details remain available');
+      await until(() => !contents('/extension'), 'disabled extension native contents destroyed');
+      await capture('extension-disabled-cleanly');
+      assert.ok(wc.isDestroyed());
+    } finally {
+      continuity = await evaluate(() => {
+        const result = window.__wuuExtensionDisableContinuity.stop();
+        delete window.__wuuExtensionDisableContinuity; return result;
+      }).catch(error => ({ unavailable: String(error) }));
+      report.extensionDisableContinuity = continuity;
+      fs.writeFileSync(path.join(output, 'extension-disable-shell-continuity.json'), JSON.stringify(continuity, null, 2));
+      save();
+    }
+    assert.equal(continuity.unavailable, undefined, 'Shell continuity evidence is available');
+    assert.ok(continuity.frames > 0, 'Observe real renderer frames throughout disable');
+    assert.deepEqual(continuity.failures, [], 'Disabling an unrelated extension never removes the selected shell or shows application recovery');
     await click('button[role="switch"][aria-label="Turn on Acceptance Webpage"]', 're-enable-authored-extension');
     await waitFor(() => document.querySelector('.sidebar-ribbon-main button[aria-label="Fixture Website"]'), undefined, 'fixture re-enabled', 20000);
     const replacement = await openSite('Fixture Website', '/extension');
     assert.notEqual(replacement.id, wc.id, 'Re-enabled generation gets a new page');
     assert.equal(views().filter(view => view.webContents.getURL() === origin + '/extension').length, 1, 'Exactly one replacement plugin native page');
-    return { layout, multipleWebsiteDestinations: true, ordinaryNavigation, sharedCookieRetained: true, hiddenPageRetained: true, retainedDraft: true, oldGenerationDestroyed: true, singleReplacementPage: true };
+    return { layout, multipleWebsiteDestinations: true, ordinaryNavigation, sharedCookieRetained: true, hiddenPageRetained: true, retainedDraft: true, oldGenerationDestroyed: true, singleReplacementPage: true, shellContinuity: continuity };
   });
   // Public availability is diagnostic; actual tab ownership, chrome and return
   // behavior remain product gates even when a service blocks anonymous access.
@@ -1841,7 +1998,10 @@ async function runWebsiteAcceptance(h, fixture) {
             await hoverTab(site.tabID);
             assert.ok(await publicSurface(site, wc), 'Rail hover preserves the public page or navigation error');
             assert.deepEqual(view.getBounds(), bounds, 'Rail hover does not resize the public page');
-            await capture(`public-${site.name}-hover-rail`);
+            await expandTabRail(site.tabID);
+            assert.ok(await publicSurface(site, wc), 'Keyboard-opened rail preserves the public page or navigation error');
+            assert.deepEqual(view.getBounds(), bounds, 'Keyboard-opened rail does not resize the public page');
+            await capture(`public-${site.name}-keyboard-opened-rail`);
             await finishRailInteraction(null, `public-${site.name}-hover`);
             const popup = Menu.prototype.popup;
             Menu.prototype.popup = function (...args) { visit.menu = this.items.map(item => ({ label: item.label, enabled: item.enabled })); return popup.apply(this, args); };
@@ -1870,4 +2030,4 @@ async function runWebsiteAcceptance(h, fixture) {
   await goConversations();
   report.websiteFixture = { origin, requestCount: fixture.requests.length, externalAccounts: false, authoredExtension: true };
 }
-module.exports = { createWebsiteFixture, runWebsiteAcceptance };
+module.exports = { createWebsiteFixture, runWebsiteAcceptance, readRibbonInteraction };

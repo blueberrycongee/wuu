@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -44,11 +45,19 @@ func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) 
 // Open creates a fresh thread runtime owned by the returned engine session.
 // Close drains its turn and workers before releasing the provider generation.
 func (e *WuuEngine) Open(ctx context.Context, req agentengine.OpenRequest) (agentengine.Session, error) {
+	engine, _, err := e.OpenWithRuntime(ctx, req)
+	return engine, err
+}
+
+// OpenWithRuntime exposes the owned native runtime for host-side configuration
+// and observation. The returned engine alone owns its cleanup; callers must
+// finish using the runtime before Close and must not release its generation.
+func (e *WuuEngine) OpenWithRuntime(ctx context.Context, req agentengine.OpenRequest) (agentengine.Session, *ThreadRuntime, error) {
 	if e == nil || e.session == nil {
-		return nil, errors.New("wuu engine is not bound to a runtime session")
+		return nil, nil, errors.New("wuu engine is not bound to a runtime session")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	threadID := req.ThreadID
 	if threadID == "" {
@@ -60,10 +69,10 @@ func (e *WuuEngine) Open(ctx context.Context, req agentengine.OpenRequest) (agen
 	}
 	rt, err := e.session.NewThreadRuntimeForRoot(threadID, rootDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rt.EngineID = agentengine.EngineWuu
-	return &wuuEngineSession{runner: rt.StreamRunner, owner: e.session, ownedRuntime: rt}, nil
+	return &wuuEngineSession{runner: rt.StreamRunner, owner: e.session, ownedRuntime: rt}, rt, nil
 }
 
 // Resume reopens an existing conversation with the same resource ownership
@@ -132,10 +141,34 @@ func (s *Session) RefreshEngineSettings() error {
 func (s *Session) UpdateEngineSettings(update config.EnginesSettingsUpdate) error {
 	s.engineSettingsMu.Lock()
 	defer s.engineSettingsMu.Unlock()
-	if err := config.UpdateEnginesSettings(s.ConfigPath, update); err != nil {
+	services, release, err := s.RetainStateServices()
+	if err != nil {
 		return err
 	}
-	return s.refreshEngineSettings()
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return err
+	}
+	source := view.Source
+	if len(source) == 0 {
+		source, err = json.Marshal(view.Config)
+		if err != nil {
+			return errors.New("selected configuration cannot be edited")
+		}
+	}
+	next, err := config.UpdateEnginesSettingsSource(source, update)
+	if err != nil {
+		return err
+	}
+	view, err = services.Config.CompareExchange(context.Background(), view.Revision, next)
+	if err != nil {
+		return err
+	}
+	if view.ActivationError != "" {
+		return errors.New("engine settings were saved, but the selected configuration could not be activated")
+	}
+	return s.applyEngineSettings(view.Config)
 }
 
 func (s *Session) refreshEngineSettings() error {
@@ -143,6 +176,10 @@ func (s *Session) refreshEngineSettings() error {
 	if err != nil {
 		return err
 	}
+	return s.applyEngineSettings(cfg)
+}
+
+func (s *Session) applyEngineSettings(cfg config.Config) error {
 	codexBinary, codexResolveErr := codexengine.ResolveBinary()
 	codexEnabled := codexResolveErr == nil
 	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()

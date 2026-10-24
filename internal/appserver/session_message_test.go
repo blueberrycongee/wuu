@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
 func TestSessionMessageQueuedDeliveryAndReplay(t *testing.T) {
@@ -25,7 +26,7 @@ func TestSessionMessageQueuedDeliveryAndReplay(t *testing.T) {
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() { once.Do(func() { close(release) }); srv.Close() })
-	ctx := context.Background()
+	ctx := runtime.WithInvocationState(context.Background(), testRuntimeState(t, rt))
 	create := func(id, plugin, visibility string) string {
 		t.Helper()
 		result, err := srv.createPluginSession(ctx, plugin, pluginhost.SessionCreateParams{RequestID: id, Name: id, Visibility: visibility, ContextSource: pluginhost.SessionContextFresh})
@@ -74,7 +75,7 @@ func TestSessionMessageQueuedDeliveryAndReplay(t *testing.T) {
 			if event.RequestID != params.RequestID || event.State != "completed" {
 				continue
 			}
-			loaded, err := srv.loadPersistedThreadState(target, time.Now())
+			loaded, err := srv.loadPersistedThreadState(testRuntimeState(t, srv.rt), target, time.Now())
 			if err != nil {
 				t.Fatal(err)
 			}

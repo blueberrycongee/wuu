@@ -13,7 +13,7 @@ import (
 	_ "image/png"
 	"strings"
 
-	"github.com/blueberrycongee/wuu/internal/runtime"
+	"context"
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
@@ -35,7 +35,12 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 	if params.Index < 0 || params.Offset < 0 || len(params.SHA256) != 64 {
 		return s.writeResponse(req.ID, nil, errors.New("invalid attachment reference or offset"))
 	}
-	th, err := s.historyThread(params.ThreadID)
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer binding.Close()
+	th, err := s.historyThread(binding, params.ThreadID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -75,11 +80,11 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 	th.mu.Unlock()
 	hash := sha256.New()
 	if artifactURI != "" {
-		stateDir, err := s.workspaceStateDir()
+		services, err := binding.Services()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		data, media, err := runtime.ReadManagedArtifact(s.rt.WuuHome, stateDir, params.ThreadID, artifactURI, 12*1024*1024)
+		data, media, err := services.Artifacts.Read(context.Background(), params.ThreadID, artifactURI, 12*1024*1024)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}

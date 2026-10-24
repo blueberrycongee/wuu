@@ -133,7 +133,9 @@ func (m Manifest) EnabledByDefault() bool {
 // DesktopSpec identifies the package-relative browser module for Desktop
 // contributions. Entry is intentionally never an absolute package path.
 type DesktopSpec struct {
-	Entry string `json:"entry"`
+	Entry            string                          `json:"entry"`
+	Services         []pluginhost.ServiceDescriptor  `json:"services,omitempty"`
+	RequiredServices []pluginhost.ServiceRequirement `json:"required_services,omitempty"`
 }
 
 type ThemeSpec struct {
@@ -720,12 +722,30 @@ func normalizeDesktop(root string, raw json.RawMessage) (*DesktopSpec, error) {
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil, nil
 	}
-	if err := validateObjectFields("desktop", trimmed, "entry"); err != nil {
+	if err := validateObjectFields("desktop", trimmed, "entry", "services", "required_services"); err != nil {
 		return nil, err
 	}
 	var spec DesktopSpec
 	if err := json.Unmarshal(trimmed, &spec); err != nil {
 		return nil, fmt.Errorf("desktop: %w", err)
+	}
+	seen := make(map[string]bool)
+	for _, service := range spec.Services {
+		if err := pluginhost.ValidateServiceDescriptor(service); err != nil {
+			return nil, fmt.Errorf("desktop: %w", err)
+		}
+		if service.Name != "ui.shell" || service.Version != "1.0.0" || len(service.Methods) != 1 || service.Methods[0].Name != "describe" {
+			return nil, fmt.Errorf("desktop service %q must implement ui.shell 1.0.0 describe", service.Name)
+		}
+		if seen[service.Name] {
+			return nil, fmt.Errorf("duplicate desktop service %q", service.Name)
+		}
+		seen[service.Name] = true
+	}
+	for _, requirement := range spec.RequiredServices {
+		if err := pluginhost.ValidateServiceRequirement(requirement); err != nil {
+			return nil, fmt.Errorf("desktop: %w", err)
+		}
 	}
 	if strings.Contains(spec.Entry, `\`) {
 		return nil, fmt.Errorf("desktop.entry path %q must use package-relative slash separators", spec.Entry)
@@ -757,7 +777,8 @@ func normalizeDesktop(root string, raw json.RawMessage) (*DesktopSpec, error) {
 	if info.Size() > maxDesktopEntrySize {
 		return nil, fmt.Errorf("desktop.entry %s exceeds %d bytes", entry, maxDesktopEntrySize)
 	}
-	return &DesktopSpec{Entry: entry}, nil
+	spec.Entry = entry
+	return &spec, nil
 }
 
 func normalizeThemes(raw json.RawMessage) ([]ThemeSpec, error) {

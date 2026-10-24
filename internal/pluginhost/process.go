@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 const (
@@ -272,10 +276,15 @@ func (c *ProcessClient) RequiredServices() []ServiceRequirement {
 	return cloneServiceRequirements(c.requiredServices)
 }
 
-// InvokeService delivers one registry-routed call to this provider plugin.
+// InvokeService delivers one call to this provider plugin. Structured provider
+// failures retain their codes as HostServiceError; transport errors stay unclassified.
 func (c *ProcessClient) InvokeService(ctx context.Context, params ServiceInvokeParams) (json.RawMessage, error) {
 	var result json.RawMessage
 	if err := c.call(ctx, ServiceInvokeMethod, params, &result); err != nil {
+		var remoteErr *remoteCallError
+		if errors.As(err, &remoteErr) && remoteErr.code != "" {
+			return nil, &HostServiceError{Code: remoteErr.code, Message: remoteErr.message}
+		}
 		return nil, err
 	}
 	return result, nil
@@ -458,8 +467,14 @@ func (c *ProcessClient) Close(ctx context.Context) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_ = c.call(shutdownCtx, "shutdown", nil, nil)
+	shutdownErr := c.call(shutdownCtx, "shutdown", nil, nil)
 	err := c.stopProcess()
+	// Runtimes may exit without replying. Only a received rejection proves a
+	// shutdown callback failure independently of the process retirement result.
+	var remoteErr *remoteCallError
+	if errors.As(shutdownErr, &remoteErr) {
+		err = errors.Join(shutdownErr, err)
+	}
 	c.mu.Lock()
 	c.status.State = StateStopped
 	c.tools = nil
@@ -487,17 +502,42 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	if err != nil {
 		return err
 	}
+	var completeReceipt func(error)
+	receiptScope := providers.ModelReceiptScopeFromContext(ctx)
+	if receiptScope != nil {
+		ctx, completeReceipt, err = providers.BeginModelReceipt(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	var receiptErr error
+	callerOwnsPending := true
 	responseCh := make(chan rpcResponse, 1)
 	c.pendingMu.Lock()
 	c.pending[id] = responseCh
 	c.pendingMu.Unlock()
-	defer c.removePending(id)
-	if input, ok := params.(ServiceInvokeParams); ok && input.CallerScope != nil {
-		if err := c.writeScopedInvocation(ctx, payload, input.CallerScope); err != nil {
-			return fmt.Errorf("write scoped request: %w", err)
+	defer func() {
+		if callerOwnsPending {
+			c.removePending(id)
+			if completeReceipt != nil {
+				completeReceipt(receiptErr)
+			}
 		}
-	} else if err := c.writeLine(ctx, payload); err != nil {
-		return fmt.Errorf("write request: %w", err)
+	}()
+	writeLabel := "write request"
+	if input, ok := params.(ServiceInvokeParams); ok && input.CallerScope != nil {
+		writeLabel = "write scoped request"
+		err = c.writeScopedInvocation(ctx, payload, input.CallerScope)
+	} else {
+		err = c.writeLine(ctx, payload)
+	}
+	if err != nil {
+		// Canceling before acquiring the writer launches no remote work. A
+		// failed write retires the transport because delivery is uncertain.
+		if ctx.Err() == nil || c.processCtx.Err() != nil {
+			receiptErr = err
+		}
+		return fmt.Errorf("%s: %w", writeLabel, err)
 	}
 	// The invoke frame must be written before cancellation can be signalled.
 	// Otherwise a fast cancel can arrive before the runtime registers its
@@ -514,29 +554,65 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	finishExecution := c.watchExecution(ctx, executionID)
 	defer finishExecution()
 
+	response, err := c.waitResponse(ctx, responseCh)
+	if err != nil {
+		if completeReceipt != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			callerOwnsPending = false
+			// Local cancellation does not acknowledge the remote callback.
+			// Retain its original response without writing into caller-owned result.
+			go func() {
+				observationCtx := receiptScope.ObservationContext()
+				response, completionErr := c.waitResponse(observationCtx, responseCh)
+				if completionErr != nil && observationCtx.Err() != nil {
+					completionErr = errors.Join(completionErr, context.Cause(observationCtx))
+				}
+				if completionErr == nil && response.Error == nil && result != nil && len(response.Result) == 0 {
+					completionErr = errors.New("response is missing result")
+				}
+				c.removePending(id)
+				completeReceipt(completionErr)
+			}()
+		} else {
+			receiptErr = err
+		}
+		return err
+	}
+	if response.Error != nil {
+		message := strings.TrimSpace(response.Error.Message)
+		if message == "" {
+			message = "plugin call failed"
+		}
+		return &remoteCallError{code: strings.TrimSpace(response.Error.Code), message: message}
+	}
+	if result == nil {
+		return nil
+	}
+	if len(response.Result) == 0 {
+		receiptErr = errors.New("response is missing result")
+		return receiptErr
+	}
+	if err := json.Unmarshal(response.Result, result); err != nil {
+		receiptErr = fmt.Errorf("decode result: %w", err)
+		return receiptErr
+	}
+	return nil
+}
+
+func (c *ProcessClient) waitResponse(ctx context.Context, responseCh <-chan rpcResponse) (rpcResponse, error) {
 	select {
 	case response := <-responseCh:
-		if response.Error != nil {
-			message := strings.TrimSpace(response.Error.Message)
-			if message == "" {
-				message = "plugin call failed"
-			}
-			return &remoteCallError{code: strings.TrimSpace(response.Error.Code), message: message}
-		}
-		if result == nil {
-			return nil
-		}
-		if len(response.Result) == 0 {
-			return errors.New("response is missing result")
-		}
-		if err := json.Unmarshal(response.Result, result); err != nil {
-			return fmt.Errorf("decode result: %w", err)
-		}
-		return nil
+		return response, nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return rpcResponse{}, ctx.Err()
 	case <-c.readerDone:
-		return c.readFailure()
+		// EOF can follow a complete reply before the caller resumes. Keep
+		// that reply authoritative; only an empty queue means transport loss.
+		select {
+		case response := <-responseCh:
+			return response, nil
+		default:
+			return rpcResponse{}, c.readFailure()
+		}
 	}
 }
 
@@ -795,7 +871,9 @@ func (c *ProcessClient) rejectHostService(id, code, message string) error {
 }
 
 func (c *ProcessClient) writeHostServiceResult(response HostServiceResult) error {
-	payload, err := json.Marshal(response)
+	// Preserve bounded raw results inside the RPC envelope. HTML and JavaScript
+	// escaping can otherwise expand an already valid provider page.
+	payload, err := jsonv2.Marshal(response, json.DefaultOptionsV1(), jsontext.EscapeForHTML(false), jsontext.EscapeForJS(false))
 	if err != nil {
 		return fmt.Errorf("encode host service result: %w", err)
 	}
@@ -869,7 +947,7 @@ func (c *ProcessClient) fail(err error) {
 }
 
 func (c *ProcessClient) failFatalCall(err error) {
-	if err == nil {
+	if err == nil || errors.Is(err, providers.ErrModelReceiptScopeClosed) {
 		return
 	}
 	var domainErr *remoteCallError

@@ -91,6 +91,7 @@ type Options struct {
 type Runtime struct {
 	mu       sync.Mutex
 	core     *runtime.Session
+	bindings *appserver.RuntimeBindings
 	serving  int
 	closed   bool
 	closeErr error
@@ -139,17 +140,20 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := runtimeconfig.ApplyOverrides(&cfg, runtimeconfig.Overrides{
+	overrides := runtimeconfig.Overrides{
 		AgentProfile:   opts.AgentProfile,
 		MaxTurns:       opts.MaxTurns,
 		Effort:         opts.Effort,
 		Variant:        opts.Variant,
 		PermissionMode: opts.PermissionMode,
-	}); err != nil {
+	}
+	if err := runtimeconfig.ApplyOverrides(&cfg, overrides); err != nil {
 		return nil, err
 	}
 
+	bindings := appserver.NewRuntimeBindings()
 	core, err := runtime.NewSession(runtime.Options{
+		NativeProviders:          bindings.NativeProviders(),
 		RootDir:                  rootDir,
 		Host:                     host,
 		WorkspaceID:              strings.TrimSpace(opts.WorkspaceID),
@@ -160,7 +164,7 @@ func New(opts Options) (*Runtime, error) {
 		Config:                   cfg,
 		ProviderName:             strings.TrimSpace(opts.Provider),
 		ModelOverride:            strings.TrimSpace(opts.Model),
-		PermissionModeExplicit:   strings.TrimSpace(opts.PermissionMode) != "",
+		Overrides:                overrides,
 		NoTools:                  opts.NoTools,
 		NonInteractive:           opts.NonInteractive,
 		SafeMode:                 opts.SafeMode,
@@ -168,7 +172,7 @@ func New(opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runtime{core: core}, nil
+	return &Runtime{core: core, bindings: bindings}, nil
 }
 
 // Serve runs one app-server JSONL connection until the client requests
@@ -202,7 +206,7 @@ func (r *Runtime) Serve(ctx context.Context, in io.Reader, out io.Writer) error 
 		r.mu.Unlock()
 	}()
 
-	return appserver.RunStdio(ctx, core, in, out)
+	return appserver.RunStdio(ctx, core, in, out, appserver.WithRuntimeBindings(r.bindings))
 }
 
 // Close releases resources owned by the embedded runtime. It is idempotent.

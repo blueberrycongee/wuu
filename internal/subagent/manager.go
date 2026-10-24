@@ -40,6 +40,7 @@ type Manager struct {
 	defaultKeepRecent      int
 	defaultDisableCompact  bool
 	defaultJournal         providers.InferenceJournal
+	BeginModelReceipts     agent.BeginModelReceiptsFunc
 	toolLedgerFactory      func(string) (*toolledger.Ledger, error)
 
 	mu        sync.Mutex
@@ -84,8 +85,9 @@ type ManagerOptions struct {
 	DisableAutoCompact      bool
 	// InferenceJournal is an infrastructure dependency fixed at manager
 	// construction. UpdateDefaults intentionally does not replace it.
-	InferenceJournal  providers.InferenceJournal
-	ToolLedgerFactory func(ownerID string) (*toolledger.Ledger, error)
+	InferenceJournal   providers.InferenceJournal
+	BeginModelReceipts agent.BeginModelReceiptsFunc
+	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
 	// AcquireLoopDriver is required for execution. Missing configuration
 	// rejects the turn before lifecycle hooks, inference, or tool calls.
 	AcquireLoopDriver loopdriver.AcquireFunc
@@ -94,21 +96,22 @@ type ManagerOptions struct {
 }
 
 type managerDefaults struct {
-	client            providers.StreamClient
-	providerName      string
-	model             string
-	effort            string
-	options           map[string]any
-	contextWindow     int
-	maxInputTokens    int
-	outputReserve     int
-	compactTokens     int
-	compactPct        float64
-	temperature       float64
-	keepRecent        int
-	disableCompact    bool
-	journal           providers.InferenceJournal
-	toolLedgerFactory func(string) (*toolledger.Ledger, error)
+	client             providers.StreamClient
+	providerName       string
+	model              string
+	effort             string
+	options            map[string]any
+	contextWindow      int
+	maxInputTokens     int
+	outputReserve      int
+	compactTokens      int
+	compactPct         float64
+	temperature        float64
+	keepRecent         int
+	disableCompact     bool
+	journal            providers.InferenceJournal
+	BeginModelReceipts agent.BeginModelReceiptsFunc
+	toolLedgerFactory  func(string) (*toolledger.Ledger, error)
 }
 
 type toolContextBlockProvider interface {
@@ -139,6 +142,7 @@ func NewManagerWithOptions(client providers.StreamClient, defaultModel string, o
 		defaultKeepRecent:      opts.CompactKeepRecentTokens,
 		defaultDisableCompact:  opts.DisableAutoCompact,
 		defaultJournal:         opts.InferenceJournal,
+		BeginModelReceipts:     opts.BeginModelReceipts,
 		toolLedgerFactory:      opts.ToolLedgerFactory,
 		acquireLoopDriver:      opts.AcquireLoopDriver,
 		onSubagentStart:        opts.OnSubagentStart,
@@ -180,21 +184,22 @@ func (m *Manager) defaultsSnapshot() managerDefaults {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return managerDefaults{
-		client:            m.client,
-		providerName:      m.defaultProviderName,
-		model:             m.defaultModel,
-		effort:            m.defaultEffort,
-		options:           provideroptions.Clone(m.defaultProviderOptions),
-		contextWindow:     m.defaultContextWindow,
-		maxInputTokens:    m.defaultMaxInputTokens,
-		outputReserve:     m.defaultOutputReserve,
-		compactTokens:     m.defaultCompactTokens,
-		temperature:       m.defaultTemperature,
-		compactPct:        m.defaultCompactPct,
-		keepRecent:        m.defaultKeepRecent,
-		disableCompact:    m.defaultDisableCompact,
-		journal:           m.defaultJournal,
-		toolLedgerFactory: m.toolLedgerFactory,
+		client:             m.client,
+		providerName:       m.defaultProviderName,
+		model:              m.defaultModel,
+		effort:             m.defaultEffort,
+		options:            provideroptions.Clone(m.defaultProviderOptions),
+		contextWindow:      m.defaultContextWindow,
+		maxInputTokens:     m.defaultMaxInputTokens,
+		outputReserve:      m.defaultOutputReserve,
+		compactTokens:      m.defaultCompactTokens,
+		temperature:        m.defaultTemperature,
+		compactPct:         m.defaultCompactPct,
+		keepRecent:         m.defaultKeepRecent,
+		disableCompact:     m.defaultDisableCompact,
+		journal:            m.defaultJournal,
+		BeginModelReceipts: m.BeginModelReceipts,
+		toolLedgerFactory:  m.toolLedgerFactory,
 	}
 }
 
@@ -396,21 +401,22 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 	runtimeDefaults := defaults
 	if runtime != nil {
 		runtimeDefaults = managerDefaults{
-			client:            client,
-			providerName:      providerName,
-			model:             model,
-			effort:            strings.TrimSpace(runtime.Effort),
-			options:           provideroptions.Clone(runtime.ProviderOptions),
-			contextWindow:     runtime.ContextWindow,
-			maxInputTokens:    runtime.MaxInputTokens,
-			outputReserve:     runtime.OutputReserveTokens,
-			compactTokens:     runtime.CompactThresholdTokens,
-			compactPct:        runtime.CompactThresholdPct,
-			temperature:       runtime.Temperature,
-			keepRecent:        runtime.CompactKeepRecentTokens,
-			disableCompact:    runtime.DisableAutoCompact,
-			journal:           defaults.journal,
-			toolLedgerFactory: defaults.toolLedgerFactory,
+			client:             client,
+			providerName:       providerName,
+			model:              model,
+			effort:             strings.TrimSpace(runtime.Effort),
+			options:            provideroptions.Clone(runtime.ProviderOptions),
+			contextWindow:      runtime.ContextWindow,
+			maxInputTokens:     runtime.MaxInputTokens,
+			outputReserve:      runtime.OutputReserveTokens,
+			compactTokens:      runtime.CompactThresholdTokens,
+			compactPct:         runtime.CompactThresholdPct,
+			temperature:        runtime.Temperature,
+			keepRecent:         runtime.CompactKeepRecentTokens,
+			disableCompact:     runtime.DisableAutoCompact,
+			journal:            defaults.journal,
+			BeginModelReceipts: defaults.BeginModelReceipts,
+			toolLedgerFactory:  defaults.toolLedgerFactory,
 		}
 	}
 
@@ -476,13 +482,13 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 	doneCh := sa.doneCh
 	m.mu.Unlock()
 
-	go m.runTurn(subCtx, cancel, sa, opts.MaxSteps, history, doneCh, runtimeDefaults)
+	go m.runTurn(subCtx, cancel, sa, opts.MaxSteps, history, doneCh, runtimeDefaults, nil)
 
 	return sa, nil
 }
 
 // runTurn executes one turn for a sub-agent in a goroutine.
-func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *SubAgent, maxSteps int, history []providers.ChatMessage, doneCh chan struct{}, defaults managerDefaults) {
+func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *SubAgent, maxSteps int, history []providers.ChatMessage, doneCh chan struct{}, defaults managerDefaults, receiptErr error) {
 	ownsDone := true
 	defer func() {
 		if ownsDone {
@@ -500,7 +506,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		if r := recover(); r != nil {
 			sa.mu.Lock()
 			sa.Status = StatusFailed
-			sa.Error = fmt.Errorf("worker panic: %v", r)
+			sa.Error = errors.Join(receiptErr, fmt.Errorf("worker panic: %v", r))
 			sa.CompletedAt = time.Now()
 			sa.mu.Unlock()
 			m.prepareTerminal(sa, StatusFailed)
@@ -580,6 +586,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		InferenceOperationKind:   providers.InferenceOperationAgentRound,
 		InferenceWorkloadProfile: providers.InferenceProfileBackgroundAgent,
 		InferenceJournal:         defaults.journal,
+		BeginModelReceipts:       defaults.BeginModelReceipts,
 		OnUsage:                  onUsage,
 		OnTokenUsage:             onTokenUsage,
 	}
@@ -632,16 +639,12 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	// active parent turn. Inheriting its ID would alias the callback registry.
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: executionID})
 	if err == nil {
-		if m.onSubagentStart != nil {
-			err = m.onSubagentStart(ctx, sa.ID)
-		}
+		err = runWorkerLifecycleHook(ctx, sa.ID, defaults, m.onSubagentStart)
 		if err == nil {
 			res, err = runner.RunWithCallback(ctx, history, onEvent)
 			sa.acceptDriverCheckpoint(res)
 		}
-		if m.onSubagentStop != nil {
-			err = errors.Join(err, m.onSubagentStop(ctx, sa.ID))
-		}
+		err = errors.Join(err, runWorkerLifecycleHook(ctx, sa.ID, defaults, m.onSubagentStop))
 	}
 	content := res.Content
 	nextHistory := mergeTurnHistory(history, res)
@@ -661,20 +664,20 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		//     stopped without saying anything. Ask once for a final summary,
 		//     reusing the same turn machinery in place (no parallel loop).
 		if strings.TrimSpace(content) == "" && ctx.Err() == nil {
-			if nudged, nudgedHistory, ok := m.runFinalSummaryNudge(ctx, runner, sa, nextHistory, onEvent); ok {
-				nextHistory = nudgedHistory
-				if strings.TrimSpace(nudged) != "" {
-					content = nudged
-				}
-			}
+			var nudgeErr error
+			content, nextHistory, nudgeErr = m.runFinalSummaryNudge(ctx, runner, sa, nextHistory, onEvent)
+			err = errors.Join(err, nudgeErr)
 		}
 		//  3. Clearly labelled placeholder: only if the worker genuinely
 		//     produced nothing. A placeholder is not a fabricated statement,
 		//     so it does not violate "the runtime never answers for the model".
-		if strings.TrimSpace(content) == "" {
+		if err == nil && strings.TrimSpace(content) == "" {
 			content = emptyWorkerResultPlaceholder
 		}
 	}
+	// An implicit continuation shares its caller's completion boundary. Its
+	// successful work cannot erase a required receipt failure from an earlier turn.
+	err = errors.Join(receiptErr, err)
 	workflowOutcome := providers.InferenceOutcomeSucceeded
 	if err != nil {
 		workflowOutcome = providers.InferenceOutcomeFailed
@@ -693,6 +696,9 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	// normal resumed turn. No successful Followup can remain parked in memory
 	// with no future BeforeStep to consume it.
 	if ctx.Err() == nil && len(sa.pendingMessages) > 0 {
+		if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+			receiptErr = err
+		}
 		continuationHistory := append(providers.CloneChatMessages(nextHistory), sa.popPendingUserMessagesLocked()...)
 		lifetime := sa.maxLifetime
 		continuationCtx, continuationCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -709,7 +715,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		sa.cancelFunc = continuationCancel
 		sa.mu.Unlock()
 		ownsDone = false
-		go m.runTurn(continuationCtx, continuationCancel, sa, maxSteps, continuationHistory, doneCh, defaults)
+		go m.runTurn(continuationCtx, continuationCancel, sa, maxSteps, continuationHistory, doneCh, defaults, receiptErr)
 		return
 	}
 	sa.history = nextHistory
@@ -719,8 +725,14 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		case errors.Is(err, context.DeadlineExceeded) && sa.maxLifetime > 0:
 			sa.Status = StatusFailed
 			sa.Error = fmt.Errorf("worker exceeded max lifetime (%s)", sa.maxLifetime)
+			if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+				sa.Error = errors.Join(sa.Error, err)
+			}
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			sa.Status = StatusCancelled
+			if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+				sa.Error = err
+			}
 		default:
 			sa.Status = StatusFailed
 			sa.Error = err
@@ -738,6 +750,21 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	finalStatus := sa.Status
 	sa.mu.Unlock()
 	m.finishTerminal(ctx, sa, finalStatus, nextHistory)
+}
+
+func runWorkerLifecycleHook(ctx context.Context, id string, defaults managerDefaults, hook func(context.Context, string) error) (hookErr error) {
+	if hook == nil {
+		return nil
+	}
+	// Prompt hooks run outside the main runner and must not inherit its parent's
+	// journal or receipt lifetime, even when the worker detached cancellation.
+	ctx = providers.WithInferenceJournal(ctx, defaults.journal)
+	ctx, finish, hookErr := agent.BeginModelReceipts(ctx, defaults.BeginModelReceipts)
+	if hookErr != nil {
+		return hookErr
+	}
+	defer func() { hookErr = errors.Join(hookErr, finish()) }()
+	return hook(ctx, id)
 }
 
 // finishTerminal is shared by a running turn and cancellation of a parked turn.
@@ -855,9 +882,9 @@ func lastAssistantText(history []providers.ChatMessage) string {
 // runFinalSummaryNudge runs exactly one additional turn asking a completed
 // worker that produced no text for a final summary. It reuses the same runner
 // and turn loop in place (no parallel goroutine) and reports the recovered
-// text plus the extended history. Best-effort: a nudge that errors leaves the
-// worker's completed result and history untouched.
-func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.StreamRunner, sa *SubAgent, history []providers.ChatMessage, onEvent agent.StreamCallback) (string, []providers.ChatMessage, bool) {
+// text plus the extended history. Ordinary generation failures are best-effort;
+// required receipt failures preserve accepted output and fail the worker.
+func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.StreamRunner, sa *SubAgent, history []providers.ChatMessage, onEvent agent.StreamCallback) (string, []providers.ChatMessage, error) {
 	nudge := providers.ChatMessage{
 		Role:    "user",
 		Content: "You have finished the task but returned no final message. Provide your final summary now: state what you did, what you found or changed, and anything left undone.",
@@ -866,7 +893,11 @@ func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.Stream
 	ctx = loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: sa.ID, ExecutionID: rand.Text()})
 	res, err := runner.RunWithCallback(ctx, turnHistory, onEvent)
 	if err != nil {
-		return "", history, false
+		if !errors.Is(err, agent.ErrModelReceiptLifecycle) {
+			return "", history, nil
+		}
+		sa.acceptDriverCheckpoint(res)
+		return res.Content, mergeTurnHistory(history, res), err
 	}
 	sa.acceptDriverCheckpoint(res)
 	nextHistory := mergeTurnHistory(turnHistory, res)
@@ -874,7 +905,7 @@ func (m *Manager) runFinalSummaryNudge(ctx context.Context, runner *agent.Stream
 	if strings.TrimSpace(content) == "" {
 		content = lastAssistantText(nextHistory)
 	}
-	return content, nextHistory, true
+	return content, nextHistory, nil
 }
 
 func (sa *SubAgent) acceptDriverCheckpoint(result agent.LoopResult) {
@@ -1118,7 +1149,7 @@ func (m *Manager) followup(ctx context.Context, id, message, forceTool string) (
 	// change made while the worker sat idle.
 	m.refreshWakeAuthority(sa.toolkit)
 
-	go m.runTurn(runCtx, cancel, sa, maxSteps, history, doneCh, defaults)
+	go m.runTurn(runCtx, cancel, sa, maxSteps, history, doneCh, defaults, nil)
 	return snap, nil
 }
 
@@ -1218,21 +1249,22 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 	runtimeDefaults := defaults
 	if runtime != nil {
 		runtimeDefaults = managerDefaults{
-			client:            client,
-			providerName:      providerName,
-			model:             model,
-			effort:            strings.TrimSpace(runtime.Effort),
-			options:           provideroptions.Clone(runtime.ProviderOptions),
-			contextWindow:     runtime.ContextWindow,
-			maxInputTokens:    runtime.MaxInputTokens,
-			outputReserve:     runtime.OutputReserveTokens,
-			compactTokens:     runtime.CompactThresholdTokens,
-			compactPct:        runtime.CompactThresholdPct,
-			temperature:       runtime.Temperature,
-			keepRecent:        runtime.CompactKeepRecentTokens,
-			disableCompact:    runtime.DisableAutoCompact,
-			journal:           defaults.journal,
-			toolLedgerFactory: defaults.toolLedgerFactory,
+			client:             client,
+			providerName:       providerName,
+			model:              model,
+			effort:             strings.TrimSpace(runtime.Effort),
+			options:            provideroptions.Clone(runtime.ProviderOptions),
+			contextWindow:      runtime.ContextWindow,
+			maxInputTokens:     runtime.MaxInputTokens,
+			outputReserve:      runtime.OutputReserveTokens,
+			compactTokens:      runtime.CompactThresholdTokens,
+			compactPct:         runtime.CompactThresholdPct,
+			temperature:        runtime.Temperature,
+			keepRecent:         runtime.CompactKeepRecentTokens,
+			disableCompact:     runtime.DisableAutoCompact,
+			journal:            defaults.journal,
+			BeginModelReceipts: defaults.BeginModelReceipts,
+			toolLedgerFactory:  defaults.toolLedgerFactory,
 		}
 	}
 

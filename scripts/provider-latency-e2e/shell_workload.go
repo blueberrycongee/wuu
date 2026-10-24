@@ -15,7 +15,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/codemode"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	proc "github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -116,7 +115,7 @@ func shellConversation(pc config.ProviderConfig, provider string, repeat int, ti
 	if err != nil {
 		panic("client setup failed")
 	}
-	runner := agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: client, Tools: kit, ProviderName: provider, Model: pc.Model,
+	runner := agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: client, Tools: kit, ProviderName: provider, Model: pc.Model,
 		Effort: "low", PromptCacheKey: fmt.Sprintf("shell-e2e-%d", time.Now().UnixNano()),
 		SystemPrompt: "Execute the exact evaluation program supplied by the user, without edits. Then return only the requested answer. Never rerun a command or poll a background process.",
 		MaxSteps:     3, DisableAutoCompact: true}

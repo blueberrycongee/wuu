@@ -24,7 +24,7 @@ func TestFreezeWorkerTreeCancelsAndHoldsResults(t *testing.T) {
 	childTurn := scriptedStreamTurn{started: make(chan struct{}), gate: make(chan struct{}), content: "child done"}
 	client := &scriptedStreamClient{steps: []scriptedStreamTurn{parentTurn, childTurn}}
 	c, err := New(Config{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		Client:        client,
 		DefaultModel:  "fake-model",

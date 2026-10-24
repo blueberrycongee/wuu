@@ -4,29 +4,40 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/evalharness"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
 	"github.com/blueberrycongee/wuu/internal/execution"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/sessiontrace"
 	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
@@ -731,6 +742,171 @@ func TestRunEvalLiveCodexOAuthSkipsWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestRunEvalTaskPersistsItsExecutingThreadAndObservations(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("WUU_HOME", filepath.Join(home, "state"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		delta := map[string]any{"role": "assistant", "content": "done"}
+		finish := "stop"
+		if !bytes.Contains(body, []byte(`"tool_call_id"`)) {
+			arguments, _ := json.Marshal(map[string]string{"path": "fixture.txt"})
+			delta = map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{
+				"index": 0, "id": "eval-read", "type": "function",
+				"function": map[string]any{"name": "read_file", "arguments": string(arguments)},
+			}}}
+			finish = "tool_calls"
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}},
+			"usage":   map[string]int{"prompt_tokens": 20, "completion_tokens": 3},
+		})
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", payload)
+	}))
+	t.Cleanup(server.Close)
+	cfg := config.Config{
+		DefaultProvider: "test",
+		Providers: map[string]config.ProviderConfig{"test": {
+			Type: "openai-compatible", BaseURL: server.URL, APIKey: "synthetic", Model: "gpt-test",
+		}},
+		Agent: config.AgentConfig{PermissionMode: "unconfined", ToolLoading: config.ToolLoadingFlat},
+	}
+	verified := false
+	result := runEvalTask(evalTaskRunConfig{
+		Task: evalharness.Task{
+			ID: "owned-thread", Name: "Owned eval thread", Prompt: "Read fixture.txt and finish.",
+			RequiredTools: []string{"read_file"},
+			Setup: func(root string) error {
+				return os.WriteFile(filepath.Join(root, "fixture.txt"), []byte("fixture\n"), 0o600)
+			},
+			Verify: func(_ context.Context, root, answer string) (evalharness.Verification, error) {
+				verified = true
+				_, err := os.Stat(filepath.Join(root, "fixture.txt"))
+				return evalharness.Verification{Passed: answer == "done" && err == nil}, err
+			},
+		},
+		Config: cfg, HomeDir: home, ProviderName: "test", MaxSteps: 3,
+		Timeout: 20 * time.Second, KeepWorkdir: true,
+	})
+	t.Cleanup(func() { _ = os.RemoveAll(result.Workdir) })
+	if !result.Success || !verified {
+		t.Fatalf("eval failed before verification: %+v", result)
+	}
+	obs := result.Observability
+	if obs == nil || len(obs.ContextRequests) != 2 || len(obs.ToolRecords) == 0 || obs.HarnessDir == "" {
+		t.Fatalf("executing thread observations missing: %+v", obs)
+	}
+	for _, request := range obs.ContextRequests {
+		if request.PromptCacheKey != obs.SessionID {
+			t.Fatalf("request belongs to another runtime: %+v", request)
+		}
+	}
+	state, err := runtime.OpenState(context.Background(), runtime.StateOptions{RootDir: result.Workdir, HomeDir: home, Config: cfg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	metadata, found, err := state.Sessions.Find(obs.SessionID)
+	if err != nil || !found || metadata.CWD != result.Workdir {
+		t.Fatalf("eval has no persisted execution metadata: metadata=%+v found=%v err=%v", metadata, found, err)
+	}
+	if _, found, err := state.Sessions.LoadDriverBinding(obs.SessionID); err != nil || !found {
+		t.Fatalf("eval bypassed its captured driver binding: found=%v err=%v", found, err)
+	}
+	if _, err := os.Stat(obs.TracePath); err != nil {
+		t.Fatalf("eval trace missing after cleanup: %v", err)
+	}
+}
+
+func TestEvalQuiescenceWaitsForTerminalWorkerPhysicalRelease(t *testing.T) {
+	root := t.TempDir()
+	kit, err := tools.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	control, err := agentcontrol.New(agentcontrol.Config{
+		Client: evalWorkerClient{}, DefaultModel: "fixture", ParentRepo: root,
+		SessionID: "eval-drain", HistoryDir: filepath.Join(root, "workers"),
+		ThreadDir: filepath.Join(root, "threads"), HarnessDir: filepath.Join(root, "harness"),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		WorkerFactory: func(string, agentcontrol.WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) {
+			return kit, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalizing, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(func() {
+		unblock()
+		control.BeginShutdown()
+		control.StopAll()
+		control.YieldWorkerTerminalFinalizations()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := control.WaitOwnedWorkerExecutions(ctx); err != nil {
+			t.Error(err)
+		}
+		control.Close()
+	})
+	unsubscribe := control.SubscribeWorkerTerminalFinalizer(func(subagent.Notification) error {
+		close(finalizing)
+		<-release
+		return nil
+	})
+	defer unsubscribe()
+	if _, err := control.Spawn(context.Background(), agentcontrol.SpawnRequest{TaskName: "drain", Prompt: "finish", Isolation: string(agentcontrol.IsolationInplace)}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-finalizing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not reach terminal finalization")
+	}
+	for _, worker := range control.List() {
+		if !subagent.IsTerminal(worker.Status) {
+			t.Fatalf("expected terminal status before physical release: %+v", worker)
+		}
+	}
+	if !control.HasOwnedWorkerExecutions() {
+		t.Fatal("fixture did not retain physical worker ownership")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := waitForSubAgentQuiescence(ctx, control); !errors.Is(err, context.Canceled) {
+		t.Fatalf("terminal status bypassed physical cleanup: %v", err)
+	}
+	unblock()
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := waitForSubAgentQuiescence(ctx, control); err != nil {
+		t.Fatal(err)
+	}
+	if control.HasOwnedWorkerExecutions() {
+		t.Fatal("quiescence returned before physical release")
+	}
+}
+
+type evalWorkerClient struct{}
+
+func (evalWorkerClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {
+	return providers.ChatResponse{}, errors.New("unexpected non-streaming request")
+}
+
+func (evalWorkerClient) StreamChat(context.Context, providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	events := make(chan providers.StreamEvent, 2)
+	events <- providers.StreamEvent{Type: providers.EventContentDelta, Content: "done"}
+	events <- providers.StreamEvent{Type: providers.EventDone}
+	close(events)
+	return events, nil
+}
+
 func TestMissingRequiredTools(t *testing.T) {
 	missing := missingRequiredTools([]string{"tool_search", "cron"}, []string{"tool_search", "write_file"})
 	if len(missing) != 1 || missing[0] != "cron" {
@@ -1004,8 +1180,7 @@ func TestEvalContextBlockObservationsSummarizeRuntimeBlocks(t *testing.T) {
 		t.Fatalf("read_file: %v", err)
 	}
 
-	got := evalContextBlockObservations(&runtime.Session{
-		RootDir: root,
+	got := evalContextBlockObservations(&runtime.ThreadRuntime{
 		Toolkit: kit,
 	})
 	byKind := make(map[string]evalharness.ContextBlockObservation)
@@ -1646,25 +1821,32 @@ func parseCLIJSONLines(t *testing.T, text string) []map[string]any {
 	return events
 }
 
+func commandSessionStore(t *testing.T) *session.Store {
+	t.Helper()
+	state, err := openCommandState(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := state.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return state.Sessions
+}
+
 func TestRunSessionShowReturnsCreatedSessionJSON(t *testing.T) {
 	wuuHome := filepath.Join(t.TempDir(), "wuu-home")
 	t.Setenv("WUU_HOME", wuuHome)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if sessDir == "" {
-		t.Fatal("statepath.SessionsDir returned empty path")
-	}
+	store := commandSessionStore(t)
 
 	const id = "cli-thread-1"
-	sess, err := session.CreateWithMetadata(sessDir, id, "/tmp/workdir")
+	sess, err := store.CreateWithMetadata(id, "/tmp/workdir")
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{
 		Role:    "user",
 		Content: "hello from CLI",
 	}); err != nil {
@@ -1700,15 +1882,11 @@ func TestRunSessionListJSONFiltersCurrentWorkspace(t *testing.T) {
 	otherWorkdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "current-thread", workdir); err != nil {
+	store := commandSessionStore(t)
+	if _, err := store.CreateWithMetadata("current-thread", workdir); err != nil {
 		t.Fatalf("create current session: %v", err)
 	}
-	if _, err := session.CreateWithMetadata(sessDir, "other-thread", otherWorkdir); err != nil {
+	if _, err := store.CreateWithMetadata("other-thread", otherWorkdir); err != nil {
 		t.Fatalf("create other session: %v", err)
 	}
 
@@ -1734,16 +1912,12 @@ func TestRunSessionShowSubcommandReturnsHistoryJSON(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "show-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("show-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{
 		Role:    "assistant",
 		Content: "visible answer",
 	}); err != nil {
@@ -1773,19 +1947,15 @@ func TestRunSessionShowLastReturnsMostRecentForWorkspace(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "older-thread", workdir); err != nil {
+	store := commandSessionStore(t)
+	if _, err := store.CreateWithMetadata("older-thread", workdir); err != nil {
 		t.Fatalf("create older session: %v", err)
 	}
-	latest, err := session.CreateWithMetadata(sessDir, "latest-thread", workdir)
+	latest, err := store.CreateWithMetadata("latest-thread", workdir)
 	if err != nil {
 		t.Fatalf("create latest session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, latest.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(latest.ID, session.HistoryRecord{
 		Role:    "assistant",
 		Content: "latest answer",
 	}); err != nil {
@@ -1817,26 +1987,22 @@ func TestRunSessionSearchJSONMatchesHistoryAndFiltersWorkspace(t *testing.T) {
 	otherWorkdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	current, err := session.CreateWithMetadata(sessDir, "search-current", workdir)
+	store := commandSessionStore(t)
+	current, err := store.CreateWithMetadata("search-current", workdir)
 	if err != nil {
 		t.Fatalf("create current session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, current.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(current.ID, session.HistoryRecord{
 		Role:    "user",
 		Content: "please fix the orion cache regression",
 	}); err != nil {
 		t.Fatalf("append current history: %v", err)
 	}
-	other, err := session.CreateWithMetadata(sessDir, "search-other", otherWorkdir)
+	other, err := store.CreateWithMetadata("search-other", otherWorkdir)
 	if err != nil {
 		t.Fatalf("create other session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, other.ID, session.HistoryRecord{
+	if err := store.AppendHistoryRecord(other.ID, session.HistoryRecord{
 		Role:    "user",
 		Content: "orion cache but another workspace",
 	}); err != nil {
@@ -1877,12 +2043,8 @@ func TestRunSessionArchiveHidesSessionFromList(t *testing.T) {
 	workdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "archive-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("archive-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -1938,16 +2100,12 @@ func TestRunSessionDeleteRemovesSessionAndArtifacts(t *testing.T) {
 	workdir := t.TempDir()
 	t.Chdir(workdir)
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "delete-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("delete-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if err := session.AppendHistoryRecord(sessDir, sess.ID, session.HistoryRecord{Role: "user", Content: "temporary task"}); err != nil {
+	if err := store.AppendHistoryRecord(sess.ID, session.HistoryRecord{Role: "user", Content: "temporary task"}); err != nil {
 		t.Fatalf("append history: %v", err)
 	}
 	workspaceStateDir, err := statepath.WorkspaceDir(wuuHome, workdir)
@@ -1981,7 +2139,7 @@ func TestRunSessionDeleteRemovesSessionAndArtifacts(t *testing.T) {
 	if payload.ThreadID != sess.ID || payload.Session.ID != sess.ID || !payload.Deleted || payload.ArtifactPath != artifactDir || !payload.ArtifactsDeleted {
 		t.Fatalf("unexpected delete payload: %+v", payload)
 	}
-	if _, ok, err := session.Find(sessDir, sess.ID); err != nil || ok {
+	if _, ok, err := store.Find(sess.ID); err != nil || ok {
 		t.Fatalf("deleted session should not be found, ok=%v err=%v", ok, err)
 	}
 	if _, err := os.Stat(artifactDir); !os.IsNotExist(err) {
@@ -2062,12 +2220,8 @@ func TestRunDebugProtocolEventsJSONReadsTraceEvents(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "debug-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("debug-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -2122,12 +2276,8 @@ func TestRunSessionTraceJSONReplaysTrace(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	sess, err := session.CreateWithMetadata(sessDir, "trace-thread", workdir)
+	store := commandSessionStore(t)
+	sess, err := store.CreateWithMetadata("trace-thread", workdir)
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -2173,15 +2323,11 @@ func TestRunSessionTraceLastReplaysMostRecentTrace(t *testing.T) {
 	t.Setenv("WUU_HOME", wuuHome)
 	workdir := t.TempDir()
 
-	home, err := statepath.Home("")
-	if err != nil {
-		t.Fatalf("statepath.Home: %v", err)
-	}
-	sessDir := statepath.SessionsDir(home)
-	if _, err := session.CreateWithMetadata(sessDir, "older-trace-thread", workdir); err != nil {
+	store := commandSessionStore(t)
+	if _, err := store.CreateWithMetadata("older-trace-thread", workdir); err != nil {
 		t.Fatalf("create older session: %v", err)
 	}
-	latest, err := session.CreateWithMetadata(sessDir, "latest-trace-thread", workdir)
+	latest, err := store.CreateWithMetadata("latest-trace-thread", workdir)
 	if err != nil {
 		t.Fatalf("create latest session: %v", err)
 	}

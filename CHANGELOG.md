@@ -14,11 +14,15 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Show running and upcoming automations in the contextual sidebar, with task status, scheduled time, workspace-aware selection, and access to dispatched one-shot run details.
 
+- Add opt-in SQLite and JSONL providers for the public `state.documents` contract, with atomic revision checks, durable retry receipts, explicit migration, portable exports/imports and provider revocation. Add SDK helpers and independent process/CLI verification. Conversation persistence migration remains separate.
+
+- Move the default multi-round algorithm into an ordinary driver provider using `driver.turn` 4.0 for model, tool, context, compaction and observation effects. Remove the whole-loop host gateway and migrate embedded callers. Driver service version 2 preserves typed terminal failures and recovery evidence; existing default checkpoint identity and format remain compatible. The SDK exposes the same resources to independent process drivers.
+
 - Compose named profiles from ordered reusable bundles, profile patches and user overrides with composition version 2; version 1 inline configurations remain supported. Patches can select or exclude modules and replace or remove service bindings; diagnostics show applied layers and individual selection sources. Explicit empty compositions remain empty after saving.
 
 - Persist independent drivers' model-input receipts before model or streaming-tool dispatch. Storage failure prevents execution; receipts preserve the bound driver, execution, operation identity and submitted input across native and process implementations.
 
-- Let independent drivers opt into overlapping safe tools with model streaming through `driver.turn` 3.1. Typed batch receipts join the original effects once; cancellation drains tools before provider release, and model replay stops after accepted work even without a durable ledger.
+- Let independent drivers opt into overlapping safe tools with model streaming through `driver.turn` 4.0. Typed batch receipts join the original effects once; cancellation drains tools before provider release, and model replay stops after accepted work even without a durable ledger.
 
 - Give independent loop drivers explicit input admission, request-context and request-transform operations through `driver.turn` 3.0. Model submission preserves classified failures, partial messages and reported usage without implicitly consuming input or preparing the request. Update the SDK and service requirement together; the evidence workflow owns its preparation order and bounded context-overflow recovery.
 

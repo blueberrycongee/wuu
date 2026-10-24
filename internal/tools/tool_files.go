@@ -262,7 +262,7 @@ func (t *ReadFileTool) ExecuteResult(ctx context.Context, argsJSON string) (tool
 	result := map[string]any{
 		"action":             "read",
 		"path":               displayPath,
-		"workspace_revision": workspaceRevision(ctx, t.env.RevisionRoot(ctx)),
+		"workspace_revision": workspaceRevision(ctx, t.env.RevisionRoot(ctx), t.env.RuntimeHome),
 		"content_sha256":     contentHash,
 		"content":            redactSensitiveReadContent(t.env, resolved, buf.String()),
 		"num_lines":          len(readResult.Lines),
@@ -819,7 +819,7 @@ func readFileByteWindow(ctx context.Context, env *Env, resolved, displayPath str
 	result := map[string]any{
 		"action":             "read_bytes",
 		"path":               displayPath,
-		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx)),
+		"workspace_revision": workspaceRevision(ctx, env.RevisionRoot(ctx), env.RuntimeHome),
 		"content_sha256":     contentSHA,
 		"total_bytes":        fileSize,
 		"segment_end_offset": segmentEnd,
@@ -950,7 +950,7 @@ func (t *WriteFileTool) executeResolvedWrite(ctx context.Context, resolved, disp
 	}
 	t.env.RecordWriteState(resolved, []byte(content))
 	if t.env.OnFileChanged != nil {
-		t.env.OnFileChanged(resolved)
+		t.env.OnFileChanged(ctx, resolved)
 	}
 
 	result := map[string]any{
@@ -958,7 +958,7 @@ func (t *WriteFileTool) executeResolvedWrite(ctx context.Context, resolved, disp
 		"path":               t.env.NormalizeDisplayPathExec(ctx, resolved),
 		"written_bytes":      len(content),
 		"new_file_sha":       formatFileSHA(sha256Hex([]byte(content))),
-		"workspace_revision": workspaceRevision(ctx, t.env.RevisionRoot(ctx)),
+		"workspace_revision": workspaceRevision(ctx, t.env.RevisionRoot(ctx), t.env.RuntimeHome),
 	}
 
 	if fileExists {
@@ -1167,7 +1167,7 @@ func (t *ListFilesTool) Execute(ctx context.Context, argsJSON string) (string, e
 		}
 		visibleEntries = append(visibleEntries, item)
 	}
-	revision := continuationSnapshotRevision(workspaceRevision(ctx, t.env.RevisionRoot(ctx)), "list_files", visibleEntries)
+	revision := continuationSnapshotRevision(workspaceRevision(ctx, t.env.RevisionRoot(ctx), t.env.RuntimeHome), "list_files", visibleEntries)
 	if err := validateStableOffset("list_files", args.Offset, args.ExpectedRevision, revision); err != nil {
 		return "", err
 	}
@@ -1370,7 +1370,7 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 	}
 	t.env.RecordWriteState(resolved, []byte(newContent))
 	if t.env.OnFileChanged != nil {
-		t.env.OnFileChanged(resolved)
+		t.env.OnFileChanged(ctx, resolved)
 	}
 
 	diff := computeDiff(text, newContent, 3)
@@ -1379,7 +1379,7 @@ func (t *EditFileTool) executeResolvedEdit(ctx context.Context, resolved, displa
 		"path":               t.env.NormalizeDisplayPathExec(ctx, resolved),
 		"old_file_sha":       formatFileSHA(oldSHA),
 		"new_file_sha":       formatFileSHA(sha256Hex([]byte(newContent))),
-		"workspace_revision": workspaceRevision(ctx, t.env.RevisionRoot(ctx)),
+		"workspace_revision": workspaceRevision(ctx, t.env.RevisionRoot(ctx), t.env.RuntimeHome),
 		"diff":               diff,
 		"next_suggestions":   []string{"run targeted validation with command execution if that capability is exposed, otherwise inspect the resulting diff before finishing"},
 	}

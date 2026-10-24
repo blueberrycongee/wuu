@@ -37,13 +37,7 @@ type PersistedInput struct {
 	Messages []providers.ChatMessage
 }
 
-type LoopPolicy struct {
-	ModelRoundLimit   int
-	DisableTools      bool
-	DisableCompaction bool
-}
-
-type ModelLoopReceipt struct {
+type TurnReceipt struct {
 	ID string
 }
 
@@ -69,7 +63,6 @@ type TerminalOutcome struct {
 }
 
 type KernelGateway interface {
-	ExecuteModelLoop(context.Context, PersistedInput, LoopPolicy) (ModelLoopReceipt, error)
 	WriteCheckpoint(context.Context, Checkpoint) error
 }
 

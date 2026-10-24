@@ -13,6 +13,7 @@ import (
 // extension surfaces. Revocation filters availability without rewriting the
 // immutable generation snapshots retained by running conversations.
 type ExtensionSnapshot struct {
+	GenerationID      string
 	Plugins           []pluginpkg.Plugin
 	ActivePlugins     []pluginpkg.Plugin
 	Skills            []skills.Skill
@@ -33,6 +34,7 @@ func (s *Session) ExtensionSnapshot() ExtensionSnapshot {
 	}
 	generation := s.pluginGeneration
 	if generation != nil {
+		snapshot.GenerationID = generation.id
 		generation.revokedMu.Lock()
 		defer generation.revokedMu.Unlock()
 	}

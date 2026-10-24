@@ -7,6 +7,9 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 )
 
 // LoginStart is the public device-code challenge shown to the user.
@@ -38,12 +41,18 @@ const (
 type LoginHub struct {
 	mu      sync.Mutex
 	pending map[string]*pendingLogin
+	closed  bool
 }
 
 type pendingLogin struct {
-	device   DeviceCode
-	interval time.Duration
-	deadline time.Time
+	mu          sync.Mutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	credentials credentialstore.Store
+	release     func()
+	device      DeviceCode
+	interval    time.Duration
+	deadline    time.Time
 }
 
 // NewLoginHub creates an empty SuperGrok login tracker.
@@ -51,8 +60,18 @@ func NewLoginHub() *LoginHub {
 	return &LoginHub{pending: map[string]*pendingLogin{}}
 }
 
-// Start requests a device code and remembers it under a login id.
-func (h *LoginHub) Start(ctx context.Context) (LoginStart, error) {
+// Start captures the credential source for a device login. On success the hub
+// owns release; on failure ownership remains with the caller.
+func (h *LoginHub) Start(ctx context.Context, selected credentialstore.Store, release func()) (LoginStart, error) {
+	if selected == nil {
+		return LoginStart{}, authstorage.ErrUnavailable
+	}
+	h.mu.Lock()
+	closed := h.closed
+	h.mu.Unlock()
+	if closed {
+		return LoginStart{}, errors.New("xAI login tracker is closed")
+	}
 	device, err := RequestDeviceCode(ctx, nil)
 	if err != nil {
 		return LoginStart{}, err
@@ -74,7 +93,12 @@ func (h *LoginHub) Start(ctx context.Context) (LoginStart, error) {
 	if h.pending == nil {
 		h.pending = map[string]*pendingLogin{}
 	}
+	if h.closed {
+		return LoginStart{}, errors.New("xAI login tracker is closed")
+	}
+	loginCtx, cancel := context.WithCancel(context.Background())
 	h.pending[id] = &pendingLogin{
+		ctx: loginCtx, cancel: cancel, credentials: selected, release: release,
 		device:   device,
 		interval: interval,
 		deadline: time.Now().Add(expiresIn),
@@ -90,38 +114,54 @@ func (h *LoginHub) Start(ctx context.Context) (LoginStart, error) {
 }
 
 // Poll performs one token-endpoint check for a previously started login.
-func (h *LoginHub) Poll(ctx context.Context, loginID, home, baseURL string) (LoginPollStatus, error) {
+func (h *LoginHub) Poll(ctx context.Context, loginID, baseURL string) (LoginPollStatus, error) {
 	h.mu.Lock()
 	pending := h.pending[loginID]
 	h.mu.Unlock()
 	if pending == nil {
 		return LoginPollStatus{Status: LoginFailed, Error: "xAI SuperGrok login is no longer pending"}, nil
 	}
+	pending.mu.Lock()
+	terminal := false
+	defer func() {
+		if terminal {
+			// Queued pollers must observe completion before the lock is released.
+			pending.cancel()
+		}
+		pending.mu.Unlock()
+		if terminal {
+			h.Cancel(loginID)
+		}
+	}()
+	pollCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(pending.ctx, cancel)
+	defer func() { stop(); cancel() }()
+	if pending.ctx.Err() != nil {
+		return LoginPollStatus{}, errors.New("login cancelled")
+	}
 	if time.Now().After(pending.deadline) {
-		h.Cancel(loginID)
+		terminal = true
 		return LoginPollStatus{Status: LoginExpired, Error: "xAI SuperGrok device code expired; sign in again"}, nil
 	}
-	tokens, err := ExchangeDeviceCode(ctx, nil, pending.device)
+	tokens, err := ExchangeDeviceCode(pollCtx, nil, pending.device)
+	if pending.ctx.Err() != nil {
+		return LoginPollStatus{}, errors.New("login cancelled")
+	}
 	if err == nil {
-		if persistErr := PersistTokens(home, tokens, baseURL); persistErr != nil {
+		terminal = true
+		if persistErr := SaveTokens(pollCtx, pending.credentials, tokens, baseURL); persistErr != nil {
 			return LoginPollStatus{}, persistErr
 		}
-		h.Cancel(loginID)
 		return LoginPollStatus{Status: LoginSuccess, Interval: pending.interval}, nil
 	}
 	if errors.Is(err, errAuthorizationPending) {
 		return LoginPollStatus{Status: LoginPending, Interval: pending.interval + oauthPollingSafetyMargin}, nil
 	}
 	if errors.Is(err, errSlowDown) {
-		h.mu.Lock()
-		if current := h.pending[loginID]; current != nil {
-			current.interval += slowDownIncrement
-			pending = current
-		}
-		h.mu.Unlock()
+		pending.interval += slowDownIncrement
 		return LoginPollStatus{Status: LoginPending, Interval: pending.interval + oauthPollingSafetyMargin}, nil
 	}
-	h.Cancel(loginID)
+	terminal = true
 	status := LoginFailed
 	if err.Error() == "xAI SuperGrok authorization was denied" {
 		status = LoginDenied
@@ -135,8 +175,34 @@ func (h *LoginHub) Poll(ctx context.Context, loginID, home, baseURL string) (Log
 // Cancel drops an outstanding device-code login.
 func (h *LoginHub) Cancel(loginID string) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	pending := h.pending[loginID]
 	delete(h.pending, loginID)
+	h.mu.Unlock()
+	if pending == nil {
+		return
+	}
+	pending.cancel()
+	// In-flight polling must finish before its captured generation is released.
+	pending.mu.Lock()
+	defer pending.mu.Unlock()
+	if pending.release != nil {
+		pending.release()
+		pending.release = nil
+	}
+}
+
+// Close cancels pending logins and releases their captured service generations.
+func (h *LoginHub) Close() {
+	h.mu.Lock()
+	h.closed = true
+	ids := make([]string, 0, len(h.pending))
+	for id := range h.pending {
+		ids = append(ids, id)
+	}
+	h.mu.Unlock()
+	for _, id := range ids {
+		h.Cancel(id)
+	}
 }
 
 // WaitForDevice blocks until the user completes SuperGrok authorization.

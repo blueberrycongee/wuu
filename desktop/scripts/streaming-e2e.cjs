@@ -9,6 +9,7 @@ const rendererHtml = path.join(desktopRoot, "out", "renderer", "index.html");
 const preload = path.join(__dirname, "streaming-e2e-preload.cjs");
 
 process.env.WUU_STREAM_E2E_CWD = repoRoot;
+process.env.WUU_STREAM_E2E_LOCALE = "zh-CN";
 app.commandLine.appendSwitch("disable-gpu");
 app.commandLine.appendSwitch("disable-software-rasterizer");
 

@@ -16,8 +16,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
@@ -63,16 +64,31 @@ func TestProtocolEngineRebuildUsesSettingsWithoutLaunchingAgents(t *testing.T) {
 func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 	client := &generationClient{id: "owned"}
 	generation := testPluginGeneration("owned", client)
-	s := testGenerationSession(generation)
+	s := testGenerationSession(t, generation)
 	s.RootDir, s.WuuHome, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
-	s.StreamRunner = &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
+	s.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
 	t.Cleanup(func() { _, _ = s.Cleanup(); _ = generation.close() })
 	factory := NewWuuEngine(s)
-	first, err := factory.Open(context.Background(), agentengine.OpenRequest{ThreadID: "first"})
+	first, firstRuntime, err := factory.OpenWithRuntime(context.Background(), agentengine.OpenRequest{ThreadID: "first"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = first.Close(context.Background()) })
+	model := &defaultBindingModel{}
+	firstRuntime.StreamRunner.Client = model
+	if _, err := first.RunTurn(context.Background(), agentengine.TurnInput{}, nil); !errors.Is(err, session.ErrSessionNotFound) || model.calls != 0 {
+		t.Fatalf("missing metadata admitted inference: calls=%d err=%v", model.calls, err)
+	}
+	if _, err := firstRuntime.Sessions.CreateWithMetadata("first", s.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	// Native observers configure the exact runner owned by the engine. Changing
+	// workspace defaults after capture must not redirect this admitted session.
+	s.StreamRunner.Client = &defaultBindingModel{fail: true}
+	result, err := first.RunTurn(context.Background(), agentengine.TurnInput{History: []providers.ChatMessage{{Role: "user", Content: "hello"}}}, nil)
+	if err != nil || result.Result.Content != "Hello" || model.calls != 1 {
+		t.Fatalf("owned runtime was not used: result=%+v calls=%d err=%v", result.Result, model.calls, err)
+	}
 	second, err := factory.Resume(context.Background(), agentengine.ResumeRequest{OpenRequest: agentengine.OpenRequest{ThreadID: "second"}})
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +123,7 @@ func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 
 func TestWuuEngineCloseDrainsActiveTurnAndStopsAdmission(t *testing.T) {
 	model := &defaultBindingModel{}
-	engine := &wuuEngineSession{runner: &agent.StreamRunner{Client: model, Model: "fixture", LoopDriver: loopdriver.DefaultDriver{}}}
+	engine := &wuuEngineSession{runner: &agent.StreamRunner{Client: model, Model: "fixture", LoopDriver: agent.DefaultDriver{}}}
 	started, release, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
 	defer unblock()
@@ -172,7 +188,7 @@ func TestWuuEngineSessionInterrupt(t *testing.T) {
 func TestEngineSessionForThreadUnavailable(t *testing.T) {
 	s := &Session{engines: agentengine.NewRegistry()}
 	rt := &ThreadRuntime{
-		StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}},
+		StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}},
 		EngineID:     agentengine.EngineWuu,
 	}
 	sess := s.EngineSessionForThread(context.Background(), rt, agentengine.ThreadBinding{})
@@ -219,10 +235,18 @@ func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
 		Providers:       map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", Model: "fixture", BaseURL: "https://example.invalid/v1", APIKey: "fixture"}},
 		Engines:         &config.EnginesConfig{DefaultEngine: "codex", Codex: off, Claude: off, Cursor: off, Devin: off, DSH: off, Grok: off, Hermes: off, Pi: off, OpenCode: off, Antigravity: off},
 	}
-	modules := []string{}
+	modules := testStateModules()
 	cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 	root, home := t.TempDir(), t.TempDir()
-	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg})
+	configPath := filepath.Join(root, "settings.json")
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSession(Options{RootDir: root, HomeDir: home, Config: cfg, ConfigPath: configPath, ConfigLoadMode: ConfigLoadFile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,14 +257,6 @@ func TestSelectedEngineSurvivesUnavailableStartupAndRefresh(t *testing.T) {
 	})
 	if s.DefaultEngine() != "codex" || s.EngineAvailable("codex") {
 		t.Fatalf("startup changed unavailable selection: default=%q available=%v", s.DefaultEngine(), s.EngineAvailable("codex"))
-	}
-	data, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.ConfigPath, s.ConfigLoadMode = filepath.Join(root, "settings.json"), ConfigLoadFile
-	if err := os.WriteFile(s.ConfigPath, data, 0600); err != nil {
-		t.Fatal(err)
 	}
 	if err := s.RefreshEngineSettings(); err != nil {
 		t.Fatal(err)
@@ -307,3 +323,48 @@ func (*testEngineSession) RunTurn(context.Context, agentengine.TurnInput, agente
 
 func (*testEngineSession) Interrupt(context.Context, string) error { return nil }
 func (*testEngineSession) Close(context.Context) error             { return nil }
+
+func TestEngineSettingsUseSelectedConfigurationSource(t *testing.T) {
+	ctx := context.Background()
+	provider := config.NewMemoryService(config.Module, config.Default())
+	consumer := &runtimeServiceConsumer{id: StateServicesConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: config.ServiceName, MajorVersion: 1, Required: true}}}
+	host := pluginhost.New(provider, consumer)
+	registry, conflicts := pluginhost.BuildServiceRegistry(provider, consumer)
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer host.Close(ctx)
+	path := filepath.Join(t.TempDir(), "unselected", "config.json")
+	s := &Session{PluginHost: host, ConfigPath: path}
+	selected := "codex"
+	disabled := false
+	if err := s.UpdateEngineSettings(config.EnginesSettingsUpdate{DefaultEngine: &selected, Codex: &config.EngineBinaryUpdate{Enabled: &disabled}}); err != nil {
+		t.Fatal(err)
+	}
+	if s.DefaultEngine() != agentengine.EngineID("codex") {
+		t.Fatal("committed selected engine was not applied")
+	}
+	services, release, err := s.RetainStateServices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := services.Config.Read(ctx)
+	release()
+	if err != nil || view.Config.Engines == nil || view.Config.Engines.DefaultEngine != "codex" {
+		t.Fatalf("engine settings not persisted by selected provider: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("engine edit accessed unselected file source")
+	}
+	if err := provider.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	selected = "wuu"
+	if err := s.UpdateEngineSettings(config.EnginesSettingsUpdate{DefaultEngine: &selected}); err == nil {
+		t.Fatal("closed selected config fell back")
+	}
+	if s.DefaultEngine() != agentengine.EngineID("codex") {
+		t.Fatal("failed edit changed active engine selection")
+	}
+}

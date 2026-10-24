@@ -13,9 +13,10 @@ const pool = new AppServerClientPool(() => context, () => cwd, event => {
   bridge.publish(event);
   send({ desktopEvent: event });
 });
-const bridge = new RemoteAppServerBridge((workdir, method, params, reply) => {
+const bridge = new RemoteAppServerBridge((workdir, method, params, reply, _peer, activations) => {
   if (workdir !== cwd) throw new Error("Unknown workspace");
   if (method === "shutdown") throw new Error("Cannot shut down shared service");
+  if (method === "initialize") return activations.initialize(context.cwd, pool.bindContextRequest(context), params);
   if (method.startsWith("desktop/file/")) return Promise.resolve(requestRemoteFiles(context,method,params));
   if (method.startsWith("desktop/git/")) return Promise.resolve(requestRemoteGit(new GitService(() => context, () => pool.runningThreadCwds(), () => pool.threadCwdsForWorkdir(cwd)), method, params));
   return pool.requestInContext(context, method, params, reply);

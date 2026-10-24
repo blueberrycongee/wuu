@@ -3,7 +3,6 @@ package appserver
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/config"
@@ -20,9 +19,21 @@ func (s *Server) xaiLoginHub() *xaisub.LoginHub {
 }
 
 func (s *Server) handleAuthXAILoginStart(ctx context.Context, req Request) error {
-	start, err := s.xaiLoginHub().Start(ctx)
+	if s.closed.Load() {
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	services, release, err := s.rt.RetainStateServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	start, err := s.xaiLoginHub().Start(ctx, services.Credentials, release)
+	if err != nil {
+		release()
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if s.closed.Load() {
+		s.xaiLoginHub().Cancel(start.LoginID)
+		return s.writeResponse(req.ID, nil, errServerClosed)
 	}
 	return s.writeResponse(req.ID, AuthXAILoginStartResult{
 		LoginID:                 start.LoginID,
@@ -43,7 +54,7 @@ func (s *Server) handleAuthXAILoginPoll(ctx context.Context, req Request) error 
 	if loginID == "" {
 		return s.writeResponse(req.ID, nil, errLoginIDRequired())
 	}
-	status, err := s.xaiLoginHub().Poll(ctx, loginID, os.Getenv("HOME"), xaisub.DefaultBaseURL)
+	status, err := s.xaiLoginHub().Poll(ctx, loginID, xaisub.DefaultBaseURL)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -80,4 +91,13 @@ func (s *Server) resetXAISubscriptionRuntimes() {
 
 func errLoginIDRequired() error {
 	return errors.New("login_id is required")
+}
+
+func (s *Server) closeXAILogins() {
+	s.xaiLoginMu.Lock()
+	hub := s.xaiLogins
+	s.xaiLoginMu.Unlock()
+	if hub != nil {
+		hub.Close()
+	}
 }

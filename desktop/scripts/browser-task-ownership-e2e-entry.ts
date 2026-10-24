@@ -342,7 +342,6 @@ app.whenReady().then(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   writeFileSync(join(home, "config.json"), JSON.stringify({
-    composition: { version: 1, modules: ["kernel", "wuu.default-loop", "wuu.session-execution", "wuu.tool-execution"] },
     default_provider: "fixture",
     ptc: { enabled: false },
     agent: { tool_loading: "flat", max_steps: 20 },

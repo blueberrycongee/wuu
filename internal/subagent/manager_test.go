@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
@@ -25,7 +27,7 @@ func (*managerTestJournal) PrepareOperation(providers.InferenceOperationJournalR
 	return nil
 }
 func (*managerTestJournal) PrepareAttempt(providers.InferenceAttemptJournalRecord) error { return nil }
-func (*managerTestJournal) UpsertSubmission(providers.InferenceSubmissionJournalRecord) error {
+func (*managerTestJournal) UpsertSubmission(context.Context, providers.InferenceSubmissionJournalRecord) error {
 	return nil
 }
 func (*managerTestJournal) MarkAttemptFirstEvent(string, string, string, time.Time) error { return nil }
@@ -47,7 +49,7 @@ func (j *managerTestJournal) CompleteWorkflow(record providers.InferenceWorkflow
 
 func TestManagerUpdateDefaultsPreservesInferenceJournal(t *testing.T) {
 	journal := &managerTestJournal{}
-	manager := NewManagerWithOptions(&fakeClient{}, "model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), InferenceJournal: journal})
+	manager := NewManagerWithOptions(&fakeClient{}, "model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}), InferenceJournal: journal})
 
 	manager.UpdateDefaults(nil, "updated-model", ManagerOptions{})
 
@@ -236,7 +238,9 @@ func (c *resumeClient) StreamChat(ctx context.Context, req providers.ChatRequest
 // fakeToolkit is a no-op ToolExecutor that satisfies the runner contract.
 type fakeToolkit struct{}
 
-func (fakeToolkit) Definitions() []providers.ToolDefinition { return nil }
+func (fakeToolkit) Definitions() []providers.ToolDefinition {
+	return []providers.ToolDefinition{{Name: "agent_report", InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}}}
+}
 func (fakeToolkit) Execute(_ context.Context, _ providers.ToolCall) (string, error) {
 	return "", nil
 }
@@ -269,7 +273,7 @@ func TestWorkerRequiresExplicitDriver(t *testing.T) {
 
 func TestSpawn_HappyPath(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "all done"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "explorer",
@@ -307,7 +311,7 @@ func TestRunTurnDispatchesSubagentLifecycleOnce(t *testing.T) {
 	var mu sync.Mutex
 	var events []string
 	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		OnSubagentStart: func(_ context.Context, id string) error {
 			mu.Lock()
@@ -340,7 +344,7 @@ func TestRunTurnDispatchesSubagentLifecycleOnce(t *testing.T) {
 func TestSpawnStartsWorkflowIndependentFromParentAgent(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "all done"}}
 	journal := &managerTestJournal{}
-	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), InferenceJournal: journal})
+	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}), InferenceJournal: journal})
 	parent := providers.NewInferenceWorkflow(providers.InferenceProfileInteractive)
 	ctx := providers.WithInferenceWorkflow(context.Background(), parent)
 
@@ -373,10 +377,223 @@ func TestSpawnStartsWorkflowIndependentFromParentAgent(t *testing.T) {
 	}
 }
 
+type receiptWorkerClient struct {
+	fakeClient
+	scopes chan *providers.ModelReceiptScope
+}
+
+func (c *receiptWorkerClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	c.scopes <- providers.ModelReceiptScopeFromContext(ctx)
+	return c.fakeClient.StreamChat(ctx, req)
+}
+
+func TestWorkerModelReceiptsSurviveInheritedClosedParent(t *testing.T) {
+	for _, restored := range []bool{false, true} {
+		t.Run(fmt.Sprintf("restored-%t", restored), func(t *testing.T) {
+			deadline, stop := context.WithTimeout(context.Background(), 5*time.Second)
+			defer stop()
+			ctx, parent := providers.NewModelReceiptScope(deadline)
+			parent.Seal()
+			ctx = context.WithoutCancel(ctx)
+			client := &receiptWorkerClient{fakeClient: fakeClient{response: providers.ChatResponse{Content: "worker done"}}, scopes: make(chan *providers.ModelReceiptScope, 2)}
+			var begins, finishes atomic.Int32
+			mgr := NewManagerWithOptions(client, "test", ManagerOptions{
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+				BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+					begins.Add(1)
+					if providers.ModelReceiptScopeFromContext(ctx) != parent {
+						return ctx, nil, errors.New("worker admission lost caller context")
+					}
+					ctx, scope := providers.NewModelReceiptScope(ctx)
+					return ctx, func() error { finishes.Add(1); scope.Seal(); return scope.Wait(deadline) }, nil
+				},
+			})
+			// Updating model defaults must not erase generation-owned receipt admission.
+			mgr.UpdateDefaults(nil, "updated", ManagerOptions{})
+			selected := &WorkerRuntime{Model: "selected", Client: client}
+			var sa *SubAgent
+			var err error
+			if restored {
+				sa, err = mgr.Restore(RestoreOptions{Run: PersistedRun{ID: "restored-worker", Model: "test", Status: StatusCompleted, Messages: []providers.ChatMessage{{Role: "user", Content: "earlier task"}}}, Toolkit: fakeToolkit{}, WorkerRuntime: selected})
+				if err == nil {
+					_, err = mgr.Followup(ctx, sa.ID, "resume")
+				}
+			} else {
+				sa, err = mgr.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, WorkerRuntime: selected})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var previous *providers.ModelReceiptScope
+			for turn := int32(1); turn <= 2; turn++ {
+				snapshot, err := mgr.Wait(deadline, sa.ID)
+				if err != nil || snapshot.Status != StatusCompleted || begins.Load() != turn || finishes.Load() != turn {
+					t.Fatalf("worker receipt lifecycle failed: status=%s admissions=%d completions=%d err=%v workerErr=%s", snapshot.Status, begins.Load(), finishes.Load(), err, snapshot.Error)
+				}
+				select {
+				case scope := <-client.scopes:
+					if scope == nil || scope == parent || scope == previous {
+						t.Fatal("worker model reused inherited or previous receipt scope")
+					}
+					select {
+					case <-scope.Done():
+					default:
+						t.Fatal("worker finished before receipt completion")
+					}
+					previous = scope
+				default:
+					t.Fatal("worker did not call its selected model")
+				}
+				if turn == 1 {
+					if _, err := mgr.Followup(ctx, sa.ID, "continue"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		})
+	}
+}
+
+type lifecyclePromptJournal struct {
+	managerTestJournal
+	operations []providers.InferenceOperation
+}
+
+func (j *lifecyclePromptJournal) PrepareOperation(record providers.InferenceOperationJournalRecord) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.operations = append(j.operations, record.Operation)
+	return nil
+}
+
+type lifecyclePromptClient struct {
+	mu       sync.Mutex
+	scopes   []*providers.ModelReceiptScope
+	journals []providers.InferenceJournal
+}
+
+func (c *lifecyclePromptClient) Chat(ctx context.Context, req providers.ChatRequest) (providers.ChatResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if req.Operation.Kind != providers.InferenceOperationHookPrompt {
+		return providers.ChatResponse{}, errors.New("lifecycle prompt lost its operation kind")
+	}
+	c.scopes = append(c.scopes, providers.ModelReceiptScopeFromContext(ctx))
+	c.journals = append(c.journals, providers.InferenceJournalFromContext(ctx))
+	if len(c.scopes) == 2 {
+		return providers.ChatResponse{Content: `{"ok":false,"reason":"stop policy rejected"}`}, nil
+	}
+	return providers.ChatResponse{Content: `{"ok":true}`}, nil
+}
+
+func TestWorkerPromptHooksOwnReceiptsAndJournal(t *testing.T) {
+	deadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	parentJournal, workerJournal := &lifecyclePromptJournal{}, &lifecyclePromptJournal{}
+	ctx, parent := providers.NewModelReceiptScope(providers.WithInferenceJournal(deadline, parentJournal))
+	parent.Seal()
+	ctx = context.WithoutCancel(ctx)
+	promptClient := &lifecyclePromptClient{}
+	registry := hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
+		hooks.SubagentStart: {{Type: "prompt", Prompt: "$ARGUMENTS"}},
+		hooks.SubagentStop:  {{Type: "prompt", Prompt: "$ARGUMENTS"}},
+	})
+	registry.SetModelClient(hooks.NewProviderModelClient(promptClient, "hook-model", parentJournal))
+	dispatcher := hooks.NewDispatcher(registry)
+	cleanupErr := errors.New("stop receipt checkpoint failed")
+	stopFinishing, releaseStop := make(chan struct{}), make(chan struct{})
+	var scopes []*providers.ModelReceiptScope
+	var admissionJournals []providers.InferenceJournal
+	manager := NewManagerWithOptions(&fakeClient{response: providers.ChatResponse{Content: "worker output"}}, "worker-model", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		InferenceJournal:  workerJournal,
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+			ctx, scope := providers.NewModelReceiptScope(ctx)
+			scopes = append(scopes, scope)
+			admissionJournals = append(admissionJournals, providers.InferenceJournalFromContext(ctx))
+			ordinal := len(scopes)
+			return ctx, func() error {
+				scope.Seal()
+				if ordinal == 3 {
+					close(stopFinishing)
+					select {
+					case <-releaseStop:
+					case <-deadline.Done():
+						return deadline.Err()
+					}
+					return errors.Join(scope.CheckpointSubmissions(deadline), cleanupErr)
+				}
+				return scope.CheckpointSubmissions(deadline)
+			}, nil
+		},
+		OnSubagentStart: func(ctx context.Context, id string) error {
+			_, err := dispatcher.Dispatch(ctx, hooks.SubagentStart, &hooks.Input{AgentID: id})
+			return err
+		},
+		OnSubagentStop: func(ctx context.Context, id string) error {
+			_, err := dispatcher.Dispatch(ctx, hooks.SubagentStop, &hooks.Input{AgentID: id})
+			return err
+		},
+	})
+	sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type outcome struct {
+		snapshot SubAgentSnapshot
+		err      error
+	}
+	done := make(chan outcome, 1)
+	go func() { snapshot, err := manager.Wait(deadline, sa.ID); done <- outcome{snapshot, err} }()
+	select {
+	case <-stopFinishing:
+	case result := <-done:
+		promptClient.mu.Lock()
+		calls := len(promptClient.scopes)
+		promptClient.mu.Unlock()
+		t.Fatalf("worker became terminal before stop receipt cleanup: status=%s hook model calls=%d err=%v", result.snapshot.Status, calls, result.err)
+	case <-deadline.Done():
+		t.Fatal("worker never reached stop receipt cleanup")
+	}
+	sa.mu.Lock()
+	status := sa.Status
+	sa.mu.Unlock()
+	if status != StatusRunning {
+		t.Fatalf("worker published %s before stop cleanup", status)
+	}
+	close(releaseStop)
+	select {
+	case result := <-done:
+		if result.err != nil || result.snapshot.Status != StatusFailed || !errors.Is(result.snapshot.Error, hooks.ErrBlocked) || !errors.Is(result.snapshot.Error, cleanupErr) || result.snapshot.Result != "worker output" {
+			t.Fatalf("stop lost callback/cleanup error or partial result: %+v waitErr=%v", result.snapshot, result.err)
+		}
+	case <-deadline.Done():
+		t.Fatal("worker did not finish after stop cleanup")
+	}
+	if len(scopes) != 3 || scopes[0] == parent || scopes[1] == parent || scopes[2] == parent || scopes[0] == scopes[1] || scopes[1] == scopes[2] || scopes[0] == scopes[2] {
+		t.Fatalf("start, main and stop did not receive independent owners: %v", scopes)
+	}
+	if admissionJournals[0] != workerJournal || admissionJournals[2] != workerJournal {
+		t.Fatal("lifecycle admission inherited the parent journal")
+	}
+	promptClient.mu.Lock()
+	defer promptClient.mu.Unlock()
+	if len(promptClient.scopes) != 2 || promptClient.scopes[0] != scopes[0] || promptClient.scopes[1] != scopes[2] || promptClient.journals[0] != workerJournal || promptClient.journals[1] != workerJournal {
+		t.Fatalf("real prompt model escaped worker receipt/journal ownership: scopes=%v journals=%v", promptClient.scopes, promptClient.journals)
+	}
+	parentJournal.mu.Lock()
+	defer parentJournal.mu.Unlock()
+	workerJournal.mu.Lock()
+	defer workerJournal.mu.Unlock()
+	if len(parentJournal.operations) != 0 || len(workerJournal.operations) != 3 || workerJournal.operations[0].Kind != providers.InferenceOperationHookPrompt || workerJournal.operations[1].Kind != providers.InferenceOperationAgentRound || workerJournal.operations[2].Kind != providers.InferenceOperationHookPrompt {
+		t.Fatalf("lifecycle writes used wrong journal: parent=%+v worker=%+v", parentJournal.operations, workerJournal.operations)
+	}
+}
+
 func TestSpawn_UsesManagerDefaultRequestOptions(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "all done"}}
 	mgr := NewManagerWithOptions(client, "worker-api-model", ManagerOptions{
-		AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}),
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 		DefaultEffort: "high",
 		DefaultProviderOptions: map[string]any{
@@ -415,7 +632,7 @@ func TestSpawn_StampsDefaultProviderOnNativeState(t *testing.T) {
 		response:       providers.ChatResponse{Content: "all done"},
 		providerItemID: "resp-alpha-1",
 	}
-	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), DefaultProviderName: "alpha"})
+	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}), DefaultProviderName: "alpha"})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{Type: "worker", Prompt: "do thing", Toolkit: fakeToolkit{}})
 	if err != nil {
@@ -455,7 +672,7 @@ func TestSpawn_PinnedClientStampsPinnedProvider(t *testing.T) {
 		response:       providers.ChatResponse{Content: "pinned done"},
 		providerItemID: "resp-gamma-1",
 	}
-	mgr := NewManagerWithOptions(defaultClient, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), DefaultProviderName: "beta"})
+	mgr := NewManagerWithOptions(defaultClient, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}), DefaultProviderName: "beta"})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -493,7 +710,7 @@ func TestRestore_DefaultProviderDropsForeignItemIDs(t *testing.T) {
 		response:       providers.ChatResponse{Content: "resumed"},
 		providerItemID: "resp-beta-9",
 	}
-	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(loopdriver.DefaultDriver{}), DefaultProviderName: "beta"})
+	mgr := NewManagerWithOptions(client, "worker-model", ManagerOptions{AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}), DefaultProviderName: "beta"})
 
 	sa, err := mgr.Restore(RestoreOptions{
 		Run: PersistedRun{
@@ -650,7 +867,14 @@ func TestRunTurn_EmptyOutputNudgeRecoversFinalSummary(t *testing.T) {
 		{Content: "", StopReason: "end_turn"},
 		{Content: "final summary after nudge", StopReason: "end_turn"},
 	}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	var admissions, completions atomic.Int32
+	mgr := NewManagerWithOptions(client, "fake-model", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+			admissions.Add(1)
+			return ctx, func() error { completions.Add(1); return nil }, nil
+		},
+	})
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{Type: "worker", Prompt: "do thing", Toolkit: fakeToolkit{}})
 	if err != nil {
 		t.Fatal(err)
@@ -668,6 +892,268 @@ func TestRunTurn_EmptyOutputNudgeRecoversFinalSummary(t *testing.T) {
 	if client.callCount() != 2 {
 		t.Fatalf("expected exactly one main turn plus one nudge turn, got %d model calls", client.callCount())
 	}
+	if admissions.Load() != 2 || completions.Load() != 2 {
+		t.Fatalf("nudge reused prior receipt lifecycle: admissions=%d completions=%d", admissions.Load(), completions.Load())
+	}
+}
+
+func TestRunTurnNudgePreservesReceiptFailure(t *testing.T) {
+	for _, admission := range []bool{false, true} {
+		t.Run(fmt.Sprintf("admission-%t", admission), func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			client := &scriptedStreamClient{responses: []providers.ChatResponse{{StopReason: "end_turn"}, {Content: "accepted summary", StopReason: "end_turn"}}}
+			journal := &managerTestJournal{}
+			receiptErr := errors.New("nudge receipt required write failed")
+			var admissions atomic.Int32
+			manager := NewManagerWithOptions(client, "test", ManagerOptions{
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+				InferenceJournal:  journal,
+				BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+					ordinal := admissions.Add(1)
+					if admission && ordinal == 2 {
+						return ctx, nil, receiptErr
+					}
+					return ctx, func() error {
+						if ordinal == 2 {
+							return receiptErr
+						}
+						return nil
+					}, nil
+				},
+			})
+			historyPath := filepath.Join(t.TempDir(), "worker.json")
+			sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, HistoryPath: historyPath})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := manager.Wait(ctx, sa.ID)
+			if err != nil || snapshot.Status != StatusFailed || !errors.Is(snapshot.Error, receiptErr) || !errors.Is(snapshot.Error, agent.ErrModelReceiptLifecycle) {
+				t.Fatalf("nudge swallowed required receipt failure: status=%s workerErr=%v waitErr=%v", snapshot.Status, snapshot.Error, err)
+			}
+			wantCalls, wantResult := 2, "accepted summary"
+			if admission {
+				wantCalls, wantResult = 1, ""
+			}
+			if admissions.Load() != 2 || client.callCount() != wantCalls || snapshot.Result != wantResult || lastAssistantText(sa.HistorySnapshot()) != wantResult {
+				t.Fatalf("nudge lost accepted output: admissions=%d calls=%d result=%q history=%+v", admissions.Load(), client.callCount(), snapshot.Result, sa.HistorySnapshot())
+			}
+			persisted, err := LoadPersistedRun(historyPath)
+			if err != nil || persisted.Status != StatusFailed || lastAssistantText(persisted.Messages) != wantResult {
+				t.Fatalf("nudge failed to persist accepted history: status=%s history=%+v err=%v", persisted.Status, persisted.Messages, err)
+			}
+			journal.mu.Lock()
+			defer journal.mu.Unlock()
+			if len(journal.workflowCompletions) != 1 || journal.workflowCompletions[0].Outcome != providers.InferenceOutcomeFailed {
+				t.Fatalf("nudge falsely completed worker workflow: %+v", journal.workflowCompletions)
+			}
+		})
+	}
+}
+
+type failedNudgeClient struct{ scriptedStreamClient }
+
+func (c *failedNudgeClient) StreamChat(ctx context.Context, req providers.ChatRequest) (<-chan providers.StreamEvent, error) {
+	if c.callCount() == 1 {
+		c.next()
+		return nil, &providers.HTTPError{StatusCode: 400, Body: "summary generation rejected"}
+	}
+	return c.scriptedStreamClient.StreamChat(ctx, req)
+}
+
+func TestRunTurnNudgeModelFailureRemainsBestEffort(t *testing.T) {
+	client := &failedNudgeClient{}
+	manager := NewManagerWithOptions(client, "test", ManagerOptions{
+		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+		BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+			return ctx, func() error { return nil }, nil
+		},
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := manager.Wait(ctx, sa.ID)
+	if err != nil || snapshot.Status != StatusCompleted || snapshot.Error != nil || snapshot.Result != emptyWorkerResultPlaceholder || client.callCount() != 2 {
+		t.Fatalf("ordinary nudge failure stopped being best-effort: %+v calls=%d waitErr=%v", snapshot, client.callCount(), err)
+	}
+}
+
+func TestFollowupReceiptFailureSurvivesContinuations(t *testing.T) {
+	for _, stage := range []string{"nudge", "main", "start", "stop", "ordinary-stop"} {
+		for _, admission := range []bool{false, true} {
+			if stage == "ordinary-stop" && admission {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/admission-%t", stage, admission), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				failureReady, releaseFailure := make(chan struct{}), make(chan struct{})
+				continuationReady, releaseContinuation := make(chan struct{}), make(chan struct{})
+				unblockFailure := sync.OnceFunc(func() { close(releaseFailure) })
+				unblockContinuation := sync.OnceFunc(func() { close(releaseContinuation) })
+				defer unblockFailure()
+				defer unblockContinuation()
+				receiptErr := errors.New("required receipt failed before queued continuation")
+				failAt, firstCalls := int32(1), 1
+				responses := []providers.ChatResponse{{Content: "accepted first output"}}
+				if stage == "nudge" {
+					failAt, firstCalls = 2, 2
+					responses = append([]providers.ChatResponse{{StopReason: "end_turn"}}, responses...)
+				}
+				if stage == "stop" || stage == "ordinary-stop" {
+					failAt = 2
+				}
+				if stage == "start" || (admission && stage == "main") {
+					firstCalls, responses = 0, nil
+				} else if admission && stage == "nudge" {
+					firstCalls, responses = 1, responses[:1]
+				}
+				responses = append(responses, providers.ChatResponse{Content: "first continuation done"}, providers.ChatResponse{Content: "second continuation done"}, providers.ChatResponse{Content: "explicit retry done"})
+				client := &scriptedStreamClient{responses: responses}
+				var admissions atomic.Int32
+				var continuationGated atomic.Bool
+				fail := func() error {
+					close(failureReady)
+					select {
+					case <-releaseFailure:
+						return receiptErr
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				opts := ManagerOptions{
+					AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+					BeginModelReceipts: func(runCtx context.Context) (context.Context, func() error, error) {
+						ordinal := admissions.Add(1)
+						if stage != "ordinary-stop" && ordinal == failAt && admission {
+							return runCtx, nil, fail()
+						}
+						return runCtx, func() error {
+							if stage != "ordinary-stop" && ordinal == failAt {
+								return fail()
+							}
+							if client.callCount() == firstCalls+1 && continuationGated.CompareAndSwap(false, true) {
+								close(continuationReady)
+								select {
+								case <-releaseContinuation:
+								case <-ctx.Done():
+									return ctx.Err()
+								}
+							}
+							return nil
+						}, nil
+					},
+				}
+				if stage == "start" {
+					opts.OnSubagentStart = func(context.Context, string) error { return nil }
+				}
+				if stage == "stop" {
+					opts.OnSubagentStop = func(context.Context, string) error { return nil }
+				}
+				if stage == "ordinary-stop" {
+					var stopped atomic.Bool
+					opts.OnSubagentStop = func(context.Context, string) error {
+						if stopped.CompareAndSwap(false, true) {
+							return fail()
+						}
+						return nil
+					}
+				}
+				manager := NewManagerWithOptions(client, "test", opts)
+				historyPath := filepath.Join(t.TempDir(), "worker.json")
+				sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, HistoryPath: historyPath})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i, ready := range []chan struct{}{failureReady, continuationReady} {
+					select {
+					case <-ready:
+					case <-ctx.Done():
+						t.Fatalf("turn %d never reached receipt gate: %v", i, ctx.Err())
+					}
+					snapshot, err := manager.Followup(ctx, sa.ID, fmt.Sprintf("queued instruction %d", i))
+					if err != nil || snapshot.Status != StatusRunning || snapshot.PendingMessageCount != 1 {
+						t.Fatalf("Followup did not queue at receipt gate: %+v err=%v", snapshot, err)
+					}
+					if i == 0 {
+						unblockFailure()
+					} else {
+						unblockContinuation()
+					}
+				}
+				snapshot, err := manager.Wait(ctx, sa.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if stage == "ordinary-stop" {
+					if snapshot.Status != StatusCompleted || snapshot.Error != nil {
+						t.Fatalf("ordinary hook error prevented queued recovery: %+v", snapshot)
+					}
+				} else if snapshot.Status != StatusFailed || !errors.Is(snapshot.Error, receiptErr) || !errors.Is(snapshot.Error, agent.ErrModelReceiptLifecycle) {
+					t.Errorf("continuation lost required receipt error: status=%s err=%v", snapshot.Status, snapshot.Error)
+				}
+				if client.callCount() != firstCalls+2 || snapshot.Result != "second continuation done" || snapshot.PendingMessageCount != 0 {
+					t.Fatalf("queued work did not complete: calls=%d snapshot=%+v", client.callCount(), snapshot)
+				}
+				persisted, err := LoadPersistedRun(historyPath)
+				if err != nil || persisted.Status != snapshot.Status || persisted.Result != snapshot.Result {
+					t.Fatalf("persisted terminal differs: %+v err=%v", persisted, err)
+				}
+				if stage != "ordinary-stop" && !strings.Contains(persisted.Error, receiptErr.Error()) {
+					t.Errorf("persisted terminal lost required error: %q", persisted.Error)
+				}
+				wantMessages := []string{"queued instruction 0", "first continuation done", "queued instruction 1", "second continuation done"}
+				if firstCalls > 0 && !(admission && stage == "nudge") {
+					wantMessages = append([]string{"accepted first output"}, wantMessages...)
+				}
+				for _, messages := range [][]providers.ChatMessage{sa.HistorySnapshot(), persisted.Messages} {
+					remaining := wantMessages
+					for _, message := range messages {
+						if len(remaining) > 0 && message.Content == remaining[0] {
+							remaining = remaining[1:]
+						}
+					}
+					if len(remaining) != 0 {
+						t.Fatalf("accepted history or queued input lost: missing=%v messages=%+v", remaining, messages)
+					}
+				}
+				if _, err := manager.Followup(ctx, sa.ID, "explicit retry"); err != nil {
+					t.Fatal(err)
+				}
+				retried, err := manager.Wait(ctx, sa.ID)
+				if err != nil || retried.Status != StatusCompleted || retried.Error != nil || retried.Result != "explicit retry done" {
+					t.Fatalf("explicit retry retained prior run error: %+v err=%v", retried, err)
+				}
+			})
+		}
+	}
+}
+
+func TestWorkerReceiptContextFailureRetainsIdentity(t *testing.T) {
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			receiptErr := errors.New("receipt owner cleanup failed")
+			manager := NewManagerWithOptions(&fakeClient{response: providers.ChatResponse{Content: "accepted output"}}, "test", ManagerOptions{
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+				BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+					return ctx, func() error { return errors.Join(receiptErr, cause) }, nil
+				},
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, MaxLifetime: time.Hour})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := manager.Wait(ctx, sa.ID)
+			if err != nil || snapshot.Status == StatusCompleted || !errors.Is(snapshot.Error, receiptErr) || !errors.Is(snapshot.Error, cause) || !errors.Is(snapshot.Error, agent.ErrModelReceiptLifecycle) || snapshot.Result != "accepted output" {
+				t.Fatalf("receipt failure identity lost at terminal: %+v waitErr=%v", snapshot, err)
+			}
+		})
+	}
 }
 
 func TestRunTurn_EmptyOutputFallsBackToPlaceholder(t *testing.T) {
@@ -678,7 +1164,7 @@ func TestRunTurn_EmptyOutputFallsBackToPlaceholder(t *testing.T) {
 		{Content: "", StopReason: "end_turn"},
 		{Content: "", StopReason: "end_turn"},
 	}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{Type: "worker", Prompt: "do thing", Toolkit: fakeToolkit{}})
 	if err != nil {
 		t.Fatal(err)
@@ -700,7 +1186,7 @@ func TestRunTurn_EmptyOutputFallsBackToPlaceholder(t *testing.T) {
 
 func TestSpawn_LLMError(t *testing.T) {
 	client := &fakeClient{err: errors.New("boom")}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:    "worker",
@@ -724,7 +1210,7 @@ func TestSpawn_Cancel(t *testing.T) {
 		response: providers.ChatResponse{Content: "ok"},
 		delay:    2 * time.Second,
 	}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:    "worker",
@@ -752,7 +1238,7 @@ func TestStopAll(t *testing.T) {
 		response: providers.ChatResponse{Content: "ok"},
 		delay:    2 * time.Second,
 	}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	for i := 0; i < 3; i++ {
 		_, err := mgr.Spawn(context.Background(), SpawnOptions{
@@ -809,7 +1295,7 @@ func TestStopAllConcurrentCancelReplacement(t *testing.T) {
 
 func TestNotifications(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "ok"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	ch := make(chan Notification, 16)
 	mgr.Subscribe(ch)
@@ -842,7 +1328,7 @@ loop:
 }
 
 func TestBroadcastSnapshotPublishesRunningUsage(t *testing.T) {
-	mgr := NewManager(&fakeClient{}, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(&fakeClient{}, "fake-model", agent.DefaultDriver{})
 	ch := make(chan Notification, 1)
 	mgr.Subscribe(ch)
 
@@ -866,7 +1352,7 @@ func TestTerminalPrepareRunsBeforeFinalSnapshotPersistence(t *testing.T) {
 	dir := t.TempDir()
 	historyPath := filepath.Join(dir, "workers", "worker.json")
 	client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	prepareEntered := make(chan Notification, 1)
 	releasePrepare := make(chan struct{})
@@ -918,7 +1404,7 @@ func TestPersistHistoryFailureMarksWorkerFailed(t *testing.T) {
 	// with elevated filesystem permissions.
 	historyPath := t.TempDir()
 	client := &fakeClient{response: providers.ChatResponse{Content: "completed work"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 	notifications := make(chan Notification, 4)
 	mgr.Subscribe(notifications)
 
@@ -975,7 +1461,7 @@ func TestPersistHistoryRecordsResumeFields(t *testing.T) {
 	dir := t.TempDir()
 	historyPath := filepath.Join(dir, "workers", "worker.json")
 	client := &fakeClient{response: providers.ChatResponse{Content: "ok"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		ID:            "worker-resume",
@@ -1056,7 +1542,7 @@ func TestLoadPersistedRunToleratesPreVersionSnapshot(t *testing.T) {
 }
 
 func TestSpawn_RequiresToolkitAndPrompt(t *testing.T) {
-	mgr := NewManager(&fakeClient{}, "m", loopdriver.DefaultDriver{})
+	mgr := NewManager(&fakeClient{}, "m", agent.DefaultDriver{})
 
 	_, err := mgr.Spawn(context.Background(), SpawnOptions{Prompt: "x"})
 	if err == nil {
@@ -1075,7 +1561,7 @@ func TestSpawn_RequiresToolkitAndPrompt(t *testing.T) {
 // caller's Prompt as the final user message.
 func TestSpawn_WithInitialHistory_PrefixIsParentHistory(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "fork done"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	parentHistory := []providers.ChatMessage{
 		{Role: "system", Content: "you are the parent agent"},
@@ -1133,7 +1619,7 @@ func TestSpawn_WithInitialHistory_PrefixIsParentHistory(t *testing.T) {
 
 func TestFollowup_CompletedAgentStartsNewTurnWithHistory(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "turn done"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -1200,7 +1686,7 @@ func TestFollowup_CompletedAgentStartsNewTurnWithHistory(t *testing.T) {
 // messages must be replayed ahead of the new instruction.
 func TestFollowup_FailedAgentResumesWithHistory(t *testing.T) {
 	client := newResumeClient("fail", providers.ChatResponse{Content: "resumed done"})
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -1270,7 +1756,7 @@ func TestFollowup_FailedAgentResumesWithHistory(t *testing.T) {
 // as an explicit revive request, not a hard rejection.
 func TestFollowup_CancelledAgentResumesWithHistory(t *testing.T) {
 	client := newResumeClient("block", providers.ChatResponse{Content: "resumed done"})
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:         "worker",
@@ -1329,7 +1815,7 @@ func TestFollowup_CancelledAgentResumesWithHistory(t *testing.T) {
 
 func TestQueueMessageBroadcastsPendingMessageSnapshot(t *testing.T) {
 	client := &fakeClient{delay: time.Hour}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:    "explorer",
@@ -1394,7 +1880,7 @@ func TestFollowupAtTerminalBoundaryContinuesInsteadOfStrandingMessage(t *testing
 		releaseFirst: make(chan struct{}),
 		secondSeen:   make(chan providers.ChatRequest, 1),
 	}
-	manager := NewManager(client, "boundary-model", loopdriver.DefaultDriver{})
+	manager := NewManager(client, "boundary-model", agent.DefaultDriver{})
 	agent, err := manager.Spawn(context.Background(), SpawnOptions{
 		ID:       "terminal-boundary-worker",
 		Type:     "worker",
@@ -1456,7 +1942,7 @@ func contains(s, sub string) bool {
 // the force is one-shot: a later plain follow-up runs unforced.
 func TestFollowupForcingTool_PinsFirstRequest(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:        "worker",
@@ -1494,7 +1980,7 @@ func TestFollowupForcingTool_PinsFirstRequest(t *testing.T) {
 // worker got alongside the error and the resume hint.
 func TestFailedRunSalvagesPartialResult(t *testing.T) {
 	client := newResumeClient("", providers.ChatResponse{Content: "found the bug in parser.go"})
-	mgr := NewManager(client, "fake-model", loopdriver.DefaultDriver{})
+	mgr := NewManager(client, "fake-model", agent.DefaultDriver{})
 
 	sa, err := mgr.Spawn(context.Background(), SpawnOptions{
 		Type:        "worker",

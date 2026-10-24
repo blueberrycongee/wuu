@@ -36,7 +36,7 @@ func (j *recordingInferenceJournal) PrepareAttempt(InferenceAttemptJournalRecord
 	return j.failPrepare
 }
 
-func (j *recordingInferenceJournal) UpsertSubmission(record InferenceSubmissionJournalRecord) error {
+func (j *recordingInferenceJournal) UpsertSubmission(_ context.Context, record InferenceSubmissionJournalRecord) error {
 	j.record("submission:" + string(record.Outcome))
 	return j.failSubmission
 }
@@ -152,7 +152,9 @@ func TestExecuteChatCommitsWriteAheadLifecycle(t *testing.T) {
 		"attempt:prepared",
 		"submission:in_flight",
 		"submission:succeeded",
+		"submission:succeeded",
 		"attempt:succeeded",
+		"submission:succeeded",
 		"operation:succeeded",
 		"complete_workflow",
 	}

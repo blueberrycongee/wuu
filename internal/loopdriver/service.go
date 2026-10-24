@@ -43,7 +43,7 @@ func (s *Service) Status() pluginhost.Status {
 	return pluginhost.Status{ID: s.id, State: s.state}
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return []pluginhost.ServiceDescriptor{{Name: s.name, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{
+	return []pluginhost.ServiceDescriptor{{Name: s.name, Version: DriverServiceVersion, Methods: []pluginhost.ServiceMethodDescriptor{
 		{Name: RemoteMethodDescriptor, Preparation: true},
 		{Name: RemoteMethodCreate}, {Name: RemoteMethodResume}, {Name: RemoteMethodRun},
 		{Name: RemoteMethodShutdown, Cleanup: true},
@@ -162,9 +162,7 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 		gateway := serviceGateway{router: s.router, caller: s.id, scopeID: params.ExecutionID, executionID: entry.execution.ExecutionID}
 		outcome, runErr := entry.instance.Run(ctx, gateway)
 		result := remoteRunResult{Status: outcome.Status, ReceiptID: outcome.ReceiptID, Checkpoint: outcome.Checkpoint}
-		if runErr != nil {
-			result.Error = runErr.Error()
-		}
+		result.Failure = FailureToWire(runErr)
 		return json.Marshal(result)
 	default:
 		return nil, fmt.Errorf("unknown driver method %q", params.Method)
@@ -178,21 +176,6 @@ type serviceGateway struct {
 	executionID string
 }
 
-func (g serviceGateway) ExecuteModelLoop(ctx context.Context, input PersistedInput, policy LoopPolicy) (ModelLoopReceipt, error) {
-	raw, err := json.Marshal(DriverModelLoopParams{ExecutionID: g.executionID, Input: input, Policy: policy})
-	if err != nil {
-		return ModelLoopReceipt{}, err
-	}
-	reply, callErr := g.router.RouteServiceCall(ctx, g.caller, pluginhost.ServiceCallParams{Service: DriverModelLoopService, Method: DriverModelLoopMethod, ExecutionID: g.scopeID, Params: raw})
-	if callErr != nil {
-		return ModelLoopReceipt{}, callErr
-	}
-	var result DriverModelLoopResult
-	if err := json.Unmarshal(reply, &result); err != nil {
-		return ModelLoopReceipt{}, err
-	}
-	return ModelLoopReceipt{ID: result.ReceiptID}, nil
-}
 func (g serviceGateway) WriteCheckpoint(ctx context.Context, checkpoint Checkpoint) error {
 	raw, err := json.Marshal(DriverCheckpointParams{ExecutionID: g.executionID, Checkpoint: checkpoint})
 	if err != nil {

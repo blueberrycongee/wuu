@@ -155,6 +155,19 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// Activation can synchronously submit input through host services. Such
 	// admission must queue rather than wait for the activation that called it.
 	if !s.pluginGenerationRefreshMu.TryLock() {
+		if s.pluginGenerationMutation.Load() || s.pluginGenerationRefreshing.Load() {
+			return errPluginGenerationRefreshBusy
+		}
+		epoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+		if err != nil {
+			return err
+		}
+		// An unchanged observation owns no effects. Recheck the phase fences
+		// after sampling health, which can look healthy during retirement.
+		if epoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery() &&
+			!s.pluginGenerationMutation.Load() && !s.pluginGenerationRefreshing.Load() {
+			return nil
+		}
 		return errPluginGenerationRefreshBusy
 	}
 	refreshed := false
@@ -163,11 +176,13 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		if invalidated && !refreshed {
 			inventory, skills := s.currentExtensionState()
 			if err := s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
-				Epoch: s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
+				ApplicationShell: s.rt.ApplicationShellBinding(),
+				Epoch:            s.pluginGenerationEpoch.Load(), ExtensionInventory: inventory, Skills: skills,
 			}); err != nil {
 				providers.DebugLogf("notify invalidated plugin dependencies: %v", err)
 			}
 		}
+		s.pluginGenerationRefreshing.Store(false)
 		s.pluginGenerationRefreshMu.Unlock()
 		if refreshed {
 			s.retireIdlePluginRuntimes()
@@ -175,7 +190,9 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	}()
 	// Revoke failed dependencies before an epoch/recovery early return. A pinned
 	// older generation may fail while the current generation remains healthy.
-	invalidated = s.rt.RevokeFailedPluginDependencies()
+	invalidated = s.rt.RevokeFailedPluginDependencies(func() {
+		s.pluginGenerationRefreshing.Store(true)
+	})
 	observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
 	if err != nil {
 		return err
@@ -184,6 +201,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		s.pluginRefreshFailure = pluginGenerationRefreshFailure{}
 		return nil
 	}
+	s.pluginGenerationRefreshing.Store(true)
 	lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(s.rt.WuuHome)
 	if err != nil {
 		return err
@@ -215,7 +233,10 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// Keep this observed epoch with the prepared candidate. Publication can
 	// advance again during activation; recording that newer epoch here would
 	// hide a change this candidate never loaded. The next refresh adopts it.
-	cfg := s.currentExtensionConfig()
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return err
+	}
 	inputs, err := json.Marshal(struct {
 		Epoch         uint64
 		ConfigSources string
@@ -287,7 +308,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		providers.DebugLogf("refresh plugin generation: %v", err)
 	}
 	*failure = pluginGenerationRefreshFailure{}
-	s.schedulePluginTurnLifecycleReplay()
+	s.scheduleCurrentPluginTurnLifecycleReplay()
 	inventory, skills := s.currentExtensionState()
 	refreshed = true
 	// The refresh mutex still serializes local mutations while the shared lease
@@ -300,8 +321,21 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		s.pluginRuntimeRevision.Add(1)
 	}
 	return s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
+		ApplicationShell:   s.rt.ApplicationShellBinding(),
 		Epoch:              epoch,
 		ExtensionInventory: inventory,
 		Skills:             skills,
 	})
+}
+
+// Publication is a new admission boundary. Existing events retain their own
+// state; replay of the newly selected graph captures only that graph here.
+func (s *Server) scheduleCurrentPluginTurnLifecycleReplay() {
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		providers.DebugLogf("capture plugin lifecycle replay state: %v", err)
+		return
+	}
+	defer binding.Close()
+	s.schedulePluginTurnLifecycleReplay(binding)
 }

@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/stretchr/testify/require"
 )
@@ -42,9 +41,9 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 			rt.Toolkit = kit
 			require.NoError(t, os.WriteFile(filepath.Join(rt.RootDir, "value.txt"), []byte("before\nrepeat\nrepeat\n"), 0600))
 			var changed []string
-			kit.SetOnFileChanged(func(path string) { changed = append(changed, filepath.Base(path)) })
+			kit.SetOnFileChanged(func(_ context.Context, path string) { changed = append(changed, filepath.Base(path)) })
 
-			sess, err := session.CreateWithMetadata(rt.SessionDir, "historical-patch", rt.RootDir)
+			sess, err := rt.Sessions.CreateWithMetadata("historical-patch", rt.RootDir)
 			require.NoError(t, err)
 			oldArgs := `{"patchText":"*** Begin Patch\n*** Add File: value.txt\n+before\n+repeat\n+repeat\n*** End Patch"}`
 			oldResult := `{"files":[{"path":"value.txt","action":"add","diff":"+before\n+repeat\n+repeat"}]}`
@@ -54,7 +53,7 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 				{Role: "tool", Name: "apply_patch", ToolCallID: "historical-call", Content: oldResult},
 				{Role: "assistant", Content: "Created value.txt"},
 			}
-			require.NoError(t, rewriteChatHistory(rt.SessionDir, sess.ID, history))
+			require.NoError(t, rewriteChatHistory(rt.Sessions, sess.ID, history))
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -106,7 +105,7 @@ func TestServerUnifiedEditingResumesHistoricalPatch(t *testing.T) {
 				require.True(t, names["edit_file"] && names["write_file"])
 				require.False(t, names["apply_patch"])
 			}
-			persisted, err := loadChatMessages(rt.SessionDir, sess.ID)
+			persisted, err := loadChatMessages(rt.Sessions, sess.ID)
 			require.NoError(t, err)
 			var oldCall, oldReply bool
 			for _, msg := range persisted {

@@ -566,7 +566,7 @@ func searchWorkspaceRevision(ctx context.Context, env *Env) string {
 	if stashedRoot, revision, ok := toolctx.WorkspaceRevision(ctx); ok && stashedRoot == root {
 		return revision
 	}
-	return workspaceRevision(ctx, root)
+	return workspaceRevision(ctx, root, env.RuntimeHome)
 }
 
 func searchResultCapacity(limit int) int {

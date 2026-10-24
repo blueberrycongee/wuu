@@ -13,9 +13,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -27,6 +25,7 @@ func writeProviderSettingsConfig(t *testing.T, rt *runtime.Session, body string)
 	if err := os.WriteFile(rt.ConfigPath, []byte(body), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	bindConfigSourceForTest(t, rt)
 }
 
 func readProviderSettingsConfig(t *testing.T, rt *runtime.Session) config.Config {
@@ -79,7 +78,7 @@ func TestServerKeepSelectionSavesAnotherProviderWithoutSelectingIt(t *testing.T)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	idle := newThreadState("idle-thread", nil, "gateway", "gateway-model", rt.RootDir, false, time.Now().UTC())
-	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: loopdriver.DefaultDriver{}, Model: "gateway-model"}}
+	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "gateway-model"}}
 	srv.threads[idle.ID] = idle
 
 	response := requestProviderSettings(t, srv, out, "key", `{"provider":"gateway","base_url":"https://edge.example.test/v1","api_key":"gateway-key","keep_selection":true}`)
@@ -107,10 +106,7 @@ func TestServerKeepSelectionSavesAnotherProviderWithoutSelectingIt(t *testing.T)
 	if saved := cfg.Providers["gateway"]; saved.BaseURL != "https://edge.example.test/v1" || saved.Model != "gateway-model" || saved.APIKey != "" {
 		t.Fatalf("gateway config = %+v", saved)
 	}
-	store, err := authstorage.ForHome(os.Getenv("HOME"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	store := selectedAuthFixture(t, rt)
 	if credentials, err := store.Get("gateway"); err != nil || credentials.APIKey != "gateway-key" {
 		t.Fatalf("gateway key not stored: %+v err=%v", credentials, err)
 	}

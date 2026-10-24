@@ -90,10 +90,11 @@ func (c *activationOrderClient) RequiredServices() []pluginhost.ServiceRequireme
 
 func TestActivatePluginHostOpensKernelServicesBeforePluginCallbacks(t *testing.T) {
 	kernel := newKernelHostServices(nil, nil)
-	registry, conflicts := pluginhost.BuildServiceRegistry(kernel)
+	clients := append(testKernelStateProviders(t, t.TempDir()), kernel)
+	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	client := &activationOrderClient{kernel: kernel, state: pluginhost.StatePrepared}
 	registry.RegisterClients(client)
-	host := pluginhost.New(client, kernel)
+	host := pluginhost.New(append(clients, client)...)
 	host.AttachServiceRegistry(registry, conflicts)
 	defer host.Close(context.Background())
 

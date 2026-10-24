@@ -26,7 +26,12 @@ const (
 
 func (k *kernelHostServices) bindModelSession(session *Session, host *pluginhost.Host) {
 	k.mu.Lock()
-	k.modelSession = session
+	k.modelSession = &Session{RootDir: session.RootDir, HomeDir: session.HomeDir, ConfigPath: session.ConfigPath, ConfigLoadMode: session.ConfigLoadMode, DesktopExecutionDefaults: session.DesktopExecutionDefaults, InferenceJournalRuntime: session.InferenceJournalRuntime}
+	if k.selectedServices != nil {
+		k.modelSession.configClient = k.selectedServices.config
+		k.modelSession.credentials = k.selectedServices.credentials
+		k.modelSession.chatGPTManager = k.selectedServices.chatGPT
+	}
 	k.modelHost = host
 	k.mu.Unlock()
 }
@@ -38,7 +43,7 @@ type modelRequestInvoker struct {
 func (k *modelRequestInvoker) ID() string                { return k.parent.ID() }
 func (k *modelRequestInvoker) Status() pluginhost.Status { return k.parent.Status() }
 
-func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params pluginhost.ServiceInvokeParams) (result json.RawMessage, callErr error) {
 	if err := callCtx.Err(); err != nil {
 		return nil, err
 	}
@@ -115,6 +120,14 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	if err := ctx.Err(); err != nil {
 		return nil, modelRequestError(err)
 	}
+	// Transport cancellation can precede terminal accounting. Keep this
+	// generation's authority until Execute has persisted the complete outcome.
+	ctx, binding, owner, err := k.parent.retainModelInvocation(ctx, cancel, false)
+	if err != nil {
+		return nil, err
+	}
+	var execution *providers.InferenceExecution
+	defer func() { callErr = errors.Join(callErr, owner.complete(callCtx, execution, callErr)) }()
 
 	// Load one coherent host configuration instead of reading the mutable
 	// foreground runner while another client changes its selected model.
@@ -165,7 +178,7 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 			}
 		}
 	}
-	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider)
+	client, err := providerfactory.BuildClient(selection.RuleProviderConfig, selection.Provider, providerfactory.Bindings{Credentials: runtimeSession.credentials, ChatGPT: runtimeSession.chatGPTManager})
 	if err != nil {
 		return nil, serviceError("service_unavailable", "configured model client is unavailable")
 	}
@@ -179,16 +192,22 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// capabilities have no parent inference journal, so attribute them to the
 	// validated plugin instead of creating a hidden conversation.
 	if providers.InferenceJournalFromContext(ctx) == nil {
-		journal := runtimeSession.InferenceJournalForOwner("plugin:" + params.Caller)
+		journal := binding.InferenceJournalRuntime.ForOwner("plugin:" + params.Caller)
 		if journal == nil {
 			return nil, serviceError("service_unavailable", "inference accounting is unavailable")
 		}
 		ctx = providers.WithInferenceJournal(ctx, journal)
 	}
+	request, err = providers.EnsureInferenceExecutionContext(ctx, request, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+	if err != nil {
+		return nil, modelRequestError(err)
+	}
+	execution = request.Execution
 	// This auxiliary request intentionally has no agent-loop callbacks, injected
 	// history or tools. Provider preparation, credentials, capacity, retry and
 	// durable accounting use the ordinary host inference path.
 	response, err := modelrequest.Execute(ctx, client, request, modelrequest.Options{AllowUnboundedOutput: input.AllowUnboundedOutput})
+	binding.Generation.recordModelCompletionError(request.Execution.JournalError())
 	if err != nil {
 		if errors.Is(err, modelrequest.ErrUnsupportedLimit) {
 			return nil, serviceError("unsupported_limit", err.Error())
@@ -205,18 +224,18 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	if finishReason == "" {
 		finishReason = providers.FinishReasonUnknown
 	}
-	result := pluginhost.ModelRequestResult{
+	modelResult := pluginhost.ModelRequestResult{
 		Text: response.Content, Provider: request.Provider, Model: request.Model,
 		FinishReason: string(finishReason), Truncated: response.Truncated || finishReason == providers.FinishReasonLength,
 	}
 	if response.Usage != nil {
-		result.Usage = &pluginhost.ModelRequestUsage{
+		modelResult.Usage = &pluginhost.ModelRequestUsage{
 			InputTokens: response.Usage.InputTokens, OutputTokens: response.Usage.OutputTokens,
 			CacheCreationTokens: response.Usage.CacheCreationTokens, CacheReadTokens: response.Usage.CacheReadTokens,
 			CacheCreationUnknown: response.Usage.CacheCreationUnknown,
 		}
 	}
-	return marshalServiceResult(result)
+	return marshalServiceResult(modelResult)
 }
 
 func modelRequestError(err error) error {

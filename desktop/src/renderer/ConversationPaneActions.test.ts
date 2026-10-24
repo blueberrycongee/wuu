@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { InitializeResult, RuntimeContext, Thread } from "../shared/protocol";
 import {
+  captureComposerDrafts,
   createThreadSessionTab,
+  emptyComposerDraft,
   initialState,
   threadSessionTabID,
   type AppState,
@@ -47,6 +49,7 @@ function buildActions(initial: AppState = {
   let appState = initial;
   const moveSplitDraftToGlobalComposer = vi.fn();
   const actions = createConversationPaneActions({
+    getComposerDraftSnapshot: () => captureComposerDrafts(appState, emptyComposerDraft()),
     setAppState: (update) => {
       appState = typeof update === "function" ? update(appState) : update;
     },

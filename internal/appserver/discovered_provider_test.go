@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func setupDiscoveredGrokProvider(t *testing.T) *runtime.Session {
@@ -29,6 +28,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 	for _, entry := range []string{"existing conversation", "new conversation"} {
 		t.Run(entry, func(t *testing.T) {
 			rt := setupDiscoveredGrokProvider(t)
+			bindConfigSourceForTest(t, rt)
 			before, _, err := rt.LoadEffectiveConfig()
 			if err != nil {
 				t.Fatal(err)
@@ -65,7 +65,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 			if built.StreamRunner.ProviderName != "grok-build" || built.StreamRunner.Model != "grok-4.6" || built.StreamRunner.Variant != "xhigh" {
 				t.Fatalf("selected runtime used a different model: %+v", built.Selection)
 			}
-			saved, ok, err := session.Find(rt.SessionDir, thread.ID)
+			saved, ok, err := rt.Sessions.Find(thread.ID)
 			if err != nil || !ok || saved.Provider != "grok-build" || saved.Model != "grok-4.6" {
 				t.Fatalf("selected session = %+v, found=%v, err=%v", saved, ok, err)
 			}
@@ -102,6 +102,7 @@ func TestConversationSelectsDiscoveredProviderWithoutChangingDefaults(t *testing
 func TestConversationRejectsUndiscoveredProvider(t *testing.T) {
 	rt := setupDiscoveredGrokProvider(t)
 	t.Setenv("GROK_HOME", t.TempDir())
+	bindConfigSourceForTest(t, rt)
 	before, err := os.ReadFile(rt.ConfigPath)
 	if err != nil {
 		t.Fatal(err)

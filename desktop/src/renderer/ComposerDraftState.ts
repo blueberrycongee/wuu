@@ -1,3 +1,4 @@
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import {
   startTransition,
   useCallback,
@@ -145,10 +146,11 @@ async function attachComposerAttachmentFilesToDraft(
 
 export function useComposerDraftState(
   updateStoredDrafts?: (update: (draft: ComposerDraftState) => ComposerDraftState) => void,
+  application?: ApplicationServiceV1,
 ): ComposerDraftStateController {
-  const [prompt, setPromptState] = useState("");
+  const [prompt, setPromptState] = useState(() => application?.getSnapshot().composer.draftText ?? "");
   const [promptRevision, setPromptRevision] = useState(0);
-  const promptRef = useRef("");
+  const promptRef = useRef(prompt);
   const promptCommitTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
@@ -168,12 +170,27 @@ export function useComposerDraftState(
     // Programmatic clears/restores must reach Composer even when App's delayed
     // string snapshot already equals `next` (for example, send within 400ms).
     setPromptRevision((current) => current + 1);
-  }, [cancelPromptCommit]);
+    if (application && application.getSnapshot().composer.draftText !== next) {
+      void application.invoke("composer.set-draft", { text: next }).catch(showErrorToast);
+    }
+  }, [cancelPromptCommit, application]);
+  useEffect(() => {
+    if (!application) return;
+    let publishedText = application.getSnapshot().composer.draftText ?? "";
+    return application.subscribe(() => {
+      const text = application.getSnapshot().composer.draftText ?? "";
+      if (text === publishedText) return;
+      publishedText = text;
+      if (text !== promptRef.current) setPrompt(text);
+    });
+  }, [application, setPrompt]);
   const setPromptFromInput = useCallback((value: string) => {
     promptRef.current = value;
     cancelPromptCommit();
     const pendingCommit = { value };
     pendingPromptCommitRef.current = pendingCommit;
+    // Shared ownership must precede shell disposal; only local rendering waits.
+    if (application) void application.invoke("composer.set-draft", { text: value }).catch(showErrorToast);
     promptCommitTimerRef.current = setTimeout(() => {
       promptCommitTimerRef.current = undefined;
       if (pendingPromptCommitRef.current !== pendingCommit) {
@@ -188,7 +205,7 @@ export function useComposerDraftState(
         );
       });
     }, COMPOSER_PROMPT_IDLE_COMMIT_MS);
-  }, [cancelPromptCommit]);
+  }, [cancelPromptCommit, application]);
   useEffect(() => cancelPromptCommit, [cancelPromptCommit]);
   const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
   const [composerFiles, setComposerFiles] = useState<ComposerFile[]>([]);

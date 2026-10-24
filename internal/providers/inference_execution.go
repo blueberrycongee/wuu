@@ -355,10 +355,33 @@ func ensureInferenceExecution(ctx context.Context, req ChatRequest, fallbackKind
 }
 
 // EnsureInferenceExecutionContext attaches the process-local execution
-// identity. Durable request hashing is intentionally deferred until an attempt
-// is prepared, after provider-specific request normalization has completed.
+// identity and registers it with the current receipt scope. An ended ticket
+// rejects registration before attempt preparation. Durable request hashing is
+// deferred until provider-specific request normalization has completed.
 func EnsureInferenceExecutionContext(ctx context.Context, req ChatRequest, fallbackKind InferenceOperationKind, fallbackProfile InferenceWorkloadProfile) (ChatRequest, error) {
-	return ensureInferenceExecution(ctx, req, fallbackKind, fallbackProfile)
+	req, err := ensureInferenceExecution(ctx, req, fallbackKind, fallbackProfile)
+	if err != nil || ctx == nil {
+		return req, err
+	}
+	ticket, ok := ctx.Value(modelReceiptContextKey{}).(*modelReceiptTicket)
+	if !ok {
+		return req, nil
+	}
+	scope := ticket.scope
+	scope.mu.Lock()
+	defer scope.mu.Unlock()
+	if ticket.ended || scope.aborted {
+		return req, ErrModelReceiptScopeClosed
+	}
+	// Ensure is repeated by wrappers and attempt preparation. Keep the actual
+	// execution once, including identities supplied before entering this scope.
+	for _, execution := range scope.executions {
+		if execution == req.Execution {
+			return req, nil
+		}
+	}
+	scope.executions = append(scope.executions, req.Execution)
+	return req, nil
 }
 
 func bindInferenceJournalContext(ctx context.Context, req ChatRequest) (ChatRequest, error) {
@@ -543,7 +566,7 @@ func (a InferenceAttempt) RecordSubmission(meta InferenceSubmissionMeta) (Infere
 	}
 	e.nextSubmission = nextOrdinal
 	if e.journal != nil {
-		if err := e.journal.UpsertSubmission(journalSubmission(e.operation.ID, submission)); err != nil {
+		if err := e.journal.UpsertSubmission(context.Background(), journalSubmission(e.operation.ID, submission)); err != nil {
 			e.nextSubmission--
 			if !IsWorkflowBudgetError(err) {
 				e.journalErr = err
@@ -658,7 +681,15 @@ func (a InferenceAttempt) JournalError() error {
 	if !a.Valid() {
 		return nil
 	}
-	e := a.execution
+	return a.execution.JournalError()
+}
+
+// JournalError returns the first required journal write failure, including
+// failures before the first attempt. A nil execution has no journal error.
+func (e *InferenceExecution) JournalError() error {
+	if e == nil {
+		return nil
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.journalErr
@@ -676,6 +707,9 @@ func (a InferenceAttempt) Complete(outcome InferenceTerminalOutcome, failure Nor
 	}
 	if e.journal == nil {
 		return nil
+	}
+	if err := e.checkpointSubmissionsLocked(context.Background(), a.ID); err != nil {
+		return err
 	}
 	if err := e.journal.CompleteAttempt(InferenceAttemptTerminalRecord{
 		OperationID: e.operation.ID,
@@ -714,6 +748,9 @@ func (a InferenceAttempt) PrepareRecoveryAttempt(ctx context.Context, plan Recov
 		}
 		if e.journal == nil {
 			return nil
+		}
+		if err := e.checkpointSubmissionsLocked(context.Background(), a.ID); err != nil {
+			return err
 		}
 		return e.journal.PrepareRecoveryAttempt(ctx, InferenceRecoveryAttemptJournalRecord{
 			Recovery: InferenceRecoveryJournalRecord{
@@ -758,6 +795,9 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 		return e.journalErr
 	}
 	if e.journal != nil {
+		if err := e.checkpointSubmissionsLocked(context.Background(), ""); err != nil {
+			return err
+		}
 		if err := e.journal.CompleteOperation(InferenceOperationTerminalRecord{
 			OperationID: e.operation.ID,
 			Outcome:     outcome,
@@ -771,6 +811,42 @@ func (e *InferenceExecution) Complete(outcome InferenceTerminalOutcome, failure 
 	e.terminal = true
 	if e.ownsWorkflow {
 		if err := CompleteInferenceWorkflow(e.workflow, e.journal, outcome); err != nil {
+			e.journalErr = err
+			return err
+		}
+	}
+	return nil
+}
+
+// CheckpointSubmissions persists current physical receipts, including after
+// logical completion. The owner first joins the producers and observers, then
+// supplies its remaining cleanup deadline. This does not repeat logical
+// completion or retry a previously failed required write.
+func (e *InferenceExecution) CheckpointSubmissions(ctx context.Context) error {
+	if e == nil {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.journalErr != nil {
+		return e.journalErr
+	}
+	if e.journal == nil {
+		return nil
+	}
+	return e.checkpointSubmissionsLocked(ctx, "")
+}
+
+// checkpointSubmissionsLocked persists the actual observations before a logical
+// transition. Empty attemptID covers the entire operation. The caller holds e.mu.
+func (e *InferenceExecution) checkpointSubmissionsLocked(ctx context.Context, attemptID string) error {
+	for _, submission := range e.submissions {
+		if attemptID != "" && submission.AttemptID != attemptID {
+			continue
+		}
+		if err := e.journal.UpsertSubmission(ctx, journalSubmission(e.operation.ID, snapshotSubmission(submission))); err != nil {
+			// Cancellation of a required write is still a persistence failure;
+			// recovery must not discard it as ordinary caller cancellation.
 			e.journalErr = err
 			return err
 		}
@@ -891,21 +967,21 @@ func (e *InferenceExecution) updateSubmission(id string, update func(*InferenceS
 			workflow := e.workflow
 			journal := e.journal
 			operationID := e.operation.ID
-			e.mu.Unlock()
 			if workflow != nil && workflow.spend != nil {
 				workflow.spend.SettleSubmission(submission)
 			}
+			e.mu.Unlock()
 			// A per-delta submission update is streaming cost telemetry, not a
 			// durability checkpoint. Hand it to the journal's async progress
 			// path when available so the write never blocks token delivery, and
 			// never let a bookkeeping failure poison the execution or abort the
-			// stream — the terminal record (via CompleteAttempt) is the real
-			// durability boundary and stays synchronous.
+			// stream. Completion and recovery boundaries synchronously
+			// checkpoint the current submission before advancing.
 			if journal != nil {
 				record := journalSubmission(operationID, submission)
 				if progress, ok := journal.(InferenceProgressJournal); ok {
 					progress.RecordSubmissionProgress(record)
-				} else if err := journal.UpsertSubmission(record); err != nil {
+				} else if err := journal.UpsertSubmission(context.Background(), record); err != nil {
 					e.noteJournalDegraded(err)
 				}
 			}
