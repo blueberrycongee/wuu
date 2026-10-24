@@ -216,6 +216,10 @@ export function createApplicationSettingsControls(options: {
       if (typeof window.wuu?.onAppContextChanged !== "function") throw new Error("Settings operation unavailable: onAppContextChanged");
       return window.wuu.onAppContextChanged(...args);
     },
+    discardAppContextSnapshot: async (...args) => {
+      if (typeof window.wuu?.discardAppContextSnapshot !== "function") throw new Error("Settings operation unavailable: discardAppContextSnapshot");
+      return window.wuu.discardAppContextSnapshot(...args);
+    },
     getBuildInfo: async (...args) => {
       if (typeof window.wuu?.getBuildInfo !== "function") throw new Error("Settings operation unavailable: getBuildInfo");
       return window.wuu.getBuildInfo(...args);

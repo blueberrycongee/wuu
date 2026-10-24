@@ -74,6 +74,7 @@ export interface SettingsControlsDiagnosticV1 {
 }
 /** Public settings mechanisms. Operation results are caller-owned; snapshots are immutable. */
 export interface ApplicationSettingsControlsV1 {
+  discardAppContextSnapshot: (id?: string) => Promise<AppContextState>;
   loadPluginIconURL(pluginId: string, fingerprint: string, path: string): Promise<string>;
   readBackground(): Promise<SettingsBackgroundV1 | null>;
   updateBackground(update: (current: SettingsBackgroundV1 | null) => SettingsBackgroundV1 | null): Promise<void>;
