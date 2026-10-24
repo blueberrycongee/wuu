@@ -86,6 +86,8 @@ export interface ApplicationServiceV1 {
 export interface UISlotDefinition {
   readonly id: string;
   readonly cardinality: "one" | "many";
+  /** Select a single surface through the committed service graph, without fallback. */
+  readonly service?: string;
 }
 export interface UISlotProps {
   readonly name: string;

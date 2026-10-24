@@ -21,6 +21,32 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("selects an independently owned surface and fails visibly when its selected provider unloads", async () => {
+    const { host } = fixture();
+    await host.activateGeneration({ pluginId: "shell", generation: "root", register: api => {
+      api.registerUISlot({ id: "navigation", cardinality: "one", service: "ui.navigation" });
+      api.registerApplicationShell({ id: "ui.shell", render: ({ slots }) => <slots.Slot name="shell/navigation" fallback={<span>Implicit default</span>} /> });
+    } });
+    for (const pluginId of ["default", "alternate"]) await host.activateGeneration({ pluginId, generation: "v1", register: api => {
+      api.registerUIContribution({ id: "ui.navigation", target: "shell/navigation", render: () => <span>{pluginId} navigation</span> });
+    } });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const render = (pluginId: string) => act(() => root.render(<ApplicationShellOutlet host={host}
+      binding={{ pluginId: "shell", generation: "root", id: "ui.shell" }}
+      surfaceBindings={{ "ui.navigation": { pluginId, generation: "v1", id: "ui.navigation" } }} />));
+    render("alternate");
+    expect(container.textContent).toBe("alternate navigation");
+    render("default");
+    expect(container.textContent).toBe("default navigation");
+    act(() => host.unload("default"));
+    expect(container.textContent).toContain("Selected UI surface is unavailable");
+    expect(container.textContent).not.toContain("Implicit default");
+    act(() => host.unload("shell"));
+    expect(container.textContent).toContain("Selected application shell is unavailable");
+    act(() => root.unmount());
+  });
+
   it.each(["root", "nested"])("reports %s render failure without a healthy view overwriting it", async (target) => {
     const report = vi.fn(async (_params: PluginDesktopActivationParams) => {});
     const { host } = fixture({ reportActivation: report });

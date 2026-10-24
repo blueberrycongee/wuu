@@ -21,7 +21,7 @@ export interface ApplicationShellSelection {
   readonly generation: string;
   readonly provider_id: string;
 }
-export type ShellInitializeResult = InitializeResult & { application_shell?: ApplicationShellSelection | null };
+export type ShellInitializeResult = InitializeResult & { application_shell?: ApplicationShellSelection | null; application_surfaces?: Readonly<Record<string, ApplicationShellSelection>> };
 
 /** Shared domain state survives shell replacement; UI providers own only presentation. */
 export class ApplicationController implements ApplicationServiceV1 {
@@ -342,6 +342,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         const restored = await loadRuntimeRestore(this.state);
         signal?.throwIfAborted(); this.updateState(state => applyRuntimeRestore(state, restored)); return;
       }
+      default: throw new Error(`Unknown application action: ${action}`);
     }
   }
 
@@ -380,15 +381,15 @@ export class ApplicationController implements ApplicationServiceV1 {
         ...state.threads.filter(thread => !thread.archived && !thread.ephemeral).map(item => Object.freeze({ id: item.id, kind: "thread" as const, label: item.title || item.preview || item.id, active: item.id === thread?.id, pinned: item.pinned, running: isThreadRunning(item) })),
       ]) }),
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
-      composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: running ? ["queue", "steer"] as const : ["send"] as const,
-        model: { id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider },
-        runtime: { id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }, permission: { id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }, disabledReason: this.submitting ? "Submitting" : undefined }),
+      composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
+        model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),
+        runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: this.submitting ? "Submitting" : undefined }),
       settings: Object.freeze({ contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),
       preview: this.preview,
       appearance: Object.freeze({ theme: this.theme, resolvedTheme: currentAppliedTheme(), uiFontSize: Number.parseFloat(document.documentElement.style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default, codeFontSize: readAppearance().codeSize }),
-      locale, status: Object.freeze({ contractVersion: 1, items: Object.freeze([{ id: "connection", label: state.status, kind: status === "error" ? "error" as const : "info" as const }]) }),
+      locale, status: Object.freeze({ contractVersion: 1, items: Object.freeze([Object.freeze({ id: "connection", label: state.status, kind: status === "error" ? "error" as const : "info" as const })]) }),
     });
   }
 }

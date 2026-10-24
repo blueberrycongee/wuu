@@ -837,7 +837,7 @@ export class PluginHost {
     const generations = [...this.activeGenerations.values()].filter(state => state.pluginId !== staging.pluginId);
     generations.push(staging);
     for (const state of generations) for (const slot of state.uiSlots) {
-      if (slot.removed || slot.definition.cardinality !== "one") continue;
+      if (slot.removed || slot.definition.cardinality !== "one" || slot.definition.service) continue;
       const contributions = generations.flatMap(candidate => candidate.uiContributions)
         .filter(item => !item.removed && item.definition.target === slot.definition.name);
       if (contributions.length > 1) throw new Error(`UI slot conflict: ${slot.definition.name}`);
@@ -1231,6 +1231,10 @@ export class PluginHost {
         const id = this.claimRegistrationId(state, "ui-slot", definition.id);
         if (id.includes("/")) throw new Error("UI slot id must be local to its owner");
         if (definition.cardinality !== "one" && definition.cardinality !== "many") throw new Error("Invalid UI slot cardinality");
+        if (definition.service !== undefined) {
+          requireNonEmpty(definition.service, "UI surface service");
+          if (definition.cardinality !== "one") throw new Error("Selected UI surfaces require cardinality one");
+        }
         const record: UISlotRecord = {
           pluginId: state.pluginId, generation: state.generation, id, order: 0, removed: false,
           definition: Object.freeze({ ...definition, id, name: `${state.manifestId}/${id}`, pluginId: state.pluginId, generation: state.generation }),

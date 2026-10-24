@@ -6,6 +6,14 @@ import type { WuuDesktopApi } from "../../shared/protocol";
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("rejects unknown commands and protects nested public snapshot values", async () => {
+    const controller = new ApplicationController();
+    const snapshot = controller.getSnapshot();
+    expect(Reflect.set(snapshot.composer.model!, "label", "Injected")).toBe(false);
+    expect(Object.isFrozen(snapshot.composer.availableSubmissionModes)).toBe(true);
+    await expect(controller.invoke("missing.action" as "runtime.refresh", {})).rejects.toThrow("Unknown application action");
+    expect(controller.getSnapshot()).toBe(snapshot);
+  });
   it("refreshes the local activation lifetime after successful connection restoration while retaining drafts", async () => {
     let restore!: () => Promise<void>;
     const initialized = { extension_inventory: [] };

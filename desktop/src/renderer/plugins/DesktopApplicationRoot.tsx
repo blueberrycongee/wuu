@@ -18,5 +18,7 @@ export function DesktopApplicationRoot(): JSX.Element {
   const selection = (state.initialized as ShellInitializeResult | undefined)?.application_shell;
   const binding = selection ? { pluginId: selection.plugin_id, generation: selection.generation, id: selection.provider_id } : null;
   if (!state.initialized) return <div className="application-recovery" role={state.status === "connecting" ? "status" : "alert"}>{state.status === "connecting" ? "Connecting…" : state.status}</div>;
-  return <ApplicationShellOutlet host={desktopPluginHost} binding={binding} />;
+  const surfaceBindings = Object.fromEntries(Object.entries((state.initialized as ShellInitializeResult).application_surfaces ?? {})
+    .map(([service, selected]) => [service, { pluginId: selected.plugin_id, generation: selected.generation, id: selected.provider_id }]));
+  return <ApplicationShellOutlet host={desktopPluginHost} binding={binding} surfaceBindings={surfaceBindings} />;
 }
