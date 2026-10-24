@@ -482,13 +482,13 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 	doneCh := sa.doneCh
 	m.mu.Unlock()
 
-	go m.runTurn(subCtx, cancel, sa, opts.MaxSteps, history, doneCh, runtimeDefaults)
+	go m.runTurn(subCtx, cancel, sa, opts.MaxSteps, history, doneCh, runtimeDefaults, nil)
 
 	return sa, nil
 }
 
 // runTurn executes one turn for a sub-agent in a goroutine.
-func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *SubAgent, maxSteps int, history []providers.ChatMessage, doneCh chan struct{}, defaults managerDefaults) {
+func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *SubAgent, maxSteps int, history []providers.ChatMessage, doneCh chan struct{}, defaults managerDefaults, receiptErr error) {
 	ownsDone := true
 	defer func() {
 		if ownsDone {
@@ -506,7 +506,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		if r := recover(); r != nil {
 			sa.mu.Lock()
 			sa.Status = StatusFailed
-			sa.Error = fmt.Errorf("worker panic: %v", r)
+			sa.Error = errors.Join(receiptErr, fmt.Errorf("worker panic: %v", r))
 			sa.CompletedAt = time.Now()
 			sa.mu.Unlock()
 			m.prepareTerminal(sa, StatusFailed)
@@ -675,6 +675,9 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 			content = emptyWorkerResultPlaceholder
 		}
 	}
+	// An implicit continuation shares its caller's completion boundary. Its
+	// successful work cannot erase a required receipt failure from an earlier turn.
+	err = errors.Join(receiptErr, err)
 	workflowOutcome := providers.InferenceOutcomeSucceeded
 	if err != nil {
 		workflowOutcome = providers.InferenceOutcomeFailed
@@ -693,6 +696,9 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	// normal resumed turn. No successful Followup can remain parked in memory
 	// with no future BeforeStep to consume it.
 	if ctx.Err() == nil && len(sa.pendingMessages) > 0 {
+		if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+			receiptErr = err
+		}
 		continuationHistory := append(providers.CloneChatMessages(nextHistory), sa.popPendingUserMessagesLocked()...)
 		lifetime := sa.maxLifetime
 		continuationCtx, continuationCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -709,7 +715,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		sa.cancelFunc = continuationCancel
 		sa.mu.Unlock()
 		ownsDone = false
-		go m.runTurn(continuationCtx, continuationCancel, sa, maxSteps, continuationHistory, doneCh, defaults)
+		go m.runTurn(continuationCtx, continuationCancel, sa, maxSteps, continuationHistory, doneCh, defaults, receiptErr)
 		return
 	}
 	sa.history = nextHistory
@@ -719,8 +725,14 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		case errors.Is(err, context.DeadlineExceeded) && sa.maxLifetime > 0:
 			sa.Status = StatusFailed
 			sa.Error = fmt.Errorf("worker exceeded max lifetime (%s)", sa.maxLifetime)
+			if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+				sa.Error = errors.Join(sa.Error, err)
+			}
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 			sa.Status = StatusCancelled
+			if errors.Is(err, agent.ErrModelReceiptLifecycle) {
+				sa.Error = err
+			}
 		default:
 			sa.Status = StatusFailed
 			sa.Error = err
@@ -747,14 +759,11 @@ func runWorkerLifecycleHook(ctx context.Context, id string, defaults managerDefa
 	// Prompt hooks run outside the main runner and must not inherit its parent's
 	// journal or receipt lifetime, even when the worker detached cancellation.
 	ctx = providers.WithInferenceJournal(ctx, defaults.journal)
-	if defaults.BeginModelReceipts != nil {
-		var finish func() error
-		ctx, finish, hookErr = defaults.BeginModelReceipts(ctx)
-		if hookErr != nil {
-			return hookErr
-		}
-		defer func() { hookErr = errors.Join(hookErr, finish()) }()
+	ctx, finish, hookErr := agent.BeginModelReceipts(ctx, defaults.BeginModelReceipts)
+	if hookErr != nil {
+		return hookErr
 	}
+	defer func() { hookErr = errors.Join(hookErr, finish()) }()
 	return hook(ctx, id)
 }
 
@@ -1140,7 +1149,7 @@ func (m *Manager) followup(ctx context.Context, id, message, forceTool string) (
 	// change made while the worker sat idle.
 	m.refreshWakeAuthority(sa.toolkit)
 
-	go m.runTurn(runCtx, cancel, sa, maxSteps, history, doneCh, defaults)
+	go m.runTurn(runCtx, cancel, sa, maxSteps, history, doneCh, defaults, nil)
 	return snap, nil
 }
 

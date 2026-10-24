@@ -981,6 +981,181 @@ func TestRunTurnNudgeModelFailureRemainsBestEffort(t *testing.T) {
 	}
 }
 
+func TestFollowupReceiptFailureSurvivesContinuations(t *testing.T) {
+	for _, stage := range []string{"nudge", "main", "start", "stop", "ordinary-stop"} {
+		for _, admission := range []bool{false, true} {
+			if stage == "ordinary-stop" && admission {
+				continue
+			}
+			t.Run(fmt.Sprintf("%s/admission-%t", stage, admission), func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				failureReady, releaseFailure := make(chan struct{}), make(chan struct{})
+				continuationReady, releaseContinuation := make(chan struct{}), make(chan struct{})
+				unblockFailure := sync.OnceFunc(func() { close(releaseFailure) })
+				unblockContinuation := sync.OnceFunc(func() { close(releaseContinuation) })
+				defer unblockFailure()
+				defer unblockContinuation()
+				receiptErr := errors.New("required receipt failed before queued continuation")
+				failAt, firstCalls := int32(1), 1
+				responses := []providers.ChatResponse{{Content: "accepted first output"}}
+				if stage == "nudge" {
+					failAt, firstCalls = 2, 2
+					responses = append([]providers.ChatResponse{{StopReason: "end_turn"}}, responses...)
+				}
+				if stage == "stop" || stage == "ordinary-stop" {
+					failAt = 2
+				}
+				if stage == "start" || (admission && stage == "main") {
+					firstCalls, responses = 0, nil
+				} else if admission && stage == "nudge" {
+					firstCalls, responses = 1, responses[:1]
+				}
+				responses = append(responses, providers.ChatResponse{Content: "first continuation done"}, providers.ChatResponse{Content: "second continuation done"}, providers.ChatResponse{Content: "explicit retry done"})
+				client := &scriptedStreamClient{responses: responses}
+				var admissions atomic.Int32
+				var continuationGated atomic.Bool
+				fail := func() error {
+					close(failureReady)
+					select {
+					case <-releaseFailure:
+						return receiptErr
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				opts := ManagerOptions{
+					AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+					BeginModelReceipts: func(runCtx context.Context) (context.Context, func() error, error) {
+						ordinal := admissions.Add(1)
+						if stage != "ordinary-stop" && ordinal == failAt && admission {
+							return runCtx, nil, fail()
+						}
+						return runCtx, func() error {
+							if stage != "ordinary-stop" && ordinal == failAt {
+								return fail()
+							}
+							if client.callCount() == firstCalls+1 && continuationGated.CompareAndSwap(false, true) {
+								close(continuationReady)
+								select {
+								case <-releaseContinuation:
+								case <-ctx.Done():
+									return ctx.Err()
+								}
+							}
+							return nil
+						}, nil
+					},
+				}
+				if stage == "start" {
+					opts.OnSubagentStart = func(context.Context, string) error { return nil }
+				}
+				if stage == "stop" {
+					opts.OnSubagentStop = func(context.Context, string) error { return nil }
+				}
+				if stage == "ordinary-stop" {
+					var stopped atomic.Bool
+					opts.OnSubagentStop = func(context.Context, string) error {
+						if stopped.CompareAndSwap(false, true) {
+							return fail()
+						}
+						return nil
+					}
+				}
+				manager := NewManagerWithOptions(client, "test", opts)
+				historyPath := filepath.Join(t.TempDir(), "worker.json")
+				sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, HistoryPath: historyPath})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i, ready := range []chan struct{}{failureReady, continuationReady} {
+					select {
+					case <-ready:
+					case <-ctx.Done():
+						t.Fatalf("turn %d never reached receipt gate: %v", i, ctx.Err())
+					}
+					snapshot, err := manager.Followup(ctx, sa.ID, fmt.Sprintf("queued instruction %d", i))
+					if err != nil || snapshot.Status != StatusRunning || snapshot.PendingMessageCount != 1 {
+						t.Fatalf("Followup did not queue at receipt gate: %+v err=%v", snapshot, err)
+					}
+					if i == 0 {
+						unblockFailure()
+					} else {
+						unblockContinuation()
+					}
+				}
+				snapshot, err := manager.Wait(ctx, sa.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if stage == "ordinary-stop" {
+					if snapshot.Status != StatusCompleted || snapshot.Error != nil {
+						t.Fatalf("ordinary hook error prevented queued recovery: %+v", snapshot)
+					}
+				} else if snapshot.Status != StatusFailed || !errors.Is(snapshot.Error, receiptErr) || !errors.Is(snapshot.Error, agent.ErrModelReceiptLifecycle) {
+					t.Errorf("continuation lost required receipt error: status=%s err=%v", snapshot.Status, snapshot.Error)
+				}
+				if client.callCount() != firstCalls+2 || snapshot.Result != "second continuation done" || snapshot.PendingMessageCount != 0 {
+					t.Fatalf("queued work did not complete: calls=%d snapshot=%+v", client.callCount(), snapshot)
+				}
+				persisted, err := LoadPersistedRun(historyPath)
+				if err != nil || persisted.Status != snapshot.Status || persisted.Result != snapshot.Result {
+					t.Fatalf("persisted terminal differs: %+v err=%v", persisted, err)
+				}
+				if stage != "ordinary-stop" && !strings.Contains(persisted.Error, receiptErr.Error()) {
+					t.Errorf("persisted terminal lost required error: %q", persisted.Error)
+				}
+				wantMessages := []string{"queued instruction 0", "first continuation done", "queued instruction 1", "second continuation done"}
+				if firstCalls > 0 && !(admission && stage == "nudge") {
+					wantMessages = append([]string{"accepted first output"}, wantMessages...)
+				}
+				for _, messages := range [][]providers.ChatMessage{sa.HistorySnapshot(), persisted.Messages} {
+					remaining := wantMessages
+					for _, message := range messages {
+						if len(remaining) > 0 && message.Content == remaining[0] {
+							remaining = remaining[1:]
+						}
+					}
+					if len(remaining) != 0 {
+						t.Fatalf("accepted history or queued input lost: missing=%v messages=%+v", remaining, messages)
+					}
+				}
+				if _, err := manager.Followup(ctx, sa.ID, "explicit retry"); err != nil {
+					t.Fatal(err)
+				}
+				retried, err := manager.Wait(ctx, sa.ID)
+				if err != nil || retried.Status != StatusCompleted || retried.Error != nil || retried.Result != "explicit retry done" {
+					t.Fatalf("explicit retry retained prior run error: %+v err=%v", retried, err)
+				}
+			})
+		}
+	}
+}
+
+func TestWorkerReceiptContextFailureRetainsIdentity(t *testing.T) {
+	for _, cause := range []error{context.DeadlineExceeded, context.Canceled} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			receiptErr := errors.New("receipt owner cleanup failed")
+			manager := NewManagerWithOptions(&fakeClient{response: providers.ChatResponse{Content: "accepted output"}}, "test", ManagerOptions{
+				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
+				BeginModelReceipts: func(ctx context.Context) (context.Context, func() error, error) {
+					return ctx, func() error { return errors.Join(receiptErr, cause) }, nil
+				},
+			})
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			sa, err := manager.Spawn(ctx, SpawnOptions{Type: "worker", Prompt: "work", Toolkit: fakeToolkit{}, MaxLifetime: time.Hour})
+			if err != nil {
+				t.Fatal(err)
+			}
+			snapshot, err := manager.Wait(ctx, sa.ID)
+			if err != nil || snapshot.Status == StatusCompleted || !errors.Is(snapshot.Error, receiptErr) || !errors.Is(snapshot.Error, cause) || !errors.Is(snapshot.Error, agent.ErrModelReceiptLifecycle) || snapshot.Result != "accepted output" {
+				t.Fatalf("receipt failure identity lost at terminal: %+v waitErr=%v", snapshot, err)
+			}
+		})
+	}
+}
+
 func TestRunTurn_EmptyOutputFallsBackToPlaceholder(t *testing.T) {
 	// The worker produces nothing on the main turn and nothing on the nudge:
 	// the result settles on the clearly-labelled placeholder, and the run is

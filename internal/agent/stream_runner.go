@@ -331,7 +331,7 @@ func (r *StreamRunner) RunWithCallback(ctx context.Context, history []providers.
 			return LoopResult{}, fmt.Errorf("bind loop driver: %w", err)
 		}
 	}
-	ctx, finishReceipts, err := beginModelReceipts(ctx, r.BeginModelReceipts)
+	ctx, finishReceipts, err := BeginModelReceipts(ctx, r.BeginModelReceipts)
 	if err != nil {
 		return LoopResult{}, err
 	}
@@ -406,7 +406,10 @@ type streamDriverGateway struct {
 	lastCheckpoint *loopdriver.Checkpoint
 }
 
-func beginModelReceipts(ctx context.Context, begin BeginModelReceiptsFunc) (context.Context, func() error, error) {
+// BeginModelReceipts admits a receipt lifecycle and classifies its admission and
+// completion failures with ErrModelReceiptLifecycle, preserving original errors.
+// A nil hook returns the original context and a no-op completion function.
+func BeginModelReceipts(ctx context.Context, begin BeginModelReceiptsFunc) (context.Context, func() error, error) {
 	if begin == nil {
 		return ctx, func() error { return nil }, nil
 	}
@@ -681,7 +684,7 @@ func (r *StreamRunner) CompactionNoteFork() CompactionNoteFork {
 		begin = r.BeginModelReceipts
 	}
 	return func(ctx context.Context, history []providers.ChatMessage, plan CompactionNotePlan) (result CompactionNoteForkResult, runErr error) {
-		ctx, finishReceipts, err := beginModelReceipts(ctx, begin)
+		ctx, finishReceipts, err := BeginModelReceipts(ctx, begin)
 		if err != nil {
 			return CompactionNoteForkResult{}, err
 		}
