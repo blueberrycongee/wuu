@@ -89,3 +89,36 @@ it("keeps alias and display ordering separate from configuration identity and se
     expect(save.mock.calls[0].slice(0, 2)).toEqual(["api-stable-id", "model-b"]);
   } finally { act(() => root.unmount()); container.remove(); window.wuu = previous; localStorage.removeItem("wuu.connectionDisplay.v1"); }
 });
+
+it.each(["starting", "polling"])("stops xAI authorization when selected settings unmount during %s", async phase => {
+  vi.useFakeTimers();
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); const previous = window.wuu;
+  let started!: (value: Awaited<ReturnType<WuuDesktopApi["startXAILogin"]>>) => void;
+  let polled!: (value: Awaited<ReturnType<WuuDesktopApi["pollXAILogin"]>>) => void;
+  const start = { login_id:"owned-login", user_code:"CODE", verification_uri:"https://auth.example", expires_in:300, interval_ms:1000 };
+  const cancel=vi.fn().mockResolvedValue({ok:true}); const external=vi.fn().mockResolvedValue(undefined); const save=vi.fn();
+  const poll=vi.fn(()=>new Promise<Awaited<ReturnType<WuuDesktopApi["pollXAILogin"]>>>(resolve=>{polled=resolve;}));
+  window.wuu = {listEngines:vi.fn().mockResolvedValue({engines:[]}),startXAILogin:vi.fn(()=>new Promise(resolve=>{started=resolve;})),pollXAILogin:poll,cancelXAILogin:cancel,openExternal:external} as unknown as WuuDesktopApi;
+  let mounted=true;
+  try {
+    await act(async()=>root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}><ModelServicesPage
+      initialized={{protocol_version:"test",workspace_root:"/tmp",provider:"xai",model:"grok",providers:[{name:"xai",type:"xai-subscription",model:"grok",api_key_configured:false}]}}
+      running={false} runningProviderNames={new Set()} onSave={save} onRemoveProvider={vi.fn()} onRefreshModelCatalog={vi.fn()}/></SettingsControlsProvider>));
+    await act(async()=>container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"]')!.click());
+    await act(async()=>container.querySelector<HTMLButtonElement>('[data-testid="settings-xai-login"]')!.click());
+    if(phase==="polling") {
+      await act(async()=>started(start));
+      await act(async()=>vi.advanceTimersByTimeAsync(1000));
+      expect(poll).toHaveBeenCalledTimes(1);
+    }
+    await act(async()=>root.unmount()); mounted=false;
+    if(phase==="starting") await act(async()=>started(start));
+    else await act(async()=>polled({status:"pending",interval_ms:1000}));
+    await act(async()=>vi.advanceTimersByTimeAsync(5000));
+    expect(cancel).toHaveBeenCalledExactlyOnceWith("owned-login");
+    expect(poll).toHaveBeenCalledTimes(phase==="polling"?1:0);
+    if(phase==="starting") expect(external).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+  } finally {if(mounted)act(()=>root.unmount());container.remove();window.wuu=previous;vi.useRealTimers();}
+});

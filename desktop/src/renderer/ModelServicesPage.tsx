@@ -1240,6 +1240,7 @@ function XAILoginRow({
   onSignedIn: () => Promise<boolean>;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const authorization = useAuthorizationLifetime();
   const { t } = useI18n();
   const [code, setCode] = useState("");
   return (
@@ -1252,11 +1253,12 @@ function XAILoginRow({
         type="button"
         className="settings-button"
         disabled={disabled || Boolean(code)}
+        data-testid="settings-xai-login"
         onClick={() => void onRun(async () => {
           try {
-            await runXAILogin(controls, setCode, t);
+            await runXAILogin(controls, setCode, t, authorization.current.signal);
           } finally {
-            setCode("");
+            if (!authorization.current.signal.aborted) setCode("");
           }
           await onSignedIn();
         })}
@@ -1267,24 +1269,55 @@ function XAILoginRow({
   );
 }
 
-async function runXAILogin(controls: import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1, onCode: (code: string) => void, t: Translate): Promise<void> {
+function useAuthorizationLifetime(): React.MutableRefObject<AbortController> {
+  const lifetime = useRef(new AbortController());
+  useEffect(() => {
+    lifetime.current = new AbortController();
+    return () => lifetime.current.abort();
+  }, []);
+  return lifetime;
+}
+
+async function runXAILogin(controls: import("../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1, onCode: (code: string) => void, t: Translate, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
   const start = await controls.startXAILogin();
-  onCode(start.user_code);
-  const url = start.verification_uri_complete || start.verification_uri;
-  if (url) await controls.openExternal(url);
-  const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
-  let interval = Math.max(1000, start.interval_ms || 5000);
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
-    const poll = await controls.pollXAILogin(start.login_id);
-    if (poll.status === "pending") {
-      interval = Math.max(1000, poll.interval_ms || interval);
-      continue;
+  let cancellation: Promise<{ error?: unknown }> | undefined;
+  const cancel = () => {
+    cancellation ??= controls.cancelXAILogin(start.login_id).then(() => ({}), error => ({ error }));
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  try {
+    if (signal.aborted) cancel();
+    signal.throwIfAborted();
+    onCode(start.user_code);
+    const url = start.verification_uri_complete || start.verification_uri;
+    if (url) await controls.openExternal(url);
+    signal.throwIfAborted();
+    const deadline = Date.now() + Math.max(30, start.expires_in || 300) * 1000;
+    let interval = Math.max(1000, start.interval_ms || 5000);
+    while (Date.now() < deadline) {
+      await new Promise<void>((resolve, reject) => {
+        const aborted = () => { clearTimeout(timer); signal.removeEventListener("abort", aborted); reject(signal.reason); };
+        const timer = setTimeout(() => { signal.removeEventListener("abort", aborted); resolve(); }, interval);
+        signal.addEventListener("abort", aborted, { once: true });
+        if (signal.aborted) aborted();
+      });
+      signal.throwIfAborted();
+      const poll = await controls.pollXAILogin(start.login_id);
+      signal.throwIfAborted();
+      if (poll.status === "pending") {
+        interval = Math.max(1000, poll.interval_ms || interval);
+        continue;
+      }
+      if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
+      return;
     }
-    if (poll.status !== "success") throw new Error(poll.error || t("error.oauthFailed"));
-    return;
+    throw new Error(t("error.oauthFailed"));
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    const cancelled = await cancellation;
+    if (cancelled && "error" in cancelled) throw cancelled.error;
   }
-  throw new Error(t("error.oauthFailed"));
 }
 
 function ModelChoices({
@@ -1698,6 +1731,7 @@ function ConnectServiceDialog({
   onConnected: (name: string) => void;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const authorization = useAuthorizationLifetime();
   const { t } = useI18n();
   const fieldID = useId();
   const catalogProvider = target.kind === "catalog" ? target.provider : undefined;
@@ -1749,7 +1783,8 @@ function ConnectServiceDialog({
     setError("");
     setPending(true);
     try {
-      if (subscriptionType === "xai-subscription") await runXAILogin(controls, setLoginCode, t);
+      if (subscriptionType === "xai-subscription") await runXAILogin(controls, setLoginCode, t, authorization.current.signal);
+      authorization.current.signal.throwIfAborted();
       const connection: RuntimeConnectionUpdate = {
         ...(existingCodex ? {} : { type: subscriptionType ?? protocol, create_provider: true }),
         keep_selection: !makeDefault,
@@ -1758,13 +1793,13 @@ function ConnectServiceDialog({
         ...(subscriptionType === "openai-codex" ? { reuse_codex_credentials: true } : {}),
       };
       if (existingCodex) await controls.useCodexCredentials(existingCodex.name);
+      authorization.current.signal.throwIfAborted();
       await onSave(name.trim(), model.trim(), undefined, connection);
-      onConnected(name.trim());
+      if (!authorization.current.signal.aborted) onConnected(name.trim());
     } catch (saveError) {
-      setError(errorMessage(saveError, t));
+      if (!authorization.current.signal.aborted) setError(errorMessage(saveError, t));
     } finally {
-      setLoginCode("");
-      setPending(false);
+      if (!authorization.current.signal.aborted) { setLoginCode(""); setPending(false); }
     }
   }
 
