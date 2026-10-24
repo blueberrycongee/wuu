@@ -754,13 +754,17 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 	calls.next(t, "Plan the release note").response <- providersResponse("The draft is ready.")
 	worker := projectManagedSessions(t, client, coordinator.ID)[0]
 	worker = waitForThread(t, srv, worker.ID, func(thread Thread) bool { return thread.LatestCompletedTurnID != "" })
+	// A non-waking notice can join a running turn, so this scenario requires an idle coordinator.
+	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
 
+	const userClientID = "migration-input"
 	var userTurn TurnStartResult
-	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: worker.ID, Prompt: "Also mention the migration"}, &userTurn)
+	client.rpc(t, MethodTurnStart, TurnStartParams{ClientID: userClientID, ThreadID: worker.ID, Prompt: "Also mention the migration"}, &userTurn)
 	held := calls.next(t, "mention the migration")
 	srv.drainSessionInbox(coordinator.ID)
+	noticeClientID := "project-user-message:" + worker.ID + ":" + userClientID
 	pending, err := srv.rt.Sessions.PendingInbox(coordinator.ID)
-	if err != nil || len(pending) != 1 || pending[0].Wake || pending[0].Cause != "project_user_message" || !strings.Contains(pending[0].Content, "Also mention the migration") {
+	if err != nil || len(pending) != 1 || pending[0].ClientID != noticeClientID || pending[0].Wake || pending[0].Cause != "project_user_message" || !strings.Contains(pending[0].Content, "Also mention the migration") {
 		t.Fatalf("direct user notice must persist without waking: %+v, %v", pending, err)
 	}
 	calls.assertIdle(t)
@@ -770,6 +774,14 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 		t.Fatalf("a user message changed the session's control: %+v", joined.SessionControl)
 	}
 	result := calls.next(t, "Plan the release note")
+	// The earlier notice can start the request before the result joins its steering queue.
+	if last := lastUserRequestMessage(result.request); last.ClientID == noticeClientID {
+		if last.Cause != projectCauseUserMessage || last.Content != pending[0].Content {
+			t.Fatalf("direct user notice delivered to coordinator = %+v", last)
+		}
+		result.response <- providersResponse("Waiting for the session result.")
+		result = calls.next(t, "Plan the release note")
+	}
 	if last := lastUserRequestMessage(result.request); last.ClientID != projectResultClientID(worker.ID, userTurn.Turn.ID) ||
 		last.Cause != projectCauseResult || !strings.Contains(last.Content, "The user wrote to this session") || !strings.Contains(last.Content, "Also mention the migration") {
 		t.Fatalf("result of a turn the user joined = %+v", last)
