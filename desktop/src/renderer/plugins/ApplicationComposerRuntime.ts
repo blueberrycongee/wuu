@@ -7,7 +7,7 @@ import type { CodexModelLoadState } from "../ComposerTypes";
 import { createRuntimeSettingsActions } from "../RuntimeSettingsActions";
 import { rememberedEngineRuntime, resolveDraftEngineMemory, writeDraftEngineMemory } from "../DraftEngineMemory";
 import { isProjectCoordinator } from "../ProjectSessions";
-import { providerIsCodex } from "../RuntimeHelpers";
+import { hasAuthenticatedProvider, providerIsCodex } from "../RuntimeHelpers";
 import { runtimeViewForSession } from "../SessionRuntimeState";
 
 const actionNames = new Set<keyof Actions>(["composer.choose-runtime", "composer.choose-permission", "composer.choose-worktree", "composer.refresh-engine-models", "composer.refresh-provider-models"]);
@@ -166,6 +166,25 @@ export class ApplicationComposerRuntime {
           ...(Object.keys(selection.modelOptions).length ? { model_options: { ...selection.modelOptions } } : {}) };
     return { pending: !owner.available || owner.engineSelectionPending, params,
       ...(owner.worktree.enabled ? { worktree: { startBranch: owner.worktree.startBranch } } : {}) };
+  }
+  /** Background workspace entry uses captured workspace defaults, never a draft selection. */
+  async getWorkspaceSubmissionRuntime(workspace: RuntimeContext): Promise<{ context: RuntimeContext; params: ThreadStartParams }> {
+    if (this.disposed) throw new Error("Composer runtime is disposed");
+    const state = this.host.getState();
+    if (!state.initialized || this.host.isNavigationPending()) throw new Error("Workspace runtime is not ready");
+    const project = workspace.kind === "project" ? state.projects.find(project => project.id === workspace.project_id) : undefined;
+    if (workspace.kind === "project" && (!project || project.missing)) throw new Error("Workspace is no longer available");
+    const context: RuntimeContext = project ? { kind: "project", project_id: project.id, cwd: project.path } : { ...workspace };
+    const configuration = state.initialized;
+    const inventory = await window.wuu.listEngines({ cwd: context.cwd }, context);
+    if (this.disposed) throw new Error("Composer runtime is disposed");
+    const engine = inventory.settings?.default_engine || "wuu";
+    if (engine === "wuu" && !hasAuthenticatedProvider(configuration.providers)) throw new Error("Configure a model before sending");
+    const params: ThreadStartParams = engine === "wuu"
+      ? { engine, provider: configuration.provider, model: configuration.model, effort: configuration.variant || configuration.effort,
+          speed: configuration.speed, permission_mode: configuration.permissions?.mode, approve_for_me: configuration.permissions?.approve_for_me }
+      : { engine, model: "", effort: "", permission_mode: "unconfined" };
+    return { context, params };
   }
   private admit(ownerTabId: string, signal?: AbortSignal): Source {
     if (this.disposed) throw new Error("Composer runtime is disposed");

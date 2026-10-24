@@ -206,3 +206,24 @@ it("projects submission parameters from the same owner without leaking builtin c
   expect(runtime).toEqual({ pending: false, params: { engine: "native", model: "", effort: "", speed: "", permission_mode: "unconfined" }, worktree: { startBranch: "feature" } });
   expect(runtime.params).not.toHaveProperty("provider"); expect(runtime.params).not.toHaveProperty("approve_for_me");
 });
+
+
+it("captures workspace defaults before asynchronous engine discovery", async () => {
+  const h = fixture();
+  let finish!: (value: EngineListResult) => void;
+  window.wuu = { listEngines: vi.fn(() => new Promise<EngineListResult>(resolve => { finish = resolve; })) } as unknown as typeof window.wuu;
+  const initialized = { ...configuration(), providers: [{ ...configuration().providers![0], api_key_configured: true }] };
+  h.set({ ...h.get(), initialized });
+  const pending = h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" });
+  h.set({ ...h.get(), activeSessionTabID: "draft-b", initialized: { ...initialized, model: "other" } });
+  finish(inventory);
+  await expect(pending).resolves.toMatchObject({ context: { kind: "no_project", cwd: "/source" }, params: { engine: "wuu", model: "a", effort: "high" } });
+});
+
+it("rejects removed workspace before discovery and preserves native empty overrides", async () => {
+  installEngineAPI(); const h = fixture();
+  await expect(h.runtime.getWorkspaceSubmissionRuntime(context)).rejects.toThrow();
+  expect(window.wuu.listEngines).not.toHaveBeenCalled();
+  vi.mocked(window.wuu.listEngines).mockResolvedValue({ ...inventory, settings: { default_engine: "native" } });
+  await expect(h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" })).resolves.toEqual({ context: { kind: "no_project", cwd: "/source" }, params: { engine: "native", model: "", effort: "", permission_mode: "unconfined" } });
+});
