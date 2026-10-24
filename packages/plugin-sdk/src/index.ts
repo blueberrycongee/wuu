@@ -2736,3 +2736,7 @@ export * from "./ui-projects.js";
 export * from "./ui-file-selection.js";
 export * from "./ui-side-conversation.js";
 export * from "./ui-onboarding.js";
+
+export * from "./ui-web-workspace.js";
+
+export * from "./ui-artifacts.js";
