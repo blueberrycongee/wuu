@@ -202,7 +202,12 @@ function Fixture() {
   return <WuuUIRoot><ProjectActionsProvider value={actions}>
     <div className={`app-shell sample-shell${tabs.length ? " right-panel-open" : ""}`} style={{ height: "100dvh", "--workspace-right-panel-width": params.has("panel-width") ? `${Number(params.get("panel-width"))}px` : undefined } as CSSProperties}>
       <AppSidebar
-        state={state}
+        initialized={Boolean(state.initialized)}
+        activeContextKind={state.activeContext?.kind}
+        activeSessionTabID={state.activeSessionTabID}
+        selectedWorkspaceID={state.activeProjectId}
+        extensionInventory={state.initialized?.extension_inventory}
+        lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
         sidebarWorkspaces={[workspace]} pinnedThreads={[]}
         activeThreadID={draft ? undefined : active} activeWorkspaceID={workspace.id}
         collapsedSidebarSectionIDs={new Set()} expandedSidebarSectionIDs={expanded}

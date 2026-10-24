@@ -120,7 +120,13 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
   } = options;
   return (
     <AppSidebar
-      state={state}
+      initialized={Boolean(state.initialized)}
+      activeContextKind={state.activeContext?.kind}
+      activeSessionTabID={state.activeSessionTabID}
+      selectedWorkspaceID={state.activeProjectId}
+      extensionInventory={state.initialized?.extension_inventory}
+      lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
+      catalogActive={state.sessionTabs.some(tab => tab.id === state.activeSessionTabID && tab.kind === "skills")}
       sidebarWorkspaces={sidebarWorkspaces}
       pinnedThreads={pinnedThreads}
       activeThreadID={activeThreadID}

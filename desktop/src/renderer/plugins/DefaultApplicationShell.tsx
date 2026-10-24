@@ -1,12 +1,11 @@
-import type { ApplicationShellRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationGenerationAPI, ApplicationShellRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import { App } from "../App";
 import { AppBackground } from "../background/AppBackground";
 import { AppContextCaptureHost } from "../AppContextCapture";
 import { ENABLE_APP_SNAPSHOTS } from "../../shared/featureFlags";
-import type { PluginGenerationApi } from "./PluginHost";
 
 /** Shipped module uses the same registration, selection and unload path as an external shell. */
-export function activate(api: PluginGenerationApi): void {
+export function activate(api: ApplicationGenerationAPI & { readonly pluginId: string }): void {
   api.registerUISlot({ id: "application.before", cardinality: "many" });
   api.registerUISlot({ id: "application.after", cardinality: "many" });
   function DefaultShell({ application, slots }: ApplicationShellRenderProps): JSX.Element {

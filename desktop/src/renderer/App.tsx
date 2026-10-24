@@ -748,10 +748,10 @@ export function App({ application: providedApplication }: { application?: Applic
     models: [],
   });
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const nativeSection = state.nativeSection ?? "conversations";
-  const setNativeSection = useCallback((nativeSection: "conversations" | "catalog") => {
-    setState(current => ({ ...current, nativeSection }));
-  }, [setState]);
+  const nativeSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.section);
+  const setNativeSection = useCallback((section: "conversations" | "catalog") => {
+    void application.invoke("navigation.show-section", { section }).catch(showErrorToast);
+  }, [application]);
   const ribbonBrowser = useRibbonBrowserTabs(!poppedOutMode);
   const [activeWebsiteID, setActiveWebsiteID] = useState<string>();
   const activeWebsite = ribbonBrowser.state?.tabs?.find((website) => website.id === ribbonBrowser.state?.activeTabId);
@@ -759,13 +759,14 @@ export function App({ application: providedApplication }: { application?: Applic
   useEffect(() => {
     if (ribbonBrowser.state && !ribbonBrowser.state.tabs?.length) setActiveWebsiteID(undefined);
   }, [ribbonBrowser.state]);
-  const catalogSection = state.catalogSection ?? "plugins";
-  const setCatalogSection = useCallback((catalogSection: SkillsCatalogSection) => {
-    setState(current => ({ ...current, catalogSection }));
-  }, [setState]);
-  const setCatalogPluginID = useCallback((catalogPluginID: string) => {
-    setState(current => ({ ...current, catalogPluginID }));
-  }, [setState]);
+  const catalogSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogSection);
+  const catalogPluginID = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogPluginId);
+  const setCatalogSection = useCallback((section: SkillsCatalogSection) => {
+    void application.invoke("catalog.select-section", { section }).catch(showErrorToast);
+  }, [application]);
+  const setCatalogPluginID = useCallback((pluginId: string) => {
+    void application.invoke("catalog.select-plugin", { pluginId }).catch(showErrorToast);
+  }, [application]);
   const [catalogPluginRequest, setCatalogPluginRequest] = useState<{ id: string; request: number }>();
   const [catalogVisited, setCatalogVisited] = useState(false);
   const pageWorkbench = useSyncExternalStore(desktopWorkbenchController.subscribe,
@@ -4086,16 +4087,7 @@ export function App({ application: providedApplication }: { application?: Applic
   // The active draft starts a project or an ordinary conversation; the entry
   // the user chose decides which.
   function setDraftProjectMode(project: boolean): void {
-    setState((current) => ({
-      ...current,
-      sessionTabs: current.sessionTabs.map((tab) => {
-        if (tab.id !== current.activeSessionTabID || tab.kind !== "draft" || Boolean(tab.project) === project) return tab;
-        const { project: _wasProject, ...conversation } = tab;
-        return project
-          ? { ...tab, project: true, title: t("projects.newProject") }
-          : { ...conversation, title: tab.title === t("projects.newProject") ? t("tabs.newConversation") : tab.title };
-      }),
-    }));
+    void application.invoke("draft.set-project-mode", { project }).catch(showErrorToast);
   }
 
   // A project starts as a draft like a conversation: its first message names
@@ -4366,18 +4358,10 @@ export function App({ application: providedApplication }: { application?: Applic
       void renameThread(thread, trimmed);
       return;
     }
-    const tab = activeSessionTab(current);
+    const { activeTabId, items } = application.getSnapshot().tabs;
+    const tab = items.find(item => item.id === activeTabId);
     if (tab?.kind !== "draft" || tab.title.trim() === trimmed) return;
-    setState((state) => {
-      const next = {
-        ...state,
-        sessionTabs: state.sessionTabs.map((item) =>
-          item.id === tab.id && item.kind === "draft" ? { ...item, title: trimmed } : item,
-        ),
-      };
-      appStateRef.current = next;
-      return next;
-    });
+    void application.invoke("draft.rename", { tabId: tab.id, title: trimmed }).catch(showErrorToast);
   }
 
   const {
@@ -5847,7 +5831,12 @@ export function App({ application: providedApplication }: { application?: Applic
               onOpenCatalogPlugin={openCatalogPlugin}
               sidebarCollapsed={sidebarCollapsed}
               sidebarVisible={!sidebarDrawerMode || sidebarDrawerVisible}
-              state={state}
+              initialized={Boolean(state.initialized)}
+              activeContextKind={state.activeContext?.kind}
+              activeSessionTabID={state.activeSessionTabID}
+              selectedWorkspaceID={state.activeProjectId}
+              extensionInventory={state.initialized?.extension_inventory}
+              lastViewedTurnByThreadID={state.lastViewedTurnByThreadID}
               sidebarWorkspaces={sidebarWorkspaces}
               pendingConversations={pendingThreadCreations.map((pending) => ({
                 id: pending.sessionTabID,
@@ -6103,7 +6092,7 @@ export function App({ application: providedApplication }: { application?: Applic
               active={!settingsOpen && showingManagementCatalog && !showingPrimaryPluginView}
               section={catalogSection}
               onSectionChange={setCatalogSection}
-              selectedPluginID={state.catalogPluginID ?? ""}
+              selectedPluginID={catalogPluginID}
               onSelectPlugin={setCatalogPluginID}
               activeContext={state.activeContext}
               extensionInventory={state.initialized.extension_inventory}
