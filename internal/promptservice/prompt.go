@@ -21,6 +21,7 @@ const NativeModule = "wuu.prompt.default"
 // Existing nested records retain their Go wire field spelling.
 type Request struct {
 	Role           string              `json:"role"`
+	Worker         *WorkerContext      `json:"worker,omitempty"`
 	CWD            string              `json:"cwd"`
 	Date           string              `json:"date"`
 	Provider       string              `json:"provider,omitempty"`
@@ -102,6 +103,19 @@ func Assemble(in Request) (Result, error) {
 	}
 	for _, s := range appended.Sections {
 		out.Sections = append(out.Sections, Section{Key: s.Key, Static: s.Static, Bytes: s.Bytes, Hash: s.Hash})
+	}
+	if in.Role == "worker" && in.Worker != nil {
+		worker := AssembleWorkerPrompt(out.Content, in.CWD, *in.Worker)
+		sections := make([]Section, 0, len(out.Sections)+2)
+		for _, section := range worker.Sections {
+			if section.Key == "worker_base" {
+				sections = append(sections, out.Sections...)
+			} else {
+				sections = append(sections, section)
+			}
+		}
+		worker.Sections = sections
+		return worker, nil
 	}
 	return out, nil
 }

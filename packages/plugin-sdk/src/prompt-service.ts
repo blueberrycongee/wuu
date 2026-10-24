@@ -59,7 +59,20 @@ export interface PromptContribution {
   readonly content: string;
   readonly static: boolean;
 }
+export interface PromptWorkerContext {
+  readonly type?: string;
+  readonly role?: string;
+  readonly prompt?: string;
+  readonly context_scope?: string;
+  readonly output_schema?: string;
+  readonly success_criteria?: readonly string[];
+  readonly isolation: 'inplace' | 'worktree';
+  readonly agent_id?: string;
+  readonly agent_path?: string;
+  readonly agent_profile?: string;
+}
 export interface PromptAssemblyRequest {
+  readonly worker?: PromptWorkerContext;
   readonly role: 'main' | 'worker';
   readonly cwd: string;
   /** Frozen session date supplied by the consumer. */

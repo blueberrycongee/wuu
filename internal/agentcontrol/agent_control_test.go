@@ -465,7 +465,7 @@ func TestForkAgentProfileOverridesInheritedSystemPrompt(t *testing.T) {
 	if first.Role != "system" {
 		t.Fatalf("first message role = %q, want system", first.Role)
 	}
-	if !strings.Contains(first.Content, "profile base prompt with persistent memory") {
+	if first.Content != "profile base prompt with persistent memory" {
 		t.Fatalf("fork did not install profile system prompt:\n%s", first.Content)
 	}
 	if strings.Contains(first.Content, "parent ordinary memoryless system prompt") {
@@ -3314,5 +3314,21 @@ func TestRequiresReportWorkerGetsOneClosingNudge(t *testing.T) {
 	}
 	if len(tasks) != 1 || tasks[0].ID != res.AgentID || tasks[0].Status != harness.TaskStatusCompleted {
 		t.Fatalf("expected completed task, got %+v", tasks)
+	}
+}
+
+func TestSelectedWorkerPromptEmptyAndFailureAreAuthoritative(t *testing.T) {
+	rejected := errors.New("selected prompt stopped")
+	for _, failure := range []error{nil, rejected} {
+		c := &AgentControl{defaultSys: "legacy default", workerPrompt: func(string, WorkerType, agentthread.Metadata, IsolationMode) (string, error) { return "", failure }}
+		result, err := c.workerSystemPrompt("/synthetic", WorkerType{SystemPrompt: "legacy role"}, agentthread.Metadata{}, IsolationInplace)
+		if result != "" || !errors.Is(err, failure) {
+			t.Fatalf("selected result replaced: %q %v", result, err)
+		}
+	}
+	history := []providers.ChatMessage{{Role: "system", Content: "parent policy"}, {Role: "user", Content: "retained task"}}
+	result := withInitialSystemPrompt(history, "")
+	if len(result) != 1 || result[0].Role != "user" || history[0].Content != "parent policy" {
+		t.Fatalf("empty selected policy inherited parent: %+v", result)
 	}
 }
