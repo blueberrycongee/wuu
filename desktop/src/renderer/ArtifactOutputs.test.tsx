@@ -1,3 +1,5 @@
+import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
+import { ConversationTurnIdentityProvider } from "./ConversationControlsContext";
 import type { ReactNode } from "react";
 import { ArtifactsProvider } from "./ArtifactsContext";
 import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
@@ -8,7 +10,6 @@ import { ArtifactPreview, collectTurnArtifacts, TurnEndArtifactOutputs, TurnInli
 import { ArtifactPreviewContext, ArtifactThreadContext } from "./ArtifactPreviewContext";
 import type { ThreadItem, Turn } from "../shared/protocol";
 const { openPreview, renderArtifactSlot } = vi.hoisted(() => ({ openPreview: vi.fn(), renderArtifactSlot: vi.fn(({fallback}: {fallback?: React.ReactNode}) => fallback) }));
-vi.mock("./ConversationControlsContext", () => ({useConversationControls: () => ({slots:{Slot:renderArtifactSlot}}), useConversationTurnIdentity: () => ({threadId:"source-thread",turnId:"source-turn"})}));
 vi.mock("./i18n", () => ({useI18n:()=>({t:(key:string)=>key, formatNumber:(value:number)=>String(value)})}));
 vi.mock("./ImagePreview", () => ({useImagePreview:()=>({openPreview})}));
 
@@ -295,7 +296,7 @@ function createRoot(container: HTMLElement) {
   let artifacts: ApplicationArtifacts;
   return {render: (children: ReactNode) => {
     artifacts ??= new ApplicationArtifacts(window.wuu ?? {}, {resolveResourceURL: ({source, cwd}) => `wuu-file://local/${btoa(`${cwd}/${source}`).replace(/=/g, "")}`, openFile: async () => {}});
-    root.render(<ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider>);
+    root.render(<ConversationControlsTestProvider composition={{Slot: renderArtifactSlot}}><ConversationTurnIdentityProvider threadId="source-thread" turnId="source-turn"><ArtifactsProvider application={{artifacts}}>{children}</ArtifactsProvider></ConversationTurnIdentityProvider></ConversationControlsTestProvider>);
   }, unmount: () => root.unmount()};
 }
 

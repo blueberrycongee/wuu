@@ -411,5 +411,3 @@ it("saves the resolved original and fences a failed save after changing the imag
     expect(container.querySelector('[role="alert"]')).toBeNull();
   } finally {window.wuu = prior;}
 });
-
-vi.mock("./ConversationControlsContext", () => ({useConversationControls: () => ({slots:{Slot:({fallback}:{fallback?:ReactNode}) => fallback}}), useConversationTurnIdentity: () => ({threadId:"current",turnId:"turn"})}));
