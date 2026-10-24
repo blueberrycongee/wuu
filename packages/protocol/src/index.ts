@@ -162,6 +162,8 @@ export type ApplicationShellBinding = {
 
 export type InitializeResult = {
   application_shell?: ApplicationShellBinding | null;
+  /** Selected UI service providers from the same committed composition as the shell. */
+  application_surfaces?: Record<string, ApplicationShellBinding>;
   speed?: string;
   status?: "ready" | "needs_setup";
   issues?: RuntimeIssue[];
@@ -675,6 +677,8 @@ export type ExtensionCatalogRefreshResult = {
 /** Published after the core atomically activates a new plugin generation. */
 export type PluginInventoryChangedNotification = {
   application_shell?: ApplicationShellBinding | null;
+  /** Replaces the surface bindings when the published generation changes. */
+  application_surfaces?: Record<string, ApplicationShellBinding>;
   epoch: number;
   extension_inventory: ExtensionInventoryRecord[];
   skills: SkillSummary[];
