@@ -1,10 +1,12 @@
 import * as composerMessages from "./ComposerMessages";
+import * as React from "react";
 import { act, useEffect, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DesktopProject,
   EngineListResult,
+  ExtensionInventoryRecord,
   InitializeResult,
   RuntimeContext,
   ServerEvent,
@@ -12,6 +14,8 @@ import type {
   Turn,
   WuuDesktopApi,
 } from "../shared/protocol";
+
+const composerFixture = vi.hoisted(() => ({ real: false }));
 
 vi.mock("./ComposerView", async (importOriginal) => {
   const original = await importOriginal<typeof import("./ComposerView")>();
@@ -28,6 +32,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
         () => setLocalPrompt(props.prompt),
         [props.prompt, props.promptRevision],
       );
+      if (composerFixture.real) return <original.Composer {...props} />;
       const label = props.mainConversation
         ? `main composer ${variant}`
         : "side composer";
@@ -96,6 +101,11 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 
 import { App } from "./App";
 import { translateCurrent } from "./i18n";
+import * as applicationState from "./plugins/ApplicationController";
+import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
+import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
+import { DesktopPluginRuntime } from "./plugins/DesktopPluginRuntime";
+import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
 
 const scratchCwd = "/tmp/wuu-composer-focus/scratch";
 const workspaceCwd = "/tmp/wuu-composer-focus/project";
@@ -410,6 +420,7 @@ describe("main composer focus continuity", () => {
   const originalWindowWidth = window.innerWidth;
 
   beforeEach(() => {
+    composerFixture.real = false;
     installWindowStubs();
     serverEventHandlers = [];
     resizeCallbacks = new Set();
@@ -429,6 +440,103 @@ describe("main composer focus continuity", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.restoreAllMocks();
+  });
+
+  it.each(["bridge", "register"])("keeps an opened runtime picker usable through a held %s shell replacement", async (stage) => {
+    composerFixture.real = true;
+    installWuuApi();
+    await window.wuu.selectProject(project.id);
+    window.wuu.initialize = vi.fn(async () => ({
+      ...initialized(workspaceCwd), provider: "codex", model: "gpt-fixture",
+      providers: [{ name: "codex", type: "openai-codex", model: "gpt-fixture", api_key_configured: true }],
+    }));
+    window.wuu.loadCodexModels = vi.fn(async () => ({
+      provider: "codex", model: "gpt-fixture", models: [{ slug: "gpt-fixture", display_name: "Loaded fixture model", supported_in_api: true }],
+      providers: [{ name: "codex", type: "openai-codex", model: "gpt-fixture", api_key_configured: true,
+        models: [{ id: "gpt-fixture", display_name: "Loaded fixture model" }, { id: "gpt-alternative", display_name: "Alternative fixture model" }] }],
+    }));
+    const gitStatus = { is_repo: true, branch: "main", branches: ["main", "feature"], dirty_count: 0, files: [] };
+    vi.mocked(window.wuu.gitStatus).mockResolvedValue(gitStatus);
+    let finishCheckout!: () => void;
+    window.wuu.checkoutGitBranch = vi.fn<WuuDesktopApi["checkoutGitBranch"]>(() => new Promise(resolve => {
+      finishCheckout = () => resolve({ ...gitStatus, branch: "feature" });
+    }));
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    let replacing = false;
+    let release!: () => void, started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    window.wuu.loadPluginDesktopModule = vi.fn(async ({ id, fingerprint }) => {
+      if (replacing && stage === "bridge") { started(); await gate; }
+      return { id, fingerprint, digest: "a".repeat(64), url: "runtime-picker-fixture" };
+    });
+    const runtime = new DesktopPluginRuntime(host, async () => ({ async activate(api: PluginGenerationApi) {
+      activateDefaultShell(api);
+      if (replacing && stage === "register") { started(); await gate; }
+    } }));
+    const shell: ExtensionInventoryRecord = {
+      id: "user:shell", name: "shell", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "shell" },
+      state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
+      fingerprint: "same-source", graph_generation: "first", desktop: { entry: "desktop.js" },
+    };
+    let pending: Promise<unknown> | undefined;
+    const click = async (selector: string) => {
+      const button = document.querySelector<HTMLButtonElement>(selector)!;
+      expect(button).not.toBeNull();
+      expect(button.disabled).toBe(false);
+      expect(button.closest("[inert]")).toBeNull();
+      await act(async () => button.click());
+      await flushAsync();
+    };
+    try {
+      await runtime.sync([shell]);
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
+      });
+      await flushAsync();
+      replacing = true;
+      act(() => { pending = runtime.sync([{ ...shell, graph_generation: "second" }]); });
+      await ready;
+      // An old checkout may finish after the replacement; its menu cleanup
+      // must not dismiss a picker opened in the replacement shell.
+      await click(".composer-git-controls .hero-project-pill");
+      await click('.composer-branch-menu button[title="feature"]');
+      expect(window.wuu.checkoutGitBranch).toHaveBeenCalledWith("feature", workspaceCwd);
+      const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
+      await click(".codex-runtime-trigger");
+      expect(oldTrigger.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      await act(async () => { release(); await pending; });
+      await flushAsync();
+      expect(oldTrigger.isConnected).toBe(false);
+      expect(container.querySelector(".codex-runtime-trigger")?.getAttribute("aria-expanded")).toBe("true");
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      await act(async () => finishCheckout());
+      await flushAsync();
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      await click(".runtime-panel-model");
+      const alternative = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item"))
+        .find(button => button.textContent?.includes("Alternative fixture model"));
+      expect(alternative).toBeDefined();
+      await act(async () => alternative!.click());
+      expect(controller.getState().initialized?.model).toBe("gpt-alternative");
+      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Alternative fixture model");
+      await click(".codex-runtime-trigger");
+      expect(document.querySelector(".runtime-panel")).toBeNull();
+      await click(".codex-runtime-trigger");
+      await click(".composer-project-control .hero-project-pill");
+      expect(document.querySelector(".runtime-panel")).toBeNull();
+    } finally {
+      release();
+      finishCheckout?.();
+      await pending;
+      act(() => { root?.unmount(); root = null; });
+      await runtime.sync([]);
+    }
   });
 
   it.each(["composer", "history edit"])("places a %s submission through the real App send and acknowledgement flow", async (entry) => {

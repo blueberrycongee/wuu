@@ -25,6 +25,7 @@ import {
   type CSSProperties,
   type ReactNode,
   type RefObject,
+  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -726,8 +727,22 @@ export function App({ application: providedApplication }: { application?: Applic
   const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
   const [runtimeMenuOpen, setRuntimeMenuOpen] = useState(false);
   const [accessMenuOpen, setAccessMenuOpen] = useState(false);
-  const [codexRuntimeMenu, setCodexRuntimeMenu] =
-    useState<CodexRuntimeMenu>(null);
+  const codexRuntimeMenu = state.codexRuntimeMenu ?? null;
+  const runtimeMenuOwner = useRef(true);
+  useLayoutEffect(() => {
+    runtimeMenuOwner.current = true;
+    return () => { runtimeMenuOwner.current = false; };
+  }, []);
+  const setCodexRuntimeMenu = useCallback((update: SetStateAction<CodexRuntimeMenu>) => {
+    // A checkout started by the retired shell may finish after its replacement.
+    // Its menu cleanup must retain React's former unmounted-setter behavior.
+    if (!runtimeMenuOwner.current) return;
+    setState(current => {
+      const previous = current.codexRuntimeMenu ?? null;
+      const next = typeof update === "function" ? update(previous) : update;
+      return next === previous ? current : { ...current, codexRuntimeMenu: next };
+    });
+  }, [setState]);
   const [codexModels, setCodexModels] = useState<CodexModelLoadState>({
     loading: false,
     error: "",
@@ -1462,7 +1477,10 @@ export function App({ application: providedApplication }: { application?: Applic
   // Present while the next conversation starts in its own worktree. It belongs
   // to one project root, so switching projects never carries one repository's
   // start branch into another. An empty start branch means the project's HEAD.
-  const [draftWorktree, setDraftWorktree] = useState<{ cwd: string; startBranch: string }>();
+  const draftWorktree = state.draftWorktree;
+  const setDraftWorktree = useCallback((draftWorktree: AppState["draftWorktree"]) => {
+    setState(current => current.draftWorktree === draftWorktree ? current : { ...current, draftWorktree });
+  }, [setState]);
   const draftWorktreeFor = (context: RuntimeContext | undefined, gitStatus: GitStatusResult | undefined) =>
     draftWorktree && gitStatus?.is_repo && draftWorktree.cwd === context?.cwd ? draftWorktree : undefined;
   const draftEngineSeed = useRef<{ threadID?: string; done: boolean }>({
