@@ -49,3 +49,21 @@ describe("public file selection owner",()=>{
     expect(f.preview).toHaveBeenCalledTimes(1);
   });
 });
+
+it("keeps disabled snapshots stable for startup, unknown and removed owners", () => {
+  const f = fixture();
+  const startup = {ownerTabId:""}, unknown = {ownerTabId:"unknown"};
+  const firstStartup = f.service.getSnapshot(startup);
+  const firstUnknown = f.service.getSnapshot(unknown);
+  expect(firstStartup.enabled).toBe(false);
+  expect(f.service.getSnapshot(startup)).toBe(firstStartup);
+  expect(f.service.getSnapshot(unknown)).toBe(firstUnknown);
+  const enabled = f.service.getSnapshot(f.target);
+  expect(enabled.enabled).toBe(true);
+  f.setState({...f.getState(), sessionTabs:[]});
+  const removed = f.service.getSnapshot(f.target);
+  expect(removed.enabled).toBe(false);
+  expect(removed).not.toBe(enabled);
+  expect(f.service.getSnapshot(startup)).toBe(firstStartup);
+  expect(f.service.getSnapshot(f.target)).toBe(removed);
+});

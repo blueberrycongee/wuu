@@ -46,7 +46,12 @@ export class ApplicationFileSelection implements ApplicationFileSelectionService
   }
   getSnapshot = (target: ApplicationFileSelectionTargetV1): ApplicationFileSelectionSnapshotV1 => {
     const state = this.options.getState();
-    for (const id of this.snapshots.keys()) if (!state.sessionTabs.some(tab => tab.id === id)) { this.snapshots.delete(id); this.interactionOwners.delete(id); }
+    for (const [id, cached] of this.snapshots) if (!state.sessionTabs.some(tab => tab.id === id)) {
+      // Disabled snapshots are observable store values too. Evicting them on
+      // every read makes useSyncExternalStore see a perpetually changed value.
+      if (cached.view.enabled) this.snapshots.delete(id);
+      this.interactionOwners.delete(id);
+    }
     const owner = this.owner(target);
     const draft = owner ? this.options.getDraft(target.ownerTabId) : undefined;
     const origin = owner?.thread && this.options.submission.getSnapshot().operations.find(operation => operation.threadId === owner.thread!.id && operation.ownerTabId.startsWith("draft:"))?.ownerTabId;
