@@ -1266,6 +1266,7 @@ export class ApplicationController implements HostApplicationService {
       }
       case "navigation.show-section": {
         const { section } = input as ApplicationActionMapV1["navigation.show-section"]["input"];
+        this.settings = { ...this.settings, open: false };
         this.updateState(state => ({ ...state, nativeSection: section })); return;
       }
       case "catalog.select-section": {
