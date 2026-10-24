@@ -69,12 +69,12 @@ type Binding struct {
 // Resolved is an immutable, owned selection used for one generation. Nil
 // Modules means discovery defaults; a non-nil empty set disables every module.
 type Resolved struct {
-	Profile       string
-	Modules       *[]string
-	ModuleSource  string
-	ModuleSources map[string]string
-	Layers        []string
-	Services      []Binding
+	Profile       string            `json:"profile,omitempty"`
+	Modules       *[]string         `json:"modules"`
+	ModuleSource  string            `json:"module_source"`
+	ModuleSources map[string]string `json:"module_sources,omitempty"`
+	Layers        []string          `json:"layers,omitempty"`
+	Services      []Binding         `json:"services,omitempty"`
 }
 
 var serviceName = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$`)
@@ -91,6 +91,13 @@ func (c *Config) Resolve() (Resolved, error) {
 	}
 	if c.Version != 1 && c.Version != Version {
 		return Resolved{}, fmt.Errorf("composition version %d is unsupported; expected 1 or %d", c.Version, Version)
+	}
+	if c.Version == Version {
+		owned := *c
+		owned.Profiles, owned.Bundles = productCatalog()
+		maps.Copy(owned.Profiles, c.Profiles)
+		maps.Copy(owned.Bundles, c.Bundles)
+		c = &owned
 	}
 	if c.Version == 1 && (c.Bundles != nil || c.Patches != nil) {
 		return Resolved{}, fmt.Errorf("composition bundles and patches require version %d", Version)

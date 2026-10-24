@@ -1,0 +1,110 @@
+package composition
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func TestProductProfilesShareOverrides(t *testing.T) {
+	for _, profile := range []string{"desktop", "headless"} {
+		t.Run(profile, func(t *testing.T) {
+			cfg := DefaultConfig(profile)
+			cfg.Patches = []Patch{{Modules: map[string]bool{"wuu.state.sqlite": false, "example.documents": true}, Services: []Binding{{Service: "state.documents", Major: 1, Provider: "example.documents"}}}}
+			got, err := cfg.Resolve()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Includes("wuu.state.sqlite") || !got.Includes("example.documents") {
+				t.Fatalf("replacement not applied: %+v", got)
+			}
+			if got.Includes("wuu.default-shell") != (profile == "desktop") {
+				t.Fatal("incorrect UI selection")
+			}
+			if got.SourceForModule("example.documents") != "composition:patch:0" {
+				t.Fatal("missing provenance")
+			}
+			if err := got.ValidateAvailable([]string{"example.documents"}); err == nil {
+				t.Fatal("unavailable defaults accepted")
+			}
+			fresh, err := DefaultConfig(profile).Resolve()
+			if err != nil || !fresh.Includes("wuu.state.sqlite") {
+				t.Fatal("catalog was mutated", err)
+			}
+		})
+	}
+}
+
+func TestCustomProfileOverridesShippedProfile(t *testing.T) {
+	cfg := DefaultConfig("desktop")
+	cfg.Profiles = map[string]Profile{"desktop": {Modules: []string{"custom"}}}
+	got, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*got.Modules) != 1 || !got.Includes("custom") {
+		t.Fatalf("custom profile changed: %+v", got)
+	}
+	cfg.Patches = []Patch{{Modules: map[string]bool{"custom": false}}}
+	got, err = cfg.Resolve()
+	if err != nil || len(*got.Modules) != 0 {
+		t.Fatal("removal restored defaults", err)
+	}
+}
+
+func TestCompositionJSONRejectsAmbiguousSelections(t *testing.T) {
+	for _, raw := range []string{
+		`{"version":2,"moduels":[]}`,
+		`{"version":2,"modules":null}`,
+		`{"version":2,"modules":[],"modules":["oops"]}`,
+		`{"version":2,"profiles":{"test":{"modules":null}}}`,
+		`{"version":2,"patches":[{"module":{"oops":true}}]}`,
+		`{"version":2,"services":[{"service":"state.documents","major":1,"provider":"a","source":"fake"}]}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			var cfg Config
+			if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
+				t.Fatal("ambiguous selection accepted")
+			}
+		})
+	}
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"version":2,"modules":[]}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := cfg.Resolve()
+	if err != nil || got.Modules == nil || len(*got.Modules) != 0 {
+		t.Fatal("explicit empty modules lost", err)
+	}
+}
+
+func TestExcludedBindingReportsSource(t *testing.T) {
+	cfg := &Config{Version: Version, Modules: &[]string{}, Services: []Binding{{Service: "example.service", Major: 1, Provider: "missing"}}}
+	_, err := cfg.Resolve()
+	if err == nil || !strings.Contains(err.Error(), "composition") {
+		t.Fatal("missing selection diagnostic", err)
+	}
+}
+
+func TestDefaultCompositionPreservesDiscoveredPlugins(t *testing.T) {
+	cfg := DefaultConfig("headless", "installed.one", "installed.two")
+	got, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Includes("installed.one") || !got.Includes("installed.two") || got.Includes("undiscovered") {
+		t.Fatal("default discovery set changed")
+	}
+	cfg.Patches = append(cfg.Patches, Patch{Modules: map[string]bool{"installed.one": false}})
+	got, err = cfg.Resolve()
+	if err != nil || got.Includes("installed.one") {
+		t.Fatal("removed plugin restored", err)
+	}
+}
+
+func TestNullNonSelectionFieldsRemainCompatible(t *testing.T) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"version":2,"modules":[],"services":null,"profiles":null,"bundles":null,"patches":null}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+}

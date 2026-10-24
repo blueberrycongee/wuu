@@ -67,6 +67,10 @@ func run(args []string) error {
 		return executionworker.Serve(context.Background(), os.Stdin, os.Stdout)
 	}
 
+	if args[0] == "composition" {
+		return runComposition(args[1:], os.Stdout)
+	}
+
 	// Explicit store maintenance must not initialize or alter the app home.
 	if args[0] == "state" {
 		return runState(args[1:])
@@ -2293,6 +2297,7 @@ Usage:
   wuu -r|--resume THREAD_ID [flags] [prompt...]  shortcut: exec -r
   wuu session list|show|trace|search|archive|delete|export|compact [flags]
   wuu skills lint [--json] PATH...
+  wuu composition resolve [--file composition.json] [--profile NAME]
   wuu plugin inspect|install|update|list|approve|reject|enable|disable|remove [flags]
   wuu plugin create|validate|build|test|pack [flags]
   wuu plugin dev [--watch=false] [--poll DURATION] FILE.ts|DIRECTORY
