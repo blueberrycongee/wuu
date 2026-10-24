@@ -101,11 +101,11 @@ jobs:
 
       - name: Guard generation admission under race detector
         timeout-minutes: 10
-        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$)' ./internal/appserver
+        run: go test -race -p 2 -count=1 -run '^(TestServerTurnStartDuring|TestServerThreadExecutionLease|TestPluginRefresh|TestFailedPluginRecovery|TestNonturnReceiptFailurePreventsDelivery$|TestTitleReceiptTimeoutRetainsSelectedDocuments$|TestTurnHooksKeepCapturedDispatcherAndJournal$|TestTurnHookReceiptFailuresPreventDelivery$|TestStopHookReceiptFailureSurvivesAnswerReadyCancellation$|TestExternalCapabilities)' ./internal/appserver
 
       - name: Guard shared authority and model receipt lifecycle under race detector
         timeout-minutes: 10
-        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
+        run: go test -race -p 2 -count=1 -run '^(TestStateAuthority|TestModelShutdownPersistsBeforeProcessExit|TestModelInvocation|Test.*Receipt|TestToolkitHooksFollowCapturedGenerationAndWorkerIdentity$|TestInference(TerminalCheckpoint|DeltaJournalFailure)|TestWorkflowBudget|TestInferenceJournal(PreservesTerminalBeforeDelayedProgress|PendingProgressRejectsMismatchedEvidence|CoalescesStreamingProgressAndFlushesAtBarrier|SettlesLateUsageAfterWorkflowCompletion|CostConfidenceSettlementIsIdempotent|SubmissionEvidenceIsMonotonic|EnforcesOwnerAndDigestBoundaries))' ./internal/runtime ./internal/session ./internal/providers/... ./internal/modelrequest ./internal/pluginhost ./internal/agent ./internal/agentcontrol ./internal/subagent
 
       - name: Test
         run: make test-go test-plugins
