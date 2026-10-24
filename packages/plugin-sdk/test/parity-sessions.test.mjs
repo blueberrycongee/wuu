@@ -120,3 +120,24 @@ test('independent provider checkpoints retain physical history and concurrent ta
   assert.deepEqual((await call('LoadProviderHistorySnapshot','checkpoint'))[0].Records.map(record => record.content), ['replacement','concurrent tail','after checkpoint']);
   provider.shutdown();
 });
+
+test('independent request checkpoints are detached and indexing retains the original summary', {skip: !entry}, async () => {
+  const {createSessionProvider} = await import(pathToFileURL(entry));
+  const provider = createSessionProvider(); provider.initialize(); provider.activate();
+  const call = async (method, ...args) => (await provider.invokeService({service:'session.domain',method,params:{args},caller:'owner'})).values;
+  await assert.rejects(call('LoadRequestContextCheckpoint','missing'), error => error.code === 'session_not_found');
+  await call('CreateWithMetadata','context','/synthetic');
+  assert.equal((await call('LoadRequestContextCheckpoint','context'))[0],null);
+  const checkpoint = {version:1,blocks:[{content:'retained'}]};
+  await call('SaveRequestContextCheckpoint','context',checkpoint);
+  checkpoint.blocks[0].content = 'mutated';
+  assert.equal((await call('LoadRequestContextCheckpoint','context'))[0].blocks[0].content,'retained');
+  await call('UpdateIndex','context',2,'original summary');
+  await call('UpdateIndex','context',4,'later summary');
+  const [metadata] = await call('Find','context');
+  assert.equal(metadata.entries,4); assert.equal(metadata.summary,'original summary');
+  await call('Delete','context');
+  await call('CreateWithMetadata','context','/synthetic');
+  assert.equal((await call('LoadRequestContextCheckpoint','context'))[0],null);
+  provider.shutdown();
+});

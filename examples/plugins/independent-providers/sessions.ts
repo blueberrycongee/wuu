@@ -19,6 +19,7 @@ function checkedHistory(value: readonly HistoryRecord[]): HistoryRecord[] {
 export function createSessionProvider(owner = 'independent-sessions'): RuntimePlugin {
   const sessions = new Map<string, Session>();
   const generations = new Map<string, GenerationSnapshot>();
+  const requestContexts = new Map<string, unknown>();
   const checkpoints = new Map<string, HistoryCheckpoint>();
   const histories = new Map<string, readonly HistoryRecord[]>();
   let active = false;
@@ -81,9 +82,12 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
     },
     Delete: ([id]) => {
       const current = requireSession(id);
-      sessions.delete(id); generations.delete(id); histories.delete(id); checkpoints.delete(id); turnState.delete(id);
+      sessions.delete(id); generations.delete(id); histories.delete(id); checkpoints.delete(id); requestContexts.delete(id); turnState.delete(id);
       return [structuredClone(current)];
     },
+    LoadRequestContextCheckpoint: ([id]) => {requireSession(id); return [structuredClone(requestContexts.get(id) ?? null)];},
+    SaveRequestContextCheckpoint: ([id, payload]) => {requireSession(id); requestContexts.set(id, structuredClone(payload)); return [];},
+    UpdateIndex: ([id, entries, summary]) => {const current = requireSession(id); update(id, {entries, summary:current.summary?.trim() ? current.summary : summary}); return [];},
     SetEngine: ([id, engine]) => [update(id, {engine_id: engine})],
     SetWorkspaceID: ([id, workspaceID]) => [update(id, {workspace_id: workspaceID})],
     SetRuntimeSelection: ([id, selection]) => {
@@ -132,7 +136,7 @@ export function createSessionProvider(owner = 'independent-sessions'): RuntimePl
       if (!active) throw new RuntimeHostServiceError({code: 'service_unavailable', message: 'session provider is not active'});
       return domain.invoke(request);
     },
-    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear(); checkpoints.clear(); journal.close(); turnState.close();},
+    shutdown() {active = false; sessions.clear(); generations.clear(); histories.clear(); checkpoints.clear(); requestContexts.clear(); journal.close(); turnState.close();},
   };
 }
 export default createSessionProvider();
