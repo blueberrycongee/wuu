@@ -73,7 +73,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as ComposerMessages from "./ComposerMessages";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
@@ -431,7 +431,7 @@ async function clickPageHistoryTarget(button: HTMLButtonElement | null | undefin
 }
 
 async function renderPageHistoryApp(): Promise<void> {
-  await act(async () => { root = createRoot(container); root.render(<><App /><ConfirmDialogHost /></>); });
+  await act(async () => { root = createRoot(container); root.render(<>{await createDefaultApplicationTestView()}<ConfirmDialogHost /></>); });
   await flushAsync();
   expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
 }
@@ -893,7 +893,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
     vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(activeSessionTabLabel()).toContain("session switch A");
     expect(window.wuu.gitStatus).toHaveBeenCalled();
@@ -925,7 +925,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     const status = deferred<Awaited<ReturnType<typeof window.wuu.gitStatus>>>();
     vi.mocked(window.wuu.gitStatus).mockReturnValue(status.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     const toggle = container.querySelector<HTMLButtonElement>(".environment-toggle-button")!;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
@@ -949,7 +949,7 @@ describe("session tab switch latency", () => {
     const first = deferred<InitializeResult>();
     const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
     window.wuu.updateRuntimeSettings = update;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click(); });
     const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
@@ -980,7 +980,7 @@ describe("session tab switch latency", () => {
     const first = deferred<InitializeResult>();
     const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
     window.wuu.updateRuntimeSettings = update;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
     await act(async () => { toggle(); });
@@ -1016,7 +1016,7 @@ describe("session tab switch latency", () => {
     source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
     threadsByID.set(threadAID, source);
     turnListFixture.renderTurns = true;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     // Cache B before requesting the child, then navigate again while its
     // next resume is behind the child in the IPC stream.
@@ -1061,7 +1061,7 @@ describe("session tab switch latency", () => {
     source.turns[0].items[0] = { ...source.turns[0].items[0], origin: "host", presentation_kind: "session_message", related_session_id: child.id };
     threadsByID.set(threadAID, source);
     turnListFixture.renderTurns = true;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     act(() => setMainComposerPrompt("unsent primary draft"));
     expect(mainComposerTextarea().value).toBe("unsent primary draft");
@@ -1086,7 +1086,7 @@ describe("session tab switch latency", () => {
     const first = { ...threadB(), id: "first-child", preview: "first child" };
     const second = { ...threadB(), id: "second-child", preview: "second child" };
     threadsByID.set(first.id, first); threadsByID.set(second.id, second);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const firstRead = deferred<{ thread: Thread }>();
     const secondRead = deferred<{ thread: Thread }>();
@@ -1118,7 +1118,7 @@ describe("session tab switch latency", () => {
     const { threadsByID } = installWuuApi();
     const third = { ...threadB(), id: "thread-third", preview: "third conversation" };
     threadsByID.set(third.id, third);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { threadRowButton("session switch B")!.click(); });
     await flushAsync();
@@ -1152,7 +1152,7 @@ describe("session tab switch latency", () => {
     const recovered = readComposerDraftRecovery().tabs.filter(tab => tab.kind === "thread");
     expect(recovered.find(tab => tab.threadID === threadAID)?.prompt).toBe("new draft for A");
     expect(recovered.find(tab => tab.threadID === threadBID)?.prompt).toBe("new draft for B");
-    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     expect(mainComposerTextarea().value).toBe("new draft for B");
   });
@@ -1165,7 +1165,7 @@ describe("session tab switch latency", () => {
     turnListFixture.renderTurns = true;
     const fork = deferred<{ thread: Thread }>();
     window.wuu.forkThread = vi.fn(() => fork.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const forkButton = container.querySelector<HTMLButtonElement>(
       '.agent-message-actions [aria-label="分叉"]');
@@ -1193,7 +1193,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     const archive = deferred<{ thread: Thread }>();
     window.wuu.archiveThread = vi.fn(() => archive.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
     await attachment.finish();
@@ -1219,7 +1219,7 @@ describe("session tab switch latency", () => {
     const { threadsByID, resumeThread, startTurn } = installWuuApi();
     const third = { ...threadB(), id: "cold-third", preview: "cold third" };
     threadsByID.set(third.id, third);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     if (split) await act(async () => { requestOpenThreadInSplit(threadBID); });
     const ownerID = split ? threadBID : threadAID;
@@ -1248,7 +1248,7 @@ describe("session tab switch latency", () => {
 
   it.each(["pdf", "png", "mp4"] as const)("keeps a pending %s on its original draft after switching conversations", async (extension) => {
     const { startTurn } = installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, extension);
     await act(async () => { threadRowButton("session switch B")!.click(); });
@@ -1268,7 +1268,7 @@ describe("session tab switch latency", () => {
 
   it.each(["pdf", "png"] as const)("finishes a %s after its draft moves from a split pane to the main composer", async (extension) => {
     installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { requestOpenThreadInSplit(threadBID); });
     const attachment = await pickPendingAttachment(container.querySelector(`.conversation-split-pane[data-thread-id="${threadAID}"]`)!, extension);
@@ -1282,7 +1282,7 @@ describe("session tab switch latency", () => {
 
   it.each(["remove", "send", "failure"] as const)("settles a pending PDF without losing removal, send, or failure state (%s)", async (action) => {
     const { startTurn } = installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
     expect(container.querySelectorAll(`${mainComposerSelector} ${attachmentCardSelector}`)).toHaveLength(1);
@@ -1308,7 +1308,7 @@ describe("session tab switch latency", () => {
 
   it.each(["pdf", "png"] as const)("restores a closed split draft with its completed %s attachment", async (extension) => {
     installWuuApi();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { requestOpenThreadInSplit(threadBID); });
     const attachment = await pickPendingAttachment(container.querySelector(`.conversation-split-pane[data-thread-id="${threadBID}"]`)!, extension);
@@ -1334,7 +1334,7 @@ describe("session tab switch latency", () => {
     const submit = vi.fn(async () => ({ queued: { id: "queued-pdf", thread_id: threadAID }, turn_id: threadA().turns[0].id }));
     window.wuu.queueTurn = submit;
     window.wuu.steerTurn = submit;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const attachment = await pickPendingAttachment(container.querySelector(mainComposerSelector)!, "pdf");
     await act(async () => {
@@ -1355,7 +1355,7 @@ describe("session tab switch latency", () => {
     const creation = deferred<{ thread: Thread }>();
     window.wuu.startThread = vi.fn(() => creation.promise);
     window.wuu.deleteThread = vi.fn().mockResolvedValue(undefined);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { setMainComposerPrompt("first pending query"); });
     await act(async () => { mainComposerSendButton().click(); });
@@ -1406,7 +1406,7 @@ describe("session tab switch latency", () => {
     const rename = deferred<{ thread: Thread }>();
     window.wuu.renameThread = vi.fn(() => rename.promise);
     window.wuu.startThread = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { container.querySelector<HTMLButtonElement>(".conversation-title-rename")!.click(); });
     const titleInput = container.querySelector<HTMLInputElement>(".conversation-title-edit")!;
@@ -1495,7 +1495,7 @@ describe("session tab switch latency", () => {
       ? backgroundList.promise
       : { threads: [context.cwd === alpha.cwd ? alpha : oldBeta] });
     window.wuu.resumeThread = vi.fn(async (id) => id === beta.id ? betaResume.promise : { thread: alpha });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => {
       const betaSection = Array.from(container.querySelectorAll(".project-row-name"))
@@ -1552,7 +1552,7 @@ describe("session tab switch latency", () => {
     window.wuu.resumeThread = vi.fn(async id => id === beta.id
       ? navigation === "page history settings" ? { thread: beta } : pending.promise
       : { thread: alpha });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     act(() => { setMainComposerPrompt("Retained source draft"); });
     const projectRow = (id: string) => Array.from(container.querySelectorAll(".project-row-name"))
@@ -1637,7 +1637,7 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1692,7 +1692,7 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1742,7 +1742,7 @@ describe("session tab switch latency", () => {
     threadsByID.set(threadAID, answerReady);
     window.wuu.queueTurn = vi.fn();
     window.wuu.steerTurn = vi.fn();
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     if (pane === "split") {
       await act(async () => { requestOpenThreadInSplit(threadBID); });
@@ -1773,7 +1773,7 @@ describe("session tab switch latency", () => {
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     // Repeating an earlier prompt is not evidence that this send was admitted.
     const text = threadA().turns[0].items[0].text!;
@@ -1799,7 +1799,7 @@ describe("session tab switch latency", () => {
     const { startTurn } = installWuuApi();
     const pending = deferred<{ turn: Turn }>();
     startTurn.mockReturnValueOnce(pending.promise);
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     await act(async () => { setMainComposerPrompt("send to A"); });
     await act(async () => { mainComposerSendButton().click(); });
@@ -1818,7 +1818,7 @@ describe("session tab switch latency", () => {
     expect(recovered).toContain("draft for B");
     if (outcome === "accepted") expect(recovered).not.toContain("send to A");
     else expect(recovered).toContain("send to A");
-    await act(async () => { root!.unmount(); root = createRoot(container); root.render(<App />); });
+    await act(async () => { root!.unmount(); root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     expect(mainComposerTextarea().value).toBe("draft for B");
     expect(startTurn).toHaveBeenCalledTimes(1);
@@ -1847,7 +1847,7 @@ describe("session tab switch latency", () => {
     };
     void encoding.promise.then(value => { preparation.result = value; });
     vi.spyOn(ComposerMessages, "composerImagePlaceholder").mockReturnValue({ ...encoded, data: "", encodePromise: encoding.promise, preparation });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const input = openComposerAttachmentPicker(container.querySelector('[data-main-conversation-composer="dock"]')!);
     await act(async () => {
@@ -1879,7 +1879,7 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1924,7 +1924,7 @@ describe("session tab switch latency", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1955,7 +1955,7 @@ describe("session tab switch latency", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -1991,7 +1991,7 @@ describe("session tab switch latency", () => {
     };
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     resumeThread.mockClear();
@@ -2032,7 +2032,7 @@ describe("session tab switch latency", () => {
     const first = deferred<InitializeResult>();
     const update = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(workspaceDefaults);
     window.wuu.updateRuntimeSettings = update;
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
     await act(async () => { toggle(); });

@@ -1,6 +1,7 @@
+import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
-import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
-import { ApplicationController, getDesktopApplication } from "./plugins/ApplicationController";
+import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import { getDesktopApplication } from "./plugins/ApplicationController";
 import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { usePageHistory } from "./PageHistory";
 import { PageHistoryControls } from "./PageHistoryControls";
@@ -161,7 +162,6 @@ import {
   sessionTabForLoadedRuntime,
   setThreadForPane,
   sortThreads,
-  mergeListedThreads,
   summarizeWorkspaceThreadsForSidebar,
   summarizeThreadsForSidebar,
   threadBelongsToWorkspace,
@@ -230,8 +230,6 @@ import { showActionErrorToast, showErrorToast, showToast } from "./Toast";
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { CircleAlert } from "./WuuIcons";
 import type { CodexPetCommand, CodexPetSubmitTarget } from "../shared/protocol";
-import { useArchiveDeletion } from "./useArchiveDeletion";
-import { DefaultSettingsSurface } from "./modules/DefaultSettingsSurface";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { JumpToLatestPill } from "./JumpToLatestPill";
 import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
@@ -460,9 +458,12 @@ function projectNameFromGoal(goal: string): string {
   return line.length > 48 ? `${line.slice(0, 47)}…` : line;
 }
 
-export function App({ application: providedApplication }: { application?: ApplicationServiceV1 } = {}): JSX.Element {
-  const [applicationController] = useState(() => providedApplication ? getDesktopApplication() : new ApplicationController());
-  const application = providedApplication ?? applicationController;
+export function App({ application, slots, shellPluginId }: {
+  application: ApplicationServiceV1;
+  slots: UICompositionV1;
+  shellPluginId: string;
+}): JSX.Element {
+  const [applicationController] = useState(getDesktopApplication);
   const { locale, t } = useI18n();
   const [popOutInit] = useState<PopOutInitResult | null>(() => readPopOutInit());
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
@@ -4206,9 +4207,7 @@ export function App({ application: providedApplication }: { application?: Applic
     toggleThreadPinned,
     renameThread,
     archiveThread,
-    unarchiveThread,
     deleteThread,
-    deleteArchivedThread,
   } = createThreadMutationActions({
     getAppState: () => appStateRef.current,
     setAppState: setState,
@@ -4225,17 +4224,6 @@ export function App({ application: providedApplication }: { application?: Applic
     clearThreadPendingComposerMessages,
   });
 
-  const archiveDeletion = useArchiveDeletion({
-    remove: deleteArchivedThread,
-    list: async () => {
-      const { threads } = await window.wuu.listArchivedThreads();
-      for (const thread of threads) removeCachedSidebarThread(thread.id);
-      setState(current => ({ ...current,
-        threads: mergeListedThreads(current.threads, [...current.threads.filter(thread => !thread.archived), ...threads]),
-      }));
-      return threads;
-    },
-  });
 
   function commitConversationTitle(nextTitle: string): void {
     const trimmed = nextTitle.trim();
@@ -6268,33 +6256,23 @@ export function App({ application: providedApplication }: { application?: Applic
           onChoose={choosePendingFork}
         />
       ) : null}
-      <DefaultSettingsSurface
-        application={application}
-        onNoticeVisibilityChange={setSettingsNoticeVisible}
-        archive={{
-          archivedThreads: state.threads.filter(thread => thread.archived).map(thread => {
-            const project = state.projects.find(candidate => threadBelongsToWorkspace(thread, candidate));
-            return { ...thread, archive_project_id: project?.id ?? "", archive_project_name: project?.name ?? t("appState.noWorkspace") };
-          }),
-          onUnarchiveThread: thread => void unarchiveThread(thread), archiveDeletion,
-          onDeleteAllArchivedThreads: () => void archiveDeletion.removeAll(),
-          onRetryArchiveDeletion: () => void archiveDeletion.retry(),
-        }}
-        browserSettingsAllowed={!poppedOutMode}
-        embedded={embeddedSettings}
-        embeddedDrawerPhase={sidebarDrawerPhase}
-        onSidebarPointerEnter={openSidebarDrawer}
-        onSidebarPointerLeave={event => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
-        sidebarWidth={sidebarWidth}
-        resizingSidebar={resizingSidebar}
-        shellRef={settingsShellRef}
-        sidebarCollapsed={sidebarCollapsed}
-        sidebarAnimating={sidebarAnimating}
-        onToggleSidebar={toggleSidebar}
-        onSidebarResizeStart={startSidebarResize}
-        onSidebarResizerPointer={trackSidebarResizerPointer}
-        onSidebarSeparatorKey={handleSidebarSeparatorKey}
-      />
+      <slots.Slot name={`${shellPluginId}/application.settings`} context={{ layout: {
+        onNoticeVisibilityChange: setSettingsNoticeVisible,
+        browserSettingsAllowed: !poppedOutMode,
+        embedded: embeddedSettings,
+        embeddedDrawerPhase: sidebarDrawerPhase,
+        onSidebarPointerEnter: openSidebarDrawer,
+        onSidebarPointerLeave: event => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent),
+        sidebarWidth,
+        resizingSidebar,
+        shellRef: settingsShellRef,
+        sidebarCollapsed,
+        sidebarAnimating,
+        onToggleSidebar: toggleSidebar,
+        onSidebarResizeStart: startSidebarResize,
+        onSidebarResizerPointer: trackSidebarResizerPointer,
+        onSidebarSeparatorKey: handleSidebarSeparatorKey,
+      } satisfies ApplicationSettingsLayoutV1 }} />
       {!poppedOutMode ? (
         <section className="web-workspace-stage" hidden={!showingWebsite || settingsOpen} aria-label={activeWebsite?.title}>
           <WebWorkspacePanel site={ribbonBrowser.state ? { id: WEB_WORKSPACE_RIBBON_ID, url: "about:blank", title: activeWebsite?.title } : undefined} active={showingWebsite && !settingsOpen && !accountOpen} tabs resizeWithWindow />

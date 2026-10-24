@@ -38,7 +38,8 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App, SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
+import { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { sidebarMotionMs, sidebarDrawerExitMs } from "./AppLayoutState";
 import {
   createWindowResizeSettleScheduler,
@@ -205,8 +206,8 @@ async function renderCollapsedApp(withPhoneNavigation = false): Promise<void> {
   await act(async () => {
     root = createRoot(container);
     root.render(withPhoneNavigation
-      ? <PhoneNavigationContext.Provider value={{ openDevices: () => {} }}><App /></PhoneNavigationContext.Provider>
-      : <App />);
+      ? <PhoneNavigationContext.Provider value={{ openDevices: () => {} }}>{await createDefaultApplicationTestView()}</PhoneNavigationContext.Provider>
+      : await createDefaultApplicationTestView());
   });
   await flushAsync();
   expect(appShell()?.classList.contains("sidebar-collapsed")).toBe(true);

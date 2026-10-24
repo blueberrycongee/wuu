@@ -48,7 +48,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { initialState } from "./AppState";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
 import { getDesktopApplication } from "./plugins/ApplicationController";
@@ -264,7 +264,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
     });
     await act(async () => {
       root = createRoot(container);
-      root.render(<App application={application} />);
+      root.render(await createDefaultApplicationTestView(application));
     });
     viewport = container.querySelector<HTMLElement>(".scroll-region")!;
     Object.defineProperties(viewport, {
@@ -289,7 +289,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -347,7 +347,7 @@ describe("对话 (scratch) sidebar thread selection", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 

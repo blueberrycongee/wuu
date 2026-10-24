@@ -8,11 +8,12 @@ import { ENABLE_APP_SNAPSHOTS } from "../../shared/featureFlags";
 export function activate(api: ApplicationGenerationAPI & { readonly pluginId: string }): void {
   api.registerUISlot({ id: "application.before", cardinality: "many" });
   api.registerUISlot({ id: "application.after", cardinality: "many" });
+  api.registerUISlot({ id: "application.settings", cardinality: "one", service: "ui.settings" });
   function DefaultShell({ application, slots }: ApplicationShellRenderProps): JSX.Element {
     return <>
       <AppBackground />
       <slots.Slot name={`${api.pluginId}/application.before`} />
-      <App application={application} />
+      <App application={application} slots={slots} shellPluginId={api.pluginId} />
       <slots.Slot name={`${api.pluginId}/application.after`} />
       {ENABLE_APP_SNAPSHOTS && <AppContextCaptureHost application={application} />}
     </>;

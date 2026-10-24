@@ -99,7 +99,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div />,
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
 import * as applicationState from "./plugins/ApplicationController";
@@ -362,7 +362,7 @@ async function renderApp(
   installWuuApi({ withThread, ...options });
   await act(async () => {
     root = createRoot(container);
-    root.render(<App />);
+    root.render(await createDefaultApplicationTestView());
   });
   await flushAsync();
 }
@@ -421,6 +421,7 @@ async function holdShellReplacement(stage: "bridge" | "register") {
   const controller = new applicationState.ApplicationController();
   vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
   const host = new PluginHost({ react: React, application: controller });
+    await registerDefaultTestSurfaces(host);
   let replacing = false;
   let release!: () => void, started!: () => void;
   const ready = new Promise<void>(resolve => { started = resolve; });
@@ -443,7 +444,7 @@ async function holdShellReplacement(stage: "bridge" | "register") {
   await runtime.sync([shell]);
   await act(async () => {
     root = createRoot(container);
-    root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
+    root.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" }} />);
   });
   await flushAsync();
   replacing = true;
@@ -850,7 +851,7 @@ describe("main composer focus continuity", () => {
     window.wuu.listEngines = vi.fn().mockRejectedValue(new Error("engine discovery unavailable"));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     expect(mainComposer("dock").parentElement?.dataset.sendDisabled).toBe("true");
@@ -897,7 +898,7 @@ describe("main composer focus continuity", () => {
     }));
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -906,6 +907,7 @@ describe("main composer focus continuity", () => {
     await vi.waitFor(async () => {
       await flushAsync();
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+      expect(container.querySelector('[data-testid="settings-engine-codex-status"]')).not.toBeNull();
     });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-status"]')!.click());
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-codex-enabled"]')!.click());

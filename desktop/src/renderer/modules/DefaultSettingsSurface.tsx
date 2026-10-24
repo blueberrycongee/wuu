@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationSettingsLayoutV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { EngineListResult, InitializeResult } from "../../shared/protocol";
-import { SettingsShellRenderer, type SettingsShellRendererProps } from "../ConversationShellRenderers";
+import { SettingsShellRenderer } from "../ConversationShellRenderers";
 import { useArchiveDeletion } from "../useArchiveDeletion";
 import { useSettingsRuntimeState } from "../SettingsRuntimeState";
 import type { SettingsPage } from "../SettingsView";
@@ -12,12 +12,14 @@ import { UILayerPortal } from "../ui/layers/UILayerHost";
 import { TopNotice } from "../TopNotice";
 import { CircleAlert, RefreshCw } from "../WuuIcons";
 
-export function DefaultSettingsSurface({ application, archive, onNoticeVisibilityChange, ...layout }: ApplicationSettingsLayoutV1 & {
+export function DefaultSettingsSurface({ application, ...layout }: ApplicationSettingsLayoutV1 & {
   application: ApplicationServiceV1;
-  onNoticeVisibilityChange: (visible: boolean) => void;
-  archive: Pick<SettingsShellRendererProps, "archivedThreads" | "onUnarchiveThread" | "archiveDeletion" | "onDeleteAllArchivedThreads" | "onRetryArchiveDeletion">;
 }): JSX.Element | null {
   const settings = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings);
+  const archiveDeletion = useArchiveDeletion({
+    list: () => application.invoke("settings.list-archived", {}),
+    remove: threadId => application.invoke("settings.delete-archived", { threadId }),
+  });
   const runtime = useSettingsRuntimeState({ settingsOpen: settings.open, application });
   // Existing controls edit local drafts; copy the public immutable view at this boundary.
   const initialized = useMemo(() => structuredClone(settings.configuration) as InitializeResult | undefined, [settings.configuration]);
@@ -26,9 +28,9 @@ export function DefaultSettingsSurface({ application, archive, onNoticeVisibilit
   const [catalogNotice, setCatalogNotice] = useState<{ message: string; isError: boolean }>();
   const dismissCatalogNotice = useCallback(() => setCatalogNotice(undefined), []);
   useEffect(() => {
-    onNoticeVisibilityChange(Boolean(catalogNotice));
-    return () => onNoticeVisibilityChange(false);
-  }, [catalogNotice, onNoticeVisibilityChange]);
+    layout.onNoticeVisibilityChange?.(Boolean(catalogNotice));
+    return () => layout.onNoticeVisibilityChange?.(false);
+  }, [catalogNotice, layout.onNoticeVisibilityChange]);
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
@@ -65,7 +67,11 @@ export function DefaultSettingsSurface({ application, archive, onNoticeVisibilit
         onUpdateEngineInventory={async input => structuredClone(await application.invoke("settings.update-engine", input)) as EngineListResult}
         onAdvancedSave={input => application.invoke("settings.update-advanced", input)}
         onGeneralSave={input => application.invoke("settings.update-general", input)}
-        {...archive}
+        archivedThreads={settings.archivedThreads}
+        onUnarchiveThread={thread => { void application.invoke("settings.unarchive", { threadId: thread.id }).catch(showErrorToast); }}
+        archiveDeletion={archiveDeletion}
+        onDeleteAllArchivedThreads={() => { void archiveDeletion.removeAll(); }}
+        onRetryArchiveDeletion={() => { void archiveDeletion.retry(); }}
         usage={runtime.settingsUsage} usageLoading={runtime.settingsUsageLoading} usageError={runtime.settingsUsageError}
         codexPets={runtime.codexPets} codexPetsLoading={runtime.codexPetsLoading} codexPetsError={runtime.codexPetsError}
         onCodexPetsRefresh={runtime.refreshCodexPets} onCodexPetsUpdate={runtime.updateCodexPets}
@@ -77,20 +83,7 @@ export function DefaultSettingsSurface({ application, archive, onNoticeVisibilit
 /** Settings owns its domain reads and mutations; the slot supplies only presentation geometry. */
 export function activate(api: ApplicationGenerationAPI): void {
   function SettingsContribution({ application, context }: UISlotRenderProps): JSX.Element {
-    const layout = context.layout as ApplicationSettingsLayoutV1;
-    const settings = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings);
-    const archiveDeletion = useArchiveDeletion({
-      list: () => application.invoke("settings.list-archived", {}),
-      remove: threadId => application.invoke("settings.delete-archived", { threadId }),
-    });
-    const onNoticeVisibilityChange = useCallback((visible: boolean) => layout.onNoticeVisibilityChange?.(visible), [layout.onNoticeVisibilityChange]);
-    return <DefaultSettingsSurface {...layout} application={application}
-      onNoticeVisibilityChange={onNoticeVisibilityChange}
-      archive={{ archivedThreads: settings.archivedThreads,
-        onUnarchiveThread: thread => { void application.invoke("settings.unarchive", { threadId: thread.id }).catch(showErrorToast); },
-        archiveDeletion, onDeleteAllArchivedThreads: () => void archiveDeletion.removeAll(),
-        onRetryArchiveDeletion: () => void archiveDeletion.retry(),
-      }} />;
+    return <DefaultSettingsSurface {...context.layout as ApplicationSettingsLayoutV1} application={application} />;
   }
   api.registerUIContribution({ id: "ui.settings", target: "wuu.default-shell/application.settings", render: SettingsContribution });
 }

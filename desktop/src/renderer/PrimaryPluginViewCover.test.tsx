@@ -27,7 +27,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div data-testid="mock-monaco-editor" />,
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { desktopPluginHost, desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
 
 const pluginId = "test:primary-cover";
@@ -158,7 +158,7 @@ describe("primary plugin view covers the conversation", () => {
   it("drops the empty-session greeting and dock composer while Automations is open", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 

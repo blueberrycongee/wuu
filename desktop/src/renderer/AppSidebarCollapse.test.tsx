@@ -41,7 +41,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
 import * as applicationState from "./plugins/ApplicationController";
 import { ApplicationShellOutlet } from "./plugins/ApplicationShell";
@@ -204,6 +204,31 @@ describe("sidebar collapse-state independence", () => {
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
   });
 
+  it("uses the selected settings surface and never restores a default after its provider unloads", async () => {
+    installWuuApi();
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = new PluginHost({ react: React, application: controller });
+    await registerDefaultTestSurfaces(host);
+    await host.activateGeneration({ pluginId: "shell", generation: "fixture", register: activateDefaultShell });
+    await host.activateGeneration({ pluginId: "alternate-settings", generation: "fixture", register: api => {
+      api.registerUIContribution({ id: "ui.settings", target: "another-shell/settings", render: () => <div data-testid="selected-settings">Alternate settings</div> });
+    } });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<ApplicationShellOutlet host={host}
+        binding={{ pluginId: "shell", generation: "fixture", id: "ui.shell" }}
+        surfaceBindings={{ "ui.settings": { pluginId: "alternate-settings", generation: "fixture", id: "ui.settings" } }} />);
+    });
+    await flushAsync();
+    await act(async () => controller.invoke("settings.open", { pageId: "appearance" }));
+    expect(container.querySelector('[data-testid="selected-settings"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
+    act(() => host.unload("alternate-settings"));
+    expect(container.textContent).toContain("Selected UI surface is unavailable: ui.settings");
+    expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
+  });
+
   it("keeps the draft worktree base through shell replacement without applying it to another project", async () => {
     installWuuApi();
     const projects = ["first", "second"].map(id => ({
@@ -222,6 +247,7 @@ describe("sidebar collapse-state independence", () => {
     const controller = new applicationState.ApplicationController();
     const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
     const host = new PluginHost({ react: React, application: controller });
+    await registerDefaultTestSurfaces(host);
     let release!: () => void, started!: () => void;
     const ready = new Promise<void>(resolve => { started = resolve; });
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -238,7 +264,7 @@ describe("sidebar collapse-state independence", () => {
       await host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: "first", register: activateDefaultShell });
       await act(async () => {
         root = createRoot(container);
-        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+        root.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
       });
       await flushAsync();
       act(() => {
@@ -295,8 +321,9 @@ describe("sidebar collapse-state independence", () => {
     // DesktopApplicationRoot retains the controller independently of its shell.
     const stopController = controller.start();
     const host = new PluginHost({ react: React, application: controller });
+    await registerDefaultTestSurfaces(host);
     const activate = (graph: string) => host.activateGeneration({ pluginId: "shell", generation: "same-code", graphGeneration: graph, register: activateDefaultShell });
-    const render = () => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+    const render = () => root!.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
     try {
       await activate("first");
       await act(async () => { root = createRoot(container); render(); });
@@ -350,6 +377,7 @@ describe("sidebar collapse-state independence", () => {
     const controller = new applicationState.ApplicationController();
     const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
     const host = new PluginHost({ react: React, application: controller });
+    await registerDefaultTestSurfaces(host);
     const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
     const click = async (selector: string) => {
       const button = container.querySelector<HTMLButtonElement>(selector);
@@ -362,7 +390,7 @@ describe("sidebar collapse-state independence", () => {
       await activate();
       await act(async () => {
         root = createRoot(container);
-        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+        root.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
       });
       await flushAsync();
       await click('[data-ribbon-id="catalog"]');
@@ -405,6 +433,7 @@ describe("sidebar collapse-state independence", () => {
     const controller = new applicationState.ApplicationController();
     const shared = vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
     const host = new PluginHost({ react: React, application: controller });
+    await registerDefaultTestSurfaces(host);
     const activate = () => host.activateGeneration({ pluginId: "shell", generation: "same-code", register: activateDefaultShell });
     window.wuu.updateExtensionPackage = vi.fn(async ({ action }) => {
       record = { ...record, enabled: action === "enable", runtime_state: action === "enable" ? "active" : "inactive" };
@@ -423,7 +452,7 @@ describe("sidebar collapse-state independence", () => {
       await activate();
       await act(async () => {
         root = createRoot(container);
-        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
+        root.render(<ApplicationShellOutlet host={host} surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: "shell", generation: "same-code", id: "ui.shell" }} />);
       });
       await flushAsync();
       await click('[data-ribbon-id="catalog"]');
@@ -454,7 +483,7 @@ describe("sidebar collapse-state independence", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     const accountTrigger = () => container.querySelector<HTMLButtonElement>(".sidebar-account-trigger");
@@ -484,7 +513,7 @@ describe("sidebar collapse-state independence", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
     const header = () => container.querySelector<HTMLButtonElement>(selector);
@@ -520,7 +549,7 @@ describe("sidebar collapse-state independence", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -546,7 +575,7 @@ describe("sidebar collapse-state independence", () => {
     const updated = { ...codex, model: "snapshot-model", reuse_codex_credentials: true, codex_credential_source: "codex-cli", models: [{ id: "configured-model" }, { id: "snapshot-model" }] };
     window.wuu.useCodexCredentials = vi.fn().mockResolvedValue({ providers: [...config.providers!, updated] });
     window.wuu.loadCodexModels = vi.fn().mockResolvedValue({ providers: [...config.providers!, updated], models: updated.models });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const click = async (selector: string, scope: ParentNode = container) => {
       const button = scope.querySelector<HTMLButtonElement>(selector);
@@ -582,7 +611,7 @@ describe("sidebar collapse-state independence", () => {
     window.wuu.authenticateEngine = vi.fn().mockResolvedValue({ methods: [], authenticated: true });
     window.wuu.cancelEngineAuth = vi.fn().mockResolvedValue(undefined);
     window.wuu.refreshModelCatalog = vi.fn().mockResolvedValue({ providers: [...config.providers!, updated], model_count: 3 });
-    await act(async () => { root = createRoot(container); root.render(<App />); });
+    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
     await flushAsync();
     const click = async (selector: string, scope: ParentNode = container) => {
       const button = scope.querySelector<HTMLButtonElement>(selector);

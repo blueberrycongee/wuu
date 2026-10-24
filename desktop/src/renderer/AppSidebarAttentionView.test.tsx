@@ -49,7 +49,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { App } from "./App";
+import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -216,7 +216,7 @@ describe("sidebar attention view", () => {
   it("survives a trip through settings", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -257,7 +257,7 @@ describe("sidebar attention view", () => {
     ]);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
@@ -295,7 +295,7 @@ describe("sidebar attention view", () => {
     ]);
     await act(async () => {
       root = createRoot(container);
-      root.render(<App />);
+      root.render(await createDefaultApplicationTestView());
     });
     await flushAsync();
 
