@@ -7,13 +7,14 @@ const workflow: ApplicationOnboardingWorkflowV1 = { step: "ready", selectedPlugi
   applyingPlugins: false, savingProvider: false, connected: true, savingRuntime: false, finishing: false,
   importingBrowser: "", browserImportError: "", browserImportResults: {}, browserImported: false,
   scanningWorkspaces: false, choosingWorkspace: false, selectedPaths: ["/one"], scanAttempt: 0, scannedRevision: 0, error: null, selectedEngine: "wuu" };
-let state: AppState; let owner: ApplicationOnboarding; const select = vi.fn(); const original = window.wuu;
+let state: AppState; let owner: ApplicationOnboarding; const select = vi.fn(); const perform = vi.fn(); const original = window.wuu;
 beforeEach(() => {
   state = { ...initialState, onboardingComplete: false, activeContext: { kind: "no_project", cwd: "/source" } };
-  select.mockReset(); select.mockResolvedValue(undefined);
+  select.mockReset(); select.mockResolvedValue(undefined); perform.mockReset(); perform.mockResolvedValue(undefined);
   window.wuu = { initialOnboardingComplete: false, discoverRecentWorkspaces: vi.fn(), chooseWorkspaceDirectory: vi.fn(),
     importWorkspaces: vi.fn().mockResolvedValue({ projects: [{ id: "one", path: "/one" }] }), completeOnboarding: vi.fn().mockResolvedValue(undefined) } as unknown as WuuDesktopApi;
-  owner = new ApplicationOnboarding({ getState: () => state, updateState: update => { state = typeof update === "function" ? update(state) : update; }, selectImportedWorkspace: select });
+  owner = new ApplicationOnboarding({ getState: () => state, updateState: update => { state = typeof update === "function" ? update(state) : update; }, selectImportedWorkspace: select,
+    operations: { plugins: perform, runtime: perform, provider: perform, browser: perform } });
 });
 afterEach(() => { owner.dispose(); window.wuu = original; });
 describe("public onboarding owner", () => {
@@ -59,5 +60,26 @@ describe("public onboarding owner", () => {
     await vi.waitFor(() => expect(window.wuu.completeOnboarding).toHaveBeenCalledOnce());
     signal.abort(); finish(); await expect(completing).rejects.toThrow();
     expect(owner.getSnapshot().completed).toBe(true);
+  });
+  it("settles an admitted preset into the shared flow after its observer leaves without losing newer choices", async () => {
+    owner.checkpoint({ revision: owner.getSnapshot().revision, workflow });
+    let finish!: () => void; perform.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    const stop = owner.subscribe(vi.fn());
+    const pending = owner.run({ kind: "plugins", update: { updates: [{ id: "a", action: "enable" }] } });
+    expect(owner.getSnapshot().workflow?.applyingPlugins).toBe(true); stop();
+    const current = owner.getSnapshot(); owner.checkpoint({ revision: current.revision, workflow: { ...current.workflow!, selectedPaths: ["/new"] } });
+    await expect(owner.run({ kind: "plugins", update: { updates: [] } })).rejects.toThrow(/pending/);
+    finish(); await pending;
+    expect(owner.getSnapshot().workflow).toMatchObject({ applyingPlugins: false, step: "runtime", selectedPaths: ["/new"] });
+    expect(perform).toHaveBeenCalledOnce();
+  });
+  it("clears failed setup ownership and preserves browser import results for successor views", async () => {
+    owner.checkpoint({ revision: owner.getSnapshot().revision, workflow });
+    perform.mockRejectedValueOnce(new Error("provider failure"));
+    await expect(owner.run({ kind: "provider", input: { provider: "p", model: "m" }, nextStep: "ready" })).rejects.toThrow("provider failure");
+    expect(owner.getSnapshot().workflow).toMatchObject({ savingProvider: false, error: { detail: "provider failure" } });
+    const result = { profilePath: "/profile", imported: 2, failed: 0 };
+    perform.mockResolvedValueOnce(result); await owner.run({ kind: "browser", profilePath: "/profile" });
+    expect(owner.getSnapshot().workflow).toMatchObject({ importingBrowser: "", browserImported: true, browserImportResults: { "/profile": result } });
   });
 });

@@ -1,7 +1,8 @@
 import type { SetStateAction } from "react";
-import type { ApplicationOnboardingV1, ApplicationOnboardingViewV1, ApplicationOnboardingWorkflowV1, OnboardingCallOptionsV1 } from "../../../../packages/plugin-sdk/src/ui-onboarding";
+import type { ApplicationOnboardingV1, ApplicationOnboardingViewV1, ApplicationOnboardingWorkflowV1, OnboardingCallOptionsV1, OnboardingOperationV1, OnboardingBrowserResultV1 } from "../../../../packages/plugin-sdk/src/ui-onboarding";
 import type { AppState } from "../AppState";
 import type { FirstRunOnboardingState } from "../FirstRunOnboarding";
+import { translateCurrent as t } from "../i18n";
 
 function immutable<T>(value: T): T {
   const copy = structuredClone(value);
@@ -16,6 +17,7 @@ function immutable<T>(value: T): T {
 export class ApplicationOnboarding implements ApplicationOnboardingV1 {
   private disposed = false;
   private completing = false;
+  private operationPending = false;
   private view?: ApplicationOnboardingViewV1;
   private workflow?: FirstRunOnboardingState;
   private readonly listeners = new Set<() => void>();
@@ -23,6 +25,12 @@ export class ApplicationOnboarding implements ApplicationOnboardingV1 {
     getState: () => AppState;
     updateState: (update: SetStateAction<AppState>) => void;
     selectImportedWorkspace: (projectID: string, signal?: AbortSignal) => Promise<void>;
+    operations: {
+      plugins: (input: Extract<OnboardingOperationV1, { kind: "plugins" }>["update"]) => Promise<void>;
+      runtime: (engine: string) => Promise<void>;
+      provider: (input: Extract<OnboardingOperationV1, { kind: "provider" }>["input"]) => Promise<void>;
+      browser: (profilePath: string) => Promise<OnboardingBrowserResultV1>;
+    };
   }) {}
   private check(options?: OnboardingCallOptionsV1): void {
     if (this.disposed) throw new Error("Onboarding application disposed");
@@ -67,6 +75,47 @@ export class ApplicationOnboarding implements ApplicationOnboardingV1 {
       selectedPaths: new Set(input.workflow.selectedPaths) }) as FirstRunOnboardingState;
     this.host.updateState(current => ({ ...current, onboarding })); this.notifyChanged();
   }
+  private updateWorkflow(update: (current: FirstRunOnboardingState) => FirstRunOnboardingState): void {
+    if (this.disposed) return;
+    this.host.updateState(current => current.onboarding ? { ...current, onboarding: update(current.onboarding) } : current);
+    this.notifyChanged();
+  }
+  async run(operation: OnboardingOperationV1): Promise<void> {
+    this.check();
+    if (this.operationPending || this.completing) throw new Error("A setup operation is already pending");
+    if (!this.host.getState().onboarding) throw new Error("The setup workflow is not initialized");
+    this.operationPending = true;
+    this.updateWorkflow(current => ({ ...current, error: null,
+      applyingPlugins: operation.kind === "plugins", savingRuntime: operation.kind === "runtime", savingProvider: operation.kind === "provider",
+      ...(operation.kind === "browser" ? { importingBrowser: operation.profilePath, browserImportError: "" } : {}),
+    }));
+    try {
+      switch (operation.kind) {
+        case "plugins":
+          await this.host.operations.plugins(operation.update);
+          this.updateWorkflow(current => ({ ...current, step: "runtime" })); break;
+        case "runtime":
+          await this.host.operations.runtime(operation.engine);
+          this.updateWorkflow(current => ({ ...current, step: "provider" })); break;
+        case "provider":
+          await this.host.operations.provider(operation.input);
+          this.updateWorkflow(current => ({ ...current, connected: true, step: operation.nextStep })); break;
+        case "browser": {
+          const result = await this.host.operations.browser(operation.profilePath);
+          this.updateWorkflow(current => ({ ...current, browserImportResults: { ...current.browserImportResults, [operation.profilePath]: result },
+            browserImported: current.browserImported || result.imported > 0 })); break;
+        }
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      this.updateWorkflow(current => operation.kind === "browser" ? { ...current, browserImportError: detail } : { ...current,
+        error: { title: t(operation.kind === "plugins" ? "onboarding.pluginsFailed" : operation.kind === "runtime" ? "onboarding.runtimeFailed" : "provider.saveFailed"), detail } });
+      throw error;
+    } finally {
+      this.operationPending = false;
+      this.updateWorkflow(current => ({ ...current, applyingPlugins: false, savingRuntime: false, savingProvider: false, importingBrowser: "" }));
+    }
+  }
   async discoverWorkspaces(options?: OnboardingCallOptionsV1) {
     this.check(options); const source = this.source();
     if (!window.wuu.discoverRecentWorkspaces) throw new Error("Workspace discovery is unavailable");
@@ -79,9 +128,10 @@ export class ApplicationOnboarding implements ApplicationOnboardingV1 {
   }
   async complete(input: Parameters<ApplicationOnboardingV1["complete"]>[0], options?: OnboardingCallOptionsV1): Promise<void> {
     this.check(options);
-    if (this.completing) throw new Error("Onboarding completion is already pending");
+    if (this.completing || this.operationPending) throw new Error("Onboarding completion is already pending");
     if (!window.wuu.completeOnboarding) throw new Error("Onboarding completion is unavailable");
     this.completing = true; const source = this.source();
+    this.updateWorkflow(current => ({ ...current, finishing: true, error: null }));
     try {
       if (input.paths.length > 0) {
         if (!window.wuu.importWorkspaces) throw new Error("Workspace import is unavailable");
@@ -95,7 +145,13 @@ export class ApplicationOnboarding implements ApplicationOnboardingV1 {
         this.host.updateState(current => ({ ...current, onboardingComplete: true, onboarding: undefined })); this.notifyChanged();
       }
       this.check(options);
-    } finally { this.completing = false; }
+    } catch (error) {
+      this.updateWorkflow(current => ({ ...current, error: { title: t("onboarding.finishFailed"), detail: error instanceof Error ? error.message : String(error) } }));
+      throw error;
+    } finally {
+      this.completing = false;
+      this.updateWorkflow(current => ({ ...current, finishing: false }));
+    }
   }
   dispose(): void { this.disposed = true; this.listeners.clear(); }
 }
