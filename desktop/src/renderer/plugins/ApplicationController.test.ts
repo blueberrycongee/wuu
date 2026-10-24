@@ -2,12 +2,58 @@ import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
 import { ApplicationController } from "./ApplicationController";
 import { streamTextKey, streamTextStore } from "../StreamText";
-import { initialState } from "../AppState";
+import { initialState, type AppState } from "../AppState";
 import type { WuuDesktopApi } from "../../shared/protocol";
+
+const submissionInitialized = { provider: "fixture", model: "fixture", providers: [{ name: "fixture", type: "openai", model: "fixture", api_key_configured: true }] } as AppState["initialized"];
+async function settleSubmission(controller: ApplicationController, result: Awaited<ReturnType<ApplicationController["invoke"]>>) {
+  const operationID = (result as { operationID?: string }).operationID;
+  expect(operationID).toBeTruthy();
+  await vi.waitFor(() => expect(controller.getSnapshot().submission.operations.find(operation => operation.operationID === operationID)?.phase).toMatch(/completed|failed|cancelled/));
+  return controller.getSnapshot().submission.operations.find(operation => operation.operationID === operationID)!;
+}
 
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("retains imported history attachments until the shared edit is cancelled", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const thread = { id: "history", cwd: context.cwd, preview: "", model_provider: "fixture", status: "idle", turns: [
+      { id: "turn", status: "completed", items_view: "full", items: [{ id: "user", type: "user_message", text: "Original", images: [{ media_type: "image/png", data: "QQ==" }] }] },
+    ] } as never;
+    window.wuu = {} as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread,
+      activeSessionTabID: "thread:history", sessionTabs: [{ id: "thread:history", kind: "thread", threadID: "history", context, title: "", prompt: "Unsent", images: [], files: [] }] });
+    const target = { threadId: "history", turnId: "turn", itemId: "user" };
+    await controller.invoke("history.begin-edit", target);
+    const id = controller.getSnapshot().conversationActions.editing!.draft.imageIds[0];
+    expect(controller.getSnapshot().drafts.attachments.find(item => item.id === id)?.data).toBe("QQ==");
+    controller.updateState(state => ({ ...state, status: "updated" }));
+    expect((await controller.invoke("composer.resolve-attachment", { attachmentId: id })).data).toBe("QQ==");
+    await expect(controller.invoke("composer.release-attachments", { attachmentIds: [id] })).rejects.toThrow("owned by a draft");
+    await controller.invoke("history.cancel-edit", {});
+    expect(controller.getSnapshot().drafts.primary.text).toBe("Unsent");
+    await expect(controller.invoke("composer.resolve-attachment", { attachmentId: id })).rejects.toThrow("Unknown composer attachment");
+  });
+
+  it("keeps cancellation connected after submission admission returns", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    let finish!: (value: unknown) => void;
+    window.wuu = { startThread: vi.fn(() => new Promise(resolve => { finish = resolve; })),
+      deleteThread: vi.fn().mockResolvedValue({}), startTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context,
+      initialized: { provider: "fixture", model: "fixture", providers: [{ name: "fixture", type: "openai", model: "fixture", api_key_configured: true }] } as never,
+      activeSessionTabID: "draft:a", sessionTabs: [{ id: "draft:a", kind: "draft", context, title: "", createdAt: 1, prompt: "hello", images: [], files: [] }] });
+    const lifetime = new AbortController();
+    const result = await controller.invoke("composer.submit", { ownerTabId: "draft:a" }, { signal: lifetime.signal });
+    expect(result.accepted).toBe(true);
+    lifetime.abort();
+    finish({ thread: { id: "late", cwd: context.cwd, turns: [], status: "idle" } });
+    await vi.waitFor(() => expect(window.wuu.deleteThread).toHaveBeenCalledWith("late"));
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    expect(controller.getSnapshot().drafts.primary.text).toBe("hello");
+  });
+
   it("clears pending navigation when its generation aborts before a workspace response", async () => {
     const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
     let finish!: (value: unknown) => void;
@@ -195,19 +241,19 @@ describe("shared application state", () => {
     const finish = new Map<string, (value: unknown) => void>();
     const send = vi.fn((id: string) => new Promise(resolve => { finish.set(id, resolve); }));
     window.wuu = { startTurn: send } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: thread("a"), secondaryThread: thread("b"), activePane: "primary", activeSessionTabID: "thread:a", sessionTabs: ["a", "b"].map(id => ({
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread: thread("a"), secondaryThread: thread("b"), activePane: "primary", activeSessionTabID: "thread:a", sessionTabs: ["a", "b"].map(id => ({
       id: `thread:${id}`, kind: "thread", threadID: id, context, title: id, prompt: `draft ${id}`, images: [], files: [],
     })) });
     const primary = controller.invoke("composer.submit", { ownerTabId: "thread:a" });
-    await expect(controller.invoke("composer.submit", { ownerTabId: "thread:a" })).rejects.toThrow("already pending");
+    await expect(controller.invoke("composer.submit", { ownerTabId: "thread:a" })).resolves.toMatchObject({ accepted: false });
     const secondary = controller.invoke("composer.submit", { ownerTabId: "thread:b" });
-    expect(send.mock.calls.map(args => args[0])).toEqual(["a", "b"]);
+    await vi.waitFor(() => expect(send.mock.calls.map(args => args[0])).toEqual(["a", "b"]));
     finish.get("b")!({ turn: { id: "turn-b", status: "completed", items: [] } });
-    await secondary;
-    expect(controller.getSnapshot().drafts.primary.text).toBe("draft a");
+    await settleSubmission(controller, await secondary);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("");
     expect(controller.getSnapshot().drafts.secondary.text).toBe("");
     finish.get("a")!({ turn: { id: "turn-a", status: "completed", items: [] } });
-    await primary;
+    await settleSubmission(controller, await primary);
     expect(controller.getSnapshot().drafts.primary.text).toBe("");
   });
 
@@ -217,12 +263,12 @@ describe("shared application state", () => {
     URL.revokeObjectURL = revoke;
     try {
       const context = { kind: "no_project" as const, cwd: "/workspace" };
-      const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [] } as never;
-      window.wuu = { queueTurn: vi.fn().mockResolvedValue({}), dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) } as unknown as WuuDesktopApi;
-      const controller = new ApplicationController({ ...initialState, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
+      const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "running", status: "in_progress", items: [] }] } as never;
+      window.wuu = { queueTurn: vi.fn().mockResolvedValue({ queued: { id: "queued" } }), dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) } as unknown as WuuDesktopApi;
+      const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
         { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "image", images: [{ id: "image", media_type: "image/png", data: "QQ==", previewSrc: "blob:owned" }], files: [] },
       ] });
-      await controller.invoke("composer.submit", { mode: "queue" });
+      await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "queue" }));
       await expect(controller.invoke("composer.release-attachments", { attachmentIds: ["image"] })).rejects.toThrow("pending message");
       await controller.invoke("composer.release-attachments", { attachmentIds: ["image"], ifUnreferenced: true });
       expect(controller.getSnapshot().drafts.attachments[0].id).toBe("image");
@@ -237,13 +283,13 @@ describe("shared application state", () => {
   it("owns accepted queue input and restores edits through public commands", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "turn", status: "in_progress", items: [] }] } as never;
-    window.wuu = { queueTurn: vi.fn().mockResolvedValue({}), dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
+    window.wuu = { queueTurn: vi.fn().mockResolvedValue({ queued: { id: "queued" } }), dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
       { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "queued text", images: [], files: [] },
     ] });
-    await controller.invoke("composer.submit", { mode: "queue" });
+    await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "queue" }));
     const pending = controller.getSnapshot().composerPending[0];
-    expect(pending).toMatchObject({ threadId: "a", queued: [{ text: "queued text", origin: "queue" }], guides: [] });
+    expect(pending).toMatchObject({ threadId: "a", queued: [{ text: "queued text" }], guides: [] });
     expect(Object.isFrozen(pending.queued[0])).toBe(true);
     expect(controller.getSnapshot().drafts.primary.text).toBe("");
     await controller.invoke("composer.edit-pending", { messageId: pending.queued[0].id, kind: "queue" });
@@ -406,11 +452,11 @@ describe("shared application state", () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const send = vi.fn().mockRejectedValue(new Error("delivery failed"));
     window.wuu = { startTurn: send, queueTurn: send, steerTurn: send } as unknown as WuuDesktopApi;
-    const thread = { id: "thread", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "active", status: "in_progress", items: [] }] } as never;
-    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, activeSessionTabID: "thread:thread", sessionTabs: [
+    const thread = { id: "thread", cwd: context.cwd, preview: "", status: mode === "send" ? "idle" : "in_progress", model_provider: "", turns: mode === "send" ? [] : [{ id: "active", status: "in_progress", items: [] }] } as never;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, activeSessionTabID: "thread:thread", sessionTabs: [
       { id: "thread:thread", kind: "thread", threadID: "thread", context, title: "Thread", prompt: "", images: [], files: [{ id: "file", filename: "note.txt", media_type: "text/plain", data: "QQ==" }] },
     ] });
-    await expect(controller.invoke("composer.submit", { mode })).rejects.toThrow("delivery failed");
+    expect(await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: "thread:thread", mode }))).toMatchObject({ phase: "failed", error: "delivery failed" });
     const args = send.mock.calls[0];
     expect(args[mode === "send" ? 3 : mode === "queue" ? 4 : 5]).toEqual([{ filename: "note.txt", media_type: "text/plain", data: "QQ==" }]);
     expect(controller.getSnapshot().drafts.primary.fileIds).toEqual(["file"]);
@@ -444,19 +490,19 @@ describe("shared application state", () => {
   it("creates a separate draft during admission without stealing focus on completion", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     let finish!: (result: unknown) => void;
-    window.wuu = { startThread: () => new Promise(resolve => { finish = resolve; }),
+    window.wuu = { renameThread: vi.fn().mockResolvedValue({}), startThread: () => new Promise(resolve => { finish = resolve; }),
       startTurn: vi.fn(async () => ({ turn: { id: "sent", status: "in_progress", items: [] } })) } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
       { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "first", images: [], files: [] },
     ] });
     await controller.invoke("composer.set-draft", { text: "edited before admission" });
-    const sending = controller.invoke("composer.submit", {});
+    const sending = controller.invoke("composer.submit", { ownerTabId: controller.getState().activeSessionTabID });
     expect(controller.getSnapshot().navigationWorkspace.pendingConversations).toMatchObject([{ id: "draft:a", title: "edited before admission" }]);
     const next = await controller.invoke("tab.new", {});
     expect(next.tabId).not.toBe("draft:a");
     await controller.invoke("composer.set-draft", { text: "next" });
     finish({ thread: { id: "created", model_provider: "", preview: "", updated_at: "2026-10-24T00:00:00Z", cwd: context.cwd, turns: [], status: "idle" } });
-    await sending;
+    await settleSubmission(controller, await sending);
     expect(controller.getSnapshot().tabs.activeTabId).toBe(next.tabId);
     expect(controller.getSnapshot().composer.draftText).toBe("next");
     expect(controller.getSnapshot().tabs.items.find(tab => tab.threadId === "created")?.draftText).toBe("");
@@ -594,9 +640,9 @@ describe("shared application state", () => {
   it("does not replay a failed send and keeps its draft", async () => {
     const send = vi.fn(async () => { throw new Error("uncertain delivery"); });
     window.wuu = { startTurn: send } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, thread: { id: "thread", turns: [], status: "idle" } as never });
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: { kind: "no_project", cwd: "/workspace" }, thread: { id: "thread", model_provider: "fixture", model: "fixture", preview: "", created_at: "", updated_at: "", cwd: "/workspace", turns: [], status: "idle" } as never, activeSessionTabID: "thread:thread", sessionTabs: [{ id: "thread:thread", kind: "thread", threadID: "thread", context: { kind: "no_project", cwd: "/workspace" }, title: "", prompt: "", images: [], files: [] }] });
     await controller.invoke("composer.set-draft", { text: "Keep me" });
-    await expect(controller.invoke("composer.submit", {})).rejects.toThrow("uncertain delivery");
+    expect(await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: controller.getState().activeSessionTabID }))).toMatchObject({ phase: "failed", error: "uncertain delivery" });
     expect(send).toHaveBeenCalledTimes(1);
     expect(controller.getSnapshot().composer.draftText).toBe("Keep me");
   });
@@ -604,10 +650,10 @@ describe("shared application state", () => {
   it("preserves the draft when creating a thread succeeds but submitting fails", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const send = vi.fn(async () => { throw new Error("uncertain delivery"); });
-    window.wuu = { startThread: vi.fn(async () => ({ thread: { id: "created", cwd: context.cwd, turns: [], status: "idle" } })), startTurn: send } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, activeContext: context });
+    window.wuu = { startThread: vi.fn(async () => ({ thread: { id: "created", model_provider: "fixture", model: "fixture", preview: "", created_at: "", updated_at: "", cwd: context.cwd, turns: [], status: "idle" } })), startTurn: send } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [{ id: "draft:a", kind: "draft", context, title: "", createdAt: 1, prompt: "", images: [], files: [] }] });
     await controller.invoke("composer.set-draft", { text: "Keep the first message" });
-    await expect(controller.invoke("composer.submit", {})).rejects.toThrow("uncertain delivery");
+    expect(await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: controller.getState().activeSessionTabID }))).toMatchObject({ phase: "failed", error: "uncertain delivery" });
     expect(controller.getSnapshot().conversation.threadId).toBe("created");
     expect(controller.getSnapshot().composer.draftText).toBe("Keep the first message");
     expect(send).toHaveBeenCalledTimes(1);
@@ -618,13 +664,13 @@ describe("shared application state", () => {
     let created!: (value: unknown) => void;
     const send = vi.fn(async () => ({ turn: { id: "sent", status: "in_progress", started_at: "2026-10-24T00:00:00Z", items: [] } }));
     window.wuu = { startThread: vi.fn(() => new Promise(resolve => { created = resolve; })), startTurn: send } as unknown as WuuDesktopApi;
-    const controller = new ApplicationController({ ...initialState, activeContext: context });
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [{ id: "draft:a", kind: "draft", context, title: "", createdAt: 1, prompt: "", images: [], files: [] }] });
     await controller.invoke("composer.set-draft", { text: "Original" });
-    const submitting = controller.invoke("composer.submit", {});
+    const submitting = controller.invoke("composer.submit", { ownerTabId: controller.getState().activeSessionTabID });
     await controller.invoke("composer.set-draft", { text: "Next message" });
     created({ thread: { id: "created", model_provider: "", cwd: context.cwd, preview: "", updated_at: "2026-10-24T00:00:00Z", turns: [], status: "idle" } });
-    await submitting;
-    expect(send).toHaveBeenCalledWith("created", "Original", undefined, undefined, undefined, undefined, undefined, context, expect.any(String));
+    await settleSubmission(controller, await submitting);
+    expect(send).toHaveBeenCalledWith("created", "Original", [], [], "standard", undefined, undefined, context, expect.any(String));
     expect(controller.getSnapshot().composer.draftText).toBe("Next message");
   });
   it("selects the target tab and restores its saved draft through the public action", async () => {

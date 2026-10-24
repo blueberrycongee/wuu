@@ -1,3 +1,6 @@
+import type { ApplicationConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-conversation-actions";
+import { ApplicationConversationActions, isApplicationConversationAction } from "./ApplicationConversationActions";
+import { ApplicationSubmission } from "./ApplicationSubmission";
 import type { ApplicationComposerRuntimeActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-composer-runtime";
 import type { ApplicationConversationDetailsActionMapV1, ApplicationConversationTextV1, ApplicationConversationTextTargetV1 } from "../../../../packages/plugin-sdk/src/ui-conversation";
 import type { ApplicationNavigationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
@@ -9,7 +12,7 @@ import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { createThreadSessionTab, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, bindActiveSessionTabToThread, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -19,7 +22,7 @@ import { getActiveLocale, translateCurrent } from "../i18n";
 import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
-import { awaitComposerFiles, awaitComposerImages, createComposerMessage, createOptimisticTurn, queuedMessagePreview, queuedMessageFullPreview, type QueuedComposerMessage, inputFilesFromComposer, inputImagesFromComposer } from "../ComposerMessages";
+import { awaitComposerImages, awaitComposerFiles, inputImagesFromComposer, inputFilesFromComposer, createOptimisticTurn, queuedMessagePreview, queuedMessageFullPreview, type QueuedComposerMessage } from "../ComposerMessages";
 import { createComposerPendingState } from "../ComposerPendingState";
 import { createSidebarThreadCache } from "../SidebarWorkspaceState";
 import { createConversationPaneActions } from "../ConversationPaneActions";
@@ -57,7 +60,7 @@ export class ApplicationController implements ApplicationServiceV1 {
   private get applicationComposerRuntime(): ApplicationComposerRuntime {
     return this.composerRuntimeOwner ??= new ApplicationComposerRuntime({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
-      isOwnerPending: ownerTabId => this.submitting.has(ownerTabId), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
+      isOwnerPending: ownerTabId => Boolean(this.submissionOwner?.isOwnerPending(ownerTabId)), getEngineInventory: () => this.applicationSettings.getSnapshot().engineInventory });
   }
   private previewContentOwner?: ApplicationPreviewContent;
   get previewContent(): ApplicationPreviewContent { return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu); }
@@ -103,7 +106,6 @@ export class ApplicationController implements ApplicationServiceV1 {
   private snapshot: ApplicationSnapshotV1;
   private draft = "";
   private readonly draftResources = new ApplicationDraftResources(() => this.publish());
-  private draftRevision = 0;
   private readonly applicationSettings: ApplicationSettings;
   private readonly sidebarCache: ReturnType<typeof createSidebarThreadCache>;
   private readonly pendingComposer: ReturnType<typeof createComposerPendingState>;
@@ -127,8 +129,82 @@ export class ApplicationController implements ApplicationServiceV1 {
   private navigationAbortCleanup?: () => void;
   private abortedNavigation?: { request: number; signal: AbortSignal; context: NonNullable<AppState["activeContext"]> };
   private pendingNavigation?: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>;
-  private readonly submitting = new Set<string>();
-  private readonly pendingDraftAdmissions = new Set<string>();
+  private conversationActionsOwner?: ApplicationConversationActions;
+  private get applicationConversationActions(): ApplicationConversationActions {
+    return this.conversationActionsOwner ??= new ApplicationConversationActions({
+      getState: () => this.state, updateState: this.updateState,
+      changed: () => { this.rememberDraftResources(); this.publish(); },
+      isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
+      drafts: {
+        get: pane => this.composerDraftForPane(pane ?? this.state.activePane),
+        set: (draft, pane) => {
+          const owner = this.composerDraftForPane(pane ?? this.state.activePane).ownerTabId;
+          if (!owner) throw new Error("Draft owner is unavailable");
+          if (owner === this.state.activeSessionTabID) this.draft = draft.prompt;
+          this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === owner && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
+        },
+        resolve: async (imageIds, fileIds) => {
+          const draft = this.draftResources.read({ text: "", imageIds, fileIds, selections: [] });
+          const release = this.draftResources.retain([...imageIds, ...fileIds]);
+          try {
+            const [images, files] = await Promise.all([awaitComposerImages(draft.images), awaitComposerFiles(draft.files)]);
+            return { images: inputImagesFromComposer(images) ?? [], files: inputFilesFromComposer(files) ?? [] };
+          } finally { release(); }
+        },
+        importHistory: (images, files) => {
+          const importedImages = images.map(image => ({ id: crypto.randomUUID(), kind: "image" as const, name: "image", status: "ready" as const,
+            mediaType: image.media_type, data: image.data, remoteRef: image.remote_ref, width: image.width, height: image.height }));
+          const importedFiles = files.map(file => ({ id: crypto.randomUUID(), kind: "file" as const, name: file.filename ?? "file", status: "ready" as const,
+            mediaType: file.media_type, data: file.data, remoteRef: file.remote_ref }));
+          this.draftResources.import([...importedImages, ...importedFiles]);
+          return { imageIds: importedImages.map(image => image.id), fileIds: importedFiles.map(file => file.id) };
+        },
+      },
+      pendingComposer: this.pendingComposer,
+      submission: { submitToThread: (message, thread, prepare) => this.applicationSubmission.submitToThread(message, thread, prepare),
+        steerToThread: (message, thread) => this.applicationSubmission.steerToThread(message, thread),
+        interruptThread: threadId => this.applicationSubmission.interruptThread(threadId) },
+    });
+  }
+  private submissionOwner?: ApplicationSubmission;
+  private reconcilingSubmission = false;
+  private get applicationSubmission(): ApplicationSubmission {
+    return this.submissionOwner ??= new ApplicationSubmission({
+      getState: () => this.state, updateState: this.updateState, changed: () => { this.rememberDraftResources(); this.publish(); },
+      isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
+      pending: this.pendingComposer, resources: this.draftResources, sidebarCache: this.sidebarCache,
+      getDraft: ownerTabId => {
+        const tab = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
+        const draft = tab ? cloneSessionTabDraft(tab) : emptyComposerDraft();
+        if (ownerTabId === this.state.activeSessionTabID) draft.prompt = this.draft;
+        return draft;
+      },
+      setDraft: (ownerTabId, draft) => {
+        if (ownerTabId === this.state.activeSessionTabID) this.draft = draft.prompt;
+        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
+      },
+      consumeOffer: async requestId => {
+        const request = this.applicationConversationActions.getSnapshot().questions.find(question => question.request_id === requestId);
+        if (!request || request.mode !== "offer") throw new Error("Conversation offer is unavailable");
+        await this.applicationConversationActions.invoke("question.cancel", { requestId });
+      },
+      getRuntime: ownerTabId => {
+        const owner = this.applicationComposerRuntime.getSnapshot().owners.find(owner => owner.ownerTabId === ownerTabId);
+        if (!owner) return { pending: true, params: {} };
+        const selection = owner.selection;
+        return { pending: !owner.available || owner.engineSelectionPending,
+          params: { engine: selection.engine, provider: selection.provider, model: selection.model,
+            effort: selection.engine === "wuu" ? selection.variant || selection.effort : selection.effort,
+            speed: selection.speed, model_options: { ...selection.modelOptions }, permission_mode: selection.permissionMode,
+            approve_for_me: selection.approveForMe }, worktree: owner.worktree.enabled ? { startBranch: owner.worktree.startBranch } : undefined };
+      },
+    });
+  }
+  private reconcileSubmission(): void {
+    if (this.reconcilingSubmission || !this.submissionOwner) return;
+    this.reconcilingSubmission = true;
+    try { this.submissionOwner.reconcile(); } finally { this.reconcilingSubmission = false; }
+  }
   private streamPublication?: number;
 
   constructor(state?: AppState) {
@@ -144,7 +220,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       restoreComposerDraftForThread: (id, draft) => {
         const tab = this.state.sessionTabs.find(tab => tab.id === id || tab.kind === "thread" && tab.threadID === id);
         if (!tab) return;
-        if (tab.id === this.state.activeSessionTabID) { this.draft = draft.prompt; this.draftRevision++; }
+        if (tab.id === this.state.activeSessionTabID) { this.draft = draft.prompt; }
         this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tab.id && item.kind !== "skills" ? { ...item, ...draft } : item) }));
       },
       preserveFailedComposerMessage: (id, message) => this.updateState(state => updateThreadByID(state, id, thread => upsertTurn(thread, {
@@ -154,7 +230,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     });
     this.applicationNavigation = new ApplicationNavigation({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), sidebarCache: this.sidebarCache, mutationActions: () => this.mutationActions(),
-      getPendingDraftTabIds: () => [...this.pendingDraftAdmissions],
+      getPendingDraftTabIds: () => this.submissionOwner?.getPendingDraftTabIds() ?? [],
     });
     this.applicationPreview = new ApplicationPreview({ getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
       .filter((thread): thread is Thread => Boolean(thread)), changed: () => this.publish() });
@@ -195,19 +271,20 @@ export class ApplicationController implements ApplicationServiceV1 {
     if (next.activeSessionTabID !== this.state.activeSessionTabID) {
       const tab = activeSessionTab(next);
       this.draft = tab && tab.kind !== "skills" ? tab.prompt : "";
-      this.draftRevision++;
+
     }
     this.state = next;
     this.pendingComposer.reconcilePendingComposerMessagesForState(next);
     this.rememberDraftResources();
     this.publish();
     for (const listener of this.stateListeners) listener();
+    this.reconcileSubmission();
   };
 
   start(): () => void {
     if (++this.consumers === 1) {
       this.lifetime = new AbortController();
-      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(),
+      this.subscriptions = [subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
       const restore = window.wuu?.onRuntimeRestore?.(async () => {
         const signal = this.lifetime!.signal;
@@ -228,6 +305,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       if (--this.consumers !== 0) return;
       this.lifetime?.abort();
       this.conversationDetails.stop();
+      this.submissionOwner?.dispose();
+      this.submissionOwner = undefined;
       this.composerRuntimeOwner?.dispose();
       this.composerRuntimeOwner = undefined;
       this.previewContentOwner?.dispose();
@@ -302,12 +381,12 @@ export class ApplicationController implements ApplicationServiceV1 {
   setDraft(text: string): void {
     if (text === this.draft) return;
     this.draft = text;
-    this.draftRevision++;
     this.publish({ ...this.snapshot, composer: Object.freeze({ ...this.snapshot.composer, draftText: text }),
       drafts: Object.freeze({ ...this.snapshot.drafts,
         [this.state.secondaryThread ? this.state.activePane : "primary"]: Object.freeze({ ...this.snapshot.drafts[this.state.secondaryThread ? this.state.activePane : "primary"], text }) }),
       tabs: Object.freeze({ ...this.snapshot.tabs, items: Object.freeze(this.snapshot.tabs.items.map(tab =>
         tab.id === this.state.activeSessionTabID ? Object.freeze({ ...tab, draftText: text }) : tab)) }) });
+    this.reconcileSubmission();
   }
 
   setSettings(open: boolean, pageId = this.settings.pageId): void {
@@ -339,6 +418,8 @@ export class ApplicationController implements ApplicationServiceV1 {
         message.files.forEach(file => { references.add(file.id); this.draftResources.remember("file", file); });
       }
     }
+    const editing = this.conversationActionsOwner?.getSnapshot().editing?.draft;
+    if (editing) [...editing.imageIds, ...editing.fileIds].forEach(id => references.add(id));
     this.draftResources.reconcile(references);
   }
 
@@ -417,7 +498,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       // remove the secondary pane without a second mutable composer store.
       resetSplitComposerDrafts: () => {},
       nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => createDraftSessionTab(`draft:${crypto.randomUUID()}`, context),
-      isDraftPending: (tabId: string) => this.pendingDraftAdmissions.has(tabId),
+      isDraftPending: (tabId: string) => Boolean(this.submissionOwner?.getPendingDraftTabIds().includes(tabId)),
       beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetId: string, contextSwitching = false) => {
         return this.beginNavigation(kind, targetId, contextSwitching || kind !== "thread", signal);
       },
@@ -534,7 +615,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     options?.signal?.throwIfAborted();
     const relayAbort = () => cancellation.abort(options?.signal?.reason);
     options?.signal?.addEventListener("abort", relayAbort, { once: true });
-    const signal = cancellation.signal;
+    const signal = action === "composer.submit" && options?.signal ? options.signal : cancellation.signal;
     this.invocationAborts.set(signal, cancellation);
     try {
       const result = await this.perform(action, input, signal);
@@ -556,6 +637,8 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
+    if (isApplicationConversationAction(action)) return this.applicationConversationActions.invoke(action,
+      input as ApplicationConversationActionMapV1[keyof ApplicationConversationActionMapV1]["input"]);
     if (isApplicationComposerRuntimeAction(action)) return this.applicationComposerRuntime.invoke(action,
       input as ApplicationComposerRuntimeActionMapV1[keyof ApplicationComposerRuntimeActionMapV1]["input"], signal);
     if (isApplicationConversationDetailsAction(action)) return this.conversationDetails.invoke(action,
@@ -663,7 +746,7 @@ export class ApplicationController implements ApplicationServiceV1 {
           if (content) return { activated: false };
           throw new Error("Draft navigation was superseded");
         }
-        if (content) { this.draft = content.text; this.draftRevision++; }
+        if (content) { this.draft = content.text; }
         this.updateState(state => ({ ...state, nativeSection: "conversations",
           sessionTabs: content ? state.sessionTabs.map(item => item.id === tab.id ? { ...item, ...emptyComposerDraft(), prompt: content.text } : item) : state.sessionTabs }));
         this.setSettings(false);
@@ -690,6 +773,8 @@ export class ApplicationController implements ApplicationServiceV1 {
         for (const pending of Object.values(this.pendingComposer.pendingComposerMessagesByThread)) {
           for (const message of [...pending.queued, ...pending.guides]) [...message.images, ...message.files].forEach(item => referenced.add(item.id));
         }
+        const editing = this.conversationActionsOwner?.getSnapshot().editing?.draft;
+        if (editing) [...editing.imageIds, ...editing.fileIds].forEach(id => referenced.add(id));
         if (!ifUnreferenced && attachmentIds.some(id => referenced.has(id))) throw new Error("Cannot release an attachment owned by a draft or pending message");
         this.draftResources.release(attachmentIds.filter(id => !referenced.has(id))); return;
       }
@@ -719,7 +804,7 @@ export class ApplicationController implements ApplicationServiceV1 {
             selections: tab.selections ?? [] });
           return { ...tab, ...draft };
         }) }));
-        this.draftRevision++;
+
         return Object.freeze({ attachments });
       }
       case "composer.resolve-attachment":
@@ -738,7 +823,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         const { primary, secondary } = this.draftResources.checkpoint(checkpoint.primary, checkpoint.secondary, checkpoint.attachments);
         const captured = captureComposerDrafts(this.state, secondary ? { primary, secondary } : primary);
         this.draft = captured.activeDraft.prompt;
-        this.draftRevision++;
+
         this.updateState(state => persistComposerDrafts(state, captured));
         return;
       }
@@ -782,7 +867,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         const context = workspace ? { kind: "project" as const, project_id: workspace.id, cwd: workspace.path } : this.state.activeContext;
         if (!context) throw new Error("No workspace is selected");
         if (project && context.kind !== "project") throw new Error("Project drafts require a workspace");
-        const existing = this.state.sessionTabs.find(item => item.kind === "draft" && !this.pendingDraftAdmissions.has(item.id) && sameRuntimeContext(item.context, context));
+        const existing = this.state.sessionTabs.find(item => item.kind === "draft" && !this.submissionOwner?.getPendingDraftTabIds().includes(item.id) && sameRuntimeContext(item.context, context));
         const tab = existing ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, context);
         await this.selectTab(tab, signal);
         if (this.state.activeSessionTabID !== tab.id) throw new Error("Draft navigation was superseded");
@@ -882,94 +967,9 @@ export class ApplicationController implements ApplicationServiceV1 {
         }
         return;
       }
-      case "composer.submit": {
-        if (this.pendingNavigation && !this.pendingNavigation.contentReady) throw new Error("Wait for navigation to finish before submitting");
-        const submission = input as ApplicationActionMapV1["composer.submit"]["input"];
-        const sourceTabId = submission.ownerTabId ?? this.state.activeSessionTabID;
-        if (this.submitting.has(sourceTabId)) throw new Error("A composer submission is already pending");
-        const sourceTab = this.state.sessionTabs.find(tab => tab.id === sourceTabId);
-        if (submission.ownerTabId !== undefined && (!sourceTab || sourceTab.kind === "skills")) throw new Error("Draft owner is unavailable");
-        const draft = sourceTab ? cloneSessionTabDraft(sourceTab) : emptyComposerDraft();
-        // Standalone shells can submit before their first tab has been created.
-        if (sourceTabId === this.state.activeSessionTabID) draft.prompt = this.draft;
-        const message = createComposerMessage(draft.prompt, draft.images, draft.files, undefined, draft.selections);
-        if (!message) throw new Error("The composer draft is empty");
-        const text = message.text;
-        let draftRevision = this.draftRevision;
-        const mode = submission.mode ?? "send";
-        let thread = sourceTab?.kind === "thread" ? threadForTab(this.state, sourceTab.threadID) : sourceTab ? undefined : activeThreadForState(this.state);
-        if (sourceTab?.kind === "thread" && !thread) throw new Error("Thread must be loaded before submitting");
-        if (thread?.read_only) throw new Error("The selected thread is read-only");
-        const context = thread ? resolveThreadRuntimeContext(thread, this.state.projects) : sourceTab?.context ?? this.state.activeContext;
-        if (!thread && sourceTabId) {
-          this.pendingDraftAdmissions.add(sourceTabId);
-          this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === sourceTabId && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
-        }
-        const submissionOwners = new Set([sourceTabId]);
-        this.submitting.add(sourceTabId); this.publish();
-        try {
-          const images = message.images.length ? inputImagesFromComposer(await awaitComposerImages(message.images)) : undefined;
-          const files = message.files.length ? inputFilesFromComposer(await awaitComposerFiles(message.files)) : undefined;
-          signal?.throwIfAborted();
-          if (!thread) {
-            const created = await window.wuu.startThread(undefined, context);
-            signal?.throwIfAborted();
-            thread = created.thread;
-            submissionOwners.add(threadSessionTabID(thread.id));
-            this.submitting.add(threadSessionTabID(thread.id));
-            const currentDraft = this.draft;
-            const unchanged = this.draftRevision === draftRevision;
-            if (this.state.activeSessionTabID === sourceTabId) {
-              this.adoptThread(thread, true);
-              // Delivery has not been acknowledged, so keep edits made during admission.
-              this.setDraft(currentDraft);
-              if (unchanged) draftRevision = this.draftRevision;
-            } else {
-              const createdThread = thread;
-              this.updateState(state => ({ ...state, threads: upsertThread(state.threads, createdThread),
-                sessionTabs: context ? bindActiveSessionTabToThread(state.sessionTabs, sourceTabId, createdThread, context) : state.sessionTabs }));
-            }
-          }
-          const clientId = message.id;
-          signal?.throwIfAborted();
-          if (mode === "queue") {
-            await window.wuu.queueTurn(thread.id, text, images, clientId, files, thread.permission_mode, undefined, message.contentParts, context);
-            this.pendingComposer.enqueueComposerMessage(thread.id, { ...message, origin: "queue" });
-          }
-          else if (mode === "steer") {
-            const turn = thread.turns.findLast(turn => turn.status === "in_progress");
-            if (!turn) throw new Error("There is no running turn to steer");
-            await window.wuu.steerTurn(thread.id, turn.id, text, images, clientId, files, undefined, message.contentParts, context);
-            this.pendingComposer.updateThreadPendingComposerMessages(thread.id, pending => ({ ...pending,
-              guides: [...pending.guides.filter(item => item.id !== message.id), { ...message, origin: "steer" }] }));
-          } else {
-            const result = await window.wuu.startTurn(thread.id, text, images, files, thread.permission_mode, undefined, message.contentParts, context, clientId);
-            signal?.throwIfAborted();
-            const threadId = thread.id;
-            this.updateState(state => updateThreadByID(state, threadId, current => upsertTurn(current, result.turn)));
-          }
-          signal?.throwIfAborted();
-          const sentThreadId = thread.id;
-          const owner = this.state.sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === sentThreadId);
-          const activeOwner = owner?.id === this.state.activeSessionTabID;
-          const unchangedOwner = owner && owner.kind !== "skills"
-            && (activeOwner ? this.draft : owner.prompt) === draft.prompt
-            && owner.images.map(image => image.id).join("\0") === draft.images.map(image => image.id).join("\0")
-            && owner.files.map(file => file.id).join("\0") === draft.files.map(file => file.id).join("\0")
-            && JSON.stringify(owner.selections ?? []) === JSON.stringify(draft.selections ?? []);
-          if (unchangedOwner || !owner && this.draftRevision === draftRevision) {
-            if (activeOwner || !owner) { this.draft = ""; this.draftRevision++; }
-            this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab =>
-              tab.kind === "thread" && tab.threadID === sentThreadId ? { ...tab, ...emptyComposerDraft() } : tab) }));
-          }
-        } finally { this.pendingDraftAdmissions.delete(sourceTabId); submissionOwners.forEach(id => this.submitting.delete(id)); this.publish(); }
-        return;
-      }
-      case "composer.stop": {
-        const thread = activeThreadForState(this.state);
-        if (!thread) throw new Error("No thread is selected");
-        await window.wuu.interruptTurn(thread.id); return;
-      }
+      case "composer.submit": return this.applicationSubmission.submit(input as ApplicationActionMapV1["composer.submit"]["input"], signal);
+      case "composer.cancel-submission": return { cancelled: this.applicationSubmission.cancel((input as ApplicationActionMapV1["composer.cancel-submission"]["input"]).operationID) };
+      case "composer.stop": return this.applicationSubmission.stop(this.state.activeSessionTabID);
       case "composer.configure": {
         const { modelId, runtimeId, permissionId } = input as ApplicationActionMapV1["composer.configure"]["input"];
         const thread = activeThreadForState(this.state);
@@ -1026,6 +1026,8 @@ export class ApplicationController implements ApplicationServiceV1 {
     const primaryDraft = this.composerDraftForPane("primary");
     const secondaryDraft = this.composerDraftForPane("secondary");
     const attachmentIds = new Set([...primaryDraft.images, ...primaryDraft.files, ...secondaryDraft.images, ...secondaryDraft.files].map(item => item.id));
+    const conversationActions = this.applicationConversationActions.getSnapshot();
+    if (conversationActions.editing) [...conversationActions.editing.draft.imageIds, ...conversationActions.editing.draft.fileIds].forEach(id => attachmentIds.add(id));
     const projectPending = (message: QueuedComposerMessage) => {
       [...message.images, ...message.files].forEach(attachment => attachmentIds.add(attachment.id));
       return Object.freeze({ id: message.id, text: message.text, preview: queuedMessagePreview(message), fullPreview: queuedMessageFullPreview(message),
@@ -1056,10 +1058,14 @@ export class ApplicationController implements ApplicationServiceV1 {
         ...state.projects.map(project => Object.freeze({ id: project.id, kind: "project" as const, label: project.name, active: state.activeProjectId === project.id })),
         ...state.threads.filter(thread => !thread.archived && !thread.ephemeral).map(item => Object.freeze({ id: item.id, kind: "thread" as const, label: item.title || item.preview || item.id, active: item.id === thread?.id, pinned: item.pinned, running: isThreadRunning(item) })),
       ]) }),
-      navigationWorkspace: this.applicationNavigation.getSnapshot(),
+      navigationWorkspace: Object.freeze({ ...this.applicationNavigation.getSnapshot(),
+        pendingConversations: Object.freeze(this.applicationNavigation.getSnapshot().pendingConversations.map(pending => {
+          const creation = this.applicationSubmission.getSnapshot().pendingCreations.find(creation => creation.ownerTabId === pending.id);
+          return Object.freeze({ ...pending, title: creation?.turn.items.find(item => item.kind === "user-message")?.text ?? pending.title });
+        })) }),
       tabs: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, navigationRevision: this.navigationRequest,
         primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id,
-        canSubmit: !this.submitting.has(state.activeSessionTabID) && (!this.pendingNavigation || this.pendingNavigation.contentReady === true) && !thread?.read_only,
+        canSubmit: !Boolean(this.submissionOwner?.isOwnerPending(state.activeSessionTabID)) && (!this.pendingNavigation || this.pendingNavigation.contentReady === true) && !thread?.read_only,
         pending: this.pendingNavigation,
         items: Object.freeze(state.sessionTabs.map(tab => Object.freeze({ id: tab.id, kind: tab.kind,
           title: sessionTabLabel(tab, state), workspaceId: tab.context.kind === "project" ? tab.context.project_id : undefined,
@@ -1067,6 +1073,7 @@ export class ApplicationController implements ApplicationServiceV1 {
           project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      conversationActions,
       conversationDetails: this.conversationDetails.getSnapshot(),
       conversationWorkspace: Object.freeze({ primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
         threads: Object.freeze([...new Map([...state.threads, state.secondaryThread, state.thread].filter((item): item is Thread => Boolean(item))
@@ -1074,7 +1081,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),
-        runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: this.submitting.has(state.activeSessionTabID) ? "Submitting" : undefined }),
+        runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: Boolean(this.submissionOwner?.isOwnerPending(state.activeSessionTabID)) ? "Submitting" : undefined }),
+      submission: this.applicationSubmission.getSnapshot(),
       composerRuntime: this.applicationComposerRuntime.getSnapshot(),
       composerPending,
       drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),

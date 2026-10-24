@@ -1,3 +1,5 @@
+import type { ApplicationConversationActionMapV1, ApplicationConversationActionsViewV1 } from "./ui-conversation-actions.js";
+import type { ApplicationSubmissionActionMapV1, ApplicationSubmissionSnapshotV1 } from "./ui-submission.js";
 import type { ApplicationComposerRuntimeActionMapV1, ApplicationComposerRuntimeViewV1 } from "./ui-composer-runtime.js";
 import type { ApplicationCatalogV1, CatalogCallOptionsV1, CatalogPackageUpdateV1 } from "./ui-catalog.js";
 import type { ApplicationPreviewContentV1, PreviewFileTargetV1, PreviewContentOptionsV1 } from "./ui-preview-content.js";
@@ -54,6 +56,8 @@ export interface ApplicationSnapshotV1 {
     readonly error?: string;
   };
   readonly composer: ComposerSnapshotV1;
+  readonly conversationActions: ApplicationConversationActionsViewV1;
+  readonly submission: ApplicationSubmissionSnapshotV1;
   readonly composerRuntime: ApplicationComposerRuntimeViewV1;
   readonly drafts: ApplicationDraftsSnapshotV1;
   readonly composerPending: readonly ApplicationPendingComposerThreadV1[];
@@ -92,7 +96,7 @@ export interface ApplicationAppearanceV1 {
 }
 
 /** Commands are scoped to the generation that captured this application handle. */
-export interface ApplicationActionMapV1 extends ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
+export interface ApplicationActionMapV1 extends ApplicationConversationActionMapV1, ApplicationSubmissionActionMapV1, ApplicationComposerRuntimeActionMapV1, ApplicationConversationDetailsActionMapV1, ApplicationNavigationActionMapV1, ApplicationComposerActionMapV1, ApplicationSettingsActionMapV1, ApplicationPreviewActionMapV1 {
   "workspace.retarget-draft": { input: { readonly workspaceId?: string }; result: void };
   "workspace.start-draft": { input: { readonly workspaceId?: string }; result: { readonly activated: boolean; readonly tabId?: string } };
   "workspace.create": { input: { readonly kind: "blank" | "folder" }; result: void };
@@ -124,7 +128,6 @@ export interface ApplicationActionMapV1 extends ApplicationComposerRuntimeAction
   "thread.rename": { input: { readonly threadId: string; readonly title: string }; result: void };
   "thread.archive": { input: { readonly threadId: string; readonly archived: boolean; readonly force?: boolean }; result: void };
   "composer.set-draft": { input: { readonly text: string; readonly ownerTabId?: string }; result: void };
-  "composer.submit": { input: { readonly mode?: ComposerSubmissionModeV1; readonly ownerTabId?: string }; result: void };
   "composer.stop": { input: Record<string, never>; result: void };
   "composer.configure": { input: { readonly modelId?: string; readonly runtimeId?: string; readonly permissionId?: string }; result: void };
   "settings.open": { input: { readonly pageId?: string }; result: void };

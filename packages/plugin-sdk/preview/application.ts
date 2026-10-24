@@ -25,6 +25,8 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
         items: [{ id: 'search-1', kind: 'tool-activity', status: 'completed', toolName: 'Search sources', displayLabel: 'Reviewed 3 sources' }] },
     }] },
     composer: { contractVersion: 1, threadId: 'research-1', draftText: '', running: false, availableSubmissionModes: ['send'], model: { id: 'preview', label: 'Preview fixture' }, permission: { id: 'standard', label: 'Standard' } },
+    conversationActions: { questions: [], pendingQuestionIds: [], compactingThreadIds: [], handoffThreadIds: [] },
+    submission: { operations: [], pendingCreations: [], failedDraftTabIds: [], stopRequests: [] },
     composerRuntime: { owners: [] },
     composerPending: [],
     drafts: { activeTabId: 'thread:research-1', activePane: 'primary', split: false,
@@ -184,7 +186,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
             { contractVersion: 1 as const, id: `${id}-answer`, kind: 'assistant-message' as const, text: 'Preview response: your message reached the public action adapter. No model request was sent.' },
           ] }];
           histories.set(state.conversation.threadId, turns);
-          update({ conversation: { ...state.conversation, turns }, composer: { ...state.composer, draftText: '', running: false } }); break;
+          update({ conversation: { ...state.conversation, turns }, composer: { ...state.composer, draftText: '', running: false } }); return { accepted: true, threadId: state.conversation.threadId } as ApplicationActionMapV1[Action]['result'];
         }
         case 'composer.stop': update({ composer: { ...state.composer, running: false } }); break;
         case 'composer.configure': throw new Error('Model, runtime and permission configuration require a product application adapter.');

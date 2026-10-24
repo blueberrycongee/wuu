@@ -280,7 +280,7 @@ describe("application shell assembly", () => {
     await old.application.invoke("composer.set-draft", { text: "hello" });
     await host.activateGeneration({ pluginId: "shell", generation: "v1", register: () => {} });
     expect(listeners.size).toBe(0);
-    await expect(old.application.invoke("composer.submit", {})).rejects.toThrow(/no longer active/);
+    await expect(old.application.invoke("composer.submit", { ownerTabId: "draft:test" })).rejects.toThrow(/no longer active/);
     expect(service.invoke).toHaveBeenCalledTimes(1);
   });
 
