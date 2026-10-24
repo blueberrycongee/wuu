@@ -42,7 +42,7 @@ func TestProjectPeerAdmissionRechecksControlsAfterPromptHook(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				calls.next(t, brief).response <- providersResponse("Member ready.")
+				calls.next(t, result.(projectSessionView).SessionID, brief).response <- providersResponse("Member ready.")
 				member := waitForThread(t, srv, result.(projectSessionView).SessionID, func(th Thread) bool {
 					return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != ""
 				})
@@ -115,7 +115,7 @@ func TestProjectPeerAdmissionRechecksControlsAfterPromptHook(t *testing.T) {
 				t.Fatal(err)
 			}
 			srv.drainSessionInbox(target.ID)
-			calls.next(t, request.Prompt).response <- providersResponse("Peer instruction handled.")
+			calls.next(t, target.ID, request.Prompt).response <- providersResponse("Peer instruction handled.")
 			waitForThread(t, srv, target.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 			if ids := deliveredClientIDs(t, rt, target.ID, clientID); len(ids) != 1 {
 				t.Fatalf("replayed unchanged input was duplicated: %v", ids)

@@ -48,7 +48,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				ThreadID: worker.ID, Prompt: "Return schema-capacity JSON", OutputSchema: json.RawMessage(`{"type":"object","required":["ok"]}`),
 				Request: execution.Request{Mode: execution.ModeStart},
 			}, &started)
-			initial := calls.next(t, "schema-capacity JSON")
+			initial := calls.next(t, worker.ID, "schema-capacity JSON")
 			lease, acquired, err := rt.Sessions.TryAcquireThreadExecutionLease(rt.SessionDir, holder.ID)
 			if err != nil || !acquired {
 				t.Fatalf("hold capacity: acquired=%v error=%v", acquired, err)
@@ -126,7 +126,7 @@ func TestProjectCapacityRetainsSchemaContinuation(t *testing.T) {
 				calls.assertIdle(t)
 				return
 			}
-			retry := calls.next(t, "schema-capacity JSON")
+			retry := calls.next(t, worker.ID, "schema-capacity JSON")
 			retry.response <- providersResponse(`{"ok":true}`)
 			deadline := time.Now().Add(gatedProviderTimeout)
 			for time.Now().Before(deadline) {
@@ -213,7 +213,7 @@ func TestProjectCapacitySchemaContinuationHonorsRemoteStop(t *testing.T) {
 				ThreadID: worker.ID, Prompt: "Return stopped-schema JSON", OutputSchema: json.RawMessage(`{"type":"object","required":["ok"]}`),
 				Request: execution.Request{Mode: execution.ModeStart},
 			}, &started)
-			initial := calls.next(t, "stopped-schema JSON")
+			initial := calls.next(t, worker.ID, "stopped-schema JSON")
 			if adoptWhileRunning {
 				if _, err := rt.Sessions.SetProjectMembership(worker.ID, projectSessionSource, lead.ID, ""); err != nil {
 					t.Fatal(err)

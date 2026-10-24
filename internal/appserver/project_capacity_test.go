@@ -99,7 +99,7 @@ func TestProjectCapacityRemoteMutationReleaseProgress(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	calls.next(t, "capacity-dispatch").response <- providersResponse("done")
+	calls.next(t, b.ID, "capacity-dispatch").response <- providersResponse("done")
 	waitForThread(t, srv, b.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 	if ids := deliveredClientIDs(t, rt, b.ID, "capacity-dispatch"); len(ids) != 1 {
 		t.Fatalf("deliveries: %v", ids)
@@ -114,7 +114,7 @@ func TestProjectCapacityManualAdmissionAndCoordination(t *testing.T) {
 	b := capacityWorker(t, srv, lead.ID, "capacity-b", "worker")
 	side := capacityWorker(t, srv, lead.ID, "capacity-side", "side")
 	queueCapacityInput(t, srv, a.ID, "occupy-capacity")
-	held := calls.next(t, "occupy-capacity")
+	held := calls.next(t, a.ID, "occupy-capacity")
 	_, _, err := srv.startThreadUserTurn(context.Background(), b, providers.ChatMessage{Role: "user", Content: "manual blocked", ClientID: "manual-blocked"}, turnRuntimeSnapshot{}, true, turnReadOnlyFail)
 	if !errors.Is(err, session.ErrProjectWorkerCapacity) {
 		t.Fatalf("manual err=%v", err)
@@ -123,7 +123,7 @@ func TestProjectCapacityManualAdmissionAndCoordination(t *testing.T) {
 		t.Fatalf("manual input appended: %v", ids)
 	}
 	queueCapacityInput(t, srv, side.ID, "side-coordination")
-	calls.next(t, "side-coordination").response <- providersResponse("side done")
+	calls.next(t, side.ID, "side-coordination").response <- providersResponse("side done")
 	held.response <- providersResponse("worker done")
 	waitForThread(t, srv, a.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 }
@@ -238,7 +238,7 @@ func TestProjectCapacityQueuedTurnUsesProjectRetry(t *testing.T) {
 	if err := lease.Release(); err != nil {
 		t.Fatal(err)
 	}
-	calls.next(t, "queued-capacity").response <- providersResponse("done")
+	calls.next(t, b.ID, "queued-capacity").response <- providersResponse("done")
 	waitForThread(t, srv, b.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 	if ids := deliveredClientIDs(t, rt, b.ID, "queued-capacity"); len(ids) != 1 {
 		t.Fatalf("deliveries=%v", ids)
@@ -298,7 +298,7 @@ func TestProjectCapacityPrelaunchHookRollback(t *testing.T) {
 			t.Fatal("rejected hook appended user history")
 		}
 	}
-	calls.next(t, "after-hook-rollback").response <- providersResponse("done")
+	calls.next(t, b.ID, "after-hook-rollback").response <- providersResponse("done")
 	waitForThread(t, srv, b.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 }
 
@@ -310,9 +310,9 @@ func TestProjectCapacityReductionPreservesRunningWorkers(t *testing.T) {
 	b := capacityWorker(t, srv, lead.ID, "reduce-b", "worker")
 	c := capacityWorker(t, srv, lead.ID, "reduce-c", "worker")
 	queueCapacityInput(t, srv, a.ID, "first-running")
-	first := calls.next(t, "first-running")
+	first := calls.next(t, a.ID, "first-running")
 	queueCapacityInput(t, srv, b.ID, "second-running")
-	second := calls.next(t, "second-running")
+	second := calls.next(t, b.ID, "second-running")
 	setProjectWorkerLimit(t, srv, 1)
 	queueCapacityInput(t, srv, c.ID, "after-reduction")
 	if !threadIsRunning(a) || !threadIsRunning(b) {
@@ -326,7 +326,7 @@ func TestProjectCapacityReductionPreservesRunningWorkers(t *testing.T) {
 		t.Fatalf("decreased bound not applied: %v %v", ok, err)
 	}
 	second.response <- providersResponse("second done")
-	calls.next(t, "after-reduction").response <- providersResponse("third done")
+	calls.next(t, c.ID, "after-reduction").response <- providersResponse("third done")
 	waitForThread(t, srv, c.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 }
 
@@ -425,9 +425,9 @@ func TestProjectCapacityAdoptsAlreadyRunningConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	queueCapacityInput(t, srv, a.ID, "already-managed")
-	first := calls.next(t, "already-managed")
+	first := calls.next(t, a.ID, "already-managed")
 	queueCapacityInput(t, srv, b.ID, "ordinary-running")
-	ordinary := calls.next(t, "ordinary-running")
+	ordinary := calls.next(t, b.ID, "ordinary-running")
 	if _, err := rt.Sessions.SetProjectMembership(b.ID, projectSessionSource, lead.ID, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -442,6 +442,6 @@ func TestProjectCapacityAdoptsAlreadyRunningConversation(t *testing.T) {
 		t.Fatalf("adopted execution not counted: %v %v", ok, err)
 	}
 	ordinary.response <- providersResponse("ordinary done")
-	calls.next(t, "after-running-adoption").response <- providersResponse("last done")
+	calls.next(t, c.ID, "after-running-adoption").response <- providersResponse("last done")
 	waitForThread(t, srv, c.ID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 }

@@ -29,20 +29,20 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 		return v.(projectWorkView)
 	}
 	w := act(root.ID, "new-work", tools.ProjectWorkRequest{Operation: "create", Title: "Pagination", Brief: "Keep the API compatible", Acceptance: "Existing callers work", Authority: "Local edits and tests only"})
-	leadCall := calls.next(t, "Keep the API compatible")
+	leadCall := calls.next(t, w.LeadID, "Keep the API compatible")
 	if _, err := srv.projectSessionHandler(root.ID)(context.Background(), "no-wait", tools.ProjectSessionRequest{Action: "wait", SessionID: w.LeadID}); err == nil {
 		t.Fatal("coordinator can block")
 	}
 	// Root remains independently usable while a technical model call is held.
 	var turn TurnStartResult
 	client.rpc(t, MethodTurnStart, TurnStartParams{ThreadID: root.ID, Prompt: "What is running?"}, &turn)
-	rootCall := calls.next(t, "What is running?")
+	rootCall := calls.next(t, root.ID, "What is running?")
 	if requestToolNames(rootCall.request)["bash"] || requestToolNames(rootCall.request)["write_file"] {
 		t.Fatal("coordinator exposes implementation tools")
 	}
 	rootCall.response <- providersResponse("Pagination is under investigation.")
 	w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: 1, Brief: "Implement compatible pagination; preserve existing interfaces"})
-	executorCall := calls.next(t, "Implement compatible pagination")
+	executorCall := calls.next(t, w.ExecutorID, "Implement compatible pagination")
 	executorID := w.ExecutorID
 	lead, _, _ := rt.Sessions.Find(w.LeadID)
 	executor, _, _ := rt.Sessions.Find(executorID)
@@ -56,7 +56,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 		t.Fatal("executor accepted itself")
 	}
 	executorCall.response <- providersResponse("Ready for technical review.")
-	reviewCall := calls.next(t, "Ready for technical review")
+	reviewCall := calls.next(t, w.LeadID, "Ready for technical review")
 	if pending, err := rt.Sessions.PendingInbox(root.ID); err != nil || len(pending) != 0 {
 		t.Fatalf("executor leaked to coordinator: %+v %v", pending, err)
 	}
@@ -65,7 +65,7 @@ func TestProjectWorkDeliveryLifecycle(t *testing.T) {
 		t.Fatalf("acceptance = %+v", w)
 	}
 	reviewCall.response <- providersResponse("Technical review complete.")
-	resultCall := calls.next(t, "Compatibility inspected")
+	resultCall := calls.next(t, root.ID, "Compatibility inspected")
 	resultCall.response <- providersResponse("Reviewed changes are ready for local delivery.")
 	w = act(root.ID, "delivered", tools.ProjectWorkRequest{Operation: "deliver", WorkID: w.ID, Revision: 1, Delivery: "Local isolated worktree; no commit or push"})
 	if w.Phase != "delivered" {
@@ -98,7 +98,7 @@ func TestProjectWorkStopsFromMemberAndKeepsWriteLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := value.(projectWorkView)
-	held := calls.next(t, "Review stop behavior")
+	held := calls.next(t, w.LeadID, "Review stop behavior")
 	member, _, _ := rt.Sessions.Find(w.LeadID)
 	release, err := srv.acquireProjectWorkTool(member, providers.ToolCall{Name: "write_file"}, rt.Toolkit)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestProjectWorkDirectUserCorrectionInvalidatesAcceptanceOnce(t *testing.T) 
 		t.Fatal(err)
 	}
 	w := value.(projectWorkView)
-	calls.next(t, "Preserve API")
+	calls.next(t, w.LeadID, "Preserve API")
 	// Generated evidence, including older messages without Origin, cannot
 	// change requirements or revoke the assignment that produced it.
 	for _, message := range []providers.ChatMessage{
@@ -223,13 +223,13 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 			}
 			w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Verify the artifact", Acceptance: "Background check passes", Authority: "Local only"})
 			memberID, phase := w.LeadID, "planning"
-			call := calls.next(t, "Verify the artifact")
+			call := calls.next(t, memberID, "Verify the artifact")
 			if role == "executor" {
 				w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Run the background check"})
 				call.response <- providersResponse("Dispatched")
 				waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 				memberID, phase = w.ExecutorID, "executing"
-				call = calls.next(t, "Run the background check")
+				call = calls.next(t, memberID, "Run the background check")
 			}
 			th := srv.thread(memberID)
 			th.mu.Lock()
@@ -255,7 +255,7 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 			if _, err := manager.WriteStdin(job.ID, "finish\n"); err != nil {
 				t.Fatal(err)
 			}
-			continued := calls.next(t, "verification-complete")
+			continued := calls.next(t, memberID, "verification-complete")
 			current, err := rt.Sessions.ReadProjectWork(w.ID)
 			if err != nil || current.Version != waiting.Version || current.Brief != w.Brief {
 				t.Fatalf("completion rewrote the contract: %+v %v", current, err)
@@ -279,14 +279,14 @@ func TestProjectWorkContinuesAfterBackgroundProcess(t *testing.T) {
 					t.Fatalf("submission attributed to %s, want %s", w.SubmissionTurnID, continuedTurn)
 				}
 				continued.response <- providersResponse("Background verification submitted")
-				continued = calls.next(t, "Background verification submitted")
+				continued = calls.next(t, w.LeadID, "Background verification submitted")
 			}
 			w = act(w.LeadID, "review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Artifact accepted", Evidence: "Checked the process result", CodeRef: "artifact:v1"})
 			if role == "technical_lead" && w.ReviewTurnID != continuedTurn {
 				t.Fatalf("review attributed to %s, want %s", w.ReviewTurnID, continuedTurn)
 			}
 			continued.response <- providersResponse("Accepted")
-			calls.next(t, "Artifact accepted").response <- providersResponse("Ready for delivery")
+			calls.next(t, root.ID, "Artifact accepted").response <- providersResponse("Ready for delivery")
 		})
 	}
 }
@@ -303,14 +303,14 @@ func TestProjectWorkDelegatesAuthorizedDelivery(t *testing.T) {
 		return v.(projectWorkView)
 	}
 	w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Prepare a local artifact", Acceptance: "Artifact is readable", Authority: "Write the artifact in this worktree"})
-	lead := calls.next(t, "Prepare a local artifact")
+	lead := calls.next(t, w.LeadID, "Prepare a local artifact")
 	w = act(w.LeadID, "review", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: 1, Summary: "Artifact verified", Evidence: "Read the generated artifact", CodeRef: "artifact:sha256-example"})
 	lead.response <- providersResponse("Reviewed.")
-	rootReport := calls.next(t, "Artifact verified")
+	rootReport := calls.next(t, root.ID, "Artifact verified")
 	rootReport.response <- providersResponse("Delivering the requested artifact.")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(root.ID, "deliver-request", tools.ProjectWorkRequest{Operation: "dispatch_delivery", WorkID: w.ID, Revision: 1, Brief: "Place the verified artifact at the requested local destination; no external publication"})
-	delivery := calls.next(t, "Place the verified artifact")
+	delivery := calls.next(t, w.LeadID, "Place the verified artifact")
 	if w.Phase != "delivering" || w.Review == "" {
 		t.Fatalf("delivery lost its acceptance: %+v", w)
 	}
@@ -354,7 +354,7 @@ func TestProjectWorkConcurrentRecoveryKeepsOneDispatch(t *testing.T) {
 	}
 	srv.projectTestKickInboxDrain(root.ID)
 
-	calls.next(t, "Replay-safe work")
+	calls.next(t, w.LeadID, "Replay-safe work")
 	members, err := srv.projectSessions(root.ID)
 	if err != nil || len(members) != 1 || members[0].ID != w.LeadID {
 		t.Fatalf("duplicate/replaced work member: %+v %v", members, err)
@@ -414,14 +414,14 @@ func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
 		return value.(projectWorkView)
 	}
 	w := act(root.ID, "create", tools.ProjectWorkRequest{Operation: "create", Brief: "Verify the change", Acceptance: "Checks pass", Authority: "Local only"})
-	lead := calls.next(t, "Verify the change")
+	lead := calls.next(t, w.LeadID, "Verify the change")
 	w = act(w.LeadID, "execute", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Implement the change"})
-	executor := calls.next(t, "Implement the change")
+	executor := calls.next(t, w.ExecutorID, "Implement the change")
 	lead.response <- providersResponse("Dispatched")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(w.ExecutorID, "submit", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Change implemented", Evidence: "test.log", CodeRef: "artifact:v1"})
 	executor.failure <- errors.New("terminal provider failure after submission")
-	review := calls.next(t, "requires technical review")
+	review := calls.next(t, w.LeadID, "requires technical review")
 	turns, err := srv.loadDurableProjectTurns(w.ExecutorID)
 	if err != nil || turns[len(turns)-1].Status != TurnStatusFailed {
 		t.Fatalf("missing failed terminal evidence: %+v %v", turns, err)
@@ -440,16 +440,16 @@ func TestProjectWorkRejectsFailedSubmissionAfterRecovery(t *testing.T) {
 		}
 	}
 	w = act(w.LeadID, "retry", tools.ProjectWorkRequest{Operation: "execute", WorkID: w.ID, Revision: w.Revision, Brief: "Retry verification"})
-	executor = calls.next(t, "Retry verification")
+	executor = calls.next(t, w.ExecutorID, "Retry verification")
 	review.response <- providersResponse("Retry dispatched")
 	waitForThread(t, srv, w.LeadID, func(th Thread) bool { return th.Status == ThreadStatusIdle })
 	w = act(w.ExecutorID, "submit-retry", tools.ProjectWorkRequest{Operation: "submit", WorkID: w.ID, Revision: w.Revision, Summary: "Retry passed", Evidence: "retry.log", CodeRef: "artifact:v2"})
 	executor.response <- providersResponse("Verified retry complete")
-	review = calls.next(t, "Verified retry complete")
+	review = calls.next(t, w.LeadID, "Verified retry complete")
 	w = act(w.LeadID, "accept-retry", tools.ProjectWorkRequest{Operation: "review", WorkID: w.ID, Revision: w.Revision, Summary: "Retry accepted", Evidence: "Reviewed retry.log", CodeRef: "artifact:v2"})
 	if w.Phase != "accepted" {
 		t.Fatalf("successful retry not accepted: %+v", w)
 	}
 	review.response <- providersResponse("Accepted")
-	calls.next(t, "Retry accepted").response <- providersResponse("Ready for delivery")
+	calls.next(t, root.ID, "Retry accepted").response <- providersResponse("Ready for delivery")
 }

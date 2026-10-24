@@ -55,7 +55,7 @@ func TestProjectCapacityRemoteReleaseResumesInbox(t *testing.T) {
 	if err := leases[0].Release(); err != nil {
 		t.Fatal(err)
 	}
-	calls.next(t, request.Prompt).response <- providersResponse("Independent deferred done")
+	calls.next(t, worker.SessionID, request.Prompt).response <- providersResponse("Independent deferred done")
 	waitForThread(t, srv, worker.SessionID, func(th Thread) bool { return th.Status == ThreadStatusIdle && th.LatestCompletedTurnID != "" })
 	if ids := deliveredClientIDs(t, rt, worker.SessionID, "project:"); len(ids) != 1 {
 		t.Fatalf("deferred delivery count: %v", ids)
@@ -149,10 +149,12 @@ func TestProjectCapacityCrossServerLastSlot(t *testing.T) {
 	}
 	close(gate)
 	successes := 0
+	admittedID := ""
 	for range 2 {
 		r := <-results
 		if r.failure == nil {
 			successes++
+			admittedID = ids[r.index]
 		} else {
 			if !strings.Contains(r.failure.Message, session.ErrProjectWorkerCapacity.Error()) {
 				t.Fatalf("unrelated cross-server rejection: %+v", r.failure)
@@ -171,7 +173,7 @@ func TestProjectCapacityCrossServerLastSlot(t *testing.T) {
 	if successes != 1 {
 		t.Fatalf("last slot admitted %d cross-server contenders", successes)
 	}
-	calls.next(t, "Independent atomic last slot").response <- providersResponse("Independent atomic done")
+	calls.next(t, admittedID, "Independent atomic last slot").response <- providersResponse("Independent atomic done")
 	_ = owner
 }
 

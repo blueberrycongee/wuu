@@ -63,7 +63,7 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 						return result
 					}
 					started := start("run-adoption-original")
-					first := calls.next(t, "run-adoption-original")
+					first := calls.next(t, id, "run-adoption-original")
 					var release func()
 					if duringHook {
 						entered, releasedHook := make(chan struct{}, 1), make(chan struct{})
@@ -106,8 +106,8 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 						first.response <- providersResponse(`{"wrong":true}`)
 					}
 					if !stopped {
-						calls.next(t, "run-adoption-original").response <- providersResponse(`{"wrong_again":true}`)
-						calls.next(t, "run-adoption-original").response <- providersResponse(`{"ok":true}`)
+						calls.next(t, id, "run-adoption-original").response <- providersResponse(`{"wrong_again":true}`)
+						calls.next(t, id, "run-adoption-original").response <- providersResponse(`{"ok":true}`)
 					}
 					waitRun := func(runID string, denyProvider bool) execution.Run {
 						deadline := time.Now().Add(gatedProviderTimeout)
@@ -144,8 +144,8 @@ func TestRunSchemaRetryAdoptionFence(t *testing.T) {
 					assertSchemaUserTurns(t, srv, id, turns)
 					if stopped {
 						fresh := start("run-adoption-fresh")
-						calls.next(t, "run-adoption-fresh").response <- providersResponse(`{"wrong":true}`)
-						calls.next(t, "run-adoption-fresh").response <- providersResponse(`{"ok":true}`)
+						calls.next(t, id, "run-adoption-fresh").response <- providersResponse(`{"wrong":true}`)
+						calls.next(t, id, "run-adoption-fresh").response <- providersResponse(`{"ok":true}`)
 						run = waitRun(fresh.Run.ID, false)
 						if run.Status != execution.StatusCompleted || len(run.Turns) != 2 {
 							t.Fatalf("fresh Run after stop: %+v", run)
