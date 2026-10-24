@@ -21,7 +21,7 @@ export function ComposerFileSelectionCard({ source, comment, onChangeComment, on
   const QuoteCard = source.pdf ? ComposerPdfQuoteCard : ComposerQuoteCard;
   async function openSource(): Promise<boolean> {
     if (source.pdf?.artifact_uri) {
-      const opened = openPdf?.(source) ?? false;
+      const opened = await openPdf?.(source) ?? false;
       setNotice(opened ? null : t("selectionChip.pdfOriginalConversation"));
       return opened;
     }
