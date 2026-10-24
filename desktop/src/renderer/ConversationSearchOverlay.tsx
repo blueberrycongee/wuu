@@ -1,12 +1,12 @@
 import { Search, X } from "./WuuIcons";
 import { useEffect, useRef, type KeyboardEvent, type RefObject } from "react";
-import type { DesktopProject, Thread } from "../shared/protocol";
+import type { DesktopProject } from "../shared/protocol";
 import { conversationSearchPattern, conversationSearchVisibleSnippet } from "./ConversationSearchDisplay";
 import { primaryShortcutLabel } from "./platform";
 import type { ConversationSearchState } from "./ConversationSearchState";
 import { threadBelongsToWorkspace } from "./AppState";
 import type { ApplicationSearchResultV1 } from "../../../packages/plugin-sdk/src/ui-search";
-import { threadDisplayTitle } from "./ThreadTitles";
+import { threadDisplayTitle, type ThreadTitleSource } from "./ThreadTitles";
 import { formatCurrentDate, useI18n } from "./i18n";
 
 function SearchMatchText({ text, query }: { text: string; query: string }): JSX.Element {
@@ -31,8 +31,8 @@ export function ConversationSearchOverlay({
 }: {
   state: ConversationSearchState;
   results: readonly ApplicationSearchResultV1[];
-  threads: Thread[];
-  projects: DesktopProject[];
+  threads: ThreadTitleSource[];
+  projects: readonly DesktopProject[];
   activeThreadID?: string;
   pendingThreadID?: string;
   dialogRef: RefObject<HTMLDivElement | null>;
