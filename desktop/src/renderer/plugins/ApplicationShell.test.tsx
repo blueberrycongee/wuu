@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PluginDesktopActivationParams } from "../../shared/protocol";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
+import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationShellOutlet } from "./ApplicationShell";
 
@@ -14,6 +15,11 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
     contractVersion: 1,
     settingsControls: createApplicationSettingsControls(),
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
+    previewContent: new ApplicationPreviewContent({ platform: "linux",
+      listWorkspaceDirectory: async () => { throw new Error("Not configured"); },
+      readWorkspaceFile: async () => { throw new Error("Not configured"); },
+      revealWorkspaceItem: async () => {}, showWorkspaceItemMenu: async () => ({ action: "none" }),
+    }),
     getSnapshot: vi.fn(),
     subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     invoke: vi.fn(async () => undefined) as ApplicationServiceV1["invoke"],
@@ -222,6 +228,27 @@ describe("application shell assembly", () => {
     notify("light"); expect(listener).toHaveBeenCalledTimes(1);
     unsubscribe(); expect(stop).toHaveBeenCalledTimes(1);
     finish();
+  });
+
+  it("rejects a removed preview generation promptly and fences its captured file methods", async () => {
+    const { host, service } = fixture();
+    let finish!: (value: Awaited<ReturnType<typeof service.previewContent.readFile>>) => void;
+    let sourceSignal!: AbortSignal;
+    const read = vi.spyOn(service.previewContent, "readFile").mockImplementation((_target, options) => {
+      sourceSignal = options!.signal!;
+      return new Promise(resolve => { finish = resolve; });
+    });
+    let api!: PluginGenerationApi;
+    await host.activateGeneration({ pluginId: "preview", generation: "v1", register: value => { api = value; } });
+    const captured = api.application.previewContent.readFile;
+    const pending = captured({ root: "/workspace", path: "file.txt" });
+    const rejected = expect(pending).rejects.toThrow();
+    await host.activateGeneration({ pluginId: "preview", generation: "v2", register: () => {} });
+    await rejected;
+    expect(sourceSignal.aborted).toBe(true);
+    await expect(captured({ root: "/workspace", path: "other.txt" })).rejects.toThrow();
+    expect(read).toHaveBeenCalledTimes(1);
+    finish({ root: "/workspace", path: "file.txt", absolute_path: "/workspace/file.txt", size_bytes: 1, mtime_ms: 0, sha256: "digest", binary: false, truncated: false });
   });
 
   it("disposes subscriptions and fences old application handles even after same-code reactivation", async () => {

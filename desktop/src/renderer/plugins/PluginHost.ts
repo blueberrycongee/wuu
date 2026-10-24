@@ -1,4 +1,4 @@
-import { scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
+import { scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1,
@@ -853,6 +853,7 @@ export class PluginHost {
     };
     return Object.freeze({
       contractVersion: 1 as const,
+      previewContent: scopeApplicationPreviewContent(() => service().previewContent, state.lifetime.signal, () => this.assertActive(state)),
       conversationText: scopeApplicationConversationText(() => service().conversationText, state.lifetime.signal, () => this.assertActive(state)),
       settingsControls: scopeApplicationSettingsControls(() => service().settingsControls, state.lifetime.signal, () => this.assertActive(state)),
       getSnapshot: () => service().getSnapshot(),

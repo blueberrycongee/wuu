@@ -28,6 +28,7 @@ import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
+import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { ApplicationPreview, isApplicationPreviewAction } from "./ApplicationPreview";
 import { ApplicationSettings, isApplicationSettingsAction } from "./ApplicationSettings";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
@@ -43,6 +44,8 @@ export type ShellInitializeResult = InitializeResult & { application_shell?: App
 /** Shared domain state survives shell replacement; UI providers own only presentation. */
 export class ApplicationController implements ApplicationServiceV1 {
   readonly contractVersion = 1 as const;
+  private previewContentOwner?: ApplicationPreviewContent;
+  get previewContent(): ApplicationPreviewContent { return this.previewContentOwner ??= new ApplicationPreviewContent(window.wuu); }
   readonly settingsControls = createApplicationSettingsControls();
   readonly conversationText: ApplicationConversationTextV1 = Object.freeze({
     getSnapshot: (target: ApplicationConversationTextTargetV1) => {
@@ -208,6 +211,8 @@ export class ApplicationController implements ApplicationServiceV1 {
       stopped = true;
       if (--this.consumers !== 0) return;
       this.lifetime?.abort();
+      this.previewContentOwner?.dispose();
+      this.previewContentOwner = undefined;
       this.flushBackgroundEvents();
       this.load = undefined;
       this.subscriptions.splice(0).reverse().forEach(stop => stop());

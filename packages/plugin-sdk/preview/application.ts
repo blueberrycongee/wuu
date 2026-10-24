@@ -42,6 +42,8 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
   const unavailable = (): never => { throw new Error("Settings controls are unavailable in the synthetic preview"); };
   const service: ApplicationServiceV1 = {
     contractVersion: 1,
+    previewContent: { capabilities: Object.freeze({ nativeItemMenu: false, revealItem: false, exportFile: false }),
+      listDirectory: unavailable, readFile: unavailable, revealItem: unavailable, showItemMenu: unavailable, exportFile: unavailable },
     conversationText: { getSnapshot: () => undefined, subscribe: () => () => {} },
     settingsControls: {
       connectionDisplay: { subscribe: () => () => {}, getSnapshot: () => "", get: () => ({ modelOrder: [], hiddenModels: [] }),
