@@ -20,6 +20,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
         items: [{ id: 'search-1', kind: 'tool-activity', status: 'completed', toolName: 'Search sources', displayLabel: 'Reviewed 3 sources' }] },
     }] },
     composer: { contractVersion: 1, threadId: 'research-1', draftText: '', running: false, availableSubmissionModes: ['send'], model: { id: 'preview', label: 'Preview fixture' }, permission: { id: 'standard', label: 'Standard' } },
+    composerPending: [],
     drafts: { activeTabId: 'thread:research-1', activePane: 'primary', split: false,
       primary: { text: '', imageIds: [], fileIds: [], selections: [] }, secondary: { text: '', imageIds: [], fileIds: [], selections: [] }, attachments: [] },
     settings: { contractVersion: 1, open: false, engineInventoryError: '', runningProviderNames: [], archivedThreads: [], runtimeSwitchPending: false, availablePages: [{ id: 'appearance', label: 'Appearance' }],

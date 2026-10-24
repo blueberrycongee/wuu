@@ -42,6 +42,24 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.resolve-attachment", { attachmentId: attachments[0].id })).rejects.toThrow("Unknown composer attachment");
   });
 
+  it("owns accepted queue input and restores edits through public commands", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "turn", status: "in_progress", items: [] }] } as never;
+    window.wuu = { queueTurn: vi.fn().mockResolvedValue({}), dequeueTurn: vi.fn().mockResolvedValue({ ok: true }) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
+      { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "queued text", images: [], files: [] },
+    ] });
+    await controller.invoke("composer.submit", { mode: "queue" });
+    const pending = controller.getSnapshot().composerPending[0];
+    expect(pending).toMatchObject({ threadId: "a", queued: [{ text: "queued text", origin: "queue" }], guides: [] });
+    expect(Object.isFrozen(pending.queued[0])).toBe(true);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("");
+    await controller.invoke("composer.edit-pending", { messageId: pending.queued[0].id, kind: "queue" });
+    expect(controller.getSnapshot().composerPending).toEqual([]);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("queued text");
+    expect(window.wuu.dequeueTurn).toHaveBeenCalledWith("a", pending.queued[0].id);
+  });
+
   it("deletes an archived split owner while retaining the surviving draft", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const thread = (id: string) => ({ id, cwd: context.cwd, preview: "", status: "idle", model_provider: "", archived: id === "a", turns: [] }) as never;

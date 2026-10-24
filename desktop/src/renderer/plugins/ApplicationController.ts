@@ -16,7 +16,7 @@ import { getActiveLocale, translateCurrent } from "../i18n";
 import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "../Theme";
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
-import { awaitComposerFiles, awaitComposerImages, createComposerMessage, createOptimisticTurn, inputFilesFromComposer, inputImagesFromComposer } from "../ComposerMessages";
+import { awaitComposerFiles, awaitComposerImages, createComposerMessage, createOptimisticTurn, queuedMessagePreview, queuedMessageFullPreview, type QueuedComposerMessage, inputFilesFromComposer, inputImagesFromComposer } from "../ComposerMessages";
 import { createComposerPendingState } from "../ComposerPendingState";
 import { createSidebarThreadCache } from "../SidebarWorkspaceState";
 import { createThreadMutationActions } from "../ThreadMutationActions";
@@ -526,6 +526,15 @@ export class ApplicationController implements ApplicationServiceV1 {
         if (attachmentIds.some(id => referenced.has(id))) throw new Error("Cannot release an attachment owned by a draft");
         this.draftResources.release(attachmentIds); return;
       }
+      case "composer.remove-pending": {
+        const { messageId, kind } = input as ApplicationActionMapV1["composer.remove-pending"]["input"];
+        return kind === "queue" ? this.pendingComposer.removeQueuedMessage(messageId) : this.pendingComposer.removeGuideMessage(messageId);
+      }
+      case "composer.edit-pending": {
+        const { messageId, kind } = input as ApplicationActionMapV1["composer.edit-pending"]["input"];
+        return kind === "queue" ? this.pendingComposer.editQueuedMessage(messageId) : this.pendingComposer.editGuideMessage(messageId);
+      }
+      case "composer.toggle-pending-mode": return this.pendingComposer.guideQueuedMessage((input as ApplicationActionMapV1["composer.toggle-pending-mode"]["input"]).messageId);
       case "composer.attach": {
         const { files, ownerTabId = this.state.activeSessionTabID } = input as ApplicationActionMapV1["composer.attach"]["input"];
         const owner = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
@@ -732,13 +741,18 @@ export class ApplicationController implements ApplicationServiceV1 {
                 sessionTabs: context ? bindActiveSessionTabToThread(state.sessionTabs, sourceTabId, createdThread, context) : state.sessionTabs }));
             }
           }
-          const clientId = crypto.randomUUID();
+          const clientId = message.id;
           signal?.throwIfAborted();
-          if (mode === "queue") await window.wuu.queueTurn(thread.id, text, images, clientId, files, thread.permission_mode, undefined, message.contentParts, context);
+          if (mode === "queue") {
+            await window.wuu.queueTurn(thread.id, text, images, clientId, files, thread.permission_mode, undefined, message.contentParts, context);
+            this.pendingComposer.enqueueComposerMessage(thread.id, { ...message, origin: "queue" });
+          }
           else if (mode === "steer") {
             const turn = thread.turns.findLast(turn => turn.status === "in_progress");
             if (!turn) throw new Error("There is no running turn to steer");
             await window.wuu.steerTurn(thread.id, turn.id, text, images, clientId, files, undefined, message.contentParts, context);
+            this.pendingComposer.updateThreadPendingComposerMessages(thread.id, pending => ({ ...pending,
+              guides: [...pending.guides.filter(item => item.id !== message.id), { ...message, origin: "steer" }] }));
           } else {
             const result = await window.wuu.startTurn(thread.id, text, images, files, thread.permission_mode, undefined, message.contentParts, context, clientId);
             signal?.throwIfAborted();
@@ -823,6 +837,15 @@ export class ApplicationController implements ApplicationServiceV1 {
     const primaryDraft = this.composerDraftForPane("primary");
     const secondaryDraft = this.composerDraftForPane("secondary");
     const attachmentIds = new Set([...primaryDraft.images, ...primaryDraft.files, ...secondaryDraft.images, ...secondaryDraft.files].map(item => item.id));
+    const projectPending = (message: QueuedComposerMessage) => {
+      [...message.images, ...message.files].forEach(attachment => attachmentIds.add(attachment.id));
+      return Object.freeze({ id: message.id, text: message.text, preview: queuedMessagePreview(message), fullPreview: queuedMessageFullPreview(message),
+        imageIds: Object.freeze(message.images.map(image => image.id)), fileIds: Object.freeze(message.files.map(file => file.id)),
+        held: message.held, deliveryUnconfirmed: message.deliveryUnconfirmed, heldPosition: message.heldPosition,
+        origin: message.origin, operationState: message.operationState });
+    };
+    const composerPending = Object.freeze(Object.entries(this.pendingComposer.pendingComposerMessagesByThread).map(([threadId, messages]) =>
+      Object.freeze({ threadId, queued: Object.freeze(messages.queued.map(projectPending)), guides: Object.freeze(messages.guides.map(projectPending)) })));
     const turns = (thread?.turns ?? []).map(turn => {
       const items = turn.items.map(item => {
         const key = streamTextKey(turn.id, item.id, "text");
@@ -855,6 +878,7 @@ export class ApplicationController implements ApplicationServiceV1 {
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
         model: Object.freeze({ id: thread?.model || initialized?.model || "", label: thread?.model || initialized?.model || "", providerId: thread?.model_provider || initialized?.provider }),
         runtime: Object.freeze({ id: thread?.engine_id || "wuu", label: thread?.engine_id || "Wuu" }), permission: Object.freeze({ id: thread?.permission_mode || initialized?.permissions?.mode || "", label: thread?.permission_mode || initialized?.permissions?.mode || "" }), disabledReason: this.submitting ? "Submitting" : undefined }),
+      composerPending,
       drafts: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
         primary: Object.freeze({ ...this.draftResources.project(primaryDraft), ownerTabId: primaryDraft.ownerTabId }), secondary: Object.freeze({ ...this.draftResources.project(secondaryDraft), ownerTabId: secondaryDraft.ownerTabId }),
         attachments: Object.freeze([...attachmentIds].map(id => this.draftResources.describe(id))) }),

@@ -1,6 +1,6 @@
 import type { ApplicationPreviewActionMapV1, ApplicationPreviewWorkspaceV1 } from "./ui-preview.js";
 import type { ApplicationSettingsActionMapV1, ApplicationSettingsViewV1 } from "./application-settings.js";
-import type { ApplicationComposerActionMapV1, ApplicationDraftsSnapshotV1 } from "./ui-composer.js";
+import type { ApplicationComposerActionMapV1, ApplicationDraftsSnapshotV1, ApplicationPendingComposerThreadV1 } from "./ui-composer.js";
 import type { ComponentType, ReactNode } from "react";
 import type {
   ComposerSnapshotV1, ComposerSubmissionModeV1, ConversationItemSnapshotV1,
@@ -41,6 +41,7 @@ export interface ApplicationSnapshotV1 {
   };
   readonly composer: ComposerSnapshotV1;
   readonly drafts: ApplicationDraftsSnapshotV1;
+  readonly composerPending: readonly ApplicationPendingComposerThreadV1[];
   readonly settings: SettingsSnapshotV1 & ApplicationSettingsViewV1 & { readonly open: boolean };
   readonly preview: FilePreviewSnapshotV1 | null;
   readonly previewWorkspace: ApplicationPreviewWorkspaceV1;

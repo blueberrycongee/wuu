@@ -45,7 +45,31 @@ export interface ApplicationDraftsSnapshotV1 {
   readonly attachments: readonly ApplicationAttachmentV1[];
 }
 
+/** Canonical content stays in the host; edit restores its original selections and attachments. */
+export interface ApplicationPendingComposerMessageV1 {
+  readonly id: string;
+  readonly text: string;
+  readonly preview: string;
+  readonly fullPreview: string;
+  readonly imageIds: readonly string[];
+  readonly fileIds: readonly string[];
+  readonly held?: boolean;
+  readonly deliveryUnconfirmed?: boolean;
+  readonly heldPosition?: number;
+  readonly origin?: "queue" | "steer";
+  readonly operationState?: "preparing" | "sending" | "switching";
+}
+
+export interface ApplicationPendingComposerThreadV1 {
+  readonly threadId: string;
+  readonly queued: readonly ApplicationPendingComposerMessageV1[];
+  readonly guides: readonly ApplicationPendingComposerMessageV1[];
+}
+
 export interface ApplicationComposerActionMapV1 {
+  "composer.remove-pending": { input: { readonly messageId: string; readonly kind: "queue" | "guide" }; result: boolean };
+  "composer.edit-pending": { input: { readonly messageId: string; readonly kind: "queue" | "guide" }; result: void };
+  "composer.toggle-pending-mode": { input: { readonly messageId: string }; result: void };
   "composer.import-attachments": { input: { readonly attachments: readonly ApplicationAttachmentV1[] }; result: void };
   "composer.release-attachments": { input: { readonly attachmentIds: readonly string[] }; result: void };
   /** The host owns encoding, retries and previews from this point onward. */
