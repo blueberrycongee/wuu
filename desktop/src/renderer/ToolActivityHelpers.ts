@@ -262,7 +262,7 @@ function readableToolActivityCommandInner(
         ? t("toolActivity.updateTarget", { target: formatPathTarget(path, t("toolActivity.file")) })
         : t("toolActivity.updateFiles");
     case "browser":
-      return readableBrowserLabel(args);
+      return readableBrowserLabel(args, result);
     default:
       return readableToolActivityName(item);
   }
@@ -493,7 +493,7 @@ function toolActivitySectionFromItems(
       return {
         id: key,
         kind: "browser",
-        title: t("toolActivity.browser"),
+        title: compactDetailText(toolCommands(items).map(command => command.text)) ?? t("toolActivity.browser"),
         status: combinedToolStatus(items),
         commands: toolCommands(items),
         error: firstToolError(items),
@@ -685,7 +685,7 @@ function toolActivityProcessSegmentFromItems(
         text:
           items.length > 1
             ? t("toolActivity.inspectPage")
-            : (compactDetailText(compactCommandLabels(items)) ?? t("toolActivity.inspectPage")),
+            : (compactDetailText(toolCommands(items).map(command => command.text)) ?? t("toolActivity.inspectPage")),
       };
     case "skill": {
       const targets = compactSkillTargets(items);
@@ -1104,27 +1104,43 @@ function readableBackgroundCommandLabel(action: string, command: string): string
   }
 }
 
-function readableBrowserLabel(args: JsonRecord | undefined): string {
-  const action = (stringValue(args, "action") ?? "").toLowerCase();
-  if (action === "navigate" || action === "open") {
-    const url = stringValue(args, "url");
-    return url
-      ? t("toolActivity.openBrowserTarget", { target: truncateText(url, 90) })
-      : t("toolActivity.openBrowser");
+function readableBrowserLabel(args: JsonRecord | undefined, result: JsonRecord | undefined): string {
+  const action = (stringValue(args, "action") ?? stringValue(result, "action") ?? "").toLowerCase();
+  let label: string;
+  switch (action) {
+    case "navigate":
+    case "open": label = t("toolActivity.openBrowser"); break;
+    case "observe": label = t("toolActivity.observeBrowser"); break;
+    case "click": label = t("toolActivity.clickBrowser"); break;
+    case "type": label = t("toolActivity.typeInBrowser"); break;
+    case "scroll": label = t("toolActivity.scrollBrowser"); break;
+    case "key": label = t("toolActivity.keyBrowser"); break;
+    case "screenshot": label = t("toolActivity.captureBrowser"); break;
+    case "tabs": label = t("toolActivity.listBrowserTabs"); break;
+    case "attach": label = t("toolActivity.attachBrowser"); break;
+    case "detach": label = t("toolActivity.detachBrowser"); break;
+    case "finalize": label = t("toolActivity.finalizeBrowser"); break;
+    case "wait_for": label = t("toolActivity.waitBrowser"); break;
+    case "sequence": label = t("toolActivity.sequenceBrowser", { count: arrayValue(args, "steps").length }); break;
+    case "set_visibility": label = t(args?.visible === true ? "toolActivity.showBrowser" : "toolActivity.hideBrowser"); break;
+    case "evaluate": label = t("toolActivity.runBrowserScript"); break;
+    default: label = t("toolActivity.useBrowser");
   }
-  if (action === "click") {
-    return t("toolActivity.clickBrowser");
+  // Input text may contain credentials. Describe the action without echoing it.
+  let target = stringValue(result, "title");
+  const url = stringValue(result, "url") ?? stringValue(args, "url");
+  if (!target && url) {
+    try {
+      const parsed = new URL(url);
+      target = `${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`;
+    } catch {
+      // Partial or invalid navigation input has no safe URL label yet.
+    }
   }
-  if (action === "type") {
-    return t("toolActivity.typeInBrowser");
+  if (!target && action === "key") {
+    target = stringValue(args, "keys") ?? arrayValue(args, "keys").filter(key => typeof key === "string").join(" + ");
   }
-  if (action === "screenshot") {
-    return t("toolActivity.captureBrowser");
-  }
-  if (action === "evaluate") {
-    return t("toolActivity.runBrowserScript");
-  }
-  return t("toolActivity.useBrowser");
+  return target ? `${label} · ${truncateText(target.replace(/\s+/g, " "), 90)}` : label;
 }
 
 export function readableToolName(name: string | undefined): string {
@@ -1210,6 +1226,7 @@ export function toolDisplayLabel(
  */
 function canonicalToolName(name: string): string {
   switch (name.toLowerCase()) {
+    case "wuu_browser": return "browser";
     case "exec": return "bash";
     case "bash": return "bash";
     case "read": return "read_file";
@@ -1412,7 +1429,7 @@ export function browserActivityOpenURL(items: ThreadItem[]): string | undefined 
       continue;
     }
     const args = parseJSONRecord(item.arguments);
-    const result = parseJSONRecord(item.result);
+    const result = richToolResultRecord(item) ?? parseJSONRecord(item.result);
     const url = stringValue(args, "url") ?? stringValue(result, "url");
     if (url) {
       return url;

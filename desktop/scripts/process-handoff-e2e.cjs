@@ -23,7 +23,7 @@ async function run() {
   const win = new BrowserWindow({
     width: 1100,
     height: 820,
-    show: false,
+    show: process.env.WUU_PROCESS_E2E_SCENARIO === "browser",
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -46,6 +46,12 @@ async function run() {
   await waitFor(win, () => Boolean(document.querySelector(".composer textarea")), 5000);
 
   const threadID = await startActiveThread(win);
+  if (process.env.WUU_PROCESS_E2E_SCENARIO === "browser") {
+    await verifyBrowserActivity(win, threadID);
+    console.log("browser activity e2e passed");
+    app.exit(0);
+    return;
+  }
   const now = new Date().toISOString();
   const userItem = {
     id: "user-process-handoff-e2e",
@@ -200,8 +206,64 @@ async function run() {
   await capture(win, "process-handoff-completed.png");
 
   await verifyArtifactHandoff(win, threadID);
+  await verifyBrowserActivity(win, threadID);
   console.log("process handoff e2e passed");
   app.exit(0);
+}
+
+async function verifyBrowserActivity(win, threadID) {
+  const browserItems = [
+    { id: "browser-navigate", type: "tool_call", status: "completed", name: "wuu_browser",
+      arguments: JSON.stringify({ action: "navigate", url: "https://example.com/browser-guide" }) },
+    { id: "browser-observe", type: "tool_call", status: "completed", name: "wuu_browser",
+      arguments: JSON.stringify({ action: "observe", tab_id: "tab-1" }),
+      result_detail: { structured_content: { action: "observe", title: "Browser guide — navigation and page interaction", url: "https://example.com/browser-guide" } } },
+    { id: "browser-type", type: "tool_call", status: "completed", name: "wuu_browser",
+      arguments: JSON.stringify({ action: "type", text: "private-input-must-stay-private", node_id: 3 }) },
+    { id: "browser-key", type: "tool_call", status: "completed", name: "wuu_browser",
+      arguments: JSON.stringify({ action: "key", keys: ["Control", "Enter"] }) },
+  ];
+  const turn = { id: "browser-activity", status: "in_progress", items_view: "full", started_at: new Date().toISOString(), items: [
+    { id: "browser-user", type: "user_message", status: "completed", text: "Inspect the browser guide." },
+    ...browserItems,
+  ] };
+  emitNotification(win, "turn/started", { thread_id: threadID, turn });
+  await waitFor(win, () => Array.from(document.querySelectorAll('.turn')).at(-1)?.textContent.includes('Inspect the browser guide'), 3000);
+  await evaluate(win, () => {
+    const shell = Array.from(document.querySelectorAll('.assistant-turn-shell')).at(-1);
+    const fold = shell.querySelector('.turn-process-fold');
+    if (!fold.classList.contains('expanded')) fold.querySelector('.turn-process-toggle').click();
+  });
+  await evaluate(win, () => {
+    const shell = Array.from(document.querySelectorAll('.assistant-turn-shell')).at(-1);
+    for (const details of shell.querySelectorAll('details.process-surface-fold')) details.open = true;
+  });
+  await waitFor(win, () => {
+    const rows = Array.from(document.querySelectorAll('.assistant-turn-shell')).at(-1).querySelectorAll('.activity-row');
+    return rows.length === 4 && Array.from(rows).every(row => row.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !row.closest('[inert]'));
+  }, 3000);
+  const text = await evaluate(win, () => Array.from(document.querySelectorAll('.assistant-turn-shell')).at(-1).querySelector('.activity-timeline').textContent);
+  assert.ok(text.includes('example.com/browser-guide'), 'Navigation must expose its destination.');
+  assert.ok(text.includes('Browser guide'), 'Observation must expose its structured page title.');
+  assert.ok(!text.includes('private-input-must-stay-private'), 'Input values must not leak into summaries.');
+  assert.ok(!text.includes('wuu_browser'), 'Browser activity must use semantic labels.');
+  for (const [theme, width, fontSize] of [['light', 1100, 15], ['dark', 1100, 20], ['light', 480, 20], ['dark', 480, 15]]) {
+    win.setSize(width, 820);
+    await win.webContents.executeJavaScript(`
+      document.documentElement.dataset.theme = ${JSON.stringify(theme)};
+      document.documentElement.style.setProperty('--font-ui', '${fontSize}px');
+      document.documentElement.style.setProperty('--conversation-message-font-size', '${fontSize}px');
+      if (${width < 600} && !document.querySelector('.app-shell').classList.contains('sidebar-collapsed')) {
+        document.querySelector('[data-wuu-component="sidebar-toggle"]').click();
+      }
+      window.dispatchEvent(new Event('wuu-content-size-change'));
+      Array.from(document.querySelectorAll('.activity-timeline')).at(-1).scrollIntoView({ block: 'center' });
+      new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    `);
+    // Allow theme, sidebar and native window resize transitions to settle for capture.
+    await delay(600);
+    await capture(win, `browser-activity-${theme}-${width}-${fontSize}.png`);
+  }
 }
 
 async function verifyArtifactHandoff(win, threadID) {

@@ -79,6 +79,22 @@ describe("MCP action titles", () => {
   });
 });
 
+describe("browser activity records", () => {
+  it("shows the current browser invocation's target and updates it from structured results", () => {
+    const item: ThreadItem = {
+      id: "browser", type: "tool_call", name: "wuu_browser", status: "in_progress",
+      arguments: JSON.stringify({ action: "navigate", url: "https://example.com/guide" }),
+    };
+    mount({ items: [item] });
+    expect(container!.textContent).toContain("example.com/guide");
+    rerender({ items: [{ ...item, status: "completed", arguments: JSON.stringify({ action: "observe" }),
+      result: "Readable page content", result_detail: { structured_content: { action: "observe", title: "Browser guide", url: "https://example.com/guide" } },
+    }] });
+    expect(container!.textContent).toContain("Browser guide");
+    expect(container!.textContent).not.toContain("wuu_browser");
+  });
+});
+
 describe("PTC program records", () => {
   it.each(["code", "input"])("displays literal %s source and its description", (field) => {
     let code = "  const html = \"<img src=x onerror=alert(1)>\";\n\nawait tools.read_file({path: \"notes.ts\"});\nconsole.log(html);\n";
