@@ -154,7 +154,7 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
                 onKeyDown={event => handleFloatingMenuKeyDown(event, () => setWorkspaceMenu(false), workspaceTriggerRef.current)}>
                 {view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => {
                   setWorkspaceMenu(false); workspaceTriggerRef.current?.focus();
-                  run(application.invoke("workspace.select", { workspaceId: workspace.id }));
+                  run(application.invoke("workspace.retarget-draft", { workspaceId: workspace.id }));
                 }}>{workspace.name}</button>)}
               </div>
             </FloatingMenuPortal> : null}

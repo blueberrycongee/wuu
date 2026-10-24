@@ -145,7 +145,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
-- Anchor the new-conversation workspace menu below the workspace name in the greeting, keeping it attached during scrolling and resizing.
+- Anchor the new-conversation workspace menu below the workspace name in the greeting, keeping it attached during scrolling and resizing. Selecting a workspace retargets the current draft and preserves its content instead of reopening the workspace's latest conversation.
 
 - Restore manual navigation ribbon resizing and remembered width while keeping the default compact and disabling automatic expansion on hover or focus.
 
