@@ -6,7 +6,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
-import { activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
+import { createThreadSessionTab, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, bindActiveSessionTabToThread, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
@@ -68,6 +68,9 @@ export class ApplicationController implements ApplicationServiceV1 {
   private consumers = 0;
   private lifetime?: AbortController;
   private navigationRequest = 0;
+  private splitRequest = 0;
+  private readonly invocationAborts = new WeakMap<AbortSignal, AbortController>();
+  private cancelNavigation?: () => void;
   private navigationAbortCleanup?: () => void;
   private abortedNavigation?: { request: number; signal: AbortSignal; context: NonNullable<AppState["activeContext"]> };
   private pendingNavigation?: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>;
@@ -300,10 +303,15 @@ export class ApplicationController implements ApplicationServiceV1 {
     this.pendingNavigation = Object.freeze({ kind, targetId, requestId, contextSwitching });
     const abort = () => {
       if (requestId !== this.navigationRequest) return;
-      this.finishNavigation(requestId);
+      this.navigationAbortCleanup?.();
+      this.navigationAbortCleanup = undefined;
+      this.cancelNavigation = undefined;
+      this.pendingNavigation = undefined;
       this.navigationRequest++;
       if (signal && contextSwitching && sourceContext) this.abortedNavigation = { request: this.navigationRequest, signal, context: sourceContext };
+      this.publish();
     };
+    this.cancelNavigation = () => signal && this.invocationAborts.get(signal)?.abort(new Error("Navigation cancelled"));
     signal?.addEventListener("abort", abort, { once: true });
     this.navigationAbortCleanup = () => signal?.removeEventListener("abort", abort);
     this.publish();
@@ -315,6 +323,7 @@ export class ApplicationController implements ApplicationServiceV1 {
     this.navigationAbortCleanup?.();
     this.navigationAbortCleanup = undefined;
     this.pendingNavigation = undefined;
+    this.cancelNavigation = undefined;
     this.publish();
     return true;
   }
@@ -363,7 +372,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         if (!isCurrent(request)) return false;
         return this.finishNavigation(request);
       },
-      cancelViewSwitch: () => { this.finishNavigation(this.navigationRequest); this.navigationRequest++; },
+      cancelViewSwitch: () => { this.finishNavigation(this.navigationRequest); this.navigationRequest++; this.publish(); },
       onError: (error: Error): never => { throw error; },
     };
     const threads = createThreadActivationActions({ ...common,
@@ -463,13 +472,19 @@ export class ApplicationController implements ApplicationServiceV1 {
   }
 
   async invoke<Action extends keyof ApplicationActionMapV1>(action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal }): Promise<ApplicationActionMapV1[Action]["result"]> {
-    const signal = options?.signal;
-    signal?.throwIfAborted();
+    const cancellation = new AbortController();
+    options?.signal?.throwIfAborted();
+    const relayAbort = () => cancellation.abort(options?.signal?.reason);
+    options?.signal?.addEventListener("abort", relayAbort, { once: true });
+    const signal = cancellation.signal;
+    this.invocationAborts.set(signal, cancellation);
     try {
       const result = await this.perform(action, input, signal);
       signal?.throwIfAborted();
       return result as ApplicationActionMapV1[Action]["result"];
     } finally {
+      options?.signal?.removeEventListener("abort", relayAbort);
+      this.invocationAborts.delete(signal);
       const recovery = this.abortedNavigation;
       if (signal?.aborted && recovery?.signal === signal && recovery.request === this.navigationRequest) {
         this.abortedNavigation = undefined;
@@ -490,6 +505,37 @@ export class ApplicationController implements ApplicationServiceV1 {
     if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
       input as ApplicationSettingsActionMapV1[keyof ApplicationSettingsActionMapV1]["input"], signal);
     switch (action) {
+      case "navigation.cancel": {
+        const { requestId } = input as ApplicationActionMapV1["navigation.cancel"]["input"];
+        if (requestId !== undefined && requestId !== this.pendingNavigation?.requestId) return;
+        if (this.cancelNavigation) this.cancelNavigation();
+        else { this.navigationRequest++; this.publish(); }
+        return;
+      }
+      case "conversation.open-split": {
+        const { threadId } = input as ApplicationActionMapV1["conversation.open-split"]["input"];
+        const origin = this.state;
+        const context = origin.activeContext;
+        if (!origin.thread || !context) return;
+        const splitRequest = ++this.splitRequest;
+        const navigationRevision = this.navigationRequest;
+        const ownsView = () => !signal?.aborted && splitRequest === this.splitRequest && navigationRevision === this.navigationRequest
+          && sameRuntimeContext(this.state.activeContext, context) && this.state.activeContext?.cwd === context.cwd
+          && this.state.activeSessionTabID === origin.activeSessionTabID && this.state.activePane === origin.activePane
+          && this.state.thread?.id === origin.thread?.id && this.state.secondaryThread?.id === origin.secondaryThread?.id;
+        const resumed = await window.wuu.resumeThread(threadId);
+        signal?.throwIfAborted();
+        if (!ownsView()) return;
+        if (!resumed.thread) throw new Error("Related thread resume returned no thread");
+        const thread = reconcileResumedThreadTurns(resumed.thread, this.knownThread(threadId));
+        const draft = this.state.sessionTabs.find(tab => tab.kind === "thread" && tab.threadID === thread.id);
+        this.updateState(current => ({ ...current, secondaryThread: thread,
+          activeSessionTabID: current.activePane === "secondary" ? threadSessionTabID(thread.id) : current.activeSessionTabID,
+          sessionTabs: ensureSessionTab(current.sessionTabs, createThreadSessionTab(thread,
+            resolveThreadRuntimeContext(thread, current.projects) ?? context, draft ? cloneSessionTabDraft(draft) : emptyComposerDraft())),
+          threads: upsertThread(current.threads, thread) }));
+        return;
+      }
       case "conversation.activate-pane":
       case "conversation.close-pane": {
         const { pane } = input as ApplicationActionMapV1["conversation.activate-pane"]["input"];
@@ -929,7 +975,7 @@ export class ApplicationController implements ApplicationServiceV1 {
         ...state.threads.filter(thread => !thread.archived && !thread.ephemeral).map(item => Object.freeze({ id: item.id, kind: "thread" as const, label: item.title || item.preview || item.id, active: item.id === thread?.id, pinned: item.pinned, running: isThreadRunning(item) })),
       ]) }),
       navigationWorkspace: this.applicationNavigation.getSnapshot(),
-      tabs: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane,
+      tabs: Object.freeze({ activeTabId: state.activeSessionTabID, activePane: state.activePane, navigationRevision: this.navigationRequest,
         primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id,
         canSubmit: !this.submitting.has(state.activeSessionTabID) && (!this.pendingNavigation || this.pendingNavigation.contentReady === true) && !thread?.read_only,
         pending: this.pendingNavigation,

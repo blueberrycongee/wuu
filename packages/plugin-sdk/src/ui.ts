@@ -32,6 +32,7 @@ export interface ApplicationSnapshotV1 {
   readonly navigationWorkspace: ApplicationNavigationViewV1;
   readonly tabs: {
     readonly activeTabId: string;
+    readonly navigationRevision: number;
     readonly activePane: "primary" | "secondary";
     readonly primaryThreadId?: string;
     readonly secondaryThreadId?: string;
@@ -91,6 +92,8 @@ export interface ApplicationActionMapV1 extends ApplicationNavigationActionMapV1
   /** Remove a workspace after the caller has confirmed the user's intent. */
   "workspace.remove": { input: { readonly workspaceId: string }; result: void };
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
+  "navigation.cancel": { input: { readonly requestId?: number }; result: void };
+  "conversation.open-split": { input: { readonly threadId: string }; result: void };
   "conversation.activate-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
   "conversation.close-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
   "thread.activate-child": { input: { readonly threadId: string }; result: void };

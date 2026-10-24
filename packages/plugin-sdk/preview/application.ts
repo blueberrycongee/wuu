@@ -12,7 +12,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     navigationWorkspace: { initialized: true, threads: [], workspaces: [], loadingWorkspaceIds: [], lastViewedTurnByThreadId: {}, pendingConversations: [],
       folders: [], plugins: [], destinations: [], canRevealThread: false, canCreateWorkspace: false, canChooseWorkspace: false, projectAgentEnabled: false,
       accountAvailable: false, update: { kind: 'unsupported' }, searchOpen: false, accountOpen: false },
-    tabs: { activeTabId: 'thread:research-1', activePane: 'primary', primaryThreadId: 'research-1', canSubmit: true, items: [{ id: 'thread:research-1', kind: 'thread',
+    tabs: { navigationRevision: 0, activeTabId: 'thread:research-1', activePane: 'primary', primaryThreadId: 'research-1', canSubmit: true, items: [{ id: 'thread:research-1', kind: 'thread',
       title: 'Compare the evidence', workspaceId: 'research', workspaceRoot: '/preview/research',
       threadId: 'research-1', project: false, draftText: '', hasAttachments: false }] },
     conversation: { threadId: 'research-1', title: 'Compare the evidence', loading: false, turns: [{

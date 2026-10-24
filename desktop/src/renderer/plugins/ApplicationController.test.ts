@@ -25,6 +25,47 @@ describe("shared application state", () => {
     } finally { load.mockRestore(); }
   });
 
+  it("cancels only the requested navigation and restores source transport after a late response", async () => {
+    const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+    let finish!: (value: unknown) => void;
+    window.wuu = { selectProject: vi.fn(id => id === "b" ? new Promise(resolve => { finish = resolve; }) : Promise.resolve({ projects: [], active_context: source })) } as unknown as WuuDesktopApi;
+    const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ activeContext: { kind: "project", project_id: "b", cwd: "/b" } });
+    try {
+      const controller = new ApplicationController({ ...initialState, activeContext: source });
+      const navigation = controller.invoke("workspace.start-draft", { workspaceId: "b" });
+      const requestId = controller.getSnapshot().tabs.pending!.requestId!;
+      await controller.invoke("navigation.cancel", { requestId: requestId - 1 });
+      expect(controller.getSnapshot().tabs.pending?.requestId).toBe(requestId);
+      await controller.invoke("navigation.cancel", { requestId });
+      expect(controller.getSnapshot().tabs.pending).toBeUndefined();
+      expect(controller.getSnapshot().tabs.navigationRevision).toBeGreaterThan(requestId);
+      finish({ projects: [] });
+      await expect(navigation).rejects.toThrow();
+      expect(window.wuu.selectProject).toHaveBeenLastCalledWith("a");
+    } finally { load.mockRestore(); }
+  });
+
+  it("opens a related split without losing drafts and rejects a stale split completion", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    let finish!: (value: unknown) => void;
+    window.wuu = { resumeThread: vi.fn(() => new Promise(resolve => { finish = resolve; })) } as unknown as WuuDesktopApi;
+    const primary = { id: "primary", cwd: context.cwd, status: "idle", turns: [] } as never;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread: primary, activeSessionTabID: "thread:primary", sessionTabs: [
+      { id: "thread:primary", kind: "thread", threadID: "primary", context, title: "P", prompt: "keep", images: [], files: [] },
+    ] });
+    const opening = controller.invoke("conversation.open-split", { threadId: "child" });
+    await controller.invoke("composer.set-draft", { text: "latest primary" });
+    finish({ thread: { id: "child", cwd: context.cwd, status: "idle", turns: [] } });
+    await opening;
+    expect(controller.getSnapshot().tabs.secondaryThreadId).toBe("child");
+    expect(controller.getSnapshot().drafts.primary.text).toBe("latest primary");
+    const stale = controller.invoke("conversation.open-split", { threadId: "other" });
+    await controller.invoke("navigation.cancel", {});
+    finish({ thread: { id: "other", cwd: context.cwd, status: "idle", turns: [] } });
+    await stale;
+    expect(controller.getSnapshot().tabs.secondaryThreadId).toBe("child");
+  });
+
   it("admits files into their source draft before returning and releases closed draft resources", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
