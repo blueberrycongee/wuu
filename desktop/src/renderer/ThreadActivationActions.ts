@@ -66,7 +66,7 @@ export type ThreadActivationActions = {
   selectContextThread: (context: RuntimeContext, threadID: string) => Promise<void>;
   selectWorkspaceThread: (workspaceID: string, threadID: string) => Promise<void>;
   activateThread: (threadID: string) => Promise<void>;
-  selectChildAgent: (agent: Agent) => Promise<void>;
+  selectChildAgent: (agent: Pick<Agent, "id">) => Promise<void>;
 };
 
 export function createThreadActivationActions(
@@ -419,7 +419,7 @@ export function createThreadActivationActions(
     await selectThread(threadID);
   }
 
-  async function selectChildAgent(agent: Agent): Promise<void> {
+  async function selectChildAgent(agent: Pick<Agent, "id">): Promise<void> {
     const currentState = deps.getAppState();
     if (!currentState.activeContext) {
       return;

@@ -5,7 +5,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { ConversationItemSnapshotV1 } from "../../../../packages/plugin-sdk/src/index";
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
-import { activeSessionTab, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
+import { activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateThreadByID, withLoadedRuntimeSessionTab, bindActiveSessionTabToThread, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
@@ -378,6 +378,12 @@ export class ApplicationController implements ApplicationServiceV1 {
     return { threads, tabs, workspaces };
   }
 
+  private knownThread(id: string): Thread | undefined {
+    const cache = this.sidebarCache.getSnapshot();
+    return threadForTab(this.state, id) ?? cache.cachedScratchThreads.find(thread => thread.id === id)
+      ?? Object.values(cache.workspaceThreadsByWorkspaceID).flat().find(thread => thread.id === id);
+  }
+
   private mutationActions() {
     let restoredDraft: ComposerDraftState | undefined;
     return createThreadMutationActions({ getAppState: () => this.state,
@@ -512,6 +518,10 @@ export class ApplicationController implements ApplicationServiceV1 {
       case "workspace.relocate": {
         const { workspaceId } = input as ApplicationActionMapV1["workspace.relocate"]["input"];
         await this.navigationActions(signal).workspaces.relocateProject(workspaceId); return;
+      }
+      case "thread.activate-child": {
+        const { threadId } = input as ApplicationActionMapV1["thread.activate-child"]["input"];
+        await this.navigationActions(signal).threads.selectChildAgent({ id: threadId }); return;
       }
       case "thread.activate": {
         const { threadId, workspaceId } = input as ApplicationActionMapV1["thread.activate"]["input"];
@@ -711,13 +721,16 @@ export class ApplicationController implements ApplicationServiceV1 {
       }
       case "thread.rename": {
         const { threadId, title } = input as ApplicationActionMapV1["thread.rename"]["input"];
-        const result = await window.wuu.renameThread(threadId, title);
-        signal?.throwIfAborted(); this.adoptThread(result.thread); return;
+        const thread = this.knownThread(threadId);
+        if (!thread) throw new Error("Thread is unavailable");
+        await this.mutationActions().renameThread(thread, title); return;
       }
       case "thread.archive": {
-        const { threadId, archived } = input as ApplicationActionMapV1["thread.archive"]["input"];
-        const result = await window.wuu.archiveThread(threadId, archived);
-        signal?.throwIfAborted(); this.adoptThread(result.thread); return;
+        const { threadId, archived, force } = input as ApplicationActionMapV1["thread.archive"]["input"];
+        if (!archived) { await this.mutationActions().unarchiveThread({ id: threadId }); return; }
+        const thread = this.knownThread(threadId);
+        if (!thread) throw new Error("Thread is unavailable");
+        await this.mutationActions().archiveThread(summarizeThreadsForSidebar([thread])[0], { force }); return;
       }
       case "composer.set-draft": {
         const { text, ownerTabId = this.state.activeSessionTabID } = input as ApplicationActionMapV1["composer.set-draft"]["input"];

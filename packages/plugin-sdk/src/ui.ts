@@ -90,6 +90,7 @@ export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1, 
   "workspace.relocate": { input: { readonly workspaceId: string }; result: void };
   "conversation.activate-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
   "conversation.close-pane": { input: { readonly pane: "primary" | "secondary" }; result: void };
+  "thread.activate-child": { input: { readonly threadId: string }; result: void };
   "thread.activate": { input: { readonly threadId: string; readonly workspaceId?: string }; result: void };
   "draft.start": { input: Record<string, never>; result: { readonly tabId: string } };
   "tab.pop-out": { input: { readonly tabId: string }; result: void };
@@ -107,7 +108,7 @@ export interface ApplicationActionMapV1 extends ApplicationComposerActionMapV1, 
   "thread.select": { input: { readonly threadId: string }; result: void };
   "thread.create": { input: { readonly workspaceId?: string }; result: { readonly threadId: string } };
   "thread.rename": { input: { readonly threadId: string; readonly title: string }; result: void };
-  "thread.archive": { input: { readonly threadId: string; readonly archived: boolean }; result: void };
+  "thread.archive": { input: { readonly threadId: string; readonly archived: boolean; readonly force?: boolean }; result: void };
   "composer.set-draft": { input: { readonly text: string; readonly ownerTabId?: string }; result: void };
   "composer.submit": { input: { readonly mode?: ComposerSubmissionModeV1; readonly ownerTabId?: string }; result: void };
   "composer.stop": { input: Record<string, never>; result: void };

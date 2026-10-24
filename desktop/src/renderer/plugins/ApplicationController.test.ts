@@ -117,6 +117,23 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().settings.archivedThreads).toEqual([]);
   });
 
+  it("closes the archived conversation only after confirmation and keeps the populated fallback", async () => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = { id: "a", cwd: context.cwd, preview: "", status: "idle", model_provider: "", turns: [] } as never;
+    let confirm!: (value: unknown) => void;
+    window.wuu = { archiveThread: vi.fn(() => new Promise(resolve => { confirm = resolve; })) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, activeContext: context, thread, threads: [thread], activeSessionTabID: "thread:a", sessionTabs: [
+      { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "", images: [], files: [] },
+      { id: "draft:b", kind: "draft", context, title: "B", createdAt: 1, prompt: "keep this", images: [], files: [] },
+    ] });
+    const archiving = controller.invoke("thread.archive", { threadId: "a", archived: true });
+    expect(controller.getSnapshot().drafts.activeTabId).toBe("thread:a");
+    confirm({ thread: { id: "a" } });
+    await archiving;
+    expect(controller.getSnapshot().drafts).toMatchObject({ activeTabId: "draft:b", primary: { text: "keep this" } });
+    expect(controller.getSnapshot().settings.archivedThreads.map(thread => thread.id)).toEqual(["a"]);
+  });
+
   it("reuses a populated context draft after archived thread deletion", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
     const thread = { id: "a", cwd: context.cwd, preview: "", status: "idle", model_provider: "", archived: true, turns: [] } as never;
