@@ -17,6 +17,7 @@ function fixture() {
   const publishStatus = vi.fn((value: GitStatusResult) => { source = { ...source, status: value }; });
   const reportError = vi.fn();
   const api = {
+    gitActionBusy: vi.fn().mockResolvedValue(false),
     listGitChanges: vi.fn().mockResolvedValue({ is_repo: true, root: "/one", files: [] }),
     readGitFileDiff: vi.fn().mockResolvedValue({ is_repo: true, path: "a.ts", status: "modified", additions: 1, deletions: 0, patch: "", truncated: false }),
     checkoutGitBranch: vi.fn().mockResolvedValue(status("feature")),
@@ -33,6 +34,33 @@ function fixture() {
 }
 
 describe("ApplicationEnvironment", () => {
+  it("keeps authoritative busy conservative and fences old contexts without polling stream deltas", async () => {
+    const h = fixture();
+    const old = deferred<boolean>(), next = deferred<boolean>();
+    h.api.gitActionBusy.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
+    expect(h.service.getSnapshot().actionBusy).toBe(true);
+    await Promise.resolve();
+    expect(h.api.gitActionBusy).toHaveBeenCalledExactlyOnceWith("/one");
+    h.change({ contextKey: "project:two", root: "/two" });
+    expect(h.service.getSnapshot().actionBusy).toBe(true);
+    await Promise.resolve(); next.resolve(false); await Promise.resolve(); await Promise.resolve();
+    expect(h.service.getSnapshot().actionBusy).toBe(false);
+    old.resolve(true); await Promise.resolve(); await Promise.resolve();
+    expect(h.service.getSnapshot().actionBusy).toBe(false);
+    for (let i = 0; i < 20; i++) h.service.receive({ kind: "notification", workdir: "/two", message: { method: "item/agentMessage/delta", params: {} } });
+    await Promise.resolve(); expect(h.api.gitActionBusy).toHaveBeenCalledTimes(2);
+    h.api.gitActionBusy.mockRejectedValueOnce(new Error("offline"));
+    h.service.receive({ kind: "notification", workdir: "/two", message: { method: "turn/started", params: {} } });
+    h.service.receive({ kind: "notification", workdir: "/two", message: { method: "thread/resumed", params: {} } });
+    expect(h.service.getSnapshot().actionBusy).toBe(true);
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(h.api.gitActionBusy).toHaveBeenCalledTimes(3);
+    expect(h.service.getSnapshot().actionBusy).toBe(true);
+    h.change({ contextKey: "", root: undefined });
+    expect(h.service.getSnapshot().actionBusy).toBe(false);
+    h.retire();
+  });
+
   it("cancels a retired caller refresh without cancelling its successor", async () => {
     vi.useFakeTimers(); const h = fixture();
     const old = new AbortController(), next = new AbortController();
@@ -57,7 +85,9 @@ describe("ApplicationEnvironment", () => {
   });
 
   it("publishes branch and commit status and maps public parameters once", async () => {
-    const h = fixture(); const listener = vi.fn(); h.service.subscribe(listener);
+    const h = fixture();
+    await vi.waitFor(() => expect(h.service.getSnapshot().actionBusy).toBe(false));
+    const listener = vi.fn(); h.service.subscribe(listener);
     await h.service.checkoutBranch("feature");
     expect(h.api.checkoutGitBranch).toHaveBeenCalledWith("feature", "/one");
     expect(h.publishStatus).toHaveBeenLastCalledWith(status("feature"), false);

@@ -60,7 +60,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     onPopoverDismiss: () => () => {}, onState: () => () => {}, onReveal: () => () => {}, onFocusAddress: () => () => {}, onFocusFind: () => () => {}, onDownloads: () => () => {},
     library: { getState: unavailable, setBookmark: unavailable, removeHistory: unavailable, clearHistory: unavailable, onState: () => () => {} },
   };
-  const environment: ReturnType<ApplicationServiceV1["environment"]["getSnapshot"]> = { contextKey: "preview", capabilities: { review: false, checkout: false, createBranch: false, commit: false, pullRequest: false } };
+  const environment: ReturnType<ApplicationServiceV1["environment"]["getSnapshot"]> = { actionBusy: false, contextKey: "preview", capabilities: { review: false, checkout: false, createBranch: false, commit: false, pullRequest: false } };
   const onboarding: ReturnType<ApplicationServiceV1["onboarding"]["getSnapshot"]> = { revision: 0, completed: true, capabilities: { discoverWorkspaces: false, chooseWorkspace: false, browserImport: false } };
   const catalog: ReturnType<ApplicationServiceV1["catalog"]["getSnapshot"]> = { contextKey: "preview", inventory: [], capabilities: { install: false, update: false, remove: false } };
   const fileSelections = new Map<string, ReturnType<ApplicationServiceV1["fileSelection"]["getSnapshot"]>>();

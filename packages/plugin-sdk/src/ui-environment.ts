@@ -32,6 +32,8 @@ export interface EnvironmentPullRequestResultV1 {
   readonly already_exists: boolean;
 }
 export interface EnvironmentSnapshotV1 {
+  /** Authoritative worktree occupancy; pending or unavailable reads remain busy. */
+  readonly actionBusy: boolean;
   readonly contextKey: string;
   readonly root?: string;
   readonly status?: EnvironmentGitStatusV1;

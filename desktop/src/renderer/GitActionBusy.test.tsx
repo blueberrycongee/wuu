@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ServerEvent } from "../shared/protocol";
+import { ApplicationEnvironment } from "./plugins/ApplicationEnvironment";
 import { useGitActionBusy } from "./GitActionBusy";
 
 const originalWuu = (window as unknown as { wuu?: unknown }).wuu;
@@ -29,30 +29,25 @@ describe("useGitActionBusy", () => {
     const gitActionBusy = vi.fn(
       () => new Promise<boolean>((resolve) => resolvers.push(resolve)),
     );
-    let emitServerEvent: ((event: ServerEvent) => void) | undefined;
-    const off = vi.fn();
+
     Object.defineProperty(window, "wuu", {
       configurable: true,
       value: {
         gitActionBusy,
-        onServerEvent: (listener: (event: ServerEvent) => void) => {
-          emitServerEvent = listener;
-          return off;
-        },
+
       },
     });
 
+    const environment = new ApplicationEnvironment({ getSource: () => ({ contextKey: "project-1", root: "/repo" }),
+      publishStatus: () => {}, assertActive: () => {}, reportError: () => {} });
     let busy = false;
     function Harness(): null {
-      busy = useGitActionBusy(
-        { kind: "project", project_id: "project-1", cwd: "/repo" },
-        "thread-1",
-      );
+      busy = useGitActionBusy(environment);
       return null;
     }
     container = document.createElement("div");
     document.body.appendChild(container);
-    act(() => {
+    await act(async () => {
       root = createRoot(container!);
       root.render(<Harness />);
     });
@@ -61,8 +56,8 @@ describe("useGitActionBusy", () => {
     expect(gitActionBusy).toHaveBeenCalledTimes(1);
     expect(gitActionBusy).toHaveBeenLastCalledWith("/repo");
 
-    act(() => {
-      emitServerEvent?.({
+    await act(async () => {
+      environment.receive({
         kind: "server-exit",
         workdir: "/repo",
         code: 1,
@@ -83,5 +78,6 @@ describe("useGitActionBusy", () => {
       await Promise.resolve();
     });
     expect(busy).toBe(false);
+    environment.dispose();
   });
 });

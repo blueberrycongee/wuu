@@ -92,7 +92,14 @@ export class ApplicationController implements HostApplicationService {
     return this.environmentOwner ??= new ApplicationEnvironment({
       getSource: () => {
         const root = workspacePanelContext(this.state.activeContext, activeThreadForState(this.state))?.cwd;
-        return { contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0, root]), root, status: this.state.gitStatus };
+        const running = new Set<string>();
+        for (const thread of [this.state.thread, this.state.secondaryThread, ...this.state.threads]) {
+          if (thread?.cwd && isThreadRunning(thread)) running.add(`${thread.id}\0${thread.cwd}`);
+        }
+        const active = activeThreadForState(this.state);
+        if (this.state.running && active?.cwd) running.add(`${active.id}\0${active.cwd}`);
+        return { contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0, root]), root,
+          status: this.state.gitStatus, runningThreadKey: [...running].sort().join("\x01") };
       },
       publishStatus: (gitStatus, ready) => this.updateState(state => ({ ...state, gitStatus, ...(ready ? { status: "ready" } : {}) })),
       assertActive: () => this.lifetime?.signal.throwIfAborted(),
@@ -631,6 +638,7 @@ export class ApplicationController implements HostApplicationService {
   }
 
   private receive(event: ServerEvent): void {
+    this.environmentOwner?.receive(event);
     this.eventEffects?.receive(event);
     const activities = reduceActivitySessionEvent(this.activitySessions, event);
     if (activities !== this.activitySessions) { this.activitySessions = activities; this.publish(); }

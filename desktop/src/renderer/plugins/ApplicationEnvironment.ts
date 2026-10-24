@@ -3,13 +3,14 @@ import type {
   ApplicationEnvironmentV1, EnvironmentCallOptionsV1, EnvironmentCommitResultV1,
   EnvironmentPullRequestResultV1, EnvironmentSnapshotV1,
 } from "../../../../packages/plugin-sdk/src/ui-environment";
-import type { GitStatusResult } from "../../shared/protocol";
+import type { GitStatusResult, ServerEvent } from "../../shared/protocol";
 import { hostSupports } from "../HostCapabilities";
 import { translateCurrent } from "../i18n";
 import { toastErrorMessage } from "../Toast";
 
 type RefreshRequest = { options?: EnvironmentCallOptionsV1; detach(): void };
-type Source = { contextKey: string; root?: string; status?: GitStatusResult };
+type Source = { contextKey: string; root?: string; status?: GitStatusResult; runningThreadKey?: string };
+const busyLifecycleMethods = new Set(["turn/started", "turn/completed", "turn/error", "thread/started", "thread/resumed"]);
 function immutable<T>(value: T): T {
   const copy = structuredClone(value);
   const freeze = (item: unknown): void => {
@@ -24,6 +25,10 @@ function immutable<T>(value: T): T {
 /** Owns Git transport and refresh lifetime, without panel or DOM state. */
 export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
   private disposed = false;
+  private busyKey?: string;
+  private actionBusy = true;
+  private busyRevision = 0;
+  private busyScheduled = false;
   private timer?: ReturnType<typeof setTimeout>;
   private activeRefresh?: RefreshRequest;
   private pendingRefresh?: RefreshRequest;
@@ -46,7 +51,8 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
   getSnapshot(): EnvironmentSnapshotV1 {
     this.assertActive();
     const source = this.host.getSource();
-    const value = { contextKey: source.contextKey, root: source.root, status: source.status, capabilities: {
+    this.syncBusySource();
+    const value = { actionBusy: this.actionBusy, contextKey: source.contextKey, root: source.root, status: source.status, capabilities: {
       review: typeof window.wuu.listGitChanges === "function" && typeof window.wuu.readGitFileDiff === "function"
         && hostSupports("listGitChanges") && hostSupports("readGitFileDiff"),
       checkout: hostSupports("checkoutGitBranch"), createBranch: hostSupports("createCheckoutGitBranch"),
@@ -68,7 +74,47 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
 
   notifyChanged(): void {
     if (this.disposed) return;
+    this.syncBusySource();
     for (const listener of this.listeners) listener();
+  }
+
+  /** Consumes the controller's existing stream, including background worktrees. */
+  receive(event: ServerEvent): void {
+    if (this.disposed || !(event.kind === "server-exit"
+      || event.kind === "notification" && busyLifecycleMethods.has(event.message.method))) return;
+    this.invalidateBusy();
+    this.notifyChanged();
+  }
+
+  private syncBusySource(): void {
+    const source = this.host.getSource();
+    const key = JSON.stringify([source.contextKey, source.root, source.runningThreadKey]);
+    if (key === this.busyKey) return;
+    this.busyKey = key;
+    this.invalidateBusy();
+  }
+
+  private invalidateBusy(): void {
+    this.actionBusy = Boolean(this.host.getSource().root);
+    this.busyRevision++;
+    if (this.busyScheduled) return;
+    this.busyScheduled = true;
+    // One lifecycle event can also change canonical running state. Read once
+    // after both invalidations, while exposing conservative busy immediately.
+    queueMicrotask(() => {
+      this.busyScheduled = false;
+      if (this.disposed) return;
+      const source = this.host.getSource();
+      const revision = this.busyRevision;
+      if (!source.root || typeof window.wuu?.gitActionBusy !== "function") return;
+      void window.wuu.gitActionBusy(source.root).then(busy => {
+        if (this.disposed || revision !== this.busyRevision || !this.isCurrent(source)) return;
+        this.actionBusy = busy;
+        this.notifyChanged();
+      }, () => {
+        // The conservative value remains true until a later successful read.
+      });
+    });
   }
 
   dispose(): void {
