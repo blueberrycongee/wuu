@@ -375,7 +375,7 @@ func readAuthority(ctx context.Context, client *persistence.Client, checkpoint p
 	if actual != checkpoint {
 		return nil, persistence.ErrBindingChanged
 	}
-	return json.Marshal(snapshot)
+	return persistence.MarshalSnapshot(snapshot)
 }
 func authorityRevision(ctx context.Context, documents persistence.Documents, revision persistence.Revision) error {
 	view, err := documents.Read(ctx, persistence.Query{Namespace: "wuu.state.authority.v1", Keys: []string{}, AtRevision: &revision})

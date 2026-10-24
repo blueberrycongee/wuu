@@ -164,6 +164,9 @@ func (s *Service) InvokeService(ctx context.Context, params pluginhost.ServiceIn
 		}
 		return nil, &pluginhost.HostServiceError{Code: code, Message: err.Error()}
 	}
+	if snapshot, ok := result.(Snapshot); ok {
+		return MarshalSnapshot(snapshot)
+	}
 	return json.Marshal(result)
 }
 

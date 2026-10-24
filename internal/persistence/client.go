@@ -119,7 +119,14 @@ func (c *Client) invokeEncoded(ctx context.Context, method string, raw json.RawM
 		}
 		return errors.Join(cause, err)
 	}
-	if err := json.Unmarshal(raw, response); err != nil {
+	if snapshot, ok := response.(*Snapshot); ok {
+		// Export owns the response bytes. Borrow its values instead of copying the
+		// entire database once more during startup checkpoint verification.
+		err = decodeBorrowedValues(raw, snapshot, false)
+	} else {
+		err = json.Unmarshal(raw, response)
+	}
+	if err != nil {
 		return fmt.Errorf("decode %s.%s result: %w", ServiceName, method, err)
 	}
 	return nil
