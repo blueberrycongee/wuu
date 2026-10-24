@@ -65,6 +65,8 @@
     "dist/ui-catalog.d.ts",
     "dist/ui-conversation.js",
     "dist/ui-conversation.d.ts",
+    "dist/ui-composer-presentation.js",
+    "dist/ui-composer-presentation.d.ts",
     "dist/ui-composer-runtime.js",
     "dist/ui-composer-runtime.d.ts",
     "dist/ui-environment.js",

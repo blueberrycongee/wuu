@@ -2740,3 +2740,5 @@ export * from "./ui-onboarding.js";
 export * from "./ui-web-workspace.js";
 
 export * from "./ui-artifacts.js";
+
+export * from "./ui-composer-presentation.js";
