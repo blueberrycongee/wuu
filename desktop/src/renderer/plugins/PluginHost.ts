@@ -849,6 +849,8 @@ export class PluginHost {
 
   private createApplicationService(state: GenerationState): ApplicationServiceV1 {
     let desktop: ApplicationServiceV1["desktop"] | undefined;
+    let composerPresentation: ApplicationServiceV1["composerPresentation"] | undefined;
+    const getPluginHost = () => this;
     const service = (): HostApplicationService => {
       this.assertActive(state);
       if (!this.application) throw new Error("Application service is unavailable");
@@ -856,6 +858,7 @@ export class PluginHost {
     };
     return Object.freeze({
       contractVersion: 1 as const,
+      get composerPresentation() { return composerPresentation ??= service().createComposerPresentationScope(state.lifetime.signal, getPluginHost); },
       get desktop() { return desktop ??= service().createDesktopScope(state.lifetime.signal); },
       webWorkspace: scopeApplicationWebWorkspace(() => service().webWorkspace, state.lifetime.signal, () => this.assertActive(state)),
       environment: scopeApplicationEnvironment(() => service().environment, state.lifetime.signal, () => this.assertActive(state)),

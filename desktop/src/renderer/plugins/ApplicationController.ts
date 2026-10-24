@@ -1,3 +1,5 @@
+import { ApplicationComposerPresentation } from "./ApplicationComposerPresentation";
+import type { PluginHost } from "./PluginHost";
 import { ApplicationEnvironment } from "./ApplicationEnvironment";
 import { readWorkspaceBrowserNavigation, subscribeWorkspaceBrowserNavigation } from "../WorkspaceBrowserNavigation";
 import { ENABLE_EMBEDDED_BROWSER } from "../FeatureFlags";
@@ -97,6 +99,12 @@ export class ApplicationController implements HostApplicationService {
   private artifactsOwner?: ApplicationArtifacts;
   get artifacts(): ApplicationArtifacts {
     return this.artifactsOwner ??= new ApplicationArtifacts(window.wuu, this.previewContent);
+  }
+  private composerPresentationOwner?: ApplicationComposerPresentation;
+  createComposerPresentationScope(signal: AbortSignal, getPluginHost: () => PluginHost) {
+    return (this.composerPresentationOwner ??= new ApplicationComposerPresentation({
+      getState: () => this.state, subscribeState: this.subscribeState, getPluginHost,
+    })).createScope(signal);
   }
   private desktopOwner?: ApplicationDesktop;
   createDesktopScope(signal: AbortSignal) {
@@ -488,6 +496,7 @@ export class ApplicationController implements HostApplicationService {
       this.browserOwner?.dispose(); this.browserOwner = undefined;
       this.environmentOwner?.dispose(); this.environmentOwner = undefined;
       this.artifactsOwner = undefined;
+      this.composerPresentationOwner?.dispose(); this.composerPresentationOwner = undefined;
       this.desktopOwner?.dispose(); this.desktopOwner = undefined;
       void this.webWorkspaceOwner?.dispose().catch(error => console.error("Web workspace cleanup failed", error));
       this.webWorkspaceOwner = undefined;

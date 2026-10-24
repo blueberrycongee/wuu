@@ -60,6 +60,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
       };
       const scoped: ApplicationServiceV1 = {
         contractVersion: 1,
+        get composerPresentation() { assertActive(); controller.signal.throwIfAborted(); return application.composerPresentation; },
         get desktop() { assertActive(); controller.signal.throwIfAborted(); return application.desktop; },
         webWorkspace: scopeApplicationWebWorkspace(() => application.webWorkspace, controller.signal, assertActive),
         environment: scopeApplicationEnvironment(() => application.environment, controller.signal, assertActive),

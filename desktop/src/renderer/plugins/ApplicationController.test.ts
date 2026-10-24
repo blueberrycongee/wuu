@@ -38,7 +38,7 @@ describe("shared application state", () => {
     expect(send.mock.calls[0][7]).toEqual({ kind: "no_project", cwd: "/background" });
     expect(controller.getState().activeContext).toEqual(context);
     expect(controller.getState().activeSessionTabID).toBe("draft:foreground");
-    expect(controller.getState().sessionTabs[0].prompt).toBe("untouched");
+    expect(controller.getState().sessionTabs[0]).toMatchObject({ prompt: "untouched" });
   });
 
   it("hydrates only the captured remote item and rejects stale, mismatched, or cancelled reads", async () => {

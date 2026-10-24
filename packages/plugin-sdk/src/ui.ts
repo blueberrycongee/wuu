@@ -1,3 +1,4 @@
+import type { ApplicationComposerPresentationV1 } from "./ui-composer-presentation.js";
 import type { ApplicationEnvironmentV1, EnvironmentCallOptionsV1 } from "./ui-environment.js";
 import type { ApplicationArtifactsV1, ArtifactCallOptionsV1 } from "./ui-artifacts.js";
 import type { ApplicationDesktopControlsV1 } from "./ui-desktop.js";
@@ -174,6 +175,7 @@ export interface ApplicationServiceV1 {
   readonly previewContent: ApplicationPreviewContentV1;
   readonly environment: ApplicationEnvironmentV1;
   readonly artifacts: ApplicationArtifactsV1;
+  readonly composerPresentation: ApplicationComposerPresentationV1;
   readonly desktop: ApplicationDesktopControlsV1;
   readonly webWorkspace: ApplicationWebWorkspaceV1;
   readonly onboarding: ApplicationOnboardingV1;
