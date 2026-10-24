@@ -1099,13 +1099,15 @@ export function App({ application, slots, shellPluginId }: {
     for (const operation of submissionView.operations) {
       if (initialSubmissionIds.current.has(operation.operationID)) continue;
       const placed = placedSubmissions.current.get(operation.operationID);
-      if (operation.phase === "failed" || operation.phase === "cancelled") {
+      // Queue/steer delivery belongs to the existing reading flow, including
+      // a direct send rerouted to the queue after concurrent admission.
+      if (operation.phase === "failed" || operation.phase === "cancelled" || operation.mode === "queue" || operation.mode === "steer") {
         if (placed) discardSubmittedMessage(placed);
         initialSubmissionIds.current.add(operation.operationID);
         placedSubmissions.current.delete(operation.operationID);
         continue;
       }
-      if (placed) continue;
+      if (placed || operation.mode !== "send") continue;
       if (operation.ownerTabId !== tabs.activeTabId && operation.threadId !== activeThreadID) {
         initialSubmissionIds.current.add(operation.operationID);
         continue;

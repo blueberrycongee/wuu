@@ -36,6 +36,10 @@ export interface ApplicationSubmissionOperationV1 {
   readonly ownerTabId: string;
   readonly threadId?: string;
   readonly messageID: string;
+  /** Resolved delivery route, which may differ from the requested mode.
+   * Only `send` requests placement of the message; queue, steer, or an
+   * unresolved route preserve the reader's current position. */
+  readonly mode?: "send" | "queue" | "steer";
   readonly phase: "preparing" | "sending" | "completed" | "failed" | "cancelled";
   readonly error?: string;
 }

@@ -199,6 +199,8 @@ export class ApplicationSubmission {
     return this.deliverPending(operation, "guide", () => false);
   }
   private async deliverPending(operation: Operation, kind: "queue" | "guide", shouldHold: () => boolean): Promise<boolean> {
+    operation.view = { ...operation.view, mode: kind === "queue" ? "queue" : "steer" };
+    this.publish();
     const thread = operation.thread!; const message = operation.message; const list = kind === "queue" ? "queued" : "guides";
     const exists = () => this.options.pending.pendingComposerMessagesForThread(thread.id)[list].some(candidate => candidate.id === message.id);
     try {
@@ -234,6 +236,7 @@ export class ApplicationSubmission {
     if (!target && (runtime.pending || (runtime.params.engine ?? "wuu") === "wuu" && !hasAuthenticatedProvider(initial.initialized?.providers))) { forgetLocalTurnTiming(optimistic.id); return false; }
     const key = target?.id ?? source.id;
     if (this.admissions.has(key) || target?.read_only || target && isThreadRunning(target) && !activeTurnIsAnswerReady(target)) { forgetLocalTurnTiming(optimistic.id); return false; }
+    operation.view = { ...operation.view, mode: "send" };
     this.admissions.set(key, operation);
     if (!target) this.creations.set(source.id, operation);
     this.options.updateState(state => state.activeSessionTabID === source.id ? { ...state, running: true, status: "" } : state);
