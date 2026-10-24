@@ -87,7 +87,7 @@ function Titlebar() {
   const state = { ...initialState, activeContext: { kind: "project" as const, project_id: "wuu", cwd: workspace.root } };
   return <header className="titlebar">
     <div className="title-block"><ConversationTitleContent application={application} slots={fixtureSlots} slotOwner="preview-fixture" /></div>
-    <ConversationTitleActions state={state} pluginPageVisible={pluginPageVisible}
+    <ConversationTitleActions thread={state.activePane === "secondary" ? state.secondaryThread : state.thread} pluginPageVisible={pluginPageVisible}
       environmentToggleRef={React.createRef()} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
       rightPanelOpen={rightPanelOpen} onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)} />
   </header>;

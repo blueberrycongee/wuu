@@ -114,7 +114,7 @@ function Fixture() {
       </div></aside>
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
         <header className="titlebar"><div className="title-block"><PanelLeft className="icon"/><ConversationTitleContent application={titleApplication} slots={fixtureSlots} slotOwner="preview-fixture"/></div>
-          <ConversationTitleActions state={initialState}
+          <ConversationTitleActions thread={initialState.activePane === "secondary" ? initialState.secondaryThread : initialState.thread}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={environmentOpen}
             onToggleEnvironmentPanel={() => setEnvironmentOpen(value => !value)}
             rightPanelOpen={rightOpen} onToggleRightPanel={() => setRightOpen(value => !value)} />

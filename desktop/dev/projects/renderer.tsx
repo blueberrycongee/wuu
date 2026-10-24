@@ -233,7 +233,7 @@ function Fixture() {
       />
       <main className="conversation-pane" style={{ "--dock-composer-height": `${dockHeight}px` } as CSSProperties}>
         <header className="titlebar"><div className="title-block"><span>{draft ? "新项目" : current?.title}</span></div>
-          <ConversationTitleActions state={{ ...state, thread: draft ? undefined : current }}
+          <ConversationTitleActions thread={state.activePane === "secondary" ? state.secondaryThread : draft ? undefined : current}
             environmentToggleRef={environmentToggleRef} environmentPanelVisible={false} onToggleEnvironmentPanel={noop}
             rightPanelOpen={initialTabs.length > 0} onToggleRightPanel={noop} />
         </header>

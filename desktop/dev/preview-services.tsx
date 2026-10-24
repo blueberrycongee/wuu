@@ -17,7 +17,7 @@ export function createFixtureApplication(initial: Partial<ApplicationSnapshotV1>
   const listeners = new Set<() => void>();
   const unavailable = (): never => {throw new Error("This capability is unavailable in the synthetic preview");};
   const fileSelections = new Map<string, ReturnType<typeof base.fileSelection.getSnapshot>>();
-  const environment = {contextKey:"preview", root:"/preview", capabilities:{review:false, checkout:false, createBranch:false, commit:false, pullRequest:false}};
+  const environment = {actionBusy:false, contextKey:"preview", root:"/preview", capabilities:{review:false, checkout:false, createBranch:false, commit:false, pullRequest:false}};
   const update = (tabs: readonly ApplicationPreviewTabV1[], activeTabId?: string) => {
     snapshot = {...snapshot, revision: snapshot.revision + 1, previewWorkspace:{...snapshot.previewWorkspace, tabs, activeTabId}};
     listeners.forEach(listener => listener());
