@@ -97,6 +97,12 @@ ipcMain.handle = (channel, handler) => originalHandle(channel, async (...args) =
     throw new Error(`Acceptance must never invoke inference: ${channel}`);
   }
   const entry = { channel, completed: false, ...(channel === 'wuu:browser-pip-host-layout' ? { payload: args[1] } : {}) };
+  const catalogLifecycle = ['wuu:initialize', 'wuu:extension-catalog-refresh', 'wuu:plugin-desktop-activation'].includes(channel);
+  if (catalogLifecycle) Object.assign(entry, { sender: args[0].sender.id, startedAtMs: Date.now() - started });
+  if (channel === 'wuu:plugin-desktop-activation') {
+    const { id, fingerprint, graph_generation, activation, phase, status } = args[1];
+    entry.activation = { id, fingerprint, graph_generation, activation, phase, status };
+  }
   rpc.push(entry);
   if (channel === 'wuu:web-workspace-bounds' && report.activeTabSwitchTrace) {
     report.activeTabSwitchTrace.boundsIPC.push({ id: args[1], bounds: args[2], atMs: Date.now() - started });
@@ -107,12 +113,22 @@ ipcMain.handle = (channel, handler) => originalHandle(channel, async (...args) =
   if (websiteSetting) (report.websiteSettingReads ||= []).push(websiteSetting);
   try {
     const value = await handler(...args); entry.completed = true;
+    // Retain only public lifecycle identities, never initialize configuration.
+    if (channel === 'wuu:initialize' && value.application_shell) {
+      const { plugin_id, generation, provider_id } = value.application_shell;
+      entry.applicationShell = { plugin_id, generation, provider_id };
+    }
+    if (channel === 'wuu:extension-catalog-refresh') {
+      entry.inventory = value.extension_inventory.map(({ id, fingerprint, graph_generation }) => ({ id, fingerprint, graph_generation }));
+    }
     if (websiteSetting) Object.assign(websiteSetting, { completedAtMs: Date.now() - started, value: value.value });
     return value;
   } catch (error) {
     entry.error = String(error);
     if (websiteSetting) websiteSetting.error = String(error);
     throw error;
+  } finally {
+    if (catalogLifecycle) entry.completedAtMs = Date.now() - started;
   }
 });
 let win;
@@ -134,15 +150,37 @@ async function evaluate(fn, arg) {
   return result.value;
 }
 async function waitFor(fn, arg, label = String(fn), timeout = 12000) {
+  // DOM elements and React-attached nodes are not structured-cloneable.
+  // Predicates cross the Electron bridge only as booleans.
+  return waitForValue(() => evaluate(`async argument => Boolean(await (${fn})(argument))`, arg), label, timeout);
+}
+async function waitForValue(read, label, timeout = 12000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    // DOM elements and React-attached nodes are not structured-cloneable.
-    // Predicates cross the Electron bridge only as booleans.
-    const value = await evaluate(`async argument => Boolean(await (${fn})(argument))`, arg);
+    const value = await read();
     if (value) return value;
     await delay(40);
   }
   throw new Error(`Timed out: ${label}`);
+}
+async function waitForCatalogRefreshRender(sender, binding, afterIPC) {
+  return waitForValue(() => {
+    const entries = rpc.slice(afterIPC).filter(entry => entry.sender === sender);
+    const refresh = entries.find(entry => entry.channel === 'wuu:extension-catalog-refresh');
+    if (refresh?.error) throw new Error(refresh.error);
+    if (!refresh?.completed) return;
+    const target = refresh.inventory.find(item => item.id === binding.plugin_id);
+    assert.ok(target?.fingerprint && target.graph_generation, 'Refresh publishes the selected shell identity');
+    const reports = entries.filter(entry => entry.channel === 'wuu:plugin-desktop-activation'
+      && entry.activation.id === target.id && entry.activation.fingerprint === target.fingerprint
+      && entry.activation.graph_generation === target.graph_generation);
+    const failure = reports.find(entry => entry.error || entry.activation.status === 'failed');
+    assert.ok(!failure, `Selected shell activation failed: ${JSON.stringify(failure)}`);
+    const render = reports.find(entry => entry.completed && entry.activation.phase === 'render' && entry.activation.status === 'active');
+    if (!render) return;
+    return { target, refreshStartedAtMs: refresh.startedAtMs, refreshCompletedAtMs: refresh.completedAtMs,
+      render: { ...render.activation, sender: render.sender, acknowledgedAtMs: render.completedAtMs } };
+  }, 'This window acknowledges rendering the refreshed shell graph');
 }
 async function settle() {
   await evaluate(async () => {
@@ -569,7 +607,17 @@ async function run() {
       observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
       const tick = () => { evidence.frames++; sample('frame'); frame = requestAnimationFrame(tick); };
       sample('before-refresh', true); frame = requestAnimationFrame(tick);
-      window.__wuuSkillsRefreshPresentation = { sample, stop: () => {
+      const originalShell = inspect('.app-shell').node;
+      const catalogSnapshot = () => {
+        const catalog = document.querySelector('.catalog-section-pane:not([hidden])');
+        return { at: performance.now(), shell: inspect('.app-shell')?.node ?? null, originalShell,
+          catalogVisible: Boolean(catalog && !catalog.inert),
+          skillsSelected: catalog?.querySelector('.catalog-tab[data-tab="skills"]')?.getAttribute('aria-selected') === 'true',
+          busy: catalog?.querySelector('.catalog-refresh')?.getAttribute('aria-busy') ?? null,
+          row: Boolean(catalog?.querySelector('.catalog-row[aria-label="Preview acceptance-skill"]')),
+          error: catalog?.querySelector('.skills-catalog-error')?.textContent ?? null };
+      };
+      window.__wuuSkillsRefreshPresentation = { sample, catalogSnapshot, stop: () => {
         sample('before-Escape', true); observer.disconnect(); cancelAnimationFrame(frame);
         return { ...evidence, endedAt: performance.now() };
       } };
@@ -577,9 +625,23 @@ async function run() {
     const presentation = { pairs: [], reportEpochMs: started, clock: 'Capture intervals use report atMs; DOM samples use timeOrigin + performance.now().',
       boundary: 'Sequential renderer and X11 captures are not atomic. A changed DOM/animation state or a gap between captures prevents a capture-only verdict. Layout sampling can affect rendering timing.' };
     try {
+      const sender = win.webContents.id;
+      const binding = rpc.findLast(entry => entry.channel === 'wuu:initialize' && entry.sender === sender && entry.completed)?.applicationShell;
+      assert.ok(binding, 'This window initialized a selected application shell');
+      const afterIPC = rpc.length;
+      presentation.refresh = { sender, binding, afterIPC };
       await click('.catalog-refresh', 'catalog-refresh');
-      await waitFor(() => document.querySelector('.catalog-refresh')?.getAttribute('aria-busy') === 'false');
-      assert.ok(await evaluate(() => Boolean(document.querySelector('.catalog-section-pane:not([hidden]) .catalog-row[aria-label="Preview acceptance-skill"]'))), 'Refreshing the catalog preserves the selected Skills page');
+      Object.assign(presentation.refresh, await waitForCatalogRefreshRender(sender, binding, afterIPC));
+      const loadedCatalog = await waitForValue(async () => {
+        const snapshot = await evaluate(() => window.__wuuSkillsRefreshPresentation.catalogSnapshot());
+        presentation.refresh.latestCatalog = snapshot;
+        assert.ok(snapshot.shell && snapshot.shell !== snapshot.originalShell, 'Refresh renders a new shell activation');
+        assert.ok(snapshot.catalogVisible && snapshot.skillsSelected, 'Refreshing the catalog preserves the selected Skills page');
+        assert.ok(!snapshot.error, snapshot.error);
+        return snapshot.busy === 'false' ? snapshot : undefined;
+      }, 'The acknowledged shell finishes loading its Skills catalog');
+      presentation.refresh.loadedCatalog = loadedCatalog;
+      assert.ok(loadedCatalog.row, 'The refreshed Skills page retains acceptance-skill');
       await capture('skills-after-catalog-refresh', async renderer => {
         const pair = { renderer: { file: renderer.file, sha256: renderer.sha256, startedAtMs: renderer.captureStartedAtMs, endedAtMs: renderer.atMs } };
         presentation.pairs.push(pair);
