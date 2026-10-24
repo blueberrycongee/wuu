@@ -44,6 +44,13 @@ export class ApplicationComposerPresentation {
     };
     return Object.freeze({
       getSnapshot: (ownerTabId: string) => {
+        check();
+        if (!this.host.getState().sessionTabs.some(tab => tab.id === ownerTabId && tab.kind !== "skills")) {
+          const previous = views.get(ownerTabId); if (previous?.key === "unavailable") return previous.value;
+          const value = immutable({ ownerTabId, available: false, running: false, turnRunning: false, canSteer: false, readOnly: true,
+            status: "", queryHistory: [], skillRevision: "", workspaceCapabilities: { create: false, open: false } });
+          views.set(ownerTabId, { key: "unavailable", value }); return value;
+        }
         const { state, tab, thread } = owner(ownerTabId);
         const initialized = runtimeViewForSession(state.initialized, thread);
         const turn = activeTurnForThread(thread); const running = Boolean(thread && isThreadRunning(thread));

@@ -20,6 +20,13 @@ function fixture() {
 }
 
 describe("composer presentation host boundary", () => {
+  it("publishes an unavailable view when a mounted draft closes", () => {
+    const f = fixture(); f.service.getSnapshot("draft");
+    f.set({ ...f.get(), sessionTabs: [] });
+    expect(f.service.getSnapshot("draft")).toMatchObject({ ownerTabId: "draft", available: false });
+    expect(f.service.getSnapshot("draft")).toBe(f.service.getSnapshot("draft"));
+    f.helper.dispose();
+  });
   it("publishes immutable telemetry without mutating the canonical store", () => {
     const f = fixture();
     turnTelemetryStore.ingest({ kind: "notification", workdir: "/one", message: { method: "turn/usage", params: { turn_id: "one", output_tokens: 4 } } });
