@@ -60,7 +60,9 @@ export function loadSkinImage(input: { id: string; fingerprint: string; path: st
   return pending;
 }
 
-export function useSkinImage(skin: AvailableShellSkin | undefined, mode: "light" | "dark", load = loadSkinImage) {
+const hostSkinImages = { loadSkinImage };
+export function useSkinImage(skin: AvailableShellSkin | undefined, mode: "light" | "dark", source: Pick<import("../../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1, "loadSkinImage"> = hostSkinImages) {
+  const load = source.loadSkinImage;
   const path = skin?.[mode].image;
   const key = skin && path ? `${skin.pluginId}:${skin.fingerprint}:${path}` : "";
   const [result, setResult] = useState({ key: "", url: "", error: false });

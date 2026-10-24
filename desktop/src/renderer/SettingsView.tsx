@@ -308,6 +308,7 @@ function SettingsViewContent({
   onToggleSidebar: () => void;
 }): JSX.Element {
   const controls = useSettingsControls();
+  const loadPluginIcon = useMemo(() => controls.loadPluginIconURL.bind(controls), [controls]);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -849,7 +850,7 @@ function SettingsViewContent({
                     <SettingsNavItem
                       key={pageId}
                       pageID={pageId}
-                      icon={<PluginIcon loadIcon={controls.loadPluginIconURL} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
+                      icon={<PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon-lg" />}
                       active={activePage === pageId}
                       onClick={() => selectPage(pageId)}
                     >

@@ -12,7 +12,7 @@ function SkinCard({ skin, mode, selected, choose, title, image }: {
 }): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
-  const loaded = useSkinImage(skin, mode, controls.loadSkinImage);
+  const loaded = useSkinImage(skin, mode, controls);
   const variant = skin?.[mode];
   const url = loaded.url || image;
   const style: CSSProperties = {
