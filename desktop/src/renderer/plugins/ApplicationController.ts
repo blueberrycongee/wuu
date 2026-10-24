@@ -407,7 +407,7 @@ export class ApplicationController implements ApplicationServiceV1 {
 
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
     if (isApplicationPreviewAction(action)) return this.applicationPreview.invoke(action,
-      input as ApplicationPreviewActionMapV1[keyof ApplicationPreviewActionMapV1]["input"]);
+      input as ApplicationPreviewActionMapV1[keyof ApplicationPreviewActionMapV1]["input"], signal);
     if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
       input as ApplicationSettingsActionMapV1[keyof ApplicationSettingsActionMapV1]["input"], signal);
     switch (action) {

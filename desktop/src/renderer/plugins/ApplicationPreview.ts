@@ -1,5 +1,6 @@
 import type { ApplicationPreviewActionMapV1, ApplicationPreviewWorkspaceV1 } from "../../../../packages/plugin-sdk/src/ui-preview";
 import type { Thread } from "../../shared/protocol";
+import { validPdfSelectionReference } from "../PdfSelection";
 import { collectTurnArtifacts } from "../ArtifactOutputs";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
 import { closeViewTab, closeViewTabsWhere, focusViewTab, initialWorkspaceViewTabsState, openViewTab, reorderViewTabs,
@@ -41,8 +42,9 @@ export class ApplicationPreview {
     this.host.changed();
   }
 
-  invoke<Action extends keyof ApplicationPreviewActionMapV1>(action: Action,
-    input: ApplicationPreviewActionMapV1[Action]["input"]): ApplicationPreviewActionMapV1[Action]["result"] {
+  async invoke<Action extends keyof ApplicationPreviewActionMapV1>(action: Action,
+    input: ApplicationPreviewActionMapV1[Action]["input"], signal?: AbortSignal): Promise<ApplicationPreviewActionMapV1[Action]["result"]> {
+    signal?.throwIfAborted();
     let result: unknown;
     switch (action) {
       case "preview.open-file": {
@@ -58,10 +60,23 @@ export class ApplicationPreview {
       case "preview.open-artifact": {
         const { threadId, artifactId, sha256, page } = input as ApplicationPreviewActionMapV1["preview.open-artifact"]["input"];
         const thread = this.host.getThreads().find(thread => thread.id === threadId);
-        const artifact = thread?.turns.flatMap(collectTurnArtifacts).find(artifact => artifact.id === artifactId);
-        if (!thread || !artifact || sha256 !== undefined && artifact.sha256 !== sha256) throw new Error("Artifact is unavailable or its snapshot changed");
+        let artifact = thread?.turns.flatMap(collectTurnArtifacts).find(artifact => artifact.id === artifactId
+          || sha256 !== undefined && artifact.uri === artifactId && artifact.sha256 === sha256);
         if (page !== undefined && (!Number.isSafeInteger(page) || page < 1)) throw new Error("Artifact page must be a positive integer");
-        this.update(openViewTab(this.state, workspaceArtifactViewTab({ threadID: threadId, cwd: thread.cwd,
+        if (!artifact && validPdfSelectionReference({ start_page: page ?? 1, end_page: page ?? 1,
+          artifact_uri: artifactId, artifact_sha256: sha256, artifact_thread_id: threadId })) {
+          // The managed protocol validates the persisted manifest and full digest;
+          // a range read avoids loading the PDF into application snapshot memory.
+          const response = await fetch(artifactId, { headers: { Range: "bytes=0-0" }, signal });
+          await response.body?.cancel();
+          signal?.throwIfAborted();
+          if (response.ok && response.headers.get("Content-Type")?.split(";")[0] === "application/pdf") {
+            artifact = { id: artifactId, itemId: "", index: 0, placement: "inline", type: "file", name: decodeURIComponent(new URL(artifactId).pathname.split("/").at(-1)!),
+              mimeType: "application/pdf", uri: artifactId, sha256, delivered: true };
+          }
+        }
+        if (!artifact || sha256 !== undefined && artifact.sha256 !== sha256) throw new Error("Artifact is unavailable or its snapshot changed");
+        this.update(openViewTab(this.state, workspaceArtifactViewTab({ threadID: threadId, cwd: thread?.cwd,
           artifact: structuredClone(artifact), page, pageRequest: page === undefined ? undefined : crypto.randomUUID() }))); break;
       }
       case "preview.open-tool": {
