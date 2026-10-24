@@ -73,9 +73,9 @@ export interface StateDocumentCursor {
 }
 /** Page the existing export method; continuation and receipts require both pins. */
 export type StateExportPageRequest = {
-  /** Positive UTF-8 JSON byte target. One oversized record may exceed it. */
+  /** 1..33554432 UTF-8 JSON bytes; must fit the envelope. One record may exceed it. */
   readonly target_bytes: number;
-  /** Positive maximum number of records in this page. */
+  /** 1..10000 records in this page. */
   readonly max_items: number;
 } & (
   | { readonly section: "documents"; readonly after?: never; readonly at_revision?: never; readonly generation?: never }

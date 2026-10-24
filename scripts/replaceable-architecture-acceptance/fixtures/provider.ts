@@ -45,8 +45,8 @@ const plugin: RuntimePlugin = {
       const page = (params as { page?: StateExportPageRequest }).page;
       if (page === undefined) return { version: 1, revision: state.revision, documents: state.documents, receipts: state.receipts };
       if (!page || (page.section !== "documents" && page.section !== "receipts")
-        || !Number.isSafeInteger(page.target_bytes) || page.target_bytes <= 0
-        || !Number.isSafeInteger(page.max_items) || page.max_items <= 0
+        || !Number.isSafeInteger(page.target_bytes) || page.target_bytes <= 0 || page.target_bytes > 33554432
+        || !Number.isSafeInteger(page.max_items) || page.max_items <= 0 || page.max_items > 10000
         || (page.at_revision !== undefined && (typeof page.at_revision !== "string" || !/^(0|[1-9]\d*)$/.test(page.at_revision)))
         || (page.generation !== undefined && (typeof page.generation !== "string" || !page.generation))
         || ((page.at_revision === undefined) !== (page.generation === undefined))
@@ -91,7 +91,10 @@ const plugin: RuntimePlugin = {
     }
     if (method !== "commit") reject("method_not_found", "unknown method");
     const tx = params as StateTransaction;
-    const digest = createHash("sha256").update(JSON.stringify(tx)).digest("hex");
+    // Match Go encoding/json v1 HTML and line-separator escaping in receipts.
+    const canonical = JSON.stringify(tx).replace(/[<>&\u2028\u2029]/g,
+      char => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+    const digest = createHash("sha256").update(canonical).digest("hex");
     const prior = state.receipts.find(receipt => receipt.id === tx.id);
     if (prior) {
       if (prior.digest !== digest) reject("state_operation_conflict", "operation has different intent");

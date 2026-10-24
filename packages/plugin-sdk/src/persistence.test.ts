@@ -1,4 +1,11 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
+import { cp, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
 import { documentStore, documentStoreDescriptor, type StateExportPage, type StateExportPageRequest } from "./persistence.js";
 import type { RuntimeHost } from "./index.js";
 
@@ -73,3 +80,89 @@ void [unpinnedReceipts, unpinnedDocuments, wrongCursor];
 const partialPin: StateExportPageRequest = { section: "documents", at_revision: expectedRevision, target_bytes: 1024, max_items: 2 };
 void partialPin;
 console.log("persistence paged export wire contract passed");
+
+// Exercise the external fixture through real JSONL, with only the public SDK
+// installed beside it. Receipt bytes must survive export and a process restart.
+const dir = await mkdtemp(join(tmpdir(), "wuu-paged-provider-"));
+const installedSDK = join(dir, "node_modules/@wuu/plugin-sdk");
+async function startProvider() {
+  const child = spawn(process.execPath, ["--experimental-strip-types", "provider.ts"], {
+    cwd: dir, env: { ...process.env, WUU_ACCEPTANCE_STATE: join(dir, "state.json") }, stdio: ["pipe", "pipe", "pipe"],
+  });
+  const exited = once(child, "exit");
+  let stderr = "";
+  child.stderr.on("data", data => { stderr += data; });
+  const lines = createInterface({ input: child.stdout });
+  const responses = lines[Symbol.asyncIterator]();
+  const timer = setTimeout(() => child.kill(), 15000);
+  let id = 0;
+  async function request(method: string, params?: unknown) {
+    const requestId = String(++id);
+    child.stdin.write(JSON.stringify({ id: requestId, method, params }) + "\n");
+    const line = await responses.next();
+    assert.equal(line.done, false, stderr);
+    const response = JSON.parse(line.value!);
+    assert.equal(response.id, requestId);
+    return response;
+  }
+  return {
+    request,
+    invoke: (method: string, params: unknown) => request("service.invoke", { service: "state.documents", method, params }),
+    async shutdown() {
+      assert.equal((await request("shutdown")).error, undefined);
+      child.stdin.end();
+      assert.equal((await exited)[0], 0, stderr);
+    },
+    async dispose() { clearTimeout(timer); child.kill(); lines.close(); await exited; },
+  };
+}
+let provider: Awaited<ReturnType<typeof startProvider>> | undefined;
+try {
+  await mkdir(installedSDK, { recursive: true });
+  await cp(new URL("./", import.meta.url), join(installedSDK, "dist"), { recursive: true });
+  await copyFile(new URL("../package.json", import.meta.url), join(installedSDK, "package.json"));
+  await copyFile(new URL("../../../scripts/replaceable-architecture-acceptance/fixtures/provider.ts", import.meta.url), join(dir, "provider.ts"));
+  await writeFile(join(dir, "package.json"), JSON.stringify({ private: true, type: "module" }));
+  provider = await startProvider();
+  await provider.request("initialize", {});
+  await provider.request("activate");
+  const tx = {
+    id: "html-<>&\u2028\u2029", expected_revision: "0", writes: [{ namespace: "n<&", key: "k>&", value: {
+      html: "<>&\u2028\u2029", literal: "\\u003c", unicode: "中😀", normal: [true, null, 42],
+    } }],
+  };
+  // encoding/json v1 escapes HTML and line separators, including object keys
+  // and metadata strings. The literal backslash sequence is not an HTML rune.
+  const canonical = String.raw`{"id":"html-\u003c\u003e\u0026\u2028\u2029","expected_revision":"0","writes":[{"namespace":"n\u003c\u0026","key":"k\u003e\u0026","value":{"html":"\u003c\u003e\u0026\u2028\u2029","literal":"\\u003c","unicode":"中😀","normal":[true,null,42]}}]}`;
+  assert.deepEqual(JSON.parse(canonical), tx);
+  const expectedDigest = createHash("sha256").update(canonical).digest("hex");
+  const committed = await provider.invoke("commit", tx);
+  assert.equal(committed.error, undefined);
+  const full = (await provider.invoke("export", {})).result;
+  const first = (await provider.invoke("export", { page: { section: "documents", target_bytes: 33554432, max_items: 10000 } })).result;
+  const receiptPage = (await provider.invoke("export", { page: { section: "receipts", at_revision: first.revision, generation: first.generation, target_bytes: 1024, max_items: 1 } })).result;
+  const invalid = [];
+  for (const page of [
+    { section: "documents", target_bytes: 33554433, max_items: 1 },
+    { section: "documents", target_bytes: 1024, max_items: 10001 },
+  ]) invalid.push((await provider.invoke("export", { page })).error?.code);
+  await provider.shutdown(); await provider.dispose();
+  provider = await startProvider();
+  await provider.request("initialize", {}); await provider.request("activate");
+  const retried = await provider.invoke("commit", tx);
+  const changed = await provider.invoke("commit", { ...tx, writes: [{ ...tx.writes[0], value: "changed" }] });
+  assert.deepEqual({
+    fullDigest: full.receipts[0].digest, pageDigest: receiptPage.receipts[0].digest,
+    document: first.documents[0], done: first.done, invalid,
+    retried, changedCode: changed.error?.code,
+  }, {
+    fullDigest: expectedDigest, pageDigest: expectedDigest,
+    document: tx.writes[0], done: true, invalid: ["invalid_request", "invalid_request"],
+    retried: { id: retried.id, result: committed.result }, changedCode: "state_operation_conflict",
+  });
+  await provider.shutdown();
+  console.log("external persistence canonical receipts and page limits passed");
+} finally {
+  await provider?.dispose();
+  await rm(dir, { recursive: true, force: true });
+}
