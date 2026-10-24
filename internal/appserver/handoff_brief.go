@@ -62,9 +62,6 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 	if strings.TrimSpace(plan.Prompt) == "" {
 		return params, errors.New("handoff brief prompt is empty")
 	}
-	if plan.MaxBytes <= 0 {
-		plan.MaxBytes = 24 * 1024
-	}
 	result, err := fork(ctx, messages, plan)
 	if err != nil {
 		return params, err
@@ -73,7 +70,7 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 	if body == "" {
 		return params, errors.New("handoff brief generator returned empty Markdown")
 	}
-	if len([]byte(body)) > plan.MaxBytes {
+	if plan.MaxBytes > 0 && len([]byte(body)) > plan.MaxBytes {
 		return params, fmt.Errorf("handoff brief exceeds %d bytes", plan.MaxBytes)
 	}
 	params.Seed.Body = body
