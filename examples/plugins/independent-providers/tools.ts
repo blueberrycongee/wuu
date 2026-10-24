@@ -1,4 +1,4 @@
-import { RuntimeHostServiceError, TOOL_SERVICE_DESCRIPTOR, type RuntimePlugin, type ToolServiceList, type ToolServiceResolution, type ToolServiceExecution, type ToolServiceCallRequest } from '@wuu/plugin-sdk';
+import { RuntimeHostServiceError, TOOL_SERVICE_DESCRIPTOR, type RuntimePlugin, type ToolServiceList, type ToolServiceResolution, type ToolServiceExecution, type ToolServiceFinalizeRequest, type ToolServiceCallRequest } from '@wuu/plugin-sdk';
 
 const descriptor = TOOL_SERVICE_DESCRIPTOR;
 
@@ -19,6 +19,7 @@ export function createToolsProvider(owner = 'independent-tools'): RuntimePlugin 
           type: 'object', properties: {text: {type: 'string'}}, required: ['text'], additionalProperties: false,
         }}], catalog: [], catalog_prompt: '', system_fragment: '',
       } satisfies ToolServiceList;
+      if (method === 'finalize') return {result: structuredClone((params as ToolServiceFinalizeRequest).result)} satisfies ToolServiceExecution;
       const call = (params as ToolServiceCallRequest | undefined)?.call;
       if (method === 'resolve') return call?.name === 'author_echo'
         ? {found: true, supports: true, display: {label: 'Independent echo'}, metadata: {orchestrator: false, read_only: true, concurrency_safe: true, destructive: false, risk: 'low', reason: 'pure text transformation'}} satisfies ToolServiceResolution

@@ -26,6 +26,9 @@ test('independent registry owns discovery, resolution, execution and cleanup', {
   assert.throws(() => invoke('execute', { call: { name: 'author_echo', arguments: '{"text":1}' } }), /text must be a string/);
   const result = invoke('execute', { call: { name: 'author_echo', arguments: JSON.stringify({text: '独立实现'}) } });
   assert.equal(result.result.content[0].text, 'author-one:独立实现');
+  const failure = {content: [{type: 'text', text: 'rejected before execution'}], is_error: true};
+  assert.deepEqual(invoke('finalize', {call: {name: 'author_echo'}, result: failure}), {result: failure});
+  assert.deepEqual(invoke('finalize', {call: {name: 'author_echo'}, result: result.result}), result);
   listed.tools.length = 0;
   assert.equal(invoke('list', {}).tools.length, 1);
   plugin.shutdown();
