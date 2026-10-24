@@ -5,9 +5,21 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
+
+// Embedded model fixtures still need a captured generation for receipt ownership.
+func attachTestModelGeneration(t *testing.T, rt *runtime.Session) {
+	t.Helper()
+	rt.PluginHost = pluginhost.New()
+	t.Cleanup(func() {
+		if _, err := rt.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+}
 
 func testRuntimeState(t *testing.T, rt *runtime.Session) *runtime.State {
 	t.Helper()

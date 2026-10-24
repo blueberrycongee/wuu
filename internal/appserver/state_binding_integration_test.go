@@ -230,6 +230,7 @@ func TestTitleGenerationKeepsCapturedJournalAfterReplacement(t *testing.T) {
 	}
 	defer originalJournal.Close()
 	rt.InferenceJournalRuntime = originalJournal
+	attachTestModelGeneration(t, rt)
 	binding := testRuntimeState(t, rt)
 	srv := New(rt, &lockedBuffer{})
 	defer srv.Close()

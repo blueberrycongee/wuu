@@ -55,6 +55,10 @@ func (s *Server) handleTextPolish(req Request) error {
 	ctx, cancel := context.WithTimeout(context.Background(), textPolishTimeout)
 	defer cancel()
 	ctx = providers.WithInferenceJournal(ctx, binding.InferenceJournalRuntime.ForOwner("text-polish"))
+	ctx, finishReceipts, err := binding.BeginModelReceipts(ctx)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	response, err := providers.ExecuteChat(
 		ctx,
 		models.Main,
@@ -75,6 +79,7 @@ func (s *Server) handleTextPolish(req Request) error {
 		providers.InferenceOperationAuxiliary,
 		providers.InferenceProfileInteractive,
 	)
+	err = errors.Join(err, finishReceipts())
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("BYOK text polish failed: %w", err))
 	}

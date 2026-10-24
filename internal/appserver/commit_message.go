@@ -98,6 +98,10 @@ func (s *Server) handleGitCommitMessage(req Request) error {
 	ctx, cancel := context.WithTimeout(context.Background(), gitCommitMessageTimeout)
 	defer cancel()
 	ctx = providers.WithInferenceJournal(ctx, binding.InferenceJournalRuntime.ForOwner("git-commit-message"))
+	ctx, finishReceipts, err := binding.BeginModelReceipts(ctx)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	response, err := providers.ExecuteChat(
 		ctx,
 		models.Main,
@@ -115,6 +119,7 @@ func (s *Server) handleGitCommitMessage(req Request) error {
 		providers.InferenceOperationAuxiliary,
 		providers.InferenceProfileInteractive,
 	)
+	err = errors.Join(err, finishReceipts())
 	if err != nil {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("BYOK commit message generation failed: %w", err))
 	}

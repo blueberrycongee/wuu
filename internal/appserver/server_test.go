@@ -5879,7 +5879,9 @@ func TestServerGeneratesThreadTitle(t *testing.T) {
 	rt := newTestRuntime(t, mainClient)
 	rt.TitleClient = titleClient
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
@@ -5927,7 +5929,9 @@ func TestServerGeneratesThreadTitleFromFirstTurnSnapshot(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.TitleClient = titleClient
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	sess, err := rt.Sessions.CreateWithMetadata("snapshot-title-thread", rt.RootDir)
 	if err != nil {
@@ -5989,7 +5993,9 @@ func TestServerGeneratesThreadTitleUsesTitleRoleSelection(t *testing.T) {
 		t.Fatalf("modelroles.Resolve: %v", err)
 	}
 	rt.ModelRoles = roles
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
 
 	result, err := srv.generateThreadTitleCore(testRuntimeState(t, srv.rt), "title-role-thread", []providers.ChatMessage{
 		{Role: "system", Content: "system prompt"},
@@ -6022,7 +6028,9 @@ func TestServerGeneratesThreadTitleInheritsPinnedThreadModel(t *testing.T) {
 	rt.ModelRoles = modelroles.Set{
 		Title: modelroles.Selection{Inherited: true, Model: "fake-model", APIModel: "fake-model"},
 	}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	defer srv.Close()
 
 	threadClient := &fakeClient{response: providers.ChatResponse{Content: "Thread title"}}
 	threadRuntime := &runtime.ThreadRuntime{
@@ -6102,7 +6110,9 @@ func TestServerGeneratesThreadTitleEndToEndWithStreaming(t *testing.T) {
 	}
 	registerTestWuuEngine(t, rt)
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
 		t.Fatalf("thread/start: %v", err)
@@ -6190,7 +6200,9 @@ func TestServerRegenerateTitle(t *testing.T) {
 	rt := newTestRuntime(t, mainClient)
 	rt.TitleClient = titleClient
 	out := &lockedBuffer{}
+	attachTestModelGeneration(t, rt)
 	srv := New(rt, out)
+	defer srv.Close()
 
 	// Seed an existing thread that is BEYOND its first turn. The first-turn
 	// auto title gen would skip this because history has > 1 user message;

@@ -316,11 +316,17 @@ func (s *Server) generateThreadTitleUsingModel(binding *runtime.State, threadID 
 	ctx, cancel := context.WithTimeout(context.Background(), titleGenerationTimeout)
 	defer cancel()
 	ctx = providers.WithInferenceJournal(ctx, binding.InferenceJournalRuntime.ForOwner(threadID))
+	ctx, finishReceipts, err := binding.BeginModelReceipts(ctx)
+	if err != nil {
+		res.StreamErr = err
+		return res, err
+	}
 
 	// We use a small adapter over streamTitleText so we can capture per-delta
 	// deltas for the probe / regenerate-title result. streamTitleText itself
 	// remains untouched (it's exercised by TestStreamTitleText_*).
 	text, deltas, err := streamTitleTextWithDeltas(ctx, client, req)
+	err = errors.Join(err, finishReceipts())
 	res.ContentDeltas = deltas
 	res.AggregatedText = text
 	if err != nil {
