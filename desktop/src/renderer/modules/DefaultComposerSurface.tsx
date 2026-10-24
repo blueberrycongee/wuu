@@ -68,7 +68,8 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
   const creation = view.submission.pendingCreations.find(row => row.ownerTabId === ownerTabId);
   const stop = view.submission.stopRequests.find(row => row.threadId === presentation.threadId);
   const switching = Boolean(view.tabs.pending && !view.tabs.pending.contentReady);
-  const running = Boolean(creation || !presentation.readOnly && presentation.turnRunning || switching);
+  const editingSubmitting = Boolean(view.conversationActions.editing?.threadId === presentation.threadId && view.conversationActions.editing?.submitting);
+  const running = Boolean(creation || editingSubmitting || !presentation.readOnly && presentation.turnRunning || switching);
   const configuration = presentationConfiguration && { ...presentationConfiguration, provider: selection.provider, model: selection.model,
     effort: selection.effort, variant: selection.variant, speed: selection.speed,
     permissions: { mode: selection.permissionMode, approve_for_me: selection.approveForMe } } as ComposerConfiguration;
@@ -97,8 +98,8 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
       onRemoveSelection={id => run(controls.setSelections(draft.selections.filter(row => row.id !== id)))}
       queuedMessages={queued(pending?.queued)} guideMessages={queued(pending?.guides)} running={running}
       sendDisabled={!view.tabs.canSubmit || runtime.engineSelectionPending || Boolean(stop)}
-      submitting={Boolean(view.conversationActions.editing?.threadId === presentation.threadId && view.conversationActions.editing?.submitting) || view.submission.operations.some(row => row.ownerTabId === ownerTabId && (row.phase === "preparing" || row.phase === "sending"))}
-      stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || runtime.busy || switching)}
+      submitting={editingSubmitting || view.submission.operations.some(row => row.ownerTabId === ownerTabId && (row.phase === "preparing" || row.phase === "sending"))}
+      stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || editingSubmitting || runtime.busy || switching)}
       telemetryTurnID={presentation.turnId} contextUsage={presentation.contextUsage} status={presentation.status}
       readOnly={presentation.readOnly || switching} initialized={configuration}
       engines={structuredClone(runtime.engines) as EngineInfo[]} activeEngine={selection.engine === "wuu" ? "" : selection.engine}
@@ -127,7 +128,7 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
       onSelectWorkspace={workspaceId => run(application.invoke("workspace.retarget-draft", { workspaceId }))} onSelectNoProject={() => run(application.invoke("workspace.retarget-draft", {}))}
       onCreateWorkspace={() => run(application.invoke("workspace.create", { kind: "blank" }))} onOpenWorkspace={() => run(application.invoke("workspace.create", { kind: "folder" }))}
       onSelectGitBranch={branch => application.environment.checkoutBranch(branch)} onCreateGitBranch={async branch => { await application.environment.createAndCheckoutBranch(branch); setMenu(null); }}
-      onStartNewThread={() => run(application.invoke("tab.new", { workspaceId: tab.workspaceId }).then(({ tabId }) => application.invoke("navigation.focus-composer", { tabId })))}
+      onStartNewThread={() => run(application.invoke("draft.start", {}).then(({ tabId }) => application.invoke("navigation.focus-composer", { tabId })))}
       onHandoffSession={presentation.threadId ? input => run(application.invoke("conversation.handoff", { threadId: presentation.threadId!, ...input })) : undefined}
       onOpenSideThread={presentation.threadId ? (prompt, commandId) => run(application.invoke("side.open", { parentThreadId: presentation.threadId!, prompt, commandId })) : undefined}
       onOpenWorkspaceTool={toolId => run(application.invoke("preview.open-tool", { toolId }))}

@@ -42,7 +42,8 @@ function setup() {
     catalog: { ...base.catalog, listSkillsForThread: async () => ({ contextKey: "fixture", skills: [] }) },
     invoke: async (action: string, input: any) => {
       calls.push({ action, input });
-      if (action === "tab.new") return { tabId: "new-draft" };
+      if (action === "draft.start") return { tabId: "new-draft" };
+      if (action === "tab.new") return { tabId: "recovery-draft" };
       if (action === "composer.set-draft") { state = { ...state, drafts: { ...state.drafts, primary: { ...state.drafts.primary, text: input.text } } }; publish(); }
       if (action === "composer.submit") { state = { ...state, drafts: { ...state.drafts, primary: { ...state.drafts.primary, text: "", revision: state.drafts.primary.revision + 1 } } }; publish(); return { accepted: true }; }
       return { accepted: true };
@@ -58,6 +59,7 @@ describe("selected public composer continuity", () => {
     const fixture = setup(); await fixture.render();
     await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "/new", revision: 1 } } }));
     await act(async () => container.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(fixture.calls).toContainEqual({ action: "draft.start", input: {} });
     expect(fixture.calls).toContainEqual({ action: "navigation.focus-composer", input: { tabId: "new-draft" } });
   });
   it("preserves the focused input across draft-to-thread binding and sends to the new owner", async () => {
@@ -75,8 +77,11 @@ describe("selected public composer continuity", () => {
   });
   it("shows submitting while a history edit is awaiting acknowledgement", async () => {
     const fixture = setup(); await fixture.render();
-    await fixture.update(view => ({ ...view, conversationActions: { ...view.conversationActions, editing: { threadId: "draft-one", turnId: "turn", itemId: "item", draft: { text: "edited", imageIds: [], fileIds: [] }, submitting: true } } }));
+    await fixture.update(view => ({ ...view, tabs: { ...view.tabs, items: view.tabs.items.map(tab => ({ ...tab, kind: "thread", threadId: "draft-one" })) }, conversationActions: { ...view.conversationActions, editing: { threadId: "draft-one", turnId: "turn", itemId: "item", draft: { text: "edited", imageIds: [], fileIds: [] }, submitting: true } } }));
     expect(container.querySelector('[data-wuu-component="composer-send"]')?.getAttribute("data-wuu-state")).toBe("submitting");
+    expect(container.querySelector<HTMLButtonElement>(".permission-chip")!.disabled).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!.click());
+    expect(fixture.calls).toContainEqual({ action: "conversation.interrupt", input: { threadId: "draft-one" } });
     await fixture.update(view => ({ ...view, conversationActions: { ...view.conversationActions, editing: undefined } }));
     expect(container.querySelector('[data-wuu-component="composer-send"]')?.getAttribute("data-wuu-state")).toBe("send");
   });
