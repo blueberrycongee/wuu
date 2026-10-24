@@ -6,7 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -170,5 +172,100 @@ func TestScopeInitializationDoesNotHoldProviderLock(t *testing.T) {
 	}
 	if err := native.Close(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A timed-out graph drain cancels executions but still calls provider.Close.
+// A native factory may return later, so shutdown must retain cleanup ownership.
+func TestCloseCancellationRetainsLateBackendCleanup(t *testing.T) {
+	native := NewService()
+	if err := native.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	cleaned := make(chan error, 1)
+	var count atomic.Int32
+	executor := &shutdownProbe{}
+	scope := NewScope(func(context.Context) (Backend, error) {
+		close(started)
+		<-release
+		return Backend{Executor: executor, Close: func(ctx context.Context) error {
+			count.Add(1)
+			cleaned <- ctx.Err()
+			return nil
+		}}, nil
+	})
+	invoked := make(chan error, 1)
+	go func() {
+		_, err := native.InvokeService(WithScope(context.Background(), scope), pluginhost.ServiceInvokeParams{Service: ServiceName, Method: "list", Params: json.RawMessage(`{}`)})
+		invoked <- err
+	}()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	closed := make(chan error, 1)
+	go func() { closed <- native.Close(ctx) }()
+	select {
+	case err := <-closed:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("close: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled close blocked on factory")
+	}
+	// Let the late factory settle while Close is called concurrently again.
+	go func() { closed <- native.Close(context.Background()) }()
+	release <- struct{}{}
+	select {
+	case err := <-cleaned:
+		if err != nil {
+			t.Fatalf("late cleanup got cancelled context: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("late backend leaked")
+	}
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-invoked; err == nil {
+		t.Fatal("late backend dispatched after stop")
+	}
+	if executor.calls.Load() != 0 {
+		t.Fatal("closed backend used for tool listing")
+	}
+	if err := native.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if count.Load() != 1 {
+		t.Fatalf("cleanup count: %d", count.Load())
+	}
+}
+
+type shutdownProbe struct{ calls atomic.Int32 }
+
+func (p *shutdownProbe) Definitions() []providers.ToolDefinition { p.calls.Add(1); return nil }
+func (p *shutdownProbe) Execute(context.Context, providers.ToolCall) (string, error) {
+	p.calls.Add(1)
+	return "", nil
+}
+
+func TestCloseRetainsCleanupFailureAcrossRepeatedCalls(t *testing.T) {
+	native := NewService()
+	if err := native.Activate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	scope := NewScope(func(context.Context) (Backend, error) {
+		return Backend{Executor: &shutdownProbe{}, Close: func(context.Context) error { panic("cleanup failure") }}, nil
+	})
+	if _, err := native.InvokeService(WithScope(context.Background(), scope), pluginhost.ServiceInvokeParams{Service: ServiceName, Method: "list", Params: json.RawMessage(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	first := native.Close(context.Background())
+	if first == nil {
+		t.Fatal("cleanup panic was lost")
+	}
+	if second := native.Close(context.Background()); second == nil || second.Error() != first.Error() {
+		t.Fatalf("cleanup outcome changed: %v / %v", first, second)
 	}
 }

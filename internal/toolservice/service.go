@@ -47,9 +47,11 @@ type backendEntry struct {
 // Service owns scoped default backend initialization and teardown. External
 // selections never invoke these factories and never inherit this tool catalog.
 type Service struct {
-	mu       sync.Mutex
-	state    pluginhost.State
-	backends map[*Scope]*backendEntry
+	mu        sync.Mutex
+	state     pluginhost.State
+	backends  map[*Scope]*backendEntry
+	closeDone chan struct{}
+	closeErr  error
 }
 
 func NewService() *Service {
@@ -78,21 +80,58 @@ func (s *Service) Activate(ctx context.Context) error {
 	return nil
 }
 
-// Close follows dependent-execution drain by the service graph.
+// Close stops admission immediately. A canceled graph drain may leave factories
+// running; cleanup retains ownership of their eventual results independently of
+// the caller's deadline. Repeated Close calls observe the same cleanup outcome.
 func (s *Service) Close(ctx context.Context) error {
 	s.mu.Lock()
-	s.state = pluginhost.StateStopped
-	backends := s.backends
-	s.backends = nil
-	s.mu.Unlock()
-	var errs []error
-	for _, entry := range backends {
-		<-entry.ready
-		if entry.backend.Close != nil {
-			errs = append(errs, entry.backend.Close(ctx))
-		}
+	if s.closeDone == nil {
+		s.state = pluginhost.StateStopped
+		s.closeDone = make(chan struct{})
+		backends := s.backends
+		s.backends = nil
+		// Late resources need a live cleanup context even after the graph's drain
+		// deadline. Never restart or repeat a cleanup callback after cancellation.
+		cleanupCtx := context.WithoutCancel(ctx)
+		go func() {
+			outcomes := make(chan error, len(backends))
+			for _, entry := range backends {
+				go func() {
+					var err error
+					defer func() {
+						// Preserve the host lifecycle panic boundary after moving
+						// cleanup out of its synchronous Close call stack.
+						if value := recover(); value != nil {
+							err = fmt.Errorf("tool backend cleanup panicked: %v", value)
+						}
+						outcomes <- err
+					}()
+					<-entry.ready
+					if entry.backend.Close != nil {
+						err = entry.backend.Close(cleanupCtx)
+					}
+				}()
+			}
+			var errs []error
+			for range backends {
+				errs = append(errs, <-outcomes)
+			}
+			s.mu.Lock()
+			s.closeErr = errors.Join(errs...)
+			close(s.closeDone)
+			s.mu.Unlock()
+		}()
 	}
-	return errors.Join(errs...)
+	done := s.closeDone
+	s.mu.Unlock()
+	select {
+	case <-done:
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.closeErr
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 func (s *Service) backend(ctx context.Context) (Backend, error) {
 	scope, _ := ctx.Value(scopeKey{}).(*Scope)
@@ -115,7 +154,7 @@ func (s *Service) backend(ctx context.Context) (Backend, error) {
 		case <-ctx.Done():
 			return Backend{}, ctx.Err()
 		case <-entry.ready:
-			return entry.backend, entry.err
+			return s.initializedBackend(entry)
 		}
 	}
 	// Factories can call other selected services; never hold the provider lock
@@ -125,6 +164,16 @@ func (s *Service) backend(ctx context.Context) (Backend, error) {
 		entry.err = errors.New("tool backend factory returned no executor")
 	}
 	close(entry.ready)
+	return s.initializedBackend(entry)
+}
+
+// Initialization is not dispatch admission after the provider has stopped.
+func (s *Service) initializedBackend(entry *backendEntry) (Backend, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state != pluginhost.StateActive {
+		return Backend{}, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "tool provider stopped during initialization"}
+	}
 	return entry.backend, entry.err
 }
 func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
