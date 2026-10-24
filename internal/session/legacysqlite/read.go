@@ -39,7 +39,24 @@ type Snapshot struct {
 // The owner must stop all legacy writers before capture and keep them stopped
 // until the selected documents authority is durably published.
 func Read(ctx context.Context, path string) (Snapshot, bool, error) {
+	return read(ctx, path, func(table *Table, row Row) {
+		table.Rows = append(table.Rows, row)
+	})
+}
+
+// Fingerprint verifies every application table in one read-only transaction
+// without retaining its rows. It uses the same JSON bytes and SQLite storage
+// types as Read. Legacy writers must remain stopped through verification.
+func Fingerprint(ctx context.Context, path string) (string, bool, error) {
+	snapshot, exists, err := read(ctx, path, nil)
+	return snapshot.Fingerprint, exists, err
+}
+
+func read(ctx context.Context, path string, visit func(*Table, Row)) (Snapshot, bool, error) {
 	var snapshot Snapshot
+	if err := ctx.Err(); err != nil {
+		return snapshot, false, err
+	}
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return snapshot, false, nil
 	} else if err != nil {
@@ -82,8 +99,27 @@ func Read(ctx context.Context, path string) (Snapshot, bool, error) {
 	if err != nil {
 		return snapshot, false, err
 	}
+	// Match json.Marshal(Snapshot) byte for byte, including nil slices and
+	// default escaping. Only the current row needs an encoded buffer.
+	digest := sha256.New()
+	io.WriteString(digest, `{"tables":`)
+	if snapshot.Tables == nil {
+		io.WriteString(digest, `null`)
+	} else {
+		io.WriteString(digest, `[`)
+	}
 	for i := range snapshot.Tables {
 		table := &snapshot.Tables[i]
+		if i > 0 {
+			io.WriteString(digest, `,`)
+		}
+		encodedName, _ := json.Marshal(table.Name)
+		schema, _ := json.Marshal(table.Schema)
+		io.WriteString(digest, `{"name":`)
+		digest.Write(encodedName)
+		io.WriteString(digest, `,"schema":`)
+		digest.Write(schema)
+		io.WriteString(digest, `,"rows":`)
 		// Identifiers originate from sqlite_master and are quoted, never executed as SQL.
 		name := `"` + strings.ReplaceAll(table.Name, `"`, `""`) + `"`
 		rows, err := tx.QueryContext(ctx, `SELECT rowid AS __wuu_legacy_rowid, * FROM `+name+` ORDER BY rowid`)
@@ -95,7 +131,12 @@ func Read(ctx context.Context, path string) (Snapshot, bool, error) {
 			rows.Close()
 			return snapshot, false, err
 		}
+		hasRows := false
 		for rows.Next() {
+			if err := ctx.Err(); err != nil {
+				rows.Close()
+				return snapshot, false, err
+			}
 			values := make([]any, len(columns))
 			args := make([]any, len(columns))
 			for j := range args {
@@ -115,62 +156,41 @@ func Read(ctx context.Context, path string) (Snapshot, bool, error) {
 				row.Values[column] = value
 			}
 			sort.Strings(row.BlobColumns)
-			table.Rows = append(table.Rows, row)
+			raw, err := json.Marshal(row)
+			if err != nil {
+				rows.Close()
+				return snapshot, false, err
+			}
+			if hasRows {
+				io.WriteString(digest, `,`)
+			} else {
+				io.WriteString(digest, `[`)
+				hasRows = true
+			}
+			digest.Write(raw)
+			if visit != nil {
+				visit(table, row)
+			}
 		}
 		err = rows.Err()
 		rows.Close()
 		if err != nil {
 			return snapshot, false, err
 		}
+		if hasRows {
+			io.WriteString(digest, `]`)
+		} else {
+			io.WriteString(digest, `null`)
+		}
+		io.WriteString(digest, `}`)
 	}
-	snapshot.Fingerprint, err = fingerprintSnapshot(snapshot)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return snapshot, false, err
 	}
-	return snapshot, true, nil
-}
-
-// Match json.Marshal(Snapshot) byte for byte: persisted migration markers depend
-// on field order, nil slices and default JSON escaping. Marshal only one row at a
-// time so hashing does not allocate another complete encoded database snapshot.
-func fingerprintSnapshot(snapshot Snapshot) (string, error) {
-	digest := sha256.New()
-	io.WriteString(digest, `{"tables":`)
-	if snapshot.Tables == nil {
-		io.WriteString(digest, `null`)
-	} else {
-		io.WriteString(digest, `[`)
-		for i, table := range snapshot.Tables {
-			if i > 0 {
-				io.WriteString(digest, `,`)
-			}
-			name, _ := json.Marshal(table.Name)
-			schema, _ := json.Marshal(table.Schema)
-			io.WriteString(digest, `{"name":`)
-			digest.Write(name)
-			io.WriteString(digest, `,"schema":`)
-			digest.Write(schema)
-			io.WriteString(digest, `,"rows":`)
-			if table.Rows == nil {
-				io.WriteString(digest, `null`)
-			} else {
-				io.WriteString(digest, `[`)
-				for j, row := range table.Rows {
-					if j > 0 {
-						io.WriteString(digest, `,`)
-					}
-					raw, err := json.Marshal(row)
-					if err != nil {
-						return "", err
-					}
-					digest.Write(raw)
-				}
-				io.WriteString(digest, `]`)
-			}
-			io.WriteString(digest, `}`)
-		}
+	if snapshot.Tables != nil {
 		io.WriteString(digest, `]`)
 	}
 	io.WriteString(digest, `}`)
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	snapshot.Fingerprint = hex.EncodeToString(digest.Sum(nil))
+	return snapshot, true, nil
 }

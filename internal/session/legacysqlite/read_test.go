@@ -69,6 +69,10 @@ func TestReadFingerprintMatchesLegacyJSON(t *testing.T) {
 				if want := hex.EncodeToString(digest[:]); snapshot.Fingerprint != want {
 					t.Fatalf("fingerprint changed: got %s, want %s", snapshot.Fingerprint, want)
 				}
+				fingerprint, exists, err := Fingerprint(context.Background(), path)
+				if err != nil || !exists || fingerprint != snapshot.Fingerprint {
+					t.Fatalf("streaming fingerprint: got %s, exists=%v, err=%v", fingerprint, exists, err)
+				}
 			}
 		})
 	}
@@ -117,6 +121,74 @@ func TestReadFingerprintRejectsUnencodableSQLiteValue(t *testing.T) {
 	var unsupported *json.UnsupportedValueError
 	if !errors.As(err, &unsupported) || exists || snapshot.Fingerprint != "" {
 		t.Fatalf("unencodable value: exists=%v, fingerprint=%q, err=%v", exists, snapshot.Fingerprint, err)
+	}
+	fingerprint, exists, err := Fingerprint(context.Background(), path)
+	if !errors.As(err, &unsupported) || exists || fingerprint != "" {
+		t.Fatalf("unencodable streaming value: exists=%v, fingerprint=%q, err=%v", exists, fingerprint, err)
+	}
+}
+
+func TestFingerprintMissingSource(t *testing.T) {
+	fingerprint, exists, err := Fingerprint(context.Background(), filepath.Join(t.TempDir(), "missing.sqlite3"))
+	if err != nil || exists || fingerprint != "" {
+		t.Fatalf("missing source: fingerprint=%q, exists=%v, err=%v", fingerprint, exists, err)
+	}
+}
+
+// A concurrent WAL writer must not split the fingerprint across database versions.
+func TestReadFingerprintUsesOneSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL; CREATE TABLE a (value); INSERT INTO a VALUES ('before'); CREATE TABLE z (value); INSERT INTO z VALUES ('before')`); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := Read(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, exists, err := read(context.Background(), path, func(table *Table, row Row) {
+		if table.Name == "a" {
+			if _, err := db.Exec(`UPDATE z SET value='after'; CREATE TABLE later (value)`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	if err != nil || !exists || snapshot.Fingerprint != before.Fingerprint {
+		t.Fatalf("mixed source versions: got %s, want %s, exists=%v, err=%v", snapshot.Fingerprint, before.Fingerprint, exists, err)
+	}
+	after, _, err := Fingerprint(context.Background(), path)
+	if err != nil || after == before.Fingerprint {
+		t.Fatalf("later read missed committed source change: %s, %v", after, err)
+	}
+}
+
+func TestReadFingerprintCancellation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.sqlite3")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE records (value); INSERT INTO records VALUES ('one'), ('two'), ('three')`); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	visited := 0
+	snapshot, exists, err := read(ctx, path, func(_ *Table, _ Row) {
+		visited++
+		cancel()
+	})
+	if !errors.Is(err, context.Canceled) || exists || snapshot.Fingerprint != "" || visited != 1 {
+		t.Fatalf("cancellation: visited=%d, exists=%v, fingerprint=%q, err=%v", visited, exists, snapshot.Fingerprint, err)
+	}
+	fingerprint, exists, err := Fingerprint(ctx, path)
+	if !errors.Is(err, context.Canceled) || exists || fingerprint != "" {
+		t.Fatalf("canceled fingerprint: exists=%v, fingerprint=%q, err=%v", exists, fingerprint, err)
 	}
 }
 

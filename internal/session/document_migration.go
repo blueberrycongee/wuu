@@ -35,27 +35,48 @@ type LegacyMigrationResult struct {
 // completed legacy conversion. This bounded marker read does not verify that
 // the source stayed unchanged; callers must still run MigrateLegacySQLite.
 func LegacySQLiteMigrationRecorded(ctx context.Context, documents persistence.Documents) (bool, error) {
+	_, recorded, err := readLegacySQLiteMigration(ctx, documents)
+	return recorded, err
+}
+
+func readLegacySQLiteMigration(ctx context.Context, documents persistence.Documents) (LegacyMigrationResult, bool, error) {
+	var result LegacyMigrationResult
 	view, err := documents.Read(ctx, persistence.Query{Namespace: documentNamespace("legacy_sqlite_migrations"), Keys: []string{dbFileName}})
 	if err != nil || len(view.Documents) == 0 {
-		return false, err
+		return result, false, err
 	}
-	var result LegacyMigrationResult
 	if err := json.Unmarshal(view.Documents[0].Value, &result); err != nil {
-		return false, fmt.Errorf("%w: invalid legacy migration marker", persistence.ErrCorrupt)
+		return result, false, fmt.Errorf("%w: invalid legacy migration marker", persistence.ErrCorrupt)
 	}
 	if result.Fingerprint == "" {
-		return false, fmt.Errorf("%w: incomplete legacy migration marker", persistence.ErrCorrupt)
+		return result, false, fmt.Errorf("%w: incomplete legacy migration marker", persistence.ErrCorrupt)
 	}
-	return true, nil
+	return result, true, nil
 }
 
 // MigrateLegacySQLite imports a stopped legacy writer into the selected provider.
 // Every converted document, raw source row and completion marker commits in one
 // transaction. Conflicting destination namespaces are rejected. An uncertain
 // commit returns persistence.CommitError for retrying the exact transaction;
-// repeating migration after success consults the marker without replaying data.
+// Repeating migration after success streams the source fingerprint without
+// retaining rows, running converters or constructing another write set.
 // The source is never changed, and unknown nonempty tables fail closed.
 func MigrateLegacySQLite(ctx context.Context, sessDir string, documents persistence.Documents, converters ...LegacyTableConverter) (LegacyMigrationResult, error) {
+	previous, recorded, err := readLegacySQLiteMigration(ctx, documents)
+	if err != nil {
+		return LegacyMigrationResult{}, err
+	}
+	if recorded {
+		fingerprint, exists, err := legacysqlite.Fingerprint(ctx, filepath.Join(sessDir, dbFileName))
+		if err != nil || !exists {
+			return LegacyMigrationResult{}, err
+		}
+		if previous.Fingerprint != fingerprint {
+			return LegacyMigrationResult{}, fmt.Errorf("%w: legacy source changed after migration", persistence.ErrMigrationRequired)
+		}
+		previous.AlreadyMigrated = true
+		return previous, nil
+	}
 	snapshot, exists, err := legacysqlite.Read(ctx, filepath.Join(sessDir, dbFileName))
 	if err != nil || !exists {
 		return LegacyMigrationResult{}, err

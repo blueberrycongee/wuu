@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -13,6 +14,128 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/persistence"
 )
+
+func TestLegacyMigrationCompletedMarkerSkipsConversion(t *testing.T) {
+	for _, kind := range []string{"sqlite", "jsonl"} {
+		t.Run(kind, func(t *testing.T) {
+			ctx := context.Background()
+			legacy := t.TempDir()
+			if _, err := Create(legacy, "original"); err != nil {
+				t.Fatal(err)
+			}
+			db, err := openStore(legacy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(`CREATE TABLE custom_json (value TEXT); INSERT INTO custom_json VALUES ('source')`); err != nil {
+				t.Fatal(err)
+			}
+			provider, err := persistence.Open(ctx, t.TempDir(), kind)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer provider.Close()
+			converter := func(table string, _ []map[string]any) ([]persistence.Write, bool, error) {
+				if table == "custom_json" {
+					return []persistence.Write{{Namespace: "custom.converted", Key: "one", Value: json.RawMessage(`true`)}}, true, nil
+				}
+				return nil, false, nil
+			}
+			first, err := MigrateLegacySQLite(ctx, legacy, provider, converter)
+			if err != nil || first.AlreadyMigrated {
+				t.Fatalf("first migration: %+v, %v", first, err)
+			}
+			before, err := provider.Export(ctx)
+			if err != nil || len(before.Receipts) != 1 {
+				t.Fatalf("first migration must be atomic: receipts=%d, err=%v", len(before.Receipts), err)
+			}
+			calls := 0
+			retiredConverter := func(string, []map[string]any) ([]persistence.Write, bool, error) {
+				calls++
+				return nil, false, errors.New("completed migration must not reconstruct typed writes")
+			}
+			bounded := &boundedSessionDocuments{Documents: provider}
+			again, err := MigrateLegacySQLite(ctx, legacy, bounded, retiredConverter)
+			if err != nil || !again.AlreadyMigrated || again.Fingerprint != first.Fingerprint || !reflect.DeepEqual(again.Rows, first.Rows) || calls != 0 {
+				t.Fatalf("completed migration: %+v, calls=%d, err=%v", again, calls, err)
+			}
+			if _, err := db.Exec(`UPDATE custom_json SET value='changed'`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := MigrateLegacySQLite(ctx, legacy, bounded, retiredConverter); !errors.Is(err, persistence.ErrMigrationRequired) || calls != 0 {
+				t.Fatalf("changed source: calls=%d, err=%v", calls, err)
+			}
+			after, err := provider.Export(ctx)
+			if err != nil || !reflect.DeepEqual(before, after) {
+				t.Fatalf("verification changed destination: %v", err)
+			}
+		})
+	}
+}
+
+type competingMigrationDocuments struct {
+	*persistence.Store
+	changed  bool
+	attempts int
+}
+
+func (d *competingMigrationDocuments) Commit(ctx context.Context, tx persistence.Transaction) (persistence.Receipt, error) {
+	d.attempts++
+	if d.attempts != 1 {
+		return persistence.Receipt{}, errors.New("completed competing migration was replayed")
+	}
+	tx.Writes = append([]persistence.Write(nil), tx.Writes...)
+	if d.changed {
+		for i, write := range tx.Writes {
+			if write.Namespace == documentNamespace("legacy_sqlite_migrations") {
+				var marker LegacyMigrationResult
+				if err := json.Unmarshal(write.Value, &marker); err != nil {
+					return persistence.Receipt{}, err
+				}
+				marker.Fingerprint = "a different stopped source"
+				raw, err := json.Marshal(marker)
+				if err != nil {
+					return persistence.Receipt{}, err
+				}
+				tx.Writes[i].Value = raw
+			}
+		}
+	}
+	if _, err := d.Store.Commit(ctx, tx); err != nil {
+		return persistence.Receipt{}, err
+	}
+	return persistence.Receipt{}, persistence.ErrConflict
+}
+
+func TestLegacyMigrationRechecksMarkerAfterConflict(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint("changed=", changed), func(t *testing.T) {
+			ctx := context.Background()
+			legacy := t.TempDir()
+			if _, err := Create(legacy, "original"); err != nil {
+				t.Fatal(err)
+			}
+			provider, err := persistence.Open(ctx, t.TempDir(), "sqlite")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer provider.Close()
+			documents := &competingMigrationDocuments{Store: provider, changed: changed}
+			result, err := MigrateLegacySQLite(ctx, legacy, documents)
+			if changed {
+				if !errors.Is(err, persistence.ErrMigrationRequired) {
+					t.Fatalf("competing changed source accepted: %v", err)
+				}
+			} else if err != nil || !result.AlreadyMigrated {
+				t.Fatalf("competing migration not recognized: %+v, %v", result, err)
+			}
+			if documents.attempts != 1 {
+				t.Fatalf("migration replayed after conflict: %d commits", documents.attempts)
+			}
+		})
+	}
+}
 
 type migrationRetryDocuments struct {
 	*persistence.Store
