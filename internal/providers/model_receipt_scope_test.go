@@ -95,3 +95,44 @@ func TestModelReceiptWithoutScopePreservesContext(t *testing.T) {
 	end(nil)
 	end(nil)
 }
+
+func TestModelReceiptScopeAbortStopsObservationWithoutCompletingNativeProducer(t *testing.T) {
+	modelCtx, cancelModel := context.WithCancel(context.Background())
+	ctx, scope := NewModelReceiptScope(modelCtx)
+	producerCtx, endNative, err := BeginModelReceipt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, endRPC, err := BeginModelReceipt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.Seal()
+	cancelModel()
+	if err := scope.ObservationContext().Err(); err != nil {
+		t.Fatalf("model cancellation stopped original-RPC observation: %v", err)
+	}
+	ownerErr := errors.New("owner receipt deadline expired")
+	scope.Abort(ownerErr)
+	scope.Abort(errors.New("later abort"))
+	if cause := context.Cause(scope.ObservationContext()); cause != ownerErr {
+		t.Fatalf("observation cause = %v, want original %v", cause, ownerErr)
+	}
+	if _, _, err := BeginModelReceipt(producerCtx); !errors.Is(err, ErrModelReceiptScopeClosed) {
+		t.Fatalf("aborted observation window admitted new work: %v", err)
+	}
+	endRPC(context.Cause(scope.ObservationContext()))
+	if err := scope.Wait(context.Background()); !errors.Is(err, ownerErr) {
+		t.Fatalf("aborted wait = %v", err)
+	}
+	select {
+	case <-scope.Done():
+		t.Fatal("ending RPC observation falsely completed the native producer")
+	default:
+	}
+	endNative(nil)
+	<-scope.Done()
+	if err := scope.Wait(context.Background()); !errors.Is(err, ownerErr) {
+		t.Fatalf("eventual producer completion erased the incomplete observation: %v", err)
+	}
+}

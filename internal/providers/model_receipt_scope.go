@@ -16,6 +16,10 @@ type ModelReceiptScope struct {
 	pending int
 	done    chan struct{}
 	err     error
+	aborted bool
+
+	observationCtx  context.Context
+	stopObservation context.CancelCauseFunc
 }
 
 type modelReceiptTicket struct {
@@ -29,6 +33,7 @@ type modelReceiptContextKey struct{}
 // Nested continuations use the existing context instead of creating an owner.
 func NewModelReceiptScope(ctx context.Context) (context.Context, *ModelReceiptScope) {
 	scope := &ModelReceiptScope{pending: 1, done: make(chan struct{})}
+	scope.observationCtx, scope.stopObservation = context.WithCancelCause(context.Background())
 	scope.root = &modelReceiptTicket{scope: scope}
 	return context.WithValue(ctx, modelReceiptContextKey{}, scope.root), scope
 }
@@ -55,7 +60,7 @@ func BeginModelReceipt(ctx context.Context) (context.Context, func(error), error
 	scope := parent.scope
 	scope.mu.Lock()
 	defer scope.mu.Unlock()
-	if parent.ended {
+	if parent.ended || scope.aborted {
 		return ctx, nil, ErrModelReceiptScopeClosed
 	}
 	scope.pending++
@@ -84,6 +89,28 @@ func (ticket *modelReceiptTicket) complete(err error) {
 // retain their ability to hand off tails until their own completion.
 func (s *ModelReceiptScope) Seal() { s.root.complete(nil) }
 
+// ObservationContext only controls internal completion observation. It carries
+// no execution authority and is independent of ordinary model cancellation.
+func (s *ModelReceiptScope) ObservationContext() context.Context { return s.observationCtx }
+
+// Abort ends the owner's observation window with an incomplete result. It
+// rejects new work and wakes observers, but does not complete native producers
+// or prove remote termination. The owner supplies the shared deadline cause.
+func (s *ModelReceiptScope) Abort(cause error) {
+	s.mu.Lock()
+	if s.aborted || s.pending == 0 {
+		s.mu.Unlock()
+		return
+	}
+	if cause == nil {
+		cause = context.Canceled
+	}
+	s.aborted = true
+	s.err = errors.Join(s.err, cause)
+	s.mu.Unlock()
+	s.stopObservation(cause)
+}
+
 // Done closes after logical admission is sealed and every admitted producer
 // and observer has completed. A wait timeout does not close it.
 func (s *ModelReceiptScope) Done() <-chan struct{} { return s.done }
@@ -97,6 +124,7 @@ func (s *ModelReceiptScope) Wait(ctx context.Context) error {
 	default:
 		select {
 		case <-s.done:
+		case <-s.observationCtx.Done():
 		case <-ctx.Done():
 			waitErr = ctx.Err()
 		}
