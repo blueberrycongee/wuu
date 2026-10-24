@@ -16,6 +16,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 const (
@@ -498,17 +500,42 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	if err != nil {
 		return err
 	}
+	var completeReceipt func(error)
+	receiptScope := providers.ModelReceiptScopeFromContext(ctx)
+	if receiptScope != nil {
+		ctx, completeReceipt, err = providers.BeginModelReceipt(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	var receiptErr error
+	callerOwnsPending := true
 	responseCh := make(chan rpcResponse, 1)
 	c.pendingMu.Lock()
 	c.pending[id] = responseCh
 	c.pendingMu.Unlock()
-	defer c.removePending(id)
-	if input, ok := params.(ServiceInvokeParams); ok && input.CallerScope != nil {
-		if err := c.writeScopedInvocation(ctx, payload, input.CallerScope); err != nil {
-			return fmt.Errorf("write scoped request: %w", err)
+	defer func() {
+		if callerOwnsPending {
+			c.removePending(id)
+			if completeReceipt != nil {
+				completeReceipt(receiptErr)
+			}
 		}
-	} else if err := c.writeLine(ctx, payload); err != nil {
-		return fmt.Errorf("write request: %w", err)
+	}()
+	writeLabel := "write request"
+	if input, ok := params.(ServiceInvokeParams); ok && input.CallerScope != nil {
+		writeLabel = "write scoped request"
+		err = c.writeScopedInvocation(ctx, payload, input.CallerScope)
+	} else {
+		err = c.writeLine(ctx, payload)
+	}
+	if err != nil {
+		// Canceling before acquiring the writer launches no remote work. A
+		// failed write retires the transport because delivery is uncertain.
+		if ctx.Err() == nil || c.processCtx.Err() != nil {
+			receiptErr = err
+		}
+		return fmt.Errorf("%s: %w", writeLabel, err)
 	}
 	// The invoke frame must be written before cancellation can be signalled.
 	// Otherwise a fast cancel can arrive before the runtime registers its
@@ -525,19 +552,28 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 	finishExecution := c.watchExecution(ctx, executionID)
 	defer finishExecution()
 
-	var response rpcResponse
-	select {
-	case response = <-responseCh:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-c.readerDone:
-		// EOF can follow a complete reply before the caller resumes. Keep
-		// that reply authoritative; only an empty queue means transport loss.
-		select {
-		case response = <-responseCh:
-		default:
-			return c.readFailure()
+	response, err := c.waitResponse(ctx, responseCh)
+	if err != nil {
+		if completeReceipt != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			callerOwnsPending = false
+			// Local cancellation does not acknowledge the remote callback.
+			// Retain its original response without writing into caller-owned result.
+			go func() {
+				observationCtx := receiptScope.ObservationContext()
+				response, completionErr := c.waitResponse(observationCtx, responseCh)
+				if completionErr != nil && observationCtx.Err() != nil {
+					completionErr = context.Cause(observationCtx)
+				}
+				if completionErr == nil && response.Error == nil && result != nil && len(response.Result) == 0 {
+					completionErr = errors.New("response is missing result")
+				}
+				c.removePending(id)
+				completeReceipt(completionErr)
+			}()
+		} else {
+			receiptErr = err
 		}
+		return err
 	}
 	if response.Error != nil {
 		message := strings.TrimSpace(response.Error.Message)
@@ -550,12 +586,32 @@ func (c *ProcessClient) call(ctx context.Context, method string, params, result 
 		return nil
 	}
 	if len(response.Result) == 0 {
-		return errors.New("response is missing result")
+		receiptErr = errors.New("response is missing result")
+		return receiptErr
 	}
 	if err := json.Unmarshal(response.Result, result); err != nil {
-		return fmt.Errorf("decode result: %w", err)
+		receiptErr = fmt.Errorf("decode result: %w", err)
+		return receiptErr
 	}
 	return nil
+}
+
+func (c *ProcessClient) waitResponse(ctx context.Context, responseCh <-chan rpcResponse) (rpcResponse, error) {
+	select {
+	case response := <-responseCh:
+		return response, nil
+	case <-ctx.Done():
+		return rpcResponse{}, ctx.Err()
+	case <-c.readerDone:
+		// EOF can follow a complete reply before the caller resumes. Keep
+		// that reply authoritative; only an empty queue means transport loss.
+		select {
+		case response := <-responseCh:
+			return response, nil
+		default:
+			return rpcResponse{}, c.readFailure()
+		}
+	}
 }
 
 // Serialize caller-scope admission with its terminal signal. A signal cannot
@@ -887,7 +943,7 @@ func (c *ProcessClient) fail(err error) {
 }
 
 func (c *ProcessClient) failFatalCall(err error) {
-	if err == nil {
+	if err == nil || errors.Is(err, providers.ErrModelReceiptScopeClosed) {
 		return
 	}
 	var domainErr *remoteCallError

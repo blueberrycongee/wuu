@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 func mustRaw(value any) json.RawMessage {
@@ -595,6 +597,284 @@ func runOversizeHelper() {
 			return
 		}
 		_ = enc.Encode(map[string]any{"id": req.ID, "result": result})
+	}
+}
+
+func TestProcessClientReceiptCompletion(t *testing.T) {
+	if os.Getenv("WUU_PLUGINHOST_RECEIPT_HELPER") == "1" {
+		runReceiptCompletionHelper()
+		return
+	}
+	for _, mode := range []string{"ordinary cancellation", "response", "rejection", "transport exit", "timeout", "closed scope"} {
+		t.Run(mode, func(t *testing.T) {
+			listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			_ = listener.SetDeadline(time.Now().Add(5 * time.Second))
+			root := t.TempDir()
+			client, err := Start(context.Background(), ProcessConfig{
+				ID: "receipt-plugin", Command: os.Args[0],
+				Args: []string{"-test.run=^TestProcessClientReceiptCompletion$"},
+				Env: map[string]string{
+					"WUU_PLUGINHOST_RECEIPT_HELPER": "1",
+					"WUU_PLUGINHOST_RECEIPT_ADDR":   listener.Addr().String(),
+				},
+				PluginRoot: root, ProjectRoot: filepath.Dir(root), WuuHome: t.TempDir(),
+				Timeout: 2 * time.Second,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close(context.Background())
+			control, err := listener.Accept()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			_ = control.SetDeadline(time.Now().Add(5 * time.Second))
+			reader := bufio.NewReader(control)
+			expect := func(want string) {
+				t.Helper()
+				got, err := reader.ReadString('\n')
+				if err != nil || got != want+"\n" {
+					t.Fatalf("process gate = %q, %v; want %q", got, err, want)
+				}
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var receipts *providers.ModelReceiptScope
+			if mode != "ordinary cancellation" {
+				ctx, receipts = providers.NewModelReceiptScope(ctx)
+				defer receipts.Seal()
+			}
+			if mode == "closed scope" {
+				receipts.Seal()
+				closedCtx, closedCancel := context.WithTimeout(ctx, time.Second)
+				defer closedCancel()
+				_, err := client.InvokeCapability(closedCtx, CapabilityInvokeParams{
+					Capability: CapabilityModelMiddleware, ExecutionID: "receipt-execution", Input: mustRaw("hold"),
+				})
+				if !errors.Is(err, providers.ErrModelReceiptScopeClosed) {
+					t.Fatalf("closed scope invocation = %v, want admission rejection", err)
+				}
+				if client.Status().State != StateActive {
+					t.Fatalf("local receipt rejection retired the process: %+v", client.Status())
+				}
+				client.pendingMu.Lock()
+				pending := len(client.pending)
+				client.pendingMu.Unlock()
+				if pending != 0 {
+					t.Fatalf("rejected scope left %d pending calls", pending)
+				}
+				return
+			}
+			returned := make(chan error, 1)
+			go func() {
+				_, err := client.InvokeCapability(ctx, CapabilityInvokeParams{
+					Capability: CapabilityModelMiddleware, ExecutionID: "receipt-execution", Input: mustRaw("hold"),
+				})
+				returned <- err
+			}()
+			expect("invoked")
+			cancel()
+			select {
+			case err := <-returned:
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("consumer error = %v, want cancellation", err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("consumer waited for the gated process response after cancellation")
+			}
+			expect("canceled")
+			if receipts != nil {
+				receipts.Seal()
+				select {
+				case <-receipts.Done():
+					t.Fatal("receipt scope completed while the original RPC response is still gated")
+				default:
+				}
+			}
+			client.pendingMu.Lock()
+			pending := len(client.pending)
+			client.pendingMu.Unlock()
+			wantPending := 0
+			if receipts != nil {
+				wantPending = 1
+			}
+			if pending != wantPending {
+				t.Fatalf("pending calls after cancellation = %d, want %d", pending, wantPending)
+			}
+			if mode == "timeout" {
+				waitCtx, waitCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+				err := receipts.Wait(waitCtx)
+				waitCancel()
+				if !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("gated receipt wait = %v, want deadline exceeded", err)
+				}
+				select {
+				case <-receipts.Done():
+					t.Fatal("wait timeout claimed the process producer had finished")
+				default:
+				}
+				receipts.Abort(err)
+				select {
+				case <-receipts.Done():
+				case <-time.After(time.Second):
+					t.Fatal("owner abort did not release the pending RPC observer")
+				}
+				if err := receipts.Wait(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("abandoned receipt = %v, want the owner's deadline cause", err)
+				}
+				client.pendingMu.Lock()
+				pending = len(client.pending)
+				client.pendingMu.Unlock()
+				if pending != 0 {
+					t.Fatalf("owner abort left %d pending calls", pending)
+				}
+				if client.Status().State != StateActive {
+					t.Fatalf("observation abort changed process lifecycle: %+v", client.Status())
+				}
+			}
+			if mode == "transport exit" {
+				if _, err := io.WriteString(control, "exit\n"); err != nil {
+					t.Fatal(err)
+				}
+				waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer waitCancel()
+				if err := receipts.Wait(waitCtx); err == nil || errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("receipt after process exit = %v, want transport failure", err)
+				}
+				client.pendingMu.Lock()
+				pending = len(client.pending)
+				client.pendingMu.Unlock()
+				if pending != 0 {
+					t.Fatalf("process exit left %d pending calls", pending)
+				}
+				return
+			}
+			command := "release\n"
+			if mode == "rejection" {
+				command = "reject\n"
+			}
+			if _, err := io.WriteString(control, command); err != nil {
+				t.Fatal(err)
+			}
+			expect("released")
+			if receipts != nil && mode != "timeout" {
+				waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+				defer waitCancel()
+				if err := receipts.Wait(waitCtx); err != nil {
+					t.Fatalf("completed callback receipt = %v", err)
+				}
+				client.pendingMu.Lock()
+				pending = len(client.pending)
+				client.pendingMu.Unlock()
+				if pending != 0 {
+					t.Fatalf("completed callback left %d pending calls", pending)
+				}
+			}
+			// A subsequent reply proves the discarded late response did not block
+			// the real JSONL reader or replay the canceled model invocation.
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), time.Second)
+			defer pingCancel()
+			if _, err := client.InvokeCapability(pingCtx, CapabilityInvokeParams{
+				Capability: CapabilityModelMiddleware, ExecutionID: "ping", Input: mustRaw("ping"),
+			}); err != nil {
+				t.Fatalf("ping after late reply: %v", err)
+			}
+		})
+	}
+}
+
+func runReceiptCompletionHelper() {
+	control, err := net.Dial("tcp", os.Getenv("WUU_PLUGINHOST_RECEIPT_ADDR"))
+	if err != nil {
+		os.Exit(2)
+	}
+	defer control.Close()
+	type request struct {
+		ID     string          `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	requests := make(chan request)
+	commands := make(chan string)
+	go func() {
+		defer close(requests)
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			var req request
+			if json.Unmarshal(scanner.Bytes(), &req) != nil {
+				os.Exit(3)
+			}
+			requests <- req
+		}
+	}()
+	go func() {
+		defer close(commands)
+		scanner := bufio.NewScanner(control)
+		for scanner.Scan() {
+			commands <- scanner.Text()
+		}
+	}()
+	enc := json.NewEncoder(os.Stdout)
+	waitingID, executionID := "", ""
+	respond := func(id string) {
+		_ = enc.Encode(map[string]any{"id": id, "result": CapabilityInvokeResult{Output: json.RawMessage(`{}`)}})
+	}
+	for {
+		select {
+		case req, open := <-requests:
+			if !open {
+				return
+			}
+			switch req.Method {
+			case "initialize":
+				_ = enc.Encode(map[string]any{"id": req.ID, "result": CapabilityInitializeResult{
+					ProtocolVersion: CapabilityProtocolVersion,
+					Capabilities:    []CapabilityDescriptor{{ID: CapabilityModelMiddleware, Kind: SeamDecision, Version: 1}},
+				}})
+			case "capability.invoke":
+				var params CapabilityInvokeParams
+				_ = json.Unmarshal(req.Params, &params)
+				if string(params.Input) == `"hold"` {
+					if waitingID != "" {
+						os.Exit(4)
+					}
+					waitingID, executionID = req.ID, params.ExecutionID
+					_, _ = io.WriteString(control, "invoked\n")
+				} else {
+					respond(req.ID)
+				}
+			case ExecutionCancelMethod:
+				var params ExecutionCancelParams
+				_ = json.Unmarshal(req.Params, &params)
+				if waitingID != "" && params.ExecutionID == executionID {
+					_, _ = io.WriteString(control, "canceled\n")
+				}
+			case "shutdown":
+				respond(req.ID)
+				return
+			}
+		case command, open := <-commands:
+			if !open {
+				return
+			}
+			switch command {
+			case "release":
+				respond(waitingID)
+				waitingID, executionID = "", ""
+				_, _ = io.WriteString(control, "released\n")
+			case "reject":
+				_ = enc.Encode(map[string]any{"id": waitingID, "error": rpcError{Code: "canceled", Message: "callback canceled"}})
+				waitingID, executionID = "", ""
+				_, _ = io.WriteString(control, "released\n")
+			case "exit":
+				os.Exit(23)
+			}
+		}
 	}
 }
 
