@@ -99,6 +99,7 @@ import { showErrorToast } from "./Toast";
 export interface WorkspacePanelLayout {
   open: boolean;
   covered?: boolean;
+  toolsVisible?: boolean;
   present: boolean;
   prewarm?: boolean;
   globalized: boolean;
@@ -243,7 +244,7 @@ function initialWorkspaceFileTreeVisible(): boolean {
 }
 
 function WorkspacePanelContent({
-  application, slots, open, covered = false, present, prewarm = false,
+  application, slots, open, covered = false, toolsVisible = true, present, prewarm = false,
   globalized, sheetPhase = "docked", onToggleGlobalize, canExitGlobalized = true,
   browserOverlaySuppressed = false, onDirtyFileTabsChange, conversationTabVisible = false,
   documentComposer = false, pane,
@@ -718,7 +719,7 @@ function WorkspacePanelContent({
 
   return (
     <>
-    {!covered ? (
+    {!covered && toolsVisible ? (
       <nav className="workspace-tool-rail" aria-label={t("workspace.tools")}
         data-wuu-component="workspace-tool-rail">
         <Tooltip content={t("workspace.newPage")}>

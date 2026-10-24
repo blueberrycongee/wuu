@@ -1023,6 +1023,8 @@ export function App({ application, slots, shellPluginId }: {
     !showingManagementCatalog && !showingPrimaryPluginView &&
     (activePreviewFile || activePreviewArtifact),
   );
+  const workspaceControlsVisible = !showingWebsite && !showingManagementCatalog && !showingPrimaryPluginView &&
+    !settingsOpen && !accountOpen;
   const conversationVisible = !showingWebsite && !showingManagementCatalog && !showingPrimaryPluginView &&
     !settingsOpen && !accountOpen && !workspaceToolsCoverConversation;
   const mainConversationDockVisible =
@@ -2024,6 +2026,7 @@ export function App({ application, slots, shellPluginId }: {
       {poppedOutMode ? null : (
         <slots.Slot name={`${shellPluginId}/application.preview`} context={{ layout: {
           covered: settingsOpen || showingWebsite,
+          toolsVisible: workspaceControlsVisible,
           open: rightPanelOpen,
           present: rightPanelOpen || rightPanelAnimating,
           prewarm: initialized,
@@ -2101,7 +2104,7 @@ export function App({ application, slots, shellPluginId }: {
           <SidePanelToggleIcon side="left" open={!sidebarCollapsed || sidebarDrawerVisible} />
         </button>
       ) : null}
-      {!poppedOutMode ? (
+      {!poppedOutMode && workspaceControlsVisible ? (
         <button
           className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
           data-wuu-component="right-sidebar-toggle"
