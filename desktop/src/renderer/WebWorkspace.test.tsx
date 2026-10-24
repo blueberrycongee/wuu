@@ -1,6 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { WebWorkspaceControlsProvider } from "./WebWorkspaceControlsContext";
+import { ApplicationWebWorkspace } from "./plugins/ApplicationWebWorkspace";
 import { WebWorkspacePanel } from "./WebWorkspace";
 import type { WebWorkspaceApi, WebWorkspaceState } from "../shared/webWorkspace";
 
@@ -16,6 +18,7 @@ let container: HTMLDivElement;
 let root: Root;
 let focusFind: (id: string) => void;
 let api: WebWorkspaceApi;
+let controls: ApplicationWebWorkspace;
 let previousAPI: typeof window.wuu;
 let previousAnimations: typeof document.getAnimations;
 
@@ -25,22 +28,24 @@ beforeEach(async () => {
   previousAnimations = document.getAnimations;
   document.getAnimations = vi.fn(() => []);
   api = {
-    open: vi.fn(result), command: vi.fn(result), find: vi.fn(result), stopFind: vi.fn(result),
+    close: vi.fn(async () => {}), dismissOptions: vi.fn(async () => {}), open: vi.fn(result), command: vi.fn(result), find: vi.fn(result), stopFind: vi.fn(result),
     reportBounds: vi.fn(async () => {}), setShortcutTarget: vi.fn(async () => {}),
     onState: () => () => {}, onFocusAddress: () => () => {},
     onFocusFind: (handler: Parameters<WebWorkspaceApi["onFocusFind"]>[0]) => { focusFind = handler; return () => {}; },
   } as unknown as WebWorkspaceApi;
-  window.wuu = Object.assign({}, window.wuu, { webWorkspace: api });
+  controls = new ApplicationWebWorkspace(api, "darwin", vi.fn(async () => {}));
+  window.wuu = undefined as unknown as typeof window.wuu;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, toJSON: () => ({}) });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  await act(async () => root.render(<WebWorkspacePanel site={{ id: state.id, url: state.url }} />));
+  await act(async () => root.render(<WebWorkspaceControlsProvider controls={controls}><WebWorkspacePanel site={{ id: state.id, url: state.url }} /></WebWorkspaceControlsProvider>));
   await act(async () => focusFind(state.id));
 });
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount());
+  await controls.dispose();
   container.remove();
   window.wuu = previousAPI;
   document.getAnimations = previousAnimations;
@@ -86,6 +91,6 @@ describe("website find input composition", () => {
     await act(async () => findInput().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
     expect(findInput()).toBeNull();
     expect(api.stopFind).toHaveBeenCalledWith("site");
-    expect(api.command).toHaveBeenCalledWith("site", "focus");
+    expect(api.command).toHaveBeenCalledWith("site", "focus", undefined);
   });
 });

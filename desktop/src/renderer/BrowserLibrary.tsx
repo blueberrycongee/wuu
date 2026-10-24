@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import type { WebWorkspaceApi } from "../shared/webWorkspace";
-import { persistentWebWorkspaceURL, type WebWorkspaceLibraryState } from "../shared/webWorkspaceLibrary";
+import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi } from "../../../packages/plugin-sdk/src/ui-web-workspace";
+import { persistentWebWorkspaceURL } from "../shared/webWorkspaceLibrary";
+import type { WebWorkspaceLibraryStateV1 as WebWorkspaceLibraryState } from "../../../packages/plugin-sdk/src/ui-web-workspace";
 import { Bookmark, BookOpen, Clock3, Pencil, Search, X } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
@@ -184,7 +185,7 @@ export function BrowserLibrary({ api, currentURL, currentTitle, onOpen, active =
       <BookOpen className="icon" aria-hidden="true" />
       {presentation === "menu" ? <span>{t("browserLibrary.title")}</span> : null}
     </button>
-    {open ? <NativeBrowserPopover onDismiss={() => close(false)}><UILayerPortal layer="popover">
+    {open ? <NativeBrowserPopover controls={api} onDismiss={() => close(false)}><UILayerPortal layer="popover">
       <div ref={panel} id={panelId} role="dialog" aria-labelledby={headingId} className="browser-library-panel"
         data-browser-library data-wuu-layer="popover" data-wuu-component="popover" data-web-workspace-owner={destinationId} style={position}
         onPointerDown={(event) => event.stopPropagation()}

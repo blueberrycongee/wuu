@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
-import type { WebWorkspaceApi } from "../shared/webWorkspace";
-import type { WebWorkspaceLibraryState } from "../shared/webWorkspaceLibrary";
+import type { ApplicationWebWorkspaceV1 as WebWorkspaceApi } from "../../../packages/plugin-sdk/src/ui-web-workspace";
+import type { WebWorkspaceLibraryStateV1 as WebWorkspaceLibraryState } from "../../../packages/plugin-sdk/src/ui-web-workspace";
 import { Bookmark, Clock3 } from "./WuuIcons";
 import { composerMenuWidth, FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
@@ -144,7 +144,7 @@ export function WebWorkspaceAddress({
         }} />
       {children}
     </form>
-    {showSuggestions ? <NativeBrowserPopover focus={false} onDismiss={blurAddress}><FloatingMenuPortal anchorRef={formRef} owner="web-workspace-address" placement="below" align="left" width={composerMenuWidth(480)} matchAnchorWidth offset={4}>
+    {showSuggestions ? <NativeBrowserPopover controls={api} focus={false} onDismiss={blurAddress}><FloatingMenuPortal anchorRef={formRef} owner="web-workspace-address" placement="below" align="left" width={composerMenuWidth(480)} matchAnchorWidth offset={4}>
       <ul ref={suggestionsRef} id={suggestionsID} className="web-workspace-address-suggestions" role="listbox" aria-label={t("webWorkspace.addressSearch")}
         data-web-workspace-address-suggestions="" data-wuu-layer="popover" data-web-workspace-owner={destinationId}>
         {suggestions.map((entry, index) => <li key={entry.url} id={`${suggestionsID}-${index}`} role="option" aria-selected={index === selectedSuggestion}
