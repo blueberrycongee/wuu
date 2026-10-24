@@ -28,10 +28,10 @@ try {
     await symlink(join(sdk, 'node_modules', dependency), destination);
   }
   await writeFile(join(project, 'package.json'), '{"type":"module","private":true}');
-  await cp(join(repo, 'examples/plugins/independent-providers/tools.ts'), join(project, 'tools.ts'));
-  await exec(process.execPath, [tsc, 'tools.ts', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
-  const checked = await exec(process.execPath, ['--test', join(sdk, 'test/parity-tools.test.mjs')], {
-    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js')},
+  for (const name of ['tools', 'sessions']) await cp(join(repo, `examples/plugins/independent-providers/${name}.ts`), join(project, `${name}.ts`));
+  await exec(process.execPath, [tsc, 'tools.ts', 'sessions.ts', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--target', 'ES2022', '--strict', '--skipLibCheck'], {cwd: project});
+  const checked = await exec(process.execPath, ['--test', join(sdk, 'test/parity-tools.test.mjs'), join(sdk, 'test/parity-sessions.test.mjs')], {
+    env: {...process.env, WUU_PARITY_TOOLS_ENTRY: join(project, 'tools.js'), WUU_PARITY_SESSIONS_ENTRY: join(project, 'sessions.js')},
   });
   console.log(checked.stdout);
   console.log('PASS: independent tool registry compiled against packed public SDK; no dependency installation.');

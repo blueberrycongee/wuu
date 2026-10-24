@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
+
+const entry = process.env.WUU_PARITY_SESSIONS_ENTRY;
+test('independent session metadata owns CRUD and rejects unsupported history', { skip: !entry }, async () => {
+  const { createSessionProvider } = await import(pathToFileURL(entry));
+  const provider = createSessionProvider('author-session');
+  const call = (method, ...args) => provider.invokeService({service: 'session.domain', method, params: {args}, caller: 'acceptance'}).values;
+  provider.initialize(); provider.activate();
+  const [created] = call('CreateWithMetadata', 'thread-one', '/synthetic');
+  assert.equal(created.title, 'author-session');
+  assert.throws(() => call('CreateWithMetadata', 'thread-one', '/synthetic'), /already exists/);
+  assert.equal(call('Find', 'absent')[1], false);
+  assert.throws(() => call('UpdateTitle', 'absent', 'rename'), error => error.code === 'session_not_found');
+  assert.throws(() => call('UpdateTitle', 'thread-one', '  '), /title is required/);
+  assert.equal(call('Find', 'thread-one')[0].title, 'author-session');
+  assert.equal(call('UpdateTitle', 'thread-one', 'New title')[0].title, 'New title');
+  assert.equal(call('ListForCWD', '/elsewhere', '', 0)[0].length, 0);
+  const [listed] = call('ListForCWD', '/synthetic', '', 0);
+  listed[0].title = 'mutated outside';
+  assert.equal(call('Find', 'thread-one')[0].title, 'New title');
+  assert.ok(call('UpdateArchived', 'thread-one', true)[0].archived_at);
+  assert.equal(call('UpdateArchived', 'thread-one', false)[0].archived_at, undefined);
+  assert.throws(() => call('AppendHistoryRecord', 'thread-one', {}), error => error.code === 'method_not_found');
+  assert.equal(call('Delete', 'thread-one')[0].id, 'thread-one');
+  assert.equal(call('Find', 'thread-one')[1], false);
+  provider.shutdown();
+  assert.throws(() => call('List', 0), error => error.code === 'service_unavailable');
+});
