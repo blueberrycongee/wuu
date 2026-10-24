@@ -6,7 +6,7 @@ import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../pa
 import type { ViewHostAPI, PresentationHost } from "../../shared/workbench";
 import { ApplicationController } from "./ApplicationController";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
-import { LegacyUIContributions } from "./LegacyUIContributions";
+import { LegacyUIContributions, type LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
 import { ApplicationShellOutlet } from "./ApplicationShell";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 
@@ -181,6 +181,50 @@ describe("legacy contributions in declared public slots", () => {
     expect(element.textContent).toBe("Native content");
     await expect(captured.invoke("preview.show-conversation", {})).rejects.toThrow();
     expect(invoke).toHaveBeenCalledOnce();
+  });
+
+  it("uses workbench layers only behind a live declaration without an explicit replacement", async () => {
+    const invoke = vi.fn(async () => undefined);
+    const application = Object.assign(new ApplicationController(), { invoke: invoke as ApplicationServiceV1["invoke"] });
+    const cleanup = vi.fn();
+    const captured: ApplicationServiceV1[] = [];
+    function Layer() { React.useEffect(() => cleanup, []); return <span>Legacy workbench layer</span>; }
+    const renderLegacyWorkbench = vi.fn(({ application, context }: LegacyWorkbenchRenderInput) => {
+      captured.push(application);
+      expect(context).toEqual({ visible: true });
+      return <Layer />;
+    });
+    const host = new PluginHost({ react: React, application, renderLegacyWorkbench });
+    await host.activateGeneration({ pluginId: "layout", generation: "one", register: api => {
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="layers/workbench.layers"
+        context={{ visible: true }} fallback={<span>Native fallback</span>} /> });
+    } });
+    element = document.createElement("div"); document.body.append(element); root = createRoot(element);
+    act(() => root!.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "layout", generation: "one", id: "shell" }} />));
+    expect(renderLegacyWorkbench).not.toHaveBeenCalled(); expect(element.textContent).toBe("");
+    const declare = () => host.activateGeneration({ pluginId: "layers", generation: "same", register: api => {
+      api.registerUISlot({ id: "workbench.layers", cardinality: "one" });
+    } });
+    await act(async () => { await declare(); });
+    expect(element.textContent).toBe("Legacy workbench layer");
+    const old = captured.at(-1)!;
+    await old.invoke("preview.show-conversation", {});
+    await act(async () => { await host.activateGeneration({ pluginId: "replacement", generation: "one", register: api => {
+      api.registerUIContribution({ id: "layers", target: "layers/workbench.layers", render: () => <span>Explicit replacement</span> });
+    } }); });
+    expect(element.textContent).toBe("Explicit replacement");
+    expect(cleanup).toHaveBeenCalledOnce();
+    await act(async () => { host.unload("replacement"); });
+    expect(element.textContent).toBe("Legacy workbench layer");
+    await act(async () => { host.unload("layers"); });
+    expect(element.textContent).toBe(""); expect(cleanup).toHaveBeenCalledTimes(2);
+    await expect(old.invoke("preview.show-conversation", {})).rejects.toThrow();
+    await act(async () => { await declare(); });
+    expect(element.textContent).toBe("Legacy workbench layer");
+    expect(captured.at(-1) === old).toBe(false);
+    await expect(old.invoke("preview.show-conversation", {})).rejects.toThrow();
+    await captured.at(-1)!.invoke("preview.show-conversation", {});
+    expect(invoke).toHaveBeenCalledTimes(2);
   });
 
   it("renders only the selected generation's workspace view and its title commands", async () => {
