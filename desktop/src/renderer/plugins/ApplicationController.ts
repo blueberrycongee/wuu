@@ -1,3 +1,4 @@
+import { ApplicationEventEffects } from "./ApplicationEventEffects";
 import { deriveActiveSessionHints } from "../activeSessionHint";
 import type { ApplicationDesktopPetTargetV1 } from "../../../../packages/plugin-sdk/src/ui-desktop";
 import { ApplicationComposerPresentation } from "./ApplicationComposerPresentation";
@@ -508,9 +509,14 @@ export class ApplicationController implements HostApplicationService {
     this.reconcileSubmission();
   };
 
+  private eventEffects?: ApplicationEventEffects;
+
   start(): () => void {
     if (++this.consumers === 1) {
       this.lifetime = new AbortController();
+      const notify = window.wuu?.showSystemNotification?.bind(window.wuu);
+      this.eventEffects = new ApplicationEventEffects({ getState: () => this.state, getEnvironment: () => this.environment,
+        notify, reportError: error => console.error("Application event notification failed", error) });
       this.subscriptions = [subscribeWorkspaceBrowserNavigation(() => this.publish()), subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
       if (this.browser.available) {
@@ -560,6 +566,7 @@ export class ApplicationController implements HostApplicationService {
       this.composerRuntimeOwner = undefined;
       this.activityRequest++; this.activitySourceKey = undefined;
       this.browserOwner?.dispose(); this.browserOwner = undefined;
+      this.eventEffects?.dispose(); this.eventEffects = undefined;
       this.environmentOwner?.dispose(); this.environmentOwner = undefined;
       this.artifactsOwner = undefined;
       this.composerPresentationOwner?.dispose(); this.composerPresentationOwner = undefined;
@@ -624,6 +631,7 @@ export class ApplicationController implements HostApplicationService {
   }
 
   private receive(event: ServerEvent): void {
+    this.eventEffects?.receive(event);
     const activities = reduceActivitySessionEvent(this.activitySessions, event);
     if (activities !== this.activitySessions) { this.activitySessions = activities; this.publish(); }
     this.sidebarCache.syncSidebarServerEvent(event);
