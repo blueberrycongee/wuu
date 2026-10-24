@@ -540,6 +540,7 @@ export class ApplicationController implements HostApplicationService {
           ...applyRuntimeRestore(state, restored),
           runtimeConnectionGeneration: (state.runtimeConnectionGeneration ?? 0) + 1,
         }));
+        void this.applicationConversationActions.refreshQuestions().catch(() => undefined);
       });
       if (restore) this.subscriptions.push(restore);
       this.applicationDesktop.syncPet();
@@ -602,7 +603,20 @@ export class ApplicationController implements HostApplicationService {
       }
       signal?.throwIfAborted();
       this.loaded = loaded;
-      this.updateState(state => withLoadedRuntimeSessionTab(state, loaded));
+      this.updateState(state => {
+        const context = loaded.activeContext;
+        const sessionTabs = state.sessionTabs.filter(tab => {
+          if (tab.context.kind === "project") {
+            const projectId = tab.context.project_id;
+            const project = loaded.projects?.find(project => project.id === projectId);
+            if (!project || project.path !== tab.context.cwd) return false;
+          }
+          return !context || !sameRuntimeContext(tab.context, context) || sameRecoveryContext(tab.context, context);
+        });
+        const next = withLoadedRuntimeSessionTab({ ...state, sessionTabs }, loaded);
+        const active = sessionTabs.find(tab => tab.id === this.recoveredDrafts.activeTabID && context && sameRecoveryContext(tab.context, context));
+        return !next.thread && active?.kind === "draft" ? { ...next, activeSessionTabID: active.id } : next;
+      });
       if (loaded.thread && loaded.heldComposerMessages) this.pendingComposer.seedHeldComposerMessages(loaded.thread.id, loaded.heldComposerMessages);
       return loaded;
     })();

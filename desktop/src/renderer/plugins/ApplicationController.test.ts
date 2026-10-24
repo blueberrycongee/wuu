@@ -18,6 +18,24 @@ async function settleSubmission(controller: ApplicationController, result: Await
 // Public failure cases: two shells observe one state, navigation completions
 // cannot cross generation disposal, and failed submissions retain the draft.
 describe("shared application state", () => {
+  it("restores the selected draft while discarding recovery for relocated inactive projects", async () => {
+    const context = { kind: "no_project" as const, cwd: "/scratch" };
+    const project = { id: "moved", name: "Moved", path: "/new", created_at: "", updated_at: "" };
+    const tab = (id: string, cwd = context.cwd): AppState["sessionTabs"][number] => ({ id, kind: "draft", context: { ...context, cwd }, title: "", createdAt: 1, prompt: id, images: [], files: [] });
+    const tabs = [tab("draft:first"), tab("draft:selected"), { ...tab("draft:old"), context: { kind: "project" as const, project_id: "moved", cwd: "/old" } }];
+    window.wuu = { listProjects: vi.fn().mockResolvedValue({ projects: [project], active_context: context }) } as unknown as WuuDesktopApi;
+    const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockResolvedValue({ initialized: submissionInitialized, activeContext: context, projects: [project], threads: [] });
+    const controller = new ApplicationController({ ...initialState, sessionTabs: tabs });
+    controller.recoveredDrafts.tabs = tabs; controller.recoveredDrafts.activeTabID = "draft:selected";
+    try {
+      await controller.initialize();
+      expect(controller.getState().sessionTabs.map(tab => tab.id)).not.toContain("draft:old");
+      expect(controller.getState().activeSessionTabID).toBe("draft:selected");
+      expect(controller.getSnapshot().drafts.primary.text).toBe("draft:selected");
+      expect(load).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ resumeLatestThread: false }));
+    } finally { load.mockRestore(); }
+  });
+
   it("keeps pet submission with the host and its captured workspace across UI retirement", async () => {
     const context = { kind: "no_project" as const, cwd: "/captured" };
     let command!: (value: CodexPetCommand) => void;
@@ -841,7 +859,7 @@ describe("shared application state", () => {
     window.wuu = {
       onRuntimeRestore: (listener: () => Promise<void>) => { restore = listener; return () => {}; },
       onServerEvent: () => () => {},
-      listProjects: async () => ({ projects: [] }), initialize,
+      listProjects: async () => ({ projects: [] }), initialize, listUserQuestions: vi.fn().mockResolvedValue({ questions: [] }),
       listAllThreads: async () => ({ threads: [] }), listArchivedThreads: async () => ({ threads: [] }),
     } as unknown as WuuDesktopApi;
     const controller = new ApplicationController({ ...initialState, initialized: initialized as never });
@@ -852,6 +870,7 @@ describe("shared application state", () => {
       expect(controller.getState().runtimeConnectionGeneration ?? 0).toBe(0);
       await restore();
       expect(controller.getState().runtimeConnectionGeneration).toBe(1);
+      expect(window.wuu.listUserQuestions).toHaveBeenCalledTimes(2);
       expect(controller.getSnapshot().composer.draftText).toBe("Survive reconnect");
       await restore();
       expect(controller.getState().runtimeConnectionGeneration).toBe(2);
