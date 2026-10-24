@@ -56,7 +56,7 @@ it("starts an explicit history edit before retrying a failed message", async () 
 });
 it("renders the canonical pending creation turn only for its tab owner", () => {
   const h = fixture(), pending = thread("pending").turns[0];
-  h.update({ ...h.get(), submission: { ...h.get().submission, pendingCreations: [{ ownerTabId: h.get().tabs.activeTabId, operationID: "send", startedAtMs: 1, turn: { id: pending.id, status: "running", items: [] }, displayTurn: pending }] } });
+  h.update({ ...h.get(), submission: { ...h.get().submission, pendingCreations: [{ ownerTabId: h.get().tabs.activeTabId, operationID: "send", startedAtMs: 1, turn: { ...pending, status: "in_progress" } }] } });
   expect(container!.querySelector('[data-turn-id="pending-turn"]')).not.toBeNull();
   h.update({ ...h.get(), tabs: { ...h.get().tabs, activeTabId: "another-tab" } });
   expect(container!.querySelector('[data-turn-id="pending-turn"]')).toBeNull();
