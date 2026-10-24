@@ -1,4 +1,3 @@
-import { useCallback, useLayoutEffect, useState } from "react";
 import { arrayMove } from "@dnd-kit/sortable";
 import type { ExtensionIconDescriptor, RuntimeContext } from "../shared/protocol";
 import {
@@ -341,69 +340,4 @@ export function reorderViewTabs(
     return state;
   }
   return { ...state, tabs: arrayMove(state.tabs, sourceIndex, targetIndex) };
-}
-
-/**
- * React binding composed by WorkspaceToolState.ts for the right-panel tabs.
- */
-export function useWorkspaceViewTabs(panelOpen: boolean): {
-  tabs: WorkspaceViewTab[];
-  activeTabID: string | undefined;
-  activeFileTabID: string | undefined;
-  openTab: (tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => void;
-  focusTab: (id: string | undefined) => void;
-  closeTab: (id: string) => void;
-  closeTabsWhere: (predicate: (tab: WorkspaceViewTab) => boolean) => void;
-  reorderTabs: (activeID: string, overID: string) => void;
-  syncProjectTab: (project: { id: string; title: string } | undefined) => void;
-} {
-  const [state, setState] = useState<WorkspaceViewTabsState>(initialWorkspaceViewTabsState);
-
-  useLayoutEffect(() => {
-    if (!panelOpen || state.activeTabID) return;
-    // The picker owns a real tab, including when a saved open panel is restored.
-    // Check the latest state so concurrent opens and Strict Mode cannot duplicate it.
-    setState((current) => current.activeTabID
-      ? current
-      : openViewTab(current, { kind: "new", id: `new:${crypto.randomUUID()}` }));
-  }, [panelOpen, state.activeTabID]);
-
-  const openTab = useCallback((tab: WorkspaceViewTab, options?: WorkspaceViewTabOpenOptions) => {
-    setState((current) => openViewTab(current, tab, options));
-  }, []);
-  const focusTab = useCallback((id: string | undefined) => {
-    setState((current) => focusViewTab(current, id));
-  }, []);
-  const closeTab = useCallback((id: string) => {
-    setState((current) => closeViewTab(current, id));
-  }, []);
-  const closeTabsWhere = useCallback((predicate: (tab: WorkspaceViewTab) => boolean) => {
-    setState((current) => closeViewTabsWhere(current, predicate));
-  }, []);
-  const reorderTabs = useCallback((activeID: string, overID: string) => {
-    setState((current) => reorderViewTabs(current, activeID, overID));
-  }, []);
-  const syncProjectTab = useCallback((project: { id: string; title: string } | undefined) => {
-    setState((current) => {
-      const tab = current.tabs.find((candidate) => candidate.kind === "project");
-      // Following a selection must not reopen a dismissed overview or steal
-      // focus from a file, terminal, or other explicitly selected tool.
-      if (!tab) return current;
-      if (!project) return closeViewTab(current, tab.id);
-      if (tab.projectID === project.id && tab.title === project.title) return current;
-      return openViewTab(current, workspaceProjectViewTab(project.id, project.title), { activate: false });
-    });
-  }, []);
-
-  return {
-    tabs: state.tabs,
-    activeTabID: state.activeTabID,
-    activeFileTabID: state.activeFileTabID,
-    openTab,
-    focusTab,
-    closeTab,
-    closeTabsWhere,
-    reorderTabs,
-    syncProjectTab,
-  };
 }

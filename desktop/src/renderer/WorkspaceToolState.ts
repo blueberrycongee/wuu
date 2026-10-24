@@ -1,25 +1,20 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { showErrorToast } from "./Toast";
 import type { RuntimeContext } from "../shared/protocol";
 import { restoreArtifactPreviewFocus, type ArtifactPreviewRequest } from "./ArtifactPreviewContext";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import type { RegisteredPluginViewEntry } from "./plugins/PluginHost";
-import {
-  useWorkspaceViewTabs,
-  workspaceDiffViewTab,
-  workspaceArtifactViewTab,
-  workspaceFileViewTab,
-  workspaceToolViewTab,
-  workspacePluginViewTab,
-  workspaceProjectViewTab,
-  type WorkspaceViewTab,
-} from "./WorkspaceViewTabs";
+import { workspaceArtifactViewTab, type WorkspaceViewTab } from "./WorkspaceViewTabs";
 
 export function useWorkspaceToolState({
+  application,
   rightPanelOpen,
   rightPanelGlobalized,
   setRightPanelOpenWithMotion
 }: {
+  application: ApplicationServiceV1;
   rightPanelOpen: boolean;
   rightPanelGlobalized: boolean;
   setRightPanelOpenWithMotion: (open: boolean) => void;
@@ -48,81 +43,77 @@ export function useWorkspaceToolState({
   reorderWorkspaceViewTabs: (activeID: string, overID: string) => void;
   toggleRightPanel: () => void;
 } {
-  const [conversationSelected, setConversationSelected] = useState(false);
-  const {
-    tabs: workspaceViewTabs,
-    activeTabID: workspaceActiveViewTabID,
-    activeFileTabID: workspaceActiveFileTabID,
-    openTab: openWorkspaceTab,
-    focusTab: focusWorkspaceTab,
-    closeTab,
-    closeTabsWhere,
-    reorderTabs,
-    syncProjectTab,
-  } = useWorkspaceViewTabs(rightPanelOpen && !conversationSelected);
+  const snapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().previewWorkspace);
+  const origins = useRef(new Map<string, ArtifactPreviewRequest["origin"]>());
+  const workspaceViewTabs = useMemo(() => structuredClone(snapshot.tabs) as WorkspaceViewTab[], [snapshot.tabs]);
+  const workspaceActiveViewTabID = snapshot.activeTabId;
+  const workspaceActiveFileTabID = snapshot.activeFileTabId;
+  const conversationSelected = snapshot.conversationSelected;
+  useLayoutEffect(() => {
+    if (rightPanelOpen && !conversationSelected && !application.getSnapshot().previewWorkspace.activeTabId) {
+      void application.invoke("preview.new-tab", {}).catch(showErrorToast);
+    }
+  }, [application, rightPanelOpen, conversationSelected, workspaceActiveViewTabID]);
   useEffect(() => {
-    if (!rightPanelGlobalized) setConversationSelected(false);
-  }, [rightPanelGlobalized]);
-  const focusWorkspaceConversation = useCallback(() => setConversationSelected(true), []);
-  const focusTab = useCallback((id: string | undefined) => {
-    setConversationSelected(false);
-    focusWorkspaceTab(id);
-  }, [focusWorkspaceTab]);
-
-  function openTab(...args: Parameters<typeof openWorkspaceTab>): void {
-    if (args[1]?.activate !== false) setConversationSelected(false);
-    openWorkspaceTab(...args);
-  }
-
+    if (rightPanelOpen && !rightPanelGlobalized && application.getSnapshot().previewWorkspace.conversationSelected) {
+      void application.invoke("preview.focus-tab", { tabId: application.getSnapshot().previewWorkspace.activeTabId }).catch(showErrorToast);
+    }
+  }, [application, rightPanelOpen, rightPanelGlobalized, conversationSelected]);
+  const focusWorkspaceConversation = useCallback(() => {
+    void application.invoke("preview.show-conversation", {}).catch(showErrorToast);
+  }, [application]);
+  const focusTab = useCallback((tabId: string | undefined) => {
+    void application.invoke("preview.focus-tab", { tabId }).catch(showErrorToast);
+  }, [application]);
   function ensureWorkspaceToolTab(view: WorkspacePanelView): void {
-    if (!workspaceViewTabs.some((tab) => tab.id === view)) {
-      openTab(workspaceToolViewTab(view), { activate: false });
+    if (!application.getSnapshot().previewWorkspace.tabs.some(tab => tab.id === view)) {
+      void application.invoke("preview.open-tool", { toolId: view, activate: false }).catch(showErrorToast);
     }
   }
-
   function activateWorkspaceTool(view: WorkspacePanelView): void {
-    openTab(workspaceToolViewTab(view));
+    void application.invoke("preview.open-tool", { toolId: view }).catch(showErrorToast);
   }
-
   function openWorkspaceTool(view: WorkspacePanelView): void {
-    openTab(workspaceToolViewTab(view), { replaceActiveNewTab: true });
+    activateWorkspaceTool(view);
     setRightPanelOpenWithMotion(true);
   }
-
   function openWorkspaceSideThread(): void {
-    openTab({ kind: "side-thread", id: "side-thread" }, { replaceActiveNewTab: true });
+    void application.invoke("preview.open-side-thread", {}).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
   }
-
   function openWorkspacePluginTool(entry: RegisteredPluginViewEntry): void {
-    openTab(workspacePluginViewTab(entry), { replaceActiveNewTab: true });
+    void application.invoke("preview.open-plugin", { entryId: entry.id, pluginId: entry.pluginId,
+      generation: entry.generation, viewTypeId: entry.view, title: entry.title, icon: entry.icon }).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
   }
-
   function openWorkspaceDiffTab(input: { threadID: string; path: string; selection: TurnFileDiffSelection }): void {
-    openTab(workspaceDiffViewTab(input));
+    void application.invoke("preview.open-diff", { threadId: input.threadID, path: input.path, selection: input.selection }).catch(showErrorToast);
   }
-
   function openWorkspaceFileTab(input: { context: RuntimeContext; path: string }): void {
-    openTab(workspaceFileViewTab(input));
+    void application.invoke("preview.open-file", input).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
   }
-
   function openWorkspaceArtifactTab(input: ArtifactPreviewRequest): void {
-    openTab(workspaceArtifactViewTab(input));
+    const id = workspaceArtifactViewTab(input).id;
+    origins.current.set(id, input.origin);
+    void application.invoke("preview.open-artifact", { threadId: input.threadID, artifactId: input.artifact.id,
+      sha256: input.artifact.sha256, page: input.page }).catch(error => { origins.current.delete(id); showErrorToast(error); });
     setRightPanelOpenWithMotion(true);
   }
-
-  function openWorkspaceProjectTab(projectID: string, title: string): void {
-    openTab(workspaceProjectViewTab(projectID, title));
+  function openWorkspaceProjectTab(projectId: string, title: string): void {
+    void application.invoke("preview.open-project", { projectId, title }).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
   }
-
+  const syncProjectTab = useCallback((project: { id: string; title: string } | undefined) => {
+    void application.invoke("preview.follow-project", { project }).catch(showErrorToast);
+  }, [application]);
   function showWorkspaceToolPicker(): void {
-    openTab({ kind: "new", id: `new:${crypto.randomUUID()}` });
+    void application.invoke("preview.new-tab", {}).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
   }
-
+  function reorderTabs(tabId: string, overTabId: string): void {
+    void application.invoke("preview.reorder-tab", { tabId, overTabId }).catch(showErrorToast);
+  }
   function toggleRightPanel(): void {
     if (rightPanelOpen) {
       setRightPanelOpenWithMotion(false);
@@ -138,10 +129,11 @@ export function useWorkspaceToolState({
   // through the pinned conversation tab while the workspace is expanded.
   function closeWorkspaceViewTab(id: string): void {
     const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
-    if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") restoreArtifactPreviewFocus(tab.origin);
+    if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") restoreArtifactPreviewFocus(origins.current.get(id));
     const willEmpty =
       workspaceViewTabs.length === 1 && workspaceViewTabs[0]?.id === id;
-    closeTab(id);
+    origins.current.delete(id);
+    void application.invoke("preview.close-tab", { tabId: id }).catch(showErrorToast);
     if (willEmpty) {
       if (rightPanelGlobalized) focusWorkspaceConversation();
       else setRightPanelOpenWithMotion(false);
@@ -153,7 +145,9 @@ export function useWorkspaceToolState({
   ): void {
     const willEmpty =
       workspaceViewTabs.length > 0 && workspaceViewTabs.every(predicate);
-    closeTabsWhere(predicate);
+    const tabIds = workspaceViewTabs.filter(predicate).map(tab => tab.id);
+    tabIds.forEach(id => origins.current.delete(id));
+    void application.invoke("preview.close-tabs", { tabIds }).catch(showErrorToast);
     if (willEmpty) {
       if (rightPanelGlobalized) focusWorkspaceConversation();
       else setRightPanelOpenWithMotion(false);

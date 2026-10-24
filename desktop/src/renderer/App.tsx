@@ -806,6 +806,7 @@ export function App({ application: providedApplication }: { application?: Applic
     reorderWorkspaceViewTabs,
     toggleRightPanel,
   } = useWorkspaceToolState({
+    application,
     rightPanelOpen,
     rightPanelGlobalized,
     setRightPanelOpenWithMotion,
