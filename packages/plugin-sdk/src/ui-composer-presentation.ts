@@ -31,6 +31,8 @@ export interface ApplicationComposerContextUsageV1 {
 }
 export interface ApplicationComposerPresentationViewV1 {
   readonly ownerTabId: string;
+  /** Retained while the selected shell is replaced. */
+  readonly runtimeMenu: "model" | null;
   readonly threadId?: string;
   readonly available: boolean;
   readonly running: boolean;
@@ -82,6 +84,7 @@ export interface ApplicationComposerPresentationV1 {
   /** Rebinds provider generations; unsubscribe or scope retirement releases every source. */
   subscribeStatus(threadId: string | undefined, listener: () => void): () => void;
   getSnapshot(ownerTabId: string): ApplicationComposerPresentationViewV1;
+  setRuntimeMenu(ownerTabId: string, menu: "model" | null): void;
   subscribe(listener: () => void): () => void;
   getCommands(): readonly { readonly pluginId: string; readonly id: string }[];
   executeCommand(input: { readonly ownerTabId: string; readonly pluginId: string; readonly id: string; readonly args: string }): Promise<void>;

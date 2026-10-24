@@ -19,7 +19,7 @@ function immutable<T>(value: T): T {
 export class ApplicationComposerPresentation {
   private disposed = false;
   private readonly scopes = new Set<() => void>();
-  constructor(private readonly host: { getState(): AppState; subscribeState(listener: () => void): () => void; getPluginHost(): PluginHost }) {}
+  constructor(private readonly host: { getState(): AppState; updateState(update: (state: AppState) => AppState): void; subscribeState(listener: () => void): () => void; getPluginHost(): PluginHost }) {}
 
   createScope(signal: AbortSignal): ApplicationComposerPresentationV1 {
     if (this.disposed) throw new Error("Composer presentation is disposed");
@@ -47,6 +47,11 @@ export class ApplicationComposerPresentation {
       return { state, tab, thread };
     };
     return Object.freeze({
+      setRuntimeMenu: (ownerTabId: string, menu: "model" | null) => {
+        const { state } = owner(ownerTabId);
+        if (state.activeSessionTabID !== ownerTabId) throw new Error("Composer owner is no longer active");
+        this.host.updateState(current => current.codexRuntimeMenu === menu ? current : { ...current, codexRuntimeMenu: menu });
+      },
       getStatusSnapshot: (threadId?: string) => {
         check(); const context = Object.freeze({ threadId, mainConversation: true as const });
         const items: ApplicationComposerStatusItemV1[] = []; const seen = new Set<string>();
@@ -88,7 +93,7 @@ export class ApplicationComposerPresentation {
         check();
         if (!this.host.getState().sessionTabs.some(tab => tab.id === ownerTabId && tab.kind !== "skills")) {
           const previous = views.get(ownerTabId); if (previous?.key === "unavailable") return previous.value;
-          const value = immutable({ ownerTabId, available: false, running: false, turnRunning: false, canSteer: false, readOnly: true,
+          const value = immutable({ ownerTabId, runtimeMenu: null, available: false, running: false, turnRunning: false, canSteer: false, readOnly: true,
             status: "", queryHistory: [], skillRevision: "", workspaceCapabilities: { create: false, open: false } });
           views.set(ownerTabId, { key: "unavailable", value }); return value;
         }
@@ -101,7 +106,7 @@ export class ApplicationComposerPresentation {
         const configuration = initialized && { provider: initialized.provider, model: initialized.model, effort: initialized.effort, variant: initialized.variant,
           speed: initialized.speed, permissions: initialized.permissions, providers: initialized.providers, features: { safe_mode: initialized.features?.safe_mode },
           extension_inventory: initialized.extension_inventory };
-        const value: ApplicationComposerPresentationViewV1 = { ownerTabId, threadId: thread?.id, available: Boolean(initialized && (tab.kind === "draft" || thread)),
+        const value: ApplicationComposerPresentationViewV1 = { ownerTabId, runtimeMenu: state.codexRuntimeMenu ?? null, threadId: thread?.id, available: Boolean(initialized && (tab.kind === "draft" || thread)),
           running, turnRunning: running && !activeTurnIsAnswerReady(thread), canSteer: activeTurnAcceptsSteering(thread), readOnly: Boolean(thread?.read_only),
           status: state.status, turnId: turn?.id, configuration, contextUsage: usage && ceiling ? { ...usage, window: ceiling } : usage,
           queryHistory: (thread?.turns ?? []).flatMap(turn => turn.items.flatMap(item => { const text = queryTextForUserItem(item); return text ? [text] : []; })),

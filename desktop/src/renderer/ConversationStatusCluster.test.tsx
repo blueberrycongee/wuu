@@ -15,7 +15,7 @@ const services: ApplicationComposerPresentation[] = [];
 function applicationFor(host = new PluginHost({ react: React }), todoUpdate?: TodoUpdate) {
   const thread: Thread = { id: "parent-session", preview: "", cwd: "/one", model_provider: "api", model: "model", status: "idle", created_at: "", updated_at: "",
     turns: [{ id: "turn", status: "in_progress", items_view: "full", items: todoUpdate ? [{ id: "todo", type: "tool_call", display: { capability: "todo" }, arguments: JSON.stringify(todoUpdate) }] : [] }] };
-  const helper = new ApplicationComposerPresentation({ getState: () => ({ ...initialState, thread, threads: [thread] }), subscribeState: () => () => {}, getPluginHost: () => host });
+  const helper = new ApplicationComposerPresentation({ getState: () => ({ ...initialState, thread, threads: [thread] }), updateState: () => {}, subscribeState: () => () => {}, getPluginHost: () => host });
   services.push(helper);
   return { composerPresentation: helper.createScope(new AbortController().signal), invoke: vi.fn().mockResolvedValue(undefined) };
 }

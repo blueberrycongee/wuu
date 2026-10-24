@@ -16,12 +16,25 @@ function fixture() {
     sessionTabs: [{ id: "draft", kind: "draft", title: "Draft", context: { kind: "no_project", cwd: "/one" }, prompt: "", images: [], files: [], createdAt: 1 }],
     initialized: { protocol_version: "test", workspace_root: "/one", provider: "api", model: "model", providers: [] } };
   const listeners = new Set<() => void>(); const host = new PluginHost({ react: React });
-  const helper = new ApplicationComposerPresentation({ getState: () => state, subscribeState: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, getPluginHost: () => host });
+  const helper = new ApplicationComposerPresentation({ getState: () => state, updateState: update => { state = update(state); for (const listener of listeners) listener(); }, subscribeState: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, getPluginHost: () => host });
   const life = new AbortController(); const service = helper.createScope(life.signal);
   return { host, helper, life, service, listeners, get: () => state, set: (value: AppState) => { state = value; for (const listener of listeners) listener(); } };
 }
 
 describe("composer presentation host boundary", () => {
+  it("retains the canonical runtime picker across scopes and rejects retired writers", () => {
+    const f = fixture();
+    f.service.setRuntimeMenu("draft", "model");
+    expect(f.get().codexRuntimeMenu).toBe("model");
+    f.life.abort();
+    const replacement = f.helper.createScope(new AbortController().signal);
+    expect(replacement.getSnapshot("draft").runtimeMenu).toBe("model");
+    expect(() => f.service.setRuntimeMenu("draft", null)).toThrow();
+    expect(replacement.getSnapshot("draft").runtimeMenu).toBe("model");
+    replacement.setRuntimeMenu("draft", null);
+    expect(replacement.getSnapshot("draft").runtimeMenu).toBeNull();
+    f.helper.dispose();
+  });
   it("publishes an unavailable view when a mounted draft closes", () => {
     const f = fixture(); f.service.getSnapshot("draft");
     f.set({ ...f.get(), sessionTabs: [] });

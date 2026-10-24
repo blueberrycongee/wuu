@@ -21,7 +21,7 @@ let state = { ...base.getSnapshot(),
 const subscribers = new Set<() => void>();
 const calls: unknown[] = [];
 const publish = () => { state = { ...state, revision: state.revision + 1 }; subscribers.forEach(listener => listener()); };
-const presentationView = Object.freeze({ ownerTabId: source, available: true, running: false, turnRunning: false, canSteer: false, readOnly: false, status: "Ready",
+let presentationView = Object.freeze({ runtimeMenu: null as "model" | null, ownerTabId: source, available: true, running: false, turnRunning: false, canSteer: false, readOnly: false, status: "Ready",
   configuration: { provider: "fixture", model: "Model", providers: [] }, queryHistory: [], skillRevision: "one", workspaceCapabilities: { create: false, open: false } });
 const empty = Object.freeze([]);
 const telemetry = Object.freeze({ tokensPerSecond: 0, source: "none" as const, inputTokens: 0, outputTokens: 0 });
@@ -29,7 +29,8 @@ const toolbar = Object.freeze([{ key: "fixture-tool", title: "Fixture tool", Vie
 const emptyStatus = Object.freeze({ items: empty });
 const presentation: ApplicationComposerPresentationV1 = {
   getStatusSnapshot: () => emptyStatus, subscribeStatus: () => () => {},
-  getSnapshot: () => presentationView, subscribe: () => () => {}, getCommands: () => empty, executeCommand: async input => { calls.push(input); },
+  getSnapshot: () => presentationView, subscribe: listener => { subscribers.add(listener); return () => { subscribers.delete(listener); }; },
+  setRuntimeMenu: (_ownerTabId, runtimeMenu) => { presentationView = Object.freeze({ ...presentationView, runtimeMenu }); publish(); }, getCommands: () => empty, executeCommand: async input => { calls.push(input); },
   getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: slot => slot === "composer.toolbar" ? toolbar : empty,
   getTelemetry: () => telemetry, subscribeTelemetry: () => () => {},
 };

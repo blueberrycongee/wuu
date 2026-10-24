@@ -2,7 +2,7 @@ import { ArtifactsProvider } from "../ArtifactsContext";
 import { ImagePreviewProvider } from "../ImagePreview";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
 import { focusComposerTextarea } from "../ComposerFocus";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type Ref } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type Ref } from "react";
 import type { ApplicationGenerationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
@@ -44,7 +44,16 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
   const [, redraw] = useReducer(value => value + 1, 0);
   const attachments = useMemo(() => createApplicationComposerAttachments(application, () => redraw()), [application]);
   useEffect(() => { attachments.resume(); return () => attachments.dispose(); }, [attachments]);
-  const [menu, setMenu] = useState<"workspace" | "access" | "branch" | "model" | null>(null);
+  const [localMenu, setLocalMenu] = useState<"workspace" | "access" | "branch" | null>(null);
+  const menu = presentation.runtimeMenu ?? localMenu;
+  const mounted = useRef(true);
+  useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const setMenu = (next: "workspace" | "access" | "branch" | "model" | null) => {
+    // A retired shell's pending checkout must not dismiss its replacement's picker.
+    if (!mounted.current) return;
+    application.composerPresentation.setRuntimeMenu(ownerTabId, next === "model" ? "model" : null);
+    setLocalMenu(next === "model" ? null : next);
+  };
   const [filter, setFilter] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
@@ -81,7 +90,7 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
       ...(document?.kind === "artifact" ? { artifact: { id: document.artifact.id, threadId: document.threadID, sha: document.artifact.sha256 ?? "" } } : {}) });
     return result.accepted;
   };
-  const toggle = (next: typeof menu) => setMenu(current => current === next ? null : next);
+  const toggle = (next: typeof menu) => setMenu(menu === next ? null : next);
   const compactReason = !presentation.threadId ? t("app.openConversationFirst") : selection.engine !== "wuu" ? t("slash.compact.externalEngineUnavailable") : undefined;
   const question = offer ? <UserQuestionCard key={offer.request_id} request={structuredClone(offer) as UserQuestionRequest}
     onAnswer={answer => application.invoke("question.answer", { requestId: offer.request_id, answer })}

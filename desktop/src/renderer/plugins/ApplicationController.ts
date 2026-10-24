@@ -113,7 +113,7 @@ export class ApplicationController implements HostApplicationService {
   private composerPresentationOwner?: ApplicationComposerPresentation;
   createComposerPresentationScope(signal: AbortSignal, getPluginHost: () => PluginHost) {
     return (this.composerPresentationOwner ??= new ApplicationComposerPresentation({
-      getState: () => this.state, subscribeState: this.subscribeState, getPluginHost,
+      getState: () => this.state, updateState: this.updateState, subscribeState: this.subscribeState, getPluginHost,
     })).createScope(signal);
   }
   private desktopOwner?: ApplicationDesktop;

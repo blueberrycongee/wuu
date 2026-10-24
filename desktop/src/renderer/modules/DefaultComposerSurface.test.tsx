@@ -24,14 +24,15 @@ function setup() {
   const subscribers = new Set<() => void>();
   const calls: unknown[] = [];
   const publish = () => { state = { ...state, revision: state.revision + 1 }; subscribers.forEach(listener => listener()); };
-  const presentationView = Object.freeze({ ownerTabId: source, threadId: source, available: true, running: false, turnRunning: false, canSteer: false, readOnly: false, status: "Ready",
+  let presentationView = Object.freeze({ runtimeMenu: null as "model" | null, ownerTabId: source, threadId: source, available: true, running: false, turnRunning: false, canSteer: false, readOnly: false, status: "Ready",
     configuration: { provider: "fixture", model: "Model", providers: [] }, queryHistory: [], skillRevision: "one", workspaceCapabilities: { create: false, open: false } });
   const empty = Object.freeze([]);
   const telemetry = Object.freeze({ tokensPerSecond: 0, source: "none" as const, inputTokens: 0, outputTokens: 0 });
   const emptyStatus = Object.freeze({ items: empty });
   const presentation: ApplicationComposerPresentationV1 = {
     getStatusSnapshot: () => emptyStatus, subscribeStatus: () => () => {},
-    getSnapshot: () => presentationView, subscribe: () => () => {}, getCommands: () => empty, executeCommand: async input => { calls.push(input); },
+    getSnapshot: () => presentationView, subscribe: listener => { subscribers.add(listener); return () => { subscribers.delete(listener); }; },
+    setRuntimeMenu: (_ownerTabId: string, runtimeMenu: "model" | null) => { presentationView = Object.freeze({ ...presentationView, runtimeMenu }); publish(); }, getCommands: () => empty, executeCommand: async input => { calls.push(input); },
     getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: () => empty,
     getTelemetry: () => telemetry, subscribeTelemetry: () => () => {},
   };
@@ -55,6 +56,18 @@ function setup() {
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  it("retains an open runtime picker when its shell remounts", async () => {
+    const fixture = setup(); await fixture.render();
+    const trigger = container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!;
+    await act(async () => trigger.click());
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => root.render(null));
+    await fixture.render();
+    expect(trigger.isConnected).toBe(false);
+    expect(container.querySelector(".codex-runtime-trigger")?.getAttribute("aria-expanded")).toBe("true");
+    await act(async () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click());
+    expect(container.querySelector(".codex-runtime-trigger")?.getAttribute("aria-expanded")).toBe("false");
+  });
   it("requests focus for the draft created by /new", async () => {
     const fixture = setup(); await fixture.render();
     await fixture.update(view => ({ ...view, drafts: { ...view.drafts, primary: { ...view.drafts.primary, text: "/new", revision: 1 } } }));
