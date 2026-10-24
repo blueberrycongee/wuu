@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -86,7 +87,14 @@ func (r *rendererServiceClient) Close(context.Context) error {
 	return nil
 }
 func (r *rendererServiceClient) InvokeService(_ context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
-	if params.Service != "ui.shell" || params.Method != "describe" {
+	declared := false
+	for _, service := range r.module.Services {
+		if service.Name == params.Service {
+			declared = true
+			break
+		}
+	}
+	if !declared || params.Method != "describe" {
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "renderer service method is unavailable"}
 	}
 	return json.Marshal(ApplicationShellBinding{PluginID: r.module.SubjectID, Generation: r.module.Fingerprint, ProviderID: params.Service})
@@ -117,26 +125,26 @@ func (s *Session) NativeRendererModules() []RendererModule {
 }
 
 func (s *Session) ApplicationShellBinding() *ApplicationShellBinding {
+	shell, _ := s.ApplicationBindings()
+	return shell
+}
+
+// ApplicationBindings captures shell and independently selected surfaces from
+// one generation. Discoverable packages never override the committed graph.
+func (s *Session) ApplicationBindings() (*ApplicationShellBinding, map[string]ApplicationShellBinding) {
+	surfaces := make(map[string]ApplicationShellBinding)
 	if s == nil {
-		return nil
+		return nil, surfaces
 	}
 	s.pluginGenerationMu.Lock()
 	defer s.pluginGenerationMu.Unlock()
 	if s.PluginHost == nil || s.PluginHost.ServiceRegistry() == nil {
-		return nil
+		return nil, surfaces
 	}
-	provider, exists := s.PluginHost.ServiceRegistry().ProviderPluginID("ui.shell", 1)
-	if !exists {
-		return nil
-	}
-	active := false
+	registry := s.PluginHost.ServiceRegistry()
+	active := make(map[string]bool)
 	for _, status := range s.PluginHost.Statuses() {
-		if status.ID == provider && status.State == pluginhost.StateActive {
-			active = true
-		}
-	}
-	if !active {
-		return nil
+		active[status.ID] = status.State == pluginhost.StateActive
 	}
 	modules := nativeRendererModules()
 	for _, item := range s.ActivePlugins {
@@ -144,10 +152,26 @@ func (s *Session) ApplicationShellBinding() *ApplicationShellBinding {
 			modules = append(modules, rendererModule(item))
 		}
 	}
+	var shell *ApplicationShellBinding
 	for _, module := range modules {
-		if module.ID == provider {
-			return &ApplicationShellBinding{PluginID: module.SubjectID, Generation: module.Fingerprint, ProviderID: "ui.shell"}
+		if !active[module.ID] {
+			continue
+		}
+		for _, service := range module.Services {
+			if !strings.HasPrefix(service.Name, "ui.") {
+				continue
+			}
+			provider, exists := registry.ProviderPluginID(service.Name, 1)
+			if !exists || provider != module.ID {
+				continue
+			}
+			binding := ApplicationShellBinding{PluginID: module.SubjectID, Generation: module.Fingerprint, ProviderID: service.Name}
+			if service.Name == "ui.shell" {
+				shell = &binding
+			} else {
+				surfaces[service.Name] = binding
+			}
 		}
 	}
-	return nil
+	return shell, surfaces
 }

@@ -63,11 +63,12 @@ func (s *Server) handleInitialize(req Request) error {
 		status = "needs_setup"
 		issues = append(issues, RuntimeIssue{Code: issue.Code, Provider: issue.Provider, Message: issue.Message})
 	}
+	shell, surfaces := s.rt.ApplicationBindings()
 	return s.writeResponse(req.ID, InitializeResult{
-		ApplicationShell: s.rt.ApplicationShellBinding(),
-		Status:           status,
-		Issues:           issues,
-		ProtocolVersion:  ProtocolVersion,
+		ApplicationShell: shell, ApplicationSurfaces: surfaces,
+		Status:          status,
+		Issues:          issues,
+		ProtocolVersion: ProtocolVersion,
 		Core: CoreBuildInfo{
 			Version: core.Version,
 			Commit:  core.Commit,
