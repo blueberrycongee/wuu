@@ -2723,3 +2723,7 @@ export * from "./ui-settings-controls.js";
 export * from "./ui-navigation.js";
 export * from "./ui-conversation-actions.js";
 export * from "./ui-preview-content.js";
+export * from "./ui-catalog.js";
+export * from "./ui-conversation.js";
+export * from "./ui-composer-runtime.js";
+export * from "./ui-environment.js";
