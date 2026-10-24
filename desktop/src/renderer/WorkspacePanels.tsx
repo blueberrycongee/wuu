@@ -1,14 +1,15 @@
-import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
 import {
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
-  type ReactNode,
   useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
+  useMemo,
+  createContext,
+  useContext,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -34,7 +35,6 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import {
-  ChevronDown,
   FileDiff,
   FileText,
   FolderOpen,
@@ -55,7 +55,7 @@ import {
   Project,
   X,
 } from "./WuuIcons";
-import type { ActivitySession, BrowserDockTarget, GitStatusResult, RuntimeContext, Thread } from "../shared/protocol";
+import type { RuntimeContext, Thread } from "../shared/protocol";
 import {
   formatWorkspaceFileTarget,
   parseWorkspaceFileTarget,
@@ -80,14 +80,97 @@ import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
 import { translateCurrent, useI18n } from "./i18n";
 import { Tooltip } from "./Tooltip";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
-import { HeaderPresentation, immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
-import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
-import type { PluginHost, RegisteredPluginViewEntry } from "./plugins/PluginHost";
+import { immutableHeaderSnapshot } from "./plugins/HeaderPresentation";
 import { PluginIcon } from "./PublicIcon";
-import { PluginSlot } from "./plugins/PluginSlot";
-import type { WorkbenchController } from "./plugins/Workbench";
-import { PluginViewContent } from "./plugins/Workbench";
-import { useWorkspaceBrowserNavigationRequest } from "./WorkspaceBrowserNavigation";
+import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { ApplicationPreviewWorkspaceV1, ApplicationPreviewContextV1 } from "../../../packages/plugin-sdk/src/ui-preview";
+import type { ApplicationEnvironmentV1 } from "../../../packages/plugin-sdk/src/ui-environment";
+import type { ApplicationBrowserV1, BrowserActivityV1, BrowserDockTargetV1, BrowserNavigationRequestV1 } from "../../../packages/plugin-sdk/src/ui-browser";
+import type { ApplicationTerminalsV1 } from "../../../packages/plugin-sdk/src/ui-terminals";
+import type { ApplicationProjectsV1 } from "../../../packages/plugin-sdk/src/ui-projects";
+import type { ApplicationSideConversationViewV1, ApplicationSideConversationActionMapV1 } from "../../../packages/plugin-sdk/src/ui-side-conversation";
+import { PreviewContentProvider } from "./PreviewContentContext";
+import { BrowserControlsProvider } from "./BrowserControlsContext";
+import { TerminalControlsProvider } from "./TerminalControlsContext";
+import { ProjectActionsProvider } from "./ProjectActions";
+import { ApplicationSideThreadPanel } from "./SideThreadPanel";
+import { ApplicationSideThreadComposer } from "./SideThreadComposer";
+import type { ApplicationFileSelectionServiceV1 } from "../../../packages/plugin-sdk/src/ui-file-selection";
+import { FileSelectionProvider } from "./FileSelectionContext";
+import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from "./WorkspaceBrowserOpen";
+import { showErrorToast } from "./Toast";
+
+type PreviewSurfaceActions = ApplicationActionMapV1 & ApplicationSideConversationActionMapV1 & {
+  "preview.open-url": { input: { readonly url: string; readonly modifiers?: WorkspaceBrowserOpenModifiers }; result: void };
+};
+// Remove this transitional type when the application facade publishes these owner fields.
+export interface PreviewSurfaceApplication extends Omit<ApplicationServiceV1, "getSnapshot" | "invoke"> {
+  readonly fileSelection: ApplicationFileSelectionServiceV1;
+  readonly environment: ApplicationEnvironmentV1;
+  readonly browser: ApplicationBrowserV1;
+  readonly terminals: ApplicationTerminalsV1;
+  readonly projects: ApplicationProjectsV1;
+  getSnapshot(): ApplicationSnapshotV1 & {
+    readonly previewWorkspace: ApplicationPreviewWorkspaceV1 & {
+      readonly ownerTabId: string;
+      readonly activeContext?: ApplicationPreviewContextV1;
+      readonly workspaceContext?: ApplicationPreviewContextV1;
+      readonly threadId?: string;
+      readonly conversationTitle: string;
+      readonly fileRefreshKey?: string;
+      readonly browserActivity?: BrowserActivityV1;
+      readonly browserDockTarget?: BrowserDockTargetV1;
+      readonly browserNavigation?: BrowserNavigationRequestV1;
+    };
+    readonly sideConversation: ApplicationSideConversationViewV1;
+  };
+  invoke<A extends keyof PreviewSurfaceActions>(action: A,
+    input: PreviewSurfaceActions[A]["input"],
+    options?: { readonly signal?: AbortSignal }): Promise<PreviewSurfaceActions[A]["result"]>;
+}
+
+export interface WorkspacePanelLayout {
+  open: boolean;
+  covered?: boolean;
+  present: boolean;
+  prewarm?: boolean;
+  globalized: boolean;
+  sheetPhase?: "docked" | "arming" | "open" | "exiting" | "docking";
+  onToggleGlobalize: () => void;
+  canExitGlobalized?: boolean;
+  browserOverlaySuppressed?: boolean;
+  onDirtyFileTabsChange?: (dirty: boolean) => void;
+  conversationTabVisible?: boolean;
+  documentComposer?: boolean;
+  pane: "primary" | "secondary";
+}
+const PreviewIconLoader = createContext<PreviewSurfaceApplication["catalog"]["loadIcon"] | undefined>(undefined);
+
+export function WorkspaceRightPanel(props: WorkspacePanelLayout & {
+  application: PreviewSurfaceApplication;
+  slots: UICompositionV1;
+}): JSX.Element {
+  const { application, slots } = props;
+  const source = useSyncExternalStore(application.subscribe, application.getSnapshot).previewWorkspace;
+  const openURL = useCallback((url: string, modifiers?: WorkspaceBrowserOpenModifiers) => {
+    void application.invoke("preview.open-url", { url, modifiers }).catch(showErrorToast);
+  }, [application]);
+  return <FileSelectionProvider application={application} source={{ ownerTabId: source.ownerTabId }}>
+    <WorkspaceBrowserOpenContext.Provider value={openURL}>
+      <PreviewContentProvider service={application.previewContent} slots={slots}>
+        <BrowserControlsProvider service={application.browser}>
+          <TerminalControlsProvider controls={application.terminals} appearance={application.settingsControls}>
+            <ProjectActionsProvider application={application}>
+              <PreviewIconLoader.Provider value={application.catalog.loadIcon}>
+                <WorkspacePanelContent {...props} />
+              </PreviewIconLoader.Provider>
+            </ProjectActionsProvider>
+          </TerminalControlsProvider>
+        </BrowserControlsProvider>
+      </PreviewContentProvider>
+    </WorkspaceBrowserOpenContext.Provider>
+  </FileSelectionProvider>;
+}
 
 type WorkspaceTerminalPanelComponent = typeof import("./WorkspaceTerminalPanel").WorkspaceTerminalPanel;
 
@@ -192,94 +275,43 @@ function initialWorkspaceFileTreeVisible(): boolean {
   return window.localStorage.getItem(WORKSPACE_FILE_TREE_VISIBLE_KEY) !== "false";
 }
 
-export function WorkspaceRightPanel({
-  environment,
-  open,
-  covered = false,
-  present,
-  prewarm = false,
-  tabs,
-  activeTabID,
-  activeFileTabID,
-  activeContext,
-  workspaceContext,
-  terminalThread,
-  gitStatus,
-  selectedFilePath,
-  onSelectTab,
-  onOpenTool,
-  onOpenPluginTool = () => undefined,
-  onShowTools,
-  onCloseTab,
-  onDirtyFileTabsChange,
-  onReorderTabs,
-  onOpenFile,
-  globalized,
-  conversationTab,
-  sideThreadContent,
-  sideThreadRunning = false,
-  sheetPhase = "docked",
-  onToggleGlobalize,
-  canExitGlobalized = true,
-  browserActivity,
-  browserDockTarget,
-  browserOverlaySuppressed = false,
-  focusedComposer,
-  fileRefreshKey,
-  pluginHost,
-  workbenchController,
-}: {
-  environment: ApplicationEnvironmentV1;
-  open: boolean;
-  covered?: boolean;
-  present: boolean;
-  prewarm?: boolean;
-  tabs: WorkspaceViewTab[];
-  activeTabID: string | undefined;
-  activeFileTabID?: string;
-  // activeContext is the pinned project/no_project context — used for the
-  // browser tab (its "current project" hint text, not a filesystem root).
-  // workspaceContext follows the active thread's own cwd (e.g. a worktree
-  // fork) when it differs from activeContext, and roots the file tree and
-  // terminal; see workspacePanelContext in AppState.ts.
-  activeContext?: RuntimeContext;
-  workspaceContext?: RuntimeContext;
-  terminalThread?: Thread;
-  gitStatus?: GitStatusResult;
-  selectedFilePath?: string;
-  onSelectTab: (id: string) => void;
-  onOpenTool: (view: WorkspacePanelView) => void;
-  onOpenPluginTool?: (entry: RegisteredPluginViewEntry) => void;
-  onShowTools: () => void;
-  onCloseTab: (id: string) => void;
-  onDirtyFileTabsChange?: (dirty: boolean) => void;
-  onReorderTabs: (activeID: string, overID: string) => void;
-  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
-  globalized: boolean;
-  conversationTab?: { title: string; active: boolean; onSelect: () => void };
-  sideThreadContent?: ReactNode;
-  sideThreadRunning?: boolean;
-  // Globalize-sheet phase from App's phase machine; drives the data-sheet
-  // attribute that promotes the panel to a full-window sheet in CSS.
-  sheetPhase?: "docked" | "arming" | "open" | "exiting" | "docking";
-  onToggleGlobalize: () => void;
-  canExitGlobalized?: boolean;
-  browserActivity?: ActivitySession;
-  browserDockTarget?: BrowserDockTarget;
-  browserOverlaySuppressed?: boolean;
-  focusedComposer?: ReactNode;
-  fileRefreshKey?: string;
-  pluginHost?: PluginHost;
-  workbenchController?: WorkbenchController;
-}): JSX.Element {
+function WorkspacePanelContent({
+  application, slots, open, covered = false, present, prewarm = false,
+  globalized, sheetPhase = "docked", onToggleGlobalize, canExitGlobalized = true,
+  browserOverlaySuppressed = false, onDirtyFileTabsChange, conversationTabVisible = false,
+  documentComposer = false, pane,
+}: WorkspacePanelLayout & { application: PreviewSurfaceApplication; slots: UICompositionV1 }): JSX.Element {
   const { t } = useI18n();
-  const browserNavigation = useWorkspaceBrowserNavigationRequest();
-  const effectivePluginHost = pluginHost ?? desktopPluginHost;
-  const pluginTools = useSyncExternalStore(
-    (listener) => effectivePluginHost.subscribe(listener),
-    () => effectivePluginHost.getWorkspaceTools(),
-    () => effectivePluginHost.getWorkspaceTools(),
-  );
+  const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  const preview = snapshot.previewWorkspace;
+  // Detach public immutable display data before using the existing mutable leaf renderers.
+  const tabs = useMemo(() => structuredClone(preview.tabs) as WorkspaceViewTab[], [preview.tabs]);
+  const publicThread = snapshot.conversationWorkspace.threads.find(thread => thread.id === preview.threadId);
+  const terminalThread = useMemo(() => publicThread ? structuredClone(publicThread) as Thread : undefined, [publicThread]);
+  const { activeContext, workspaceContext, fileRefreshKey, browserActivity, browserDockTarget } = preview;
+  const activeTabID = preview.activeTabId;
+  const activeFileTabID = preview.activeFileTabId;
+  const selectedFileTab = tabs.find(tab => tab.id === activeFileTabID);
+  const selectedFilePath = selectedFileTab?.kind === "file" ? selectedFileTab.path : undefined;
+  const browserNavigation = preview.browserNavigation;
+  const onSelectTab = (tabId: string) => { void application.invoke("preview.focus-tab", { tabId }).catch(showErrorToast); };
+  const onCloseTab = (tabId: string) => { void application.invoke("preview.close-tab", { tabId }).catch(showErrorToast); };
+  const onOpenTool = (toolId: WorkspacePanelView) => { void application.invoke("preview.open-tool", { toolId }).catch(showErrorToast); };
+  const onShowTools = () => { void application.invoke("preview.new-tab", {}).catch(showErrorToast); };
+  const onReorderTabs = (tabId: string, overTabId: string) => { void application.invoke("preview.reorder-tab", { tabId, overTabId }).catch(showErrorToast); };
+  const onOpenFile = useCallback((path: string, context = workspaceContext) => {
+    if (context) void application.invoke("preview.open-file", { context, path }).catch(showErrorToast);
+  }, [application, workspaceContext]);
+  const conversationTab = conversationTabVisible ? {
+    title: preview.conversationTitle, active: preview.conversationSelected,
+    onSelect: () => { void application.invoke("preview.show-conversation", {}).catch(showErrorToast); },
+  } : undefined;
+  const sideThreadRunning = snapshot.sideConversation.entry?.streaming ?? false;
+  const focusedComposer = documentComposer ? <slots.Slot name="wuu.default-preview/application.composer" context={{ variant: "document", pane }} /> : null;
+  const sideThreadContent = <ApplicationSideThreadPanel snapshot={snapshot.sideConversation}
+    active={open && !preview.conversationSelected && tabs.find(tab => tab.id === activeTabID)?.kind === "side-thread"}
+    title={t("sideThread.title")} cwd={workspaceContext?.cwd} onOpenFile={onOpenFile}
+    composer={<ApplicationSideThreadComposer snapshot={snapshot.sideConversation} invoke={application.invoke} onOpenFile={onOpenFile} />} />;
   const conversationActive = Boolean(conversationTab?.active);
   const selectedTabID = conversationActive ? WORKSPACE_CONVERSATION_TAB_ID : activeTabID;
   const visibleTabs = tabs;
@@ -716,9 +748,8 @@ export function WorkspaceRightPanel({
       inert={!open || covered}
     >
       <div className="workspace-panel-tabbar" data-wuu-component="workspace-panel-header">
-        <PluginSlot
-          host={pluginHost ?? desktopPluginHost}
-          id="workspace.header"
+        <slots.Slot
+          name="wuu.default-preview/workspace.header"
           context={Object.freeze({
             scope: "workspace",
             open,
@@ -726,18 +757,9 @@ export function WorkspaceRightPanel({
             activeViewKind: conversationActive ? "conversation" : activeTab?.kind,
           })}
         />
-        <HeaderPresentation
-          snapshot={headerSnapshot}
-          host={pluginHost}
-          controller={workbenchController}
-          onSelectTab={(tabId) => {
-            if (tabId === WORKSPACE_CONVERSATION_TAB_ID) conversationTab?.onSelect();
-            else onSelectTab(tabId);
-          }}
-          onCloseTab={(tabId) => {
-            const tab = tabs.find((candidate) => candidate.id === tabId);
-            if (tab) void requestCloseTab(tab);
-          }}
+        <slots.Slot
+          name="wuu.default-preview/header.workspace"
+          context={{ snapshot: headerSnapshot }}
           fallback={(
             <>
         {globalized ? (
@@ -1054,9 +1076,8 @@ export function WorkspaceRightPanel({
               >
                 {showingPicker ? (
                   <WorkspaceToolPicker
-                    pluginTools={pluginTools}
+                    slots={slots}
                     onSelectTool={onOpenTool}
-                    onSelectPluginTool={onOpenPluginTool}
                   />
                 ) : activeTab.kind === "diff" ? (
                   <TurnFileDiffPanel
@@ -1071,7 +1092,6 @@ export function WorkspaceRightPanel({
                     threadID={activeTab.threadID}
                     initialPage={activeTab.page}
                     pageRequest={activeTab.pageRequest}
-                    origin={activeTab.origin}
                     cwd={activeTab.cwd}
                     mode="panel"
                     onClose={() => onCloseTab(activeTab.id)}
@@ -1084,19 +1104,15 @@ export function WorkspaceRightPanel({
                   </div>
                 ) : activeTab.kind === "review" ? (
                   <WorkspaceReviewPanel
-                    environment={environment}
+                    environment={application.environment}
                     onOpenFile={onOpenFile}
                   />
                 ) : activeTab.kind === "project" ? (
                   <ProjectPanel projectID={activeTab.projectID} />
-                ) : activeTab.kind === "plugin" && workbenchController ? (
-                  <PluginViewContent
-                    controller={workbenchController}
-                    pluginId={activeTab.pluginId}
-                    viewTypeId={activeTab.viewTypeId}
-                    region="auxiliary"
-                    context={Object.freeze({ region: "workspace", tabId: activeTab.id })}
-                  />
+                ) : activeTab.kind === "plugin" ? (
+                  <slots.Slot name="wuu.default-preview/workspace.view"
+                    context={{ pluginId: activeTab.pluginId, generation: activeTab.fingerprint,
+                      viewTypeId: activeTab.viewTypeId, tabId: activeTab.id, region: "workspace" }} />
                 ) : null}
               </div>
             )}
@@ -1313,13 +1329,11 @@ function WorkspaceViewTabPreview({
 }
 
 function WorkspaceToolPicker({
-  pluginTools,
+  slots,
   onSelectTool,
-  onSelectPluginTool,
 }: {
-  pluginTools: readonly RegisteredPluginViewEntry[];
+  slots: UICompositionV1;
   onSelectTool: (view: WorkspacePanelView) => void;
-  onSelectPluginTool: (entry: RegisteredPluginViewEntry) => void;
 }): JSX.Element {
   const { t } = useI18n();
   // The list moves like a menu: arrows walk the tools, Home and End jump.
@@ -1365,38 +1379,7 @@ function WorkspaceToolPicker({
             </button>
           ))}
         </div>
-        {pluginTools.length > 0 ? (
-          <details className="workspace-tool-menu-more">
-            <summary>
-              <span className="workspace-tool-menu-icon" aria-hidden="true"><LayoutGrid className="icon" /></span>
-              <span>{t("workspace.moreTools")}</span>
-              <ChevronDown className="icon workspace-tool-menu-chevron" aria-hidden="true" />
-            </summary>
-            <div className="workspace-tool-menu-list">
-              {pluginTools.map((item) => {
-                const tabID = `plugin:${item.pluginId}:${item.id}`;
-                return (
-                  <button
-                    key={tabID}
-                    className="workspace-tool-menu-item"
-                    data-wuu-component="workspace-tool"
-                    data-wuu-plugin={item.pluginId}
-                    type="button"
-                    onClick={() => onSelectPluginTool(item)}
-                  >
-                    <span className="workspace-tool-menu-icon" aria-hidden="true">
-                      <PluginIcon icon={item.icon} pluginId={item.pluginId} fingerprint={item.generation} className="icon" />
-                    </span>
-                    <span className="workspace-tool-menu-copy">
-                      <strong>{item.title}</strong>
-                      {item.description ? <span>{item.description}</span> : null}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </details>
-        ) : null}
+        <slots.Slot name="wuu.default-preview/workspace.tools" />
       </section>
     </div>
   );
@@ -1437,6 +1420,7 @@ function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
 }
 
 function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; className?: string }): JSX.Element {
+  const loadIcon = useContext(PreviewIconLoader);
   if (tab.kind === "new") return <LayoutGrid className={className} />;
   if (tab.kind === "side-thread") return <MessageCircle className={className} />;
   if (tab.kind === "diff") {
@@ -1449,7 +1433,7 @@ function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; class
     return <FileText className={className} />;
   }
   if (tab.kind === "plugin") {
-    return <PluginIcon icon={tab.icon} pluginId={tab.pluginId} fingerprint={tab.fingerprint} className={className} />;
+    return <PluginIcon loadIcon={loadIcon} icon={tab.icon} pluginId={tab.pluginId} fingerprint={tab.fingerprint} className={className} />;
   }
   return <WorkspaceToolIcon view={tab.kind} className={className} />;
 }
