@@ -64,10 +64,19 @@ type DriverTurnStateParams struct {
 // DriverCompactBudget carries the driver's recovery observation explicitly;
 // context-local Go values never form part of the process contract.
 type DriverCompactBudget struct {
-	Reason               string `json:"reason"`
-	LastSuccessfulTokens int    `json:"last_successful_tokens"`
-	FailedRequestTokens  int    `json:"failed_request_tokens"`
-	TargetTotalTokens    int    `json:"target_total_tokens"`
+	Reason               string               `json:"reason"`
+	LastSuccessfulTokens int                  `json:"last_successful_tokens"`
+	FailedRequestTokens  int                  `json:"failed_request_tokens"`
+	TargetTotalTokens    int                  `json:"target_total_tokens"`
+	Window               *DriverContextWindow `json:"window,omitempty"`
+}
+
+// DriverContextWindow requests a selected policy's fresh-context proposal.
+// The driver must validate and explicitly commit the returned messages.
+type DriverContextWindow struct {
+	HistoryHead  int `json:"history_head"`
+	FixedTokens  int `json:"fixed_tokens"`
+	TargetTokens int `json:"target_tokens"`
 }
 
 type DriverTurnCompactParams struct {
