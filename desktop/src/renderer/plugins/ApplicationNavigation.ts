@@ -342,8 +342,16 @@ export class ApplicationNavigation {
       case "navigation.focus-workspace": this.focusedWorkspaceId = (input as Actions["navigation.focus-workspace"]["input"]).workspaceId; break;
       case "navigation.reveal-thread": await window.wuu.revealSession((input as Actions["navigation.reveal-thread"]["input"]).threadId); break;
       case "navigation.open-external": await window.wuu.openExternal((input as Actions["navigation.open-external"]["input"]).url); break;
-      case "navigation.load-icon": { const value = input as Actions["navigation.load-icon"]["input"]; result = await loadPluginIconURL(value.pluginId, value.fingerprint, value.path); break; }
-      case "navigation.account-status": { const account = await window.wuu.remoteAccount!("status"); result = { username: account.username, display_name: account.display_name, server: account.server }; break; }
+      // Reads must not publish: consumers request these values while rendering
+      // navigation, so a notification would trigger another identical read.
+      case "navigation.load-icon": {
+        const value = input as Actions["navigation.load-icon"]["input"];
+        return await loadPluginIconURL(value.pluginId, value.fingerprint, value.path) as Actions[A]["result"];
+      }
+      case "navigation.account-status": {
+        const account = await window.wuu.remoteAccount!("status");
+        return { username: account.username, display_name: account.display_name, server: account.server } as Actions[A]["result"];
+      }
       case "navigation.account-logout": { const account = await window.wuu.remoteAccount!("logout"); result = { localLogoutOnly: (account as { localLogoutOnly?: boolean }).localLogoutOnly }; window.dispatchEvent(new Event("wuu:account-changed")); break; }
       case "navigation.install-update": if (this.update.kind === "ready") await window.wuu.restartDesktopUpdate!(); else await window.wuu.downloadDesktopUpdate!(); break;
       case "navigation.reopen-browser-tab": this.revealBrowser((await this.browser.reopenTab()).activeTabId); break;

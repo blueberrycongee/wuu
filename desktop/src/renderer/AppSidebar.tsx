@@ -678,6 +678,10 @@ export function AppSidebar({
     () => navigation ? null : workbenchController.getSnapshot(),
     () => navigation ? null : workbenchController.getSnapshot(),
   );
+  const navigationInvoke = navigation?.invoke;
+  const loadPluginIcon = useMemo(() => navigationInvoke
+    ? (pluginId: string, fingerprint: string, path: string) => navigationInvoke("navigation.load-icon", { pluginId, fingerprint, path })
+    : undefined, [navigationInvoke]);
   const publicActive = navigation?.view.activePluginView;
   const activePluginMain = navigation ? (publicActive && { view: { id: publicActive.id, pluginId: publicActive.pluginId, viewTypeId: publicActive.viewTypeId, context: publicActive.context }, definition: { title: publicActive.title } }) : visibleWorkbenchView(workbenchSnapshot!, "primary");
   const activePluginMainView = activePluginMain?.view;
@@ -692,7 +696,7 @@ export function AppSidebar({
     if (navigation) return {
       pluginCount: navigation.view.plugins.filter(row => row.kind === "plugin").length,
       skillCount: navigation.view.plugins.filter(row => row.kind === "skill").length,
-      enabledPlugins: navigation.view.plugins.filter(row => row.kind === "plugin" && row.enabled).map(row => ({ ...row, provenance: { plugin_id: row.pluginId } })).sort((left, right) => left.name.localeCompare(right.name, locale)),
+      enabledPlugins: navigation.view.plugins.filter(row => row.kind === "plugin" && row.enabled).sort((left, right) => left.name.localeCompare(right.name, locale)),
     };
     const records = extensionInventory ?? [];
     const plugins = records.filter((record) => record.kind === "plugin");
@@ -1624,7 +1628,7 @@ export function AppSidebar({
           ...pluginNavigationEntries.map((entry) => ({
             id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
             title: entry.title,
-            icon: <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
+            icon: <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />,
             active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
             component: "plugin-navigation-item",
             pluginId: entry.pluginId,
@@ -1685,9 +1689,9 @@ export function AppSidebar({
                       onClick={() => onOpenCatalogPlugin(record.id)}
                     >
                       <PluginIcon
-                        loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined}
+                        loadIcon={loadPluginIcon}
                         icon={record.icon}
-                        pluginId={record.provenance.plugin_id ?? record.id}
+                        pluginId={record.id}
                         fingerprint={record.fingerprint ?? ""}
                       />
                       <span className="sidebar-section-label" title={record.name}>
@@ -1715,7 +1719,7 @@ export function AppSidebar({
                   aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
                   onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
                 >
-                  <PluginIcon loadIcon={navigation ? (pluginId, fingerprint, path) => navigation.invoke("navigation.load-icon", { pluginId, fingerprint, path }) : undefined} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
+                  <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />
                   <span className="sidebar-section-label">{entry.title}</span>
                 </button>
               ))}
