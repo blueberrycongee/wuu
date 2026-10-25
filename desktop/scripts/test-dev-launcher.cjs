@@ -140,7 +140,6 @@ assert.equal(
 );
 const devLauncherSource = readFileSync(resolve(__dirname, "dev.cjs"), "utf8");
 assert.match(devLauncherSource, /build-core\.cjs/);
-assert.doesNotMatch(devLauncherSource, /--plugins-only/);
 assert.match(devLauncherSource, /env\.WUU_DESKTOP_CORE\s*=/);
 assert.equal(packageJSON.scripts["build:core"], "node scripts/build-core.cjs");
 assert.equal(
@@ -272,5 +271,31 @@ assert.equal(ensureSourceForStaleDevHost({ current: true, ensureSource }), false
 assert.equal(sourcePreparationCalls, 0);
 assert.equal(ensureSourceForStaleDevHost({ current: false, ensureSource }), true);
 assert.equal(sourcePreparationCalls, 1);
+
+
+
+// Exercise the launcher boundary without running native builds or Electron.
+for (const profileArgs of [["--user-data-dir=/tmp/wuu isolated"], ["--user-data-dir", "/tmp/wuu isolated"]]) {
+  let launched;
+  const builds = [];
+  const fakeRequire = name => {
+    if (name === "node:child_process") return {
+      spawnSync: (_command, args) => { builds.push(args); return { status: 0 }; },
+      spawn: (_command, args) => { launched = args; return { on() {} }; },
+    };
+    if (name === "./dev-signing.cjs") return { ensureDevSigningIdentity: () => ({ identity: "test" }) };
+    if (name === "./prepare-dev-electron-app.cjs") return { prepareDevElectronApp: () => "/tmp/Test.app", helperPathForApp: () => "/tmp/helper", pipHelperPathForApp: () => "/tmp/pip" };
+    return require(name);
+  };
+  fakeRequire.resolve = require.resolve;
+  require("node:vm").runInNewContext(devLauncherSource, {
+    require: fakeRequire, __dirname, console,
+    process: { execPath: process.execPath, platform: "darwin", env: {}, argv: ["node", "dev.cjs", "--project-agent", ...profileArgs], exit: code => { throw new Error(`unexpected exit ${code}`); } },
+  });
+  assert.deepEqual(Array.from(launched.slice(2)), ["--", ...profileArgs]);
+  const coreArgs = builds.find(args => args[0].endsWith("build-core.cjs"));
+  assert.ok(coreArgs.includes("--project-agent"));
+  assert.ok(!coreArgs.includes("--plugins-only"));
+}
 
 console.log("dev launcher tests passed");

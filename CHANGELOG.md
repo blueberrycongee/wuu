@@ -46,6 +46,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Forward Electron launch arguments, including isolated user-data directories, through the desktop development launcher.
+
 - Interrupt desktop owner admission when the bootstrap pipe times out or its context is cancelled.
 
 - Recover Personal drafts and uncertain sends across restarts, retry unavailable quote sources, and keep reply panels compact. Preserve stale calendar warnings and associate delayed authorization cleanup diagnostics with their original attempt.
