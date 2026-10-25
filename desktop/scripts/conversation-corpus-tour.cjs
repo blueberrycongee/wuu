@@ -112,8 +112,11 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
             if (/(auto|scroll|hidden|clip)/.test(style.overflowX)) { clip.left = Math.max(clip.left, r.left); clip.right = Math.min(clip.right, r.right); }
           }
           const verticallyVisible = markerRect.y >= clip.top - 1 && markerRect.y + markerRect.height <= clip.bottom + 1;
+          // A table cell can be wider than its horizontal scroll viewport.
+          // Require the marker to fill the available width when it cannot fit.
+          const visibleWidth = Math.min(markerRect.x + markerRect.width, clip.right) - Math.max(markerRect.x, clip.left);
           const visible = painted && markerRect.width > 0 && markerRect.height > 0 && verticallyVisible
-            && markerRect.x >= clip.left - 1 && markerRect.x + markerRect.width <= clip.right + 1;
+            && visibleWidth >= Math.min(markerRect.width, clip.right - clip.left) - 2;
           const selectedRow = document.querySelector('.sidebar-content .thread-row.active');
           const selectedRect = rect(selectedRow);
           const selectedStyle = getComputedStyle(selectedRow);
