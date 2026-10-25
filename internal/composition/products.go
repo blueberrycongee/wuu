@@ -29,10 +29,10 @@ func productCatalog() (map[string]Profile, map[string]Bundle) {
 		base[id] = true
 	}
 	return map[string]Profile{
-			"desktop":  {Bundles: []string{"wuu.base", "wuu.desktop"}},
-			"headless": {Bundles: []string{"wuu.base"}},
-		}, map[string]Bundle{
-			"wuu.base":    {Patches: []Patch{{Modules: base}}},
-			"wuu.desktop": {Patches: []Patch{{Modules: map[string]bool{"wuu.default-shell": true, "wuu.default-settings": true, "wuu.default-navigation": true, "wuu.default-conversation": true, "wuu.default-preview": true, "wuu.default-composer": true}}}},
-		}
+		"desktop":  {Bundles: []string{"wuu.base", "wuu.desktop"}},
+		"headless": {Bundles: []string{"wuu.base"}},
+	}, map[string]Bundle{
+		"wuu.base":    {Patches: []Patch{{Modules: base}}},
+		"wuu.desktop": {Patches: []Patch{{Modules: map[string]bool{"wuu.default-shell": true, "wuu.default-settings": true, "wuu.default-navigation": true, "wuu.default-conversation": true, "wuu.default-preview": true, "wuu.default-composer": true}}}},
+	}
 }

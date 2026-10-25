@@ -8,7 +8,7 @@
 
 ## 本地启动
 
-安装仓库要求的 Go 1.26.5 和 PostgreSQL 18，创建专用数据库与拥有该库建表权限的账号，再运行：
+安装 `go.mod` 指定版本的 Go 和 PostgreSQL 18，创建专用数据库与拥有该库建表权限的账号，再运行：
 
 ```sh
 go build -trimpath -o ./bin/wuu-server ./cmd/wuu-server
