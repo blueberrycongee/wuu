@@ -204,7 +204,9 @@ async function clickResult(win, title, project) {
 async function active(win, id) {
   await waitFor(win, id => {
     const pane = document.querySelector('.cached-conversation-pane[data-active="true"]');
-    return pane?.getAttribute('data-thread-id') === id && !pane.closest('[inert]') && !document.querySelector('.conversation-search-dialog');
+    const composer = document.querySelector('.composer textarea');
+    return pane?.getAttribute('data-thread-id') === id && !pane.closest('[inert]')
+      && composer && !composer.disabled && !composer.readOnly && !document.querySelector('.conversation-search-dialog');
   }, id);
 }
 const anchor = (session, turn) => {
