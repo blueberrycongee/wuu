@@ -3164,23 +3164,38 @@ func TestStreamRunnerRestoresRequestPrefixAfterRestart(t *testing.T) {
 	}
 }
 
-func TestStreamRunnerRequiresExplicitContinueAfterCompletedItem(t *testing.T) {
-	complete := providers.ChatMessage{Role: "assistant", Content: "completed progress"}
+func TestStreamRunnerContinuesFromCompletedItem(t *testing.T) {
+	complete := providers.ChatMessage{Role: "assistant", Content: "completed progress", ProviderItemID: "msg_complete"}
 	client := &mockStreamClient{attempts: []mockStreamAttempt{
 		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: complete.Content}, {Type: providers.EventAssistantItemDone, Message: &complete}, {Type: providers.EventContentDelta, Content: "unfinished"}, {Type: providers.EventError, Error: providers.NewIncompleteStreamError("injected drop after item")}}},
-		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "replayed"}, {Type: providers.EventDone}}},
+		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "continued"}, {Type: providers.EventDone}}},
 	}}
 	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test"}
-	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "original"}}, nil)
-	var blocked *providers.ReplayBlockedError
-	if !errors.As(err, &blocked) || client.callCount != 1 {
-		t.Fatalf("completed progress automatically replayed: calls=%d err=%v", client.callCount, err)
+	var events []providers.StreamEvent
+	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "original"}}, func(event providers.StreamEvent) {
+		events = append(events, event)
+	})
+	if err != nil || client.callCount != 2 || result.Content != "continued" {
+		t.Fatalf("checkpoint continuation failed: calls=%d result=%+v err=%v", client.callCount, result, err)
 	}
-	prepared, err := providers.PrepareMessagesForModelRequest("test", result.NewMessages)
+	first, resumed := client.requests[0], client.requests[1]
+	if !resumed.ResumeSampling || resumed.Operation.ID == first.Operation.ID || resumed.Operation.ParentOperationID != first.Operation.ID {
+		t.Fatalf("continuation must create a new operation linked to the checkpoint: first=%+v resumed=%+v", first.Operation, resumed.Operation)
+	}
+	prepared, err := providers.PrepareMessagesForModelRequest("test", resumed.Messages)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(prepared) != 1 || prepared[0].Content != complete.Content {
-		t.Fatalf("completed checkpoint not retained: %+v", prepared)
+	if len(prepared) != 2 || prepared[0].Content != "original" || prepared[1].Content != complete.Content || prepared[1].ProviderItemID != complete.ProviderItemID {
+		t.Fatalf("continuation did not use the completed checkpoint: %+v", prepared)
+	}
+	if len(result.NewMessages) != 3 || result.NewMessages[1].Cause != providers.IncompleteStreamFragment || result.NewMessages[1].Content != "unfinished" {
+		t.Fatalf("unfinished fragment must remain display-only: %+v", result.NewMessages)
+	}
+	for _, event := range events {
+		if event.Type == providers.EventError || event.Type == providers.EventContentReplace ||
+			(event.Type == providers.EventLifecycle && event.Lifecycle != nil && event.Lifecycle.Phase == providers.StreamPhaseFailed) {
+			t.Fatalf("recovered checkpoint emitted a failure or erased progress: %+v", event)
+		}
 	}
 }

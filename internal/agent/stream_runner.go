@@ -1233,7 +1233,8 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	}
 	replayGuard := func(_ providers.StreamRetryContext) error {
 		// Replaying the old payload would discard protocol-complete progress.
-		// Preserve it for a new, explicitly admitted sampling turn instead.
+		// The loop can admit a bounded continuation from this checkpoint when
+		// no tool declarations or accepted work make its effects ambiguous.
 		if completedCheckpoint.Load() {
 			return errors.New("completed assistant items require explicit continuation from saved history")
 		}
@@ -1297,7 +1298,19 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			Usage:             usage,
 		}
 		if journalErr := req.Execution.Complete(outcome, failure); journalErr != nil {
-			return partial, errors.Join(fmt.Errorf("stream request failed: %w", err), fmt.Errorf("complete failed inference operation: %w", journalErr))
+			combined := errors.Join(err, fmt.Errorf("complete failed inference operation: %w", journalErr))
+			var recovery *providers.StreamRecoveryError
+			if errors.As(err, &recovery) {
+				info := recovery.Recovery
+				info.StopReason = "recovery_failed"
+				combined = &providers.StreamRecoveryError{Cause: combined, Recovery: info}
+			}
+			err = combined
+		}
+		// Let the loop persist complete items and decide whether to resume.
+		// Publishing an error here would leave a failure card on a recovered turn.
+		if s.onEvent != nil && !providers.IsContextOverflow(err) && resumableStreamCheckpoint(partial, err) == nil {
+			s.onEvent(providers.StreamEvent{Type: providers.EventError, Error: err})
 		}
 		return partial, fmt.Errorf("stream request failed: %w", err)
 	}
@@ -1754,6 +1767,13 @@ func (s *streamStep) runReliableStream(
 				}
 
 			case providers.EventLifecycle:
+				if event.Lifecycle != nil && event.Lifecycle.Phase == providers.StreamPhaseFailed &&
+					event.Lifecycle.FailureCategory == string(providers.FailureReplayUnsafe) &&
+					len(*completedMessages) > 0 && len(pendingTools) == 0 {
+					// The loop decides whether this checkpoint can resume. Keep a
+					// pending reconnect transient until the next connect or turn end.
+					continue
+				}
 				if event.Lifecycle != nil && event.Lifecycle.Phase == providers.StreamPhaseReconnecting && event.Lifecycle.ResetPartial {
 					resetPartialOutput()
 					for k := range pendingTools {
@@ -1803,12 +1823,6 @@ func (s *streamStep) runReliableStream(
 			return nil
 		}
 
-		if onEvent != nil && !providers.IsContextOverflow(streamErr) {
-			onEvent(providers.StreamEvent{
-				Type:  providers.EventError,
-				Error: streamErr,
-			})
-		}
 		return streamErr
 	}
 }

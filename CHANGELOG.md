@@ -168,6 +168,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Automatically continue interrupted model streams from completed reply or reasoning items when the round has no tool declarations or accepted tool work. Preserve displayed fragments, avoid transient failure cards, and bound consecutive continuations while retaining manual recovery for ambiguous effects.
+
 - Prevent completed answers from replaying the copy, fork, and timestamp entrance animation when returning to a cached conversation, including answers completed in the background.
 
 - Keep settings titlebar actions on one line without overlapping the page title in narrow windows and at larger UI font sizes.

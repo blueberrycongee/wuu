@@ -396,6 +396,7 @@ func RunToolLoop(
 	}
 
 	consecutiveContinuations := 0
+	checkpointContinuations := 0
 	for stepIdx := 0; cfg.MaxSteps == 0 || stepIdx < cfg.MaxSteps; stepIdx++ {
 		if cfg.BeforeStep != nil {
 			injected := cfg.BeforeStep()
@@ -986,6 +987,19 @@ func RunToolLoop(
 					Phase:   result.Phase,
 				})
 			}
+			if recovery := resumableStreamCheckpoint(result, err); recovery != nil && ctx.Err() == nil && checkpointContinuations < recovery.MaxAttempts-1 {
+				// Complete items have entered history above; incomplete fragments
+				// remain display-only. Resume with a fresh operation and the saved
+				// prefix, never the payload that produced the interrupted stream.
+				// Bound consecutive new sampling operations as well as the retries
+				// inside each stream. The shared workflow budget still caps all
+				// physical requests, including transport fallbacks.
+				checkpointContinuations++
+				resumeSampling = true
+				nextOperationParentID = recovery.OperationID
+				usage.RecordPendingMessages(result.CompletedMessages)
+				continue
+			}
 			return LoopResult{
 				NewMessages:         newMessagesForReturn(messages, startLen, historyRewritten),
 				HistoryRewritten:    historyRewritten,
@@ -996,6 +1010,7 @@ func RunToolLoop(
 			}, err
 		}
 
+		checkpointContinuations = 0
 		resumeSampling = false
 		if freshContextEnabled {
 			// Successful progress ends the previous overflow recovery attempt.
@@ -1406,6 +1421,23 @@ func resolveEffectiveCompaction(cfg LoopConfig) CompactFn {
 		}
 		return fallback(ctx, messages)
 	}
+}
+
+// A replay fence with completed items can be crossed only by a new sampling
+// request, and only when this round has no tool declarations or accepted work.
+// Recovery evidence survives the driver service boundary; error text does not
+// authorize continuation. Other failures retain explicit/manual recovery.
+func resumableStreamCheckpoint(result StepResult, err error) *providers.StreamRecoveryInfo {
+	if len(result.CompletedMessages) == 0 || len(result.ToolCalls) != 0 ||
+		(result.ToolRuntime != nil && result.ToolRuntime.HasAcceptedCalls()) {
+		return nil
+	}
+	var recovery *providers.StreamRecoveryError
+	if !errors.As(err, &recovery) || recovery.Recovery.StopReason != "replay_unsafe" ||
+		providers.NormalizeFailure(err).Category != providers.FailureReplayUnsafe {
+		return nil
+	}
+	return &recovery.Recovery
 }
 
 func stepResultHasNoPartialOutput(result StepResult) bool {

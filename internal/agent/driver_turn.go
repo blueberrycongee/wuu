@@ -355,6 +355,9 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		}
 	}
 	if err != nil {
+		if resumableStreamCheckpoint(result, err) != nil {
+			g.nextModelParentID = request.Operation.ID
+		}
 		fragment := result.Content
 		for _, completed := range result.CompletedMessages {
 			g.appendMessages(providers.CloneChatMessage(completed))
