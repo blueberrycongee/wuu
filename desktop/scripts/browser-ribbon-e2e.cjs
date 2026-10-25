@@ -84,7 +84,7 @@ function key(keyCode) {
         </div><main style={{marginLeft:280,padding:80}}><h1>Browser ribbon acceptance</h1>
         <p>The production ribbon with 48 fixture tabs.</p><input aria-label="Page editor" placeholder="Page input keeps focus when a background tab closes"/></main></>}
       createRoot(document.getElementById("root")).render(<Fixture/>);` },
-    outfile: path.join(output, "ribbon.js"), bundle: true, platform: "browser", format: "iife", define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' }, loader: { ".woff2": "file", ".png": "file", ".svg": "file" },
+    outfile: path.join(output, "ribbon.js"), bundle: true, platform: "browser", format: "iife", define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' }, loader: { ".woff2": "file", ".ttf": "file", ".png": "file", ".svg": "file" },
     plugins: [{ name: "raw-svg", setup(build) {
       build.onResolve({ filter: /\.svg\?raw$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: "raw-svg" }));
       build.onLoad({ filter: /.*/, namespace: "raw-svg" }, args => ({ contents: fs.readFileSync(args.path, "utf8"), loader: "text" }));
@@ -147,7 +147,7 @@ function key(keyCode) {
   await esbuild.build({ entryPoints: [path.join(root, "src/renderer/chromeOverlayMain.tsx")], outfile: path.join(output, "assets/native-ribbon.js"),
     bundle: true, platform: "browser", format: "iife", jsx: "automatic",
     define: { "import.meta.env.DEV": "false", "import.meta.env.MODE": '"production"' },
-    loader: { ".woff2": "file", ".png": "file", ".svg": "file" },
+    loader: { ".woff2": "file", ".ttf": "file", ".png": "file", ".svg": "file" },
     plugins: [{ name: "native-raw-svg", setup(build) {
       build.onResolve({ filter: /\.svg\?raw$/ }, args => ({ path: path.resolve(args.resolveDir, args.path.slice(0, -4)), namespace: "raw-svg" }));
       build.onLoad({ filter: /.*/, namespace: "raw-svg" }, args => ({ contents: fs.readFileSync(args.path, "utf8"), loader: "text" }));
