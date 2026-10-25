@@ -114,12 +114,12 @@ export function BrowserPiPHostReporter(): null {
     const mutationObserver = new MutationObserver(onMutation);
     // Ignore streaming text and class updates. Size changes come from
     // ResizeObserver; dialogs and retained native sections can change visibility
-    // without mounting a node or changing the conversation's dimensions. Scroll
-    // restoration also hides the host through inline visibility and inert.
+    // without mounting a node or changing the conversation's dimensions. The
+    // conversation advertises its anchor only after scroll restoration.
     mutationObserver.observe(document.body, {
       childList: true, subtree: true, attributes: true,
       attributeFilter: [
-        "aria-modal", "open", "hidden", "style", "inert", "data-settings-open", "data-native-section", "data-primary-plugin-view", "data-web-workspace-open",
+        "aria-modal", "open", "hidden", "inert", "data-pip-anchor-host", "data-settings-open", "data-native-section", "data-primary-plugin-view", "data-web-workspace-open",
       ],
     });
     window.addEventListener("resize", schedule);
@@ -160,7 +160,7 @@ export function hostLayoutMutationMatters(records: MutationRecord[]): boolean {
   return records.some((record) => {
     if (record.type === "attributes") {
       return record.attributeName === "aria-modal" || record.attributeName === "open"
-        || elementMentionsHost(record.target);
+        || record.attributeName === "data-pip-anchor-host" || elementMentionsHost(record.target);
     }
     return [...record.addedNodes, ...record.removedNodes].some(elementMentionsHost);
   });
