@@ -70,7 +70,9 @@ export async function loadRuntimeThreadList(cwd?: string): Promise<Thread[]> {
 export async function resumeThreadForRefresh(previous: Thread): Promise<Thread> {
   const revisions = new Map(previous.turns.map(turn => [turn.id, streamTextStore.getTurnRevision(turn.id)]));
   const resumed = (await window.wuu.resumeThread(previous.id)).thread;
-  if (!resumed) return previous;
+  // A missing recovery snapshot is not newer state. Replaying the captured
+  // thread would overwrite notifications received while recovery was pending.
+  if (!resumed) throw new Error("thread/resume did not return a recovery snapshot");
   for (const turn of resumed.turns) {
     if (turn.status !== "in_progress" && turn.items_view === "full"
       && revisions.get(turn.id) === streamTextStore.getTurnRevision(turn.id)) {

@@ -1370,6 +1370,7 @@ describe("session tab switch latency", () => {
   });
 
   it.each(["top", "workspace"])("keeps pending drafts separate when starting another conversation from %s", async (entry) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { threadsByID, startTurn } = installWuuApi();
     threadsByID.clear();
     startTurn.mockImplementation(async (threadID: string, text: string) => ({
@@ -1432,6 +1433,9 @@ describe("session tab switch latency", () => {
         thread: { ...created, title: "Newer conversation name" },
       }); });
     }
+    // Force foreground recovery captured before the newer title notification.
+    // This fixture has no resume snapshot for either pending creation.
+    await act(async () => { await vi.advanceTimersByTimeAsync(200); });
     await act(async () => {
       if (entry === "workspace") rename.reject(new Error("Rename unavailable"));
       else rename.resolve({ thread: { ...created, title: "Named conversation A" } });

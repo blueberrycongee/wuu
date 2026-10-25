@@ -155,6 +155,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve newer conversation titles when a delayed recovery request returns no session snapshot.
+
 - Restore workspace extension icons and readable long titles, and preserve keyboard discovery, document selection, and attachment recovery through the public desktop paths.
 
 - Migrate composer and navigation observations to public slots, remove obsolete presenters, and preserve developer-loop counter state across rendering and plugin reload.
