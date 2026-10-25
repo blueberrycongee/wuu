@@ -1304,10 +1304,10 @@ describe("session tab switch latency", () => {
     }
   });
 
-  it.each(["queue", "steer"] as const)("waits for pending PDF bytes before %s without refilling the sent draft", async (action) => {
+  it.each(["queue", "steer"] as const)("retains a pending PDF through %s until the user message is confirmed", async (action) => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, runningThreadA());
-    const submit = vi.fn(async () => ({ queued: { id: "queued-pdf", thread_id: threadAID }, turn_id: threadA().turns[0].id }));
+    const submit = vi.fn(async (...args) => ({ queued: { id: args[action === "queue" ? 3 : 4], thread_id: threadAID }, turn_id: threadA().turns[0].id }));
     window.wuu.queueTurn = submit;
     window.wuu.steerTurn = submit;
     await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
@@ -1322,6 +1322,11 @@ describe("session tab switch latency", () => {
     const args = vi.mocked(action === "queue" ? window.wuu.queueTurn : window.wuu.steerTurn).mock.calls[0];
     expect(args[0]).toBe(threadAID);
     expect(args[action === "queue" ? 4 : 5]).toEqual([{ media_type: "application/pdf", filename: "A-only.pdf", data: attachment.data }]);
+    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).not.toBeNull();
+    await act(async () => { emitNotification("item/completed", {
+      thread_id: threadAID, turn_id: runningThreadA().turns.at(-1)!.id,
+      item: { id: "accepted-pdf", source_id: args[action === "queue" ? 3 : 4], type: "user_message", status: "completed", text: "" },
+    }); });
     expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
   });
 
@@ -1347,7 +1352,7 @@ describe("session tab switch latency", () => {
       mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
-    expect(mainComposerTextarea().value).toBe("");
+    expect(mainComposerTextarea().value).toBe("queued follow-up");
     await act(async () => { setMainComposerPrompt("newer draft"); });
     await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
     expect(threadRowButton("first pending query")).toBeUndefined();
@@ -1373,9 +1378,9 @@ describe("session tab switch latency", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { threadsByID, startTurn } = installWuuApi();
     threadsByID.clear();
-    startTurn.mockImplementation(async (threadID: string, text: string) => ({
+    startTurn.mockImplementation(async (threadID: string, text: string, _images, _files, _document, _contexts, _parts, _settings, clientID: string) => ({
       turn: { id: `turn-${threadID}`, items_view: "full", status: "in_progress", items: [
-        { id: `user-${threadID}`, type: "user_message", text, status: "completed" },
+        { id: `user-${threadID}`, source_id: clientID, type: "user_message", text, status: "completed" },
       ] },
     }));
     const first = deferred<{ thread: Thread }>();
@@ -1403,11 +1408,11 @@ describe("session tab switch latency", () => {
     expect(threadRowButton("pending A")).toBeDefined();
     expect(threadRowButton("pending B")).toBeDefined();
     await act(async () => { threadRowButton("pending A")!.click(); });
-    expect(container.querySelector('.composer-stop-button')).not.toBeNull();
+    expect(mainComposerSendButton().getAttribute("data-wuu-state")).toBe("submitting");
     await act(async () => { second.resolve({ thread: { ...threadB(), preview: "", turns: [] } }); });
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(startTurn.mock.calls[0].slice(0, 2)).toEqual([threadBID, "pending B"]);
-    expect(container.querySelector('.composer-stop-button')).not.toBeNull();
+    expect(mainComposerSendButton().getAttribute("data-wuu-state")).toBe("submitting");
     const created = { ...threadA(), preview: "", turns: [] };
     await act(async () => { first.resolve({ thread: created }); });
     expect(window.wuu.renameThread).toHaveBeenCalledWith(threadAID, "Named conversation A");
@@ -1423,11 +1428,12 @@ describe("session tab switch latency", () => {
     }
     expect(threadRowButton("Named conversation A")).toBeDefined();
     expect(activeSessionTabLabel()).toBe("Named conversation A");
-    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+    expect(activeThreadProbe()?.dataset.latestUserText).toBeUndefined();
+    expect(mainComposerTextarea().value).toBe("pending A");
     expect(startTurn).toHaveBeenCalledTimes(1);
     if (entry === "workspace") {
-      await act(async () => { container.querySelector<HTMLButtonElement>('.composer-stop-button')!.click(); });
-      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("interrupted");
+      await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+      expect(mainComposerTextarea().value).toBe("pending A");
     } else {
       await act(async () => { emitNotification("thread/updated", {
         thread: { ...created, title: "Newer conversation name" },
@@ -1449,9 +1455,17 @@ describe("session tab switch latency", () => {
       expect(rows).toHaveLength(2);
       expect(new Set(Array.from(rows, row => row.getAttribute("aria-label"))).size).toBe(2);
     }
-    expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
-    expect(threadRowButton(entry === "workspace" ? "pending A" : "Newer conversation name")).toBeDefined();
-    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+    if (entry === "workspace") {
+      expect(activeThreadProbe()).toBeNull();
+      expect(mainComposerTextarea().value).toBe("pending A");
+      expect(activeSessionTabLabel()).toBe(translateCurrent("tabs.newConversation"));
+      expect(threadRowButton("pending A")).toBeUndefined();
+      expect(mainComposerSendButton().getAttribute("data-wuu-state")).not.toBe("submitting");
+    } else {
+      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+      expect(threadRowButton("Newer conversation name")).toBeDefined();
+    }
+    expect(activeThreadProbe()?.dataset.latestUserText).toBe(entry === "workspace" ? undefined : "pending A");
   });
 
   it("keeps sidebar row titles and click targets after A-B-A switching and a delayed project list", async () => {
@@ -1762,7 +1776,7 @@ describe("session tab switch latency", () => {
     await act(async () => { setMainComposerPrompt(text); });
     expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { mainComposerSendButton().click(); });
-    expect(mainComposerTextarea().value).toBe("");
+    expect(mainComposerTextarea().value).toBe(text);
     await act(async () => { setMainComposerPrompt(newerDraft); });
     expect(readComposerDraftRecovery().tabs.map(tab => tab.kind !== "skills" && tab.prompt)).toContain(text);
     await act(async () => { pending.reject(new Error("send rejected")); });

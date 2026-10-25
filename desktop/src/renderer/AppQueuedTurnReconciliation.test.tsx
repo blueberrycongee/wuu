@@ -848,7 +848,12 @@ describe("queued turn reconciliation", () => {
           resolveSteer = resolve;
         }),
     );
-    installWuuApi({ steerTurn: steerTurn as WuuDesktopApi["steerTurn"], queueTurn });
+    // Recovery reads must agree with the notifications when reconciliation runs between sends.
+    let storedThread = runningThread();
+    installWuuApi({ steerTurn: steerTurn as WuuDesktopApi["steerTurn"], queueTurn,
+      resumeThread: vi.fn(async () => ({ thread: storedThread })),
+    });
+    vi.mocked(window.wuu.listThreads).mockImplementation(async () => ({ threads: [storedThread] }));
     await act(async () => {
       root = createRoot(container);
       root.render(await createConversationTestView(threadID));
@@ -884,8 +889,9 @@ describe("queued turn reconciliation", () => {
       resolveQueue({ queued: { id: "queued-follow-up", thread_id: threadID } });
     });
     await act(async () => {
+      storedThread = runningThread("queued-follow-up");
       for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
-        message: { method: "thread/updated", params: { thread: runningThread("queued-follow-up") } } } as ServerEvent);
+        message: { method: "thread/updated", params: { thread: storedThread } } } as ServerEvent);
     });
     // Delivery must not clear the newer text typed while the first send waited.
     expect(composerProbe().querySelector("textarea")?.value).toBe("guide the running turn");
@@ -893,9 +899,10 @@ describe("queued turn reconciliation", () => {
     expect(steerTurn).toHaveBeenCalledTimes(1);
     await act(async () => {
       resolveSteer?.({ turn_id: "turn-queued" });
+      const item = { id: "accepted-guide", type: "user_message" as const, status: "completed" as const, text: "guide the running turn", source_id: vi.mocked(window.wuu.steerTurn).mock.calls[0][4] };
+      storedThread = { ...storedThread, turns: storedThread.turns.map(turn => ({ ...turn, items: [...turn.items, item] })) };
       for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
-        message: { method: "item/completed", params: { thread_id: threadID, turn_id: "turn-queued",
-          item: { id: "accepted-guide", type: "user_message", status: "completed", text: "guide the running turn", source_id: vi.mocked(window.wuu.steerTurn).mock.calls[0][4] } } } } as ServerEvent);
+        message: { method: "item/completed", params: { thread_id: threadID, turn_id: "turn-queued", item } } } as ServerEvent);
     });
     expect(composerProbe().querySelector("textarea")?.value).toBe("");
   });

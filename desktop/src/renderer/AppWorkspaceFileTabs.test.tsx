@@ -184,7 +184,7 @@ function installWuuApi(): void {
     resumeThread: vi.fn().mockResolvedValue({ thread }),
     startThread: vi.fn().mockResolvedValue({ thread: { ...thread, id: "thread-selection-new", turns: [] } }),
     startTurn: startTurnMock,
-    queueTurn: vi.fn().mockResolvedValue({ queued: { id: "queued-selection" } }),
+    queueTurn: vi.fn().mockImplementation(async (threadID, _text, _images, id) => ({ queued: { id, thread_id: threadID } })),
     steerTurn: vi.fn().mockResolvedValue({}),
     getActiveGoalSummary: vi.fn().mockResolvedValue(null),
     gitStatus: vi.fn().mockResolvedValue({
@@ -266,9 +266,9 @@ describe("workspace file tabs", () => {
     window.sessionStorage.clear();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     setInnerWidth(originalInnerWidth);
-    act(() => {
+    await act(async () => {
       root?.unmount();
     });
     root = null;
@@ -589,7 +589,7 @@ describe("workspace file tabs", () => {
     expect(window.wuu.startThread).toHaveBeenCalledTimes(1);
     await typeMainPrompt("Next question");
     act(() => selectionActions!.addComment(selectionSource, "Next comment"));
-    const next = selectionActions!.comments[0];
+    const next = selectionActions!.comments.at(-1)!;
     if (failure === "thread") {
       await act(async () => threadStart.reject(new Error("offline")));
     } else {
@@ -601,7 +601,7 @@ describe("workspace file tabs", () => {
     await flushAsync();
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
       .toBe("Next question");
-    expect(selectionActions!.comments).toEqual([next]);
+    expect(selectionActions!.comments).toEqual([original, next]);
     if (failure === "thread") {
       const recovery = document.querySelector<HTMLButtonElement>('[role="alert"] .archive-tip-action');
       expect(recovery).not.toBeNull();
@@ -858,7 +858,21 @@ describe("workspace file tabs", () => {
       expect(call[action === "steer" ? 3 : 2]).toEqual([{ media_type: image.media_type, data: image.data }]);
       expect(call[action === "start" ? 3 : action === "queue" ? 4 : 5]).toEqual(files.map(({ filename, media_type, data }) => ({ filename, media_type, data })));
     }
+    if (action !== "start") {
+      expect(composer.querySelector("textarea")!.value).toBe(prompt);
+      expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(3);
+      await act(async () => {
+        for (const handler of serverEventHandlers) handler({
+          kind: "notification", workdir: workspace,
+          message: { method: "item/completed", params: {
+            thread_id: target.id, turn_id: target.turns.at(-1)!.id,
+            item: { id: "accepted-attachments", source_id: submit.mock.calls[1][action === "queue" ? 3 : 4], type: "user_message", status: "completed", text: prompt.trim() },
+          } },
+        } as ServerEvent);
+      });
+    }
     expect(composer.querySelector("textarea")!.value).toBe("");
+    expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(0);
     if (otherComposer) expect(otherComposer.querySelector("textarea")!.value).toBe("Keep the primary draft");
   });
 
@@ -886,9 +900,9 @@ describe("workspace file tabs", () => {
     expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][7]).toEqual([original, { type: "text", text: "Queued question" }]);
     await typeMainPrompt("New question");
     act(() => selectionActions!.addComment(selectionSource, "New comment"));
-    const next = selectionActions!.comments[0];
+    const next = selectionActions!.comments.at(-1)!;
     await act(async () => queued.reject(new Error("offline")));
-    expect(selectionActions!.comments).toEqual([next]);
+    expect(selectionActions!.comments).toEqual([original, next]);
     expect(container.querySelector<HTMLTextAreaElement>("[data-main-conversation-composer] textarea")!.value)
       .toBe("New question");
   });

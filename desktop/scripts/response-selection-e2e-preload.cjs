@@ -28,6 +28,12 @@ const projectList = () => ({ projects: [], active_context: { kind: "no_project",
 function record(method, args) {
   ipcRenderer.send("selection:bridge-call", { method, args });
 }
+function acceptUserMessage(threadID, turn, sourceID, text, contentParts) {
+  const item = { id: `submitted-user-${sourceID}`, source_id: sourceID, type: "user_message", status: "completed", text, content_parts: contentParts };
+  turn.items.push(item);
+  for (const listener of listeners) listener({ kind: "notification", workdir: cwd,
+    message: { method: "item/completed", params: { thread_id: threadID, turn_id: turn.id, item } } });
+}
 contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   initialize: async () => ({ protocol_version: "e2e", general_settings: settings, provider: "e2e", model: "mock-selection", workspace_root: cwd, providers: [{ name: "e2e", type: "mock", model: "mock-selection", connection_locked: true, api_key_configured: true }] }),
   listProjects: async () => projectList(), selectNoProject: async () => projectList(),
@@ -46,10 +52,23 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   startTurn: async (...args) => {
     record("startTurn", args);
     return { turn: { id: `submitted-${args[8]}`, terminal: true, status: "completed", items_view: "full", started_at: now, completed_at: now,
-      items: [{ id: `submitted-user-${args[8]}`, type: "user_message", status: "completed", text: args[1], content_parts: args[6] }] } };
+      items: [{ id: `submitted-user-${args[8]}`, source_id: args[8], type: "user_message", status: "completed", text: args[1], content_parts: args[6] }] } };
   },
-  queueTurn: async (...args) => { record("queueTurn", args); return { queued: { id: args[3], thread_id: args[0] } }; },
-  steerTurn: async (...args) => { record("steerTurn", args); return { steer: { id: args[4], thread_id: args[0] } }; },
+  queueTurn: async (...args) => {
+    record("queueTurn", args);
+    const turn = { id: `submitted-${args[3]}`, status: "in_progress", items_view: "full", items: [] };
+    threads.find(value => value.id === args[0]).turns.push(turn);
+    for (const listener of listeners) listener({ kind: "notification", workdir: cwd,
+      message: { method: "turn/started", params: { thread_id: args[0], turn } } });
+    acceptUserMessage(args[0], turn, args[3], args[1], args[7]);
+    return { queued: { id: args[3], thread_id: args[0] } };
+  },
+  steerTurn: async (...args) => {
+    record("steerTurn", args);
+    const turn = threads.find(value => value.id === args[0]).turns.find(value => value.id === args[1]);
+    acceptUserMessage(args[0], turn, args[4], args[2], args[7]);
+    return { steer: { id: args[4], thread_id: args[0] } };
+  },
   interruptTurn: async () => ({ ok: true }),
   onServerEvent: listener => { listeners.add(listener); return () => listeners.delete(listener); },
   onWindowResizeState: () => () => undefined,
