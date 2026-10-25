@@ -40,6 +40,8 @@ export interface ApplicationSubmissionOperationV1 {
    * Only `send` requests placement of the message; queue, steer, or an
    * unresolved route preserve the reader's current position. */
   readonly mode?: "send" | "queue" | "steer";
+  /** The composing draft remains visible until the message enters the conversation or needs queue recovery. */
+  readonly draftPending?: boolean;
   readonly phase: "preparing" | "sending" | "completed" | "failed" | "cancelled";
   readonly error?: string;
 }

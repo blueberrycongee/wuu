@@ -48,6 +48,8 @@ type Operation = {
   implicitFileID?: string;
   clickedAtMs: number;
   retainResult: boolean;
+  draft?: ComposerDraftState;
+  settlePlacement?: (accepted: boolean) => void;
 };
 
 /** One submission owner for all shells, sharing the controller's drafts and queues. */
@@ -106,6 +108,7 @@ export class ApplicationSubmission {
     const thread = source.kind === "thread" ? threadForTab(state, source.threadID) : undefined;
     if (source.kind === "thread" && !thread || thread?.read_only || thread && this.stopRequests.has(thread.id) || !thread && this.options.getRuntime(source.id).pending) return { accepted: false };
     if (!thread && this.options.getRuntime(source.id).params.engine === "wuu" && !hasAuthenticatedProvider(state.initialized.providers)) return { accepted: false };
+    if ([...this.operations.values()].some(operation => operation.view.draftPending && (operation.source.id === source.id || thread && operation.thread?.id === thread.id))) return { accepted: false };
     const draft = this.options.getDraft(source.id);
     const contentParts: MessageContentPart[] | undefined = input.contentParts ? structuredClone(input.contentParts) as MessageContentPart[] : input.text === undefined || input.text === draft.prompt ? readCollapsedPromptParts(thread?.id ?? source.id, draft.prompt) : undefined;
     const selections = input.selections ? structuredClone(input.selections) as ResponseSelection[] : draft.selections;
@@ -121,7 +124,7 @@ export class ApplicationSubmission {
       implicitFileID = file.id;
       message = { ...message, files: [...message.files.filter(item => item.id !== file.id), file] };
     }
-    const operation = this.createOperation(message, source, thread); operation.implicitFileID = implicitFileID;
+    const operation = this.createOperation(message, source, thread, draft); operation.implicitFileID = implicitFileID;
     message.images.forEach(value => this.options.resources.remember("image", value));
     message.files.forEach(value => this.options.resources.remember("file", value));
     const release = this.options.resources.retain([...message.images, ...message.files].map(value => value.id));
@@ -135,27 +138,27 @@ export class ApplicationSubmission {
         ? thread && !admission && resolveComposerRunningAction(mode === "steer" ? "steer" : "queue", thread) === "steer"
           ? this.steer(operation) : this.queue(operation)
         : this.send(operation);
-    // Admission and its optimistic state are installed synchronously above.
-    this.options.setDraft(source.id, emptyComposerDraft());
+    // The draft remains the visible owner until delivery is confirmed.
     this.saveRecovery();
     if (input.consumedOfferID && this.options.consumeOffer) void this.options.consumeOffer(input.consumedOfferID).catch(error => this.report(error));
     const abort = () => { this.cancel(operation.view.operationID); };
     signal?.addEventListener("abort", abort, { once: true });
     void work.then(sent => {
-      if (!sent) this.recover(operation);
+      if (sent) this.releaseDraft(operation);
+      else this.recover(operation);
       this.phase(operation, operation.stopped ? "cancelled" : sent ? "completed" : "failed", operation.view.error);
     }, error => { this.recover(operation); this.phase(operation, "failed", rawErrorMessage(error, t("composer.sendFailed"))); })
       .finally(() => { signal?.removeEventListener("abort", abort); release(); this.finishOperation(operation); this.saveRecovery(); });
     return { accepted: true, operationID: operation.view.operationID, threadId: thread?.id };
   }
 
-  private createOperation(message: QueuedComposerMessage, source: Exclude<SessionTab, { kind: "skills" }>, thread?: Thread): Operation {
+  private createOperation(message: QueuedComposerMessage, source: Exclude<SessionTab, { kind: "skills" }>, thread?: Thread, draft?: ComposerDraftState): Operation {
     let resolve!: Operation["resolve"]; let cancelPreparation!: () => void;
     // A result belongs to its composing action, not an unbounded history log.
     for (const [id, view] of this.results) if (view.ownerTabId === source.id || thread && view.threadId === thread.id) this.results.delete(id);
     for (const active of this.operations.values()) if (active.source.id === source.id || thread && active.thread?.id === thread.id) active.retainResult = false;
     const clickedAtMs = Date.now();
-    const operation: Operation = { retainResult: true, clickedAtMs, view: { operationID: message.id, ownerTabId: source.id, threadId: thread?.id, messageID: message.id, phase: "preparing" },
+    const operation: Operation = { retainResult: true, clickedAtMs, draft: draft && cloneComposerDraft(draft), view: { operationID: message.id, ownerTabId: source.id, threadId: thread?.id, messageID: message.id, phase: "preparing", ...(draft ? { draftPending: true } : {}) },
       message, source, context: thread ? resolveThreadRuntimeContext(thread, this.options.getState().projects) : source.context,
       thread, optimistic: createOptimisticTurn(message, clickedAtMs), previousTurnIDs: new Set(thread?.turns.map(turn => turn.id)),
       ready: new Promise(done => { resolve = done; }), resolve: thread => resolve(thread),
@@ -217,7 +220,14 @@ export class ApplicationSubmission {
         const result = await window.wuu.queueTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), thread.permission_mode, message.activeDocument, message.contentParts, operation.context, shouldHold());
         acceptedID = result.queued.id || message.id;
       } else await window.wuu.steerTurn(thread.id, activeTurnIDForThread(thread)!, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), message.activeDocument, message.contentParts, operation.context);
+      operation.view = { ...operation.view, messageID: acceptedID };
       this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, id: acceptedID, images, files, operationState: undefined } : candidate) }));
+      if (operation.view.draftPending && !this.disposed && this.resultOwnerExists(operation.view)) {
+        return await new Promise<boolean>(resolve => {
+          operation.settlePlacement = resolve;
+          this.reconcile();
+        });
+      }
       return true;
     } catch (error) {
       // A server-owned uncertain delivery must stay behind the canonical
@@ -243,7 +253,7 @@ export class ApplicationSubmission {
     operation.view = { ...operation.view, mode: "send" };
     this.admissions.set(key, operation);
     if (!target) this.creations.set(source.id, operation);
-    this.options.updateState(state => state.activeSessionTabID === source.id ? { ...state, running: true, status: "" } : state);
+    if (!operation.draft) this.options.updateState(state => state.activeSessionTabID === source.id ? { ...state, running: true, status: "" } : state);
     this.publish();
     let optimisticThreadID: string | undefined;
     try {
@@ -305,7 +315,8 @@ export class ApplicationSubmission {
         });
       }
       optimisticThreadID = thread.id;
-      this.options.updateState(state => updateThreadByID(state, thread!.id, current => upsertTurn(current, optimistic)));
+      if (!operation.draft) this.options.updateState(state => updateThreadByID(state, thread!.id, current => upsertTurn(current, optimistic)));
+      else forgetLocalTurnTiming(optimistic.id);
       this.creations.delete(source.id); this.publish();
       if (customTitle) {
         const renamed = window.wuu.renameThread(thread.id, customTitle).catch(error => {
@@ -328,6 +339,7 @@ export class ApplicationSubmission {
       const [images, files] = attachments;
       const result = await window.wuu.startTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), inputFilesFromComposer(files), thread.permission_mode || runtime.params.permission_mode, message.activeDocument, message.contentParts, context, message.id);
       this.unadmitted.delete(message.id);
+      this.releaseDraft(operation);
       this.options.updateState(state => updateThreadByID(state, thread!.id, current => replaceOptimisticTurn(current, optimistic.id, result.turn, upsertTurn)));
       if (operation.stopped && isThreadRunning(threadForTab(this.options.getState(), thread.id))) await this.interruptAccepted(thread.id);
       return true;
@@ -393,7 +405,7 @@ export class ApplicationSubmission {
       this.stopRequests.set(threadID, { ...request, phase: "retry", delivery: undefined }); this.publish(); this.report(error);
     }
   }
-  reconcile(): void {
+  reconcile(removedMessageID?: string): void {
     const beforeStops = this.stopRequests.size; const beforeFailures = this.failedDrafts.size; const beforeResults = this.results.size;
     const state = this.options.getState();
     for (const [threadID, request] of this.stopRequests) {
@@ -409,8 +421,24 @@ export class ApplicationSubmission {
         && threadHasAcceptedComposerMessage(thread, operation.message, operation.optimistic.id, operation.previousTurnIDs)) {
         this.phase(operation, "completed");
       }
+      if (operation.view.draftPending && operation.thread) {
+        const accepted = thread?.turns.some(turn => !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX) && turn.items.some(item => item.type === "user_message" && item.source_id === operation.view.messageID));
+        const pending = this.options.pending.pendingComposerMessagesForThread(operation.thread.id);
+        const message = [...pending.queued, ...pending.guides].find(row => row.id === operation.view.messageID);
+        if (accepted || operation.settlePlacement && (message?.held || message?.deliveryUnconfirmed)) {
+          this.releaseDraft(operation);
+          operation.settlePlacement?.(true);
+          operation.settlePlacement = undefined;
+        } else if (operation.settlePlacement && operation.view.messageID === removedMessageID && !message) {
+          operation.stopped = true;
+          operation.settlePlacement(false);
+          operation.settlePlacement = undefined;
+        }
+      }
       if (this.resultOwnerExists(operation.view)) continue;
       operation.retainResult = false;
+      operation.settlePlacement?.(true);
+      operation.settlePlacement = undefined;
       // Background thread requests still have a real thread owner. Only a
       // removed draft's not-yet-admitted creation must be cancelled here.
       if (!operation.thread && !operation.sent) this.cancel(operation.view.operationID);
@@ -432,8 +460,30 @@ export class ApplicationSubmission {
     }
     this.publish();
   }
+  private ownsDraft(operation: Operation, owner: string): boolean {
+    const current = this.options.getDraft(owner);
+    const draft = operation.draft;
+    return Boolean(draft && current.prompt === draft.prompt
+      && JSON.stringify(current.images.map(row => row.id)) === JSON.stringify(draft.images.map(row => row.id))
+      && JSON.stringify(current.files.map(row => row.id)) === JSON.stringify(draft.files.map(row => row.id))
+      && JSON.stringify(current.selections ?? []) === JSON.stringify(draft.selections ?? []));
+  }
+  private releaseDraft(operation: Operation): void {
+    if (!operation.view.draftPending) return;
+    operation.view = { ...operation.view, draftPending: false };
+    const owner = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;
+    // Another shell or an edit made while waiting owns its new content.
+    if (this.ownsDraft(operation, owner)) this.options.setDraft(owner, emptyComposerDraft());
+    this.publish();
+  }
   private recover(operation: Operation): void {
     const { message, source } = operation;
+    const retainedOwner = operation.thread ? threadSessionTabID(operation.thread.id) : source.id;
+    if (operation.view.draftPending && this.ownsDraft(operation, retainedOwner)) {
+      operation.view = { ...operation.view, draftPending: false };
+      return;
+    }
+    operation.view = { ...operation.view, draftPending: false };
     const draft = { ...composerContextFromMessage(message.text, message.contentParts), images: message.images, files: message.files.filter(file => file.id !== operation.implicitFileID) };
     const owner = operation.thread ? threadSessionTabID(operation.thread.id) : source.id;
     const state = this.options.getState();
@@ -544,6 +594,12 @@ export class ApplicationSubmission {
     this.disposed = true;
     this.results.clear();
     this.unadmitted.clear();
-    for (const operation of this.operations.values()) if (!operation.sent) this.cancel(operation.view.operationID);
+    for (const operation of this.operations.values()) {
+      if (!operation.sent) this.cancel(operation.view.operationID);
+      // A confirmed queue owns recovery once the composing service shuts down.
+      if (operation.settlePlacement) this.releaseDraft(operation);
+      operation.settlePlacement?.(true);
+      operation.settlePlacement = undefined;
+    }
   }
 }

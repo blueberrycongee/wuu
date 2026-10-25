@@ -96,7 +96,9 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const images = (ids: readonly string[]) => ids.flatMap(id => resources.has(id) ? [attachments.read(resources.get(id)!) as ComposerImage] : []);
   const files = (ids: readonly string[]) => ids.flatMap(id => resources.has(id) ? [attachments.read(resources.get(id)!) as ComposerFile] : []);
   const pending = view.composerPending.find(row => row.threadId === (presentation.threadId ?? ownerTabId));
-  const queued = (rows: readonly ApplicationPendingComposerMessageV1[] = []): QueuedComposerMessage[] => rows.map(row => ({ ...row, images: images(row.imageIds), files: files(row.fileIds) }));
+  const retained = view.submission.operations.filter(row => row.draftPending);
+  const draftPending = retained.some(row => row.ownerTabId === ownerTabId || row.threadId && row.threadId === presentation.threadId);
+  const queued = (rows: readonly ApplicationPendingComposerMessageV1[] = []): QueuedComposerMessage[] => rows.filter(row => !retained.some(operation => operation.messageID === row.id)).map(row => ({ ...row, images: images(row.imageIds), files: files(row.fileIds) }));
   const visibleResources = [...draft.imageIds, ...draft.fileIds, ...(pending?.queued ?? []).flatMap(row => [...row.imageIds, ...row.fileIds]), ...(pending?.guides ?? []).flatMap(row => [...row.imageIds, ...row.fileIds])];
   attachments.retainVisible(visibleResources);
   const creation = view.submission.pendingCreations.find(row => row.ownerTabId === ownerTabId);
@@ -124,7 +126,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null); }} /> : undefined;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}><FileSelectionProvider application={application} source={{ ownerTabId }}><div ref={contentRef} hidden={!visible} inert={!visible} style={{ display: visible ? "contents" : "none" }}>
     <Input workspaceId={tab.workspaceId} workspaceRoot={runtime.cwd} turnId={presentation.turnId}
-      queuedCount={pending?.queued.length ?? 0} pendingCount={(pending?.queued.length ?? 0) + (pending?.guides.length ?? 0)}
+      queuedCount={queued(pending?.queued).length} pendingCount={queued(pending?.queued).length + queued(pending?.guides).length}
       variant={variant} mainConversation containerRef={containerRef} topAccessory={question}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
@@ -134,6 +136,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onRemoveSelection={id => run(controls.setSelections(draft.selections.filter(row => row.id !== id)))}
       queuedMessages={queued(pending?.queued)} guideMessages={queued(pending?.guides)} running={running}
       sendDisabled={!view.tabs.canSubmit || runtime.engineSelectionPending || Boolean(stop)}
+      clearOnSubmit={false} draftPending={draftPending}
       submitting={editingSubmitting || view.submission.operations.some(row => (row.ownerTabId === ownerTabId || Boolean(presentation.threadId && row.threadId === presentation.threadId)) && (row.phase === "preparing" || row.phase === "sending"))}
       continuation={threadContinuationTarget(view.conversationWorkspace.threads.find(thread => thread.id === presentation.threadId), application.invoke)}
       stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || editingSubmitting || runtime.busy || switching)}

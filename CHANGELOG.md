@@ -174,6 +174,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Prevent completed answers from replaying the copy, fork, and timestamp entrance animation when returning to a cached conversation, including answers completed in the background.
 
+- Keep submitted drafts in the composer with a busy send button through attachment preparation and admission. Show messages once they reach the conversation, avoiding transient queue rows and repeated arrival animations; retain input on failure and suppress duplicate sends while waiting.
+
 - Keep settings titlebar actions on one line without overlapping the page title in narrow windows and at larger UI font sizes.
 
 - Avoid reparsing unchanged cached conversation Markdown on session switches and composer updates by retaining the preview service context until its service or slots change.

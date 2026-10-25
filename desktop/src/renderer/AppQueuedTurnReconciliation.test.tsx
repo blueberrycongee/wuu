@@ -22,6 +22,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
       return <div
         data-testid="composer-probe"
         data-running={props.running}
+        data-draft-pending={props.draftPending}
         data-stop-state={props.stopState}
         data-queued-ids={props.queuedMessages
           .map((message) => message.id)
@@ -480,12 +481,14 @@ describe("queued turn reconciliation", () => {
     });
     await flushAsync();
     expect(startTurn).toHaveBeenCalledTimes(1);
-    expect(composerProbe().dataset.running).toBe("true");
+    expect(composerProbe().dataset.running).toBe("false");
+    expect(composerProbe().dataset.draftPending).toBe("true");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("pending request");
     await act(async () => {
       composerProbe().querySelector<HTMLButtonElement>('[aria-label="stop"]')!.click();
     });
     expect(window.wuu.interruptTurn).not.toHaveBeenCalled();
-    expect(composerProbe().dataset.running).toBe("true");
+    expect(composerProbe().dataset.draftPending).toBe("true");
     expect(composerProbe().dataset.stopState).toBe("pending");
 
     await act(async () => {
@@ -552,6 +555,13 @@ describe("queued turn reconciliation", () => {
     await flushAsync();
 
     expect(queuedClientIDs).toHaveLength(1);
+    expect(composerProbe().dataset.queuedIds).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("queued follow-up");
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
+        message: { method: "thread/resumed", params: { thread: runningThread(),
+          held_user_messages: [{ id: queuedClientIDs[0], thread_id: threadID, origin: "queue", prompt: "queued follow-up" }] } } } as ServerEvent);
+    });
     expect(composerProbe().dataset.queuedIds).toBe(queuedClientIDs[0]);
 
     const edit = composerProbe().querySelector<HTMLButtonElement>(
@@ -616,7 +626,7 @@ describe("queued turn reconciliation", () => {
     expect(composerProbe().dataset.queuedIds).toBe("");
   });
 
-  it("does not restore the follow-up draft while turn/start is still settling", async () => {
+  it("retains the follow-up draft until turn/start is accepted", async () => {
     const followUpTurn = {
       id: "turn-follow-up",
       status: "in_progress" as const,
@@ -654,7 +664,8 @@ describe("queued turn reconciliation", () => {
 
     expect(startTurn).toHaveBeenCalledTimes(1);
     expect(queueTurn).not.toHaveBeenCalled();
-    expect(composerProbe().querySelector("textarea")?.value).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("keep this sent");
+    expect(composerProbe().dataset.draftPending).toBe("true");
     expect(composerProbe().dataset.queuedIds).toBe("");
 
     await act(async () => {
@@ -695,7 +706,7 @@ describe("queued turn reconciliation", () => {
       send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushAsync();
-    expect(composerProbe().querySelector("textarea")?.value).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("keep this sent");
 
     await act(async () => {
       for (const handler of serverEventHandlers) {
@@ -716,6 +727,7 @@ describe("queued turn reconciliation", () => {
                     type: "user_message",
                     status: "completed",
                     text: "keep this sent",
+                    source_id: vi.mocked(window.wuu.startTurn).mock.calls[0][8],
                   },
                 ],
               },
@@ -724,6 +736,7 @@ describe("queued turn reconciliation", () => {
         });
       }
     });
+    expect(composerProbe().querySelector("textarea")?.value).toBe("");
     await act(async () => {
       rejectStart?.(new Error("rpc timeout: turn/start"));
       await Promise.resolve();
@@ -764,7 +777,7 @@ describe("queued turn reconciliation", () => {
       send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     await flushAsync();
-    expect(composerProbe().querySelector("textarea")?.value).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("restore this send");
 
     await act(async () => {
       rejectStart?.(new Error("rpc timeout: turn/start"));
@@ -800,7 +813,8 @@ describe("queued turn reconciliation", () => {
 
     expect(queuedClientIDs).toHaveLength(1);
     const queueID = queuedClientIDs[0];
-    expect(composerProbe().dataset.queuedIds).toBe(queueID);
+    expect(composerProbe().dataset.queuedIds).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("queued follow-up");
 
     // Simulate the live turn/started notification being missed while the
     // thread is backgrounded. A later authoritative thread snapshot already
@@ -820,9 +834,11 @@ describe("queued turn reconciliation", () => {
     await flushAsync();
 
     expect(composerProbe().dataset.queuedIds).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("");
+    expect(composerProbe().dataset.draftPending).toBe("false");
   });
 
-  it("steers a running turn while an earlier queue submission is still pending", async () => {
+  it("defers a second composer submission until the queued input reaches the conversation", async () => {
     let resolveQueue!: (value: Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>) => void;
     const queueTurn = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>((resolve) => { resolveQueue = resolve; }));
     let resolveSteer: ((value: { turn_id: string }) => void) | undefined;
@@ -861,15 +877,27 @@ describe("queued turn reconciliation", () => {
       await Promise.resolve();
     });
 
-    expect(steerTurn).toHaveBeenCalledTimes(1);
-    expect(composerProbe().querySelector("textarea")?.value).toBe("");
-    expect(composerProbe().dataset.guideIds).not.toBe("");
-
+    expect(steerTurn).not.toHaveBeenCalled();
+    expect(composerProbe().querySelector("textarea")?.value).toBe("guide the running turn");
+    expect(composerProbe().dataset.guideIds).toBe("");
     await act(async () => {
-      resolveSteer?.({ turn_id: "turn-current" });
       resolveQueue({ queued: { id: "queued-follow-up", thread_id: threadID } });
-      await Promise.resolve();
     });
+    await act(async () => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
+        message: { method: "thread/updated", params: { thread: runningThread("queued-follow-up") } } } as ServerEvent);
+    });
+    // Delivery must not clear the newer text typed while the first send waited.
+    expect(composerProbe().querySelector("textarea")?.value).toBe("guide the running turn");
+    await act(async () => { steer!.click(); });
+    expect(steerTurn).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveSteer?.({ turn_id: "turn-queued" });
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
+        message: { method: "item/completed", params: { thread_id: threadID, turn_id: "turn-queued",
+          item: { id: "accepted-guide", type: "user_message", status: "completed", text: "guide the running turn", source_id: vi.mocked(window.wuu.steerTurn).mock.calls[0][4] } } } } as ServerEvent);
+    });
+    expect(composerProbe().querySelector("textarea")?.value).toBe("");
   });
 
   it("rolls back an optimistic steer and restores the draft on IPC failure", async () => {
@@ -902,7 +930,8 @@ describe("queued turn reconciliation", () => {
       steer.click();
       await Promise.resolve();
     });
-    expect(composerProbe().dataset.guideIds).not.toBe("");
+    expect(composerProbe().dataset.guideIds).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("restore this guide");
 
     await act(async () => {
       rejectSteer?.(new Error("IPC unavailable"));

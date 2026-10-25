@@ -475,7 +475,7 @@ export class ApplicationController implements HostApplicationService {
     this.rememberDraftResources();
     this.snapshot = this.project();
     this.sidebarCache.subscribe(() => this.publish());
-    this.pendingComposer.subscribe(() => { this.rememberDraftResources(); this.publish(); });
+    this.pendingComposer.subscribe(() => { this.rememberDraftResources(); this.publish(); this.reconcileSubmission(); });
   }
 
   getState = (): AppState => this.state;
@@ -1184,14 +1184,20 @@ export class ApplicationController implements HostApplicationService {
         const target = input as ApplicationActionMapV1["composer.remove-pending"]["input"];
         this.pendingComposerMessage(target);
         const { messageId, kind } = target;
-        return kind === "queue" ? this.pendingComposer.removeQueuedMessage(messageId) : this.pendingComposer.removeGuideMessage(messageId);
+        const removed = await (kind === "queue" ? this.pendingComposer.removeQueuedMessage(messageId) : this.pendingComposer.removeGuideMessage(messageId));
+        if (removed) this.submissionOwner?.reconcile(messageId);
+        return removed;
       }
       case "composer.edit-pending": {
         const target = input as ApplicationActionMapV1["composer.edit-pending"]["input"];
         const message = this.pendingComposerMessage(target);
         const { messageId, kind } = target;
         const release = this.draftResources.retain([...message.images, ...message.files].map(item => item.id));
-        try { return await (kind === "queue" ? this.pendingComposer.editQueuedMessage(messageId) : this.pendingComposer.editGuideMessage(messageId)); }
+        try {
+          await (kind === "queue" ? this.pendingComposer.editQueuedMessage(messageId) : this.pendingComposer.editGuideMessage(messageId));
+          this.submissionOwner?.reconcile(messageId);
+          return;
+        }
         finally { release(); }
       }
       case "composer.toggle-pending-mode": {

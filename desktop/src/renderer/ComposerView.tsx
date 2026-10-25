@@ -160,6 +160,8 @@ export function Composer({
   forceStopWhileRunning = false,
   stopState,
   submitting = false,
+  draftPending = false,
+  clearOnSubmit = true,
   continuation,
   runtimeControlsDisabled = running,
   status,
@@ -279,6 +281,8 @@ export function Composer({
   forceStopWhileRunning?: boolean;
   stopState?: "pending" | "retry";
   submitting?: boolean;
+  draftPending?: boolean;
+  clearOnSubmit?: boolean;
   continuation?: TurnContinuationTarget;
   runtimeControlsDisabled?: boolean;
   status: string;
@@ -397,7 +401,7 @@ export function Composer({
   // A disconnected remote workbench keeps every composer draft editable (the
   // textarea stays enabled and focused), but sending and runtime controls must
   // not dispatch into a dead bridge. Gate only the action paths, never readOnly.
-  const effectiveSendDisabled = sendDisabled || Boolean(stopState) || !workbenchConnected;
+  const effectiveSendDisabled = sendDisabled || draftPending || Boolean(stopState) || !workbenchConnected;
   const effectiveRuntimeControlsDisabled = runtimeControlsDisabled || !workbenchConnected;
   // Keep the controlled textarea on a small, synchronous state path. The
   // canonical draft still lives above Composer, but updating it makes App
@@ -482,7 +486,7 @@ export function Composer({
   // is empty. The moment there is something to send, it flips back to a send
   // button. Its submit action below deliberately follows the same steer/queue
   // decision as Enter, while preserving the stop affordance for an empty input.
-  const showComposerStop = Boolean(stopState) || ((running || submitting) && (forceStopWhileRunning || !hasDraft));
+  const showComposerStop = Boolean(stopState) || (!draftPending && (running || submitting) && (forceStopWhileRunning || !hasDraft));
   const composerSendLabel = running && hasDraft && onSteer
     ? t("composer.steerSend")
     : running
@@ -812,6 +816,10 @@ export function Composer({
         submittedDraftSignatureRef.current = null;
         return;
       }
+      if (!clearOnSubmit) {
+        submittedDraftSignatureRef.current = null;
+        return;
+      }
       optimisticPromptQueueRef.current.length = 0;
       setLocalPrompt("");
       setSubmissionClearRevision((current) => current + 1);
@@ -1113,7 +1121,7 @@ export function Composer({
     if (handleQueryHistoryKeyDown(event)) {
       return;
     }
-    if (event.key === "Escape" && running && !effectiveSendDisabled && !event.repeat) {
+    if (event.key === "Escape" && (running || draftPending) && !sendDisabled && workbenchConnected && !event.repeat) {
       event.preventDefault();
       onInterrupt();
       return;
@@ -1530,8 +1538,8 @@ export function Composer({
                   <button
                     className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
                     data-wuu-component="composer-send"
-                    data-wuu-state={stopState ?? (showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
-                    aria-busy={stopState === "pending" || (showComposerStopAction && submitting) || undefined}
+                    data-wuu-state={stopState ?? (draftPending ? "submitting" : showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
+                    aria-busy={draftPending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
                     type="button"
                     onPointerDown={(event) => {
                       if (!showComposerStopAction && event.button === 0 && document.activeElement === textareaRef.current) {
@@ -1549,7 +1557,7 @@ export function Composer({
                       (effectiveSendDisabled || readOnly || (!hasDraft) || (handoffMode && !canConfirmHandoff)))
                     }
                   >
-                    {showComposerStopAction ? <ComposerStopIcon state={stopState} submitting={submitting} /> : <ArrowUp aria-hidden="true" />}
+                    {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
                   </button>
                 </Tooltip>}
               </div>

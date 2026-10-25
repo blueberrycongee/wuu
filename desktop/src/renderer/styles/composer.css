@@ -834,13 +834,6 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
   border-top: 1px solid var(--hairline-soft);
 }
 
-/* A queue acknowledges receipt locally; it never launches the conversation. */
-.composer-pending-arrival,
-.composer-queue-row {
-  --enter-opacity: 0.75;
-  animation: wuu-enter var(--motion-fast) var(--ease-out);
-}
-
 .composer-queue-row:hover .composer-queue-preview,
 .composer-queue-row:focus-within .composer-queue-preview {
   background: var(--ink-overlay-4);

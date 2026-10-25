@@ -48,19 +48,19 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().navigationWorkspace.regionVisibilityRequest).toEqual({ id: first!.id + 1, region: "auxiliary" });
   });
 
-  it("allows and removes draft-owned followups while the first conversation is being created", async () => {
+  it("retains the first draft and rejects repeated submissions while its conversation is being created", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     let finish!: (value: unknown) => void;
     const startTurn = vi.fn().mockResolvedValue({ turn: { id: "turn", status: "in_progress", items_view: "full", items: [] } });
     window.wuu = { startThread: vi.fn(() => new Promise(resolve => { finish = resolve; })), startTurn, queueTurn: vi.fn() } as unknown as WuuDesktopApi;
     const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, activeSessionTabID: "draft:pending",
-      sessionTabs: [{ id: "draft:pending", kind: "draft", context, title: "", createdAt: 1, prompt: "", images: [], files: [] }] });
-    await controller.invoke("composer.submit", { ownerTabId: "draft:pending", text: "first" });
+      sessionTabs: [{ id: "draft:pending", kind: "draft", context, title: "", createdAt: 1, prompt: "first", images: [], files: [] }] });
+    await controller.invoke("composer.submit", { ownerTabId: "draft:pending" });
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     expect(controller.getSnapshot().tabs.canSubmit).toBe(true);
-    await controller.invoke("composer.submit", { ownerTabId: "draft:pending", text: "followup" });
-    const pending = controller.getSnapshot().composerPending.find(row => row.threadId === "draft:pending")!.queued[0];
-    await expect(controller.invoke("composer.remove-pending", { ownerTabId: "draft:pending", messageId: pending.id, kind: "queue" })).resolves.toBe(true);
+    await expect(controller.invoke("composer.submit", { ownerTabId: "draft:pending" })).resolves.toMatchObject({ accepted: false });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("first");
+    expect(controller.getSnapshot().composerPending).toEqual([]);
     finish({ thread: { id: "created", cwd: context.cwd, preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle", turns: [] } });
     await vi.waitFor(() => expect(startTurn).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(controller.getSnapshot().submission.operations.every(operation => /completed|failed|cancelled/.test(operation.phase))).toBe(true));
@@ -641,7 +641,7 @@ describe("shared application state", () => {
     await vi.waitFor(() => expect(send.mock.calls.map(args => args[0])).toEqual(["a", "b"]));
     finish.get("b")!({ turn: { id: "turn-b", status: "completed", items: [] } });
     await settleSubmission(controller, await secondary);
-    expect(controller.getSnapshot().drafts.primary.text).toBe("");
+    expect(controller.getSnapshot().drafts.primary.text).toBe("draft a");
     expect(controller.getSnapshot().drafts.secondary.text).toBe("");
     finish.get("a")!({ turn: { id: "turn-a", status: "completed", items: [] } });
     await settleSubmission(controller, await primary);
@@ -659,11 +659,14 @@ describe("shared application state", () => {
       const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
         { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "image", images: [{ id: "image", media_type: "image/png", data: "QQ==", previewSrc: "blob:owned" }], files: [] },
       ] });
-      await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "queue" }));
-      await expect(controller.invoke("composer.release-attachments", { attachmentIds: ["image"] })).rejects.toThrow("pending message");
+      const submitted = await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "queue" });
+      await vi.waitFor(() => expect(controller.getSnapshot().composerPending[0]?.queued[0]?.id).toBe("queued"));
+      await expect(controller.invoke("composer.release-attachments", { attachmentIds: ["image"] })).rejects.toThrow(/draft|pending message/);
       await controller.invoke("composer.release-attachments", { attachmentIds: ["image"], ifUnreferenced: true });
       expect(controller.getSnapshot().drafts.attachments[0].id).toBe("image");
+      await controller.invoke("composer.checkpoint", { activeTabId: "thread:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
       await controller.invoke("composer.edit-pending", { ownerTabId: "thread:a", messageId: controller.getSnapshot().composerPending[0].queued[0].id, kind: "queue" });
+      await settleSubmission(controller, submitted);
       expect(revoke).not.toHaveBeenCalled();
       expect(controller.getSnapshot().drafts.attachments[0].previewUrl).toBe("blob:owned");
       await controller.invoke("composer.checkpoint", { activeTabId: "thread:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
@@ -678,7 +681,8 @@ describe("shared application state", () => {
     const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
       { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "queued text", images: [], files: [] },
     ] });
-    await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "queue" }));
+    const submitted = await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "queue" });
+    await vi.waitFor(() => expect(controller.getSnapshot().composerPending[0]?.queued[0]?.id).toBe("queued"));
     const pending = controller.getSnapshot().composerPending[0];
     expect(pending).toMatchObject({ threadId: "a", queued: [{ text: "queued text" }], guides: [] });
     expect(Object.isFrozen(pending.queued[0])).toBe(true);
@@ -687,8 +691,10 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.remove-pending", stale)).rejects.toThrow("owner");
     await expect(controller.invoke("composer.toggle-pending-mode", stale)).rejects.toThrow("owner");
     expect(window.wuu.dequeueTurn).not.toHaveBeenCalled();
-    expect(controller.getSnapshot().drafts.primary.text).toBe("");
+    expect(controller.getSnapshot().drafts.primary.text).toBe("queued text");
+    await controller.invoke("composer.checkpoint", { activeTabId: "thread:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
     await controller.invoke("composer.edit-pending", { ownerTabId: "thread:a", messageId: pending.queued[0].id, kind: "queue" });
+    await settleSubmission(controller, submitted);
     expect(controller.getSnapshot().composerPending).toEqual([]);
     expect(controller.getSnapshot().drafts.primary.text).toBe("queued text");
     expect(window.wuu.dequeueTurn).toHaveBeenCalledWith("a", pending.queued[0].id);

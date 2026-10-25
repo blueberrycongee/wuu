@@ -142,6 +142,8 @@ export function SplitPaneComposer({
   sendDisabled: requestedSendDisabled = false,
   stopState,
   submitting = false,
+  draftPending = false,
+  clearOnSubmit = true,
   continuation,
   queryHistorySessionID,
   workspaceId,
@@ -171,6 +173,8 @@ export function SplitPaneComposer({
   sendDisabled?: boolean;
   stopState?: "pending" | "retry";
   submitting?: boolean;
+  draftPending?: boolean;
+  clearOnSubmit?: boolean;
   continuation?: TurnContinuationTarget;
   queryHistorySessionID?: string;
   workspaceId?: string;
@@ -188,7 +192,7 @@ export function SplitPaneComposer({
 }): JSX.Element {
   const { t } = useI18n();
   const connected = useWorkbenchConnected();
-  const sendDisabled = requestedSendDisabled || Boolean(stopState) || !connected;
+  const sendDisabled = requestedSendDisabled || draftPending || Boolean(stopState) || !connected;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
   const [submissionRevision, setSubmissionRevision] = useState(0);
@@ -371,6 +375,10 @@ export function SplitPaneComposer({
         submittedDraftRef.current = undefined;
         return;
       }
+      if (!clearOnSubmit) {
+        submittedDraftRef.current = undefined;
+        return;
+      }
       composing.current = false;
       setSubmissionRevision((revision) => revision + 1);
     };
@@ -409,7 +417,7 @@ export function SplitPaneComposer({
     if (handleQueryHistoryKeyDown(event)) {
       return;
     }
-    if (event.key === "Escape" && running && !sendDisabled && !event.repeat) {
+    if (event.key === "Escape" && (running || draftPending) && !requestedSendDisabled && connected && !event.repeat) {
       event.preventDefault();
       onInterrupt();
       return;
@@ -563,6 +571,9 @@ export function SplitPaneComposer({
                     ) : (
                       <button
                         className="composer-action-button composer-send-button"
+                        data-wuu-component="composer-send"
+                        data-wuu-state={draftPending ? "submitting" : "send"}
+                        aria-busy={draftPending || undefined}
                         onPointerDown={(event) => {
                           if (event.button === 0 && document.activeElement === textareaRef.current) {
                             event.preventDefault();
@@ -574,7 +585,7 @@ export function SplitPaneComposer({
                         title={sendLabel}
                         disabled={readOnly || sendDisabled || !hasDraft}
                       >
-                        <ArrowUp aria-hidden="true" />
+                        {draftPending ? <ComposerStopIcon submitting /> : <ArrowUp aria-hidden="true" />}
                       </button>
                     )}
                   </div>

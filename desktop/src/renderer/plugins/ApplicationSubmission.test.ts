@@ -83,16 +83,20 @@ describe("application submission ownership",()=>{
     expect(f.getState().activeSessionTabID).toBe("draft:b");expect(f.getDraft("draft:b").prompt).toBe("new work");
     expect(f.getState().sessionTabs.some(tab=>tab.id==="thread:created")).toBe(true);
   });
-  it("migrates queued sends behind a first creation through the same pending owner",async()=>{
+  it("retains the creation draft and rejects duplicate sends until admission",async()=>{
     const creating=deferred<{thread:Thread}>();const starting=deferred<{turn:Thread["turns"][number]}>();
-    window.wuu={startThread:vi.fn(()=>creating.promise),startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn().mockResolvedValue({queued:{id:"queued"}})} as unknown as WuuDesktopApi;
-    const f=fixture();f.submission.submit({ownerTabId:"draft:a"});f.submission.submit({ownerTabId:"draft:a",text:"second"});
-    expect(f.pending.pendingComposerMessagesByThread["draft:a"].queued).toHaveLength(1);
-    creating.resolve({thread:{...thread(),cwd:"/worktree"}});await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalled());
-    expect(window.wuu.queueTurn).not.toHaveBeenCalled();starting.resolve({turn:{id:"first",status:"in_progress",items_view:"full",items:[]}});
-    await vi.waitFor(()=>expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1));
-    expect(f.pending.pendingComposerMessagesByThread.created.queued[0].id).toBe("queued");
-    expect(vi.mocked(window.wuu.queueTurn).mock.calls[0][8]).toMatchObject({cwd:"/worktree"});
+    window.wuu={startThread:vi.fn(()=>creating.promise),startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture();f.submission.submit({ownerTabId:"draft:a"});
+    expect(f.submission.submit({ownerTabId:"draft:a"}).accepted).toBe(false);
+    expect(f.getDraft("draft:a").prompt).toBe("hello");
+    creating.resolve({thread:{...thread(),cwd:"/worktree"}});await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledTimes(1));
+    expect(f.getDraft("thread:created").prompt).toBe("hello");
+    expect(f.getState().thread?.turns).toEqual([]);
+    expect(f.submission.submit({ownerTabId:"thread:created"}).accepted).toBe(false);
+    starting.resolve({turn:{id:"first",status:"in_progress",items_view:"full",items:[]}});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0].phase).toBe("completed"));
+    expect(f.getDraft("thread:created").prompt).toBe("");
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
   });
   it("does not replay an uncertain turn admission as a queue send and restores input",async()=>{
     window.wuu={startTurn:vi.fn().mockRejectedValue(new Error("request timed out")),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
