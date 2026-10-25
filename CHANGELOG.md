@@ -163,6 +163,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Avoid reparsing unchanged cached conversation Markdown on session switches and composer updates by retaining the preview service context until its service or slots change.
+
 - Extend model and engine connection row hover and click areas across the settings card, preserving inset dividers, content spacing, rounded outer corners, and visible keyboard focus.
 
 - Keep the composer's send and stop circles concentric with its rounded corner by deriving equal right and bottom spacing from the frame radius and control size, including document composers.

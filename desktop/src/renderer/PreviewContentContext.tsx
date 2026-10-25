@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { ApplicationPreviewContentV1 } from "../../../packages/plugin-sdk/src/ui-preview-content";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 
@@ -12,7 +12,8 @@ export function PreviewContentProvider({ service, slots, children }: {
   slots?: UICompositionV1;
   children: ReactNode;
 }): JSX.Element {
-  return <PreviewContentContext.Provider value={{ service, slots }}>{children}</PreviewContentContext.Provider>;
+  const value = useMemo(() => ({ service, slots }), [service, slots]);
+  return <PreviewContentContext.Provider value={value}>{children}</PreviewContentContext.Provider>;
 }
 
 export function usePreviewContent() {
