@@ -536,6 +536,7 @@ async function runWebsiteAcceptance(h, fixture) {
       }));
     }
     assert.ok(states[1].centerX > states[0].centerX + 0.5, 'Actual eye geometry follows left and right native pointer input');
+    await waitFor(() => !window.__wuuMascotAcceptance.eyes.hasAttribute('transform'), undefined, 'Mascot returns to its resting gaze after pointer input');
     await evaluate(() => { const p = window.__wuuMascotAcceptance; p.reads = p.mutations = 0; });
     await delay(400);
     const idle = await evaluate(() => ({ reads: window.__wuuMascotAcceptance.reads, mutations: window.__wuuMascotAcceptance.mutations }));
@@ -756,14 +757,16 @@ async function runWebsiteAcceptance(h, fixture) {
     if (label === 'narrow-new-tab') {
       const alignment = await evaluateRibbon(() => {
         const center = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return r.x + r.width / 2; };
-        return { rows: { upper: center('.sidebar-ribbon-main [data-ribbon-id="conversations"]'),
+        return { expanded: document.querySelector('.sidebar-ribbon').dataset.expanded === 'true',
+          rows: { upper: center('.sidebar-ribbon-main [data-ribbon-id="conversations"]'),
           account: center('.sidebar-ribbon-footer .sidebar-account-trigger') },
         icons: { upper: center('.sidebar-ribbon-main [data-ribbon-id="conversations"] > svg'),
           account: center('.sidebar-ribbon-footer .sidebar-account-avatar') } };
       });
       assert.ok([alignment.rows, alignment.icons].every(group => Object.values(group).every(x => Math.abs(x - group.upper) <= 0.5))
-        && alignment.icons.upper < alignment.rows.upper - 16,
-      `Narrow large-type footer rows align with upper tabs, with icons on their shared left axis: ${JSON.stringify(alignment)}`);
+        && (alignment.expanded ? alignment.icons.upper < alignment.rows.upper - 16
+          : Math.abs(alignment.icons.upper - alignment.rows.upper) <= 0.5),
+      `Narrow large-type footer rows and icons share the upper tab axes in the current ribbon width: ${JSON.stringify(alignment)}`);
       report.actions.push({ label: 'narrow-ribbon-footer-alignment', atMs: Date.now() - started, alignment }); save();
     }
     await click('.sidebar-account-trigger', `open-profile-${label}`);
@@ -834,12 +837,22 @@ async function runWebsiteAcceptance(h, fixture) {
   async function tabMenu(id, label) {
     await pointAtTab(id);
     const p = await chromePoint(tabButton(id)), bounds = win.getContentBounds(), zoom = win.webContents.getZoomFactor();
-    xinput(['mousemove', String(Math.round(bounds.x + p.x * zoom)), String(Math.round(bounds.y + p.y * zoom)), 'click', '3']);
-    await waitFor(() => document.querySelector('.thread-row-context-menu [role="menuitem"]'));
-    const items = await evaluate(() => [...document.querySelectorAll('.thread-row-context-menu [role="menuitem"]')].map(item => item.textContent.trim()));
-    await capture(`tab-context-${label}`);
-    (report.tabMenuTraces ||= []).push({ label, id, point: p, items }); save();
-    return items;
+    const trace = { label, id, point: p, items: [], shown: false, closed: false };
+    const popup = Menu.prototype.popup;
+    Menu.prototype.popup = function (...args) {
+      trace.items = this.items.map(item => item.label);
+      this.once('menu-will-show', () => { trace.shown = true; });
+      this.once('menu-will-close', () => { trace.closed = true; });
+      // Observe the production OS menu; X11 still performs all interaction.
+      return popup.apply(this, args);
+    };
+    try {
+      xinput(['mousemove', String(Math.round(bounds.x + p.x * zoom)), String(Math.round(bounds.y + p.y * zoom)), 'click', '3']);
+      await until(() => trace.shown, 'Native tab context menu is shown');
+      await capture(`tab-context-${label}`);
+      (report.tabMenuTraces ||= []).push(trace); save();
+      return trace.items;
+    } finally { Menu.prototype.popup = popup; }
   }
   async function middleCloseTab(id, label) {
     await pointAtTab(id);
@@ -1253,8 +1266,8 @@ async function runWebsiteAcceptance(h, fixture) {
     const transitions = await traceLoadedTabSwitches();
     const wc = await openSite('Fixture Alpha', '/alpha');
     await tabMenu(alphaID, 'over-live-page');
-    await until(() => !nativeView('/alpha').getVisible(), 'The webpage yields to the tab context menu');
-    const managerHidden = !nativeView('/alpha').getVisible();
+    const pageVisibleUnderMenu = nativeView('/alpha').getVisible();
+    assert.ok(pageVisibleUnderMenu, 'The native OS menu overlays the retained visible webpage');
     await capture('context-menu-over-native-page');
     xinput(['key', 'Escape']);
     await settle();
@@ -1275,7 +1288,7 @@ async function runWebsiteAcceptance(h, fixture) {
     await pageClick(wc, '#draft', 'focus-after-section-return');
     await wc.insertText(' restored');
     await until(() => wc.executeJavaScript('document.querySelector("#draft").value.endsWith(" restored")'), 'native focus accepts input after restore');
-    return { managerHidden, retainedContentsId: wc.id, transitions };
+    return { pageVisibleUnderMenu, retainedContentsId: wc.id, transitions };
   });
 
   await testNative('native website bounds follow narrow large-type and zoomed workbench', async () => {
