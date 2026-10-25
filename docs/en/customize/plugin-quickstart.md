@@ -190,10 +190,9 @@ checks rendered desktop contributions.
 ```bash
 wuu plugin pack .
 wuu plugin install ./hello-plugin-0.1.0.zip
-wuu plugin approve hello-plugin
 ```
 
-The current CLI stages a local package before approval enables code execution. Development-directory authorization is separate and is not distributed in the zip. Plugins run with your user authority; package validation is not a security audit. See [plugin management](plugins.md) for disabling and removing packages.
+Installing a local package confirms trust and enables code execution. Updates from the same recorded source retain trust; changing the source requires confirmation. Development-directory authorization is separate and is not distributed in the zip. Plugins run with your user authority; package validation is not a security audit. See [plugin management](plugins.md) for disabling and removing packages.
 
 For persistent state, services, and lifecycle callbacks, continue with the [authoring reference](plugin-authoring.md). To add UI instead of a model tool, use the [desktop quickstart](desktop-plugin-quickstart.md).
 

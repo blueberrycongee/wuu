@@ -163,7 +163,7 @@ check();`) + " " + shellQuote(lifecyclePath)
 		fmt.Fprintf(&providerTranscript, "stage=%s call=%d request=%s\n", stage, call, body)
 		fail := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
 		name := toolPattern.FindString(surface)
-		if stage == "install" || stage == "disabled" || stage == "discover-manager" {
+		if stage == "install" || stage == "disabled" || stage == "discover-manager" || strings.HasPrefix(stage, "bundled-") {
 			if name != "" {
 				fail("%s advertised plugin tool %s", stage, name)
 			}
@@ -177,7 +177,7 @@ check();`) + " " + shellQuote(lifecyclePath)
 		// generation as tools, including later model calls in an updating turn.
 		expectedVersion := "v2"
 		switch stage {
-		case "discover-manager", "install", "disabled":
+		case "discover-manager", "install", "disabled", "bundled-disable", "bundled-status", "bundled-enable":
 			expectedVersion = ""
 		case "read-v1", "update":
 			expectedVersion = "v1"
@@ -205,6 +205,8 @@ check();`) + " " + shellQuote(lifecyclePath)
 				} else {
 					code = `text(await tools.plugin_manager({action:"status"}));`
 				}
+			case "bundled-disable", "bundled-status", "bundled-enable":
+				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": strings.TrimPrefix(stage, "bundled-"), "id": "peers"}) + "); text(\"BUNDLED_RECEIPT:\" + receipt.model_text);"
 			case "disable-manager":
 				code = "const receipt = await tools.plugin_manager(" + encode(map[string]string{"action": "disable", "id": singleFilePluginID(source)}) + "); text(\"MANAGER_RECEIPT:\" + receipt.model_text);" + " text(await tools.bash(" + encode(map[string]string{"command": waitForRetirement}) + "));"
 			case "install":
@@ -259,6 +261,30 @@ check();`) + " " + shellQuote(lifecyclePath)
 					if stage == "update" && item.Current == "" {
 						fail("update lost pinned generation identity: %+v", item)
 					}
+				}
+			}
+			if strings.HasPrefix(stage, "bundled-") {
+				var receipt struct {
+					Action  string `json:"action"`
+					Plugins []struct {
+						ID      string `json:"id"`
+						Enabled bool   `json:"desired_enabled"`
+						Trusted bool   `json:"trusted"`
+						State   string `json:"current_conversation_runtime_state"`
+						Current string `json:"current_conversation_fingerprint"`
+					} `json:"plugins"`
+				}
+				for _, line := range strings.Split(result, "\n") {
+					if strings.HasPrefix(line, "BUNDLED_RECEIPT:") {
+						if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "BUNDLED_RECEIPT:")), &receipt); err != nil {
+							fail("invalid bundled receipt: %v", err)
+						}
+					}
+				}
+				if len(receipt.Plugins) != 1 || receipt.Plugins[0].ID != "peers" || !receipt.Plugins[0].Trusted || receipt.Plugins[0].Enabled != (stage == "bundled-enable") {
+					fail("%s policy receipt: %s", stage, result)
+				} else if stage == "bundled-status" && (receipt.Plugins[0].State != "inactive" || receipt.Plugins[0].Current != "") {
+					fail("disabled bundled plugin silently reactivated: %s", result)
 				}
 			}
 			if stage == "discover-manager" && !strings.Contains(result, "plugin_manager") && !strings.Contains(result, `"action":"status"`) {
@@ -470,6 +496,11 @@ check();`) + " " + shellQuote(lifecyclePath)
 		}
 	}
 	runTurn("disabled")
+	if useManager {
+		for _, stage := range []string{"bundled-disable", "bundled-status", "bundled-enable"} {
+			runTurn(stage)
+		}
+	}
 	// Disable must retire the active runtime, not merely hide its tool. The
 	// observable lifecycle journal also protects the old generation's lease:
 	// its update-turn call must finish before its shutdown is recorded.

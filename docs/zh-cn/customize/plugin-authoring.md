@@ -448,6 +448,6 @@ App-server 的只读 `plugin/executions/list` 返回 `{ executions: [...] }`，
 
 Monorepo 插件可在 `package.json` 声明额外构建输入：`"wuu": { "dev": { "watch": ["../shared/src", "../assets/prompt.md"] } }`。路径相对插件目录，支持相邻文件或目录；修改后会重新构建并发布，无需重启。绝对路径、插件祖先目录、经过符号链接的路径，以及超过 64 个额外输入会被拒绝。不要列入生成文件；输入目录中的 `.git`、`node_modules`、`dist` 仍被忽略。这只控制开发监听，不改变运行时权限。
 
-当前 install/update CLI 会先暂存包，再单独批准代码激活。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
+install CLI 会确认信任并启用包。同一已记录来源的更新继承信任与启停状态；来源改变或尚未记录来源时需要确认。开发目录授权不会成为分发包的信任。命令见[插件管理](plugins.md)，信任边界见[安全模型](../reference/security-model.md)。
 
 完整插件编写类型位于 [`packages/plugin-sdk/src/index.ts`](../../../packages/plugin-sdk/src/index.ts)。Go 宿主及其内部应用嵌入接口属于宿主实现，不是另一套插件编写 SDK。请与目标 Wuu 版本匹配；产品 CalVer、包 schema、能力协议、服务版本和桌面快照版本是不同的兼容性检查。

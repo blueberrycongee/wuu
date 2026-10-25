@@ -212,11 +212,15 @@ func (s *Session) PreflightExtensions(cfg config.Config) (*PluginGeneration, err
 // PreflightDiscoveredExtensions builds the already-observed catalog, allowing
 // refresh admission to fingerprint its exact inputs before starting processes.
 // Callers must serialize discovery and preparation with catalog publication.
-func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []pluginpkg.Plugin) (*PluginGeneration, error) {
+func (s *Session) PreflightDiscoveredExtensions(cfg config.Config, discovered []pluginpkg.Plugin, requiredIDs ...string) (*PluginGeneration, error) {
 	if s == nil {
 		return nil, errors.New("runtime is not initialized")
 	}
-	return s.buildPluginGeneration(cfg, discovered, nil, nil, startPluginClient)
+	required := make(map[string]bool, len(requiredIDs))
+	for _, id := range requiredIDs {
+		required[id] = true
+	}
+	return s.buildPluginGeneration(cfg, discovered, required, nil, startPluginClient)
 }
 
 // PluginGenerationNeedsRecovery reports a runtime process that reached active
@@ -413,7 +417,7 @@ func (s *Session) PreflightPluginUpdate(cfg config.Config, id, fingerprint, pack
 	if err != nil {
 		return nil, err
 	}
-	if !containsPluginGeneration(generation.active, id, fingerprint) {
+	if cfg.Extensions == nil || !pluginManagementTrusted(*cfg.Extensions, candidate) || (cfg.Extensions.IsEnabled(candidate.SubjectID, candidate.EnabledByDefault()) && !containsPluginGeneration(generation.active, id, fingerprint)) {
 		_ = generation.close()
 		s.persistRevocationReport(generation)
 		return nil, fmt.Errorf("plugin %q candidate is not approved for its exact fingerprint", id)

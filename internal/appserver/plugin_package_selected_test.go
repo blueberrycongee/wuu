@@ -2,11 +2,14 @@ package appserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -45,7 +48,18 @@ func TestPluginPackageSelectedConfigPromotionAndRemoval(t *testing.T) {
 	first := writeManagedPluginPackage(t, "selected-config-package", "1.0.0", "first")
 	installed := remarshal[PluginPackageInstallResult](t, call("install", MethodPluginPackageInstall, PluginPackageInstallParams{Path: first})["result"])
 	record := pluginPackageRecord(t, installed.ExtensionInventory, "selected-config-package")
-	call("grant", MethodExtensionPackageUpdate, ExtensionPackageUpdateParams{ID: record.ID, Fingerprint: record.Fingerprint, Action: ExtensionPackageGrant})
+	if record.ApprovalState != ExtensionApprovalGranted {
+		t.Fatalf("installation did not activate: %+v", record)
+	}
+	// Same-source bytes change is trusted, and an explicit disabled choice survives.
+	call("disable", MethodExtensionPackageUpdate, ExtensionPackageUpdateParams{ID: record.ID, Fingerprint: record.Fingerprint, Action: ExtensionPackageDisable})
+	writePluginPackageFile(t, filepath.Join(first, "plugin.json"), `{"id":"selected-config-package","version":"1.1.0","skills":["skills"]}`)
+	updated := remarshal[PluginPackageInstallResult](t, call("same-source", MethodPluginPackageInstall, PluginPackageInstallParams{Path: first})["result"])
+	updatedRecord := pluginPackageRecord(t, updated.ExtensionInventory, "selected-config-package")
+	if updated.Pending || !updated.Replaced || updatedRecord.ApprovalState != ExtensionApprovalGranted || updatedRecord.Enabled == nil || *updatedRecord.Enabled {
+		t.Fatalf("same-source update changed trust/enable choice: %+v %+v", updated, updatedRecord)
+	}
+	call("enable", MethodExtensionPackageUpdate, ExtensionPackageUpdateParams{ID: updatedRecord.ID, Fingerprint: updatedRecord.Fingerprint, Action: ExtensionPackageEnable})
 	second := writeManagedPluginPackage(t, "selected-config-package", "2.0.0", "second")
 	staged := remarshal[PluginPackageInstallResult](t, call("stage", MethodPluginPackageInstall, PluginPackageInstallParams{Path: second})["result"])
 	call("promote", MethodExtensionPackageUpdate, ExtensionPackageUpdateParams{ID: record.ID, Fingerprint: staged.Package.Fingerprint, Action: ExtensionPackagePromoteUpdate})
@@ -79,5 +93,39 @@ func TestPluginPackageSelectedConfigPromotionAndRemoval(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".wuu", "config.json")); !os.IsNotExist(err) {
 		t.Fatalf("package operation accessed unselected canonical config: %v", err)
+	}
+}
+
+func TestPluginPackageInstallPublishesCommittedConfigActivationFailure(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
+	provider := &observedConfigSource{Service: config.NewService(config.Module, rt.ConfigPath, ""), outcome: "committed"}
+	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, t.TempDir()), nil })
+	attachTestModelGeneration(t, rt, provider, credentials, &configSourceConsumer{})
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	source := writeManagedPluginPackage(t, "committed-install", "1.0.0", "installed")
+	callPluginPackageRPC(t, srv, "install", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
+	messages := parseOutput(t, out.String())
+	response := responseByID(t, messages, "install")
+	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "configuration was saved") {
+		t.Fatalf("committed activation failure hidden: %+v", response)
+	}
+	found := false
+	for _, message := range messages {
+		if message["method"] != NotificationPluginInventoryChanged {
+			continue
+		}
+		publication := remarshal[PluginInventoryChangedNotification](t, message["params"])
+		record := pluginPackageRecord(t, publication.ExtensionInventory, "committed-install")
+		if record.ApprovalState != ExtensionApprovalGranted {
+			t.Fatalf("committed trust not published: %+v", record)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("committed inventory was not published: %s", out.String())
 	}
 }

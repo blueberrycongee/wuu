@@ -169,52 +169,55 @@ func TestPluginDesktopModuleReadRejectsDisabledPlugin(t *testing.T) {
 	}
 }
 
-func TestPluginPackageInstallDirectoryIsPendingAndDoesNotActivate(t *testing.T) {
+func TestPluginPackageInstallDirectoryTrustsAndEnables(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
-	source := t.TempDir()
-	marker := filepath.Join(source, "executed")
-	writePluginPackageFile(t, filepath.Join(source, "plugin.json"), `{
-  "id": "pending-demo",
-  "name": "Pending Demo",
-  "version": "2.0.0",
-  "skills": ["skills"],
-  "runtime": {"protocol":"wuu-plugin-v1","command":"bin/plugin"}
-}`)
-	writePluginPackageFile(t, filepath.Join(source, "skills", "pending-skill", "SKILL.md"), "pending skill")
-	writePluginPackageFile(t, filepath.Join(source, "bin", "plugin"), "#!/bin/sh\ntouch "+marker+"\n")
-
+	bindConfigSourceForTest(t, rt)
+	source := writeManagedPluginPackage(t, "installed-demo", "1.0.0", "trusted installed skill")
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	callPluginPackageRPC(t, srv, "install", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
 	response := responseByID(t, parseOutput(t, out.String()), "install")
 	if response["error"] != nil {
-		t.Fatalf("install response = %+v", response)
+		t.Fatalf("install: %v", response["error"])
 	}
 	result := remarshal[PluginPackageInstallResult](t, response["result"])
-	if result.Package.ID != "pending-demo" || result.Package.SourceKind != PluginPackageSourceDirectory || result.Replaced {
-		t.Fatalf("install result = %+v", result)
+	record := pluginPackageRecord(t, result.ExtensionInventory, "installed-demo")
+	if record.ApprovalState != ExtensionApprovalGranted || record.Enabled == nil || !*record.Enabled {
+		t.Fatalf("installation did not trust/enable: %+v", record)
 	}
-	record := pluginPackageRecord(t, result.ExtensionInventory, "pending-demo")
-	if record.ApprovalState != ExtensionApprovalPending || record.State != ExtensionStatePending || record.RuntimeState != ExtensionRuntimeInactive {
-		t.Fatalf("pending inventory record = %+v", record)
+}
+
+func TestPluginPackageFailedPreparationCanRetryInstallation(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.WuuHome = retryingTempDir(t)
+	preparePluginRuntimePathsForTest(t, rt)
+	bindConfigSourceForTest(t, rt)
+	source := t.TempDir()
+	manifest := filepath.Join(source, "plugin.json")
+	writePluginPackageFile(t, manifest, `{"id":"retry-install","runtime":{"protocol":"wuu-plugin-v1","command":"missing-binary"}}`)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	callPluginPackageRPC(t, srv, "failed", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
+	response := responseByID(t, parseOutput(t, out.String()), "failed")
+	if response["error"] == nil {
+		t.Fatal("broken runtime unexpectedly installed")
 	}
-	state := capturePluginRuntimeState(srv)
-	if activePluginVersion(state.active, "pending-demo") != "" {
-		t.Fatalf("active plugins = %+v, want no unapproved plugin", state.active)
+	if _, err := os.Stat(filepath.Join(rt.WuuHome, "plugins", "retry-install")); !os.IsNotExist(err) {
+		t.Fatalf("failed installation blocked retry: %v", err)
 	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("plugin runtime executed during install: %v", err)
+	writePluginPackageFile(t, manifest, `{"id":"retry-install"}`)
+	callPluginPackageRPC(t, srv, "retry", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
+	response = responseByID(t, parseOutput(t, out.String()), "retry")
+	if response["error"] != nil {
+		t.Fatalf("retry failed: %v", response["error"])
 	}
-	installedManifest := filepath.Join(rt.WuuHome, "plugins", "pending-demo", "plugin.json")
-	if _, err := os.Stat(installedManifest); err != nil {
-		t.Fatalf("installed manifest under Wuu home: %v", err)
-	}
-	for _, skill := range result.Skills {
-		if skill.Name == "pending-skill" {
-			t.Fatalf("unapproved plugin skill was activated: %+v", skill)
-		}
+	result := remarshal[PluginPackageInstallResult](t, response["result"])
+	if result.Pending || pluginPackageRecord(t, result.ExtensionInventory, "retry-install").ApprovalState != ExtensionApprovalGranted {
+		t.Fatalf("retry requested redundant approval: %+v", result)
 	}
 }
 
@@ -843,7 +846,7 @@ func TestPluginPackageMutationsPreserveUnrelatedRunningTurn(t *testing.T) {
 	srv.threads[thread.ID] = thread
 	srv.mu.Unlock()
 
-	// Installation is catalog-only and must proceed while a turn runs.
+	// Installation publishes a generation without interrupting unrelated turns.
 	callPluginPackageRPC(t, srv, "install-busy", MethodPluginPackageInstall, PluginPackageInstallParams{Path: source})
 	// Removal revokes only the removed plugin, not unrelated turns.
 	callPluginPackageRPC(t, srv, "remove-busy", MethodPluginPackageRemove, PluginPackageRemoveParams{ID: "busy-demo"})

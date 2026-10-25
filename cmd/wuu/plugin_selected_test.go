@@ -33,6 +33,8 @@ func TestPluginCLISelectedConfig(t *testing.T) {
 	}
 	for _, scenario := range []struct{ action, mode string }{
 		{"approve", "success"}, {"disable", "success"}, {"remove", "success"},
+		{"disable-bundled", "success"}, {"enable-bundled", "success"},
+		{"install", "success"}, {"install", "read-failure"}, {"install", "conflict"}, {"install", "unknown"}, {"install", "activation-failure"},
 		{"approve-update", "success"}, {"reject-update", "read-failure"},
 		{"approve", "read-failure"}, {"remove", "read-failure"},
 		{"approve-update", "conflict"}, {"remove", "conflict"},
@@ -72,6 +74,9 @@ func TestPluginCLISelectedConfig(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if scenario.action == "enable-bundled" {
+				cfg.Extensions.SetEnabled("plugin:bundled:peers", false)
+			}
 			bootstrap, err := json.Marshal(cfg)
 			if err != nil {
 				t.Fatal(err)
@@ -98,9 +103,21 @@ func TestPluginCLISelectedConfig(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			action := strings.TrimSuffix(scenario.action, "-update")
+			action := strings.TrimSuffix(strings.TrimSuffix(scenario.action, "-update"), "-bundled")
 			var commandErr error
-			captureStdout(t, func() { commandErr = run([]string{"plugin", action, "selected-demo"}) })
+			argument := "selected-demo"
+			policySubject := installed.Plugin.SubjectID
+			if strings.HasSuffix(scenario.action, "-bundled") {
+				argument = "peers"
+				policySubject = "plugin:bundled:peers"
+			}
+			if action == "install" {
+				if _, err := pluginpkg.UninstallPackage(home, installed.Plugin.ID); err != nil {
+					t.Fatal(err)
+				}
+				argument = source
+			}
+			captureStdout(t, func() { commandErr = run([]string{"plugin", action, argument}) })
 			wantErr := scenario.mode != "success" && scenario.action != "reject-update"
 			if (commandErr != nil) != wantErr {
 				t.Fatalf("command error = %v, want error %v", commandErr, wantErr)
@@ -151,7 +168,7 @@ func TestPluginCLISelectedConfig(t *testing.T) {
 			}
 			if written {
 				switch action {
-				case "approve":
+				case "approve", "install":
 					fingerprint := installed.Plugin.Fingerprint
 					if pending.Path != "" {
 						fingerprint = pending.Package.Fingerprint
@@ -160,8 +177,12 @@ func TestPluginCLISelectedConfig(t *testing.T) {
 						t.Fatal("selected policy did not grant the exact fingerprint")
 					}
 				case "disable":
-					if !selected.Extensions.IsDisabled(installed.Plugin.SubjectID) {
+					if !selected.Extensions.IsDisabled(policySubject) {
 						t.Fatal("selected policy did not disable plugin")
+					}
+				case "enable":
+					if !selected.Extensions.IsEnabled(policySubject, false) {
+						t.Fatal("selected policy did not enable bundled plugin")
 					}
 				case "remove":
 					if _, ok := selected.Extensions.Grants[installed.Plugin.SubjectID]; ok {
@@ -170,7 +191,7 @@ func TestPluginCLISelectedConfig(t *testing.T) {
 				}
 			}
 			finalized := scenario.mode == "success" || scenario.mode == "activation-failure"
-			if action == "remove" && finalized {
+			if (action == "remove" && finalized) || (action == "install" && (scenario.mode == "read-failure" || scenario.mode == "conflict")) {
 				if _, err := os.Stat(installed.Destination); !os.IsNotExist(err) {
 					t.Fatalf("removed package remains: %v", err)
 				}
@@ -208,22 +229,37 @@ func TestPluginCLIFirstPolicyWithoutModel(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
-	if _, err := os.Stat(filepath.Join(home, "config.json")); !os.IsNotExist(err) {
-		t.Fatalf("installation created configuration: %v", err)
-	}
-	captureStdout(t, func() {
-		if err := run([]string{"plugin", "approve", "first-policy"}); err != nil {
-			t.Fatal(err)
-		}
-	})
 	loaded, _, err := config.LoadFrom(root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	item := userPluginByID(t, home, "first-policy")
 	if _, ok := loaded.Extensions.FindGrant(item.SubjectID, item.Fingerprint); !ok {
-		t.Fatal("first approval did not persist")
+		t.Fatal("installation trust did not persist")
 	}
+	captureStdout(t, func() {
+		if err := run([]string{"plugin", "disable", "first-policy"}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	writePluginConfigFile(t, filepath.Join(source, "plugin.json"), []byte(`{"id":"first-policy","version":"2.0.0"}`))
+	captureStdout(t, func() {
+		if err := run([]string{"plugin", "update", "first-policy", source}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	updated := userPluginByID(t, home, "first-policy")
+	loaded, _, err = config.LoadFrom(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Version != "2.0.0" || !loaded.Extensions.IsDisabled(updated.SubjectID) {
+		t.Fatalf("same-source update changed enable state: %+v", updated)
+	}
+	if _, ok := loaded.Extensions.FindGrant(updated.SubjectID, updated.Fingerprint); !ok {
+		t.Fatal("same-source update lost exact grant")
+	}
+
 }
 
 func writePluginConfigFile(t *testing.T, path string, data []byte) {

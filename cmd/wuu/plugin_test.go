@@ -106,7 +106,7 @@ func TestPluginCLIInstallListInspectAndRemove(t *testing.T) {
 	if err := json.Unmarshal([]byte(installOutput), &installed); err != nil {
 		t.Fatalf("decode install output: %v\n%s", err, installOutput)
 	}
-	if installed.ID != "cli-demo" || !installed.ApprovalRequired || installed.Destination != filepath.Join(home, "plugins", "cli-demo") {
+	if installed.ID != "cli-demo" || installed.ApprovalRequired || installed.Destination != filepath.Join(home, "plugins", "cli-demo") {
 		t.Fatalf("install output = %+v", installed)
 	}
 
@@ -242,6 +242,9 @@ func TestPluginCLIStagesAndDecidesUpdatesWithoutReplacingEarly(t *testing.T) {
 		t.Fatalf("approve v1: %v", err)
 	}
 	activeBefore := userPluginByID(t, home, "update-cli")
+	// A different distribution location still requires explicit source approval.
+	source = t.TempDir()
+	manifestPath = filepath.Join(source, "plugin.json")
 
 	if err := os.WriteFile(manifestPath, []byte(`{"id":"update-cli","version":"2.0.0"}`), 0o644); err != nil {
 		t.Fatal(err)

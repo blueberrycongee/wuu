@@ -155,6 +155,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Enable plugins when installed, retain trust and disabled state on same-source updates, and allow CLI and Agent callers to toggle bundled plugins. Preserve installation recovery and committed activation diagnostics.
+
 - Keep new child agents on the current composition while existing workers retain admitted bindings, and preserve tool call identities in handoff history.
 
 - Retain recoverable evaluation state and completed task results after interruption, and reject frozen plans when task or scoring code changes.

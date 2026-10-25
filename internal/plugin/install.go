@@ -784,3 +784,32 @@ func zipDirectory(source, dest string) error {
 		return nil
 	})
 }
+
+// PackageSourceIdentity identifies a local distribution location, not its bytes.
+// Updating a zip at the same canonical path is a same-source update. Retargeting
+// a symlink changes the identity and therefore requires a source-change decision.
+func PackageSourceIdentity(source string) (string, error) {
+	absolute, err := filepath.Abs(source)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(resolved), nil
+}
+
+// RollbackInstallation removes only the exact newly installed generation while
+// the caller still holds the catalog mutation lease.
+func RollbackInstallation(home, id, fingerprint string) error {
+	installed, _, err := installedUserPlugin(home, id)
+	if err != nil {
+		return err
+	}
+	if installed.Fingerprint != fingerprint {
+		return fmt.Errorf("plugin %q changed during failed installation; preserving package", id)
+	}
+	_, err = UninstallPackage(home, id)
+	return err
+}

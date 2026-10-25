@@ -184,10 +184,9 @@ WUU_SELF_EXTENSION_BINARY="$PWD/bin/wuu" \
 ```bash
 wuu plugin pack .
 wuu plugin install ./hello-plugin-0.1.0.zip
-wuu plugin approve hello-plugin
 ```
 
-当前 CLI 会先暂存本地包，再由批准操作启用代码执行。开发目录授权是独立的，不会随 zip 分发。插件以你的用户权限运行，包验证不等于安全审计。禁用和删除操作见[插件管理](plugins.md)。
+安装本地包即确认信任并启用代码执行。同一已记录来源的更新继承信任；来源改变需要确认。开发目录授权是独立的，不会随 zip 分发。插件以你的用户权限运行，包验证不等于安全审计。禁用和删除操作见[插件管理](plugins.md)。
 
 持久状态、服务和生命周期回调见[编写插件](plugin-authoring.md)。如果要添加界面而非模型工具，请使用[桌面插件快速上手](desktop-plugin-quickstart.md)。
 

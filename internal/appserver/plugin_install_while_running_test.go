@@ -10,16 +10,15 @@ import (
 )
 
 // TestPluginPackageInstallAllowedWhileTurnRunning is the install-while-active
-// regression: installation and validation are catalog-only, so they must
-// succeed while a turn is running and must not touch the active plugin
-// generation. The newly installed package appears in the inventory but adds
-// no model-facing surface to the existing Session.
+// regression: installation publishes a trusted generation while the admitted
+// turn retains its own host and model-facing surface.
 func TestPluginPackageInstallAllowedWhileTurnRunning(t *testing.T) {
 	stream := newBlockingStreamClient("eventually done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = stream
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
-	attachTestModelGeneration(t, rt)
+	preparePluginRuntimePathsForTest(t, rt)
+	bindConfigSourceForTest(t, rt)
 	activeHost := rt.PluginHost
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -71,12 +70,14 @@ func TestPluginPackageInstallAllowedWhileTurnRunning(t *testing.T) {
 	if result := responseByID(t, parseOutput(t, out.String()), "3")["result"]; result == nil {
 		t.Fatalf("install failed while a turn was running; output:\n%s", out.String())
 	}
-	if rt.PluginHost != activeHost {
-		t.Fatal("install swapped the active plugin host")
+	thread := srv.threads[threadID]
+	thread.mu.Lock()
+	retainedHost := thread.execRuntime.PluginHost
+	thread.mu.Unlock()
+	if retainedHost != activeHost {
+		t.Fatal("install replaced admitted turn plugin host")
 	}
-	if len(rt.ActivePlugins) != 0 {
-		t.Fatalf("install changed the active plugin set: %+v", rt.ActivePlugins)
-	}
+
 	found := false
 	for _, record := range srv.currentExtensionInventory() {
 		if record.ID == "plugin:user:live-install" {

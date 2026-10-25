@@ -88,88 +88,136 @@ func runPluginInspect(args []string) error {
 	return printPluginPackageOutput(packageInspectionOutput(inspection), *jsonOutput, "Valid plugin package")
 }
 
-func runPluginInstall(args []string) (retErr error) {
-	fs, jsonOutput := pluginFlagSet("plugin install")
+func runPluginInstall(args []string) error { return runPluginPackageInstall("install", args) }
+func runPluginUpdate(args []string) error  { return runPluginPackageInstall("update", args) }
+
+func runPluginPackageInstall(action string, args []string) (retErr error) {
+	fs, jsonOutput := pluginFlagSet("plugin " + action)
 	if err := fs.Parse(args); err != nil {
 		return pluginCLIError(err)
 	}
-	source, err := requiredPluginArgument(fs, "plugin install requires one local directory or .zip path")
+	source := ""
+	if action == "update" {
+		if fs.NArg() != 2 {
+			return pluginCLIError(errors.New("plugin update requires an installed plugin id and one local directory or .zip path"))
+		}
+		source = fs.Arg(1)
+	} else {
+		var err error
+		source, err = requiredPluginArgument(fs, "plugin install requires one local directory or .zip path")
+		if err != nil {
+			return err
+		}
+	}
+	inspection, err := pluginpkg.InspectPackage(source)
+	if err != nil {
+		return pluginCLIError(err)
+	}
+	if action == "update" && inspection.ID != fs.Arg(0) {
+		return pluginCLIError(fmt.Errorf("plugin update id %q does not match package id %q", fs.Arg(0), inspection.ID))
+	}
+	identity, err := pluginpkg.PackageSourceIdentity(source)
+	if err != nil {
+		return pluginCLIError(err)
+	}
+	home, err := statepath.Home("")
 	if err != nil {
 		return err
 	}
-	home, err := statepath.Home("")
+	ctx, cancel := signalContext()
+	defer cancel()
+	binding, err := openCommandState(ctx, "")
 	if err != nil {
-		return fmt.Errorf("resolve Wuu home: %w", err)
+		return err
 	}
-	inspection, err := pluginpkg.InspectPackage(source)
+	defer func() { retErr = errors.Join(retErr, binding.Close()) }()
+	services, err := binding.Services()
 	if err != nil {
-		return pluginCLIError(err)
+		return err
 	}
-	releaseMutation, err := beginPluginCLIMutation(home, "install")
+	release, err := beginPluginCLIMutation(home, action)
 	if err != nil {
-		return pluginCLIError(err)
+		return err
 	}
-	defer func() { retErr = errors.Join(retErr, releaseMutation()) }()
-	if _, statErr := os.Lstat(filepath.Join(home, "plugins", inspection.ID)); statErr == nil {
-		pending, err := pluginpkg.StagePackageUpdate(home, source)
+	defer func() { retErr = errors.Join(retErr, release()) }()
+	var pending *pluginpkg.PendingUpdate
+	var fresh *pluginpkg.InstallResult
+	preservePackage := false
+	defer func() {
+		if fresh != nil && !preservePackage {
+			retErr = errors.Join(retErr, pluginpkg.RollbackInstallation(home, fresh.Plugin.ID, fresh.Plugin.Fingerprint))
+		}
+	}()
+	if _, err := os.Lstat(filepath.Join(home, "plugins", inspection.ID)); err == nil {
+		update, err := pluginpkg.StagePackageUpdate(home, identity)
 		if err != nil {
 			return pluginCLIError(err)
 		}
-		output := packageInspectionOutput(pending.Package)
-		output.Destination = pending.Path
-		output.Pending = true
-		output.ActiveFingerprint = pending.ActiveFingerprint
-		output.ApprovalRequired = true
-		return printPluginPackageOutput(output, *jsonOutput, "Staged plugin update; the installed generation remains active until approval")
-	} else if !os.IsNotExist(statErr) {
-		return pluginCLIError(fmt.Errorf("inspect installed plugin %q: %w", inspection.ID, statErr))
+		pending = &update
+	} else if !os.IsNotExist(err) {
+		return err
+	} else if action == "update" {
+		return pluginCLIError(fmt.Errorf("plugin %q is not installed", inspection.ID))
 	}
-	result, err := pluginpkg.InstallPackage(home, source)
+	subject := extensions.SubjectID("user", inspection.ID)
+	if pending != nil {
+		view, err := services.Config.Read(ctx)
+		if err != nil {
+			return err
+		}
+		trusted := view.Config.Extensions != nil && view.Config.Extensions.TrustsSource(subject, pending.ActiveFingerprint, identity)
+		clear(view.Source)
+		if !trusted {
+			output := packageInspectionOutput(pending.Package)
+			output.Destination = pending.Path
+			output.Pending = true
+			output.ActiveFingerprint = pending.ActiveFingerprint
+			output.ApprovalRequired = true
+			return printPluginPackageOutput(output, *jsonOutput, "Staged plugin source change; confirmation is required")
+		}
+		inspection = pending.Package
+	} else {
+		installed, err := pluginpkg.InstallPackage(home, identity)
+		if err != nil {
+			return pluginCLIError(err)
+		}
+		inspection = installed.Package
+		fresh = &installed
+	}
+	view, next, err := preparePluginPolicy(ctx, services.Config, func(settings *extensions.Settings) error {
+		if pending != nil && !settings.TrustsSource(subject, pending.ActiveFingerprint, identity) {
+			return errors.New("plugin source authorization changed; reread before retry")
+		}
+		return settings.TrustInstallation(subject, inspection.Fingerprint, identity, inspection.EffectivePermissions, pending == nil)
+	})
 	if err != nil {
-		return pluginCLIError(err)
+		return err
 	}
-	output := packageInspectionOutput(result.Package)
-	output.Destination = result.Destination
-	output.Replaced = result.Replaced
-	output.ApprovalRequired = true
-	return printPluginPackageOutput(output, *jsonOutput, "Installed plugin package; approval is required before code activation")
-}
-
-func runPluginUpdate(args []string) (retErr error) {
-	fs, jsonOutput := pluginFlagSet("plugin update")
-	if err := fs.Parse(args); err != nil {
-		return pluginCLIError(err)
+	defer clear(view.Source)
+	defer clear(next)
+	preservePackage = true // An unknown CAS may already have committed the matching grant.
+	committed, policyErr := commitPluginPolicy(ctx, services.Config, view.Revision, next)
+	var serviceErr *pluginhost.HostServiceError
+	if errors.As(policyErr, &serviceErr) && serviceErr.Code == "config_conflict" {
+		preservePackage = false
 	}
-	if fs.NArg() != 2 || strings.TrimSpace(fs.Arg(0)) == "" || strings.TrimSpace(fs.Arg(1)) == "" {
-		return pluginCLIError(errors.New("plugin update requires an installed plugin id and one local directory or .zip path"))
+	if !committed {
+		return policyErr
 	}
-	id, source := strings.TrimSpace(fs.Arg(0)), strings.TrimSpace(fs.Arg(1))
-	inspection, err := pluginpkg.InspectPackage(source)
-	if err != nil {
-		return pluginCLIError(err)
+	if pending != nil {
+		installed, err := pluginpkg.PromotePendingUpdate(home, inspection.ID, inspection.Fingerprint)
+		if err != nil {
+			return errors.Join(policyErr, fmt.Errorf("plugin policy committed, but package promotion failed: %w", err))
+		}
+		inspection = installed.Package
 	}
-	if inspection.ID != id {
-		return pluginCLIError(fmt.Errorf("plugin update id %q does not match package id %q", id, inspection.ID))
+	if policyErr != nil {
+		return policyErr
 	}
-	home, err := statepath.Home("")
-	if err != nil {
-		return fmt.Errorf("resolve Wuu home: %w", err)
-	}
-	releaseMutation, err := beginPluginCLIMutation(home, "update")
-	if err != nil {
-		return pluginCLIError(err)
-	}
-	defer func() { retErr = errors.Join(retErr, releaseMutation()) }()
-	pending, err := pluginpkg.StagePackageUpdate(home, source)
-	if err != nil {
-		return pluginCLIError(err)
-	}
-	output := packageInspectionOutput(pending.Package)
-	output.Destination = pending.Path
-	output.Pending = true
-	output.ActiveFingerprint = pending.ActiveFingerprint
-	output.ApprovalRequired = true
-	return printPluginPackageOutput(output, *jsonOutput, "Staged plugin update; approve it to replace the installed generation")
+	output := packageInspectionOutput(inspection)
+	output.Destination = filepath.Join(home, "plugins", inspection.ID)
+	output.Replaced = pending != nil
+	return printPluginPackageOutput(output, *jsonOutput, "Installed and trusted plugin package")
 }
 
 func runPluginList(args []string) error {
@@ -382,8 +430,8 @@ func runPluginPolicy(action string, args []string) (retErr error) {
 	if err != nil {
 		return pluginCLIError(err)
 	}
-	if item.Official {
-		return pluginCLIError(fmt.Errorf("official bundled plugin %q does not use user policy actions", item.ID))
+	if item.Official && (action == "approve" || action == "reject") {
+		return pluginCLIError(fmt.Errorf("official bundled plugin %q cannot be approved or rejected", item.ID))
 	}
 	var approvedUpdate *pluginpkg.PendingUpdate
 	if (action == "approve" || action == "reject") && item.Source == "user" {
@@ -413,12 +461,17 @@ func runPluginPolicy(action string, args []string) (retErr error) {
 			if item.Source == "project" {
 				scope = extensions.GrantScopeProject
 			}
+			sourceIdentity := ""
+			if approvedUpdate != nil {
+				sourceIdentity = approvedUpdate.SourceIdentity
+			}
 			if err := settings.RecordGrant(extensions.Grant{
-				SubjectID:   item.SubjectID,
-				Fingerprint: item.Fingerprint,
-				Scope:       scope,
-				Permissions: append([]string(nil), item.EffectivePermissions...),
-				ApprovedAt:  time.Now().UTC(),
+				SourceIdentity: sourceIdentity,
+				SubjectID:      item.SubjectID,
+				Fingerprint:    item.Fingerprint,
+				Scope:          scope,
+				Permissions:    append([]string(nil), item.EffectivePermissions...),
+				ApprovedAt:     time.Now().UTC(),
 			}); err != nil {
 				return err
 			}

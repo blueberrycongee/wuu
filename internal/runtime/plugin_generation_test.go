@@ -1012,40 +1012,6 @@ func testGenerationSession(t *testing.T, generation *PluginGeneration) *Session 
 	}
 }
 
-func TestRefreshPluginCatalogKeepsActiveGeneration(t *testing.T) {
-	host := pluginhost.New(&generationClient{id: "live"})
-	livePlugin := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "live"}}
-	generation := &PluginGeneration{
-		id:      "gen-live",
-		plugins: []pluginpkg.Plugin{livePlugin},
-		active:  []pluginpkg.Plugin{livePlugin},
-		host:    host,
-	}
-	session := &Session{
-		RootDir:          t.TempDir(),
-		WuuHome:          t.TempDir(),
-		Plugins:          []pluginpkg.Plugin{livePlugin},
-		ActivePlugins:    []pluginpkg.Plugin{livePlugin},
-		PluginHost:       host,
-		pluginGeneration: generation,
-	}
-	if err := session.RefreshPluginCatalog(); err != nil {
-		t.Fatal(err)
-	}
-	if !session.IsCurrentPluginGeneration(generation) {
-		t.Fatal("catalog refresh changed the committed generation identity")
-	}
-	if session.PluginHost != host || session.pluginGeneration != generation || generation.host != host {
-		t.Fatal("catalog refresh touched the active plugin generation")
-	}
-	if len(session.ActivePlugins) != 1 || session.ActivePlugins[0].ID != "live" {
-		t.Fatalf("catalog refresh changed the active plugin set: %+v", session.ActivePlugins)
-	}
-	if session.Skills != nil || session.systemPrompts != nil {
-		t.Fatal("catalog refresh installed model-facing surfaces")
-	}
-}
-
 func testPluginGeneration(id string, client pluginhost.Client) *PluginGeneration {
 	plugin := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: id}}
 	return &PluginGeneration{

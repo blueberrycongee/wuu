@@ -159,7 +159,8 @@ async function run() {
     const installed=boot('plugin/package/install',{path:path.join(packages,id)});
     const record=installed.extension_inventory.find(item=>item.kind==='plugin' && item.provenance.plugin_id===id);
     assert.ok(record,JSON.stringify(installed));
-    boot('extension/package/update',{id:record.id,fingerprint:record.fingerprint,action:'grant'});
+    assert.equal(record.approval_state,'granted','install grants trust without a second approval');
+    assert.equal(record.enabled,true,'install enables the selected package');
     report[id]=record;
   }
   if(coldResearch) {
@@ -182,7 +183,11 @@ async function run() {
   await until(()=>evaluate(()=>!document.querySelector('.composer-stop-button') && ![...document.querySelectorAll('.research-composer button')].some(e=>e.textContent==='Stop')),'first turn completes');
   const listed=await evaluate(cwd=>window.wuu.listThreads(cwd),project);
   assert.equal(listed.threads.length,1,JSON.stringify(listed)); const threadID=listed.threads[0].id;report.threadID=threadID;
-  const before=await evaluate(id=>window.wuu.resumeThread(id),threadID);
+  // Answer-ready can precede durable turn completion and usage publication.
+  const before=await until(async()=>{
+    const snapshot=await evaluate(id=>window.wuu.resumeThread(id),threadID);
+    return snapshot.thread.turns.length===1 && snapshot.thread.turns[0].status==='completed' ? snapshot : null;
+  },'first turn durably completes before shell replacement');
   fs.writeFileSync(path.join(output,'thread-before.json'),JSON.stringify(before,null,2));
   await capture(coldResearch ? 'research-cold-completed' : 'default-completed');
   if(!coldResearch) {
