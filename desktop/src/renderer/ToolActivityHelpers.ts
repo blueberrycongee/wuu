@@ -89,6 +89,43 @@ export function buildToolActivityProcessSegments(
   );
 }
 
+/** Pick the newest running call in wire order, or the last settled call. */
+export function latestToolActivityProcessSegment(
+  items: ThreadItem[],
+  hasCompaction: boolean,
+): ToolActivityProcessSegment | undefined {
+  const candidates = hasCompaction
+    ? items.filter(item => itemToolStatus(item) !== "completed"
+      || !["context", "context-window"].includes(toolActivitySectionKey(item)))
+    : items;
+  const item = [...candidates].reverse().find(item => itemToolStatus(item) === "running")
+    ?? candidates.at(-1);
+  if (!item) return undefined;
+
+  const key = toolActivitySectionKey(item);
+  const segment = toolActivityProcessSegmentFromItems(key, [item]);
+  const name = canonicalToolName((item.name ?? "").trim());
+  if (["read_file", "edit_file", "write_file", "apply_patch", "grep", "glob"].includes(name)) return segment;
+
+  const args = parseJSONRecord(item.arguments);
+  const result = richToolResultRecord(item) ?? parseJSONRecord(item.result);
+  const command = stringValue(args, "command") ?? stringValue(result, "command");
+  if (command && (name === "bash" || item.display?.capability === "command.bash")) {
+    return {
+      ...segment,
+      text: `${t(`process.action.command.${segment.status}`)} ${truncateText(command.replace(/\s+/g, " "), 100)}`,
+    };
+  }
+
+  const action = readableToolActivityCommandInner(item) || readableToolActivityName(item);
+  return {
+    id: segment.id,
+    kind: segment.kind,
+    status: segment.status,
+    text: t(`process.activity.${segment.status}`, { action }),
+  };
+}
+
 export function activitySummaryText(
   sections: ToolActivitySection[],
   fallback: ToolActivitySummary,
@@ -1140,7 +1177,7 @@ function readableBrowserLabel(args: JsonRecord | undefined, result: JsonRecord |
   if (!target && action === "key") {
     target = stringValue(args, "keys") ?? arrayValue(args, "keys").filter(key => typeof key === "string").join(" + ");
   }
-  return target ? `${label} · ${truncateText(target.replace(/\s+/g, " "), 90)}` : label;
+  return target ? `${label} ${truncateText(target.replace(/\s+/g, " "), 90)}` : label;
 }
 
 export function readableToolName(name: string | undefined): string {

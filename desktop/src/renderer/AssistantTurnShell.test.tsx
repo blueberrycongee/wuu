@@ -1001,7 +1001,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].classList.contains("is-live-gray")).toBe(true);
     expect(rows[0].classList.contains("is-streaming")).toBe(false);
-    expect(rows[0].textContent).toContain("思考过程");
+    expect(rows[0].textContent).toContain("App.tsx");
   });
 
   it("does not sweep older process rows after commentary becomes latest", () => {
@@ -1016,7 +1016,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].classList.contains("is-live-gray")).toBe(false);
     expect(rows[0].classList.contains("is-streaming")).toBe(false);
-    expect(rows[0].textContent).toContain("思考过程");
+    expect(rows[0].textContent).toContain("App.tsx");
   });
 
   it("keeps the reasoning fold closed even when the outer process fold is open", () => {
@@ -1093,7 +1093,6 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
     const groups = processSurfaceRows(container);
     expect(groups).toHaveLength(1);
     expect(groups[0].textContent).toContain("搜索");
-    expect(groups[0].textContent).toContain("正在思考");
     const folds = reasoningFolds(container);
     expect(folds).toHaveLength(1);
     expect(reasoningSummaryText(folds[0])).toBe("正在思考");
@@ -1156,7 +1155,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
 
     const surfaceAfter = container.querySelector(".process-surface");
     expect(surfaceAfter).toBe(surfaceBefore);
-    expect(surfaceAfter?.textContent).toContain("正在思考");
+    expect(surfaceAfter?.querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("App.tsx");
   });
 
   it("groups consecutive tool activity into one count row with details", () => {
@@ -1169,9 +1168,7 @@ describe("AssistantTurnShell — reasoning fold (rule 3)", () => {
 
     const groups = processSurfaceFolds(container);
     expect(groups).toHaveLength(1);
-    expect(groups[0].querySelector(".process-surface-count")?.textContent).toBe(
-      "2",
-    );
+    expect(groups[0].querySelector(".process-surface-summary-line")?.getAttribute("aria-label")).toContain("2");
     expect(groups[0].querySelectorAll(".activity-group")).toHaveLength(2);
   });
 

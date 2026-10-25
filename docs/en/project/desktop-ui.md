@@ -340,6 +340,8 @@ Use a CSS transition from the ladder for motion whose geometry is already known:
 
 ## Conversation disclosure scrolling
 
+The active process row shows the latest running tool call, falling back to the latest settled call between tools. Earlier process groups and completed turns summarize their tool activity. Reasoning stays in the expanded trail when tools are present; reasoning-only rows retain their thinking label. Compact rows keep the shared quiet text color.
+
 Opening or closing tool/reasoning details preserves the reader's scroll mode. A conversation following the latest content continues following through the height transition; a paused conversation keeps its reading position. Wheel, touch, keyboard scrolling, scrollbar dragging, and text selection take precedence over layout correction.
 
 Inside a bounded inspection strip, tools and reasoning follow their event order.

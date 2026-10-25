@@ -62,6 +62,12 @@ async function run() {
     document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
   });
   const threadID = await startActiveThread(win);
+  // The synthetic turn below bypasses normal submission cleanup.
+  await evaluate(win, () => {
+    const input = document.querySelector("[data-main-conversation-composer] textarea");
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(input, "");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
   const turnID = "turn-process-compaction-summary-e2e";
   const userItem = {
     id: "user-process-compaction-summary-e2e",
@@ -99,8 +105,8 @@ async function run() {
     delta: "A long activity summary keeps its compaction ring on the same line.",
   });
 
-  // Five commands plus a long extension name make the summary wider than the
-  // available room once the compaction ring and chevron are accounted for.
+  // Keep a long command active after a mixed history so both the live call
+  // and the settled aggregate exercise truncation beside the compaction ring.
   const items = [];
   for (let index = 0; index < 5; index += 1) {
     items.push({
@@ -128,6 +134,13 @@ async function run() {
       arguments: "{}",
     },
     {
+      id: "latest-process-compaction-summary-e2e",
+      type: "tool_call",
+      status: "in_progress",
+      name: "bash",
+      arguments: JSON.stringify({ command: "pnpm typecheck --filter desktop --filter plugin-sdk --filter protocol --filter remote-control --filter native-clients" }),
+    },
+    {
       id: "compact-process-compaction-summary-e2e",
       type: "context_compaction",
       status: "completed",
@@ -137,7 +150,7 @@ async function run() {
   );
   for (const item of items) {
     emitNotification(win, "item/started", { thread_id: threadID, turn_id: turnID, item });
-    emitNotification(win, "item/completed", { thread_id: threadID, turn_id: turnID, item });
+    if (item.status === "completed") emitNotification(win, "item/completed", { thread_id: threadID, turn_id: turnID, item });
   }
 
   const geometry = await waitFor(win, compactionSummaryGeometry, 5000);
@@ -183,7 +196,7 @@ async function run() {
     thread_id: threadID,
     turn: {
       id: turnID,
-      items: [userItem, ...items, {
+      items: [userItem, ...items.map(item => ({ ...item, status: "completed" })), {
         ...answerItem, status: "completed", terminal: true,
         text: "The activity summary and composer hint keep the same quiet color.",
       }],
@@ -210,6 +223,7 @@ async function checkQuietText(win, state, report) {
   if (state !== "welcome") {
     await waitFor(win, () => document.querySelector('.process-surface-summary-text')
       ?.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }), 5000);
+    await waitFor(win, () => !document.querySelector('.process-surface [data-transitioning="true"]'), 5000);
   }
   for (const [width, fontSize] of [[1080, 15], [600, 20]]) {
     win.setContentSize(width, 900);
@@ -259,7 +273,7 @@ function compactionSummaryGeometry() {
       !(ring instanceof HTMLElement) || !(chevron instanceof SVGElement)) {
     return null;
   }
-  if (!text.textContent?.includes("mcp_plugin_cua_mac_computer_computer_e4eeb575")) {
+  if (!text.textContent?.includes("pnpm typecheck")) {
     return null;
   }
   const rect = (element) => {

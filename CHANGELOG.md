@@ -99,6 +99,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Show the latest concrete tool call in the active conversation activity row and keep historical rows summarized by activity. Keep the full tool and reasoning trail in the expandable details, without a dot-separated reasoning label.
+
 - Center the conversation composer with equal side gutters when the right-side tool rail is visible.
 
 - Use narrower workspace and branch menus, tighter shared menu spacing, and less padding in the home usage card. Simplify the branch picker to a search field and branch list, showing branch creation only after a new name is entered.
