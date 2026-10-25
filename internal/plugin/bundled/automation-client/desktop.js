@@ -13,7 +13,6 @@ export async function activate(api) {
 
     "automation.title": "Automations",
     "automation.sidebar.running": "Running now", "automation.sidebar.upcoming": "Up next",
-    "automation.sidebar.idle": "Nothing running right now", "automation.sidebar.unscheduled": "No upcoming runs",
     "automation.sidebar.loading": "Loading schedules…", "automation.sidebar.refreshError": "Could not refresh schedules",
     "automation.run.starting": "Starting",
     "automation.new": "New automation", "automation.empty": "No automations yet",
@@ -39,7 +38,6 @@ export async function activate(api) {
 
     "automation.title": "自动化",
     "automation.sidebar.running": "正在运行", "automation.sidebar.upcoming": "接下来",
-    "automation.sidebar.idle": "当前没有运行中的任务", "automation.sidebar.unscheduled": "暂无待触发的任务",
     "automation.sidebar.loading": "正在加载调度…", "automation.sidebar.refreshError": "调度信息刷新失败",
     "automation.run.starting": "正在启动",
     "automation.new": "新建自动化", "automation.empty": "还没有自动化任务",
@@ -650,15 +648,15 @@ export async function activate(api) {
           h("span", { className: "plugin-automation-sidebar-title" }, title),
           h("span", { className: "plugin-automation-sidebar-meta" }, meta)));
     };
-    const group = (name, items, empty) => h("section", { className: "plugin-automation-sidebar-group", "aria-label": tr(name) },
+    const group = (name, items) => items.length ? h("section", { className: "plugin-automation-sidebar-group", "aria-label": tr(name) },
       h("h3", { className: "sidebar-subsection-title plugin-automation-sidebar-heading" }, tr(name), h("span", { className: "plugin-automation-sidebar-count", "aria-hidden": true }, items.length)),
-      items.length ? items : h("p", { className: "sidebar-subsection-empty" }, tr(empty)));
+      items) : null;
     return h("div", { className: "plugin-automation-sidebar" },
       h("p", { className: "plugin-automation-sidebar-workspace" }, workspace.name || workspaceName(workspace.root)),
       error ? h("p", { className: "sidebar-subsection-empty", role: "status", title: error }, tr("automation.sidebar.refreshError")) : null,
       !loaded ? (!error ? h("p", { className: "sidebar-subsection-empty", role: "status" }, tr("automation.sidebar.loading")) : null) : h(React.Fragment, null,
-        group("automation.sidebar.running", active.map((run) => row(run.task, run.id, run.status, run.triggered_at)), "automation.sidebar.idle"),
-        group("automation.sidebar.upcoming", upcoming.map((task) => row(task, task.id, null, task.next_run_at)), "automation.sidebar.unscheduled")));
+        group("automation.sidebar.running", active.map((run) => row(run.task, run.id, run.status, run.triggered_at))),
+        group("automation.sidebar.upcoming", upcoming.map((task) => row(task, task.id, null, task.next_run_at)))));
   }
 
   function Catalog(props) {
