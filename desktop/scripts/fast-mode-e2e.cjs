@@ -177,7 +177,10 @@ async function run() {
   await waitFor(main, () => [...document.querySelectorAll('.thread-row')].some(row => row.textContent.includes('Provider effort fixture')));
   await evaluate(main, () => [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Provider effort fixture')).querySelector('.thread-row-main').click());
   await waitFor(main, () => document.querySelector('.thread-row[aria-current="page"]')?.textContent.includes('Provider effort fixture'));
-  await waitFor(main, () => document.querySelector('.codex-runtime-trigger'));
+  await waitFor(main, () => {
+    const input = document.querySelector('.composer textarea');
+    return input && !input.disabled && !input.readOnly && document.querySelector('.codex-runtime-trigger:not(:disabled)');
+  });
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
   await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]'));
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'false');
@@ -337,7 +340,10 @@ async function run() {
   await evaluate(main, () => { for (const group of document.querySelectorAll('.project-group')) group.querySelector('button[aria-expanded="false"]')?.click(); });
   await waitFor(main, () => [...document.querySelectorAll('.thread-row')].some(row => row.textContent.includes('Codex speed fixture')));
   await evaluate(main, () => [...document.querySelectorAll('.thread-row')].find(row => row.textContent.includes('Codex speed fixture')).querySelector('.thread-row-main').click());
-  await waitFor(main, () => document.querySelector('.codex-runtime-trigger')?.textContent.includes('GPT-6 Astra'));
+  await waitFor(main, () => {
+    const input = document.querySelector('.composer textarea');
+    return input && !input.disabled && !input.readOnly && document.querySelector('.codex-runtime-trigger:not(:disabled)')?.textContent.includes('GPT-6 Astra');
+  });
   await openPanel();
   assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));

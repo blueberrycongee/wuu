@@ -173,8 +173,20 @@ async function dragFirstPage() {
       if (window.__pdfDragEvents.length < 32) window.__pdfDragEvents.push({ type, buttons: event.buttons,
         trusted: event.isTrusted, x: event.clientX, y: event.clientY, target: `${target.nodeName}.${target.className || ''}` });
     }, { capture: true, signal: window.__pdfDragAbort.signal });
-    // Use glyph geometry: PDF text spans can be narrower than their text range.
-    return { start: Math.ceil(r.left), end: Math.floor(r.right) - 1, y: Math.round((r.top + r.bottom) / 2) };
+    // PDF text spans and glyph ranges can have different fractional bounds.
+    // Target a native caret at the end while keeping the pointer on the text.
+    const root = span.getRootNode();
+    const y = Math.round((r.top + r.bottom) / 2);
+    const text = span.firstChild;
+    range.setStart(text, text.length - 1);
+    const last = range.getBoundingClientRect();
+    for (let x = Math.ceil(last.right); x >= Math.floor(last.left); x--) {
+      const caret = document.caretPositionFromPoint(x, y, { shadowRoots: [root] });
+      if (root.elementFromPoint(x, y) === span && caret?.offsetNode === text && caret.offset === text.length) {
+        return { start: Math.ceil(r.left), end: x, y };
+      }
+    }
+    throw new Error(`No native drag endpoint for the final PDF glyph: ${JSON.stringify(last.toJSON())}`);
   });
   await focusWindow();
   const ranges = [];
