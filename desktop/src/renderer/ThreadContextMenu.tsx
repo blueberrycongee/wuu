@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useActiveContextMenu } from "./ActiveContextMenu";
+import { useOptionalDesktopControls } from "./DesktopControlsContext";
+import { NativeContextMenu } from "./NativeContextMenu";
 import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
 import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
@@ -38,17 +40,21 @@ export type ThreadContextMenuItem =
       separator: true;
     };
 
-export function ThreadContextMenu({
-  x,
-  y,
-  items,
-  onClose
-}: {
+type ThreadContextMenuProps = {
   x: number;
   y: number;
   items: ThreadContextMenuItem[];
   onClose: () => void;
-}): JSX.Element {
+};
+
+export function ThreadContextMenu(props: ThreadContextMenuProps): JSX.Element {
+  const native = useOptionalDesktopControls()?.contextMenu;
+  if (native) return <NativeContextMenu api={native} {...props} items={props.items.map((item, index) =>
+    "separator" in item ? item : { id: String(index), label: item.label, disabled: item.disabled, onSelect: item.onSelect })} />;
+  return <WebThreadContextMenu {...props} />;
+}
+
+function WebThreadContextMenu({ x, y, items, onClose }: ThreadContextMenuProps): JSX.Element {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const [layout, setLayout] = useState<ContextMenuLayout | null>(null);

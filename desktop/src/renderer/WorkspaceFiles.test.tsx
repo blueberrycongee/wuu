@@ -184,7 +184,7 @@ function rowButtonByTitle(title: string): HTMLButtonElement {
 }
 
 function contextMenu(): HTMLElement | null {
-  return document.body.querySelector(".workspace-tree-context-menu");
+  return document.body.querySelector('[role="menu"]');
 }
 
 async function dispatchContextMenu(

@@ -1234,53 +1234,6 @@ html[data-focus-modality="keyboard"] .workspace-tool-menu :is(button, summary):f
   will-change: auto;
 }
 
-/* Right-click menu on file-tree rows. The component (WorkspaceTreeContextMenu
-   in WorkspaceFiles.tsx) positions the menu in viewport coordinates and
-   clamps it to the right/bottom edge of the viewport; this CSS only gives
-   it shape so it stays in keeping with the rest of the panel — flat
-   surface, soft drop shadow, no native chrome. */
-.workspace-tree-context-menu {
-  width: max-content;
-  max-width: calc(100vw - 16px);
-  max-height: calc(100dvh - 16px);
-  overflow: auto;
-  position: fixed;
-  z-index: 1000;
-  min-width: 168px;
-  padding: var(--menu-inset);
-  background: var(--menu-bg);
-  backdrop-filter: var(--surface-blur);
-  border: 1px solid var(--menu-border);
-  border-radius: var(--menu-shell-radius);
-  box-shadow: var(--menu-shadow);
-  --enter-y: -2px;
-  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
-}
-
-.workspace-tree-context-menu-item {
-  display: flex;
-  width: 100%;
-  height: auto;
-  min-height: var(--control-row-height);
-  align-items: center;
-  text-align: left;
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
-  line-height: var(--line-ui);
-  color: var(--ink);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-xs);
-  cursor: default;
-}
-
-.workspace-tree-context-menu-item:hover,
-.workspace-tree-context-menu-item:focus-visible {
-  background: var(--menu-hover);
-  outline: none;
-}
-
 /* The panel's one empty state: the missing thing, a reason only when the
  * title does not say it, and at most one action. */
 .workspace-panel-empty {

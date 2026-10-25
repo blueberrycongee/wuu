@@ -7,8 +7,12 @@ export function DesktopControlsProvider({ controls, children }: { controls: Appl
   return <DesktopControlsContext.Provider value={controls}>{children}</DesktopControlsContext.Provider>;
 }
 
+export function useOptionalDesktopControls(): ApplicationDesktopControlsV1 | undefined {
+  return useContext(DesktopControlsContext);
+}
+
 export function useDesktopControls(): ApplicationDesktopControlsV1 {
-  const controls = useContext(DesktopControlsContext);
+  const controls = useOptionalDesktopControls();
   if (!controls) throw new Error("Desktop controls provider is missing");
   return controls;
 }

@@ -99,6 +99,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Use native desktop context menus for object actions such as rename, pin, move, copy, and delete, plus standard text editing. Group session actions consistently and share the web fallback with the file tree. Keep creation menus, composer commands, pickers, and panel controls rendered in the app.
+
 - Show the latest concrete tool call in the active conversation activity row and keep historical rows summarized by activity. Keep the full tool and reasoning trail in the expandable details, without a dot-separated reasoning label.
 
 - Center the conversation composer with equal side gutters when the right-side tool rail is visible.

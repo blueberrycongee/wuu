@@ -41,7 +41,6 @@
 .composer-project-menu,
 .composer-textarea-context-menu,
 .thread-row-context-menu,
-.workspace-tree-context-menu,
 .select-menu-panel,
 .codex-runtime-menu {
   font-size: var(--font-menu);

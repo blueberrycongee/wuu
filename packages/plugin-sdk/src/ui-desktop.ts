@@ -6,6 +6,17 @@ export type ApplicationAccountDriverV1 = (action: ApplicationAccountActionV1, in
 export type ApplicationDesktopContextV1 = { kind: "project"; project_id: string; cwd: string } | { kind: "no_project"; cwd: string };
 export type ApplicationDesktopPetTargetV1 = { thread_id: string } | { workspace: ApplicationDesktopContextV1 };
 
+/** Native action menus. Coordinates are CSS pixels relative to the owning window. */
+export type ApplicationDesktopMenuItemV1 =
+  | { separator: true }
+  | { id: string; label: string; disabled?: boolean; role?: "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll" };
+export interface ApplicationDesktopContextMenuV1 {
+  /** Use a fresh token per call. Resolves to an action ID, or null on dismissal or a system editing action. */
+  show(request: { token: string; x?: number; y?: number; items: readonly ApplicationDesktopMenuItemV1[] }): Promise<string | null>;
+  /** Closes only the menu opened with this token. */
+  dismiss(token: string): Promise<void>;
+}
+
 /** A window capability handle belongs to one mounted UI generation. */
 export interface ApplicationDesktopControlsV1 {
   readonly platform?: "darwin" | "linux" | "win32";
@@ -30,6 +41,7 @@ export interface ApplicationDesktopControlsV1 {
   readonly showNotification?: (params: { title: string; body: string }) => Promise<{ shown: boolean }>;
   readonly setActiveCUAThread?: (threadId?: string) => void;
   readonly chromeOverlay?: ApplicationDesktopChromeOverlayApiV1;
+  readonly contextMenu?: ApplicationDesktopContextMenuV1;
 }
 
 /** Presentation-only native overlays; session/account authority remains in the host. */

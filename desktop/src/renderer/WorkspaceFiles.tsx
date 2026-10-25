@@ -1,5 +1,5 @@
 import { workspacePdfRevision } from "./PdfSelection";
-import { useActiveContextMenu } from "./ActiveContextMenu";
+import { ThreadContextMenu, copyToClipboard } from "./ThreadContextMenu";
 import { usePreviewContent } from "./PreviewContentContext";
 import { preparePresortedFileTreeInput } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
@@ -20,7 +20,6 @@ import { desktopApiErrorMessage } from "./WorkspaceReviewHelpers";
 import { workspacePathToSlash } from "./WorkspacePaths";
 import { translateCurrent, useI18n } from "./i18n";
 import { FilePreviewPresentation } from "./plugins/FilePreviewPresentation";
-import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { VideoPreview } from "./VideoPreview";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
 import { WorkspacePreviewBoundary } from "./WorkspacePreviewBoundary";
@@ -449,11 +448,7 @@ function MacWorkspaceTreeContextMenu({
 }
 
 function WorkspaceTreeContextMenu({
-  entry,
-  workspaceRoot,
-  x,
-  y,
-  onClose
+  entry, workspaceRoot, x, y, onClose
 }: {
   entry: WorkspaceFileTreeEntry;
   workspaceRoot: string;
@@ -463,159 +458,19 @@ function WorkspaceTreeContextMenu({
 }): JSX.Element {
   const { service } = usePreviewContent();
   const { t } = useI18n();
-  const ref = useRef<HTMLDivElement | null>(null);
-  useActiveContextMenu(onClose);
-  // The menu mounts at the cursor, but until React commits the first
-  // paint its own size isn't known — measure on the layout effect that
-  // runs just before paint, clamp to viewport so the user never sees
-  // it spilling off-screen.
-  const [position, setPosition] = useState({ x, y });
-  useLayoutEffect(() => {
-    const menuElement = ref.current;
-    if (!menuElement) {
-      return;
-    }
-    const updatePosition = (): void => {
-      const margin = 8;
-      // Use layout dimensions; the entrance animation temporarily scales the box.
-      const nextX = Math.max(margin, Math.min(window.innerWidth - menuElement.offsetWidth - margin, x));
-      const nextY = Math.max(margin, Math.min(window.innerHeight - menuElement.offsetHeight - margin, y));
-      setPosition(current => current.x === nextX && current.y === nextY ? current : { x: nextX, y: nextY });
-    };
-    updatePosition();
-    // Resizing the window or the menu's text can invalidate the initial clamp.
-    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(updatePosition);
-    observer?.observe(menuElement);
-    window.addEventListener("resize", updatePosition);
-    return () => {
-      observer?.disconnect();
-      window.removeEventListener("resize", updatePosition);
-    };
-  }, [x, y]);
-
-  // Outside click + Escape dismiss. Listener attach is deferred to a
-  // setTimeout(0) so the original `contextmenu` event's pointerdown
-  // burst doesn't fire dismiss on the same gesture that opened us.
-  // Only left clicks dismiss — right clicks land on tree rows whose
-  // own `onContextMenu` handler re-opens / re-anchors the menu at the
-  // new cursor position; dismissing on right-click would race with
-  // that re-open and kill the menu instead of repositioning it.
-  useEffect(() => {
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) {
-        return;
-      }
-      const menuElement = ref.current;
-      if (!menuElement) {
-        return;
-      }
-      if (event.target instanceof Node && menuElement.contains(event.target)) {
-        return;
-      }
-      onClose();
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    let active = true;
-    const id = window.setTimeout(() => {
-      if (!active) {
-        return;
-      }
-      document.addEventListener("pointerdown", handlePointerDown);
-      document.addEventListener("keydown", handleKeyDown);
-    }, 0);
-    return () => {
-      active = false;
-      window.clearTimeout(id);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
-
-  // `entry.path` is absolute — it comes from the same main-process dir
-  // listing the tree itself renders against. Strip the workspace-root
-  // prefix so users get a repo-relative path for tools that take one
-  // (CLI flags, CI scripts, commit messages).
   const absolutePath = entry.path;
-  const relativePath = useMemo(() => {
-    const normalizedRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/$/, "");
-    const normalizedPath = absolutePath.replace(/\\/g, "/");
-    return normalizedPath.startsWith(`${normalizedRoot}/`)
-      ? normalizedPath.slice(normalizedRoot.length + 1)
-      : absolutePath;
-  }, [absolutePath, workspaceRoot]);
-
-  // Silent failures only — the user already saw the menu close, and a
-  // notification toast for a clipboard / reveal failure would be louder
-  // than the action they tried. Both outcomes dismiss the menu.
-  const copyToClipboard = (value: string) => () => {
-    void navigator.clipboard.writeText(value).then(
-      () => onClose(),
-      () => onClose(),
-    );
-  };
-  const revealInFolder = () => {
-    void service.revealItem({ root: workspaceRoot, path: relativePath }).then(
-      () => onClose(),
-      () => onClose(),
-    );
-  };
-
-  // Pierre Trees renders this component in a slot below its custom element.
-  // Portal to the host layer so the tree's strict containment, clipping, and
-  // compositor transform cannot change the fixed-position coordinate system
-  // or hide the menu outside the tree panel.
-  return (
-    <UILayerPortal layer="menu">
-      <div
-        ref={ref}
-        className="workspace-tree-context-menu"
-        data-wuu-component="menu"
-        data-wuu-layer="menu"
-        data-wuu-state="open"
-        role="menu"
-        style={{ left: position.x, top: position.y }}
-        onContextMenu={(event) => event.preventDefault()}
-      >
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          onClick={copyToClipboard(absolutePath)}
-        >
-          {t("workspace.files.copyPath")}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          onClick={copyToClipboard(relativePath)}
-        >
-          {t("workspace.files.copyRelativePath")}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          onClick={copyToClipboard(entry.name)}
-        >
-          {t("workspace.files.copyFileName")}
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          className="workspace-tree-context-menu-item"
-          disabled={!service.capabilities.revealItem}
-          onClick={revealInFolder}
-        >
-          {t("workspace.files.revealInFileManager")}
-        </button>
-      </div>
-    </UILayerPortal>
-  );
+  const normalizedRoot = workspaceRoot.replace(/\\/g, "/").replace(/\/$/, "");
+  const normalizedPath = absolutePath.replace(/\\/g, "/");
+  const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
+    ? normalizedPath.slice(normalizedRoot.length + 1) : absolutePath;
+  return <ThreadContextMenu x={x} y={y} onClose={onClose} items={[
+    { label: t("workspace.files.copyPath"), onSelect: () => { void copyToClipboard(absolutePath); } },
+    { label: t("workspace.files.copyRelativePath"), onSelect: () => { void copyToClipboard(relativePath); } },
+    { label: t("workspace.files.copyFileName"), onSelect: () => { void copyToClipboard(entry.name); } },
+    { separator: true },
+    { label: t("workspace.files.revealInFileManager"), disabled: !service.capabilities.revealItem,
+      onSelect: () => service.revealItem({ root: workspaceRoot, path: relativePath }).catch(error => console.error("[desktop] reveal item failed", error)) },
+  ]} />;
 }
 
 function absoluteWorkspacePath(root: string, path: string): string {

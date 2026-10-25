@@ -16,6 +16,7 @@ import { BrowserExtensionManager, type BrowserExtensionConsent } from "./browser
 import { BrowserExtensionWindows } from "./browserExtensionWindows";
 import { saveArtifactFile } from "./artifactSave";
 import { showArtifactItemMenu } from "./artifactItemMenu";
+import { showContextMenu, dismissContextMenu } from "./contextMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
 import { inheritSystemProxy } from "./systemProxy";
@@ -1924,6 +1925,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:text-polish", (event, text: string) =>
     appServerRequest<TextPolishResult>(event, "text/polish", { text }),
   );
+  ipcMain.handle("wuu:context-menu-show", (event, request) => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Context menus are available from Wuu windows only.");
+    }
+    return showContextMenu(event.sender, request);
+  });
+  ipcMain.handle("wuu:context-menu-dismiss", (event, token: string) => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) return;
+    dismissContextMenu(event.sender, token);
+  });
   ipcMain.handle("wuu:artifact-save", async (event, name: string, source: string) => {
     const parent = BrowserWindow.fromWebContents(event.sender);
     if (!parent) throw new Error("Artifact window is no longer available");

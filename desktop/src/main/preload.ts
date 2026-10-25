@@ -1,4 +1,5 @@
 import type { PageContextApi } from "../shared/pageContext";
+import type { ApplicationDesktopContextMenuV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
@@ -837,6 +838,11 @@ browserApi.removeBrowserExtension = (id) =>
   ipcRenderer.invoke("wuu:browser-extensions-remove", id) as Promise<BrowserExtensionRecord[]>;
 
 (api as WuuDesktopApi & PageContextApi).readPageContext = (id, tabId) => ipcRenderer.invoke("wuu:page-context-read", id, tabId);
+
+(api as WuuDesktopApi & { contextMenu: ApplicationDesktopContextMenuV1 }).contextMenu = {
+  show: request => ipcRenderer.invoke("wuu:context-menu-show", request),
+  dismiss: token => ipcRenderer.invoke("wuu:context-menu-dismiss", token),
+};
 
 contextBridge.exposeInMainWorld("wuu", api);
 

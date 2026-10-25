@@ -1,8 +1,8 @@
-import type { ApplicationDesktopControlsV1, ApplicationDesktopPetTargetV1 } from "../../../../packages/plugin-sdk/src/ui-desktop";
+import type { ApplicationDesktopControlsV1, ApplicationDesktopPetTargetV1, ApplicationDesktopContextMenuV1 } from "../../../../packages/plugin-sdk/src/ui-desktop";
 import type { CodexPetCommand, CodexPetFeed, WuuDesktopApi } from "../../shared/protocol";
 import type { ChromeOverlayApi, ChromeOverlayEvent } from "../../shared/chromeOverlay";
 
-type DesktopBridge = WuuDesktopApi & { chromeOverlay?: ChromeOverlayApi; setActiveCUAThread?: (threadID?: string) => void };
+type DesktopBridge = WuuDesktopApi & { contextMenu?: ApplicationDesktopContextMenuV1; chromeOverlay?: ChromeOverlayApi; setActiveCUAThread?: (threadID?: string) => void };
 
 /** Window authority and pet delivery live outside replaceable UI generations. */
 export class ApplicationDesktop {
@@ -43,6 +43,7 @@ export class ApplicationDesktop {
     const owner = {};
     const prefix = `${crypto.randomUUID()}:`;
     const overlays = new Map<string, number>();
+    const menus = new Set<string>();
     const subscriptions = new Set<() => void>();
     const check = () => { signal.throwIfAborted(); if (!active || this.disposed) throw new Error("Desktop UI generation is retired"); };
     const call = async <T>(operation: () => Promise<T>): Promise<T> => { check(); const result = await operation(); check(); return result; };
@@ -55,6 +56,8 @@ export class ApplicationDesktop {
       if (!active) return;
       active = false; signal.removeEventListener("abort", retire); this.scopes.delete(retire);
       for (const off of [...subscriptions]) off();
+      for (const token of menus) void this.bridge.contextMenu!.dismiss(prefix + token).catch(error => console.error("[desktop] context menu cleanup failed", error));
+      menus.clear();
       if (this.cuaOwner === owner) { this.cuaOwner = undefined; this.bridge.setActiveCUAThread?.(undefined); }
       void this.enqueue(async () => {
         if (this.controlsOwner === owner) { this.controlsOwner = undefined; await this.bridge.windowSetControls!({ visible: false, x: 0, y: 0 }).catch(() => {}); }
@@ -84,6 +87,17 @@ export class ApplicationDesktop {
       onVisibilityChange: listener => subscribe(handler => { const changed = () => handler(document.visibilityState !== "hidden"); document.addEventListener("visibilitychange", changed); return () => document.removeEventListener("visibilitychange", changed); }, listener),
       showNotification: this.available("showSystemNotification") ? params => call(() => this.bridge.showSystemNotification(params)) : undefined,
       setActiveCUAThread: this.available("setActiveCUAThread") ? threadId => { check(); this.cuaOwner = owner; this.bridge.setActiveCUAThread!(threadId); } : undefined,
+      contextMenu: this.bridge.contextMenu ? Object.freeze({
+        show: (request: Parameters<ApplicationDesktopContextMenuV1["show"]>[0]) => call(async () => {
+          menus.add(request.token);
+          try { return await this.bridge.contextMenu!.show({ ...structuredClone(request), token: prefix + request.token }); }
+          finally { menus.delete(request.token); }
+        }),
+        dismiss: async (token: string) => {
+          if (!menus.delete(token)) return;
+          await this.bridge.contextMenu!.dismiss(prefix + token);
+        },
+      }) : undefined,
       chromeOverlay: overlay ? Object.freeze({
         show: (request: Parameters<ChromeOverlayApi["show"]>[0]) => {
           const captured = structuredClone(request);

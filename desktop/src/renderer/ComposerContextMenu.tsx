@@ -1,5 +1,7 @@
 import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useActiveContextMenu } from "./ActiveContextMenu";
+import { useOptionalDesktopControls } from "./DesktopControlsContext";
+import { NativeContextMenu } from "./NativeContextMenu";
 import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
 import { useI18n } from "./i18n";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
@@ -37,15 +39,7 @@ export { placeContextMenu } from "./ContextMenuPlacement";
 //     dismiss the menu we just opened.
 //   - Another context menu opening → close (useActiveContextMenu).
 
-export function ComposerContextMenu({
-  textareaRef,
-  x,
-  y,
-  hasSelection,
-  disabled = false,
-  onClose,
-  onValueChange
-}: {
+type ComposerContextMenuProps = {
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   x: number;
   y: number;
@@ -53,7 +47,23 @@ export function ComposerContextMenu({
   disabled?: boolean;
   onClose: () => void;
   onValueChange: (next: string) => void;
-}): JSX.Element {
+};
+
+export function ComposerContextMenu(props: ComposerContextMenuProps): JSX.Element {
+  const native = useOptionalDesktopControls()?.contextMenu;
+  const { t } = useI18n();
+  if (native) return <NativeContextMenu api={native} x={props.x} y={props.y} onClose={props.onClose} items={[
+    { id: "cut", label: t("contextMenu.cut"), role: "cut", disabled: props.disabled || !props.hasSelection },
+    { id: "copy", label: t("contextMenu.copy"), role: "copy", disabled: !props.hasSelection },
+    { id: "paste", label: t("contextMenu.paste"), role: "paste", disabled: props.disabled },
+    { id: "delete", label: t("contextMenu.delete"), role: "delete", disabled: props.disabled || !props.hasSelection },
+    { separator: true },
+    { id: "selectAll", label: t("contextMenu.selectAll"), role: "selectAll" },
+  ]} />;
+  return <WebComposerContextMenu {...props} />;
+}
+
+function WebComposerContextMenu({ textareaRef, x, y, hasSelection, disabled = false, onClose, onValueChange }: ComposerContextMenuProps): JSX.Element {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement | null>(null);
   useActiveContextMenu(onClose);

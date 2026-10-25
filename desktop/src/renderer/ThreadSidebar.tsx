@@ -1075,16 +1075,16 @@ function ThreadRows({
           y={contextMenu.y}
           items={contextMenu.mode === "folder" ? folderOrganizationMenuItems(contextMenu.thread) : [
             {
+              label: t("threadSidebar.rename"),
+              disabled: !onRename,
+              onSelect: () => openRenameDialog(contextMenu.thread),
+            },
+            {
               label: t(contextMenu.thread.pinned ? "sidebar.unpin" : "sidebar.pin"),
               onSelect: () => togglePinned(contextMenu.thread),
             },
             ...organizationMenuItems(contextMenu.thread),
             { separator: true },
-            {
-              label: t("threadSidebar.rename"),
-              disabled: !onRename,
-              onSelect: () => openRenameDialog(contextMenu.thread),
-            },
             {
               label: t("threadSidebar.copyWorkingDirectory"),
               onSelect: () => {
@@ -1092,16 +1092,16 @@ function ThreadRows({
               },
             },
             {
+              label: t("threadSidebar.copyConversationID"),
+              onSelect: () => {
+                void copyToClipboard(contextMenu.thread.id);
+              },
+            },
+            {
               label: revealInFileManagerLabel(),
               disabled: !organization?.revealThread && !hostSupports("revealSession"),
               onSelect: () => {
                 void (organization?.revealThread ? organization.revealThread(contextMenu.thread.id) : window.wuu.revealSession(contextMenu.thread.id));
-              },
-            },
-            {
-              label: t("threadSidebar.copyConversationID"),
-              onSelect: () => {
-                void copyToClipboard(contextMenu.thread.id);
               },
             },
             { separator: true },
