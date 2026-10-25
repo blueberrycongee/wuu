@@ -114,11 +114,12 @@ export function BrowserPiPHostReporter(): null {
     const mutationObserver = new MutationObserver(onMutation);
     // Ignore streaming text and class updates. Size changes come from
     // ResizeObserver; dialogs and retained native sections can change visibility
-    // without mounting a node or changing the conversation's dimensions.
+    // without mounting a node or changing the conversation's dimensions. Scroll
+    // restoration also hides the host through inline visibility and inert.
     mutationObserver.observe(document.body, {
       childList: true, subtree: true, attributes: true,
       attributeFilter: [
-        "aria-modal", "open", "hidden", "data-settings-open", "data-native-section", "data-primary-plugin-view", "data-web-workspace-open",
+        "aria-modal", "open", "hidden", "style", "inert", "data-settings-open", "data-native-section", "data-primary-plugin-view", "data-web-workspace-open",
       ],
     });
     window.addEventListener("resize", schedule);
@@ -172,7 +173,7 @@ function elementMentionsHost(node: Node): boolean {
 }
 
 function visibleRect(element: Element): HostRect | null {
-  if (!(element instanceof HTMLElement) || element.hidden) return null;
+  if (!(element instanceof HTMLElement) || element.hidden || element.closest("[inert]")) return null;
   const style = getComputedStyle(element);
   if (style.display === "none" || style.visibility === "hidden") return null;
   const rect = element.getBoundingClientRect();
