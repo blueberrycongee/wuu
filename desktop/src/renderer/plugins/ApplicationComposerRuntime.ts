@@ -198,7 +198,7 @@ export class ApplicationComposerRuntime {
     if (this.disposed) throw new Error("Composer runtime is disposed");
     signal?.throwIfAborted(); const state = this.sync();
     const owner = this.owners.get(ownerTabId); const tab = state.sessionTabs.find(tab => tab.id === ownerTabId);
-    if (!owner || !tab || state.activeSessionTabID !== ownerTabId || !this.sameContext(state, tab.context) || this.host.isNavigationPending()) throw new Error("Composer runtime owner is no longer active");
+    if (!owner || !tab || state.activeSessionTabID !== ownerTabId || !this.sameContext(state, tab.context) || this.host.isNavigationPending()) throw new DOMException("Composer runtime owner is no longer active", "AbortError");
     return { owner, tab, thread: this.thread(state, tab), generation: state.runtimeConnectionGeneration, signal };
   }
   private current(source: Source): boolean {
@@ -303,8 +303,11 @@ export class ApplicationComposerRuntime {
         owner.inventory = immutable(result); owner.fetchedAt = Date.now();
         this.seed(owner, source.tab);
       } catch (error) {
-        if (this.current(source) && request === owner.engineRequest) owner.engineError = error instanceof Error ? error.message : String(error);
         if (source.signal?.aborted) throw error;
+        if (this.current(source) && request === owner.engineRequest) {
+          owner.engineError = error instanceof Error ? error.message : String(error);
+          throw error;
+        }
       } finally {
         if (request === owner.engineRequest) { owner.engineLoading = false; owner.enginePending = undefined; if (!this.disposed) this.host.changed(); }
       }

@@ -153,6 +153,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep conversation navigation responsive when its viewport remounts, and ignore stale model-discovery failures after switching tabs.
+
 - Center the startup icon, title, and progress bar without reserving invisible space for the delayed loading hint; showing the hint keeps the startup content in place.
 
 - Keep successful replies completed when only post-run model receipt cleanup fails, retaining the failure in diagnostics without a conversation notice. Distinguish receipt lifecycle failures from user stops in live and restored error messages.

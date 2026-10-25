@@ -231,14 +231,26 @@ export function App({ application, slots, shellPluginId }: {
   const secondaryThread = secondarySource as Thread | undefined;
   const activeThread = conversationWorkspace.activePane === "secondary" ? secondaryThread : primaryThread;
   const composerRuntimeView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
+  const composerNavigationPending = Boolean(tabs.pending);
   useEffect(() => {
     const ownerTabId = composerRuntimeView.activeOwnerTabId;
-    if (!ownerTabId) return;
-    const refresh = () => { void application.invoke("composer.refresh-engine-models", { ownerTabId }).catch(showErrorToast); };
+    if (!ownerTabId || composerNavigationPending) return;
+    const cancellation = new AbortController();
+    const refresh = () => {
+      const snapshot = application.getSnapshot();
+      if (snapshot.tabs.pending || snapshot.composerRuntime.activeOwnerTabId !== ownerTabId) return;
+      void application.invoke("composer.refresh-engine-models", { ownerTabId }, { signal: cancellation.signal }).catch(error => {
+        if (cancellation.signal.aborted || error?.name === "AbortError") return;
+        showErrorToast(error);
+      });
+    };
     refresh();
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [application, composerRuntimeView.activeOwnerTabId]);
+    return () => {
+      cancellation.abort();
+      window.removeEventListener("focus", refresh);
+    };
+  }, [application, composerRuntimeView.activeOwnerTabId, composerNavigationPending]);
   const activities = useSyncExternalStore(application.subscribe, () => application.getSnapshot().activities);
   const appShellRef = useRef<HTMLDivElement>(null);
   const settingsShellRef = useRef<HTMLDivElement>(null);
@@ -1128,7 +1140,7 @@ export function App({ application, slots, shellPluginId }: {
     }
   }, [submissionView, conversationWorkspace, tabs.activeTabId, activeThreadID, requestSubmittedQueryScroll, discardSubmittedMessage]);
   useConversationSwitchReady({
-    visible: !settingsOpen && !accountOpen && !showingWebsite,
+    visible: conversationVisible,
     pendingViewSwitch,
     activeThreadID,
     viewportRef: conversationScrollRef,

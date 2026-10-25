@@ -36,13 +36,19 @@ export function useConversationSwitchReady({
     let measuredFrames = 0;
     let frame = 0;
     const check = (): void => {
+      measuredFrames += 1;
       const viewport = viewportRef.current;
-      if (!viewport) return;
+      if (!viewport) {
+        // A selected surface may remount after the resumed data is published.
+        // Missing geometry must not strand navigation behind its loading cover.
+        if (measuredFrames >= MAX_RESTORATION_FRAMES) finishViewSwitch(requestID);
+        else frame = window.requestAnimationFrame(check);
+        return;
+      }
       settleLayoutRef.current();
       const geometry = [viewport.clientWidth, viewport.clientHeight, viewport.scrollHeight, viewport.scrollTop].join(":");
       stableFrames = geometry === previous ? stableFrames + 1 : 0;
       previous = geometry;
-      measuredFrames += 1;
       // The first callback precedes paint; two unchanged frames also allow
       // nested React commits and resize-observer scroll corrections to settle.
       // Live output or external assets may keep changing height. The snapshot

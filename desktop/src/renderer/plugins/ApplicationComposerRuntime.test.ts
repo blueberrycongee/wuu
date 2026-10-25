@@ -227,3 +227,38 @@ it("rejects removed workspace before discovery and preserves native empty overri
   vi.mocked(window.wuu.listEngines).mockResolvedValue({ ...inventory, settings: { default_engine: "native" } });
   await expect(h.runtime.getWorkspaceSubmissionRuntime({ kind: "no_project", cwd: "/source" })).resolves.toEqual({ context: { kind: "no_project", cwd: "/source" }, params: { engine: "native", model: "", effort: "", permission_mode: "unconfined" } });
 });
+
+
+it("marks stale refresh admission as cancellation", async () => {
+  installEngineAPI();
+  const h = fixture();
+  await expect(h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-b" }))
+    .rejects.toMatchObject({ name: "AbortError" });
+  expect(window.wuu.listEngines).not.toHaveBeenCalled();
+});
+
+it("reports current discovery failures but ignores superseded failures", async () => {
+  const rejectors: Array<(error: Error) => void> = [];
+  window.wuu = { listEngines: vi.fn(() => new Promise((_, reject) => rejectors.push(reject))) } as unknown as typeof window.wuu;
+  const h = fixture();
+  const old = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  const fresh = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a", force: true });
+  rejectors[0](new Error("Old failure"));
+  await expect(old).resolves.toBeUndefined();
+  const failure = expect(fresh).rejects.toThrow("Engine unavailable");
+  rejectors[1](new Error("Engine unavailable"));
+  await failure;
+  expect(h.view().engineModelsError).toBe("Engine unavailable");
+  expect(h.view().engineModelsLoading).toBe(false);
+});
+
+it("ignores discovery failures after navigating away", async () => {
+  let rejectRequest!: (error: Error) => void;
+  window.wuu = { listEngines: vi.fn(() => new Promise((_, reject) => { rejectRequest = reject; })) } as unknown as typeof window.wuu;
+  const h = fixture();
+  const request = h.runtime.invoke("composer.refresh-engine-models", { ownerTabId: "draft-a" });
+  h.set({ ...h.get(), activeSessionTabID: "draft-b" });
+  rejectRequest(new Error("Old workspace unavailable"));
+  await expect(request).resolves.toBeUndefined();
+  expect(h.view().engineModelsError).toBe("");
+});

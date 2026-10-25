@@ -137,3 +137,34 @@ describe("useViewSwitchState", () => {
     expect(settleLayout).toHaveBeenCalled();
   });
 });
+
+
+it.each([true, false])("releases navigation when the conversation viewport is temporarily absent (mounts=%s)", async mounts => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+    frames.set(++nextFrame, callback); return nextFrame;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+  const paint = () => act(() => {
+    const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0));
+  });
+  const viewportRef = { current: null as HTMLDivElement | null };
+  const finishViewSwitch = vi.fn(() => true);
+  const settleLayout = vi.fn();
+  function Probe() {
+    useConversationSwitchReady({ pendingViewSwitch: { kind: "thread", targetID: "target", visible: true, restoreRequestID: 7 },
+      activeThreadID: "target", viewportRef, settleLayout, finishViewSwitch });
+    return null;
+  }
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  await act(async () => { root.render(createElement(Probe)); });
+  paint();
+  expect(finishViewSwitch).not.toHaveBeenCalled();
+  if (mounts) viewportRef.current = document.createElement("div");
+  for (let index = 0; index < 8; index++) paint();
+  expect(finishViewSwitch).toHaveBeenCalledExactlyOnceWith(7);
+  expect(settleLayout.mock.calls.length > 0).toBe(mounts);
+});
