@@ -17,15 +17,14 @@
 }
 
 :root:has(.app-shell.navigation-ribbon-layout:not(.popped-out-shell)) {
-  /* Window chrome shares the native controls' fixed 22-DIP axis. Keep page
-     zoom out of its geometry, including Linux caption buttons. */
-  --window-titlebar-height: calc(44px / var(--desktop-page-zoom, 1));
+  /* Reserve native caption space while allowing app controls to grow with
+     page zoom without clipping the header. */
+  --window-titlebar-height: max(calc(44px / var(--desktop-page-zoom, 1)), calc(var(--control-size-toolbar) + var(--space-2) * 2));
 }
 
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
   --canvas-titlebar-height: max(44px, calc(var(--control-size-toolbar) + var(--space-2) * 2));
   --workbench-top: var(--window-titlebar-height);
-  --workbench-control-size: calc(var(--control-size-toolbar) / var(--desktop-page-zoom, 1));
 }
 
 /* Renderer-owned macOS lights fit in the ribbon. The workbench can therefore
@@ -57,13 +56,6 @@
 
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-section-title {
   padding-left: calc(var(--control-size-toolbar) + var(--space-2));
-}
-
-.navigation-ribbon-layout:has(.sidebar-ribbon) > :is(.section-sidebar-toggle, .shell-right-sidebar-toggle) {
-  /* Preserve their physical hitboxes and glyphs beside native chrome while
-     content text and its own toolbars continue to follow the saved zoom. */
-  --control-size-toolbar: var(--workbench-control-size);
-  --control-icon-size: calc(var(--icon-size) / var(--desktop-page-zoom, 1));
 }
 
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
@@ -220,7 +212,7 @@
 }
 
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle {
-  left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--sidebar-content-icon-size) - var(--control-size-toolbar)) / 2);
+  left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2);
 }
 
 .section-sidebar-toggle * {
@@ -255,7 +247,7 @@
   --ribbon-row-gap: var(--space-4);
   --ribbon-group-gap: var(--space-6);
   --ribbon-inline-inset: var(--space-2);
-  --sidebar-ribbon-icon-size: calc(var(--icon-size-xl) + 2px);
+  --sidebar-ribbon-icon-size: var(--icon-size);
   position: absolute;
   inset: 0 auto 0 0;
   z-index: 126;
@@ -766,12 +758,10 @@
 .shell-page-history-controls button,
 .shell-page-history-controls button * { -webkit-app-region: no-drag; }
 .navigation-ribbon-layout:has(.sidebar-ribbon) > .shell-page-history-controls {
-  --control-size-toolbar: var(--workbench-control-size);
-  --control-icon-size: calc(var(--icon-size) / var(--desktop-page-zoom, 1));
   left: calc(var(--window-titlebar-leading-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap));
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) {
-  --app-history-width: calc(var(--workbench-control-size) * 2 + var(--control-toolbar-gap));
+  --app-history-width: calc(var(--control-size-toolbar) * 2 + var(--control-toolbar-gap));
   --app-history-origin: calc(var(--sidebar-width) + var(--sidebar-ribbon-extra, 0px));
   --app-history-inset: var(--control-toolbar-inset);
   --app-history-end: calc(var(--app-history-origin) + var(--app-history-inset) + var(--app-history-width) + var(--control-toolbar-gap));
@@ -779,7 +769,7 @@
 /* Only the toggle occupies the secondary sidebar header. History belongs to
    the active content header, whose leading lane reserves the same dimensions. */
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed {
-  --app-history-inset: calc(var(--space-2) * 2 + (var(--sidebar-content-icon-size) - var(--workbench-control-size)) / 2 + var(--workbench-control-size) + var(--control-toolbar-gap));
+  --app-history-inset: calc(var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2 + var(--control-size-toolbar) + var(--control-toolbar-gap));
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .shell-page-history-controls {
   top: calc(var(--workbench-top) + (var(--canvas-titlebar-height) - var(--control-size-toolbar)) / 2);

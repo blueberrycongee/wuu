@@ -212,7 +212,6 @@ it("uses the file-change summary chrome for a single presented file", async () =
   try {
     await act(async () => root.render(<TurnEndArtifactOutputs artifacts={collectTurnArtifacts(turn)} />));
     expect(container.querySelector(".turn-edit-summary-overview-title")?.textContent).toBe("wuu-promo.mp4");
-    expect(container.querySelector(".turn-artifact-meta")?.textContent).toBe("MP4");
     expect(container.querySelector(".turn-edit-summary-row")).toBeNull();
     expect(container.textContent).not.toContain("video/mp4");
   } finally { act(() => root.unmount()); container.remove(); }
@@ -235,7 +234,6 @@ it("lists multiple presented files in the same summary rows as file changes", as
       "one.pdf",
       "two.pdf",
     ]);
-    expect(rows.map((row) => row.querySelector(".turn-artifact-meta")?.textContent)).toEqual(["PDF", "PDF"]);
   } finally { act(() => root.unmount()); container.remove(); }
 });
 

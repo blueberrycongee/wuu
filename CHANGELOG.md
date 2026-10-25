@@ -101,6 +101,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Balance composer and sent-message shadows between the previous and lighter treatments in both light and dark themes.
 
+- Simplify delivered file cards to a single filename row, removing the redundant format and size subtitle.
+
 - Replace sidebar running-state rings with a nine-dot diagonal light wave, shared by workspace and conversation indicators, with a static matrix under reduced motion.
 
 - Increase vertical spacing between desktop navigation ribbon buttons and below the app icon, with more separation above the footer controls.

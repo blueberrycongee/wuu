@@ -375,7 +375,7 @@
   /* Keep the ambient shadow close to the frame so its geometric edge remains
      legible against the message canvas instead of reading as a wider haze. */
   --composer-frame-shadow: var(--shadow-composer);
-  --composer-surface-bg: var(--theme-override-color-surface, var(--paper));
+  --composer-surface-bg: var(--surface-raised);
   --composer-textarea-disabled: var(--theme-override-color-text-muted, #6d7471);
   --composer-project-menu-icon: var(--theme-override-color-text-muted, #6b7176);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #b45309);

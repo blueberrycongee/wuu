@@ -11,7 +11,7 @@ import { useConversationControls, useConversationTurnIdentity } from "./Conversa
 import { RichContent } from "./RichContent";
 import { isMarkdownDocument, MarkdownDocumentReading } from "./MarkdownDocumentReading";
 import { AttachmentImage } from "./AttachmentImage";
-import { fileNameParts, formatByteSize } from "./AttachmentFormat";
+import { fileNameParts } from "./AttachmentFormat";
 import { ProcessSurfaceFold } from "./ProcessSurfaceFold";
 import {
   TURN_OUTPUT_SUMMARY_BATCH_SIZE,
@@ -290,7 +290,6 @@ export function TurnEndArtifactOutputs({
           component="turn-artifacts"
           icon={<ArtifactFileIcon artifact={single} />}
           title={single.name}
-          subtitle={<ArtifactMetadata artifact={single} />}
           trailing={<TurnOutputSummaryChevron />}
           onOpen={(event) => openArtifact(single, event.currentTarget)}
           onContextMenu={(event) => fileActions.show(single, event)}
@@ -304,7 +303,6 @@ export function TurnEndArtifactOutputs({
             key: artifact.id,
             name: artifact.name,
             icon: <ArtifactFileIcon artifact={artifact} />,
-            subtitle: <ArtifactMetadata artifact={artifact} />,
             trailing: <TurnOutputSummaryChevron />,
             tooltip: artifact.name,
             onOpen: (event) => openArtifact(artifact, event.currentTarget),
@@ -465,28 +463,6 @@ function ArtifactFileIcon({ artifact }: { artifact: TurnArtifact }): JSX.Element
   return <Icon className="icon" aria-hidden="true" />;
 }
 
-function ArtifactMetadata({ artifact }: { artifact: TurnArtifact }): JSX.Element {
-  const { t, formatNumber } = useI18n();
-  const suffix = fileNameParts(artifact.name).extension;
-  // Resource titles can contain dots without being filenames, such as v1.2.
-  const extension = /^\.[a-z][a-z0-9]{0,9}$/i.test(suffix) ? suffix.slice(1).toUpperCase() : "";
-  const mimeType = artifact.mimeType.split(";", 1)[0].toLowerCase();
-  const genericMime = mimeType === "application/octet-stream" || mimeType === "text/plain";
-  const mimeFormat = extensionForMimeType(mimeType).slice(1).toUpperCase()
-    || mimeType.match(/^[^/]+\/(?:x-)?([a-z][a-z0-9-]{0,11})$/)?.[1].toUpperCase();
-  const format = (genericMime ? extension : mimeFormat) || extension
-    || (mimeType === "text/plain" ? "TXT" : t("artifacts.file"));
-  const size = artifact.sizeBytes !== undefined && Number.isFinite(artifact.sizeBytes) && artifact.sizeBytes >= 0
-    ? formatByteSize(artifact.sizeBytes, formatNumber)
-    : undefined;
-  return (
-    <span className="turn-artifact-meta">
-      <span>{format}</span>
-      {size ? <><span aria-hidden="true">·</span><span>{size}</span></> : null}
-    </span>
-  );
-}
-
 function openArtifactFile(
   service: ApplicationArtifactsV1,
   artifact: TurnArtifact,
@@ -585,7 +561,6 @@ function ArtifactCard({
         component="artifact"
         icon={<ArtifactFileIcon artifact={artifact} />}
         title={artifact.name}
-        subtitle={<ArtifactMetadata artifact={artifact} />}
         trailing={<TurnOutputSummaryChevron />}
         onOpen={(event) => openArtifactFile(service, artifact, event.currentTarget, cwd, onPreview)}
         onContextMenu={(event) => fileActions.show(artifact, event)}

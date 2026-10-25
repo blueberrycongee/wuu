@@ -166,7 +166,7 @@ async function renderBoard(kind, theme, marker) {
   let content = "";
   if (kind === "colour") {
     const groups = [
-      ["Surfaces / 表面", [["Canvas / 画布", "--paper"], ["Surface / 基础表面", "--surface-1"], ["Muted / 次级表面", "--surface-2"], ["Raised / 强调表面", "--surface-3"]]],
+      ["Surfaces / 表面", [["Canvas / 画布", "--paper"], ["Reading card / 阅读卡片", "--surface-raised"], ["Surface / 基础表面", "--surface-1"], ["Muted / 次级表面", "--surface-2"]]],
       ["Text / 文字", [["Strong / 强调", "--ink-strong"], ["Body / 正文", "--ink"], ["Secondary / 次要", "--ink-soft"], ["Muted / 弱化", "--ink-muted"]]],
       ["Lines / 边界", [["Divider / 内部分隔", "--hairline-soft"], ["Frame / 容器边界", "--hairline"], ["Strong / 强边界", "--hairline-strong"], ["Control / 功能边界", "--control-boundary"]]],
       ["Status / 状态", [["Success / 成功", "--success"], ["Warning / 注意", "--warning"], ["Danger / 危险", "--danger"], ["Info / 信息", "--info"]]],

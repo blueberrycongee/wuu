@@ -52,6 +52,8 @@
      surface-1 was darker than the canvas, so cards and section headers either
      disappeared into the page or became near-black bands. --- */
   --paper: var(--theme-override-color-canvas, var(--gray-0));
+  --wuu-color-canvas: var(--gray-0);
+  --surface-raised: var(--theme-override-color-surface-elevated, var(--surface-1));
   --surface-1: var(--theme-override-color-surface, var(--gray-50));
   --surface-2: var(--theme-override-color-surface-muted, var(--gray-100));
   --surface-3: var(--theme-override-color-surface-elevated, var(--gray-150));
@@ -177,7 +179,7 @@
 
   /* composer.css / composer-context-meter.css / chat.css */
   --composer-frame-shadow: var(--shadow-composer);
-  --composer-surface-bg: var(--surface-1);
+  --composer-surface-bg: var(--surface-raised);
   --composer-textarea-disabled: var(--theme-override-color-text-muted, #757b78);
   --composer-project-menu-icon: var(--theme-override-color-text-muted, #9aa0a5);
   --composer-menu-note-warning-strong: var(--wuu-color-warning, #e2a04a);

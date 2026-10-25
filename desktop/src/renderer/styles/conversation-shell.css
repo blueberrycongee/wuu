@@ -352,7 +352,8 @@
    * Include its stroke edge, not just the empty space around the SVG box. */
   --title-icon-ink-inset: calc(var(--control-toolbar-glyph-offset) + var(--icon-size) * (3.5 - var(--icon-stroke) / 2) / 24);
   --title-visible-gap: calc(var(--title-leading-gap) + 2 * var(--title-icon-ink-inset));
-  min-width: 0;
+  /* Keep the leading action reachable when zoom leaves little title space. */
+  min-width: var(--control-size-toolbar);
   gap: max(0px, calc(var(--title-visible-gap) - 2 * var(--title-icon-ink-inset)));
   overflow: hidden;
 }
