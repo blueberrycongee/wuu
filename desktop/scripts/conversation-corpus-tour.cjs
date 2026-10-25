@@ -18,8 +18,10 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
   assert.ok(samples.length && (!selected || samples.length === selected.length), 'Unknown or duplicate corpus sample selection');
   const report = {
     selectedSamples: samples.map(sample => sample.id), corpusVersion: corpus.version, corpusSha256: createHash('sha256').update(bytes).digest('hex'),
-    commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: __dirname, encoding: 'utf8' }).trim(),
-    dirty: Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: __dirname, encoding: 'utf8' }).trim()),
+    commit: process.env.WUU_E2E_SOURCE_COMMIT || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: __dirname, encoding: 'utf8' }).trim(),
+    dirty: process.env.WUU_E2E_SOURCE_COMMIT
+      ? (process.env.WUU_E2E_SOURCE_CHANGES === undefined ? null : Boolean(process.env.WUU_E2E_SOURCE_CHANGES.trim()))
+      : Boolean(execFileSync('git', ['status', '--porcelain'], { cwd: __dirname, encoding: 'utf8' }).trim()),
     executable: path.basename(process.execPath), replayMode: textOnly ? 'final-answer-only' : 'original-steps',
     electron: process.versions.electron, chromium: process.versions.chrome, platform: process.platform,
     timing: corpus.timing, tools: corpus.tools, matrix, checkpoints: [], samples: [], status: 'running',
@@ -267,6 +269,8 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
         }, sample.id);
         assert.ok(persisted.some(item => item.type === 'agent_message' && item.text === sample.steps.at(-1).text),
           `${sample.id}: persisted answer differs from the corpus`);
+        await waitFor(win, id => [...document.querySelectorAll('.thread-row-main')].some(row => row.textContent.includes(`[${id}]`)), sample.id);
+        await evaluate(win, id => [...document.querySelectorAll('.thread-row-main')].find(row => row.textContent.includes(`[${id}]`)).click(), sample.id);
         await capture('history', sample.steps.at(-1).text, sample.steps.length - 1, persisted);
         const hasProcess = sample.steps.some(step => step.tool_count > 0);
         const processIndex = sample.steps.findIndex(step => step.tool_count && step.text.trim());

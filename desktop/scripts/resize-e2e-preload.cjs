@@ -277,7 +277,7 @@ const desktopAPI = {
     provider: "e2e",
     model: "mock-resize",
     workspace_root: cwd,
-    providers: [{ name: "e2e", type: "mock", model: "mock-resize" }],
+    providers: [{ name: "e2e", type: "mock", model: "mock-resize", api_key_configured: true }],
     // Layout journeys open /side through the same public contribution gate.
     extension_inventory: [{
       id: "user:e2e-attached-chat", kind: "plugin", name: "Attached chat fixture",
@@ -298,7 +298,7 @@ const desktopAPI = {
   updateRuntimeSettings: async (provider, model) => ({
     provider,
     model,
-    providers: [{ name: provider, type: "mock", model }]
+    providers: [{ name: provider, type: "mock", model, api_key_configured: true }]
   }),
   loadCodexModels: async (provider) => ({
     provider,
