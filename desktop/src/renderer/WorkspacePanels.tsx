@@ -36,6 +36,8 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import {
+  ChevronDown,
+  ChevronUp,
   FileDiff,
   FileText,
   FolderOpen,
@@ -184,6 +186,7 @@ export const WORKSPACE_FILE_TREE_MAX_WIDTH = 480;
 export const WORKSPACE_FILE_CONTENT_MIN_WIDTH = 360;
 const WORKSPACE_FILE_TREE_COLLAPSE_THRESHOLD = 140;
 const WORKSPACE_FILE_TREE_WIDTH_STEP = 24;
+const WORKSPACE_TOOL_RAIL_COLLAPSED_KEY = "wuu.desktop.workspaceToolRailCollapsed";
 const WORKSPACE_FILE_TREE_WIDTH_KEY = "wuu.desktop.fileTreeWidth";
 const WORKSPACE_FILE_TREE_SIDE_KEY = "wuu.desktop.fileTreeSide";
 const WORKSPACE_FILE_TREE_VISIBLE_KEY = "wuu.desktop.fileTreeVisible";
@@ -251,6 +254,14 @@ function WorkspacePanelContent({
   documentComposer = false, pane,
 }: WorkspacePanelLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const { t } = useI18n();
+  const [toolRailCollapsed, setToolRailCollapsed] = useState(
+    () => window.localStorage.getItem(WORKSPACE_TOOL_RAIL_COLLAPSED_KEY) === "true",
+  );
+  const toggleToolRail = () => {
+    const collapsed = !toolRailCollapsed;
+    setToolRailCollapsed(collapsed);
+    window.localStorage.setItem(WORKSPACE_TOOL_RAIL_COLLAPSED_KEY, String(collapsed));
+  };
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const preview = snapshot.previewWorkspace;
   // Detach public immutable display data before using the existing mutable leaf renderers.
@@ -729,8 +740,17 @@ function WorkspacePanelContent({
   return (
     <>
     {!covered && toolsVisible ? (
-      <nav className="workspace-tool-rail" aria-label={t("workspace.tools")}
-        data-wuu-component="workspace-tool-rail">
+      <nav className={toolRailCollapsed ? "workspace-tool-rail-collapsed" : "workspace-tool-rail"}
+        aria-label={t("workspace.tools")} data-wuu-component="workspace-tool-rail">
+        <Tooltip content={t(toolRailCollapsed ? "workspace.expandTools" : "workspace.collapseTools")}>
+          <button className="icon-button workspace-tool-rail-toggle" type="button"
+            data-wuu-component="workspace-tool-rail-toggle"
+            aria-label={t(toolRailCollapsed ? "workspace.expandTools" : "workspace.collapseTools")}
+            aria-expanded={!toolRailCollapsed} onClick={toggleToolRail}>
+            {toolRailCollapsed ? <ChevronDown /> : <ChevronUp />}
+          </button>
+        </Tooltip>
+        {!toolRailCollapsed ? <>
         <Tooltip content={t("workspace.newPage")}>
           <button className="icon-button" type="button" aria-label={t("workspace.newPage")}
             aria-pressed={open && !conversationActive && showingPicker} onClick={onShowTools}>
@@ -747,6 +767,7 @@ function WorkspacePanelContent({
             </button>
           </Tooltip>
         ))}
+        </> : null}
       </nav>
     ) : null}
     <aside

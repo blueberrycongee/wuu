@@ -1965,6 +1965,8 @@ export const enUS = {
   "workspace.tabUnsaved": "{label}, unsaved changes",
   "workspace.closeTab": "Close {label}",
   "workspace.tools": "Workspace tools",
+  "workspace.collapseTools": "Collapse toolbar",
+  "workspace.expandTools": "Expand toolbar",
   "workspace.files.readFailed": "Failed to read files",
   "workspace.files.noWorkspace": "No workspace",
   "workspace.files.reading": "Reading files",

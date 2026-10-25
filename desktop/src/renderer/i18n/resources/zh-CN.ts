@@ -1962,6 +1962,8 @@ export const zhCN = {
   "workspace.tabUnsaved": "{label}，有未保存修改",
   "workspace.closeTab": "关闭{label}",
   "workspace.tools": "工作区工具",
+  "workspace.collapseTools": "收起工具栏",
+  "workspace.expandTools": "展开工具栏",
   "workspace.files.readFailed": "读取文件失败",
   "workspace.files.noWorkspace": "没有工作区",
   "workspace.files.reading": "正在读取文件",

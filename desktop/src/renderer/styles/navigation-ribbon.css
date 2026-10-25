@@ -46,12 +46,13 @@
   -webkit-app-region: drag;
 }
 
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .shell-right-sidebar-toggle {
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .shell-right-sidebar-toggle,
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .workspace-tool-rail-collapsed {
   top: calc(var(--workbench-top) + (var(--canvas-titlebar-height) - var(--control-size-toolbar)) / 2);
 }
 
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) :is(.titlebar, .workspace-panel-tabbar) {
-  padding-right: calc(var(--control-toolbar-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+  padding-right: calc(var(--control-toolbar-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--workspace-tool-toggle-reserve, 0px));
 }
 
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-section-title {

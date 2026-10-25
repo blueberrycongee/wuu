@@ -206,10 +206,9 @@
     ),
     var(--environment-panel-reserved-width)
   );
-  /* Bottom controls center on the pane; the upper tool rail reserves space
-   * in the scrolling content without narrowing the composer. */
+  /* Messages and bottom controls share the space released by the tool rail. */
   --conversation-visible-inset-left: 0px;
-  --conversation-visible-inset-right: 0px;
+  --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
   --dock-composer-height: 0px;
   grid-column: 2;
   grid-row: 1;
@@ -330,7 +329,7 @@
 /* Reserve the stable shell toggle only while this titlebar reaches the
  * right window edge. A docked workspace reserves its own matching slot. */
 .app-shell:not(.popped-out-shell):not(.right-panel-open) .titlebar {
-  padding-right: calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+  padding-right: calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--workspace-tool-toggle-reserve, 0px));
 }
 
 .app-shell.sidebar-collapsed .titlebar,

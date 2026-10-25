@@ -62,8 +62,20 @@
   --workspace-tab-active-bg: var(--selection-surface);
 }
 
-/* The preview provider owns the rail. Reserve its footprint only while that
- * provider renders it, including when the tools themselves are collapsed. */
+/* Once collapsed, keep an expand control in the header and release the column. */
+.app-shell:has(.workspace-tool-rail-collapsed) {
+  --workspace-tool-toggle-reserve: calc(var(--control-size-toolbar) + var(--control-toolbar-gap));
+}
+
+.workspace-tool-rail-collapsed {
+  position: absolute;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  right: calc(var(--shell-right-control-inset) + var(--control-size-toolbar) + var(--control-toolbar-gap));
+  z-index: 151;
+  -webkit-app-region: no-drag;
+}
+
+/* The preview provider reserves the rail's footprint only while it is visible. */
 .app-shell:has(.workspace-tool-rail) {
   --workspace-tool-rail-width: calc(var(--control-size-toolbar) + var(--space-1) + 2px);
   /* Center the wider rail on the window's right-panel toggle. */
@@ -90,7 +102,8 @@
   -webkit-app-region: no-drag;
 }
 
-.workspace-tool-rail .icon-button {
+.workspace-tool-rail .icon-button,
+.workspace-tool-rail-collapsed .icon-button {
   flex-shrink: 0;
   width: var(--control-size-toolbar);
   height: var(--control-size-toolbar);
@@ -185,7 +198,7 @@
   background: var(--workspace-canvas-bg);
   /* Clear native window controls and reserve the shell-owned sidebar toggle,
      including while the reading canvas is a full-width sheet. */
-  padding: var(--conversation-pane-inset) calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap)) 0 var(--workspace-row-inset);
+  padding: var(--conversation-pane-inset) calc(max(var(--control-toolbar-inset), var(--window-controls-inset-right)) + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--workspace-tool-toggle-reserve, 0px)) 0 var(--workspace-row-inset);
   -webkit-app-region: drag;
   position: relative;
   z-index: 1;
