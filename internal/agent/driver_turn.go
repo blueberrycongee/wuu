@@ -104,11 +104,12 @@ func (g *streamTurnGateway) prepare(ctx context.Context) error {
 		}
 		g.policy = &policy
 	}
-	recovered, err := g.runner.pendingToolResultMessages(ctx, g.input.Messages)
+	history := providers.ResolveProviderHistory(filterDurableHistory(providers.CloneChatMessages(g.input.Messages)), g.runner.ProviderName, "")
+	recovered, err := g.runner.pendingToolResultMessages(ctx, history)
 	if err != nil {
 		return fmt.Errorf("recover pending tool results: %w", err)
 	}
-	g.baseHistory = filterDurableHistory(providers.CloneChatMessages(g.input.Messages))
+	g.baseHistory = history
 	g.activeHistory = providers.CloneChatMessages(g.baseHistory)
 	g.revision = 1
 	g.appendMessages(recovered...)
@@ -336,6 +337,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		}
 	}
 	round.Usage = result.Usage
+	round.CompletedMessages = providers.CloneChatMessages(result.CompletedMessages)
 	assistant := assistantMessageFromStep(result)
 	if result.Usage != nil {
 		g.contextTokens = result.Usage.TotalContextTokens()
@@ -350,10 +352,18 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if shouldPersistAssistantMessage(assistant) {
 		if err == nil {
 			g.appendMessages(assistant)
-		} else if strings.TrimSpace(result.Content) != "" || len(result.Images) > 0 {
-			// Keep visible partial output, but not incomplete provider state or
-			// tool declarations. The reply still exposes those for reconciliation.
-			g.appendMessages(providers.ChatMessage{Role: "assistant", Content: result.Content, Images: result.Images, Phase: result.Phase})
+		}
+	}
+	if err != nil {
+		fragment := result.Content
+		for _, completed := range result.CompletedMessages {
+			g.appendMessages(providers.CloneChatMessage(completed))
+			if completed.Content != "" {
+				fragment = strings.TrimPrefix(fragment, completed.Content)
+			}
+		}
+		if strings.TrimSpace(fragment) != "" || len(result.Images) > 0 {
+			g.appendMessages(providers.ChatMessage{Role: "assistant", Cause: providers.IncompleteStreamFragment, Content: fragment, Images: result.Images, Phase: result.Phase})
 		}
 	}
 	return round, err

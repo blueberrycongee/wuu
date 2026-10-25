@@ -55,6 +55,9 @@ export class ApplicationSubmission {
   private readonly operations = new Map<string, Operation>();
   private readonly results = new Map<string, ApplicationSubmissionOperationV1>();
   private readonly admissions = new Map<string, Operation>();
+  private readonly continuations = new Set<string>();
+  private readonly unadmitted = new Map<string, QueuedComposerMessage>();
+  unadmittedComposerMessage = (id: string): QueuedComposerMessage | undefined => this.unadmitted.get(id);
   private readonly lanes = new Map<string, { tail: Promise<void>; stopVersion: number }>();
   private readonly creations = new Map<string, Operation>();
   private readonly stopRequests = new Map<string, { target?: string; phase: "pending" | "retry"; delivery?: symbol }>();
@@ -236,6 +239,7 @@ export class ApplicationSubmission {
     if (!target && (runtime.pending || (runtime.params.engine ?? "wuu") === "wuu" && !hasAuthenticatedProvider(initial.initialized?.providers))) { forgetLocalTurnTiming(optimistic.id); return false; }
     const key = target?.id ?? source.id;
     if (this.admissions.has(key) || target?.read_only || target && isThreadRunning(target) && !activeTurnIsAnswerReady(target)) { forgetLocalTurnTiming(optimistic.id); return false; }
+    this.unadmitted.set(message.id, message);
     operation.view = { ...operation.view, mode: "send" };
     this.admissions.set(key, operation);
     if (!target) this.creations.set(source.id, operation);
@@ -318,11 +322,12 @@ export class ApplicationSubmission {
       const attachments = await Promise.race([Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]), operation.cancelled]);
       if (!attachments || operation.stopped) {
         this.options.updateState(state => updateThreadByID(state, thread!.id, current => interruptOptimisticTurn(current, optimistic.id, Date.now()), activeThreadIDForState(state) === thread!.id ? { running: false } : {}));
-        return true;
+        return false;
       }
       operation.sent = true; this.phase(operation, "sending");
       const [images, files] = attachments;
       const result = await window.wuu.startTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), inputFilesFromComposer(files), thread.permission_mode || runtime.params.permission_mode, message.activeDocument, message.contentParts, context, message.id);
+      this.unadmitted.delete(message.id);
       this.options.updateState(state => updateThreadByID(state, thread!.id, current => replaceOptimisticTurn(current, optimistic.id, result.turn, upsertTurn)));
       if (operation.stopped && isThreadRunning(threadForTab(this.options.getState(), thread.id))) await this.interruptAccepted(thread.id);
       return true;
@@ -498,6 +503,21 @@ export class ApplicationSubmission {
     if (context) { operation.context = { ...context }; operation.capturedContext = true; }
     return this.runInternal(operation, kind, prepareThread);
   }
+  async continueThread(thread: Thread, sourceTurnID: string): Promise<boolean> {
+    if (this.disposed || thread.read_only || thread.archived || isThreadRunning(thread)
+      || sourceTurnID.startsWith(OPTIMISTIC_TURN_ID_PREFIX) || thread.turns.at(-1)?.id !== sourceTurnID
+      || !["failed", "interrupted"].includes(thread.turns.at(-1)?.status ?? "")
+      || this.stopRequests.has(thread.id) || this.admissions.has(thread.id) || this.continuations.has(thread.id)) return false;
+    this.continuations.add(thread.id);
+    try {
+      const result = await window.wuu.startTurn(thread.id, "", undefined, undefined, thread.permission_mode,
+        undefined, undefined, resolveThreadRuntimeContext(thread, this.options.getState().projects), undefined, sourceTurnID);
+      this.options.updateState(state => updateThreadByID(state, thread.id, current => upsertTurn(current, result.turn)));
+      return true;
+    } finally {
+      this.continuations.delete(thread.id);
+    }
+  }
   submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean> {
     return this.submitInternal(message, thread, "send", prepareThread);
   }
@@ -518,6 +538,7 @@ export class ApplicationSubmission {
   dispose(): void {
     this.disposed = true;
     this.results.clear();
+    this.unadmitted.clear();
     for (const operation of this.operations.values()) if (!operation.sent) this.cancel(operation.view.operationID);
   }
 }

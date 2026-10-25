@@ -144,47 +144,50 @@ async function capture(name) {
   report.screenshots.push(file); save();
 }
 async function verifyRibbonHeader(name, resizeFont = false) {
-  const before = await evaluate(() => document.querySelector("[data-ribbon-id]").getBoundingClientRect().y);
+  const before = await evaluate(() => ({
+    y: document.querySelector("[data-ribbon-id]").getBoundingClientRect().y,
+    width: document.querySelector(".sidebar-ribbon").getBoundingClientRect().width,
+  }));
   win.webContents.focus();
-  await evaluate(() => {
-    window.__ribbonKeyboardObserved = false;
-    document.addEventListener("keydown", () => { window.__ribbonKeyboardObserved = true; }, { once: true, capture: true });
-  });
-  await observeInput(win.webContents);
-  key(win.webContents, "HOME");
-  await until(() => evaluate(() => window.__ribbonKeyboardObserved && document.documentElement.dataset.focusModality === "keyboard"), "keyboard opening input delivered");
   await evaluate(() => document.querySelector("[data-ribbon-id]").focus());
-  let ribbon;
-  await until(() => {
-    ribbon = win.contentView.children.find(view => view.webContents?.getURL().includes("surface=ribbon"));
-    return ribbon?.getVisible();
-  }, "native ribbon opens for header verification");
-  await until(async () => {
-    const state = await ribbon.webContents.executeJavaScript("window.wuuChromeOverlay.ready().then(request=>({width:innerWidth,bounds:request?.bounds,focus:request?.focus}))");
-    report.ribbonOpening = { ...state, nativeBounds: ribbon.getBounds(), visible: ribbon.getVisible() };
-    return state.bounds && Math.abs(state.width - state.bounds.width) < 1;
-  }, "native ribbon fully revealed");
-  const geometry = await evaluate(() => {
-    const toolbar = document.querySelector(".web-workspace-stage:not([hidden]) .web-workspace-toolbar").getBoundingClientRect();
-    return { toolbarBottom: toolbar.bottom, firstRowY: document.querySelector("[data-ribbon-id]").getBoundingClientRect().y,
-      fontSize: Number.parseFloat(getComputedStyle(document.querySelector(".workspace-browser-url-input")).fontSize) };
-  });
-  const nativeBounds = ribbon.getBounds();
-  report.checks.push({ name, nativeBounds, ...geometry, firstRowBefore: before }); save();
-  assert.ok(nativeBounds.y / win.webContents.getZoomFactor() >= geometry.toolbarBottom - 1, "Expanded native ribbon must leave the whole browser toolbar unobstructed");
-  assert.equal(geometry.firstRowY, before, "Opening native ribbon must not move its destination rows");
-  if (resizeFont) for (const fontSize of [15, 20]) {
+  await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await evaluate(() => document.querySelector(".sidebar-ribbon").getBoundingClientRect().width), before.width, "Focusing a destination preserves the saved ribbon width");
+  await evaluate(() => document.querySelector(".ribbon-resizer").focus());
+  await observeInput(win.webContents);
+  key(win.webContents, "END");
+  await until(() => evaluate(() => {
+    const handle = document.querySelector(".ribbon-resizer");
+    return handle.getAttribute("aria-valuenow") === handle.getAttribute("aria-valuemax");
+  }), "keyboard expands ribbon");
+  for (const fontSize of resizeFont ? [15, 20] : [15]) {
     await setFontSize(fontSize);
+    let geometry, nativeBounds;
     await until(async () => {
-      const bottom = await evaluate(() => document.querySelector(".web-workspace-stage:not([hidden]) .web-workspace-toolbar").getBoundingClientRect().bottom);
-      return Math.abs(ribbon.getBounds().y / win.webContents.getZoomFactor() - bottom) <= 1;
-    }, `open native ribbon follows toolbar at ${fontSize}px`);
-    assert.equal(ribbon.getVisible(), true, "Changing font size keeps the native ribbon open");
-    report.checks.push({ fontSize, nativeBounds: ribbon.getBounds() }); save();
+      geometry = await evaluate(() => {
+        const toolbar = document.querySelector(".web-workspace-stage:not([hidden]) .web-workspace-toolbar").getBoundingClientRect();
+        const host = document.querySelector(".web-workspace-stage:not([hidden]) .web-workspace-host").getBoundingClientRect();
+        return { toolbarBottom: toolbar.bottom, firstRowY: document.querySelector("[data-ribbon-id]").getBoundingClientRect().y,
+          ribbonWidth: document.querySelector(".sidebar-ribbon").getBoundingClientRect().width,
+          expectedWidth: Number(document.querySelector(".ribbon-resizer").getAttribute("aria-valuenow")),
+          host: { x: host.x, y: host.y, width: host.width, height: host.height } };
+      });
+      const page = win.contentView.children.find(view => view.getVisible() && view.webContents?.getURL().startsWith("http://127.0.0.1:"));
+      nativeBounds = page?.getBounds();
+      return nativeBounds && Math.abs(geometry.ribbonWidth - geometry.expectedWidth) <= 1 &&
+        ["x", "y", "width", "height"].every(k => Math.abs(nativeBounds[k] - Math.round(geometry.host[k] * win.webContents.getZoomFactor())) <= 2);
+    }, `expanded ribbon and native page align at ${fontSize}px`);
+    assert.ok(nativeBounds.y / win.webContents.getZoomFactor() >= geometry.toolbarBottom - 1, "Expanded ribbon leaves the browser toolbar unobstructed");
+    if (!resizeFont) assert.equal(geometry.firstRowY, before.y, "Resizing ribbon preserves destination row positions");
+    report.checks.push({ name, fontSize, nativeBounds, ...geometry }); save();
   }
   await capture(name);
-  key(ribbon.webContents, "ESC");
-  await until(() => !ribbon.getVisible(), "native ribbon dismisses");
+  await evaluate(() => document.querySelector(".ribbon-resizer").focus());
+  key(win.webContents, "HOME");
+  await until(() => evaluate(() => {
+    const handle = document.querySelector(".ribbon-resizer");
+    return handle.getAttribute("aria-valuenow") === handle.getAttribute("aria-valuemin") &&
+      Math.abs(document.querySelector(".sidebar-ribbon").getBoundingClientRect().width - Number(handle.getAttribute("aria-valuemin"))) <= 1;
+  }), "keyboard compacts ribbon");
 }
 async function setFontSize(size) {
   await evaluate(async size => {
@@ -334,6 +337,8 @@ async function run() {
       if (state.id === "ribbon-browser") window.__restoredTabOrders.push((state.tabs ?? []).map(tab => tab.id));
     });
   });
+  app.focus({ steal: true }); win.focus();
+  await until(() => win.isFocused(), "fixture foreground before close/reopen keyboard verification");
   guest.focus(); key(guest, "W", [process.platform === "darwin" ? "meta" : "control"]);
   await until(() => evaluate(id => !document.querySelector(`[data-ribbon-id="${id}"]`), first), "close active tab with keyboard");
   const neighbor = webContents.getAllWebContents().find(wc => wc.getURL() === `${base}/second`);

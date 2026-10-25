@@ -423,6 +423,33 @@ func (l *Ledger) SupersedePreparedBatch(ctx context.Context, batchID string) err
 	})
 }
 
+// ValidateContinuation requires the execution lease and reconciled receipts.
+// Fresh sampling cannot make an unconfirmed at-most-once effect safe to repeat.
+func (l *Ledger) ValidateContinuation(ctx context.Context) error {
+	if l == nil {
+		return nil
+	}
+	return l.write(ctx, func(tx *persistence.Tx) error {
+		batches, err := toolstate.ReadOwnerBatches(tx, l.ownerID)
+		if err != nil {
+			return err
+		}
+		for _, batch := range batches {
+			invocations, err := batchInvocations(tx, batch)
+			if err != nil {
+				return err
+			}
+			for _, invocation := range invocations {
+				if invocation.ReplayPolicy == string(ReplayAtMostOnce) &&
+					(invocation.State == string(InvocationRunning) || invocation.State == string(InvocationInterruptedUnknown)) {
+					return &ReplayBlockedError{Decision: ReplayDecision{Action: ReplayBlock, Reason: ReplayReasonInvocationUnknown, BlockingInvocationIDs: []string{invocation.ID}}}
+				}
+			}
+		}
+		return nil
+	})
+}
+
 // Reconcile requires the caller's exclusive execution lease, and never retries
 // an external effect whose result was not durably settled.
 func (l *Ledger) Reconcile(ctx context.Context) error {

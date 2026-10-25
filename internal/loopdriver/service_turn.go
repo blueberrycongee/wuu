@@ -139,7 +139,7 @@ func (g serviceGateway) callModel(ctx context.Context, method string, request pr
 	}, &result); err != nil {
 		return ModelRound{}, err
 	}
-	round := ModelRound{Messages: modelwire.DriverMessagesFromWire(result.Messages), ToolBatchID: result.ToolBatchID, ToolWorkStarted: result.ToolWorkStarted}
+	round := ModelRound{CompletedMessages: modelwire.DriverMessagesFromWire(result.CompletedMessages), Messages: modelwire.DriverMessagesFromWire(result.Messages), ToolBatchID: result.ToolBatchID, ToolWorkStarted: result.ToolWorkStarted}
 	if result.Usage != nil {
 		usage := modelwire.TokenUsageFromWire(*result.Usage)
 		round.Usage = &usage

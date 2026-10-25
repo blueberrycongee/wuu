@@ -123,7 +123,7 @@ describe("application submission ownership",()=>{
     const f=fixture(thread());
     const sending=f.submission.submitToThread({id:"edited",text:"edited",images:[],files:[]},thread(),()=>preparing.promise);
     await f.submission.stop("thread:created");
-    preparing.resolve(thread());expect(await sending).toBe(true);
+    preparing.resolve(thread());expect(await sending).toBe(false);
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
     expect(f.getState().threads[0].turns.at(-1)?.status).toBe("interrupted");
   });

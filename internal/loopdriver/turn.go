@@ -77,8 +77,10 @@ type InputAdmission struct {
 // failure prevents model and streaming-tool execution. A committed receipt does
 // not prove submission, since cancellation may occur immediately afterward.
 type ModelRound struct {
-	Messages []providers.ChatMessage
-	Usage    *providers.TokenUsage
+	// CompletedMessages survives a failed stream separately from its partial output.
+	CompletedMessages []providers.ChatMessage
+	Messages          []providers.ChatMessage
+	Usage             *providers.TokenUsage
 	// CallModelWithTools reserves a unique batch before dispatch and permits
 	// safe prefix tools to start during streaming. On success, a nonempty ID
 	// must be joined through CallTools with exactly the returned calls before

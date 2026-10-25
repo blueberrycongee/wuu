@@ -31,6 +31,7 @@ export interface ApplicationConversationActionsHost {
   };
   pendingComposer: { threadHasPendingComposerMessages(threadID: string): boolean };
   submission: {
+    unadmittedComposerMessage?(id: string): QueuedComposerMessage | undefined;
     submitToThread(message: QueuedComposerMessage, thread: Thread, prepareThread?: () => Promise<Thread>): Promise<boolean>;
     steerToThread(message: QueuedComposerMessage, thread: Thread): Promise<boolean>;
     interruptThread(threadId: string): Promise<void>;
@@ -74,6 +75,7 @@ export class ApplicationConversationActions {
       restorePrimaryComposerDraft: draft => host.drafts.set(draft),
       threadHasPendingComposerMessages: id => host.pendingComposer.threadHasPendingComposerMessages(id),
       sendComposerMessageToThread: (message, thread, prepare) => host.submission.submitToThread(message, thread, prepare),
+      unadmittedComposerMessage: id => host.submission.unadmittedComposerMessage?.(id),
       worktreeForkNonGitReason: t("app.worktreeRequiresGit"),
       onError: error => { throw error; },
       // Presentation effects belong to the command consumer, not the domain owner.

@@ -1076,6 +1076,32 @@ func TestRunToolLoop_KimiMessageSizeOverflowAutoCompactsOnce(t *testing.T) {
 	}
 }
 
+func TestRunToolLoopContinuationSurvivesOverflowCompaction(t *testing.T) {
+	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
+	step := &fakeStep{results: []StepResult{{}, {ToolCalls: []providers.ToolCall{{ID: "call-after-resume", Name: "read_file", Arguments: `{}`}}}, {Content: "continued"}}, errs: []error{overflow, nil, nil}}
+	history := []providers.ChatMessage{userMsg("original"), {Role: "assistant", Content: "completed prefix"}}
+	cfg := LoopConfig{Model: "claude-test", ResumeSampling: true, Tools: &fakeLoopTools{defs: []providers.ToolDefinition{{Name: "read_file"}}}, Compact: func(_ context.Context, messages []providers.ChatMessage) ([]providers.ChatMessage, error) {
+		return messages[len(messages)-1:], nil
+	}}
+	if _, err := RunToolLoop(context.Background(), history, cfg, step); err != nil {
+		t.Fatal(err)
+	}
+	if len(step.calls) != 3 {
+		t.Fatalf("requests = %d", len(step.calls))
+	}
+	for i, req := range step.calls[:2] {
+		if !req.ResumeSampling {
+			t.Fatalf("request %d lost explicit continuation before successful response", i)
+		}
+		if req.Messages[len(req.Messages)-1].Role != "assistant" {
+			t.Fatalf("request %d lost assistant tail", i)
+		}
+	}
+	if step.calls[2].ResumeSampling {
+		t.Fatal("continuation mode outlived first successful response")
+	}
+}
+
 func TestRunToolLoop_ContextOverflowStopsWhenCompactUnchanged(t *testing.T) {
 	overflow := &providers.HTTPError{StatusCode: 400, Body: "context_length_exceeded", ContextOverflow: true}
 	step := &fakeStep{results: []StepResult{{}}, errs: []error{overflow}}
@@ -2793,5 +2819,26 @@ func TestRunToolLoop_ReturnsInvalidToolArgumentsToModel(t *testing.T) {
 	retryMessages := step.calls[1].Messages
 	if len(retryMessages) != 2 || len(retryMessages[0].ToolCalls) != 1 || retryMessages[1].ToolCallID != "call_1" {
 		t.Fatalf("retry should include paired invalid tool call and error result, got %+v", retryMessages)
+	}
+}
+
+func TestFailedStepKeepsCompletedItemsAndIsolatesFragment(t *testing.T) {
+	step := &fakeStep{results: []StepResult{{
+		CompletedMessages: []providers.ChatMessage{{Role: "assistant", ReasoningBlocks: []providers.ReasoningBlock{{Type: "thinking", Thinking: "done reasoning", Signature: "signed"}}}, {Role: "assistant", Content: "completed item", ProviderItemID: "msg_done", ProviderItemProvider: "test", ProviderItemModel: "test"}},
+		Content:           "completed itemincomplete tail", ReasoningContent: "unfinished thinking", ProviderItemID: "msg_partial",
+	}}, errs: []error{errors.New("injected disconnect")}}
+	result, err := RunToolLoop(context.Background(), []providers.ChatMessage{{Role: "user", Content: "task"}}, LoopConfig{Model: "test"}, step)
+	if err == nil {
+		t.Fatal("fault not injected")
+	}
+	prepared, err := providers.PrepareMessagesForProviderRequest("test", "test", result.NewMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared) != 2 || prepared[1].Content != "completed item" || prepared[1].ProviderItemID != "msg_done" || len(prepared[0].ReasoningBlocks) != 1 {
+		t.Fatalf("completed progress lost: %+v", prepared)
+	}
+	if len(result.NewMessages) != 3 || result.NewMessages[2].Cause != providers.IncompleteStreamFragment || result.NewMessages[2].Content != "incomplete tail" {
+		t.Fatalf("fragment not isolated: %+v", result.NewMessages)
 	}
 }

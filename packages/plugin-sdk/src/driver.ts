@@ -61,6 +61,8 @@ export interface DriverContextSegment {
   readonly visible_in_ui: boolean;
 }
 export interface DriverModelRound {
+  /** Protocol-complete items retained when a stream fails; partial output remains in messages. */
+  readonly completed_messages?: readonly DriverMessage[];
   /** The assistant response. Input admission is a separate operation. */
   readonly messages: readonly DriverMessage[];
   /** Reserved batch from modelWithTools. Join a successful nonempty receipt
@@ -141,6 +143,8 @@ export interface DriverSystemSection {
   readonly hash?: string;
 }
 export interface DriverTurnSettings {
+  /** Explicit continuation from saved history without a new user message. */
+  readonly resume_sampling?: boolean;
   readonly max_steps: number;
   readonly streaming_tools: boolean;
   readonly provider_observation_key: string;

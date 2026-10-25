@@ -283,7 +283,15 @@ export function TurnFailureNotice({
   const classified = failureKind(error, reconnect ? reconnectReason(reconnect) : undefined, display, message);
   const kind = !online && OFFLINE_EXPLAINS.has(classified) ? "offline" : classified;
   const status = failureStatusCode(error, message);
-  const title = kind
+  const recoveryState = retrying
+    ? reconnect?.reason === "waiting_network" ? "waiting_network" : "retrying"
+    : error?.recovery?.stop_reason === "replay_unsafe" ? "unsafe_replay"
+      : !["auth", "quota", "model", "context"].includes(kind ?? "") && ["retry_limit", "workflow_budget_exceeded", "workflow_cost_indeterminate"].includes(error?.recovery?.stop_reason ?? "") ? "exhausted" : "failed";
+  const title = recoveryState === "waiting_network" ? t("turnFailure.waitingNetwork")
+    : recoveryState === "retrying" ? t("turnFailure.retrying")
+    : recoveryState === "unsafe_replay" ? t("turnFailure.unsafeReplay")
+    : recoveryState === "exhausted" ? t("turnFailure.exhausted")
+    : kind
     ? t(FAILURE_COPY[kind].title)
     : reconnect && (retrying || !error)
       ? reconnectFallbackTitle(reconnect)
@@ -321,6 +329,7 @@ export function TurnFailureNotice({
   const Icon = retrying ? TriangleAlert : CircleAlert;
   return (
     <aside
+      data-recovery-state={recoveryState}
       className={`turn-notice turn-failure${retrying ? " is-retrying" : ""}${arriving ? " is-arriving" : ""}`}
       role={retrying ? "status" : "alert"}
       aria-label={title}

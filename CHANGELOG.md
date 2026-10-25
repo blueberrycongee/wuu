@@ -75,6 +75,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Experimental workbench website destinations share the desktop browser profile, retain navigation state, and can be added, edited, removed, and reordered alongside conversations and extension pages.
 - Desktop extensions can render a native website through the existing view API, with page lifecycle tied to the mounted extension view.
+
+- Continue interrupted Wuu tasks from durable history without repeating user input; preserve completed items and tool results, isolate incomplete fragments, and distinguish network waiting, retries, exhaustion and unsafe replay.
+
 - Show Computer Use calls as readable action titles, with original calls, outputs, and errors available in expandable records.
 
 - Show external connections as compact two-line rows with account plans, remaining quota bars and local reset times; omit unavailable quota details.

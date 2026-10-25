@@ -404,7 +404,9 @@ when a consumer breaks or throws. Consume streams within the handler lifetime;
 use a background job for work that must outlive the originating handler. Preserve
 opaque `provider_state` and `lifecycle` payloads when forwarding events. If
 `reset_partial` is true, discard prior partial output before accepting replacement
-events from a retry.
+events from a retry. The `assistant_item_done` event carries a complete assistant
+`message` checkpoint for interrupted-turn recovery. Forward it intact; it does not
+append another visible message.
 
 A middleware receives `ModelMiddlewareInput` with `request`, `origin`, `stream`
 and `continuation_id`. Forward through `invokeModel` or `startModelInvocation`

@@ -1517,7 +1517,6 @@ export function App({ application, slots, shellPluginId }: {
   }
 
   function revealWebsite(): void {
-    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
     closeWorkspaceMenus();
     closeConversationSearch({ immediate: true });
     setEnvironmentDialog(null);

@@ -400,6 +400,14 @@ func buildAnthropicRequestWithSupport(req providers.ChatRequest, maxTokens int, 
 		return anthropicRequest{}, err
 	}
 	req.Messages = prepared
+	if req.ResumeSampling && len(prepared) > 0 && prepared[len(prepared)-1].Role == "assistant" {
+		// Messages with thinking enabled cannot prefill an assistant reply.
+		// This adapter-only instruction starts a fresh response; it never enters
+		// the durable transcript or duplicates the original user task.
+		req.Messages = append(providers.CloneChatMessages(prepared), providers.ChatMessage{
+			Role: "user", Content: "Continue the unfinished task from the completed progress above. Do not repeat completed actions.",
+		})
+	}
 	toolSearchEnabled := shouldEnableAnthropicToolSearch(req, support)
 
 	// Parse cache control options from provider options.
@@ -1159,6 +1167,7 @@ type blockState struct {
 	toolID    string
 	toolName  string
 	argsJSON  strings.Builder
+	text      strings.Builder
 	reasoning providers.ReasoningBlock
 }
 
@@ -1275,6 +1284,9 @@ func (c *Client) handleSSEEvent(
 			bs := blocks[p.Index]
 			switch p.Delta.Type {
 			case "text_delta":
+				if bs != nil {
+					bs.text.WriteString(p.Delta.Text)
+				}
 				if !emit.Send(providers.StreamEvent{Type: providers.EventContentDelta, Content: p.Delta.Text}) {
 					return true
 				}
@@ -1304,6 +1316,12 @@ func (c *Client) handleSSEEvent(
 		}
 		if json.Unmarshal([]byte(raw.Data), &idx) == nil {
 			if bs, ok := blocks[idx.Index]; ok {
+				if bs.blockType == "text" && bs.text.Len() > 0 {
+					message := providers.ChatMessage{Role: "assistant", Content: bs.text.String()}
+					if !emit.Send(providers.StreamEvent{Type: providers.EventAssistantItemDone, Message: &message}) {
+						return true
+					}
+				}
 				if bs.blockType == "tool_use" {
 					if !emit.Send(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &providers.ToolCall{ID: bs.toolID, Name: bs.toolName, Kind: anthropicToolCallKind(bs.toolName), Arguments: bs.argsJSON.String()}}) {
 						return true

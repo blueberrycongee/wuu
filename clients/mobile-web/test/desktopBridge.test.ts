@@ -770,3 +770,11 @@ it("marks a terminal as ended when a new remote attachment replaces its owner", 
  expect(events).toContainEqual(expect.objectContaining({type:'error',id:'term-1'}));
  await bridge.disconnect();
 });
+
+it("forwards explicit continuation without inventing user input", async () => {
+  const host = await api();
+  await host.startTurn("thread", "", undefined, undefined, undefined, undefined, undefined, undefined, undefined, "turn-interrupted");
+  expect(remote.call).toHaveBeenCalledWith("turn/start", expect.objectContaining({
+    thread_id: "thread", prompt: "", resume_after_turn_id: "turn-interrupted",
+  }), expect.any(Number), expect.any(String));
+});

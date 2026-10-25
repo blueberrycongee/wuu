@@ -783,3 +783,10 @@ checkout. The validator rejects unexpected fields, common secrets and non-exampl
 HTTP URLs; it cannot establish that arbitrary prose is safe to share. Review each
 new sample manually. Keep source claims in sample text as historical fixture
 content, not current product documentation. No real account or model key is needed.
+
+
+### Interruption recovery fixtures
+
+Run `go test -race ./internal/appserver ./internal/agent ./internal/providers/... -run 'TestTurnContinue|TestRecoveryFaultMatrix|TestFailedStepKeeps|TestExplicitResume' -count=1 -v` for simulated admission, restart, tool-result and provider-protocol recovery.
+
+After installing the locked desktop and `clients/mobile-web` dependencies, run `node desktop/scripts/continuation-recovery-e2e.mjs`. It uses Chromium headless, production Composer/notice components and synthetic callbacks. Set `WUU_HEADLESS_CHROMIUM` to an existing headless Chromium executable when needed; the script does not install one. Screenshots and `report.json` are written to ignored `artifacts/issue-903/ui/` (`WUU_RECOVERY_OUTPUT` overrides it). The matrix covers light 15px/wide and dark 20px/narrow recovery states plus duplicate-click suppression. This component fixture complements the public RPC/HTTP Go tests; it does not verify native Electron, live model behavior or an actual network outage.

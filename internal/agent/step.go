@@ -19,7 +19,9 @@ import (
 // the loop doesn't care whether the response came from a one-shot
 // Chat or a fully-consumed SSE stream.
 type StepResult struct {
-	ProviderItems []providers.ProviderItem
+	// CompletedMessages contains only protocol-complete items from a failed stream.
+	CompletedMessages []providers.ChatMessage
+	ProviderItems     []providers.ProviderItem
 	// Content is the assistant's text for this round (concatenation
 	// of all content deltas in the streaming case).
 	Content string
@@ -175,6 +177,7 @@ type SystemPromptSectionInfo = providers.SystemPromptSectionSummary
 // LoopConfig bundles every knob the shared loop needs. All callbacks
 // are optional. Tools is required if the model is allowed to call any.
 type LoopConfig struct {
+	ResumeSampling bool
 	// Tools is the executor used to run model-requested tool calls.
 	// May be nil if the caller knows the model has no tools available.
 	Tools ToolExecutor

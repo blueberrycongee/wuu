@@ -184,6 +184,7 @@ export interface ModelStreamEventV1 {
   /** Opaque diagnostic/retry metadata; preserve it when forwarding events. */
   readonly provider_state?: Readonly<Record<string, unknown>>;
   readonly lifecycle?: Readonly<Record<string, unknown>>;
+  /** assistant_item_done carries a complete assistant message checkpoint; forward it without rendering an extra message. */
   readonly type: string;
   readonly content?: string;
   readonly phase?: string;

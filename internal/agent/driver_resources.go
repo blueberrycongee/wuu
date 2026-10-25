@@ -24,7 +24,7 @@ func (g *streamTurnGateway) ReadSettings(ctx context.Context) (pluginprotocol.Dr
 	r := g.runner
 	_, observationKey := r.providerConnectionSnapshot()
 	settings := pluginprotocol.DriverTurnSettings{
-		MaxSteps: r.MaxSteps, StreamingTools: r.StreamingToolExecution,
+		MaxSteps: r.MaxSteps, StreamingTools: r.StreamingToolExecution, ResumeSampling: r.ResumeSampling,
 		ProviderObservationKey: observationKey, ModelVariant: r.Variant,
 		ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens,
 		OutputReserveTokens: r.OutputReserveTokens, CompactThresholdTokens: r.CompactThresholdTokens,

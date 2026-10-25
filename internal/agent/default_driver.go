@@ -91,7 +91,8 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 	}
 	step := &driverResourceStep{turn: turn, definitions: request.Tools, streaming: settings.StreamingTools}
 	cfg := LoopConfig{
-		Model: request.Model, ProviderName: request.Provider, Temperature: request.Temperature,
+		ResumeSampling: settings.ResumeSampling,
+		Model:          request.Model, ProviderName: request.Provider, Temperature: request.Temperature,
 		MediaInput: request.MediaInput, Effort: request.Effort, ProviderOptions: request.ProviderOptions,
 		NativeDeferredToolDiscovery: request.NativeDeferredToolDiscovery, ForceToolFirstStep: request.ForceToolName,
 		SessionID: i.execution.SessionID, ExecutionID: i.execution.ExecutionID,
@@ -289,7 +290,7 @@ func (s *driverResourceStep) Execute(ctx context.Context, request providers.Chat
 	} else {
 		round, err = s.turn.CallModel(ctx, request)
 	}
-	result := StepResult{Usage: round.Usage}
+	result := StepResult{Usage: round.Usage, CompletedMessages: providers.CloneChatMessages(round.CompletedMessages)}
 	for _, message := range round.Messages {
 		if message.Role != "assistant" {
 			continue

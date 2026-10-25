@@ -1597,13 +1597,13 @@ export function AppSidebar({
         onOpenExternal={navigation ? url => navigation.invoke("navigation.open-external", { url }) : undefined}
         ribbonRef={ribbonRef}
         websites={websites}
-        onNewTab={onNewTab ? () => activateNative(onNewTab) : undefined}
+        onNewTab={onNewTab}
         onCloseTab={onCloseTab}
         onPinTab={onPinTab}
         onMuteTab={onMuteTab}
         onReorderTabs={onReorderTabs}
         activeWebsiteId={activeWebsiteId}
-        onSelectWebsite={onSelectWebsite ? (website) => activateNative(() => onSelectWebsite(website)) : undefined}
+        onSelectWebsite={onSelectWebsite}
         items={[
           {
             id: "conversations",

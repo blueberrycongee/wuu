@@ -500,8 +500,8 @@ const api: WuuDesktopApi = {
   },
   openExternal: (url: string) =>
     ipcRenderer.invoke("wuu:open-external", url),
-  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId) =>
-    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId),
+  startTurn: (threadId: string, prompt: string, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId, resumeAfterTurnId) =>
+    ipcRenderer.invoke("wuu:turn-start", threadId, prompt, images, files, permissionMode, activeDocument, contentParts, targetContext, clientId, resumeAfterTurnId),
   queueTurn: (threadId: string, prompt: string, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext, hold) =>
     ipcRenderer.invoke("wuu:turn-queue", threadId, prompt, images, clientId, files, permissionMode, activeDocument, contentParts, targetContext, hold),
   updateQueuedTurn: (threadId: string, queueId: string, prompt: string, images, files, contentParts) =>

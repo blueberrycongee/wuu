@@ -428,6 +428,9 @@ type CacheHint struct {
 
 // ChatRequest is the normalized request payload for providers.
 type ChatRequest struct {
+	// ResumeSampling is an explicit new sampling turn with no new user input.
+	// Adapters may add request-only compatibility guidance; it is never durable.
+	ResumeSampling bool
 	// Provider is Wuu's configured provider identity. It is request metadata
 	// used to prevent provider-native state from crossing endpoints and is
 	// never serialized by provider adapters.
@@ -541,11 +544,13 @@ const (
 	EventProviderItem    StreamEventType = "provider_item"
 	EventUsage           StreamEventType = "usage"
 	EventMessage         StreamEventType = "message"
-	EventLifecycle       StreamEventType = "lifecycle"
-	EventReconnect       StreamEventType = "reconnect"
-	EventCompact         StreamEventType = "compact"
-	EventDone            StreamEventType = "done"
-	EventError           StreamEventType = "error"
+	// EventAssistantItemDone checkpoints a complete provider item without changing live UI projection.
+	EventAssistantItemDone StreamEventType = "assistant_item_done"
+	EventLifecycle         StreamEventType = "lifecycle"
+	EventReconnect         StreamEventType = "reconnect"
+	EventCompact           StreamEventType = "compact"
+	EventDone              StreamEventType = "done"
+	EventError             StreamEventType = "error"
 )
 
 // AgentActivityState is the provider-neutral lifecycle reported for an

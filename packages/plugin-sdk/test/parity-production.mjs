@@ -45,7 +45,7 @@ function startServer() {
   const listeners = new Set();
   let sequence = 0;
   let ended;
-  let stderr = ''; 
+  let stderr = '';
   const exit = once(child, 'exit');
   child.stderr.on('data', data => {stderr += String(data); transcript.push({stderr: String(data)});});
   createInterface({input: child.stdout}).on('line', line => {

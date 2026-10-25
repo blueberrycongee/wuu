@@ -690,7 +690,7 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	requireActiveRuntime(t, rt.PluginHost, "reload-fixture")
 }
 
-func TestPluginGrantActivationFailurePublishesCommittedInventory(t *testing.T) {
+func TestPluginInstallActivationFailurePublishesCommittedInventory(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
@@ -712,10 +712,9 @@ func TestPluginGrantActivationFailurePublishesCommittedInventory(t *testing.T) {
 	srv := New(rt, out)
 	defer srv.Close()
 	callPluginPackageRPC(t, srv, "install", MethodPluginPackageInstall, PluginPackageInstallParams{Path: root})
-	installed := remarshal[PluginPackageInstallResult](t, responseByID(t, parseOutput(t, out.String()), "install")["result"])
-	record := pluginPackageRecord(t, installed.ExtensionInventory, "activate-failure")
-	callPluginPackageRPC(t, srv, "grant", MethodExtensionPackageUpdate, ExtensionPackageUpdateParams{ID: record.ID, Fingerprint: record.Fingerprint, Action: ExtensionPackageGrant})
-	response := responseByID(t, parseOutput(t, out.String()), "grant")
+	// Installation grants trust and activates immediately. A failed activation
+	// must still publish the configuration that was durably committed.
+	response := responseByID(t, parseOutput(t, out.String()), "install")
 	if !strings.Contains(fmt.Sprint(response["error"]), "committed") {
 		t.Fatalf("expected explicit committed activation error: %+v", response)
 	}

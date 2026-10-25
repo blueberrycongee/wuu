@@ -144,12 +144,15 @@ func (th *threadState) startTurnLocked(turnID string, userMsg providers.ChatMess
 	th.toolItems = make(map[string]string)
 	th.streamText = nil
 
-	userItem := chatMessageItem(th.nextItemIDLocked(turnID), userMsg)
+	var items []ThreadItem
+	if chatMessageHasUserPayload(userMsg) {
+		items = append(items, chatMessageItem(th.nextItemIDLocked(turnID), userMsg))
+	}
 	turn := Turn{
 		ID:            turnID,
 		ModelProvider: th.ModelProvider,
 		Model:         th.Model,
-		Items:         []ThreadItem{userItem},
+		Items:         items,
 		ItemsView:     TurnItemsViewFull,
 		Status:        TurnStatusInProgress,
 		StartedAt:     &now,
@@ -965,6 +968,9 @@ func (th *threadState) upsertStreamReconnectItemLocked(turnID string, lc *provid
 	}
 	item.Text = lc.Reason
 	item.Reason = lc.FailureCategory
+	if lc.FailureCategory == string(providers.FailureNetwork) && !lc.ResetPartial {
+		item.Reason = "waiting_network"
+	}
 	item.RetryCount = lc.RetryCount
 	item.MaxRetries = lc.MaxRetries
 	if lc.RetryIn > 0 {
@@ -1563,6 +1569,16 @@ func projectPersistedHistory(threadID string, history []persistedMessage, now ti
 			continue
 		}
 		if strings.EqualFold(strings.TrimSpace(rec.Role), "meta") {
+			if rec.Content == turnContinueHistoryRecord {
+				itemIndex = 0
+				toolItems = make(map[string]int)
+				toolBatches = make(map[string]*projectedToolBatch)
+				turnID := fmt.Sprintf("%s-turn-%04d", threadID, len(turns)+1)
+				turns = append(turns, Turn{ID: turnID, Items: []ThreadItem{}, ItemsView: TurnItemsViewFull, Status: TurnStatusInterrupted})
+				current = &turns[len(turns)-1]
+				turnStartedAt[turnID] = rec.At
+				continue
+			}
 			if current != nil && rec.Content == "token_usage" {
 				setProjectedTurnTiming(current, turnStartedAt[current.ID], rec.At)
 			}

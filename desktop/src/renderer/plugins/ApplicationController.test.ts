@@ -122,7 +122,7 @@ describe("shared application state", () => {
 
   it("keeps history retries and recovery sends bound to the requested conversation", async () => {
     const context = { kind: "no_project" as const, cwd: "/foreground" };
-    const thread = { id: "background", cwd: "/background", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [], history_cursor: "page:one" };
+    const thread = { id: "background", cwd: "/background", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [{ id: "interrupted", status: "interrupted" as const, items_view: "full" as const, items: [] }], history_cursor: "page:one" };
     const history = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
     const send = vi.fn().mockResolvedValue({ turn: { id: "sent", items: [], items_view: "full", status: "in_progress" } });
     window.wuu = { loadEarlierThreadHistory: history, startTurn: send } as unknown as WuuDesktopApi;

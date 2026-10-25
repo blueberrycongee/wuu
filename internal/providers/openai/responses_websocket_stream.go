@@ -787,6 +787,7 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			pending.setArguments(event)
 
 		case "response.output_item.done":
+			emitResponsesCompletedMessage(emit, event.Item)
 			if item, ok := responsesOutputItemReplayInput(event.Item); ok {
 				responseItems = append(responseItems, item)
 			}

@@ -374,6 +374,9 @@ const turnTerminalHistoryRecord = "turn_terminal"
 // interrupted so the settled row ("网络异常 · 第 n/m 次重试") survives reload.
 const streamReconnectHistoryRecord = "stream_reconnect"
 
+// A continue boundary creates a display turn without entering model history.
+const turnContinueHistoryRecord = "turn_continue"
+
 func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKind, status TurnStatus, cause *TurnError, at time.Time, reconnect *ThreadItem, providerName, model string, usage providers.TokenUsage) error {
 	if s == nil || s.rt == nil || th == nil || !th.PersistHistory || strings.TrimSpace(turnID) == "" {
 		return nil

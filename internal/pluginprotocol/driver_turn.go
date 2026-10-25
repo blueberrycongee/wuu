@@ -116,11 +116,12 @@ type DriverModelRecovery struct {
 }
 
 type DriverTurnModelResult struct {
-	Messages        []DriverMessageV1  `json:"messages"`
-	Usage           *ModelRequestUsage `json:"usage,omitempty"`
-	Failure         *DriverFailure     `json:"failure,omitempty"`
-	ToolBatchID     string             `json:"tool_batch_id,omitempty"`
-	ToolWorkStarted bool               `json:"tool_work_started,omitempty"`
+	CompletedMessages []DriverMessageV1  `json:"completed_messages,omitempty"`
+	Messages          []DriverMessageV1  `json:"messages"`
+	Usage             *ModelRequestUsage `json:"usage,omitempty"`
+	Failure           *DriverFailure     `json:"failure,omitempty"`
+	ToolBatchID       string             `json:"tool_batch_id,omitempty"`
+	ToolWorkStarted   bool               `json:"tool_work_started,omitempty"`
 }
 
 type DriverTurnToolsParams struct {

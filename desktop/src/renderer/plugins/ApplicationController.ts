@@ -977,8 +977,12 @@ export class ApplicationController implements HostApplicationService {
       if (region === "settings") this.setSettings(true);
       else if (region === "primary") this.setSettings(false);
     }
-    if (isApplicationNavigationAction(action)) return this.applicationNavigation.invoke(action,
-      input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
+    if (isApplicationNavigationAction(action)) {
+      const result = await this.applicationNavigation.invoke(action,
+        input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
+      if (["navigation.select-browser-tab", "navigation.create-browser-tab", "navigation.reopen-browser-tab", "navigation.reveal-browser"].includes(action)) this.setSettings(false);
+      return result;
+    }
     if (isApplicationPreviewAction(action)) {
       const result = await this.applicationPreview.invoke(action,
         input as ApplicationPreviewActionMapV1[typeof action]["input"], signal);
@@ -1002,10 +1006,14 @@ export class ApplicationController implements HostApplicationService {
       case "conversation.continue": {
         const { threadId, turnId, text } = input as ApplicationActionMapV1["conversation.continue"]["input"];
         const thread = this.knownThread(threadId);
-        const message = createComposerMessage(text, [], []);
-        if (!thread || thread.read_only || thread.archived || isThreadRunning(thread) || !message ||
+        if (!thread || thread.read_only || thread.archived || isThreadRunning(thread) ||
           (turnId !== undefined && thread.turns.at(-1)?.id !== turnId)) return { accepted: false };
-        return { accepted: await this.applicationSubmission.submitBackground(message, thread, resolveThreadRuntimeContext(thread, this.state.projects)) };
+        if (!thread.engine_id || thread.engine_id === "wuu") {
+          const sourceTurnID = turnId ?? thread.turns.at(-1)?.id;
+          return { accepted: sourceTurnID !== undefined && await this.applicationSubmission.continueThread(thread, sourceTurnID) };
+        }
+        const message = createComposerMessage(text, [], []);
+        return { accepted: Boolean(message) && await this.applicationSubmission.submitBackground(message!, thread, resolveThreadRuntimeContext(thread, this.state.projects)) };
       }
       case "conversation.read-usage": {
         const { timezone } = input as ApplicationActionMapV1["conversation.read-usage"]["input"];

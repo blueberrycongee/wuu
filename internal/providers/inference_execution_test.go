@@ -478,3 +478,19 @@ func TestUsageLessTerminalSubmissionSettlesAsEstimated(t *testing.T) {
 		t.Fatalf("cost summary = %+v, want zero unknown-billable", summary)
 	}
 }
+
+func TestResumeSamplingIsPartOfRequestIdentity(t *testing.T) {
+	req := ChatRequest{Model: "test", Messages: []ChatMessage{{Role: "user", Content: "task"}, {Role: "assistant", Content: "progress"}}}
+	original, err := InferenceRequestHash(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ResumeSampling = true
+	resumed, err := InferenceRequestHash(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original == resumed {
+		t.Fatal("adapter continuation guidance absent from request identity")
+	}
+}

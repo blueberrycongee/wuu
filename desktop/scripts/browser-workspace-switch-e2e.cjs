@@ -340,21 +340,22 @@ async function run() {
     report.recording.modifiedAt = file.mtimeMs;
     assert.ok(file.size > 0 && file.mtimeMs >= report.recordingStart.wallClock, 'Recording must contain fresh footage from this run');
   }
-  // Keep the native ribbon focused when its owner closes, so its queued blur
-  // runs during native teardown rather than testing only an unfocused surface.
-  win.webContents.focus();
-  await evaluate(() => document.querySelector('.sidebar-ribbon [data-ribbon-id]').focus());
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'ArrowDown' });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'ArrowDown' });
-  const ribbon = win.contentView.children.find(view => view.webContents && !view.webContents.isDestroyed()
-    && view.webContents.getURL() === 'wuu-chrome://ui/chrome-overlay.html?surface=ribbon');
-  await until(() => ribbon?.getVisible() && ribbon.webContents.isFocused(), 'keyboard opens and focuses native ribbon before quit');
+  // Keep a native browser popover focused during owner teardown so queued
+  // blur callbacks run against the same lifecycle boundary as normal use.
+  await click('[data-browser-library-trigger]');
+  await until(async () => {
+    for (const contents of visibleContents()) {
+      if (contents !== win.webContents && contents.isFocused()
+        && await contents.executeJavaScript('Boolean(document.querySelector("[data-library-section]"))')) return true;
+    }
+    return false;
+  }, 'native browser library is focused before quit');
   step = 'quit';
   report.status = 'quitting'; report.checks = ['54 real clicks across two browser tabs, Chat and Settings', 'Every guest visibility transition recorded with no repeated hide/show per action', 'Four stable compositor-paced visibility samples after each action', 'Guest identity, unsent draft and exact scroll retained throughout', 'No unexpected navigation or WebContents recreation', 'Cold first Settings visit never displays a window-covering loading surface', 'Native page follows ancestor transforms and reversals, moving menu ancestors, and concurrent effects without idle polling']; save();
   app.once('quit', (_event, exitCode) => {
     if (exitCode !== 0 || report.status !== 'quitting') return;
     report.status = 'passed'; report.normalQuit = true;
-    report.checks.push('Closing the focused native ribbon owner completes without a late blur exception');
+    report.checks.push('Closing the focused native browser popover owner completes without a late blur exception');
     save();
     console.log(JSON.stringify({ status: report.status, output, transitions: report.transitions.length, visibilityEvents: report.events.length, recording: report.recording, normalQuit: report.normalQuit }, null, 2));
   });

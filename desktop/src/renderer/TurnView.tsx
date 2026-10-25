@@ -8,6 +8,7 @@ import type {
   ThreadItem,
   Turn,
 } from "../shared/protocol";
+import { OPTIMISTIC_TURN_ID_PREFIX } from "./ComposerMessages";
 import { buildAssistantTurnDisplay } from "./AssistantTurnDisplay";
 import { useAssistantTurnPresentation } from "./AssistantTurnPresentation";
 import { AssistantTurnShell } from "./AssistantTurnShell";
@@ -244,7 +245,8 @@ function TurnContent({
   // continue their native session, just as we do when a turn left partial work.
   const recoverable = isLatestTurn && turnEndedInFailure(turn) && onEditMessage && onSubmitEditMessage;
   const canRewindHistory = !engineID || engineID === "wuu" || engineID === "codex";
-  const shouldContinue = !canRewindHistory || turnLeftPartialWork(turn);
+  const shouldContinue = !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX)
+    && ((Boolean(threadID) && (!engineID || engineID === "wuu")) || !canRewindHistory || turnLeftPartialWork(turn));
   const continueFailedTurn = recoverable && shouldContinue && threadID
     ? async () => { await application.invoke("conversation.continue", { threadId: threadID, turnId: turn.id, text: t("turnFailure.continuePrompt") }); }
     : undefined;

@@ -16,6 +16,18 @@ Starting work or receiving a new result gives that conversation priority while p
 
 These conversations remain in their workspace lists too. Pinned and archived conversations, project agents, and their managed sessions are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, or in 对话 when no project is selected.
 
+## Continue after an interruption
+
+When a Wuu task stops or fails, leave the input empty and click **Continue** (the send button), or use **Continue** in the failure notice. This starts a new turn from saved active history without repeating your question. Reopening the conversation or restarting Wuu retains this action. Typing a new instruction still sends a normal message.
+
+Completed replies, signed reasoning and confirmed tool results remain available to the model. Unfinished stream fragments can remain visible in the old turn but are excluded from subsequent model requests. If a tool may have changed something and its result is unknown, Wuu blocks continuation; inspect the affected work before sending a new instruction. It never disables the tool replay guard to resume a task.
+
+A dropped response that already completed an assistant item stops automatic payload replay and keeps that item for explicit Continue.
+
+Automatic recovery is separate: a pending network connection shows **Waiting for the network**, other recoveries show **Retrying the request**, and terminal notices distinguish exhausted recovery from unsafe replay. Stop cancels the current request and its backoff; it does not schedule another turn. Double clicks and stale requests cannot start concurrent continuations.
+
+Automatic retries retain the existing workload and shared workflow limits. A new model round receives its own operation allowance; transport changes, nested recovery, ambiguous billable submissions and waiting still share the workflow budget. Confirmed progress does not reset that shared budget. Explicit Continue starts a new workflow after the preceding turn has settled.
+
 ## Recover unsent text
 
 Wuu automatically restores unsent text in the same window after a reload. No setting is required. Recovery copies stay local to that window for up to 24 hours, with at most 20 drafts and 32K characters per draft. Closing the window clears them. Attachments and quoted context are not restored, and recovered text is never sent automatically.

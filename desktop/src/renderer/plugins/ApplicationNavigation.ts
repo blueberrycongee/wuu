@@ -124,7 +124,12 @@ export class ApplicationNavigation {
     let updateEvent = false;
     let runningEvent = false;
     const changed = () => { if (active) this.host.changed(); };
-    const off = [desktopPluginHost.subscribe(changed), desktopWorkbenchController.subscribe(changed), this.browser.subscribe(changed), this.browser.start(error => this.host.updateState(state => ({ ...state, status: String(error) })))];
+    const off = [desktopPluginHost.subscribe(changed), desktopWorkbenchController.subscribe(changed), this.browser.subscribe(() => {
+      // Native keyboard commands can select or close a tab without invoking a
+      // navigation action. Follow that selection while the browser is foreground.
+      if (this.activeWebsiteId) this.activeWebsiteId = this.browser.getSnapshot()?.activeTabId;
+      changed();
+    }), this.browser.start(error => this.host.updateState(state => ({ ...state, status: String(error) })))];
     let repairTimer: number | undefined;
     let repairSignature = "";
     let repairVersion = 0;
@@ -215,6 +220,12 @@ export class ApplicationNavigation {
     const patch = (thread: Thread) => ({ ...thread, folder_id: folderId || undefined });
     this.host.sidebarCache.patchCachedSidebarThread(threadId, patch);
     this.host.updateState(state => updateThreadByID(state, threadId, patch));
+  }
+  private revealBrowser(tabId: string | undefined): void {
+    // Publish the browser destination before notifying plugin-view subscribers.
+    this.activeWebsiteId = tabId;
+    this.accountOpen = false;
+    desktopWorkbenchController.deactivateRegion("primary");
   }
   async invoke<A extends keyof Actions>(action: A, input: Actions[A]["input"], signal?: AbortSignal): Promise<Actions[A]["result"]> {
     signal?.throwIfAborted();
@@ -335,10 +346,10 @@ export class ApplicationNavigation {
       case "navigation.account-status": { const account = await window.wuu.remoteAccount!("status"); result = { username: account.username, display_name: account.display_name, server: account.server }; break; }
       case "navigation.account-logout": { const account = await window.wuu.remoteAccount!("logout"); result = { localLogoutOnly: (account as { localLogoutOnly?: boolean }).localLogoutOnly }; window.dispatchEvent(new Event("wuu:account-changed")); break; }
       case "navigation.install-update": if (this.update.kind === "ready") await window.wuu.restartDesktopUpdate!(); else await window.wuu.downloadDesktopUpdate!(); break;
-      case "navigation.reopen-browser-tab": this.activeWebsiteId = (await this.browser.reopenTab()).activeTabId; break;
-      case "navigation.reveal-browser": this.activeWebsiteId = this.browser.getSnapshot()?.activeTabId; break;
-      case "navigation.create-browser-tab": this.activeWebsiteId = (await this.browser.createTab()).activeTabId; break;
-      case "navigation.select-browser-tab": { const { tabId } = input as Actions["navigation.select-browser-tab"]["input"]; await this.browser.selectTab(tabId); this.activeWebsiteId = tabId; break; }
+      case "navigation.reopen-browser-tab": this.revealBrowser((await this.browser.reopenTab()).activeTabId); break;
+      case "navigation.reveal-browser": this.revealBrowser(this.browser.getSnapshot()?.activeTabId); break;
+      case "navigation.create-browser-tab": this.revealBrowser((await this.browser.createTab()).activeTabId); break;
+      case "navigation.select-browser-tab": { const { tabId } = input as Actions["navigation.select-browser-tab"]["input"]; await this.browser.selectTab(tabId); this.revealBrowser(tabId); break; }
       case "navigation.close-browser-tab": { const { tabId } = input as Actions["navigation.close-browser-tab"]["input"]; const next = await this.browser.closeTab(tabId); if (this.activeWebsiteId === tabId) this.activeWebsiteId = next.activeTabId; break; }
       case "navigation.pin-browser-tab": { const { tabId, pinned } = input as Actions["navigation.pin-browser-tab"]["input"]; await this.browser.pinTab(tabId, pinned); break; }
       case "navigation.mute-browser-tab": { const { tabId, muted } = input as Actions["navigation.mute-browser-tab"]["input"]; await this.browser.muteTab(tabId, muted); break; }

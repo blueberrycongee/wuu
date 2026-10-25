@@ -4,6 +4,7 @@ package pluginprotocol
 // decide when to use these resources; reading settings performs no inference,
 // compaction or tool execution.
 type DriverTurnSettings struct {
+	ResumeSampling          bool                  `json:"resume_sampling,omitempty"`
 	MaxSteps                int                   `json:"max_steps"`
 	StreamingTools          bool                  `json:"streaming_tools"`
 	ProviderObservationKey  string                `json:"provider_observation_key"`

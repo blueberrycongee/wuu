@@ -120,6 +120,7 @@ type turnAdmissionHooks struct {
 }
 
 type turnRuntimeSnapshot struct {
+	ResumeAfterTurnID string
 	// CWD and permissions are captured at admission. Later metadata changes
 	// must not retarget an already-admitted external-engine turn.
 	CWD                string
@@ -178,7 +179,12 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if params.Prompt == "" && len(images) == 0 && len(files) == 0 {
+	params.ResumeAfterTurnID = strings.TrimSpace(params.ResumeAfterTurnID)
+	resuming := params.ResumeAfterTurnID != ""
+	if resuming && (params.Prompt != "" || len(images) != 0 || len(files) != 0 || len(params.ContentParts) != 0 || strings.TrimSpace(params.ClientID) != "") {
+		return s.writeResponse(req.ID, nil, errors.New("continue does not accept new input"))
+	}
+	if !resuming && params.Prompt == "" && len(images) == 0 && len(files) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("prompt or attachment is required"))
 	}
 	// Adopt published extensions before capturing this new request. A later
@@ -221,7 +227,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		}
 		return s.startThreadCompactTurn(ctx, req, th, params.Prompt)
 	}
-	if allowBackgroundWait && threadIsRunning(th) && threadCurrentTurnIsAnswerReady(th) {
+	if !resuming && allowBackgroundWait && threadIsRunning(th) && threadCurrentTurnIsAnswerReady(th) {
 		// Waiting for leftover settlement must not stall the serial stdio loop.
 		if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
 			if err := s.handleTurnStartAdmission(ctx, req, false); err != nil {
@@ -237,10 +243,12 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	userMsg.ClientID = strings.TrimSpace(params.ClientID)
-	if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if !resuming {
+		if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
-	snapshot := turnRuntimeSnapshot{}.withPermissions(permissions)
+	snapshot := turnRuntimeSnapshot{ResumeAfterTurnID: params.ResumeAfterTurnID}.withPermissions(permissions)
 	snapshot.PermissionExplicit = params.PermissionMode != nil
 	snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	snapshot.RequestContext = activeDocumentRequestContext(params.ActiveDocument)
@@ -261,6 +269,16 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 			threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(admitted)
 			if err != nil {
 				return err
+			}
+			if resuming {
+				if threadRuntime != nil && threadRuntime.StreamRunner != nil && threadRuntime.StreamRunner.ToolLedger != nil {
+					if err := threadRuntime.StreamRunner.ToolLedger.ValidateContinuation(ctx); err != nil {
+						return err
+					}
+				}
+				if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
+					return err
+				}
 			}
 			s.foldFrozenWorkerTree(admitted, threadRuntime)
 			return nil
@@ -2782,6 +2800,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// session instead and have no StreamRunner.
 	var baseTurnTools agent.ToolExecutor
 	var baseForceInitialCompact bool
+	var baseResumeSampling bool
 	var baseCompactOnly bool
 	var baseToolWaitInterrupt func() <-chan struct{}
 	var baseBeforeStep func() []providers.ChatMessage
@@ -2797,6 +2816,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if runner != nil {
 		baseTurnTools = runner.Tools
 		baseForceInitialCompact = runner.ForceInitialCompact
+		baseResumeSampling = runner.ResumeSampling
 		baseCompactOnly = runner.CompactOnly
 		baseToolWaitInterrupt = runner.ToolWaitInterrupt
 		baseBeforeStep = runner.BeforeStep
@@ -2813,6 +2833,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			restoreRunnerOnce.Do(func() {
 				runner.Tools = baseTurnTools
 				runner.ForceInitialCompact = baseForceInitialCompact
+				runner.ResumeSampling = baseResumeSampling
 				runner.CompactOnly = baseCompactOnly
 				runner.ToolWaitInterrupt = baseToolWaitInterrupt
 				runner.BeforeStep = baseBeforeStep
@@ -2921,6 +2942,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// for the turns that follow it.
 	if runner != nil {
 		runner.ForceInitialCompact = turnRuntime.ForceCompact
+		runner.ResumeSampling = turnRuntime.ResumeAfterTurnID != ""
 		runner.CompactOnly = turnRuntime.CompactOnly
 	}
 	reviewIntent := &nativeReviewIntent{}
@@ -4228,10 +4250,11 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	if strings.TrimSpace(userMsg.Role) == "" {
 		userMsg.Role = "user"
 	}
-	if !chatMessageHasUserPayload(userMsg) {
+	resuming := snapshot.ResumeAfterTurnID != ""
+	if !resuming && !chatMessageHasUserPayload(userMsg) {
 		return startedThreadTurn{}, false, nil
 	}
-	if failIfRunning {
+	if failIfRunning && !resuming {
 		if err := s.waitAndHandoffAnswerReadyTurn(ctx, th); err != nil {
 			return startedThreadTurn{}, false, err
 		}
@@ -4310,6 +4333,25 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, nil
 		}
 	}
+	if resuming {
+		var resumeErr error
+		switch {
+		case agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu:
+			resumeErr = errors.New("continue is available only for Wuu engine threads")
+		case th.ReadOnly:
+			resumeErr = errors.New("thread is read-only")
+		case len(th.Turns) == 0 || len(th.History) == 0:
+			resumeErr = errors.New("no history to continue")
+		case th.Turns[len(th.Turns)-1].ID != snapshot.ResumeAfterTurnID:
+			resumeErr = errors.New("continue source turn is stale; refresh the thread")
+		}
+		if resumeErr != nil {
+			th.releaseThreadExecutionLeaseLocked()
+			th.mu.Unlock()
+			cancel()
+			return startedThreadTurn{}, false, resumeErr
+		}
+	}
 	th.mu.Unlock()
 
 	abortAdmission := func() {
@@ -4355,15 +4397,17 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	threadID := th.ID
 	threadCWD := th.CWD
 	th.mu.Unlock()
-	if !chatMessageHasUserPayload(userMsg) {
+	if !resuming && !chatMessageHasUserPayload(userMsg) {
 		abortAdmission()
 		return startedThreadTurn{}, false, nil
 	}
-	if _, err := th.state.DispatchHook(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
-		SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
-	}); err != nil {
-		abortAdmission()
-		return startedThreadTurn{}, false, fmt.Errorf("user prompt hook: %w", err)
+	if !resuming {
+		if _, err := th.state.DispatchHook(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
+			SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
+		}); err != nil {
+			abortAdmission()
+			return startedThreadTurn{}, false, fmt.Errorf("user prompt hook: %w", err)
+		}
 	}
 
 	th.mu.Lock()
@@ -4434,7 +4478,20 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			}
 		}
 	}
-	if th.PersistHistory && !userAlreadyPersisted {
+	if th.PersistHistory && resuming {
+		turnID = fmt.Sprintf("%s-turn-%04d", th.ID, len(th.Turns)+1)
+		seq, err := th.state.Sessions.AppendHistoryRecordReturningSeq(th.ID, session.HistoryRecord{
+			Role: "meta", Content: turnContinueHistoryRecord, ClientID: turnID, At: now,
+		})
+		if err != nil {
+			th.releaseThreadExecutionLeaseLocked()
+			th.mu.Unlock()
+			cancel()
+			return startedThreadTurn{}, false, err
+		}
+		userMsgSeq = seq // terminalize even if launch fails after this boundary.
+		th.historyHeadSeq = max(th.historyHeadSeq, seq)
+	} else if th.PersistHistory && !userAlreadyPersisted {
 		seq, err := appendControlledChatMessage(th.state.Sessions, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline, hooks.acceptedUserWork)
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
@@ -4455,7 +4512,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	history := cloneHistory(th.History)
-	if !userAlreadyPersisted {
+	if !resuming && !userAlreadyPersisted {
 		history = append(history, userMsg)
 	}
 	th.History = history
@@ -4478,6 +4535,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		turnID = turn.ID
 	}
 	turnRuntime := turnRuntimeSnapshotLocked(th).withPermissions(permissions)
+	turnRuntime.ResumeAfterTurnID = snapshot.ResumeAfterTurnID
 	turnRuntime.PermissionExplicit = snapshot.PermissionExplicit
 	turnRuntime.ForceCompact = snapshot.ForceCompact
 	turnRuntime.CompactOnly = snapshot.CompactOnly
@@ -4496,7 +4554,9 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	th.currentExecutionRunID = turnRuntime.ExecutionRunID
 	turnRuntime.RequestContext = cloneContextSegments(snapshot.RequestContext)
 	th.mu.Unlock()
-	s.noticeProjectUserMessage(th.state, th, userMsg)
+	if !resuming {
+		s.noticeProjectUserMessage(th.state, th, userMsg)
+	}
 
 	return startedThreadTurn{
 		ctx:        turnCtx,

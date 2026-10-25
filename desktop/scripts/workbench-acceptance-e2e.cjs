@@ -422,13 +422,15 @@ async function geometry(label) {
     const context = rect(settings ? '.settings-sidebar' : '.sidebar > .sidebar-content');
     const main = rect(settings ? '.settings-main' : '.conversation-pane');
     const chrome = rect('.workbench-window-chrome');
-    const controls = ['.section-sidebar-toggle', '.shell-right-sidebar-toggle'].map(selector => {
+    const conversation = !settings && document.querySelector('.sidebar')?.dataset.nativeSection === 'conversations';
+    const rightControlPresent = Boolean(document.querySelector('.shell-right-sidebar-toggle'));
+    const controls = ['.section-sidebar-toggle', ...(conversation ? ['.shell-right-sidebar-toggle'] : [])].map(selector => {
       const node = document.querySelector(selector), r = node.getBoundingClientRect();
       const x = r.x + r.width / 2, y = r.y + r.height / 2;
       return { selector, rect: r.toJSON(), visible: getComputedStyle(node).visibility === 'visible', hit: node.contains(document.elementFromPoint(x, y)) };
     });
     return { viewport: { width: innerWidth, height: innerHeight }, overflow: document.documentElement.scrollWidth - innerWidth,
-      settings, collapsed: shell.classList.contains('sidebar-collapsed'), ribbon, context, main, chrome, controls,
+      settings, conversation, rightControlPresent, collapsed: shell.classList.contains('sidebar-collapsed'), ribbon, context, main, chrome, controls,
       surface: { content: surface.content, radius: surface.borderTopLeftRadius, top: parseFloat(surface.top), left: parseFloat(surface.left),
         right: parseFloat(surface.right), bottom: parseFloat(surface.bottom) } };
   });
@@ -439,7 +441,8 @@ async function geometry(label) {
   assert.ok(Math.abs(g.surface.top - g.chrome.bottom) <= 2, `${label}: shared surface begins below native window chrome`);
   assert.ok(Math.abs(g.context.y - g.main.y) <= 2, `${label}: contextual sidebar and main content share their top edge`);
   assert.ok(g.main.right <= g.viewport.width + 1 && g.main.bottom <= g.viewport.height + 1, `${label}: main panel fits the window`);
-  assert.ok(g.controls.filter(c => !g.settings || c.selector === '.section-sidebar-toggle').every(c => c.visible && c.hit), `${label}: native caption/chrome or an overlay blocks a sidebar toggle`);
+  assert.equal(g.rightControlPresent, g.conversation, `${label}: workspace controls belong to conversations`);
+  assert.ok(g.controls.every(c => c.visible && c.hit), `${label}: native caption/chrome or an overlay blocks a sidebar toggle`);
   return g;
 }
 async function appearance(theme, size, width) {

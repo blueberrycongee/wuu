@@ -3163,3 +3163,24 @@ func TestStreamRunnerRestoresRequestPrefixAfterRestart(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamRunnerRequiresExplicitContinueAfterCompletedItem(t *testing.T) {
+	complete := providers.ChatMessage{Role: "assistant", Content: "completed progress"}
+	client := &mockStreamClient{attempts: []mockStreamAttempt{
+		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: complete.Content}, {Type: providers.EventAssistantItemDone, Message: &complete}, {Type: providers.EventContentDelta, Content: "unfinished"}, {Type: providers.EventError, Error: providers.NewIncompleteStreamError("injected drop after item")}}},
+		{events: []providers.StreamEvent{{Type: providers.EventContentDelta, Content: "replayed"}, {Type: providers.EventDone}}},
+	}}
+	runner := StreamRunner{LoopDriver: DefaultDriver{}, Client: client, Model: "test"}
+	result, err := runner.RunWithCallback(context.Background(), []providers.ChatMessage{{Role: "user", Content: "original"}}, nil)
+	var blocked *providers.ReplayBlockedError
+	if !errors.As(err, &blocked) || client.callCount != 1 {
+		t.Fatalf("completed progress automatically replayed: calls=%d err=%v", client.callCount, err)
+	}
+	prepared, err := providers.PrepareMessagesForModelRequest("test", result.NewMessages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared) != 1 || prepared[0].Content != complete.Content {
+		t.Fatalf("completed checkpoint not retained: %+v", prepared)
+	}
+}
