@@ -21,7 +21,7 @@ function activationKey(activation: object): number {
 }
 
 const SurfaceBindings = React.createContext<Readonly<Record<string, ApplicationShellBinding>>>({});
-const SurfacesPending = React.createContext(false);
+export const UICompositionPendingContext = React.createContext(false);
 
 const SlotAncestors = React.createContext<readonly string[]>([]);
 
@@ -35,7 +35,7 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
     // A contribution cannot recreate a slot after its defining provider unloads.
     const slot = host.getUISlot(name);
     const bindings = React.useContext(SurfaceBindings);
-    const pending = React.useContext(SurfacesPending);
+    const pending = React.useContext(UICompositionPendingContext);
     if (!slot) return null;
     let contributions = host.getUIContributions(name);
     if (slot.service) {
@@ -113,8 +113,8 @@ export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pe
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>
-    <SurfacesPending.Provider value={pending}>
+    <UICompositionPendingContext.Provider value={pending}>
       <SurfaceBindings.Provider value={surfaceBindings}><SelectedShell host={host} shell={selected} /></SurfaceBindings.Provider>
-    </SurfacesPending.Provider>
+    </UICompositionPendingContext.Provider>
   </ShellBoundary>;
 }

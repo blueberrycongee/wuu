@@ -3799,6 +3799,7 @@ export {
   skillsSessionTabID,
   sortThreads,
   summarizeWorkspaceThreadsForSidebar,
+  summarizeThreadForSidebar,
   summarizeThreadsForSidebar,
   threadItemFromRecord,
   threadForPane,

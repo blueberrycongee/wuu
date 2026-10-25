@@ -25,8 +25,8 @@ export function useConversationSearchNavigation({
   }, []);
 
   useLayoutEffect(() => {
-    if (!target || intent.current?.id !== target.id) intent.current = undefined;
-    if (target && !intent.current && thread?.id === target.threadId) {
+    if (!target || switching || intent.current?.id !== target.id) intent.current = undefined;
+    if (target && !switching && !intent.current && thread?.id === target.threadId) {
       cancelPendingJump();
       intent.current = { id: target.id, isCurrent: captureConversationScrollIntent() };
     }
@@ -34,7 +34,7 @@ export function useConversationSearchNavigation({
       cancelPendingJump();
       finish(target.id);
     }
-  }, [target, thread?.id, captureConversationScrollIntent, cancelPendingJump, finish]);
+  }, [target, thread?.id, switching, captureConversationScrollIntent, cancelPendingJump, finish]);
 
   useEffect(() => {
     // Publish reader cancellation before a replacement shell can bind a new

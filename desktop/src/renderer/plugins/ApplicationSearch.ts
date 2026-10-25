@@ -1,7 +1,7 @@
 import type { SetStateAction } from "react";
 import type { ApplicationSearchActionMapV1 as Actions, ApplicationSearchResultV1, ApplicationSearchTargetV1, ApplicationSearchViewV1 } from "../../../../packages/plugin-sdk/src/ui-search";
 import type { RuntimeContext, Thread, ThreadSearchResultItem } from "../../shared/protocol";
-import { activeThreadForState, sameRuntimeContext, summarizeThreadsForSidebar, updateThreadByID, updateTurnItem, type AppState } from "../AppState";
+import { activeThreadForState, sameRuntimeContext, summarizeThreadForSidebar, updateThreadByID, updateTurnItem, type AppState } from "../AppState";
 import { conversationSearchPattern } from "../ConversationSearchDisplay";
 
 const resultLimit = 100;
@@ -96,7 +96,7 @@ export class ApplicationSearch {
       if (!current()) return;
       this.acceptedRequest = request;
       this.accepted = rows.map((result, index) => ({ id: `${request}:${index}`, result }));
-      this.results = this.accepted.map(({ id, result }) => ({ resultId: id, thread: summarizeThreadsForSidebar([result.thread])[0], snippet: result.snippet, messageSeq: result.message_seq }));
+      this.results = this.accepted.map(({ id, result }) => ({ resultId: id, thread: summarizeThreadForSidebar(result.thread), snippet: result.snippet, messageSeq: result.message_seq }));
       this.loading = false; this.host.changed();
     } catch (error) {
       if (!current()) return;

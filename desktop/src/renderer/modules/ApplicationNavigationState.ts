@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { UICompositionPendingContext } from "../plugins/ApplicationShell";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { VIEW_SWITCH_LOADING_DELAY_MS, type PendingViewSwitch } from "../ViewSwitchState";
 import { showErrorToast } from "../Toast";
@@ -7,6 +8,7 @@ import { showErrorToast } from "../Toast";
 export function useApplicationNavigationState(application: ApplicationServiceV1) {
   const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
   const pending = tabs.pending;
+  const surfacesPending = useContext(UICompositionPendingContext);
   const [visibleRequest, setVisibleRequest] = useState<number>();
   useEffect(() => {
     if (!pending || pending.kind === "thread") return;
@@ -18,13 +20,13 @@ export function useApplicationNavigationState(application: ApplicationServiceV1)
     targetID: pending.targetId,
     visible: pending.kind === "thread" || visibleRequest === pending.requestId,
     contextSwitching: pending.contextSwitching,
-    restoreRequestID: pending.contentReady ? pending.requestId : undefined,
+    restoreRequestID: pending.contentReady && !surfacesPending ? pending.requestId : undefined,
   };
   const finishViewSwitch = useCallback((requestId: number): boolean => {
-    if (application.getSnapshot().tabs.pending?.requestId !== requestId) return false;
+    if (surfacesPending || application.getSnapshot().tabs.pending?.requestId !== requestId) return false;
     void application.invoke("navigation.reveal-complete", { requestId }).catch(showErrorToast);
     return true;
-  }, [application]);
+  }, [application, surfacesPending]);
   const cancelViewSwitch = useCallback(() => {
     void application.invoke("navigation.cancel", {}).catch(showErrorToast);
   }, [application]);
@@ -33,7 +35,7 @@ export function useApplicationNavigationState(application: ApplicationServiceV1)
   return { pendingViewSwitch, finishViewSwitch, cancelViewSwitch, getCurrentViewSwitchRequestID, isCurrentViewSwitchRequest,
     visiblePendingThreadID: pendingViewSwitch?.kind === "thread" && pendingViewSwitch.visible ? pendingViewSwitch.targetID : undefined,
     visiblePendingWorkspaceID: pendingViewSwitch?.kind === "workspace" ? pendingViewSwitch.targetID : undefined,
-    viewSwitchPending: Boolean(pending), submissionTargetPending: Boolean(pending),
+    viewSwitchPending: Boolean(pending) || surfacesPending, submissionTargetPending: Boolean(pending) || surfacesPending,
     viewContextSwitchPending: pendingViewSwitch?.kind === "workspace" || pendingViewSwitch?.kind === "runtime" && pendingViewSwitch.visible,
   };
 }
