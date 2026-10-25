@@ -2401,6 +2401,11 @@ Eval flags:
   --max-steps       max tool loop steps per task
   --timeout         timeout per task (default 10m)
   --keep-workdirs   keep temporary task workdirs
+  --freeze FILE    freeze task IDs, scorer, model, configuration and environment; no model calls
+  --plan FILE      execute that fixed plan; requires a new --artifacts directory
+  --candidate PATH load a local TypeScript file or package into the experiment
+  --artifacts DIR  retain source snapshots, bindings, full execution and results
+  --compare A,B    compare two experiment report.json files under the frozen rule
   --replay-trace    replay an eval trace JSONL without calling a model or tools
   --live-codex-oauth
                    run live Codex OAuth E2E eval using local Codex CLI or wuu OAuth credentials

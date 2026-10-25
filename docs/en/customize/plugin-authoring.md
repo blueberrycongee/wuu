@@ -203,13 +203,14 @@ Capabilities are declared separately, with an ID, `kind`, and version. Current s
 | `agent.system_prompt.section` | `transform`: contribute a prompt section |
 | `agent.request.transform` | `transform`: prepend system messages to the model request |
 | `agent.pre_step` | `transform`: append identified messages before a step |
+| `agent.step.policy` | `decision`: continue or stop default-loop model admission; see [harness experiments](harness-experiments.md) |
 | `agent.turn.completed`, `agent.turn.lifecycle`, `agent.turn.interrupted` | `observe`: react to supported turn events |
 | `plugin.client.request` | `decision`: dispatch requests from the plugin's desktop UI |
 | `agent.compaction` | `decision`: experimental compaction contract |
 
 `agent.request.transform` receives a provider-neutral request view; its public output is `prepend_system_messages`, not arbitrary mutation of a provider's wire request. The SDK marks compaction experimental, so do not treat it as a stable general replacement for the whole agent loop.
 
-Capabilities can declare `priority`, `depends_on`, and `conflicts`. Higher priority runs first; equal priorities preserve discovery order. `error_policy` is `propagate`, `isolate`, or `ignore`: observers cannot propagate, and only observers may ignore. The built-in turn observers default to isolation; other capabilities default to propagation. Handle expected failures inside the plugin rather than relying on one blanket error policy.
+Capabilities can declare `priority`, `depends_on`, and `conflicts`. Higher priority runs first; equal priorities sort by plugin ID. `error_policy` is `propagate`, `isolate`, or `ignore`: observers cannot propagate, and only observers may ignore. The built-in turn observers default to isolation; other capabilities default to propagation. Handle expected failures inside the plugin rather than relying on one blanket error policy.
 
 ## Calling host services
 

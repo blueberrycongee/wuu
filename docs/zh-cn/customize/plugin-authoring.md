@@ -179,13 +179,14 @@ TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具�
 | `agent.system_prompt.section` | `transform`：添加提示词区块 |
 | `agent.request.transform` | `transform`：在模型请求前添加系统消息 |
 | `agent.pre_step` | `transform`：在步骤前追加带标识的消息 |
+| `agent.step.policy` | `decision`：继续或停止默认循环的模型步骤，见 [Harness 实验](harness-experiments.md) |
 | `agent.turn.completed`、`agent.turn.lifecycle`、`agent.turn.interrupted` | `observe`：响应支持的轮次事件 |
 | `plugin.client.request` | `decision`：分派插件桌面 UI 发来的请求 |
 | `agent.compaction` | `decision`：实验性的压缩契约 |
 
 `agent.request.transform` 接收与 provider 无关的请求视图，公开输出是 `prepend_system_messages`，不是任意修改 provider 的传输请求。SDK 将压缩标为实验性，不应把它当作稳定的、可替换整个 agent 循环的通用接口。
 
-能力可声明 `priority`、`depends_on` 和 `conflicts`。优先级高的先执行，同优先级保留发现顺序。`error_policy` 为 `propagate`、`isolate` 或 `ignore`；观察能力不能传播错误，只有观察能力能忽略错误。内置轮次观察能力默认隔离，其他能力默认传播。预期内的失败应在插件内部处理，不要只依赖统一错误策略。
+能力可声明 `priority`、`depends_on` 和 `conflicts`。优先级高的先执行，同优先级按插件 ID 排序。`error_policy` 为 `propagate`、`isolate` 或 `ignore`；观察能力不能传播错误，只有观察能力能忽略错误。内置轮次观察能力默认隔离，其他能力默认传播。预期内的失败应在插件内部处理，不要只依赖统一错误策略。
 
 ## 调用宿主服务
 

@@ -101,6 +101,7 @@
             "zh-cn/reference/desktop-plugins.md",
             "zh-cn/customize/plugin-system.md",
             "zh-cn/customize/plugin-compositions.md",
+            "zh-cn/customize/harness-experiments.md",
             "zh-cn/customize/theme-surface-matrix.md"
           ]
         },
@@ -211,6 +212,7 @@
             "en/reference/desktop-plugins.md",
             "en/customize/plugin-system.md",
             "en/customize/plugin-compositions.md",
+            "en/customize/harness-experiments.md",
             "en/customize/theme-surface-matrix.md"
           ]
         },

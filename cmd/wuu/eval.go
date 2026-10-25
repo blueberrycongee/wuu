@@ -22,6 +22,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/evalharness"
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/providers/codex"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -34,13 +35,14 @@ import (
 )
 
 type evalReport struct {
-	StartedAt  time.Time            `json:"started_at"`
-	DurationMS int64                `json:"duration_ms"`
-	Provider   string               `json:"provider,omitempty"`
-	Model      string               `json:"model,omitempty"`
-	Config     string               `json:"config,omitempty"`
-	Summary    evalSummary          `json:"summary"`
-	Results    []evalharness.Result `json:"results"`
+	Experiment *evalExperimentIdentity `json:"experiment,omitempty"`
+	StartedAt  time.Time               `json:"started_at"`
+	DurationMS int64                   `json:"duration_ms"`
+	Provider   string                  `json:"provider,omitempty"`
+	Model      string                  `json:"model,omitempty"`
+	Config     string                  `json:"config,omitempty"`
+	Summary    evalSummary             `json:"summary"`
+	Results    []evalharness.Result    `json:"results"`
 }
 
 type evalSummary struct {
@@ -70,10 +72,26 @@ func runEval(args []string) error {
 	keepWorkdirs := fs.Bool("keep-workdirs", false, "keep temporary task workdirs")
 	replayTrace := fs.String("replay-trace", "", "replay an eval trace JSONL file without calling a model or executing tools")
 	liveCodexOAuth := fs.Bool("live-codex-oauth", false, "run live Codex OAuth E2E eval using local Codex CLI or wuu OAuth credentials")
+	freeze := fs.String("freeze", "", "write a frozen experiment plan without running tasks")
+	plan := fs.String("plan", "", "run a frozen experiment plan without filtering its task list")
+	candidate := fs.String("candidate", "", "load a local TypeScript file or plugin package for this experiment")
+	artifacts := fs.String("artifacts", "", "new directory for durable experiment evidence")
+	compare := fs.String("compare", "", "compare baseline,candidate experiment report paths")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
+	if *compare != "" {
+		return compareEvalExperiments(*compare)
+	}
+	if *freeze != "" || *plan != "" {
+		return runEvalExperiment(evalExperimentOptions{Freeze: *freeze, Plan: *plan, Candidate: *candidate, Artifacts: *artifacts,
+			Workdir: *workdir, Provider: *providerName, Model: *modelOverride, Tasks: *taskFilter, MaxSteps: *maxSteps,
+			Timeout: *timeout, LiveCodex: *liveCodexOAuth, KeepWorkdirs: *keepWorkdirs})
+	}
+	if *candidate != "" || *artifacts != "" {
+		return errors.New("--candidate and --artifacts require --plan")
+	}
 	if *list {
 		for _, task := range evalharness.Catalog() {
 			fmt.Printf("%s\t%s\t%s\n", task.ID, task.Name, task.Description)
@@ -355,15 +373,19 @@ func runLiveCodexOAuthEval(cfg liveCodexOAuthEvalConfig) error {
 }
 
 type evalTaskRunConfig struct {
-	Task          evalharness.Task
-	Config        config.Config
-	ConfigPath    string
-	ProviderName  string
-	ModelOverride string
-	MaxSteps      int
-	Timeout       time.Duration
-	HomeDir       string
-	KeepWorkdir   bool
+	Task             evalharness.Task
+	Config           config.Config
+	ConfigPath       string
+	ProviderName     string
+	ModelOverride    string
+	MaxSteps         int
+	Timeout          time.Duration
+	HomeDir          string
+	KeepWorkdir      bool
+	WuuHome          string
+	Catalog          *[]pluginpkg.Plugin
+	EvidenceDir      string
+	ExpectedPackages map[string]string
 }
 
 // waitForSubAgentQuiescence closes worker admission after every child becomes
@@ -412,7 +434,16 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 	if cfg.KeepWorkdir {
 		result.Workdir = taskRoot
 	} else {
-		defer os.RemoveAll(taskRoot)
+		defer func() {
+			if result.RetainedStateDir != "" {
+				result.Workdir = taskRoot
+				return
+			}
+			if err := os.RemoveAll(taskRoot); err != nil {
+				result.Success = false
+				result.Error = errors.Join(errors.New(result.Error), err).Error()
+			}
+		}()
 	}
 	if cfg.Task.IsolateWuuHome {
 		defer setTemporaryEnv("WUU_HOME", filepath.Join(taskRoot, ".wuu-home"))()
@@ -437,12 +468,14 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 	}
 
 	rt, err := runtime.NewSession(runtime.Options{
-		RootDir:       taskRoot,
-		HomeDir:       cfg.HomeDir,
-		ConfigPath:    cfg.ConfigPath,
-		Config:        runtimeConfig,
-		ProviderName:  cfg.ProviderName,
-		ModelOverride: cfg.ModelOverride,
+		RootDir:           taskRoot,
+		HomeDir:           cfg.HomeDir,
+		ConfigPath:        cfg.ConfigPath,
+		Config:            runtimeConfig,
+		ProviderName:      cfg.ProviderName,
+		ModelOverride:     cfg.ModelOverride,
+		WuuHome:           cfg.WuuHome,
+		DiscoveredPlugins: cfg.Catalog,
 	})
 	if err != nil {
 		result.Error = err.Error()
@@ -459,6 +492,7 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 		}
 		_, workspaceErr := rt.Cleanup()
 		if cleanupErr = errors.Join(cleanupErr, workspaceErr); cleanupErr != nil {
+			result.RetainedStateDir = rt.StateDir
 			result.Success = false
 			if result.Error == "" {
 				result.Error = cleanupErr.Error()
@@ -470,6 +504,13 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 		result.DurationMS = time.Since(started).Milliseconds()
 		persistEvalTrace(&result)
 	}()
+	if cfg.EvidenceDir != "" {
+		if err := saveEvalRuntimeEvidence(cfg.EvidenceDir, rt, cfg.ExpectedPackages); err != nil {
+			result.RetainedStateDir = rt.StateDir
+			result.Error = err.Error()
+			return result
+		}
+	}
 	evalSessionID := "eval-" + cfg.Task.ID + "-" + session.NewID()
 	if err := rt.SetSessionID(evalSessionID); err != nil {
 		result.Error = err.Error()
@@ -563,6 +604,12 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 
 	turnResult, runErr := engine.RunTurn(ctx, agentengine.TurnInput{History: history}, nil)
 	runResult := turnResult.Result
+	if cfg.EvidenceDir != "" {
+		if err := writeEvalEvidence(filepath.Join(cfg.EvidenceDir, "execution.json"), runResult); err != nil {
+			result.RetainedStateDir = rt.StateDir
+			runErr = errors.Join(runErr, fmt.Errorf("save full execution: %w", err))
+		}
+	}
 	// Background sub-agents spawned during the turn outlive the main agent's
 	// final answer. Verification must observe their terminal state, not race
 	// against it: wait (bounded by the task ctx) until every child releases its
@@ -1094,7 +1141,7 @@ func summarizeEvalResults(results []evalharness.Result) evalSummary {
 func countAssistantTurns(messages []providers.ChatMessage) int {
 	count := 0
 	for _, msg := range messages {
-		if msg.Role == "assistant" {
+		if msg.Role == "assistant" && msg.Origin != "plugin" {
 			count++
 		}
 	}

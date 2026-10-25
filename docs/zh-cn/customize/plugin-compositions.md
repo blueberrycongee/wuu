@@ -1,5 +1,6 @@
 # Agent 组合
 
+固定任务、独立评分、进程隔离和结果保留见[本地 Harness 实验](harness-experiments.md)。单独运行一个新组合不等于定义了 benchmark。
 
 `host.composition` 版本 1 允许受信任插件创建独立的 Go 运行时，试跑 harness 组合，再显式绑定逻辑 agent。它复用主运行时的版本化服务、依赖图、激活检查和按依赖逆序清理机制。[组合实验室示例](../../../examples/plugins/composition-lab.ts) 将这些操作公开为 agent 工具和开发者客户端能力。
 

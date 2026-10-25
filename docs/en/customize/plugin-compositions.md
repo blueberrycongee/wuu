@@ -8,6 +8,7 @@ wuu plugin dev examples/plugins/composition-lab.ts
 
 A plugin declares `requireCompositionService()` in `required_services` and calls `compositionService(host)` with the current callback's host. This requires the `kernel` module. The service is unavailable during preparation. It adds no manifest or build requirement to single-file TypeScript development.
 
+For a fixed task list, independent grading, process isolation and retained results, use [local harness experiments](harness-experiments.md). A fresh composition run alone does not define a benchmark.
 
 ## Try, select, and undo
 
