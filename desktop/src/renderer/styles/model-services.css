@@ -740,20 +740,30 @@
   grid-template-columns: var(--connection-icon-size) minmax(0, 1fr) var(--icon-size);
   align-items: center;
   gap: var(--space-3);
-  width: 100%;
+  /* Include the group's gutters in both the hover surface and the hit area. */
+  width: calc(100% + var(--card-padding) * 2);
+  margin-inline: calc(-1 * var(--card-padding));
   min-width: 0;
   min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
-  padding: var(--settings-row-pad-block) 0;
+  padding: var(--settings-row-pad-block) var(--card-padding);
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: 0;
   color: var(--ink);
   background: transparent;
   text-align: start;
 }
+.connection-summary-list > [role="listitem"]:first-child > .connection-summary-row {
+  border-start-start-radius: calc(var(--settings-group-radius) - 1px);
+  border-start-end-radius: calc(var(--settings-group-radius) - 1px);
+}
+.connection-summary-list > [role="listitem"]:last-child > .connection-summary-row {
+  border-end-start-radius: calc(var(--settings-group-radius) - 1px);
+  border-end-end-radius: calc(var(--settings-group-radius) - 1px);
+}
 .connection-summary-row:hover { background: var(--surface-1); }
 html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .connection-summary-row > .icon { color: var(--ink-soft); }
 .connection-summary-icon { display: grid; place-items: center; width: var(--connection-icon-size); height: var(--connection-icon-size); }
