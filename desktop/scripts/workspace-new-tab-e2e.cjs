@@ -313,16 +313,21 @@ app.whenReady().then(async () => {
   assert.equal(await evaluate(() => document.querySelector('[data-wuu-component="workspace-panel"]').dataset.wuuView), "new");
   results.push({ scenario: "multiple new pages and close recovery", passed: true });
 
-  await waitFor(() => Boolean(document.querySelector(".workspace-tool-menu-more")));
-  await evaluate(() => document.querySelector('[data-wuu-tool="browser"]').focus());
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu-item')].some(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title'));
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu [data-wuu-tool="browser"]')].some(item => item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })));
+  await evaluate(() => [...document.querySelectorAll('.workspace-tool-menu [data-wuu-tool="browser"]')].find(item => item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).focus());
+  await waitFor(() => document.activeElement?.getAttribute('data-wuu-tool') === 'browser');
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
-  await waitFor(() => document.activeElement?.tagName === "SUMMARY");
+  try {
+    await waitFor(() => document.activeElement?.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title');
+  } catch (error) {
+    fs.writeFileSync(path.join(output, 'keyboard-discovery.json'), JSON.stringify(await evaluate(() => ({ active: document.activeElement?.outerHTML, menus: [...document.querySelectorAll('.workspace-tool-menu')].map(menu => ({ html: menu.outerHTML, visible: menu.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) })) })), null, 2));
+    throw error;
+  }
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Return" });
   win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Return" });
-  await waitFor(() => document.querySelector(".workspace-tool-menu-more").open);
-  await click('[data-wuu-plugin="user:workspace-e2e"]');
   await waitFor(() => Boolean(document.querySelector("[data-workspace-e2e-notes]")));
   assert.equal((await tabs()).length, 2);
   for (const theme of ["light", "dark"]) {
@@ -601,7 +606,7 @@ app.whenReady().then(async () => {
   });
   await click(".workspace-panel-globalize");
   await click(".workspace-panel-add");
-  await click(".workspace-tool-menu-more > summary");
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu-item')].some(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title'));
 
   for (const theme of ["light", "dark"]) {
     for (const size of [14, 20]) {
@@ -647,18 +652,18 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
     document.querySelector(".workspace-tool-menu").scrollTop = 0;
-    document.querySelector(".workspace-tool-menu-more").open = false;
   });
   await capture("light-14-default");
-  await evaluate(() => document.querySelector(".workspace-tool-menu-more > summary").focus());
-  await waitFor(() => document.activeElement === document.querySelector(".workspace-tool-menu-more > summary"));
+  await waitFor(() => [...document.querySelectorAll('.workspace-tool-menu-item')].some(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title' && item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })));
+  await evaluate(() => [...document.querySelectorAll('.workspace-tool-menu-item')].find(item => item.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title' && item.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).focus());
+  await waitFor(() => document.activeElement?.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title');
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
   await waitFor(() => document.activeElement?.dataset.wuuTool === "files");
   await capture("light-14-keyboard-focus");
-  results.push({ scenario: "keyboard skips collapsed extensions", passed: true });
+  results.push({ scenario: "keyboard wraps from the public extension entry to the first tool", passed: true });
   const hover = await evaluate(() => {
-    const box = document.querySelector('[data-wuu-tool="files"]').getBoundingClientRect();
+    const box = document.querySelector('.workspace-tool-menu [data-wuu-tool="files"]').getBoundingClientRect();
     return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
   });
   win.webContents.sendInputEvent({ type: "mouseMove", ...hover });

@@ -8,6 +8,7 @@ import { PluginCommandActions } from "./PluginCommandActions";
 import { createPluginTranslator } from "./pluginI18n";
 import { useI18n } from "../i18n";
 import { dispatchFilePreviewAction } from "./FilePreviewPresentation";
+import { PluginIcon } from "../PublicIcon";
 
 export interface LegacyViewIdentity {
   readonly pluginId: string;
@@ -99,7 +100,12 @@ function WorkspaceTool({ entry, ...props }: LegacyUIContributionsProps & { entry
     if (props.host.getGenerationActivation(entry.pluginId, entry.generation) !== activation) return;
     void props.application.invoke("preview.open-plugin", { entryId: entry.id, pluginId: entry.pluginId, generation: entry.generation,
       viewTypeId: entry.view, title: entry.title, icon: entry.icon }).catch(error => setError(String(error)));
-  }}>{entry.title}</button>{error && <span role="alert">{error}</span>}</Lifetime>;
+  }} title={entry.description ? `${entry.title}\n${entry.description}` : entry.title}>
+    <span className="workspace-tool-menu-icon" aria-hidden="true">
+      <PluginIcon loadIcon={props.application.catalog.loadIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} className="icon" />
+    </span>
+    <span className="workspace-tool-menu-copy"><strong>{entry.title}</strong>{entry.description && <span>{entry.description}</span>}</span>
+  </button>{error && <span role="alert">{error}</span>}</Lifetime>;
 }
 
 class LegacyBoundary extends React.Component<{ host: PluginHost; identity: Identity; fallback?: React.ReactNode; onFailure?: (error: unknown) => void; children: React.ReactNode }, { failed: boolean }> {

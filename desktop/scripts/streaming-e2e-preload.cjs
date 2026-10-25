@@ -212,6 +212,7 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     return { thread };
   },
   resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),
+  listEngines: async () => ({ engines: [] }),
   forkThread: async () => ({ thread: null }),
   editThreadMessage: async (threadId) => {
     await ipcRenderer.invoke("test:request-lifecycle", "thread/edit-message", { threadId });
@@ -220,6 +221,8 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     return { thread };
   },
   listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || process.env.WUU_PROJECT_PANEL_E2E ? [...threads.values()] : [] }),
+  listAllThreads: async () => ({ threads: [...threads.values()] }),
+  getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
     ipcRenderer.send("test:queued-input", { threadId, text, id, hold });

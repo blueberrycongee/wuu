@@ -311,6 +311,8 @@ const desktopAPI = {
       : resizeThread
   }),
   listThreads: async () => ({ threads: [resizeThread] }),
+  listAllThreads: async () => ({ threads: [resizeThread] }),
+  getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   openSideThread: async () => ({ summary: sideSummary }),
   getSideThreadHistory: async () => ({

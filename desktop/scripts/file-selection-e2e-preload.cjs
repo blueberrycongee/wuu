@@ -66,6 +66,7 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     }],
   }),
   updateRuntimeSettings: async () => ({ provider: "e2e", model: "mock-selection", providers }),
+  listEngines: async () => ({ engines: [] }),
   loadCodexModels: async () => ({ provider: "e2e", models: [{ id: "mock-selection", name: "mock-selection" }] }),
   getBuildInfo: async () => ({ desktop: { version: "selection-e2e", date: now } }),
   gitStatus: async () => ({ is_repo: true, branch: "selection-e2e", branches: ["selection-e2e"], dirty_count: 0,
@@ -85,6 +86,8 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   startThread: async () => ({ thread: clone(thread) }),
   resumeThread: async () => ({ thread: clone(thread) }),
   listThreads: async () => ({ threads: [clone(thread)] }),
+  listAllThreads: async () => ({ threads: [clone(thread)] }),
+  getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   startTurn: async (threadId, prompt, images = [], inputFiles = [], permissionMode, activeDocument, contentParts) => {
     if (threadId !== thread.id) throw new Error(`Unexpected thread: ${threadId}`);
