@@ -43,7 +43,7 @@ func TestProjectCoordinationExternalReplacement(t *testing.T) {
 	t.Cleanup(func() { _ = external.Close(context.Background()) })
 	state := persistence.NewService(persistence.SQLiteModule, t.TempDir(), "sqlite")
 	nativeDocuments := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
-		result, err := registry.Call(ctx, ProjectCoordinationModule, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: params})
+		result, err := registry.Call(ctx, session.DefaultModule, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: params})
 		if err != nil {
 			return nil, err
 		}
@@ -51,17 +51,19 @@ func TestProjectCoordinationExternalReplacement(t *testing.T) {
 	})
 	srv := New(newTestRuntime(t, &fakeClient{}), &lockedBuffer{})
 	t.Cleanup(srv.Close)
-	native := srv.NewProjectCoordinationProvider(session.NewStore(context.Background(), nativeDocuments))
+	sessions := session.NewService(session.DefaultModule, nativeDocuments)
+	store := projectProviderStore(registry, ProjectCoordinationModule)
+	native := srv.NewProjectCoordinationProvider(store)
 	native.registry = registry
 	bridge := native.bridge
-	mechanism, err := bridge.MechanismFactory().Build(runtime.NativeProviderContext{Sessions: session.NewStore(context.Background(), nativeDocuments), Registry: registry, RetainState: func() (*runtime.State, error) { return native.retainState() }})
+	mechanism, err := bridge.MechanismFactory().Build(runtime.NativeProviderContext{Sessions: store, Registry: registry, RetainState: func() (*runtime.State, error) { return native.retainState() }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	consumer := NewProjectCoordinationConsumer()
 	background := &projectBackgroundTestService{}
 	configuration := config.NewMemoryService("independent.config", config.Default())
-	clients := []pluginhost.Client{background, native, external, state, consumer, mechanism, configuration}
+	clients := []pluginhost.Client{background, native, external, state, sessions, consumer, mechanism, configuration}
 	conflicts := registry.RegisterClients(clients...)
 	if len(conflicts) != 0 {
 		t.Fatalf("conflicts: %v", conflicts)

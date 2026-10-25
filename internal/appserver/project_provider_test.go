@@ -48,11 +48,12 @@ func TestProjectCoordinationProviderLifecycle(t *testing.T) {
 	cfg := config.Default()
 	cfg.Agent.ProjectMaxParallel = 2
 	configuration := config.NewMemoryService("independent.config", cfg)
-	conflicts := registry.RegisterClients(native, consumer, stateProvider, mechanism, background, configuration)
+	sessions := session.NewService(session.DefaultModule, documents)
+	conflicts := registry.RegisterClients(native, consumer, stateProvider, sessions, mechanism, background, configuration)
 	if len(conflicts) != 0 {
 		t.Fatalf("conflicts: %v", conflicts)
 	}
-	host := pluginhost.New(native, consumer, stateProvider, mechanism, background, configuration)
+	host := pluginhost.New(native, consumer, stateProvider, sessions, mechanism, background, configuration)
 	background.host = host
 	host.AttachServiceRegistry(registry, conflicts)
 	bindProjectTestGraph(t, native, host)

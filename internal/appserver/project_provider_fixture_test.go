@@ -13,14 +13,18 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/titleservice"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
 // Existing behavioral suites exercise the native provider's recovery boundary
@@ -65,14 +69,15 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	registry := pluginhost.NewServiceRegistry()
 	state := persistence.NewService(persistence.SQLiteModule, filepath.Join(rt.SessionDir, "documents"), "sqlite")
 	documents := persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
-		result, err := registry.Call(ctx, ProjectCoordinationConsumer, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: params})
+		result, err := registry.Call(ctx, session.DefaultModule, pluginhost.ServiceCallParams{Service: persistence.ServiceName, Method: method, Params: params})
 		if err != nil {
 			return nil, err
 		}
 		return result, nil
 	})
 	rt.Documents = documents
-	rt.Sessions = session.NewStore(context.Background(), documents)
+	rt.Sessions = projectProviderStore(registry, ProjectCoordinationConsumer)
+	sessions := session.NewService(session.DefaultModule, documents)
 	registerTestWuuEngine(t, rt)
 	bridge := NewProjectCoordinatorBridge()
 	nativeClient, err := bridge.ProviderFactory().Build(runtime.NativeProviderContext{Documents: documents, Sessions: rt.Sessions, Registry: registry, RetainState: rt.RetainState})
@@ -90,7 +95,8 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	stateConsumer := &configSourceConsumer{}
 	home := os.Getenv("HOME")
 	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
-	clients := []pluginhost.Client{background, native, state, consumer, mechanism, configuration, credentials, stateConsumer}
+	clients := []pluginhost.Client{background, native, state, sessions, consumer, mechanism, configuration, credentials, stateConsumer,
+		promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, toolservice.NewService(), &embeddedToolsConsumer{}}
 	conflicts := registry.RegisterClients(clients...)
 	if len(conflicts) != 0 {
 		t.Fatalf("project fixture graph: %v", conflicts)
