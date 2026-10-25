@@ -44,7 +44,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Select plugin-provided shell skins independently of content themes, with paired light/dark artwork, ribbon previews, native ribbon continuity and default-frame recovery. Local images use a fixed Gaussian blur with automatic contrast, replacing effect, strength and position controls. Shared controls use soft surfaces and shadows, translucent menus and neutral filled selections.
 
-- Add MiniMax-M3.1-Flash and Gemini 4 Argon to the model catalog, with their documented context and output limits, reasoning effort levels, and OpenRouter model entries.
+- Add MiniMax-M3.1-Flash and Gemini 4 Argon to the model catalog, with their documented context and output limits, reasoning effort levels, and OpenRouter model entries. MiniMax connections recognize the current China API hostname, preserve saved model metadata across catalog refreshes, keep new models discoverable while hiding retired entries, enforce always-on M3.1 thinking, mark M3/M3.1 temperature as fixed, and avoid unsupported forced tool choice.
 
 - Save images and links from website context menus, including Blob/data resources and popup pages, through the browser download manager; copy images or their addresses and open image URLs in new tabs.
 

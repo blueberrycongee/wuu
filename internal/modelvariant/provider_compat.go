@@ -127,8 +127,15 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 			setOptionDefault(result, "thinkingConfig", thinking)
 		}
 	}
-	if strings.Contains(desc.APIID, "minimax-m3") && desc.APINPM == compatNPMAnthropic {
-		setOptionDefault(result, "thinking", map[string]any{"type": "adaptive"})
+	if strings.Contains(desc.APIID, "minimax-m3") || isMiniMaxM31(desc.ModelID) {
+		if (isMiniMaxM31(desc.APIID) || isMiniMaxM31(desc.ModelID)) && (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMOpenAICompatible) {
+			result["thinking"] = map[string]any{"type": "adaptive"}
+		} else if desc.APINPM == compatNPMAnthropic {
+			setOptionDefault(result, "thinking", map[string]any{"type": "adaptive"})
+		}
+		if desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMOpenAICompatible {
+			setOptionDefault(result, "toolChoiceAutoOnly", true)
+		}
 	}
 	if (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic) &&
 		(strings.Contains(desc.APIID, "k2p") || strings.Contains(desc.APIID, "kimi-k2.") || strings.Contains(desc.APIID, "kimi-k2p")) {

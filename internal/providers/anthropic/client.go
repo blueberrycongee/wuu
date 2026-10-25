@@ -206,6 +206,9 @@ func (c *Client) Chat(ctx context.Context, req providers.ChatRequest) (providers
 	if err != nil {
 		return providers.ChatResponse{}, err
 	}
+	if autoToolChoiceOnly(req.ProviderOptions) {
+		req.ForceToolName = ""
+	}
 
 	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens, req.Model)
 	payload, err := c.buildAnthropicRequest(req, maxTok, false)
@@ -329,6 +332,9 @@ func (c *Client) StreamChat(ctx context.Context, req providers.ChatRequest) (<-c
 	req, err = providers.EnsureInferenceAttemptContext(ctx, req, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
 	if err != nil {
 		return nil, err
+	}
+	if autoToolChoiceOnly(req.ProviderOptions) {
+		req.ForceToolName = ""
 	}
 
 	maxTok := resolveMaxTokens(req.MaxTokens, c.maxTokens, req.Model)
@@ -758,6 +764,11 @@ func providerOptionBool(value any) (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+func autoToolChoiceOnly(options map[string]any) bool {
+	enabled, _ := providerOptionBool(options["toolChoiceAutoOnly"])
+	return enabled
 }
 
 func shouldEnableAnthropicToolSearch(req providers.ChatRequest, support anthropicToolSearchSupport) bool {
