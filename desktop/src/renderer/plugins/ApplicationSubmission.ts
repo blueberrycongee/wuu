@@ -316,7 +316,7 @@ export class ApplicationSubmission {
       }
       optimisticThreadID = thread.id;
       if (!operation.draft) this.options.updateState(state => updateThreadByID(state, thread!.id, current => upsertTurn(current, optimistic)));
-      else forgetLocalTurnTiming(optimistic.id);
+      // Event/RPC confirmation binds the send clock even without a visible placeholder.
       this.creations.delete(source.id); this.publish();
       if (customTitle) {
         const renamed = window.wuu.renameThread(thread.id, customTitle).catch(error => {
@@ -332,6 +332,7 @@ export class ApplicationSubmission {
       }
       const attachments = await Promise.race([Promise.all([awaitComposerImages(message.images), awaitComposerFiles(message.files)]), operation.cancelled]);
       if (!attachments || operation.stopped) {
+        if (operation.draft) forgetLocalTurnTiming(optimistic.id);
         this.options.updateState(state => updateThreadByID(state, thread!.id, current => interruptOptimisticTurn(current, optimistic.id, Date.now()), activeThreadIDForState(state) === thread!.id ? { running: false } : {}));
         return false;
       }
@@ -348,6 +349,7 @@ export class ApplicationSubmission {
       const current = optimisticThreadID ? threadForTab(this.options.getState(), optimisticThreadID) : undefined;
       const interrupted = isCancellationMessage(raw.toLowerCase()) || isOptimisticTurnInterrupted(current, optimistic.id);
       const accepted = threadHasAcceptedComposerMessage(current, message, optimistic.id, operation.previousTurnIDs);
+      if (operation.draft && interrupted && !accepted) forgetLocalTurnTiming(optimistic.id);
       const busy = `thread ${JSON.stringify(optimisticThreadID)} already has a running turn`;
       if (!interrupted && !accepted && operation.sent && operation.thread && (raw.endsWith(busy) || raw.endsWith(`${busy} in another app-server: thread execution is owned by another app-server`))) {
         this.options.updateState(state => updateThreadByID(state, operation.thread!.id, current => dropOptimisticTurn(current, optimistic.id)));
