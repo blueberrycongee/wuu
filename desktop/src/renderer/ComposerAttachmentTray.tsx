@@ -156,14 +156,8 @@ export function ComposerAttachmentTray({
     for (const key of dismissed.current) {
       if (!cards.some((card) => card.key === key)) dismissed.current.delete(key);
     }
-    const slow = motionDurationMs("--motion-slow", 280);
-    const base = motionDurationMs("--motion-base", 180);
-    const easeOut = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
-    const easeIn = motionCurve("--ease-in", "cubic-bezier(0.4, 0, 1, 1)");
     const tray = trayRef.current;
     const list = listRef.current;
-    const animate = !reset && !document.hidden && !prefersReducedMotion() && slow > 0 &&
-      typeof tray?.animate === "function";
 
     const settleLift = (): void => {
       lift.current?.stack.cancel();
@@ -191,6 +185,13 @@ export function ComposerAttachmentTray({
       offsets.current = new Map();
       return;
     }
+    // Empty trays need no computed motion styles during conversation switches.
+    const slow = motionDurationMs("--motion-slow", 280);
+    const base = motionDurationMs("--motion-base", 180);
+    const easeOut = motionCurve("--ease-out", "cubic-bezier(0.33, 1, 0.68, 1)");
+    const easeIn = motionCurve("--ease-in", "cubic-bezier(0.4, 0, 1, 1)");
+    const animate = !reset && !document.hidden && !prefersReducedMotion() && slow > 0 &&
+      typeof tray.animate === "function";
     const trayHeight = tray.offsetHeight + Number.parseFloat(getComputedStyle(tray).marginBottom || "0");
     const presentCount = rendered.filter((entry) => !entry.exiting).length;
     if (!animate) {
