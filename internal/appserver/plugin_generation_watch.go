@@ -144,6 +144,25 @@ func (s *Server) pollPluginGeneration() {
 	}
 }
 
+// A contended observation needs no transition locks when the published
+// generation is unchanged and healthy. Actual transitions still fence admission.
+func (s *Server) pluginGenerationObservationError() error {
+	if s.pluginGenerationMutation.Load() || s.pluginGenerationRefreshing.Load() {
+		return errPluginGenerationRefreshBusy
+	}
+	epoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+	if err != nil {
+		return err
+	}
+	// Recheck phase fences after sampling health, which can look healthy
+	// while failed dependencies are being retired.
+	if epoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery() &&
+		!s.pluginGenerationMutation.Load() && !s.pluginGenerationRefreshing.Load() {
+		return nil
+	}
+	return errPluginGenerationRefreshBusy
+}
+
 func (s *Server) refreshPluginGenerationIfChanged() error {
 	if s == nil || s.rt == nil || s.rt.WuuHome == "" || s.closed.Load() {
 		return nil
@@ -155,26 +174,13 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 	// Activation can synchronously submit input through host services. Such
 	// admission must queue rather than wait for the activation that called it.
 	if !s.pluginGenerationRefreshMu.TryLock() {
-		if s.pluginGenerationMutation.Load() || s.pluginGenerationRefreshing.Load() {
-			return errPluginGenerationRefreshBusy
-		}
-		epoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
-		if err != nil {
-			return err
-		}
-		// An unchanged observation owns no effects. Recheck the phase fences
-		// after sampling health, which can look healthy during retirement.
-		if epoch == s.pluginGenerationEpoch.Load() && !s.rt.PluginGenerationNeedsRecovery() &&
-			!s.pluginGenerationMutation.Load() && !s.pluginGenerationRefreshing.Load() {
-			return nil
-		}
-		return errPluginGenerationRefreshBusy
+		return s.pluginGenerationObservationError()
 	}
 	// Admission can hold a thread lock, while config updates retire thread
 	// runtimes. Defer this observation rather than wait in the reverse order.
 	if !s.configRefreshMu.TryLock() {
 		s.pluginGenerationRefreshMu.Unlock()
-		return errPluginGenerationRefreshBusy
+		return s.pluginGenerationObservationError()
 	}
 	refreshed := false
 	invalidated := false
