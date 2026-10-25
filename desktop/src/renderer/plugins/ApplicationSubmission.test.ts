@@ -86,11 +86,13 @@ describe("application submission ownership",()=>{
   it("retains the creation draft and rejects duplicate sends until admission",async()=>{
     const creating=deferred<{thread:Thread}>();const starting=deferred<{turn:Thread["turns"][number]}>();
     window.wuu={startThread:vi.fn(()=>creating.promise),startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
-    const f=fixture();f.submission.submit({ownerTabId:"draft:a"});
+    // Native completion acceptance can submit live text before the parent draft catches up.
+    const f=fixture();f.submission.submit({ownerTabId:"draft:a",text:"hello accepted suffix"});
     expect(f.submission.submit({ownerTabId:"draft:a"}).accepted).toBe(false);
-    expect(f.getDraft("draft:a").prompt).toBe("hello");
+    expect(f.getDraft("draft:a").prompt).toBe("hello accepted suffix");
     creating.resolve({thread:{...thread(),cwd:"/worktree"}});await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledTimes(1));
-    expect(f.getDraft("thread:created").prompt).toBe("hello");
+    expect(vi.mocked(window.wuu.startTurn).mock.calls[0][1]).toBe("hello accepted suffix");
+    expect(f.getDraft("thread:created").prompt).toBe("hello accepted suffix");
     expect(f.getState().thread?.turns).toEqual([]);
     expect(f.submission.submit({ownerTabId:"thread:created"}).accepted).toBe(false);
     starting.resolve({turn:{id:"first",status:"in_progress",items_view:"full",items:[]}});

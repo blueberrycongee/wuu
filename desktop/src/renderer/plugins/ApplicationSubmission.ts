@@ -124,6 +124,12 @@ export class ApplicationSubmission {
       implicitFileID = file.id;
       message = { ...message, files: [...message.files.filter(item => item.id !== file.id), file] };
     }
+    // Native input can be ahead of the parent draft when Enter follows completion acceptance.
+    // Delivery must compare against the text actually submitted, not its earlier render.
+    if (input.text !== undefined && input.text !== draft.prompt) {
+      draft.prompt = input.text;
+      this.options.setDraft(source.id, draft);
+    }
     const operation = this.createOperation(message, source, thread, draft); operation.implicitFileID = implicitFileID;
     message.images.forEach(value => this.options.resources.remember("image", value));
     message.files.forEach(value => this.options.resources.remember("file", value));
