@@ -10,9 +10,10 @@ import {
   Split,
   X,
 } from "./WuuIcons";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { InputFile, InputImage } from "../shared/protocol";
 import { AttachmentImage } from "./AttachmentImage";
+import { useConversationRenderActive, useConversationRevealSnap } from "./ConversationRenderActivity";
 import { useImagePreview } from "./ImagePreview";
 import { useI18n } from "./i18n";
 import { fileNameParts, formatFileSize } from "./AttachmentFormat";
@@ -42,6 +43,16 @@ export function AgentMessageActions({
 }): JSX.Element {
   const { t } = useI18n();
   const [revealFinished, setRevealFinished] = useState(false);
+  const renderActive = useConversationRenderActive();
+  const revealSnap = useConversationRevealSnap();
+  useLayoutEffect(() => {
+    // Background completion and pane restoration must consume the entrance.
+    // A temporary CSS override would restart it when the reveal snap ends.
+    // Keep an unfinished answer eligible for its later live completion.
+    if (!reserved && !hidden && (!renderActive || revealSnap)) {
+      setRevealFinished(true);
+    }
+  }, [hidden, renderActive, reserved, revealSnap]);
 
   return (
     <div
