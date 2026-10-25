@@ -8,9 +8,9 @@
  *   SKIP_DELAY_MS of any other layer closing opens immediately, so sweeping
  *   across a row of controls or a list doesn't pay the delay per anchor.
  * - Anchor presses, outside presses, Escape, external scroll, and blur dismiss.
- *   After a dismiss on press or
- *   Escape the layer stays suppressed until the pointer leaves the
- *   anchor, so a clicked control doesn't immediately re-arm its layer.
+ *   After a dismiss on press or Escape the layer stays suppressed until the
+ *   pointer leaves the anchor, so a clicked control doesn't immediately
+ *   re-arm its layer.
  * - No layer opens while a context menu is open, and opening one dismisses
  *   the current layer.
  *
@@ -247,7 +247,7 @@ export function useHoverReveal<K>({
     }
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
-        if (!propagateEscape) event.stopPropagation();
+        if (!propagateEscape && revealedRef.current) event.stopPropagation();
         suppressUntilLeaveRef.current = true;
         const anchorHovered = revealedRef.current?.anchor.matches(":hover");
         if (interactive && layerRef.current?.contains(document.activeElement)) {
