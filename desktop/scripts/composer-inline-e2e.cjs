@@ -81,7 +81,8 @@ async function focus() {
 }
 async function draft(text) {
   await focus();
-  await key("A", [process.platform === "darwin" ? "meta" : "control"]);
+  win.webContents.selectAll();
+  await frames();
   if (text) await win.webContents.insertText(text);
   else await key("Backspace");
   await until(({ selector, text }) => document.querySelector(selector)?.value === text, { selector: inputSelector, text }, `draft ${JSON.stringify(text)}`);
@@ -229,7 +230,8 @@ app.whenReady().then(async () => {
     await key("Tab");
     assert.equal(await value(), "Plan a focused check");
     assert.equal(await evaluate((selector) => document.activeElement === document.querySelector(selector), inputSelector), true);
-    await key("Z", [process.platform === "darwin" ? "meta" : "control"]);
+    win.webContents.undo();
+    await frames();
     assert.equal(await value(), "Plan", "accepted suffix can be undone through the native edit history");
   });
 

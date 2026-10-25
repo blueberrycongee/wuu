@@ -141,7 +141,8 @@ export class ApplicationComposerPresentation {
             requestSignal.addEventListener("abort", cancelRequest, { once: true });
             try {
               const result = await provider.provideCompletion(immutable(context), request.signal);
-              check(); request.signal.throwIfAborted();
+              if (request.signal.aborted) return null;
+              check();
               return host.getComposerInlineCompletionProviders().includes(provider) ? result : null;
             } finally {
               signal.removeEventListener("abort", cancelScope);

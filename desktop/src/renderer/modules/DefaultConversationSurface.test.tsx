@@ -56,15 +56,15 @@ it("keeps loading and empty state distinct from a failed runtime", () => {
   h.update({ ...h.get(), phase: "error", conversation: { loading: false, turns: [], error: "Runtime unavailable" } });
   expect(container!.textContent).toContain("Runtime unavailable");
 });
-it("starts an explicit history edit before retrying a failed message", async () => {
+it("continues the failed turn through its public identity", async () => {
   const h = fixture(), failed = thread("one");
   failed.turns[0] = { ...failed.turns[0], status: "failed", error: { message: "Request failed: HTTP 500 Internal Server Error" }, items: [failed.turns[0].items[0]] };
   h.update({ ...h.get(), conversationWorkspace: { ...h.get().conversationWorkspace, threads: [failed] } });
   const retry = container!.querySelector<HTMLButtonElement>(".turn-failure-recovery button");
   expect(retry).not.toBeNull();
   await act(async () => retry!.click());
-  expect(h.invoke.mock.calls.map(call => call[0])).toEqual(["history.begin-edit", "history.update-edit", "history.submit-edit"]);
-  expect(h.invoke).toHaveBeenLastCalledWith("history.submit-edit", { threadId: "one", turnId: "one-turn", itemId: "one-user" });
+  expect(h.invoke.mock.calls.map(call => call[0])).toEqual(["conversation.continue"]);
+  expect(h.invoke).toHaveBeenLastCalledWith("conversation.continue", { threadId: "one", turnId: "one-turn", text: expect.any(String) });
 });
 it("renders the canonical pending creation turn only for its tab owner", () => {
   const h = fixture(), pending = thread("pending").turns[0];

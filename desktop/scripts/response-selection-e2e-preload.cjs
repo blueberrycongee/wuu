@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   listThreads: async () => ({ threads }), listArchivedThreads: async () => ({ threads: [] }),
   startThread: async () => ({ thread: threads[0] }),
   resumeThread: async id => ({ thread: threads.find(value => value.id === id) || threads[0] }),
+  listEngines: async () => ({ engines: [] }),
   loadCodexModels: async provider => ({ provider, models: [{ id: "mock-selection", name: "mock-selection" }] }),
   gitStatus: async () => ({ is_repo: false, branches: [], dirty_count: 0 }),
   listGitChanges: async () => ({ is_repo: false, root: cwd, files: [] }),

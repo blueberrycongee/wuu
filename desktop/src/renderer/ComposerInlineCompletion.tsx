@@ -23,7 +23,7 @@ import { parseComposerSlashDraft } from "./ComposerSlashCommands";
 export interface ComposerInlineCompletionActions {
   accept(): boolean;
   dismiss(): boolean;
-  dispatched(text: string, mode: ComposerSubmissionModeV1): void;
+  prepareDispatch(text: string, mode: ComposerSubmissionModeV1): () => void;
 }
 
 type Observation = {
@@ -228,13 +228,14 @@ export function useComposerInlineCompletion({
       setSuggestion(null);
       return true;
     },
-    dispatched(text, mode) {
-      // This is called only after the composer's synchronous dispatch callback
-      // accepts. A later transport failure cannot be inferred from that boundary.
-      observe();
-      const pending = accepted.current;
-      accepted.current = [];
-      for (const item of pending) notify(item.suggestion, { type: "dispatched", mode, edited: text !== item.draftText });
+    prepareDispatch(text, mode) {
+      // Admission can clear the draft or bind a new thread before its promise
+      // resolves. Keep attribution for this submission across that transition.
+      const pending = [...accepted.current];
+      return () => {
+        accepted.current = accepted.current.filter(item => !pending.includes(item));
+        for (const item of pending) notify(item.suggestion, { type: "dispatched", mode, edited: text !== item.draftText });
+      };
     },
   };
   const visible = suggestion && suggestion.observation === observation && observation.eligible

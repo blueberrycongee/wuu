@@ -413,13 +413,12 @@ export function Composer({
   // interval where two gestures can still read the same rendered draft, while
   // allowing a real input change (even to the same eventual text) to re-arm it.
   const submittedDraftSignatureRef = useRef<string | null>(null);
-  useEffect(() => () => { submittedDraftSignatureRef.current = null; }, [queryHistorySessionID]);
   const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
     setLastPromptRevision(promptRevision);
     setLastCommittedPrompt(committedPrompt);
     optimisticPromptQueueRef.current.length = 0;
-    submittedDraftSignatureRef.current = null;
+    if (committedPrompt !== "") submittedDraftSignatureRef.current = null;
     setLocalPrompt(committedPrompt);
   } else if (committedPrompt !== lastCommittedPrompt) {
     setLastCommittedPrompt(committedPrompt);
@@ -433,7 +432,9 @@ export function Composer({
       optimisticPromptQueueRef.current.splice(0, optimisticPromptIndex + 1);
     } else {
       optimisticPromptQueueRef.current.length = 0;
-      submittedDraftSignatureRef.current = null;
+      // Admission clears the canonical draft before its promise settles. Keep
+      // the pending send identity so its completion also clears local input.
+      if (committedPrompt !== "") submittedDraftSignatureRef.current = null;
       setLocalPrompt(committedPrompt);
     }
   }
@@ -803,13 +804,14 @@ export function Composer({
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : promptOverride;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
     submittedDraftSignatureRef.current = draftSignature;
+    const dispatched = inlineCompletionActionsRef.current?.prepareDispatch(canonicalPrompt, mode);
     const finish = (accepted: boolean | void): void => {
+      if (accepted !== false) dispatched?.();
       if (submittedDraftSignatureRef.current !== draftSignature) return;
       if (accepted === false) {
         submittedDraftSignatureRef.current = null;
         return;
       }
-      inlineCompletionActionsRef.current?.dispatched(canonicalPrompt, mode);
       optimisticPromptQueueRef.current.length = 0;
       setLocalPrompt("");
       setSubmissionClearRevision((current) => current + 1);

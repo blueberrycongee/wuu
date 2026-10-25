@@ -363,13 +363,14 @@ export function SplitPaneComposer({
     const canonicalPrompt = contentParts ? contentParts.map((part) => part.text).join("") : currentPrompt;
     if (contentParts && queryHistorySessionID) rememberCollapsedPromptParts(queryHistorySessionID, canonicalPrompt, contentParts);
     submittedDraftRef.current = currentSignature;
+    const dispatched = inline.actions.prepareDispatch(canonicalPrompt, running ? "queue" : "send");
     const finish = (accepted: boolean | void): void => {
+      if (accepted !== false) dispatched();
       if (submittedDraftRef.current !== currentSignature) return;
       if (accepted === false) {
         submittedDraftRef.current = undefined;
         return;
       }
-      inline.actions.dispatched(canonicalPrompt, running ? "queue" : "send");
       composing.current = false;
       setSubmissionRevision((revision) => revision + 1);
     };

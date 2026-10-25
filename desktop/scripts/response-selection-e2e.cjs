@@ -482,6 +482,9 @@ async function run() {
   });
   await win.loadFile(process.env.WUU_E2E_RENDERER || path.join(desktop, "out/renderer/index.html"));
   await win.webContents.debugger.sendCommand("Emulation.setFocusEmulationEnabled", { enabled: true });
+  await until(() => [...document.querySelectorAll('.thread-row-main')].some(row => row.textContent.includes('Selection main')),
+    "selection fixture in sidebar");
+  await evaluate(() => [...document.querySelectorAll('.thread-row-main')].find(row => row.textContent.includes('Selection main')).click());
   await until(selector => !!document.querySelector(selector), "rendered response", surface);
   await evaluate(() => {
     for (const toggle of document.querySelectorAll('.environment-toggle-button[aria-pressed="true"], [data-wuu-component=right-sidebar-toggle][aria-pressed="true"]')) toggle.click();

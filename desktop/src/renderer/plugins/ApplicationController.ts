@@ -399,7 +399,7 @@ export class ApplicationController implements HostApplicationService {
   private setComposerDraft = (ownerTabId: string, draft: ComposerDraftState): void => {
     this.reviseDraft(ownerTabId);
     if (ownerTabId === this.state.activeSessionTabID) this.draft = draft.prompt;
-    this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, ...draft } : tab) }));
+    this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(tab => tab.id === ownerTabId && tab.kind !== "skills" ? { ...tab, ...draft, selections: draft.selections } : tab) }));
   };
   private sideConversationOwner?: ApplicationSideConversation;
   private get applicationSideConversation(): ApplicationSideConversation {
