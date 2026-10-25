@@ -400,7 +400,9 @@
 }
 
 .settings-titlebar-slot > .settings-page-actions {
+  flex: 0 0 auto;
   min-height: 0;
+  white-space: nowrap;
   margin: 0 0 0 auto;
   -webkit-app-region: no-drag;
 }

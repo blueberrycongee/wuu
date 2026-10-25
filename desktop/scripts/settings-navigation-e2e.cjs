@@ -39,6 +39,41 @@ app.whenReady().then(async () => {
     await evaluate(() => document.querySelector('[data-settings-page="providers"]').click());
     await until(() => document.querySelector('.app-shell[data-settings-open]'));
     const measurements = [];
+    await until(() => document.querySelector('[data-testid="settings-connection-add"]'));
+    for (const theme of ["light", "dark"]) {
+      for (const size of [15, 20]) {
+        for (const width of [980, 1280]) {
+          win.setContentSize(width, 640);
+          await evaluate(({ theme, size }) => {
+            document.documentElement.dataset.theme = theme;
+            document.documentElement.style.setProperty("--font-ui", `${size}px`);
+          }, { theme, size });
+          const label = `settings-actions-${theme}-${size}-${width}`;
+          await capture(label);
+          const geometry = await evaluate(() => {
+            const button = document.querySelector('[data-testid="settings-connection-add"]');
+            const title = document.querySelector('.settings-titlebar-slot > .settings-page-title');
+            const rect = button.getBoundingClientRect();
+            const range = document.createRange();
+            range.selectNodeContents(button);
+            const textRects = [...range.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0);
+            return { button: rect.toJSON(), title: title.getBoundingClientRect().toJSON(),
+              textRects: textRects.map(rect => rect.toJSON()), viewportWidth: innerWidth };
+          });
+          assert.ok(geometry.button.width > 0 && geometry.button.right <= geometry.viewportWidth, `${label}: action stays visible`);
+          assert.ok(geometry.title.right <= geometry.button.left, `${label}: title does not overlap action`);
+          for (const rect of geometry.textRects) {
+            assert.ok(rect.left >= geometry.button.left && rect.right <= geometry.button.right
+              && rect.top >= geometry.button.top && rect.bottom <= geometry.button.bottom, `${label}: action contents stay inside button`);
+          }
+          measurements.push({ label, ...geometry });
+        }
+      }
+    }
+    await evaluate(() => {
+      document.documentElement.dataset.theme = "light";
+      document.documentElement.style.setProperty("--font-ui", "15px");
+    });
     const checkScroll = async (selector, fixedSelectors, label) => {
       const result = await evaluate(async ({ selector, fixedSelectors }) => {
         const node = document.querySelector(selector);

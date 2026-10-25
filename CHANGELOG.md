@@ -166,6 +166,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep settings titlebar actions on one line without overlapping the page title in narrow windows and at larger UI font sizes.
+
 - Avoid reparsing unchanged cached conversation Markdown on session switches and composer updates by retaining the preview service context until its service or slots change.
 
 - Extend model and engine connection row hover and click areas across the settings card, preserving inset dividers, content spacing, rounded outer corners, and visible keyboard focus.
