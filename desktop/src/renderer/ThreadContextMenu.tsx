@@ -120,12 +120,12 @@ function WebThreadContextMenu({ x, y, items, onClose }: ThreadContextMenuProps):
       if (!active) {
         return;
       }
-      document.addEventListener("pointerdown", handlePointerDown);
+      document.addEventListener("pointerdown", handlePointerDown, true);
     }, 0);
     return () => {
       active = false;
       window.clearTimeout(id);
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [onClose]);

@@ -1362,7 +1362,7 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 @media (hover: hover) {
-  .sidebar-recents-heading:not(:hover, :focus-within) .sidebar-recents-new-thread {
+  .sidebar-recents-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-recents-new-thread {
     opacity: 0;
   }
 }
@@ -1430,8 +1430,8 @@ html[data-focus-modality="keyboard"] :is(
  * keeps its button. Empty groups retain their action as the entry point.
  * Touch keeps both visible: no hover. */
 @media (hover: hover) {
-  .sidebar-functional-heading:not(:hover, :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"],
-  .sidebar-functional-heading:not(:hover, :focus-within, [data-empty="true"]) .sidebar-functional-action:not([aria-expanded="true"]) {
+  .sidebar-functional-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"],
+  .sidebar-functional-heading:not(:hover, [data-empty="true"]):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-functional-action:not([aria-expanded="true"]) {
     opacity: 0;
   }
 }
@@ -1814,7 +1814,7 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 .project-group:hover > .project-row .project-row-chevron,
-.project-group:focus-within > .project-row .project-row-chevron {
+html[data-focus-modality="keyboard"] .project-group:focus-within > .project-row .project-row-chevron {
   opacity: 1;
 }
 
@@ -1981,26 +1981,26 @@ html[data-focus-modality="keyboard"] :is(
  * stopped matching and the button never appeared (regression fixed per
  * sidebar-groups-andy-workspaces.md §1.2). */
 .project-group:hover .project-row-new-thread,
-.project-group:focus-within .project-row-new-thread {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row-new-thread {
   opacity: 1;
   pointer-events: auto;
   transform: translate3d(0, 0, 0);
 }
 
 .project-group:hover .project-row .project-row-unread,
-.project-group:focus-within .project-row .project-row-unread,
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-unread,
 .project-group:hover .project-row .project-row-loading,
-.project-group:focus-within .project-row .project-row-loading {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-loading {
   opacity: 0;
 }
 
 .project-group:hover .project-row .project-row-unread,
-.project-group:focus-within .project-row .project-row-unread {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-unread {
   transform: scale(0.72);
 }
 
 .project-group:hover .project-row .project-row-loading,
-.project-group:focus-within .project-row .project-row-loading {
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-loading {
   scale: 0.72;
 }
 
@@ -2221,8 +2221,8 @@ html[data-focus-modality="keyboard"] :is(
  * indicator while those controls are present rather than letting them overlap. */
 .thread-row:hover::before,
 .thread-row:hover .thread-row-spinner,
-.thread-row:focus-within::before,
-.thread-row:focus-within .thread-row-spinner {
+html[data-focus-modality="keyboard"] .thread-row:focus-within::before,
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-spinner {
   opacity: 0;
 }
 
@@ -2343,12 +2343,12 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
 }
 
 .thread-row:hover .thread-row-main > .thread-row-title,
-.thread-row:focus-within .thread-row-main > .thread-row-title {
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
 }
 
 .thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
-.thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+html[data-focus-modality="keyboard"] .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
@@ -2375,7 +2375,8 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
-.thread-row:is(:hover, :focus-within):has(.thread-row-fork-icon) .thread-row-fork-icon {
+.thread-row:hover:has(.thread-row-fork-icon) .thread-row-fork-icon,
+html[data-focus-modality="keyboard"] .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-fork-icon {
   right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
 }
 
@@ -2422,6 +2423,8 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
     visibility 0s linear 120ms;
 }
 
+/* Pointer clicks retain DOM focus. Only keyboard focus reveals row actions
+ * after the pointer leaves; title spacing and status slots follow that rule. */
 /* When the row is hovered the action icons must read as clearly
  * clickable, not as faint decoration. Idle --ink-soft still washes out
  * on the hover background; bumping to --ink makes pin / archive
@@ -2439,7 +2442,7 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   transition-delay: 120ms;
 }
 
-.thread-row:focus-within .thread-row-actions {
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-actions {
   opacity: 1;
   pointer-events: auto;
   visibility: visible;
@@ -2685,7 +2688,7 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 /* Idle headers can use the space of their hidden new-thread action. Keep the
  * trailing track whenever an action or a status indicator is visible. */
 .sidebar-section-header-group:not(:has(.project-row-new-thread)) .sidebar-section-row,
-.project-group:not(:hover):not(:focus-within) > .sidebar-section-header-group >
+.project-group:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) > .sidebar-section-header-group >
   .sidebar-section-row:not(:has(.project-row-loading, .project-row-unread)) {
   grid-template-columns:
     var(--sidebar-nav-icon-col)

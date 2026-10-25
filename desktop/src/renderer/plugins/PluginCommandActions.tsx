@@ -81,8 +81,8 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
       if (!(event.target instanceof Node) || trigger.current?.contains(event.target) || menu.current?.contains(event.target)) return;
       setOpen(false);
     };
-    document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
   }, [open]);
   if (actions.length === 0) return null;
   return <Fragment>

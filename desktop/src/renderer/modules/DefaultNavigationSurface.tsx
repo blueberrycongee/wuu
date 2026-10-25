@@ -126,8 +126,8 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onDeleteThread={thread => run(invoke("navigation.delete-thread", { threadId: thread.id }))}
     onRenameThread={(thread, title) => run(application.invoke("thread.rename", { threadId: thread.id, title }))}
     onToggleWorkspaceMenu={() => setWorkspaceMenuOpen(value => !value)}
-    onCreateWorkspace={() => run(application.invoke("workspace.create", { kind: "blank" }))}
-    onOpenWorkspaceFolder={() => run(application.invoke("workspace.create", { kind: "folder" }))}
+    onCreateWorkspace={() => { setWorkspaceMenuOpen(false); run(application.invoke("workspace.create", { kind: "blank" })); }}
+    onOpenWorkspaceFolder={() => { setWorkspaceMenuOpen(false); run(application.invoke("workspace.create", { kind: "folder" })); }}
     onToggleSidebarSectionCollapsed={toggleSection} onLoadWorkspaceThreads={workspace => invoke("navigation.load-workspace", { workspaceId: workspace.id })}
     onFocusWorkspace={workspaceSelectionEnabled ? workspaceId => run(invoke("navigation.focus-workspace", { workspaceId })) : undefined}
     onStartNewThreadInWorkspace={workspaceId => run(focusAfterNavigation(async () => {

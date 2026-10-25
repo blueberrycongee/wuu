@@ -97,10 +97,10 @@ function StatusOverflow({ items, onOpenSession }: {
       const target = event.target;
       if (target instanceof Node && !detailsRef.current?.contains(target) && !menuRef.current?.contains(target)) close();
     };
-    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("pointerdown", dismiss, true);
     return () => {
       cancelAnimationFrame(frame);
-      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("pointerdown", dismiss, true);
     };
   }, [open]);
 

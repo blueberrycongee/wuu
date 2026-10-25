@@ -63,8 +63,8 @@ export function ConversationTriggers({ threadID }: { threadID: string }): JSX.El
     const dismiss = (event: PointerEvent): void => {
       if (event.target instanceof Node && !anchor.current?.contains(event.target) && !panel.current?.contains(event.target)) setOpen(false);
     };
-    document.addEventListener("pointerdown", dismiss);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerdown", dismiss); };
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener("pointerdown", dismiss, true); };
   }, [open]);
 
   const waiting = (processes ?? []).filter((process) => process.trigger?.status === "waiting" || process.trigger?.status === "received");

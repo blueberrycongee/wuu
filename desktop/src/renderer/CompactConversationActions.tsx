@@ -40,10 +40,10 @@ export function CompactConversationActions({
         setOpen(false);
       }
     };
-    document.addEventListener("pointerdown", dismissOutside);
+    document.addEventListener("pointerdown", dismissOutside, true);
     document.addEventListener("focusin", dismissOutside);
     return () => {
-      document.removeEventListener("pointerdown", dismissOutside);
+      document.removeEventListener("pointerdown", dismissOutside, true);
       document.removeEventListener("focusin", dismissOutside);
     };
   }, [open, environmentToggleRef]);

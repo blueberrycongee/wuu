@@ -937,8 +937,8 @@ export function App({ application, slots, shellPluginId }: {
       }
     }
 
-    window.addEventListener("pointerdown", handlePointerDown);
-    return () => window.removeEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
   }, [
     environmentPanelHasRoom,
     environmentPanelMenu,

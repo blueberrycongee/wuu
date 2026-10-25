@@ -125,7 +125,7 @@ function WebComposerContextMenu({ textareaRef, x, y, hasSelection, disabled = fa
       if (!active) {
         return;
       }
-      document.addEventListener("pointerdown", handlePointerDown);
+      document.addEventListener("pointerdown", handlePointerDown, true);
       document.addEventListener("keydown", handleKeyDown);
       document.addEventListener("scroll", handleScroll, true);
       window.addEventListener("resize", onClose);
@@ -134,7 +134,7 @@ function WebComposerContextMenu({ textareaRef, x, y, hasSelection, disabled = fa
     return () => {
       active = false;
       window.clearTimeout(id);
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
       document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("resize", onClose);

@@ -40,6 +40,7 @@ export function ComposerBranchPicker({
       </button>
       {open && !disabled ? (
         <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
+          onDismiss={onToggle}
           mobileSheet={{ label: t(worktreeStart ? "composer.worktreeStartBranch" : "git.branch"), onClose: onToggle }}>
           <ComposerBranchMenu gitStatus={gitStatus} selectedBranch={worktreeStart ? branch : gitStatus.branch}
             checkout={!worktreeStart} onSelect={onSelect} onCreate={onCreate} onOpenWorktree={onOpenWorktree}

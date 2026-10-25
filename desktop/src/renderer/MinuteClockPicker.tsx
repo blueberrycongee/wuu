@@ -41,8 +41,8 @@ export function MinuteClockPicker({
       if (anchorRef.current?.contains(target) || isInsideFloatingMenu(target, "minute-clock")) return;
       setOpen(false);
     }
-    document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
   }, [open]);
 
   function commit(nextMinute: number): void {

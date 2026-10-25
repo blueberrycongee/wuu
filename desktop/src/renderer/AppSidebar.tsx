@@ -2114,6 +2114,7 @@ export function AppSidebar({
                         <FloatingMenuPortal
                           anchorRef={addWorkspaceTriggerRef}
                           owner="sidebar-workspace"
+                          onDismiss={onToggleWorkspaceMenu}
                           placement="below"
                           align="right"
                           offset={4}

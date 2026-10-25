@@ -121,8 +121,8 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
     const dismiss = (event: globalThis.PointerEvent) => {
       if (event.target instanceof Node && !workspaceTriggerRef.current?.contains(event.target) && !workspaceMenuRef.current?.contains(event.target)) setWorkspaceMenu(false);
     };
-    document.addEventListener("pointerdown", dismiss);
-    return () => document.removeEventListener("pointerdown", dismiss);
+    document.addEventListener("pointerdown", dismiss, true);
+    return () => document.removeEventListener("pointerdown", dismiss, true);
   }, [workspaceMenu]);
   const selectedWorkspace = view.workspaces.workspaces.find(row => row.id === view.workspaces.activeWorkspaceId);
   const greeting = selectedWorkspace ? greetingFor(hour, { kind: "workspace", workspaceName: "{workspace}" }).split("{workspace}") : undefined;

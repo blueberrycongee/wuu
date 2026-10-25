@@ -1281,6 +1281,7 @@ export function Composer({
                   <FloatingMenuPortal
                     anchorRef={menuRef}
                     owner="composer-runtime"
+                    onDismiss={onToggleMenu}
                     placement="above"
                     align="left"
                     width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
@@ -1453,6 +1454,7 @@ export function Composer({
                       <FloatingMenuPortal
                         anchorRef={accessMenuRef}
                         owner="composer-access"
+                        onDismiss={onToggleAccessMenu}
                         placement="above"
                         align="left"
                         offset={6}
