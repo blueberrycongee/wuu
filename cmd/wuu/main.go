@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/appserver"
-	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
@@ -2147,20 +2146,16 @@ func runAppServer(args []string) error {
 		if host.Kind != runtime.HostLocal {
 			return errors.New("desktop owner admission requires a local host")
 		}
-		bootstrap := os.NewFile(3, "desktop-parent-admission")
-		if bootstrap == nil {
-			return errors.New("desktop parent admission pipe is unavailable")
+		bootstrap, err := openDesktopAdmissionPipe(3)
+		if err != nil {
+			return fmt.Errorf("open desktop parent admission pipe: %w", err)
 		}
 		info, statErr := bootstrap.Stat()
 		if statErr != nil || info.Mode()&(os.ModeNamedPipe|os.ModeSocket) == 0 {
 			bootstrap.Close()
 			return errors.New("desktop parent admission requires an inherited pipe")
 		}
-		if err := bootstrap.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
-			bootstrap.Close()
-			return errors.New("desktop admission deadline unavailable")
-		}
-		connectionCtx, err = clientauthority.AdmitDesktop(connectionCtx, userspace.Binding{UserSpaceID: *userSpaceID, ProductDomain: *productDomain}, bootstrap)
+		connectionCtx, err = admitDesktopParent(connectionCtx, userspace.Binding{UserSpaceID: *userSpaceID, ProductDomain: *productDomain}, bootstrap)
 		bootstrap.Close()
 		if err != nil {
 			return err
