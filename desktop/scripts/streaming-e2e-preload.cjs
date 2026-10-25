@@ -6,6 +6,7 @@ const runtimeContext = { kind: "no_project", cwd };
 let startedThreadCount = 0;
 let workspacePreviewReadFailed = false;
 const threads = new Map();
+const heldMessages = new Map();
 
 function projectList() {
   return {
@@ -211,7 +212,9 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     threads.set(id, thread);
     return { thread };
   },
-  resumeThread: async (id) => ({ thread: threads.get(id) ?? null }),
+  resumeThread: async (id) => ({ thread: threads.get(id) ?? null,
+    ...(heldMessages.has(id) ? { held_user_messages: heldMessages.get(id) } : {}),
+  }),
   listEngines: async () => ({ engines: [] }),
   forkThread: async () => ({ thread: null }),
   editThreadMessage: async (threadId) => {
@@ -271,6 +274,9 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     const listener = (_event, payload) => {
       const thread = payload.message?.params?.thread;
       if (thread) threads.set(thread.id, thread);
+      if (payload.message?.method === "turn/held") {
+        heldMessages.set(payload.message.params.thread_id, payload.message.params.messages);
+      }
       handler(payload);
     };
     ipcRenderer.on("test:server-event", listener);
