@@ -87,14 +87,6 @@ describe("composer presentation host boundary", () => {
     f.life.abort(); await expect(providers[0].provideCompletion(context, new AbortController().signal)).rejects.toThrow();
     f.helper.dispose();
   });
-  it("publishes only presentation adapters for composer slots", async () => {
-    const f = fixture();
-    await f.host.activateGeneration({ pluginId: "sample", generation: "one", register: api => { api.registerSlot("composer.toolbar", { id: "button", render: () => null }); } });
-    const contributions = f.service.getContributions("composer.toolbar");
-    expect(contributions).toHaveLength(1); expect(Object.keys(contributions[0]).sort()).toEqual(["View", "key", "title"]);
-    expect(f.service.getContributions("composer.toolbar")).toBe(contributions);
-    f.host.unload("sample"); expect(f.service.getContributions("composer.toolbar")).toHaveLength(0); f.helper.dispose();
-  });
 });
 
 describe("composer status scope", () => {

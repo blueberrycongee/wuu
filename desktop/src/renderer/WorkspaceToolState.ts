@@ -55,10 +55,12 @@ export function useWorkspaceToolState({
     }
   }, [application, rightPanelOpen, conversationSelected, workspaceActiveViewTabID]);
   useEffect(() => {
-    if (rightPanelOpen && !rightPanelGlobalized && application.getSnapshot().previewWorkspace.conversationSelected) {
-      void application.invoke("preview.focus-tab", { tabId: application.getSnapshot().previewWorkspace.activeTabId }).catch(showErrorToast);
+    if (rightPanelOpen && application.getSnapshot().previewWorkspace.conversationSelected) {
+      const preview = application.getSnapshot().previewWorkspace;
+      if (preview.tabs.length === 0) setRightPanelOpenWithMotion(false);
+      else if (!rightPanelGlobalized) void application.invoke("preview.focus-tab", { tabId: preview.activeTabId }).catch(showErrorToast);
     }
-  }, [application, rightPanelOpen, rightPanelGlobalized, conversationSelected]);
+  }, [application, rightPanelOpen, rightPanelGlobalized, conversationSelected, setRightPanelOpenWithMotion]);
   const focusWorkspaceConversation = useCallback(() => {
     void application.invoke("preview.show-conversation", {}).catch(showErrorToast);
   }, [application]);
@@ -119,7 +121,9 @@ export function useWorkspaceToolState({
       setRightPanelOpenWithMotion(false);
       return;
     }
-    if (workspaceActiveViewTabID === undefined && workspaceViewTabs.length > 0) {
+    if (workspaceViewTabs.length === 0) {
+      void application.invoke("preview.new-tab", {}).catch(showErrorToast);
+    } else if (workspaceActiveViewTabID === undefined) {
       focusTab(workspaceViewTabs[workspaceViewTabs.length - 1].id);
     }
     setRightPanelOpenWithMotion(true);

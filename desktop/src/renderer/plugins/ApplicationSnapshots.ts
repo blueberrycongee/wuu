@@ -12,7 +12,9 @@ type ConversationItemKindV1 = ConversationItemSnapshotV1["kind"];
 
 export function toConversationItemSnapshot(
   item: ApplicationConversationThreadItemV1,
-  kind: ConversationItemKindV1,
+  kind: ConversationItemKindV1 = item.type === "user_message" ? "user-message"
+    : item.type === "agent_message" ? "assistant-message" : item.type === "reasoning" ? "reasoning"
+    : item.type === "tool_call" ? "tool-reference" : "notice",
   displayText = item.text,
 ): ConversationItemSnapshotV1 {
   const contentType = kind === "notice" ? "plain-text" as const : "markdown" as const;
@@ -187,12 +189,7 @@ export function createConversationTurnsProjector() {
     const turns = Object.freeze(thread.turns.map(turn => {
       const cached = cache.get(turn);
       if (cached && cached.active === active && cached.locale === locale) return cached.view;
-      const items = turn.items.map(item => {
-        const kind: ConversationItemKindV1 = item.type === "user_message" ? "user-message"
-          : item.type === "agent_message" ? "assistant-message" : item.type === "reasoning" ? "reasoning"
-          : item.type === "tool_call" ? "tool-reference" : "notice";
-        return toConversationItemSnapshot(item, kind);
-      });
+      const items = turn.items.map(item => toConversationItemSnapshot(item));
       const view: ApplicationTurnV1 = Object.freeze({ id: turn.id,
         status: turn.status === "in_progress" ? "running" : turn.status === "interrupted" ? "cancelled" : turn.status,
         items: Object.freeze(items), process: toConversationProcessSnapshot(turn.items.filter(item => item.type === "reasoning" || item.type === "tool_call"), turn.status === "in_progress", active, locale) });

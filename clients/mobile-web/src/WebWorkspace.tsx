@@ -1,5 +1,5 @@
 import { useLayoutEffect } from "react";
-import { App } from "../../../desktop/src/renderer/App";
+import { DesktopApplicationRoot } from "../../../desktop/src/renderer/plugins/DesktopApplicationRoot";
 import { applyMessageFlowFontSize } from "../../../desktop/src/renderer/MessageFlowFontSizeSection";
 import { applyPlatformStamp } from "../../../desktop/src/renderer/platform";
 import { startRendererVisibilitySync } from "../../../desktop/src/renderer/RendererVisibility";
@@ -32,7 +32,7 @@ export default function WebWorkspace(): React.JSX.Element {
   }, []);
   return (
       <WuuUIRoot>
-        <App />
+        <DesktopApplicationRoot />
         <ToastViewport />
         <ConfirmDialogHost />
       </WuuUIRoot>

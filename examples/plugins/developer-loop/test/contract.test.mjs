@@ -38,24 +38,23 @@ const api = {
   registerCommand: register("commands"),
   registerStatusItem: register("status"),
   registerLocale: register("locales"),
-  registerSlot: (_slot, contribution) => register("slots")(contribution),
+  registerUIContribution: register("uiContributions"),
   registerPresenter: register("presenters"),
-  registerToolActivityPresenter: register("toolActivityPresenters"),
 };
 
 renderer.activate(api);
-const presenter = registrations.get("toolActivityPresenters")[0];
+const presenter = registrations.get("uiContributions").find(item => item.target === "wuu.default-conversation/conversation.tool-activity");
 const presented = presenter.render({
-  activity: {
+  context: { snapshot: {
     id: "call-1",
     toolName: "developer-loop-echo",
-    capability: presenter.key,
+    capability: "developer-loop.tool.echo",
     status: "completed",
     argumentsText: "{}",
     resultText: "developer-loop tool ok",
   },
-  host: {},
-  fallback: createElement("span", null, "native"),
+  },
+  children: createElement("span", null, "native"),
 });
 assert.equal(presented.type, "section");
 assert.equal(presented.props["data-developer-loop-tool"], "completed");
@@ -79,13 +78,14 @@ const renderPresenter = (target, snapshot, key) => {
   return definition.render({ contractVersion: 1, target, key, snapshot, host: presentationHost, fallback });
 };
 
-const itemOutput = renderPresenter("conversation.item", {
+const messageContribution = registrations.get("uiContributions").find(item => item.target === "wuu.default-conversation/conversation.message");
+const itemOutput = messageContribution.render({ children: fallback, context: { snapshot: {
   contractVersion: 1,
   id: "message-1",
   kind: "assistant-message",
   status: "completed",
   text: "Accepted answer",
-}, "assistant-message");
+} } });
 assert.equal(itemOutput.children[0], fallback);
 assert.equal(itemOutput.children[1].props["data-item-id"], "message-1");
 assert.equal(itemOutput.children[1].props["data-item-status"], "completed");

@@ -83,16 +83,16 @@ it("uses published closeability and restores native heading focus through public
   expect(container.querySelector("h1")?.textContent).toBe("Original conversation");
 });
 
-it("renders legacy header slots and presenters through the shell's actual composition", async () => {
+it("renders header contributions and presenters through the shell's actual composition", async () => {
   const h = await fixture();
   let header: HeaderSnapshotV1 | undefined, presentation: PresentationHost | undefined, context: unknown;
   await act(async () => host.activateGeneration({ pluginId: "header", generation: "one", register: api => {
-    api.registerSlot("workspace.header", { id: "before", render: props => { context = props; return <span>Legacy header</span>; } });
+    api.registerUIContribution({ target: "shell/workspace.header", id: "before", render: props => { context = props.context; return <span>Public header</span>; } });
     api.registerPresenter({ id: "title", target: "header.workspace", render: props => { header = props.snapshot as HeaderSnapshotV1; presentation = props.host; return <h1>{header.title}</h1>; } });
   } }));
   const current = h.get();
   h.update({ ...current, navigationWorkspace: { ...current.navigationWorkspace, activePluginView: { id: "view", pluginId: "extension", title: "Automation", webPage: false, closable: false } } });
-  expect(container.textContent).toContain("Legacy header");
+  expect(container.textContent).toContain("Public header");
   expect(container.querySelector("h1")?.textContent).toBe("Automation");
   expect(header).toMatchObject({ scope: "workspace", title: "Automation", canNavigateBack: true });
   expect(header?.tabs).toBeUndefined();

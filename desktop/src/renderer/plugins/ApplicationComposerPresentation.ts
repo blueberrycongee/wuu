@@ -1,13 +1,11 @@
 import { externalAgentActivityStatusSource } from "../ExternalAgentActivityStore";
 import type { ComposerStatusItem, ComposerStatusState } from "../../../../packages/plugin-sdk/src/index";
-import { createElement } from "react";
-import type { ApplicationComposerStatusSnapshotV1, ApplicationComposerStatusItemV1, ApplicationComposerPresentationV1, ApplicationComposerPresentationViewV1, ApplicationComposerContributionV1, ApplicationComposerInlineProviderV1, ApplicationComposerContributionContextV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
+import type { ApplicationComposerStatusSnapshotV1, ApplicationComposerStatusItemV1, ApplicationComposerPresentationV1, ApplicationComposerPresentationViewV1, ApplicationComposerInlineProviderV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
 import { activeTodoUpdateForThread, activeTurnAcceptsSteering, activeTurnForThread, activeTurnIsAnswerReady, isThreadRunning, latestContextUsageForThread, queryTextForUserItem, requestedHandoffIntentForThread, type AppState } from "../AppState";
 import { providerModelContextWindow } from "../RuntimeHelpers";
-import { runtimeViewForSession } from "../SessionRuntimeState";
+import { runtimeViewForConversation } from "../SessionRuntimeState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
-import type { RegisteredComposerStatusSource, PluginHost, RegisteredComposerInlineCompletionProvider, RegisteredPluginSlotContribution } from "./PluginHost";
-import { PluginSlotContribution } from "./PluginSlot";
+import type { RegisteredComposerStatusSource, PluginHost, RegisteredComposerInlineCompletionProvider } from "./PluginHost";
 
 function immutable<T>(value: T): T {
   const result = structuredClone(value);
@@ -29,7 +27,6 @@ export class ApplicationComposerPresentation {
     const statusSources = () => [...this.host.getPluginHost().getComposerStatusSources(), externalAgentActivityStatusSource];
     const views = new Map<string, { key: string; value: ApplicationComposerPresentationViewV1 }>();
     const inlineCache = new WeakMap<readonly RegisteredComposerInlineCompletionProvider[], readonly ApplicationComposerInlineProviderV1[]>();
-    const slotCache = new WeakMap<readonly RegisteredPluginSlotContribution[], readonly ApplicationComposerContributionV1[]>();
     const telemetryCache = new WeakMap<ReturnType<typeof turnTelemetryStore.getSnapshot>, ReturnType<ApplicationComposerPresentationV1["getTelemetry"]>>();
     let commandSource: ReturnType<PluginHost["getCommands"]> | undefined;
     let commands: ReturnType<ApplicationComposerPresentationV1["getCommands"]> = Object.freeze([]);
@@ -98,7 +95,7 @@ export class ApplicationComposerPresentation {
           views.set(ownerTabId, { key: "unavailable", value }); return value;
         }
         const { state, tab, thread } = owner(ownerTabId);
-        const initialized = runtimeViewForSession(state.initialized, thread);
+        const initialized = runtimeViewForConversation(state.initialized, thread, activeTurnForThread(thread));
         const turn = activeTurnForThread(thread); const running = Boolean(thread && isThreadRunning(thread));
         const ceiling = providerModelContextWindow(initialized, thread?.model_provider || initialized?.provider, thread?.model || initialized?.model)
           || (!thread ? state.initialized?.advanced_settings?.context_window_tokens : undefined);
@@ -160,17 +157,6 @@ export class ApplicationComposerPresentation {
         inlineCache.set(source, adapters); return adapters;
       },
       subscribeComposerInlineCompletionProviders: callback => listen(listener => this.host.getPluginHost().subscribeComposerInlineCompletionProviders(listener), callback),
-      getContributions: slot => {
-        check(); const host = this.host.getPluginHost(); const source = host.getSlotSnapshot(slot); const previous = slotCache.get(source); if (previous) return previous;
-        const contributions = Object.freeze(source.map(contribution => Object.freeze({ key: `${contribution.pluginId}:${contribution.generation}:${contribution.id}`, title: contribution.title,
-          View: ({ context }: { context: ApplicationComposerContributionContextV1 }) => {
-            if (!active || this.disposed || signal.aborted || !host.getSlotSnapshot(slot).includes(contribution)) return null;
-            const { thread } = owner(context.ownerTabId);
-            return createElement(PluginSlotContribution, { host, id: slot, contribution, context: { ...context, threadId: thread?.id } });
-          },
-        })));
-        slotCache.set(source, contributions); return contributions;
-      },
       getTelemetry: turnId => {
         check(); const source = turnTelemetryStore.getSnapshot(turnId);
         const previous = telemetryCache.get(source); if (previous) return previous;

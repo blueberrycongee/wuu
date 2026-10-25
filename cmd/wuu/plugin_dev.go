@@ -862,7 +862,8 @@ runJSONLRuntime(plugin, { input: process.stdin, output: process.stdout }).catch(
 	desktop := `import type { PluginGenerationApi } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
-  api.registerSlot("conversation.header", {
+  api.registerUIContribution({
+    target: "wuu.default-shell/conversation.header",
     id: "hello",
     render() {
       return api.react.createElement("span", null, "Hello from " + api.pluginId);

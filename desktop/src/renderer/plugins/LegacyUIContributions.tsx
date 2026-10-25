@@ -1,17 +1,13 @@
 import * as React from "react";
-import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { ConversationItemSnapshotV1, HeaderSnapshotV1, InspectorSnapshotV1, InspectorSectionHostAPI, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
-import { HEADER_ACTIONS, FILE_PREVIEW_ACTIONS, CONVERSATION_ITEM_ACTIONS } from "../../shared/workbench";
-import { PLUGIN_SLOT_IDS, type PluginHost, type PluginSlotId, type RegisteredPresenter } from "./PluginHost";
-import { PluginSlotContribution } from "./PluginSlot";
-import { PluginSurface } from "./PluginSurface";
+import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
+import type { ConversationItemSnapshotV1, HeaderSnapshotV1, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
+import { HEADER_ACTIONS, FILE_PREVIEW_ACTIONS } from "../../shared/workbench";
+import { type PluginHost, type RegisteredPresenter } from "./PluginHost";
 import { PluginConversationCards } from "./PluginConversationCards";
 import { PluginCommandActions } from "./PluginCommandActions";
 import { createPluginTranslator } from "./pluginI18n";
 import { useI18n } from "../i18n";
 import { dispatchFilePreviewAction } from "./FilePreviewPresentation";
-import { toConversationItemSnapshot, toConversationProcessSnapshot } from "./ApplicationSnapshots";
-import { toToolActivitySnapshot } from "./ToolActivityPresenter";
 
 export interface LegacyViewIdentity {
   readonly pluginId: string;
@@ -64,24 +60,16 @@ export function LegacyUIContributions(props: LegacyUIContributionsProps): React.
     if (!props.renderLegacyWorkbench) throw new Error("Legacy workbench host is unavailable");
     return props.renderLegacyWorkbench({ application: props.application, context: props.context });
   }
-  if ((PLUGIN_SLOT_IDS as readonly string[]).includes(semanticSlot)) return <LegacySlots {...props} id={semanticSlot as PluginSlotId} />;
-  if (semanticSlot === "inspector.sections") return <InspectorSections {...props} />;
   if (semanticSlot === "workspace.tools") return <WorkspaceTools {...props} />;
   if (semanticSlot === "workspace.view") return <WorkspaceView {...props} />;
   if (semanticSlot === "conversation.cards") return <Cards {...props} />;
   if (semanticSlot === "conversation.message.actions") return <MessageActions {...props} />;
-  if (["conversation.message", "conversation.timeline", "conversation.process", "conversation.tool-activity", "header.workspace", "header.conversation", "content.preview"].includes(semanticSlot)) {
+  if (["header.workspace", "header.conversation", "content.preview"].includes(semanticSlot)) {
     return <Presenters {...props} />;
   }
   return props.fallback;
 }
 
-function LegacySlots(props: LegacyUIContributionsProps & { id: PluginSlotId }): React.ReactNode {
-  const records = useRegistry(props.host, () => props.host.getSlotSnapshot(props.id));
-  return <>{props.fallback}{records.map(record => <Lifetime key={`${activationKey(props.host, record)}:${record.id}`} host={props.host} identity={record}>
-    <PluginSlotContribution host={props.host} id={props.id} contribution={record} context={props.context} />
-  </Lifetime>)}</>;
-}
 function Cards(props: LegacyUIContributionsProps): React.ReactNode {
   const cards = React.useSyncExternalStore(listener => props.host.subscribeConversationCards(listener), () => props.host.getConversationCards(), () => props.host.getConversationCards());
   const threadId = props.context.threadId;
@@ -89,63 +77,15 @@ function Cards(props: LegacyUIContributionsProps): React.ReactNode {
   return <>{props.fallback}{retain(props.host, cards.filter(card => card.threadId === threadId), <PluginConversationCards host={props.host} threadId={threadId} />)}</>;
 }
 
-type Mutable<T> = T extends readonly (infer V)[] ? Mutable<V>[] : T extends object ? { -readonly [K in keyof T]: Mutable<T[K]> } : T;
-// Legacy snapshot builders only read these values; preserve the frozen payload
-// instead of copying attachment data on each presentation/stream update.
-function legacyInput<T>(value: T): Mutable<T> { return value as Mutable<T>; }
-function sourceItem(snapshot: ApplicationSnapshotV1, context: Readonly<Record<string, unknown>>) {
-  const threads = snapshot.conversationWorkspace.threads;
-  const thread = threads.find(value => value.id === context.threadId);
-  const turns = thread?.turns ?? (snapshot.sideConversation.entry?.summary?.side_thread_id === context.threadId ? snapshot.sideConversation.turns : []);
-  const turn = turns.find(value => value.id === context.turnId);
-  const item = turn?.items.find(value => value.id === context.itemId);
-  return { thread, turn, item };
-}
-function itemSnapshot(snapshot: ApplicationSnapshotV1, context: Readonly<Record<string, unknown>>): ConversationItemSnapshotV1 | undefined {
-  const { item } = sourceItem(snapshot, context);
-  if (!item) return undefined;
-  const kind = item.type === "user_message" ? "user-message" : item.type === "agent_message" ? "assistant-message"
-    : item.type === "reasoning" ? "reasoning" : item.type === "error" || item.type === "context_compaction" ? "notice" : undefined;
-  return kind ? toConversationItemSnapshot(legacyInput(item), kind) : undefined;
-}
 function MessageActions(props: LegacyUIContributionsProps): React.ReactNode {
-  const snapshot = React.useSyncExternalStore(props.application.subscribe, props.application.getSnapshot, props.application.getSnapshot);
   const commands = useRegistry(props.host, () => props.host.getCommands());
-  const item = itemSnapshot(snapshot, props.context);
+  const item = props.context.snapshot as ConversationItemSnapshotV1 | undefined;
   if (!item || typeof props.context.turnId !== "string") return props.fallback;
   const context = Object.freeze({ contractVersion: 1 as const, target: "conversation.message.actions" as const,
     threadId: typeof props.context.threadId === "string" ? props.context.threadId : undefined, turnId: props.context.turnId, item });
   const applicable = props.host.resolveCommandActions(context).actions;
   if (!applicable.length) return props.fallback;
   return retain(props.host, commands, <PluginCommandActions host={props.host} context={context} />);
-}
-
-function InspectorSections(props: LegacyUIContributionsProps): React.ReactNode {
-  const sections = useRegistry(props.host, () => props.host.getInspectorSections());
-  const snapshot = props.context.snapshot as InspectorSnapshotV1;
-  return <>{props.fallback}{sections.length > 0 && <div className="plugin-inspector-sections" data-wuu-component="plugin-inspector-sections">
-    {sections.map(section => <Lifetime key={`${activationKey(props.host, section)}:${section.id}`} host={props.host} identity={section}>
-      <LegacyBoundary host={props.host} identity={section} onFailure={error => props.host.recordInspectorFailure(section, error)}
-        fallback={<section className="plugin-inspector-section" data-plugin-id={section.pluginId} data-plugin-generation={section.generation}>
-          <h2>{section.title}</h2><div className="plugin-inspector-section-content"><p className="plugin-inspector-section-error" role="alert">This section could not be displayed.</p></div>
-        </section>}>
-        <InspectorSection {...props} section={section} snapshot={snapshot} />
-      </LegacyBoundary>
-    </Lifetime>)}
-  </div>}</>;
-}
-function InspectorSection({ section, snapshot, ...props }: LegacyUIContributionsProps & {
-  section: ReturnType<PluginHost["getInspectorSections"]>[number]; snapshot: InspectorSnapshotV1;
-}): React.ReactNode {
-  const api = React.useMemo<InspectorSectionHostAPI>(() => {
-    const host = props.createViewHost(section);
-    return Object.freeze({ executeCommand: host.executeCommand, openView: host.openView });
-  }, [props.createViewHost, section]);
-  if (section.when?.(snapshot) === false) return null;
-  const Content = section.render;
-  return <section className="plugin-inspector-section" data-plugin-id={section.pluginId} data-plugin-generation={section.generation}>
-    <h2>{section.title}</h2><div className="plugin-inspector-section-content"><Content snapshot={snapshot} host={api} /></div>
-  </section>;
 }
 
 function WorkspaceTools(props: LegacyUIContributionsProps): React.ReactNode {
@@ -227,18 +167,11 @@ function capturedHost(props: LegacyUIContributionsProps, identity: LegacyViewIde
 }
 
 function Presenters(props: LegacyUIContributionsProps): React.ReactNode {
-  const snapshot = React.useSyncExternalStore(props.application.subscribe, props.application.getSnapshot, props.application.getSnapshot);
-  const { item, turn } = sourceItem(snapshot, props.context);
-  const target = props.semanticSlot === "conversation.message" ? "conversation.item" : props.semanticSlot;
-  let value: unknown = props.context.snapshot;
+  const target = props.semanticSlot;
+  const value: unknown = props.context.snapshot;
   let key: string | undefined;
-  if (target === "conversation.item") { value = itemSnapshot(snapshot, props.context); key = (value as ConversationItemSnapshotV1 | undefined)?.kind; }
-  if (target === "conversation.process" && turn) value = toConversationProcessSnapshot(legacyInput(turn.items.filter(item => Array.isArray(props.context.itemIds) && props.context.itemIds.includes(item.id))), turn.status === "in_progress", true, snapshot.locale);
-  if (target === "conversation.tool-activity" && item) { value = toToolActivitySnapshot(legacyInput(item), snapshot.locale); key = item.display?.capability ?? item.name; }
   if (target === "content.preview") key = (value as { contentType?: string } | undefined)?.contentType;
   const presenters = useRegistry(props.host, () => props.host.getPresenters(target, key));
-  const surfaceId = props.semanticSlot === "conversation.message" || props.semanticSlot === "conversation.timeline" ? props.semanticSlot : undefined;
-  const surfaces = useRegistry(props.host, () => props.host.getSurfaceSnapshot(surfaceId ?? "conversation.message"));
   const chain = [...presenters.filter(record => record.mode === "wrap").reverse(), ...presenters.filter(record => record.mode === "replace").reverse()];
   const draw = (index: number, value: unknown): React.ReactNode => {
     const record = chain[index];
@@ -246,8 +179,7 @@ function Presenters(props: LegacyUIContributionsProps): React.ReactNode {
     return <PresenterContent key={`${activationKey(props.host, record)}:${record.id}`} {...props} record={record} target={target} value={value} presentationKey={key}
       downstream={draw(index + 1, value)} next={input => draw(index + 1, input === undefined ? value : input.snapshot)} />;
   };
-  const content = value === undefined ? props.fallback : draw(0, value);
-  return surfaceId ? retain(props.host, surfaces, <PluginSurface host={props.host} id={surfaceId} context={props.context} fallback={content} />) : content;
+  return value === undefined ? props.fallback : draw(0, value);
 }
 function PresenterContent({ record, target, value, presentationKey, downstream, next, ...props }: LegacyUIContributionsProps & {
   record: RegisteredPresenter; target: string; value: unknown; presentationKey?: string; downstream: React.ReactNode; next: PresenterProps["next"];
@@ -304,14 +236,6 @@ function presenterActions(props: LegacyUIContributionsProps, target: string, val
       ...(props.application.previewContent.capabilities.revealItem ? { reveal: () => props.application.previewContent.revealItem(resource) } : {}) };
     const actions = [FILE_PREVIEW_ACTIONS.open, ...(callbacks.reveal ? [FILE_PREVIEW_ACTIONS.reveal] : [])];
     return Object.fromEntries(actions.map(action => [action, (input: unknown) => dispatchFilePreviewAction(action, input, resource.path, callbacks)]));
-  }
-  if (target === "conversation.item" && (value as ConversationItemSnapshotV1)?.kind === "user-message"
-    && typeof props.context.threadId === "string" && typeof props.context.turnId === "string" && typeof props.context.itemId === "string") {
-    const source = { threadId: props.context.threadId, turnId: props.context.turnId, itemId: props.context.itemId };
-    return { [CONVERSATION_ITEM_ACTIONS.edit]: input => {
-      if (input !== undefined) throw new Error("conversation.item.edit does not accept input");
-      return props.application.invoke("history.begin-edit", source);
-    } };
   }
   return {};
 }

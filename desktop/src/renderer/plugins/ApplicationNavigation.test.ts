@@ -49,6 +49,8 @@ describe("public navigation domain", () => {
     try {
       const first = await desktopWorkbenchController.openPluginView("close-test", "page", { region: "primary" });
       expect(navigation.getSnapshot().activePluginView).toMatchObject({ id: first, closable: true });
+      const viewContext = desktopWorkbenchController.getSnapshot().views.find(view => view.id === first)!.context;
+      expect(navigation.getSnapshot().activePluginView?.context).toBe(viewContext);
       await expect(navigation.invoke("navigation.close-plugin", { viewId: "stale" })).rejects.toThrow();
       expect(navigation.getSnapshot().activePluginView?.id).toBe(first);
       await navigation.invoke("navigation.close-plugin", { viewId: first });

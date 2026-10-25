@@ -34,15 +34,17 @@ export function activate(api: PluginGenerationApi): void {
     }, enabled ? "Demo on" : "Demo off");
   }
 
-  api.registerSlot("composer.toolbar", {
+  api.registerUIContribution({
     id: "demo-toggle",
+    title: "Demo toggle",
+    target: "wuu.default-composer/composer.toolbar",
     order: 20,
     render: () => React.createElement(DemoToggle, null),
   });
 }
 ```
 
-`api.react` 是宿主的 React 实例，`api.ui.ToolbarToggle` 提供共享控件，`composer.toolbar` 负责放置，不依赖输入框内部 DOM。通过 API 注册组件，不要额外打包一份 React 运行时。
+`api.react` 是宿主的 React 实例，`api.ui.ToolbarToggle` 提供共享控件，`wuu.default-composer/composer.toolbar` 负责放置，不依赖输入框内部 DOM。通过 API 注册组件，不要额外打包一份 React 运行时。
 
 ## 构建和加载
 

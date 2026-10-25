@@ -5,7 +5,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi, type PluginHostOptions } from "./PluginHost";
-import { PluginSlot } from "./PluginSlot";
+import { createUIComposition } from "./ApplicationShell";
 
 const source = readFileSync(resolve(process.cwd(), "../internal/plugin/bundled/goal/desktop.js"), "utf8");
 const activate = Function(source.replace("export async function activate(api)", "return async function activate(api)"))() as (api: PluginGenerationApi) => Promise<void>;
@@ -29,14 +29,11 @@ afterEach(() => {
 async function mount(invokeRuntime: InvokeRuntime) {
   vi.useFakeTimers();
   const host = new PluginHost({ react: React, invokeRuntime });
+  await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register: api => { api.registerUISlot({ id: "composer.above", cardinality: "many" }); } });
+  const slots = createUIComposition(host);
   await host.activateGeneration({
     pluginId: "goal",
     generation: "one",
-    contributions: {
-      slots: [{ id: "goal-controls", target: "composer.above", order: 20, title: "目标" }],
-      surfaces: [],
-      presenters: [],
-    },
     register: activate,
   });
   const container = document.createElement("div");
@@ -45,12 +42,13 @@ async function mount(invokeRuntime: InvokeRuntime) {
   cleanups.push(() => {
     act(() => root.unmount());
     host.disable("goal");
+    host.unload("wuu.default-composer");
     container.remove();
   });
 
   const render = async (threadId = "thread-one", extra: Record<string, unknown> = {}) => {
     await act(async () => {
-      root.render(<PluginSlot host={host} id="composer.above" context={{ threadId, mainConversation: true, ...extra }} />);
+      root.render(<slots.Slot name="wuu.default-composer/composer.above" context={{ threadId, mainConversation: true, ...extra }} />);
       await Promise.resolve();
       await Promise.resolve();
     });

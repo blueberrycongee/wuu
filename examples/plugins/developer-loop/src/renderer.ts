@@ -6,8 +6,11 @@ import type {
   NavigationSnapshotV1,
   PluginGenerationApi,
   PresentationHost,
+  PresenterProps,
   StatusSnapshotV1,
+  ToolActivitySnapshot,
   ViewHostAPI,
+  ViewRenderProps,
 } from "@wuu/plugin-sdk";
 
 const VIEW_ID = "acceptance-counter";
@@ -39,14 +42,14 @@ export async function invokePresentationAction(
 }
 
 function registerAcceptancePresenters(api: PluginGenerationApi): void {
-  api.registerPresenter({
-    id: "assistant-message",
-    target: "conversation.item",
-    key: "assistant-message",
+  for (const owner of ["wuu.default-conversation", "wuu.default-preview"]) api.registerUIContribution({
+    id: `${owner}-assistant-message`,
+    target: `${owner}/conversation.message`,
     mode: "wrap",
-    render({ snapshot, fallback }) {
-      const item = snapshot as ConversationItemSnapshotV1;
-      return observedFallback(api, fallback, {
+    render({ context, children }) {
+      const item = context.snapshot as ConversationItemSnapshotV1;
+      if (item.kind !== "assistant-message") return children;
+      return observedFallback(api, children, {
           "data-developer-loop-presenter": "conversation-item",
           "data-item-id": item.id,
           "data-item-kind": item.kind,
@@ -124,19 +127,19 @@ function registerAcceptancePresenters(api: PluginGenerationApi): void {
 
 function observedFallback(
   api: PluginGenerationApi,
-  fallback: unknown,
+  fallback: PresenterProps["fallback"],
   attributes: Readonly<Record<string, string>>,
-): unknown {
+) {
   return api.react.createElement(
-    api.react.Fragment as (props: Readonly<Record<string, unknown>>) => unknown,
+    api.react.Fragment,
     null,
     fallback,
     api.react.createElement("span", { ...attributes, hidden: true, "aria-hidden": true }),
   );
 }
 
-function acceptanceView(api: PluginGenerationApi, props: Readonly<Record<string, unknown>>): unknown {
-  const host = (props as unknown as { host: ViewHostAPI }).host;
+function acceptanceView(api: PluginGenerationApi, props: ViewRenderProps) {
+  const { host } = props;
   const { Button, Card, Page, Row, Section, Stack } = api.ui;
   activeViewHost = host;
   let count = 0;
@@ -226,26 +229,31 @@ function acceptanceView(api: PluginGenerationApi, props: Readonly<Record<string,
 
 export function activate(api: PluginGenerationApi): void {
   registerAcceptancePresenters(api);
-  api.registerToolActivityPresenter({
-    id: "developer-loop-echo",
-    key: "developer-loop.tool.echo",
-    render({ activity, fallback }) {
-      return api.react.createElement(
-        "section",
-        { "data-developer-loop-tool": activity.status, "data-tool-id": activity.id },
-        api.react.createElement("strong", null, "Developer loop"),
-        api.react.createElement("span", null, activity.resultText ?? activity.argumentsText ?? "Running"),
-        activity.error ? api.react.createElement("span", { role: "alert" }, activity.error) : fallback,
-      );
-    },
-  });
+  for (const owner of ["wuu.default-conversation", "wuu.default-preview"]) {
+    api.registerUIContribution({
+      id: `developer-loop-echo-${owner}`,
+      target: `${owner}/conversation.tool-activity`,
+      mode: "wrap",
+      render({ context, children }) {
+        const activity = context.snapshot as ToolActivitySnapshot;
+        if ((activity.capability ?? activity.toolName) !== "developer-loop.tool.echo") return children;
+        return api.react.createElement(
+          "section",
+          { "data-developer-loop-tool": activity.status, "data-tool-id": activity.id },
+          api.react.createElement("strong", null, "Developer loop"),
+          api.react.createElement("span", null, activity.resultText ?? activity.argumentsText ?? "Running"),
+          activity.error ? api.react.createElement("span", { role: "alert" }, activity.error) : children,
+        );
+      },
+    });
+  }
   api.registerViewType({
     id: VIEW_ID,
     title: "Acceptance Counter",
     icon: "check-circle",
     defaultRegion: "auxiliary",
     persistence: "durable",
-    render: (props: Readonly<Record<string, unknown>>) => acceptanceView(api, props),
+    render: props => acceptanceView(api, props),
   });
   api.registerViewPlacement({
     id: "acceptance-tools",
@@ -315,7 +323,8 @@ export function activate(api: PluginGenerationApi): void {
       "developerLoop.counter.increment": "增加并保存",
     },
   });
-  api.registerSlot("conversation.header", {
+  api.registerUIContribution({
+    target: "wuu.default-shell/conversation.header",
     id: "developer-loop-status",
     render() {
       return api.react.createElement("span", null, `Plugin generation ${api.generation}`);

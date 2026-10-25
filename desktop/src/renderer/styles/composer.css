@@ -1161,6 +1161,18 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   flex: 1 1 auto;
 }
 
+/* Keep plugin controls reachable when the model controls need their own row. */
+.composer-bar:has(.composer-plugin-toolbar) {
+  height: auto;
+  min-height: 40px;
+  flex-wrap: wrap;
+}
+
+.composer-bar-left:has(.composer-plugin-toolbar) {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+
 .composer-plugin-toolbar {
   display: inline-flex;
   flex: 0 0 auto;
@@ -1187,9 +1199,9 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-plugin-tools-item {
   display: grid;
   min-height: 38px;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
   border-radius: var(--radius-xs);
   padding: 4px 7px 4px 10px;
 }
@@ -1198,14 +1210,17 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   background: var(--surface-2);
 }
 
+.composer-plugin-tools-item > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .composer-plugin-tools-label {
-  overflow: hidden;
   color: var(--ink);
   font-size: var(--font-ui);
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .composer-bar-right {

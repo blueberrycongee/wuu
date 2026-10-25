@@ -89,7 +89,9 @@ export function EnvironmentSideStack({
         onOpenCommit={onOpenCommit}
         onOpenPullRequest={onOpenPullRequest}
         pluginSections={
-          <slots.Slot name={`${slotOwner}/inspector.sections`} context={{ snapshot: inspectorSnapshot }} />
+          <div className="plugin-inspector-sections" data-wuu-component="plugin-inspector-sections">
+            <slots.Slot name={`${slotOwner}/inspector.sections`} context={{ snapshot: inspectorSnapshot }} />
+          </div>
         }
       />
     </div>

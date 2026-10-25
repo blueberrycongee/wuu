@@ -5,7 +5,7 @@ import type { ApplicationWebWorkspaceV1 } from "../../../../packages/plugin-sdk/
 import { activeThreadForState, activeThreadIDForState, upsertThread, markThreadSummariesViewed, mergeSidebarThread, summarizeThreadsForSidebar, presentationRunningThreadIDs, reconcileListedThreadState, isThreadRunning, updateThreadByID, type AppState, type ThreadSummary } from "../AppState";
 import { createRibbonBrowserState } from "../RibbonBrowserState";
 import { parseSessionOrganization } from "../SessionOrganization";
-import { loadThreadListRefresh } from "../RuntimeLoadState";
+import { loadThreadListRefresh, resumeThreadForRefresh } from "../RuntimeLoadState";
 import { writeThreadReadState } from "../ThreadReadState";
 import { hostSupports } from "../HostCapabilities";
 import { ENABLE_ACCOUNT } from "../FeatureFlags";
@@ -108,7 +108,15 @@ export class ApplicationNavigation {
       searchOpen: this.searchOpen, accountOpen: this.accountOpen, focusedWorkspaceId: this.focusedWorkspaceId, composerFocusRequest: this.composerFocusRequest,
     };
     const key = JSON.stringify(view);
-    if (key !== this.snapshotKey || !this.snapshot) { this.snapshotKey = key; this.snapshot = immutable(view) as ApplicationNavigationViewV1; }
+    if (key !== this.snapshotKey || !this.snapshot || this.snapshot.activePluginView?.context !== active?.view.context) {
+      this.snapshotKey = key;
+      // Page-local stores use the workbench's frozen context as their instance key.
+      // Copy data rows, but retain that object for the page and its contextual UI.
+      this.snapshot = Object.freeze({
+        ...immutable({ ...view, activePluginView: undefined }),
+        activePluginView: view.activePluginView && Object.freeze(view.activePluginView),
+      }) as ApplicationNavigationViewV1;
+    }
     return this.snapshot;
   }
   start(): () => void {
@@ -137,13 +145,13 @@ export class ApplicationNavigation {
       const version = ++repairVersion;
       if (repairTimer !== undefined) window.clearTimeout(repairTimer);
       repairTimer = undefined;
-      if (!threadId || !cwd || (!running && !executorRunning) || (hasRunningTurn && executorRunning)) return;
+      if (!thread || !threadId || !cwd || (!running && !executorRunning) || (hasRunningTurn && executorRunning)) return;
       const key = `${cwd}\0${threadId}`;
       repairTimer = window.setTimeout(() => {
         repairTimer = undefined;
         if (repairInFlight === key) return;
         repairInFlight = key;
-        void window.wuu.resumeThread(threadId).then(({ thread }) => {
+        void resumeThreadForRefresh(thread).then(thread => {
           if (!active || version !== repairVersion || !thread) return;
           this.host.updateState(current => current.activeContext?.cwd === cwd && activeThreadIDForState(current) === threadId
             ? reconcileListedThreadState(current, upsertThread(current.threads, thread)) : current);

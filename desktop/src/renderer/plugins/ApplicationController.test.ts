@@ -1010,6 +1010,31 @@ describe("shared application state", () => {
     } finally { stop(); }
   });
 
+  // Native shutdown must await accepted resource cleanup, including a terminal
+  // whose stop request outlives the last mounted application consumer.
+  it("waits for asynchronous terminal cleanup after its last consumer stops", async () => {
+    let finish!: () => void;
+    let stopping!: () => void;
+    const stopStarted = new Promise<void>(resolve => { stopping = resolve; });
+    window.wuu = {
+      onServerEvent: () => () => {},
+      listUserQuestions: async () => ({ questions: [] }),
+      startTerminalSession: async () => ({ id: "terminal" }),
+      stopTerminalSession: () => { stopping(); return new Promise<void>(resolve => { finish = resolve; }); },
+    } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized });
+    const stop = controller.start();
+    await controller.terminals.start({ cwd: "/fixture", cols: 80, rows: 24 });
+    stop();
+    let settled = false;
+    const cleanup = controller.flushCleanup().then(() => { settled = true; });
+    await stopStarted;
+    expect(settled).toBe(false);
+    finish();
+    await cleanup;
+    expect(settled).toBe(true);
+  });
+
   it("publishes the canonical state to every subscriber without duplicating it", () => {
     const controller = new ApplicationController();
     const changed = vi.fn();

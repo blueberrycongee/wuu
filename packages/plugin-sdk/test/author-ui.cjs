@@ -24,8 +24,8 @@ const click = async (expression) => {
 const type = async (label, text) => {
   await click(field(label));
   assert.equal(await evaluate(`document.activeElement===${field(label)}`), true, `Native focus: ${label}`);
-  window.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'a', modifiers: ['control'] });
-  window.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'a', modifiers: ['control'] });
+  // This standalone test window has no application Edit menu accelerators.
+  window.webContents.selectAll();
   await waitFor(`${field(label)}.selectionStart===0 && ${field(label)}.selectionEnd===${field(label)}.value.length`, `Native select-all: ${label}`);
   await window.webContents.insertText(text);
   await waitFor(`${field(label)}?.value===${JSON.stringify(text)}`, `Native typing: ${label}`);
@@ -130,6 +130,49 @@ const screenshot = async (name) => {
   await waitFor(`document.querySelector('.research-notebook')`, 'Third-plugin reload');
   report.cases.push('third-plugin unloading removes owned child UI and reload restores it');
   assert.deepEqual(report.errors, []);
+  await trace('composition wrappers and recovery');
+  // Public contract failures: wrappers must not claim the single content seat,
+  // tie ordering must be stable, and a broken wrapper must preserve its child.
+  const wrappedShell = shell.replace("cardinality: 'many'", "cardinality: 'one'").replace(
+    "api.registerApplicationShell({ id: 'ui.shell', render: Shell });",
+    `api.registerUIContribution({id:'a-wrap',target:'research-workbench/evidence',mode:'wrap',render:({children}) => <section data-wrapper="outer">{children}</section>});
+     api.registerUIContribution({id:'Z-wrap',target:'research-workbench/evidence',mode:'wrap',render:({children}) => <section data-wrapper="inner">{children}</section>});
+     api.registerApplicationShell({ id: 'ui.shell', render: Shell });`);
+  await writeFile(shellPath, wrappedShell);
+  await waitFor(`document.querySelector('[data-wrapper="outer"] > [data-wrapper="inner"] .research-notebook')`, 'Wrappers around single content in stable order');
+  revision = await evaluate('document.documentElement.dataset.previewRevision');
+  await writeFile(shellPath, wrappedShell.replace("cardinality: 'one'", "cardinality: 'one', service: 'ui.preview'"));
+  await waitFor(`document.querySelector('#preview-diagnostics')?.textContent.includes('Selected UI surfaces cannot be wrapped')`, 'Service-slot wrapper rejection');
+  assert.equal(await evaluate('document.documentElement.dataset.previewRevision'), revision);
+  await writeFile(shellPath, wrappedShell.replace('<section data-wrapper="outer">{children}</section>', '(() => { throw new Error("wrapper-recovery-probe"); })()'));
+  await waitFor(`document.documentElement.dataset.previewRevision!==${JSON.stringify(revision)} && document.querySelector('[data-wrapper="inner"] .research-notebook') && !document.querySelector('[data-wrapper="outer"]')`, 'Broken wrapper preserves content');
+  assert.ok(report.errors.some(message => message.includes('wrapper-recovery-probe')));
+  assert.deepEqual(report.errors.filter(message => !message.includes('wrapper-recovery-probe')), []);
+  await screenshot('wrapper-recovery');
+  report.cases.push('single-content wrappers, deterministic ordering, service-slot rejection, render failure preserves child');
+  await trace('slot layout and localization');
+  // Layout receives ordered content metadata, while wrappers surround the layout.
+  // The packed SDK must deliver the same translation and context contract as desktop.
+  const layoutShell = wrappedShell.replace('cardinality: \'one\'', 'cardinality: \'many\'')
+    .replace('<Slot name="research-workbench/evidence"', '<Slot layout={({items}) => <div data-slot-layout>{items.map(item => <section key={item.key} data-layout-item={item.id}><h3>{item.title}</h3>{item.node}</section>)}</div>} name="research-workbench/evidence"')
+    .replace("api.registerApplicationShell({ id: 'ui.shell', render: Shell });", `
+      api.registerLocale({id:'layout-locale',locale:'en',entries:{'layout.greeting':'Evidence for {thread}'}});
+      api.registerUIContribution({id:'layout-probe',title:'Translated evidence',order:-1,target:'research-workbench/evidence',
+        render:({context,locale,translate}) => <p data-layout-probe data-locale={locale}>{translate('layout.greeting',{thread:String(context.threadId)})}</p>});
+      api.registerApplicationShell({ id: 'ui.shell', render: Shell });`);
+  await writeFile(shellPath, layoutShell);
+  await waitFor(`document.querySelector('[data-wrapper="outer"] > [data-wrapper="inner"] [data-slot-layout] [data-layout-probe]')`, 'Wrappers surround custom layout');
+  assert.equal(await evaluate(`document.querySelector('[data-slot-layout]').firstElementChild.dataset.layoutItem`), 'layout-probe');
+  assert.equal(await evaluate(`document.querySelector('[data-layout-item="layout-probe"] h3').textContent`), 'Translated evidence');
+  assert.match(await evaluate(`document.querySelector('[data-layout-probe]').textContent`), /^Evidence for .+/);
+  assert.doesNotMatch(await evaluate(`document.querySelector('[data-layout-probe]').textContent`), /undefined|\{thread\}/);
+  assert.ok(await evaluate(`document.querySelector('[data-layout-probe]').dataset.locale`));
+  assert.ok(await evaluate(`document.querySelector('[data-slot-layout] .research-notebook')`));
+  await screenshot('slot-layout-localization');
+  await writeFile(shellPath, shell);
+  await waitFor(`!document.querySelector('[data-slot-layout]') && document.querySelector('.research-notebook')`, 'Layout unload preserves restored content');
+  assert.deepEqual(report.errors.filter(message => !message.includes('wrapper-recovery-probe')), []);
+  report.cases.push('packed slot layout metadata, ordered content, wrappers, localization, context and unload');
   await writeFile(join(output, 'report.json'), JSON.stringify({ ...report, passed: true }, null, 2));
   console.log(JSON.stringify({ passed: true, cases: report.cases.length, screenshots: report.screenshots.length, output }));
   clearTimeout(watchdog); app.exit(0);

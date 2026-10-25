@@ -589,6 +589,7 @@ async function showProjectDirectoryDialog(
 }
 
 const desktopActivationOwners = new Map<number, PluginDesktopActivations>();
+const desktopActivationDisconnects = new Set<Promise<void>>();
 const observedActivationWindows = new WeakSet<WebContents>();
 
 function desktopActivationOwner(event: IpcMainInvokeEvent): PluginDesktopActivations {
@@ -601,7 +602,12 @@ function desktopActivationOwner(event: IpcMainInvokeEvent): PluginDesktopActivat
     const disconnect = (): void => {
       const owner = desktopActivationOwners.get(contents.id);
       desktopActivationOwners.delete(contents.id);
-      void owner?.disconnect().catch((error: unknown) => console.error("Desktop activation disconnect failed", error));
+      if (owner) {
+        const pending = owner.disconnect();
+        desktopActivationDisconnects.add(pending);
+        void pending.catch((error: unknown) => console.error("Desktop activation disconnect failed", error))
+          .finally(() => desktopActivationDisconnects.delete(pending));
+      }
     };
     contents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) disconnect();
@@ -3228,12 +3234,49 @@ app.on("before-quit", (event) => {
   void prepareToQuit().finally(() => app.quit());
 });
 
+async function stopRenderer(window: BrowserWindow): Promise<void> {
+  const contents = window.webContents;
+  if (contents.isDestroyed()) return;
+  await new Promise<void>((resolve, reject) => {
+    const complete = (error?: Error): void => {
+      clearTimeout(timer);
+      ipcMain.removeListener("wuu:renderer-shutdown-complete", acknowledge);
+      contents.removeListener("destroyed", destroyed);
+      contents.removeListener("render-process-gone", destroyed);
+      if (error) reject(error); else resolve();
+    };
+    const acknowledge = (event: IpcMainEvent, error?: unknown): void => {
+      if (event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
+      complete(error === undefined ? undefined : new Error(String(error)));
+    };
+    const destroyed = (): void => complete();
+    // A hung or still-loading renderer must not block native quit indefinitely.
+    const timer = setTimeout(() => {
+      complete(new Error(`Renderer ${contents.id} did not finish shutdown within 10 seconds`));
+    }, 10000);
+    ipcMain.on("wuu:renderer-shutdown-complete", acknowledge);
+    contents.once("destroyed", destroyed);
+    contents.once("render-process-gone", destroyed);
+    contents.send("wuu:renderer-shutdown");
+  }).finally(() => { if (!window.isDestroyed()) window.destroy(); });
+}
+
 function prepareToQuit(): Promise<void> {
   if (quitCleanup) return quitCleanup;
   // Publish the shared promise before destroying windows: closing the hidden
   // host can synchronously re-enter quit through window-all-closed.
-  quitCleanup = Promise.resolve().then(() => {
+  quitCleanup = Promise.resolve().then(async () => {
     desktopUpdates?.stop();
+    const renderers = await Promise.allSettled(windowRegistry.allWindows().map(stopRenderer));
+    for (const result of renderers) {
+      if (result.status === "rejected") console.error("Renderer shutdown failed", result.reason);
+    }
+    const disconnects = [...desktopActivationOwners.values()].map(owner => owner.disconnect());
+    desktopActivationOwners.clear();
+    const disconnected = await Promise.allSettled([...disconnects, ...desktopActivationDisconnects]);
+    for (const result of disconnected) {
+      if (result.status === "rejected") console.error("Desktop activation disconnect failed", result.reason);
+    }
     systemPermissions.close();
     appContextCapture.dispose();
     terminalSessionManager.cleanup();

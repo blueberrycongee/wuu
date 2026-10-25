@@ -335,23 +335,6 @@ export interface InspectorSnapshotV1 {
   readonly todo?: InspectorTodoSnapshotV1;
 }
 
-export interface InspectorSectionHostAPI {
-  executeCommand(commandId: string, input?: unknown): Promise<unknown>;
-  openView(viewTypeId: ViewTypeId, options?: OpenViewOptions): Promise<void>;
-}
-
-export interface InspectorSectionRenderProps {
-  readonly snapshot: InspectorSnapshotV1;
-  readonly host: InspectorSectionHostAPI;
-}
-
-export interface InspectorSectionDefinition {
-  readonly id: string;
-  readonly title: string;
-  readonly priority?: number;
-  readonly render: HostUIComponent<InspectorSectionRenderProps>;
-}
-
 export type ToolActivityStatus = "running" | "completed" | "failed";
 
 export interface ToolActivityResultContentPart {
@@ -392,19 +375,6 @@ export interface ToolActivitySnapshot {
   readonly resultText?: string;
   readonly structuredResult?: ToolActivityStructuredResult;
   readonly error?: string;
-}
-
-export interface ToolActivityPresenterProps {
-  readonly activity: ToolActivitySnapshot;
-  readonly host: ViewHostAPI;
-  readonly fallback: unknown;
-}
-
-export interface ToolActivityPresenterDefinition {
-  readonly id: string;
-  /** Exact stable dispatch identity, such as a tool display capability. */
-  readonly key: string;
-  readonly render: (props: ToolActivityPresenterProps) => unknown;
 }
 
 /**
@@ -516,8 +486,6 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
   /** Observe host lifecycle events; disposal is bound to this generation. */
   onHostEvent(handler: (event: unknown) => void): Disposable;
-  registerSlot(slotId: string, contribution: SlotRegistration): Disposable;
-  registerSurface(surfaceId: string, contribution: SurfaceRegistration): Disposable;
   registerCommand(command: CommandRegistration): Disposable;
   /** Show a non-persistent card at the bottom of a conversation. */
   showConversationCard(card: ConversationCardRegistration): ConversationCardHandle;
@@ -529,13 +497,11 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   registerCleanup(cleanup: () => void): Disposable;
   registerViewType(definition: ViewTypeDefinition): Disposable;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
-  registerInspectorSection(definition: InspectorSectionDefinition): Disposable;
   registerRenderer(definition: RendererDefinition): Disposable;
   registerThemeTokens(tokens: ThemeTokens): Disposable;
   registerCSSSnippet(snippet: CSSSnippet): Disposable;
   registerStatusItem(item: StatusItemDefinition): Disposable;
   registerPresenter(definition: PresenterDefinition): Disposable;
-  registerToolActivityPresenter(definition: ToolActivityPresenterDefinition): Disposable;
 }
 
 interface PluginVisibleHistoryScope {
@@ -2157,7 +2123,7 @@ export interface Disposable {
 }
 
 export const PRESENTATION_TARGETS = [
-  "conversation.item", "conversation.process", "conversation.tool-activity",
+  "conversation.item", "conversation.process",
   "conversation.composer", "header.conversation", "header.workspace",
   "navigation.primary", "app.status", "content.preview", "settings",
 ] as const;
@@ -2582,11 +2548,11 @@ export interface PresenterProps {
   readonly snapshot: unknown;
   readonly host: PresentationHost;
   /** Original host rendering, unaffected by other presenters. */
-  readonly original: unknown;
+  readonly original: React.ReactNode;
   /** Lazily continue with lower-priority presenters, optionally with a new snapshot. */
-  readonly next: (input?: { readonly snapshot: unknown }) => unknown;
+  readonly next: (input?: { readonly snapshot: unknown }) => React.ReactNode;
   /** Equivalent to next() with the current snapshot. */
-  readonly fallback: unknown;
+  readonly fallback: React.ReactNode;
 }
 
 export interface PresenterDefinition {
@@ -2595,13 +2561,7 @@ export interface PresenterDefinition {
   readonly key?: string;
   readonly mode?: PresentationMode;
   readonly priority?: number;
-  readonly render: (props: PresenterProps) => unknown;
-}
-
-export interface SlotRegistration {
-  id: string;
-  order?: number;
-  render(context: Readonly<Record<string, unknown>>): unknown;
+  readonly render: (props: PresenterProps) => React.ReactNode;
 }
 
 export type ComposerStatusState = "running" | "queued" | "waiting" | "error" | "idle";
@@ -2626,15 +2586,6 @@ export interface ComposerStatusSourceRegistration {
   readonly order?: number;
   getSnapshot(context: ComposerStatusContext): readonly ComposerStatusItem[];
   subscribe(context: ComposerStatusContext, listener: () => void): () => void;
-}
-
-export type SurfaceMode = "replace" | "wrap";
-
-export interface SurfaceRegistration {
-  id: string;
-  mode: SurfaceMode;
-  order?: number;
-  render(context: Readonly<Record<string, unknown>>, fallback: unknown): unknown;
 }
 
 export interface CommandRegistration extends PluginCommandPresentation {

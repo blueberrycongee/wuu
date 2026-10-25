@@ -810,8 +810,6 @@ type ExtensionContributions struct {
 	Themes         []ExtensionThemeDescriptor                 `json:"themes,omitempty"`
 	Skins          []ExtensionSkinDescriptor                  `json:"skins,omitempty"`
 	Settings       []ExtensionSettingDescriptor               `json:"settings,omitempty"`
-	Slots          []ExtensionSlotContributionDescriptor      `json:"slots,omitempty"`
-	Surfaces       []ExtensionSurfaceContributionDescriptor   `json:"surfaces,omitempty"`
 	Presenters     []ExtensionPresenterContributionDescriptor `json:"presenters,omitempty"`
 	Navigation     []ExtensionViewEntryDescriptor             `json:"navigation,omitempty"`
 	WorkspaceTools []ExtensionViewEntryDescriptor             `json:"workspace_tools,omitempty"`
@@ -832,21 +830,6 @@ type ExtensionIconDescriptor struct {
 	Path  string `json:"path,omitempty"`
 	Light string `json:"light,omitempty"`
 	Dark  string `json:"dark,omitempty"`
-}
-
-type ExtensionSlotContributionDescriptor struct {
-	ID     string `json:"id"`
-	Target string `json:"target"`
-	Order  int    `json:"order,omitempty"`
-	Title  string `json:"title,omitempty"`
-}
-
-type ExtensionSurfaceContributionDescriptor struct {
-	ID     string `json:"id"`
-	Target string `json:"target"`
-	Mode   string `json:"mode"`
-	Order  int    `json:"order,omitempty"`
-	Title  string `json:"title,omitempty"`
 }
 
 type ExtensionPresenterContributionDescriptor struct {

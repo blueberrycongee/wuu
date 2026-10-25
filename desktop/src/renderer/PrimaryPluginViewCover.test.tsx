@@ -163,7 +163,7 @@ describe("primary plugin view covers the conversation", () => {
     await flushAsync();
 
     expect(container.querySelector(".empty-home")).not.toBeNull();
-    expect(container.querySelector(".conversation-pane > .dock-composer-wrap")).not.toBeNull();
+    expect(container.querySelector(".conversation-pane .dock-composer-wrap")).not.toBeNull();
 
     await act(async () => {
       await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph",

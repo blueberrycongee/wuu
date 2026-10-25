@@ -89,7 +89,7 @@
 
 首次设置在完成前中断时，会保留已经应用的插件选择。清单区分实际 `enabled` 状态与可选的 `enabled_override` 用户设置；没有 override 时使用插件默认值。
 
-UI 声明放在 `contributes.slots`、`surfaces`、`presenters`、`navigation`、`workspaceTools` 或 `settingsPages` 中，描述放置位置和入口，实际渲染仍由桌面模块注册。匹配与组合规则见[桌面 UI 插件](desktop-plugins.md)。
+manifest UI 声明使用 `contributes.presenters`、`navigation`、`workspaceTools` 或 `settingsPages`，描述放置位置和入口，实际渲染由桌面模块注册。对于已声明的 UI 区域，调用 `registerUIContribution` 并指定带所有者前缀的目标，无需 manifest 条目。旧 `contributes.slots` 和 `surfaces` 字段会被拒绝。组合规则见[桌面 UI 插件](desktop-plugins.md)。
 
 ### 外壳皮肤
 

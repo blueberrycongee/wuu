@@ -152,6 +152,11 @@ app.whenReady().then(async () => {
   await waitFor(win, () => Boolean(document.querySelector(".artifact-preview-panel iframe")));
   await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
   await waitFor(win, () => !document.querySelector(".artifact-preview-panel"));
+  await waitFor(win, () => document.querySelector('[data-wuu-component="right-sidebar-toggle"]')?.getAttribute("aria-expanded") === "false");
+  await evaluate(win, () => document.querySelector('[data-wuu-component="right-sidebar-toggle"]').click());
+  await waitFor(win, () => document.querySelector('.workspace-right-panel.tools')?.getAttribute("aria-hidden") === "false");
+  await evaluate(win, () => document.querySelector('button[data-wuu-component="workspace-tool-tab-close"]').click());
+  await waitFor(win, () => document.querySelector('[data-wuu-component="right-sidebar-toggle"]')?.getAttribute("aria-expanded") === "false");
   await complete(win, 1);
   await waitFor(win, () => document.querySelector(".artifact-preview-text")?.textContent.startsWith("Delivered text snapshot"));
   await evaluate(win, () => [...document.querySelectorAll(".artifact-preview-actions button")].at(-1).click());
@@ -589,4 +594,12 @@ app.whenReady().then(async () => {
   }
   win.destroy();
   app.exit(0);
-}).catch((error) => { console.error(error); app.exit(1); });
+}).catch(async (error) => {
+  console.error(error);
+  const win = BrowserWindow.getAllWindows()[0];
+  if (win && !win.isDestroyed()) {
+    fs.writeFileSync(path.join(output, "failure.png"), (await win.webContents.capturePage()).toPNG());
+    fs.writeFileSync(path.join(output, "failure.html"), await evaluate(win, () => document.body.innerHTML));
+  }
+  app.exit(1);
+});

@@ -57,13 +57,15 @@ import {
   TurnNotice,
 } from "./TurnNotice";
 import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
-import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import { showErrorToast } from "./Toast";
 import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
 import { useI18n } from "./i18n";
 import { useConversationControls } from "./ConversationControlsContext";
+import { toConversationItemSnapshot } from "./plugins/ApplicationSnapshots";
+import { streamTextKey, useStreamedText } from "./StreamText";
 import { placeUserMessageActions } from "./UserMessageActionPlacement";
 
 interface ThreadItemViewProps {
@@ -106,16 +108,20 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const { item } = props;
   const { slots, slotOwner } = useConversationControls();
   const threadId = useContext(ArtifactThreadContext);
+  const text = useStreamedText(streamTextKey(props.turnID, item.id, "text"), item.text,
+    props.streaming && item.status === "in_progress");
+  const nativeContent = useMemo(() => <BuiltInThreadItemView {...props} />, [props]);
   if (item.remote_content_ref && item.type !== "tool_call") {
     return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
   }
   if (item.type === "user_message" && isInternalUserNotificationItem(item)) {
     return null;
   }
-  const context = Object.freeze({ threadId, turnId: props.turnID, itemId: item.id });
+  const context = Object.freeze({ threadId, turnId: props.turnID, itemId: item.id,
+    snapshot: toConversationItemSnapshot(item, undefined, item.text === undefined && text === "" ? undefined : text) });
   return <>
     <slots.Slot name={`${slotOwner}/conversation.message.before`} context={context} />
-    <slots.Slot name={`${slotOwner}/conversation.message`} context={context} fallback={<BuiltInThreadItemView {...props} />} />
+    <slots.Slot name={`${slotOwner}/conversation.message`} context={context} fallback={nativeContent} />
     <slots.Slot name={`${slotOwner}/conversation.message.after`} context={context} />
   </>;
 });
@@ -156,7 +162,7 @@ function BuiltInThreadItemView({
   const hasPluginActions = !editing && !emptyActions;
   const pluginActions = editing ? null : <slots.Slot
     name={`${slotOwner}/conversation.message.actions`}
-    context={{ threadId: owningThreadId, turnId: turnID, itemId: item.id }}
+    context={{ threadId: owningThreadId, turnId: turnID, itemId: item.id, snapshot: toConversationItemSnapshot(item) }}
     fallback={<EmptyMessageActions onEmpty={setEmptyActions} />}
   />;
   const streamLive = item.status === "in_progress" && turnStatus === "in_progress";
@@ -219,7 +225,7 @@ function BuiltInThreadItemView({
         && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
-          requestOpenThreadInSplit(relatedSessionID);
+          void application.invoke("thread.activate", { threadId: relatedSessionID }).catch(showErrorToast);
         }
       };
       return (

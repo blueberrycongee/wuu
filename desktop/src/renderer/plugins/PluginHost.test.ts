@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PRESENTATION_TARGETS, type PluginCommandActionContext, type ComposerInlineCompletionProviderHandle, type ComposerInlineCompletionInteraction } from "../../shared/workbench";
 
 import {
-  PLUGIN_SLOT_IDS,
   PluginHost,
   type Disposable,
   type PluginGenerationApi,
@@ -18,18 +17,7 @@ afterEach(() => {
 });
 
 describe("PluginHost", () => {
-  it("publishes the fixed slots and orders registrations by order, plugin id, and contribution id", async () => {
-    expect(PLUGIN_SLOT_IDS).toEqual([
-      "sidebar.primary",
-      "sidebar.footer",
-      "workspace.header",
-      "conversation.header",
-      "conversation.message.before",
-      "conversation.message.after",
-      "composer.above",
-      "composer.toolbar",
-    ]);
-
+  it("orders registrations by order, plugin id, and contribution id", async () => {
     const host = new PluginHost({ react: React });
     let injectedReact: typeof React | undefined;
 
@@ -38,8 +26,8 @@ describe("PluginHost", () => {
       generation: "one",
       register(api) {
         injectedReact = api.react;
-        api.registerSlot("composer.toolbar", contribution("z-last", 10));
-        api.registerSlot("composer.toolbar", contribution("z-first", 0));
+        api.registerUIContribution({ target: "fixture/composer.toolbar", ...contribution("z-last", 10) });
+        api.registerUIContribution({ target: "fixture/composer.toolbar", ...contribution("z-first", 0) });
         api.registerCommand(command("z-command", 10));
         api.registerLocale({ id: "base", locale: "en", entries: { shared: "zeta", zeta: "Zeta" } });
         api.registerStyle({ id: "z-style", css: ".zeta {}", order: 10 });
@@ -49,8 +37,8 @@ describe("PluginHost", () => {
       pluginId: "alpha",
       generation: "one",
       register(api) {
-        api.registerSlot("composer.toolbar", contribution("b", 0));
-        api.registerSlot("composer.toolbar", contribution("a", 0));
+        api.registerUIContribution({ target: "fixture/composer.toolbar", ...contribution("b", 0) });
+        api.registerUIContribution({ target: "fixture/composer.toolbar", ...contribution("a", 0) });
         api.registerCommand(command("alpha-command", 0));
         api.registerLocale({ id: "base", locale: "en", entries: { alpha: "Alpha", shared: "alpha" } });
         api.registerStyle({ id: "alpha-style", css: ".alpha {}", order: 0 });
@@ -58,7 +46,7 @@ describe("PluginHost", () => {
     });
 
     expect(injectedReact).toBe(React);
-    expect(host.getSlotSnapshot("composer.toolbar").map(qualifiedId)).toEqual([
+    expect(host.getUIContributions("fixture/composer.toolbar").map(qualifiedId)).toEqual([
       "alpha:a",
       "alpha:b",
       "zeta:z-first",
@@ -125,27 +113,27 @@ describe("PluginHost", () => {
         pluginId,
         generation: "one",
         register(api) {
-          api.registerSurface("conversation.timeline", {
+          api.registerPresenter({ target: "conversation.item",
             id: `${pluginId}-main`,
             mode: "replace",
-            render: (_context, fallback) => fallback,
+            render: ({ fallback }) => fallback,
           });
         },
       });
     }
 
-    expect(host.getSurfaceSnapshot("conversation.timeline").at(-1)?.pluginId).toBe("zeta");
+    expect(host.getPresenters("conversation.item").at(-1)?.pluginId).toBe("zeta");
     expect(host.getConflicts()).toEqual([
       expect.objectContaining({
-        key: "surface:conversation.timeline",
-        kind: "surface",
-        target: "conversation.timeline",
+        key: "presenter:conversation.item:",
+        kind: "presenter",
+        target: "conversation.item",
         winnerPluginId: "zeta",
       }),
     ]);
 
-    host.setConflictPreference("surface:conversation.timeline", "alpha");
-    expect(host.getSurfaceSnapshot("conversation.timeline").at(-1)?.pluginId).toBe("alpha");
+    host.setConflictPreference("presenter:conversation.item:", "alpha");
+    expect(host.getPresenters("conversation.item").at(-1)?.pluginId).toBe("alpha");
     expect(host.getConflicts()[0]?.winnerPluginId).toBe("alpha");
   });
 
@@ -215,7 +203,7 @@ describe("PluginHost", () => {
     });
 
     expect(cleanup).toEqual(["old"]);
-    expect(host.getSlotSnapshot("workspace.header").map((item) => item.generation)).toEqual(["new"]);
+    expect(host.getUIContributions("fixture/workspace.header").map((item) => item.generation)).toEqual(["new"]);
     expect(host.getCommands().map((item) => item.id)).toEqual(["new-command"]);
     expect(host.getLocaleEntries("en")).toEqual({ label: "new" });
     expect(document.head.querySelector("style[data-wuu-plugin-generation=old]")).toBeNull();
@@ -231,7 +219,7 @@ describe("PluginHost", () => {
 
     newHandle.dispose();
     expect(cleanup).toEqual(["old", "new"]);
-    expect(host.getSlotSnapshot("workspace.header")).toEqual([]);
+    expect(host.getUIContributions("fixture/workspace.header")).toEqual([]);
     expect(host.getCommands()).toEqual([]);
     expect(host.getLocaleEntries("en")).toEqual({});
     expect(document.head.querySelector("style[data-wuu-plugin-id=notes]")).toBeNull();
@@ -294,17 +282,17 @@ describe("PluginHost", () => {
     const executed: string[] = [];
     await host.activateGeneration({ pluginId: "commands", generation: "same", register(api) {
       api.registerCommand({ id: "run", title: "Run", execute: () => { executed.push("old"); } });
-      api.registerSlot("workspace.header", { id: "label", render: () => "old" });
+      api.registerUIContribution({ target: "fixture/workspace.header", id: "label", render: () => "old" });
     } });
     const retained = host.getCommands()[0]!;
     await host.activateGeneration({ pluginId: "commands", generation: "same", register(api) {
       api.registerCommand({ id: "run", title: "Run", execute: () => { executed.push("new"); } });
-      api.registerSlot("workspace.header", { id: "label", render: () => "new" });
+      api.registerUIContribution({ target: "fixture/workspace.header", id: "label", render: () => "new" });
     } });
     expect(() => retained.execute()).toThrow("no longer active");
     host.getCommands()[0]!.execute();
     expect(executed).toEqual(["new"]);
-    expect(host.getSlotSnapshot("workspace.header")[0]!.render({})).toBe("new");
+
     host.unload("commands");
   });
 
@@ -433,7 +421,7 @@ describe("PluginHost", () => {
       async register(api) {
         candidate = api;
         api.registerCleanup(() => cleanup.push("first"));
-        api.registerSlot("sidebar.footer", contribution("partial"));
+        api.registerUIContribution({ target: "fixture/sidebar.footer", ...contribution("partial") });
         api.registerCleanup(() => cleanup.push("second"));
         api.registerStyle({ id: "partial", css: ".partial {}" });
         if (failure === "throw") throw new Error("registration stopped");
@@ -450,7 +438,7 @@ describe("PluginHost", () => {
     await Promise.resolve();
     expect(cleanup).toEqual(["second", "first"]);
     expect(host.getCommands().map((item) => item.id)).toEqual(["stable"]);
-    expect(host.getSlotSnapshot("sidebar.footer")).toEqual([]);
+    expect(host.getUIContributions("fixture/sidebar.footer")).toEqual([]);
     expect(document.head.querySelector("style[data-wuu-plugin-generation=broken]")).toBeNull();
     expect(host.getGenerationDiagnostics("review", "broken").map((item) => item.kind)).toEqual(["activation"]);
   });
@@ -463,7 +451,7 @@ describe("PluginHost", () => {
       pluginId: "removable",
       generation: "one",
       register(api) {
-        disposables.push(api.registerSlot("sidebar.footer", contribution("footer")));
+        disposables.push(api.registerUIContribution({ target: "fixture/sidebar.footer", ...contribution("footer") }));
         disposables.push(api.registerCommand(command("action")));
         disposables.push(api.registerStyle({ id: "theme", css: ".theme {}" }));
         disposables.push(api.registerLocale({ id: "copy", locale: "en", entries: { copy: "Copy" } }));
@@ -476,7 +464,7 @@ describe("PluginHost", () => {
       disposable.dispose();
     }
 
-    expect(host.getSlotSnapshot("sidebar.footer")).toEqual([]);
+    expect(host.getUIContributions("fixture/sidebar.footer")).toEqual([]);
     expect(host.getCommands()).toEqual([]);
     expect(host.getLocaleEntries("en")).toEqual({});
     expect(document.head.querySelector("style[data-wuu-plugin-id=removable]")).toBeNull();
@@ -507,7 +495,7 @@ describe("PluginHost", () => {
     host.disable("disable-me");
     expect(lifetime.aborted).toBe(true);
 
-    expect(host.getSlotSnapshot("workspace.header")).toEqual([]);
+    expect(host.getUIContributions("fixture/workspace.header")).toEqual([]);
     expect(host.getCommands()).toEqual([]);
     expect(host.getLocaleEntries("en")).toEqual({});
     expect(document.head.querySelector("style[data-wuu-plugin-id=disable-me]")).toBeNull();
@@ -690,11 +678,11 @@ describe("PluginHost", () => {
     await expect(host.activateGeneration({
       pluginId: "undeclared",
       generation: "one",
-      contributions: { slots: [] },
+      contributions: { presenters: [] },
       register(api) {
-        api.registerSlot("composer.above", contribution("status"));
+        api.registerPresenter({ id: "status", target: "conversation.item", mode: "wrap", render: () => null });
       },
-    })).rejects.toThrow("slot registration status is not declared");
+    })).rejects.toThrow("presenter registration status is not declared");
   });
 
   it("rejects manifest UI contributions that activation does not register", async () => {
@@ -704,41 +692,10 @@ describe("PluginHost", () => {
       pluginId: "missing-registration",
       generation: "one",
       contributions: {
-        surfaces: [{ id: "frame", target: "conversation.timeline", mode: "wrap" }],
+        presenters: [{ id: "frame", target: "conversation.item", mode: "wrap" }],
       },
       register() {},
-    })).rejects.toThrow("Manifest surface contribution frame was not registered");
-  });
-
-  it("validates keyed tool activity presenters and rejects another plugin's active key", async () => {
-    const host = new PluginHost({ react: React });
-    for (const definition of [
-      { id: "", key: "tool.echo", render: () => null },
-      { id: "echo", key: "", render: () => null },
-      { id: "echo", key: "tool.echo", render: null },
-    ]) {
-      await expect(host.activateGeneration({
-        pluginId: `invalid-${definition.id || definition.key}`,
-        generation: "one",
-        register(api) { api.registerToolActivityPresenter(definition as never); },
-      })).rejects.toThrow();
-    }
-
-    await host.activateGeneration({
-      pluginId: "owner",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({ id: "echo", key: "tool.echo", render: () => null });
-      },
-    });
-    await expect(host.activateGeneration({
-      pluginId: "candidate",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({ id: "other", key: "tool.echo", render: () => null });
-      },
-    })).rejects.toThrow("already owned by another plugin");
-    expect(host.getToolActivityPresenter("tool.echo")?.pluginId).toBe("owner");
+    })).rejects.toThrow("Manifest presenter contribution frame was not registered");
   });
 
   it("keeps candidates private, swaps replacements atomically, and preserves the active presenter on failure", async () => {
@@ -749,40 +706,33 @@ describe("PluginHost", () => {
       pluginId: "owner",
       generation: "one",
       async register(api) {
-        api.registerToolActivityPresenter({ id: "echo", key: "tool.echo", render: () => "one" });
+        api.registerUIContribution({ id: "echo", target: "owner/tool", mode: "wrap", render: () => "one" });
         await gate;
       },
     });
-    expect(host.getToolActivityPresenters()).toEqual([]);
-    await expect(host.activateGeneration({
-      pluginId: "other",
-      generation: "one",
-      register(api) {
-        api.registerToolActivityPresenter({ id: "echo", key: "tool.echo", render: () => "other" });
-      },
-    })).rejects.toThrow("already owned by another plugin");
+    expect(host.getUIContributions("owner/tool")).toEqual([]);
     release();
     await activation;
-    expect(host.getToolActivityPresenter("tool.echo")?.generation).toBe("one");
+    expect(host.getUIContributions("owner/tool")[0]?.generation).toBe("one");
 
     await host.activateGeneration({
       pluginId: "owner",
       generation: "two",
       register(api) {
-        api.registerToolActivityPresenter({ id: "echo", key: "tool.echo", render: () => "two" });
+        api.registerUIContribution({ id: "echo", target: "owner/tool", mode: "wrap", render: () => "two" });
       },
     });
-    expect(host.getToolActivityPresenter("tool.echo")?.generation).toBe("two");
+    expect(host.getUIContributions("owner/tool")[0]?.generation).toBe("two");
 
     await expect(host.activateGeneration({
       pluginId: "owner",
       generation: "broken",
       register(api) {
-        api.registerToolActivityPresenter({ id: "echo", key: "tool.echo", render: () => "broken" });
+        api.registerUIContribution({ id: "echo", target: "owner/tool", mode: "wrap", render: () => "broken" });
         throw new Error("stop");
       },
     })).rejects.toThrow("stop");
-    expect(host.getToolActivityPresenter("tool.echo")?.generation).toBe("two");
+    expect(host.getUIContributions("owner/tool")[0]?.generation).toBe("two");
   });
 
   it("updates subscribers for presenter disposal and unload", async () => {
@@ -794,30 +744,30 @@ describe("PluginHost", () => {
       pluginId: "owner",
       generation: "one",
       register(api) {
-        registration = api.registerToolActivityPresenter({ id: "echo", key: "tool.echo", render: () => null });
+        registration = api.registerUIContribution({ id: "echo", target: "owner/tool", mode: "wrap", render: () => null });
       },
     });
-    const published = host.getToolActivityPresenters();
+    const published = host.getUICompositionSnapshot();
     expect(Object.isFrozen(published)).toBe(true);
     expect(Object.isFrozen(published[0])).toBe(true);
     registration.dispose();
-    expect(host.getToolActivityPresenters()).toEqual([]);
+    expect(host.getUIContributions("owner/tool")).toEqual([]);
     expect(notifications).toHaveLength(2);
 
     await host.activateGeneration({
       pluginId: "owner",
       generation: "two",
       register(api) {
-        api.registerToolActivityPresenter({ id: "echo", key: "tool.echo", render: () => null });
+        api.registerUIContribution({ id: "echo", target: "owner/tool", mode: "wrap", render: () => null });
       },
     });
     host.unload("owner");
-    expect(host.getToolActivityPresenter("tool.echo")).toBeUndefined();
+    expect(host.getUIContributions("owner/tool")[0]).toBeUndefined();
   });
 
   it("publishes stable exact-match presenter snapshots in deterministic order", async () => {
     expect(PRESENTATION_TARGETS).toEqual([
-      "conversation.item", "conversation.process", "conversation.tool-activity",
+      "conversation.item", "conversation.process",
       "conversation.composer", "header.conversation", "header.workspace",
       "navigation.primary", "app.status", "content.preview", "settings",
     ]);
@@ -951,15 +901,17 @@ describe("PluginHost", () => {
   it.each(["one", "two"])("ignores delayed render reports from a retired run when replacing with %s", async (generation) => {
     const host = new PluginHost({ react: React });
     const register = (api: PluginGenerationApi) => {
-      api.registerSlot("composer.above", contribution("status"));
+      api.registerUIContribution({ target: "fixture/composer.above", ...contribution("status") });
     };
     await host.activateGeneration({ pluginId: "render", generation: "one", register });
-    const retired = host.getSlotSnapshot("composer.above")[0]!;
+    const retired = host.observeGenerationRender("render", "one");
     await host.activateGeneration({ pluginId: "render", generation, register });
-    host.recordRenderFailure(retired, { slotId: "composer.above" }, new Error("late failure"));
+    retired.failed(new Error("late failure"));
+    retired.dispose();
     expect(host.getGenerationDiagnostics("render", "one")).toEqual([]);
-    const current = host.getSlotSnapshot("composer.above")[0]!;
-    host.recordRenderFailure(current, { slotId: "composer.above" }, new Error("current failure"));
+    const current = host.observeGenerationRender("render", generation);
+    current.failed(new Error("current failure"));
+    current.dispose();
     expect(host.getGenerationDiagnostics("render", generation)).toHaveLength(1);
     host.unload("render");
   });
@@ -969,17 +921,18 @@ describe("PluginHost", () => {
     await host.activateGeneration({
       pluginId: "recoverable",
       generation: "one",
-      register(api) { api.registerSlot("composer.above", contribution("status")); },
+      register(api) { api.registerUIContribution({ target: "fixture/composer.above", ...contribution("status") }); },
     });
-    const contributionRecord = host.getSlotSnapshot("composer.above")[0];
-    host.recordRenderFailure(contributionRecord, { slotId: "composer.above" }, new Error("render boom"));
-    host.recordRenderFailure(contributionRecord, { slotId: "composer.above" }, new Error("render boom"));
+    const observer = host.observeGenerationRender("recoverable", "one");
+    observer.failed(new Error("render boom"));
+    observer.failed(new Error("render boom"));
     expect(host.getGenerationDiagnostics("recoverable", "one")).toHaveLength(1);
+    observer.dispose();
 
     await host.activateGeneration({
       pluginId: "recoverable",
       generation: "one",
-      register(api) { api.registerSlot("composer.above", contribution("status")); },
+      register(api) { api.registerUIContribution({ target: "fixture/composer.above", ...contribution("status") }); },
     });
     expect(host.getGenerationDiagnostics("recoverable", "one")).toEqual([]);
   });
@@ -1007,7 +960,7 @@ function qualifiedId(item: { pluginId: string; id: string }): string {
 }
 
 function registerCompleteGeneration(api: PluginGenerationApi, label: string): void {
-  api.registerSlot("workspace.header", contribution(`${label}-slot`));
+  api.registerUIContribution({ target: "fixture/workspace.header", ...contribution(`${label}-slot`) });
   api.registerCommand(command(`${label}-command`));
   api.registerStyle({ id: `${label}-style`, css: `.${label} {}` });
   api.registerLocale({ id: `${label}-copy`, locale: "en", entries: { label } });

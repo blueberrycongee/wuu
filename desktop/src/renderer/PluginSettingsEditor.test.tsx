@@ -155,20 +155,20 @@ describe("PluginSettingsEditor", () => {
         pluginId,
         generation: "sha256:generation-1",
         register(api) {
-          api.registerSurface("conversation.timeline", {
-            id: `${pluginId}-main`, mode: "replace", render: (_context, fallback) => fallback,
+          api.registerPresenter({ target: "conversation.item",
+            id: `${pluginId}-main`, mode: "replace", render: ({ fallback }) => fallback,
           });
         },
       });
     }
 
     await renderEditor({ ...pluginRecord(), id: "alpha-conflict", contributions: {} });
-    const trigger = container.querySelector<HTMLButtonElement>("[data-conflict-key='surface:conversation.timeline'] .select-menu-trigger")!;
+    const trigger = container.querySelector<HTMLButtonElement>("[data-conflict-key='presenter:conversation.item:'] .select-menu-trigger")!;
     expect(trigger.textContent).toContain("zeta-conflict");
     await act(async () => trigger.click());
     await act(async () => document.querySelector<HTMLElement>('[role="menuitemradio"][data-value="alpha-conflict"]')?.click());
-    expect(setPluginConflictPreference).toHaveBeenCalledWith("surface:conversation.timeline", "alpha-conflict");
-    expect(desktopPluginHost.getSurfaceSnapshot("conversation.timeline").at(-1)?.pluginId).toBe("alpha-conflict");
+    expect(setPluginConflictPreference).toHaveBeenCalledWith("presenter:conversation.item:", "alpha-conflict");
+    expect(desktopPluginHost.getPresenters("conversation.item").at(-1)?.pluginId).toBe("alpha-conflict");
   });
 
   it("shows isolated contribution diagnostics", async () => {
@@ -177,13 +177,13 @@ describe("PluginSettingsEditor", () => {
       pluginId: "alpha-conflict",
       generation: "sha256:generation-1",
       register(api) {
-        api.registerSurface("conversation.timeline", {
-          id: "broken-main", mode: "wrap", render: (_context, fallback) => fallback,
+        api.registerPresenter({ target: "conversation.item",
+          id: "broken-main", mode: "wrap", render: ({ fallback }) => fallback,
         });
       },
     });
-    const contribution = desktopPluginHost.getSurfaceSnapshot("conversation.timeline")[0];
-    desktopPluginHost.recordRenderFailure(contribution, { surfaceId: "conversation.timeline" }, new Error("render boom"));
+    const contribution = desktopPluginHost.getPresenters("conversation.item")[0];
+    desktopPluginHost.recordPresenterFailure(contribution, new Error("render boom"));
 
     await renderEditor({ ...pluginRecord(), id: "alpha-conflict", contributions: {} });
     expect(container.textContent).toContain("插件贡献已被隔离");

@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { ViewHostAPI, PresentationHost, InspectorSectionHostAPI, InspectorSnapshotV1 } from "../../shared/workbench";
+import type { ViewHostAPI, PresentationHost, InspectorSnapshotV1 } from "../../shared/workbench";
 import { ApplicationController } from "./ApplicationController";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { LegacyUIContributions, type LegacyWorkbenchRenderInput } from "./LegacyUIContributions";
@@ -13,7 +13,7 @@ import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 let root: Root | undefined;
 let element: HTMLDivElement;
 afterEach(() => { act(() => root?.unmount()); root = undefined; element?.remove(); vi.restoreAllMocks(); });
-async function fixture(semanticSlot: string, context: Readonly<Record<string, unknown>> = {}) {
+async function fixture(semanticSlot: string, context: Readonly<Record<string, unknown>> = {}, cardinality: "one" | "many" = "one") {
   const invoke = vi.fn(async () => undefined);
   const application = Object.assign(new ApplicationController(), {
     subscribe: () => () => {}, invoke: invoke as ApplicationServiceV1["invoke"],
@@ -23,7 +23,7 @@ async function fixture(semanticSlot: string, context: Readonly<Record<string, un
   const host = new PluginHost({ react: React, application, createLegacyViewHost: createViewHost });
   // Only the semantic slot is declared; no adapter contribution is registered.
   await host.activateGeneration({ pluginId: "custom-shell", generation: "one", register(api) {
-    api.registerUISlot({ id: semanticSlot, cardinality: "one" });
+    api.registerUISlot({ id: semanticSlot, cardinality });
     api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name={`custom-shell/${semanticSlot}`} context={context} fallback={<span>Native content</span>} /> });
   } });
   const mount = () => { element = document.createElement("div"); document.body.append(element); root = createRoot(element);
@@ -43,7 +43,7 @@ describe("legacy contributions in declared public slots", () => {
     await register(api => {
       api.registerLocale({ id: "language", locale: "en", entries: { hello: "Translated" } });
       api.registerCleanup(() => events.push("generation"));
-      api.registerSlot(slot, { id: "before", render: ctx => <><Content />{(ctx.translate as (key: string) => string)("hello")}:{String(ctx.itemId)}</> });
+      api.registerUIContribution({ target: `custom-shell/${slot}`, id: "before", render: ({ context, translate }) => <><Content />{translate("hello")}:{String(context.itemId)}</> });
     });
     mount(); expect(element.textContent).toContain("Old extensionTranslated:item");
     await act(async () => { host.unload("extension"); });
@@ -158,27 +158,30 @@ describe("legacy contributions in declared public slots", () => {
     await expect(captured.invoke("file-preview.open", { path: "../secret" })).rejects.toThrow();
   });
 
-  it.each(["conversation.message", "conversation.message.actions"])("resolves %s from explicit public source IDs", async semanticSlot => {
+  it.each(["conversation.message", "conversation.message.actions"])("uses the leaf payload for %s without looking up another conversation", async semanticSlot => {
     const source = { threadId: "secondary", turnId: "turn", itemId: "message" };
-    const { application, register, mount, invoke } = await fixture(semanticSlot, source);
-    const baseline = application.getSnapshot();
-    const snapshot: ApplicationSnapshotV1 = { ...baseline, conversationWorkspace: { ...baseline.conversationWorkspace, threads: [
-      { id: "secondary", preview: "", model_provider: "test", model: "test", cwd: "/repo", status: "idle", created_at: "", updated_at: "", turns: [{ id: "turn", status: "completed", items_view: "full", items: [{ id: "message", type: "user_message", status: "completed", text: "Selected source" }] }] },
-    ] } };
-    application.getSnapshot = () => snapshot;
-    let api!: PresentationHost;
+    const item = Object.freeze({ contractVersion: 1, id: "message", kind: "user-message", status: "completed", text: "Selected source" });
+    const { host, register, mount, invoke } = await fixture(semanticSlot, { ...source, snapshot: item });
+    let captured!: ApplicationServiceV1;
     const command = vi.fn();
-    await register(plugin => { plugin.registerCommand({ id: "inspect", title: "Inspect source", placements: ["conversation.message.actions"], execute: command }); plugin.registerPresenter({ id: "item", target: "conversation.item", key: "user-message", render: props => {
-      api = props.host; return <span>{(props.snapshot as { text: string }).text}</span>;
-    } }); });
+    await register(plugin => {
+      plugin.registerCommand({ id: "inspect", title: "Inspect source", placements: ["conversation.message.actions"], execute: command });
+      plugin.registerUIContribution({ id: "item", target: "custom-shell/conversation.message", render: ({ application, context }) => {
+        captured = application; return <span>{(context.snapshot as { text: string }).text}</span>;
+      } });
+    });
     mount();
     if (semanticSlot === "conversation.message") {
       expect(element.textContent).toBe("Selected source");
-      await api.invoke("conversation.item.edit");
+      await captured.invoke("history.begin-edit", source);
       expect(invoke).toHaveBeenCalledWith("history.begin-edit", source, { signal: expect.any(AbortSignal) });
+      const old = captured;
+      await act(async () => { host.unload("extension"); });
+      await expect(old.invoke("history.begin-edit", source)).rejects.toThrow();
+      expect(element.textContent).toBe("Native content");
     } else {
       await act(async () => { element.querySelector<HTMLButtonElement>('button[aria-label="Inspect source"]')!.click(); });
-      expect(command).toHaveBeenCalledWith(expect.objectContaining({ threadId: "secondary", turnId: "turn", item: expect.objectContaining({ id: "message", text: "Selected source" }) }));
+      expect(command).toHaveBeenCalledWith(expect.objectContaining({ threadId: "secondary", turnId: "turn", item }));
     }
   });
 
@@ -298,32 +301,34 @@ describe("legacy contributions in declared public slots", () => {
     expect(invoke).toHaveBeenCalledOnce();
   });
 
-  it("renders ordered inspector sections with predicates, isolation and captured owner methods", async () => {
+  it("renders ordered inspector contributions with conditions, isolation and captured application ownership", async () => {
     const snapshot = Object.freeze<InspectorSnapshotV1>({ contractVersion: 1, session: { id: "source", status: "idle" } });
-    const { host, register, mount } = await fixture("inspector.sections", { snapshot });
-    let captured!: InspectorSectionHostAPI;
+    const { host, register, mount } = await fixture("inspector.sections", { snapshot }, "many");
+    let captured!: ApplicationServiceV1;
     const cleanup = vi.fn();
-    function Content({ host: api }: { host: InspectorSectionHostAPI }) {
-      captured = api; React.useEffect(() => cleanup, []); return <span>Inspector content</span>;
+    function Content({ application }: { application: ApplicationServiceV1 }) {
+      captured = application; React.useEffect(() => cleanup, []); return <span>Inspector content</span>;
     }
     const silence = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       await register(api => {
-        api.registerInspectorSection({ id: "late", title: "Later", priority: 20, render: () => <span>Later content</span> });
-        api.registerInspectorSection({ id: "early", title: "Earlier", priority: 1, when: value => value.session.id === "source", render: Content });
-        api.registerInspectorSection({ id: "hidden", title: "Hidden", priority: 0, when: () => false, render: () => <span>Hidden content</span> });
-        api.registerInspectorSection({ id: "broken", title: "Broken", priority: 10, render: () => { throw new Error("inspector failed"); } });
+        const target = "custom-shell/inspector.sections";
+        api.registerUIContribution({ id: "late", target, order: 20, render: () => <section><h2>Later</h2>Later content</section> });
+        api.registerUIContribution({ id: "early", target, order: 1, render: ({ context, application }) =>
+          (context.snapshot as InspectorSnapshotV1).session.id === "source" ? <section><h2>Earlier</h2><Content application={application} /></section> : null });
+        api.registerUIContribution({ id: "hidden", target, order: 0, render: () => null });
+        api.registerUIContribution({ id: "broken", target, order: 10, render: () => { throw new Error("inspector failed"); } });
       });
       mount();
-      expect(Array.from(element.querySelectorAll("h2"), node => node.textContent)).toEqual(["Earlier", "Broken", "Later"]);
+      expect(Array.from(element.querySelectorAll("h2"), node => node.textContent)).toEqual(["Earlier", "Later"]);
       expect(element.textContent).toContain("Inspector content"); expect(element.textContent).not.toContain("Hidden content");
       expect(element.querySelector('[role="alert"]')).not.toBeNull();
-      expect(host.getGenerationDiagnostics("extension", "same")).toEqual(expect.arrayContaining([expect.objectContaining({ contributionId: "broken" })]));
-      await captured.openView("extension.detail"); await captured.executeCommand("extension.refresh");
+      expect(host.getGenerationDiagnostics("extension", "same")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "render", message: expect.stringContaining("inspector failed") })]));
+      await captured.invoke("settings.open", {});
       const old = captured;
-      await register(api => { api.registerInspectorSection({ id: "early", title: "Replaced", render: Content }); });
+      await register(api => { api.registerUIContribution({ id: "early", target: "custom-shell/inspector.sections", render: ({ application }) => <section><h2>Replaced</h2><Content application={application} /></section> }); });
       expect(element.textContent).toContain("Replaced"); expect(cleanup).toHaveBeenCalledOnce();
-      await expect(old.executeCommand("extension.refresh")).rejects.toThrow();
+      await expect(old.invoke("settings.open", {})).rejects.toThrow();
       await act(async () => { host.unload("extension"); });
       expect(element.textContent).toBe("Native content"); expect(cleanup).toHaveBeenCalledTimes(2);
     } finally { silence.mockRestore(); }

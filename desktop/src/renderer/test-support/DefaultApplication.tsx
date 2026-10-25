@@ -55,6 +55,16 @@ export function TestApplicationShellOutlet(props: React.ComponentProps<typeof Ap
   return <ApplicationShellOutlet {...props} />;
 }
 
+/** Conversation behavior suites explicitly open their starting session. */
+export async function createConversationTestView(threadId: string): Promise<React.ReactElement> {
+  const application = new applicationState.ApplicationController();
+  await application.initialize();
+  await application.invoke("thread.activate", { threadId });
+  const pending = application.getSnapshot().tabs.pending;
+  if (pending?.contentReady && pending.requestId !== undefined) await application.invoke("navigation.reveal-complete", { requestId: pending.requestId });
+  return createDefaultApplicationTestView(application);
+}
+
 /** Behavior suites mount the shipped shell and independently selected providers. */
 export async function createDefaultApplicationTestView(
   application = new applicationState.ApplicationController(),

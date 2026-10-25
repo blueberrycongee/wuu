@@ -28,11 +28,12 @@ export async function activate(api) {
     `,
   });
 
-  api.registerSurface("conversation.timeline", {
+  api.registerUIContribution({
     id: "frame-conversation.timeline",
+    target: "wuu.default-conversation/conversation.turn",
     mode: "wrap",
-    render(_context, fallback) {
-      return React.createElement("div", { className: "deep-ui-timeline" }, fallback);
+    render({ children }) {
+      return React.createElement("div", { className: "deep-ui-timeline" }, children);
     },
   });
 }

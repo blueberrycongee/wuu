@@ -28,7 +28,7 @@ describe("WorkbenchController", () => {
     document.documentElement.removeAttribute("data-theme");
   });
 
-  it.each(["view", "renderer", "inspector", "presenter"] as const)("revokes captured %s host actions across same-fingerprint reactivation", async (kind) => {
+  it.each(["view", "renderer", "presenter"] as const)("revokes captured %s host actions across same-fingerprint reactivation", async (kind) => {
     const host = new PluginHost({ react: React });
     const command = vi.fn();
     const dispatch = vi.fn();
@@ -44,7 +44,6 @@ describe("WorkbenchController", () => {
       const view = controller.getSnapshot().views.find((item) => item.id === id)!;
       const api = kind === "view" ? controller.createViewHostAPI(view)
         : kind === "renderer" ? controller.createRendererHostAPI("owner", "same")
-        : kind === "inspector" ? controller.createInspectorHostAPI("owner", "same")
         : controller.createPresentationHostAPI("owner", "same", ["act"], dispatch);
       await api.executeCommand("run", "before");
       expect(command).toHaveBeenCalledWith("before");
@@ -53,7 +52,7 @@ describe("WorkbenchController", () => {
       await expect(api.executeCommand("run", "stale")).rejects.toThrow("no longer active");
       await expect(api.openView("panel")).rejects.toThrow("no longer active");
       if (kind === "presenter") await expect((api as PresentationHost).invoke("act", "stale")).rejects.toThrow("no longer active");
-      if (kind !== "inspector") await expect((api as ViewHostAPI).getStorage("setting")).rejects.toThrow("no longer active");
+      await expect((api as ViewHostAPI).getStorage("setting")).rejects.toThrow("no longer active");
       expect(command).not.toHaveBeenCalled();
       expect(dispatch).not.toHaveBeenCalled();
       expect(getStorage).not.toHaveBeenCalled();

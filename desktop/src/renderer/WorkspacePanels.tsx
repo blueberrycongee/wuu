@@ -14,6 +14,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
+import { WorkspaceDocumentTurnDock } from "./WorkspaceDocumentTurnDock";
 import {
   closestCenter,
   DndContext,
@@ -292,7 +293,15 @@ function WorkspacePanelContent({
     const frame = window.requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
     return () => window.cancelAnimationFrame(frame);
   }, [sideThreadActive, snapshot.sideConversation.parentThreadId, sideRevealRequest]);
-  const focusedComposer = documentComposer ? <slots.Slot name="wuu.default-preview/application.composer" context={{ variant: "document", pane }} /> : null;
+  const focusedComposer = documentComposer ? <WorkspaceDocumentTurnDock
+    turns={terminalThread?.turns ?? []} cwd={workspaceContext?.cwd} onOpenFile={onOpenFile}
+    onOpenConversation={() => {
+      void application.invoke("navigation.reveal-region", { region: "primary" })
+        .then(() => application.invoke("navigation.focus-composer", { tabId: snapshot.tabs.activeTabId }))
+        .catch(showErrorToast);
+    }}>
+    <slots.Slot name="wuu.default-preview/application.composer" context={{ variant: "document", pane }} />
+  </WorkspaceDocumentTurnDock> : null;
   const sideThreadContent = <ApplicationSideThreadPanel snapshot={snapshot.sideConversation}
     ref={sideThreadPanelRef} active={sideThreadActive}
     title={t("sideThread.title")} cwd={workspaceContext?.cwd} onOpenFile={onOpenFile}

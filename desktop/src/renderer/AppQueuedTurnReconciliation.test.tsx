@@ -103,7 +103,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   WorkspaceMonacoEditor: (): JSX.Element => <div />,
 }));
 
-import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
+import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 
 const workspace = "/tmp/wuu-queued-turn-reconciliation-test";
 const threadID = "thread-queued-reconciliation";
@@ -330,7 +330,7 @@ describe("queued turn reconciliation", () => {
     const { queuedClientIDs } = installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
     vi.mocked(window.matchMedia).mockImplementation(query => ({
@@ -387,7 +387,7 @@ describe("queued turn reconciliation", () => {
     });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
     // A restored queue entry follows the same policy as a locally queued one.
@@ -451,7 +451,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi({ thread: idleThread, startTurn });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
     await act(async () => {
@@ -489,7 +489,7 @@ describe("queued turn reconciliation", () => {
   it("retains stop intent through a stale snapshot and allows retry after RPC failure", async () => {
     installWuuApi();
     window.wuu.interruptTurn = vi.fn().mockRejectedValueOnce(new Error("IPC unavailable")).mockResolvedValue({ ok: true });
-    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadID)); });
     await flushAsync();
     await act(async () => { composerProbe().querySelector<HTMLButtonElement>('[aria-label="stop"]')!.click(); });
     expect(composerProbe().dataset.stopState).toBe("retry");
@@ -515,7 +515,7 @@ describe("queued turn reconciliation", () => {
     const { queuedClientIDs, dequeuedClientIDs } = installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -565,7 +565,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi({ thread: answerReadyThread(), startTurn, queueTurn });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -616,7 +616,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi({ thread: answerReadyThread(), startTurn, queueTurn });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -660,7 +660,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi({ thread: answerReadyThread(), startTurn });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -729,7 +729,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi({ thread: { ...runningThread(), status: "idle", turns: [] }, startTurn });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -762,7 +762,7 @@ describe("queued turn reconciliation", () => {
     const { queuedClientIDs } = installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -817,7 +817,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi({ steerTurn: steerTurn as WuuDesktopApi["steerTurn"], queueTurn });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -865,7 +865,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi({ steerTurn: steerTurn as WuuDesktopApi["steerTurn"] });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -902,7 +902,7 @@ describe("queued turn reconciliation", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 
@@ -979,7 +979,7 @@ describe("queued turn reconciliation", () => {
     });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(threadID));
     });
     await flushAsync();
 

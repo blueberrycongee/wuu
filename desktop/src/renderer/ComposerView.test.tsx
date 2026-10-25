@@ -1177,6 +1177,7 @@ describe("Composer send control", () => {
 
   it.each(["Enter", "button"])("commits keystrokes with %s while deferred composer chrome is suspended", async (submission) => {
     const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register: api => { api.registerUISlot({ id: "composer.toolbar", cardinality: "many" }); } });
     const onSend = vi.fn();
     let released = false;
     let release: (() => void) | undefined;
@@ -1197,7 +1198,7 @@ describe("Composer send control", () => {
       pluginId: "slow-composer-chrome",
       generation: "one",
       register(api) {
-        api.registerSlot("composer.toolbar", {
+        api.registerUIContribution({ target: "wuu.default-composer/composer.toolbar",
           id: "slow-toolbar",
           render() {
             return api.react.createElement(SlowToolbar);
@@ -1237,12 +1238,13 @@ describe("Composer send control", () => {
 
   it("does not rerender composer plugin slots for every non-semantic character", async () => {
     const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "one", register: api => { api.registerUISlot({ id: "composer.toolbar", cardinality: "many" }); } });
     const renderToolbar = vi.fn(() => React.createElement("span", null, "toolbar"));
     await host.activateGeneration({
       pluginId: "composer-toolbar",
       generation: "one",
       register(api) {
-        api.registerSlot("composer.toolbar", {
+        api.registerUIContribution({ target: "wuu.default-composer/composer.toolbar",
           id: "toolbar",
           render: renderToolbar,
         });

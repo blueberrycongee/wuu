@@ -45,10 +45,10 @@ describe("ConversationProcessPresentation", () => {
   it("keeps the fallback DOM while addressing an expanded process through the same public slot", () => {
     container = document.createElement("div"); root = createRoot(container);
     const Slot = vi.fn(({ fallback }: { fallback?: import("react").ReactNode }) => <>{fallback}</>);
-    const render = (items: ThreadItem[]) => act(() => root.render(<ConversationControlsTestProvider composition={{ Slot }}><ConversationTurnIdentityProvider threadId="thread" turnId="turn"><ConversationProcessPresentation processItems={items} fallback={<div data-native-root />} /></ConversationTurnIdentityProvider></ConversationControlsTestProvider>));
+    const render = (items: ThreadItem[]) => act(() => root.render(<ConversationControlsTestProvider composition={{ Slot }}><ConversationTurnIdentityProvider threadId="thread" turnId="turn"><ConversationProcessPresentation processItems={items} streaming={false} active={false} fallback={<div data-native-root />} /></ConversationTurnIdentityProvider></ConversationControlsTestProvider>));
     render([tool]); const before = container.querySelector("[data-native-root]");
     render([tool, reasoning]);
     expect(container.querySelector("[data-native-root]")).toBe(before);
-    expect(Slot.mock.calls.at(-1)?.[0]).toMatchObject({ name: "wuu.default-conversation/conversation.process", context: { threadId: "thread", turnId: "turn", itemIds: [tool.id, reasoning.id] } });
+    expect(Slot.mock.calls.at(-1)?.[0]).toMatchObject({ name: "wuu.default-conversation/conversation.process", context: { threadId: "thread", turnId: "turn", itemIds: [tool.id, reasoning.id], snapshot: { kind: "mixed", active: false, streaming: false } } });
   });
 });

@@ -1,5 +1,4 @@
 import { useComposerServices } from "./ComposerServicesContext";
-import type { ApplicationComposerContributionV1 } from "../../../packages/plugin-sdk/src/ui-composer-presentation";
 import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions, type ComposerInlineSource } from "./ComposerInlineCompletion";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
@@ -90,7 +89,7 @@ import { ComposerCameraPanel } from "./ComposerCamera";
 import { WorkspaceDocumentDrawerContext } from "./WorkspaceDocumentTurnDock";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
-import { PluginSlot } from "./plugins/PluginSlot";
+import { createUIComposition } from "./plugins/ApplicationShell";
 import { ComposerPluginToolbar } from "./plugins/ComposerPluginToolbar";
 import {
   AccessMenu,
@@ -122,8 +121,6 @@ import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
 import type { TurnContextUsage } from "./AppState";
 import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
-const MemoizedComposerPluginSlot = memo(PluginSlot);
-const emptyComposerContributions: readonly ApplicationComposerContributionV1[] = Object.freeze([]);
 const MemoizedComposerPluginToolbar = memo(ComposerPluginToolbar);
 
 type ExpandedComposerDrawer = "pending" | null;
@@ -639,8 +636,8 @@ export function Composer({
     [pluginHost, services],
   );
   const getPluginCommands = useCallback(() => services ? services.presentation.getCommands() : pluginHost.getCommands(), [pluginHost, services]);
-  const getAboveContributions = useCallback(() => services?.presentation.getContributions("composer.above") ?? emptyComposerContributions, [services]);
-  const aboveContributions = useSyncExternalStore(subscribePluginHost, getAboveContributions, getAboveContributions);
+  const localSlots = useMemo(() => createUIComposition(pluginHost), [pluginHost]);
+  const slots = services?.slots ?? localSlots;
   const registeredPluginCommands = useSyncExternalStore(
     subscribePluginHost,
     getPluginCommands,
@@ -1169,7 +1166,7 @@ export function Composer({
       data-has-attachments={hasAttachments || hasCollapsedPromptBlocks || Boolean(inlineSelection) || undefined}
     >
       <div className="composer-above-input">
-        {services ? aboveContributions.map(contribution => <contribution.View key={contribution.key} context={{ ownerTabId: services.ownerTabId, variant, mainConversation, running, readOnly, hasDraft, attachmentCount: files.length + images.length }} />) : <MemoizedComposerPluginSlot host={pluginHost} id="composer.above" context={pluginSlotContext} />}
+        <slots.Slot name="wuu.default-composer/composer.above" context={pluginSlotContext} />
       </div>
       <div className="composer-shell">
         {slashMenuOpen ? (
@@ -1478,7 +1475,7 @@ export function Composer({
                     ) : null}
                   </div>
                 ) : null}
-                <MemoizedComposerPluginToolbar host={pluginHost} context={pluginSlotContext} />
+                <slots.Slot name="wuu.default-composer/composer.toolbar" context={pluginSlotContext} layout={MemoizedComposerPluginToolbar} />
               </div>
               <div className="composer-bar-right">
                 {hideRuntimeControls ? null : (

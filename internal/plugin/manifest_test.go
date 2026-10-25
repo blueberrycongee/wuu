@@ -220,8 +220,6 @@ func TestLoadManifestNormalizesDeclarativeUIContributions(t *testing.T) {
 	writeFile(t, path, `{
   "id":"ui-demo",
   "contributes":{
-    "slots":[{"id":"toolbar","target":"composer.toolbar","order":4,"title":"Toolbar"}],
-    "surfaces":[{"id":"timeline-frame","target":"conversation.timeline","mode":"wrap","order":2}],
     "presenters":[{"id":"message","target":"conversation.item","mode":"replace","priority":8}],
     "navigation":[{"id":"dashboard-nav","view":"dashboard","title":"Dashboard","order":3}],
     "workspaceTools":[{"id":"inspector-tool","view":"inspector","title":"Inspector","description":"Workspace inspector"}],
@@ -231,12 +229,6 @@ func TestLoadManifestNormalizesDeclarativeUIContributions(t *testing.T) {
 	manifest, err := LoadManifest(path, "user")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(manifest.Slots) != 1 || manifest.Slots[0].Target != "composer.toolbar" || manifest.Slots[0].Order != 4 {
-		t.Fatalf("slots = %+v", manifest.Slots)
-	}
-	if len(manifest.Surfaces) != 1 || manifest.Surfaces[0].Mode != ContributionModeWrap {
-		t.Fatalf("surfaces = %+v", manifest.Surfaces)
 	}
 	if len(manifest.Presenters) != 1 || manifest.Presenters[0].Priority != 8 {
 		t.Fatalf("presenters = %+v", manifest.Presenters)
@@ -258,11 +250,11 @@ func TestLoadManifestRejectsInvalidDeclarativeUIContributions(t *testing.T) {
 		body string
 		want string
 	}{
-		{name: "unknown slot target", body: `{"id":"demo","contributes":{"slots":[{"id":"one","target":"unknown"}]}}`, want: "unknown target"},
-		{name: "invalid surface mode", body: `{"id":"demo","contributes":{"surfaces":[{"id":"one","target":"conversation.timeline","mode":"append"}]}}`, want: "replace or wrap"},
+		{name: "removed slot declarations", body: `{"id":"demo","contributes":{"slots":[{"id":"one","target":"composer.above"}]}}`, want: "unknown field"},
+		{name: "invalid presenter mode", body: `{"id":"demo","contributes":{"presenters":[{"id":"one","target":"conversation.item","mode":"append"}]}}`, want: "replace or wrap"},
 		{name: "unknown presenter target", body: `{"id":"demo","contributes":{"presenters":[{"id":"one","target":"custom","mode":"wrap"}]}}`, want: "unknown target"},
-		{name: "duplicate id across kinds", body: `{"id":"demo","contributes":{"slots":[{"id":"same","target":"composer.above"}],"surfaces":[{"id":"same","target":"conversation.timeline","mode":"wrap"}]}}`, want: "duplicate plugin-local id"},
-		{name: "unknown item field", body: `{"id":"demo","contributes":{"slots":[{"id":"one","target":"composer.above","priority":1}]}}`, want: "unknown field"},
+		{name: "duplicate id across kinds", body: `{"id":"demo","contributes":{"navigation":[{"id":"same","view":"view","title":"View"}],"presenters":[{"id":"same","target":"conversation.item","mode":"wrap"}]}}`, want: "duplicate plugin-local id"},
+		{name: "unknown item field", body: `{"id":"demo","contributes":{"navigation":[{"id":"one","view":"view","title":"View","priority":1}]}}`, want: "unknown field"},
 		{name: "missing View entry title", body: `{"id":"demo","contributes":{"navigation":[{"id":"one","view":"dashboard"}]}}`, want: "requires title"},
 		{name: "duplicate entry id across locations", body: `{"id":"demo","contributes":{"navigation":[{"id":"same","view":"one","title":"One"}],"workspaceTools":[{"id":"same","view":"two","title":"Two"}]}}`, want: "duplicate plugin-local id"},
 	}

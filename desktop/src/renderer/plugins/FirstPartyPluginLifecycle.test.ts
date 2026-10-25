@@ -13,13 +13,16 @@ import {
   type PluginHostOptions,
 } from "./PluginHost";
 import { PluginViewContent, WorkbenchController } from "./Workbench";
+import { ApplicationShellOutlet, createUIComposition } from "./ApplicationShell";
+import { ToolActivityPresenter } from "./ToolActivityPresenter";
+import { ConversationControlsProvider, ConversationTurnIdentityProvider } from "../ConversationControlsContext";
+import { createConversationTestApplication } from "../ConversationControlsTestProvider";
+import { registerConversationSlots } from "../ConversationSlots";
 
 interface FirstPartyManifest {
   id: string;
   desktop: { entry: string };
   contributes?: {
-    slots?: PluginContributionDeclarations["slots"];
-    surfaces?: PluginContributionDeclarations["surfaces"];
     presenters?: PluginContributionDeclarations["presenters"];
     navigation?: PluginContributionDeclarations["navigation"];
     workspaceTools?: PluginContributionDeclarations["workspace_tools"];
@@ -44,6 +47,55 @@ afterEach(() => {
 });
 
 describe("first-party desktop plugin lifecycle", () => {
+  it("renders the real TODO module through the shell slot and removes its view on disable", async () => {
+    const host = new PluginHost({ react: React });
+    const { module } = await loadFirstPartyPlugin("todo");
+    const snapshot = { todo: { items: [{ content: "Retain task evidence", status: "in_progress" }] } };
+    await host.activateGeneration({ pluginId: "wuu.default-shell", generation: "one", register(api) {
+      api.registerUISlot({ id: "inspector.sections", cardinality: "many" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => React.createElement(slots.Slot, { name: "wuu.default-shell/inspector.sections", context: { snapshot } }) });
+    } });
+    await host.activateGeneration({ pluginId: "todo", generation: "one", register: module.activate });
+    const container = document.createElement("div"); const root = createRoot(container);
+    try {
+      await act(async () => root.render(React.createElement(ApplicationShellOutlet, { host, binding: { pluginId: "wuu.default-shell", generation: "one", id: "shell" } })));
+      expect(container.querySelector("h2")?.textContent).toBe("TODO");
+      expect(container.querySelector("li")?.textContent).toBe("Retain task evidence");
+      await act(async () => host.disable("todo"));
+      expect(container.textContent).toBe("");
+      snapshot.todo.items = [];
+      await act(async () => { await host.activateGeneration({ pluginId: "todo", generation: "two", register: module.activate }); });
+      expect(container.textContent).toBe("");
+    } finally { act(() => root.unmount()); host.unload("todo"); host.unload("wuu.default-shell"); }
+  });
+
+  it.each(["wuu.default-conversation", "wuu.default-preview"])("renders TODO tool results in %s from the public leaf snapshot", async slotOwner => {
+    const host = new PluginHost({ react: React });
+    const { module } = await loadFirstPartyPlugin("todo");
+    await host.activateGeneration({ pluginId: slotOwner, generation: "one", register: registerConversationSlots });
+    await host.activateGeneration({ pluginId: "todo", generation: "one", register: module.activate });
+    const slots = createUIComposition(host);
+    const application = createConversationTestApplication();
+    const container = document.createElement("div"); const root = createRoot(container);
+    const render = (capability: string, argumentsText: string) => root.render(React.createElement(ConversationControlsProvider, {
+      application, slots, slotOwner,
+      children: React.createElement(ConversationTurnIdentityProvider, { threadId: "thread", turnId: "turn",
+        children: React.createElement(ToolActivityPresenter, { item: { id: "call", type: "tool_call", name: "todo", status: "completed", arguments: argumentsText, display: { capability } }, fallback: React.createElement("span", null, "Native tool") }),
+      }),
+    }));
+    try {
+      await act(async () => render("todo", JSON.stringify({ todos: [{ content: "Retain tool evidence", status: "completed" }] })));
+      expect(container.querySelector("li")?.textContent).toBe("Retain tool evidence");
+      await act(async () => render("other", JSON.stringify({ todos: [{ content: "Foreign tool", status: "completed" }] })));
+      expect(container.textContent).toBe("Native tool");
+      await act(async () => render("todo", '{"todos":'));
+      expect(container.textContent).toBe("Native tool");
+      await act(async () => render("todo", JSON.stringify({ todos: [{ content: "Retain tool evidence", status: "completed" }] })));
+      await act(async () => host.disable("todo"));
+      expect(container.textContent).toBe("Native tool");
+    } finally { act(() => root.unmount()); host.unload("todo"); host.unload(slotOwner); }
+  });
+
   it("activates real bundled modules and removes every contribution on disable", async () => {
     const host = new PluginHost({ react: React });
 
@@ -60,7 +112,7 @@ describe("first-party desktop plugin lifecycle", () => {
     expect(host.getComposerStatusSources().map((item) => item.pluginId)).toEqual([
       "subagent",
     ]);
-    expect(host.getSlotSnapshot("composer.toolbar")).toEqual([]);
+    expect(host.getUIContributions("wuu.default-composer/composer.toolbar")).toEqual([]);
     expect(host.getViewTypes().map((item) => `${item.pluginId}:${item.id}`)).toEqual([
       "automation-client:automation.catalog",
       "dream:dream.settings",
@@ -75,24 +127,26 @@ describe("first-party desktop plugin lifecycle", () => {
       "subagent:subagent.settings",
       "dream:dream.settings",
     ]);
-    expect(host.getInspectorSections().map((item) => `${item.pluginId}:${item.id}`)).toEqual([
+    expect(host.getUIContributions("wuu.default-shell/inspector.sections").map((item) => `${item.pluginId}:${item.id}`)).toEqual([
       "todo:current-todo",
     ]);
-    expect(host.getPresenters("conversation.tool-activity", "todo").at(-1)?.pluginId).toBe("todo");
+    expect(host.getUIContributions("wuu.default-conversation/conversation.tool-activity").at(-1)?.pluginId).toBe("todo");
+    expect(host.getUIContributions("wuu.default-preview/conversation.tool-activity").at(-1)?.pluginId).toBe("todo");
     expect(document.head.querySelectorAll("style[data-wuu-plugin-id]")).toHaveLength(5);
 
     for (const pluginId of firstPartyPluginIds) {
       host.disable(pluginId);
     }
 
-    expect(host.getSlotSnapshot("composer.above")).toEqual([]);
-    expect(host.getSlotSnapshot("composer.toolbar")).toEqual([]);
+    expect(host.getUIContributions("wuu.default-composer/composer.above")).toEqual([]);
+    expect(host.getUIContributions("wuu.default-composer/composer.toolbar")).toEqual([]);
     expect(host.getComposerStatusSources()).toEqual([]);
     expect(host.getViewTypes()).toEqual([]);
     expect(host.getNavigationEntries()).toEqual([]);
     expect(host.getSettingsPages()).toEqual([]);
-    expect(host.getInspectorSections()).toEqual([]);
-    expect(host.getPresenters("conversation.tool-activity", "todo")).toEqual([]);
+    expect(host.getUIContributions("wuu.default-shell/inspector.sections")).toEqual([]);
+    expect(host.getUIContributions("wuu.default-conversation/conversation.tool-activity")).toEqual([]);
+    expect(host.getUIContributions("wuu.default-preview/conversation.tool-activity")).toEqual([]);
     expect(document.head.querySelector("style[data-wuu-plugin-id]")).toBeNull();
   });
 
@@ -120,7 +174,7 @@ describe("first-party desktop plugin lifecycle", () => {
     expect(document.head.querySelectorAll(`style[data-wuu-plugin-id="${pluginId}"][data-wuu-plugin-generation="new-generation"]`)).toHaveLength(1);
     expect([
       ...host.getComposerStatusSources(),
-      ...host.getSlotSnapshot("composer.toolbar"),
+      ...host.getUIContributions("wuu.default-composer/composer.toolbar"),
       ...host.getViewTypes(),
     ].filter((item) => item.pluginId === pluginId).every((item) => item.generation === "new-generation"))
       .toBe(true);
@@ -335,8 +389,6 @@ async function loadFirstPartyPlugin(
 function contributionDeclarations(manifest: FirstPartyManifest): PluginContributionDeclarations {
   const contributions = manifest.contributes ?? {};
   return {
-    slots: contributions.slots ?? [],
-    surfaces: contributions.surfaces ?? [],
     presenters: contributions.presenters ?? [],
     navigation: contributions.navigation ?? [],
     workspace_tools: contributions.workspaceTools ?? [],

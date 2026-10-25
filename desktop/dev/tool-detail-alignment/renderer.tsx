@@ -7,8 +7,8 @@ import { ProcessSurface } from "../../src/renderer/ProcessSurface";
 import { ConversationStatusCluster } from "../../src/renderer/ConversationStatusCluster";
 import { ToolActivityRow } from "../../src/renderer/ToolActivity";
 import { I18nProvider } from "../../src/renderer/i18n";
-import { desktopPluginHost, desktopWorkbenchController } from "../../src/renderer/plugins/DesktopPluginRuntime";
-import { PluginInspectorSections } from "../../src/renderer/plugins/PluginInspector";
+import { desktopPluginHost } from "../../src/renderer/plugins/DesktopPluginRuntime";
+import { createUIComposition } from "../../src/renderer/plugins/ApplicationShell";
 // @ts-expect-error Bundled desktop extensions are plain JavaScript modules.
 import { activate } from "../../../internal/plugin/bundled/todo/desktop.js";
 import { startFocusModality } from "../../src/renderer/FocusModality";
@@ -51,7 +51,11 @@ const items = [
   tool("failed", "read_file", { path: "missing.md" }, "failed"),
 ] as ThreadItem[];
 
+await desktopPluginHost.activateGeneration({ pluginId: "wuu.default-shell", generation: "preview", register(api) {
+  api.registerUISlot({ id: "inspector.sections", cardinality: "many" });
+} });
 await desktopPluginHost.activateGeneration({ pluginId: "todo", generation: "preview", register: activate });
+const slots = createUIComposition(desktopPluginHost);
 
 const baseApplication = createFixtureApplication();
 const status: ApplicationComposerStatusSnapshotV1 = { items: [], todoUpdate: { todos } };
@@ -66,11 +70,9 @@ createRoot(document.getElementById("root")!).render(
           <ToolActivityRow items={[editedFile]} />
         </div>
         <div className="environment-panel" style={{ position: "static", width: "min(328px, 100%)", marginTop: 32 }}>
-          <PluginInspectorSections
-            host={desktopPluginHost}
-            controller={desktopWorkbenchController}
-            snapshot={{ contractVersion: 1, session: { status: "idle" }, todo: { completed: 1, total: todos.length, items: todos } }}
-          />
+          <div className="plugin-inspector-sections" data-wuu-component="plugin-inspector-sections">
+            <slots.Slot name="wuu.default-shell/inspector.sections" context={{ snapshot: { contractVersion: 1, session: { status: "idle" }, todo: { completed: 1, total: todos.length, items: todos } } }} />
+          </div>
         </div>
         <div style={{ position: "fixed", bottom: 24, left: 24, right: 24 }}>
           <ConversationStatusCluster

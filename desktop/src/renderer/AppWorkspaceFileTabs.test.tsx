@@ -41,7 +41,7 @@ vi.mock("./JumpToLatestPill", () => ({
   ),
 }));
 
-import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
+import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as composerMessages from "./ComposerMessages";
 import * as artifactComposer from "./ArtifactComposerFile";
@@ -56,6 +56,7 @@ vi.mock("./FileSelectionSurface", () => ({
     return <div>{children({})}</div>;
   },
 }));
+import { fileSelectionRevision } from "./FileSelectionMapping";
 import { rightPanelMotionMs } from "./AppLayoutState";
 import { motionDurationMs } from "./motion";
 
@@ -218,6 +219,8 @@ function installWuuApi(): void {
     onBrowserSurface: vi.fn(() => () => {}),
     onBrowserUserInput: vi.fn(() => () => {}),
     onBrowserTabAdopted: vi.fn(() => () => {}),
+    onBrowserDock: vi.fn(() => () => {}),
+    onBrowserInvalidate: vi.fn(() => () => {}),
     writeWorkspaceFile: vi.fn(),
     revealWorkspaceItem: vi.fn().mockResolvedValue(undefined),
     onServerEvent: vi.fn((handler: (event: ServerEvent) => void) => {
@@ -286,7 +289,7 @@ describe("workspace file tabs", () => {
       size_bytes: 16, mtime_ms: 1000, sha256: "a".repeat(64), binary: false, truncated: false,
       text: `# ${path} contents`,
     }));
-    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(completedThread().id)); });
     await flushAsync();
     await typeMainPrompt("draft shared with the full-page preview");
     const history = (direction: "back" | "forward") => {
@@ -358,7 +361,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     const select = async (title: string) => {
@@ -410,7 +413,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     const link = container.querySelector<HTMLAnchorElement>('a[href="https://example.com/history"]')!;
@@ -421,7 +424,7 @@ describe("workspace file tabs", () => {
     });
     await flushAsync();
     expect(container.querySelector(".workspace-browser-panel")).not.toBeNull();
-    const viewport = container.querySelector<HTMLElement>(".conversation-pane > .scroll-region")!;
+    const viewport = container.querySelector<HTMLElement>(".conversation-pane .scroll-region")!;
     await act(async () => {
       container.querySelector<HTMLInputElement>(".workspace-browser-panel input")!.focus();
       viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: 900, bubbles: true }));
@@ -449,7 +452,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockImplementation(async (id) => ({ thread: threads.find((thread) => thread.id === id)! }));
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     const composer = container.querySelector<HTMLTextAreaElement>(".composer textarea")!;
@@ -478,7 +481,7 @@ describe("workspace file tabs", () => {
   async function openSelectionDocument(): Promise<void> {
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     await act(async () => container.querySelector<HTMLButtonElement>(".rich-file-link")?.click());
@@ -488,7 +491,7 @@ describe("workspace file tabs", () => {
 
   const selectionSource: FileSelectionSource = {
     workspace, path: "README.md", start_line: 1, start_column: 1,
-    end_line: 1, end_column: 11, quote: "# Artifact", revision: "selection-version",
+    end_line: 1, end_column: 11, quote: "# Artifact", revision: fileSelectionRevision("# Artifact\n"),
   };
 
   async function typePrompt(textarea: HTMLTextAreaElement, value: string): Promise<void> {
@@ -952,7 +955,7 @@ describe("workspace file tabs", () => {
     vi.mocked(window.wuu.resumeThread).mockResolvedValue({ thread });
     const snapshotFile = { id: "pdf-context", filename: "report.pdf", media_type: "application/pdf", data: "JVBERg==" };
     const attach = vi.spyOn(artifactComposer, "createArtifactComposerFile").mockReturnValue(snapshotFile);
-    await act(async () => { root = createRoot(container); root.render(await createDefaultApplicationTestView()); });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(completedThread().id)); });
     await flushAsync();
     const card = Array.from(container.querySelectorAll<HTMLButtonElement>(".turn-edit-summary-overview"))
       .find(button => button.textContent?.includes("report.pdf"));
@@ -1015,7 +1018,7 @@ describe("workspace file tabs", () => {
   it("hands the live draft to the right preview and back without tagging a hidden file", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
     await typeMainPrompt("Keep this unfinished request");
@@ -1049,7 +1052,7 @@ describe("workspace file tabs", () => {
   it("opens a document beside the active conversation instead of replacing it", async () => {
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 
@@ -1188,7 +1191,7 @@ describe("workspace file tabs", () => {
     installWuuApi();
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 
@@ -1228,7 +1231,7 @@ describe("workspace file tabs", () => {
     setInnerWidth(674);
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 
@@ -1255,7 +1258,7 @@ describe("workspace file tabs", () => {
     setInnerWidth(1000);
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView(completedThread().id));
     });
     await flushAsync();
 

@@ -472,7 +472,7 @@ export function ProcessSurface({
     </div>
   );
   // Keep one boundary as a single activity grows into a process group.
-  return <ConversationProcessPresentation processItems={processItems} fallback={nativeFallback} />;
+  return <ConversationProcessPresentation processItems={processItems} streaming={streaming} active={processEntryActive} fallback={nativeFallback} />;
 }
 
 function ProcessSurfaceSegmentView({

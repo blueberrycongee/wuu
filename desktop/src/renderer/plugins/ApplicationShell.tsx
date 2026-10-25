@@ -1,5 +1,7 @@
 import { LegacyUIContributions } from "./LegacyUIContributions";
 import { RuntimeLoading } from "../LoadingViews";
+import { useI18n } from "../i18n";
+import { createPluginTranslator } from "./pluginI18n";
 import * as React from "react";
 import type { UICompositionV1, UISlotProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { PluginHost, RegisteredApplicationShell, RegisteredUIContribution } from "./PluginHost";
@@ -23,10 +25,10 @@ const SurfacesPending = React.createContext(false);
 
 const SlotAncestors = React.createContext<readonly string[]>([]);
 
-function compositionFor(host: PluginHost): UICompositionV1 {
+export function createUIComposition(host: PluginHost): UICompositionV1 {
   const createViewHost = host.createLegacyViewHost.bind(host);
   const renderLegacyWorkbench = host.renderLegacyWorkbench.bind(host);
-  function Slot({ name, context = {}, fallback }: UISlotProps): React.ReactNode {
+  function Slot({ name, context = {}, fallback, layout: Layout }: UISlotProps): React.ReactNode {
     const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
     const ancestors = React.useContext(SlotAncestors);
     if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${[...ancestors, name].join(" → ")}`);
@@ -41,33 +43,44 @@ function compositionFor(host: PluginHost): UICompositionV1 {
       // The graph selects a surface independently of the layout that renders it.
       contributions = binding ? registered.filter(item => item.pluginId === binding.pluginId
         && item.generation === binding.generation && item.id === binding.id) : [];
-      if (contributions.length !== 1) return binding && pending ? <RuntimeLoading status="opening" />
+      if (contributions.length !== 1 || contributions[0].mode === "wrap") return binding && pending ? <RuntimeLoading status="opening" />
         : <div role="alert">Selected UI surface is unavailable: {slot.service}</div>;
     }
-    const content = contributions.length === 0 ? fallback : contributions.map(contribution => {
-        return <ShellBoundary key={activationKey(contribution)}
-          identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
-          <Contribution host={host} contribution={contribution} slots={composition} context={context} />
-        </ShellBoundary>;
-      });
-    return <SlotAncestors.Provider value={[...ancestors, name]}>
-      {slot.service || slot.id === "workbench.layers" && contributions.length > 0 ? content : <LegacyUIContributions key={activationKey(slot)} host={host} semanticSlot={slot.id}
-        application={slot.application} context={context} fallback={content} createViewHost={createViewHost} renderLegacyWorkbench={renderLegacyWorkbench} />}
-    </SlotAncestors.Provider>;
+    const contentContributions = contributions.filter(contribution => contribution.mode !== "wrap");
+    const items = contentContributions.map(contribution => ({
+      key: String(activationKey(contribution)), pluginId: contribution.pluginId, id: contribution.id, title: contribution.title ?? contribution.id,
+      node: <ShellBoundary key={activationKey(contribution)}
+        identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
+        <Contribution host={host} contribution={contribution} slots={composition} context={context} />
+      </ShellBoundary>,
+    }));
+    const content = items.length === 0 ? fallback : Layout && !slot.service ? <Layout items={items} context={context} /> : items.map(item => item.node);
+    let composed = slot.service || slot.id === "workbench.layers" && contentContributions.length > 0 ? content
+      : <LegacyUIContributions key={activationKey(slot)} host={host} semanticSlot={slot.id}
+          application={slot.application} context={context} fallback={content} createViewHost={createViewHost} renderLegacyWorkbench={renderLegacyWorkbench} />;
+    for (const contribution of contributions.filter(contribution => contribution.mode === "wrap")) {
+      composed = <ShellBoundary key={activationKey(contribution)} recover fallback={composed}
+        identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
+        <Contribution host={host} contribution={contribution} slots={composition} context={context}>{composed}</Contribution>
+      </ShellBoundary>;
+    }
+    return <SlotAncestors.Provider value={[...ancestors, name]}>{composed}</SlotAncestors.Provider>;
   }
-  const composition: UICompositionV1 = Object.freeze({ Slot });
+  const composition: UICompositionV1 = Object.freeze({ Slot: React.memo(Slot) });
   return composition;
 }
 
-function Contribution({ host, contribution, slots, context }: {
-  host: PluginHost; contribution: RegisteredUIContribution; slots: UICompositionV1; context: Readonly<Record<string, unknown>>;
+function Contribution({ host, contribution, slots, context, children }: {
+  host: PluginHost; contribution: RegisteredUIContribution; slots: UICompositionV1; context: Readonly<Record<string, unknown>>; children?: React.ReactNode;
 }): React.ReactNode {
   React.useEffect(() => host.retainGeneration(contribution.pluginId, contribution.generation), [host, contribution]);
+  const { locale } = useI18n();
+  const translate = React.useMemo(() => createPluginTranslator(host, locale), [host, locale]);
   const View = contribution.render;
-  return <View application={contribution.application} slots={slots} context={context} />;
+  return <View application={contribution.application} slots={slots} context={context} locale={locale} translate={translate}>{children}</View>;
 }
 
-class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string }, { error?: Error }> {
+class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; recover?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
   componentDidMount(): void {
     this.observer = this.props.host.observeGenerationRender(this.props.pluginId, this.props.generation, this.state.error);
@@ -78,13 +91,13 @@ class ShellBoundary extends React.Component<{ children: React.ReactNode; identit
   static getDerivedStateFromError(error: Error): { error: Error } { return { error }; }
   render(): React.ReactNode {
     return this.state.error
-      ? <div role="alert">{this.props.identity}: {this.state.error.message}</div>
+      ? this.props.recover ? this.props.fallback : <div role="alert">{this.props.identity}: {this.state.error.message}</div>
       : this.props.children;
   }
 }
 
 function SelectedShell({ host, shell }: { host: PluginHost; shell: RegisteredApplicationShell }): React.ReactNode {
-  const slots = React.useMemo(() => compositionFor(host), [host]);
+  const slots = React.useMemo(() => createUIComposition(host), [host]);
   React.useEffect(() => host.retainGeneration(shell.pluginId, shell.generation), [host, shell]);
   const View = shell.render;
   return <View application={shell.application} slots={slots} />;

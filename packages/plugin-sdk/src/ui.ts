@@ -204,23 +204,49 @@ export interface UISlotDefinition {
   /** Select a single surface through the committed service graph, without fallback. */
   readonly service?: string;
 }
+export interface UISlotLayoutItem {
+  readonly key: string;
+  readonly pluginId: string;
+  readonly id: string;
+  readonly title: string;
+  /** Mount this node to retain the contribution's generation and error boundary. */
+  readonly node: ReactNode;
+}
+export interface UISlotLayoutProps {
+  readonly items: readonly UISlotLayoutItem[];
+  readonly context: Readonly<Record<string, unknown>>;
+}
 export interface UISlotProps {
   readonly name: string;
   readonly context?: Readonly<Record<string, unknown>>;
   readonly fallback?: ReactNode;
+  /** Arranges ordered content inside wrappers. With no content, fallback is used.
+   * Service-selected surfaces always render their selected contribution directly. */
+  readonly layout?: ComponentType<UISlotLayoutProps>;
 }
 export interface UICompositionV1 {
   /** Nested contributions use the same component; recursive slot cycles fail visibly. */
   readonly Slot: ComponentType<UISlotProps>;
 }
 export interface UISlotRenderProps {
+  readonly locale: string;
+  readonly translate: (key: string, values?: Readonly<Record<string, string | number>>) => string;
   readonly application: ApplicationServiceV1;
   readonly slots: UICompositionV1;
   readonly context: Readonly<Record<string, unknown>>;
+  /** For wrappers, the composed content including the slot's fallback. */
+  readonly children?: ReactNode;
 }
 export interface UIContributionDefinition {
   readonly id: string;
   readonly target: string;
+  /** Label for host layouts such as toolbar overflow menus. Defaults to the local ID. */
+  readonly title?: string;
+  /** Content replaces the slot fallback; wrappers surround all composed content.
+   * Graph-selected service slots accept content only. A wrapper failure reports
+   * a render diagnostic and preserves its children. */
+  readonly mode?: "content" | "wrap";
+  /** Ascending order, then plugin and contribution ID. Later wrappers are outermost. */
   readonly order?: number;
   readonly render: ComponentType<UISlotRenderProps>;
 }

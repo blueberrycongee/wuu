@@ -130,8 +130,8 @@ export async function activate(api) {
       notice: state.error ? h("p", { role: "alert", className: "plugin-monitor-error" }, state.error) : null,
     }, open ? h("ul", { className: "plugin-monitor-list" }, sorted.map(task => h(Row, { key: task.id, task, tr, locale, readOnly }))) : null);
   }
-  api.registerSlot("composer.above", { id: "monitor-tasks", title: "Monitors", order: 30,
-    render: ({ threadId, mainConversation, readOnly, translate, locale }) => threadId && mainConversation ? h(Controls, { key: threadId, threadId, readOnly, tr: translate, locale }) : null,
+  api.registerUIContribution({ target: "wuu.default-composer/composer.above", id: "monitor-tasks", title: "Monitors", order: 30,
+    render: ({ context: { threadId, mainConversation, readOnly }, translate, locale }) => threadId && mainConversation ? h(Controls, { key: threadId, threadId, readOnly, tr: translate, locale }) : null,
   });
   api.registerStyle({ id: "monitor-tasks", css: `
     .plugin-monitor { --composer-drawer-max-height:min(55dvh,36rem); --monitor-indent:calc(7px + var(--space-2)); font-size:var(--font-ui); }

@@ -68,8 +68,6 @@ export type CatalogContributionsV1 = {
   themes?: CatalogThemeDescriptorV1[];
   skins?: CatalogSkinDescriptorV1[];
   settings?: CatalogSettingDescriptorV1[];
-  slots?: CatalogSlotContributionDescriptorV1[];
-  surfaces?: CatalogSurfaceContributionDescriptorV1[];
   presenters?: CatalogPresenterContributionDescriptorV1[];
   navigation?: CatalogViewEntryDescriptorV1[];
   workspace_tools?: CatalogViewEntryDescriptorV1[];
@@ -89,21 +87,6 @@ export type CatalogIconDescriptorV1 =
   | { name: string; path?: never; light?: never; dark?: never }
   | { name?: never; path: string; light?: never; dark?: never }
   | { name?: never; path?: never; light: string; dark: string };
-
-export interface CatalogSlotContributionDescriptorV1 {
-  id: string;
-  target: string;
-  order?: number;
-  title?: string;
-}
-
-export interface CatalogSurfaceContributionDescriptorV1 {
-  id: string;
-  target: string;
-  mode: "replace" | "wrap";
-  order?: number;
-  title?: string;
-}
 
 export interface CatalogPresenterContributionDescriptorV1 {
   id: string;

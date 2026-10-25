@@ -1713,7 +1713,7 @@ export function App({ application, slots, shellPluginId }: {
       try {
         // Replay only the existing native tab ID. Its own URL/back-forward
         // history stays owned by WebContents and onState remains authoritative.
-        await api.selectTab(WEB_WORKSPACE_RIBBON_ID, id);
+        await application.invoke("navigation.select-browser-tab", { tabId: id });
         if (isCurrent()) revealWebsite();
       } catch (error) {
         if (isCurrent()) showErrorToast(error);
@@ -1995,7 +1995,7 @@ export function App({ application, slots, shellPluginId }: {
           onSplitSeparatorDoubleClick: resetSplitPercent,
         }} />
 
-        {mainConversationDockVisible ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", containerRef: dockComposerRef }} /> : null}
+        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", visible: !settingsOpen, containerRef: dockComposerRef }} /> : null}
 
 
         <ConversationStatusCluster

@@ -19,7 +19,6 @@ import type {
   ComposerInlineCompletionProviderRegistration,
   ComposerInlineCompletionProviderHandle,
   ComposerInlineCompletionRefresh,
-  InspectorSectionDefinition,
   PluginUIKit,
   PluginCommandPresentation,
   PluginCommandActionContext,
@@ -29,7 +28,6 @@ import type {
   RendererDefinition,
   StatusItemDefinition,
   ThemeTokens,
-  ToolActivityPresenterDefinition,
   ViewPlacementContribution,
   ViewPlacementRegion,
   ViewTypeDefinition,
@@ -42,50 +40,11 @@ import {
   isPublicThemeTokenName,
 } from "../../shared/themeContract.generated";
 
-export const PLUGIN_SLOT_IDS = [
-  "sidebar.primary",
-  "sidebar.footer",
-  "workspace.header",
-  "conversation.header",
-  "conversation.message.before",
-  "conversation.message.after",
-  "composer.above",
-  "composer.toolbar",
-] as const;
-
-export type PluginSlotId = (typeof PLUGIN_SLOT_IDS)[number];
-
-export const PLUGIN_SURFACE_IDS = [
-  "conversation.timeline",
-  "conversation.message",
-] as const;
-
-export type PluginSurfaceId = (typeof PLUGIN_SURFACE_IDS)[number];
-
 export interface Disposable {
   dispose(): void;
 }
 
-export type PluginSlotRenderContext = Readonly<Record<string, unknown>>;
-
-export interface PluginSlotRegistration {
-  id: string;
-  order?: number;
-  render(context: PluginSlotRenderContext): React.ReactNode;
-}
-
-export type PluginSurfaceMode = "replace" | "wrap";
-
-export interface PluginSurfaceRegistration {
-  id: string;
-  mode: PluginSurfaceMode;
-  order?: number;
-  render(context: PluginSlotRenderContext, fallback: React.ReactNode): React.ReactNode;
-}
-
 export interface PluginContributionDeclarations {
-  readonly slots?: readonly Readonly<{ id: string; target: PluginSlotId; order?: number; title?: string }>[];
-  readonly surfaces?: readonly Readonly<{ id: string; target: PluginSurfaceId; mode: PluginSurfaceMode; order?: number; title?: string }>[];
   readonly presenters?: readonly Readonly<{ id: string; target: PresentationTarget; mode: PresentationMode; priority?: number; title?: string }>[];
   readonly navigation?: readonly PluginViewEntryDeclaration[];
   readonly workspace_tools?: readonly PluginViewEntryDeclaration[];
@@ -196,8 +155,6 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
    * ephemeral and archived threads are excluded by the host. */
   listThreads(workspaceRoot: string): Promise<readonly PluginThreadSummary[]>;
   onHostEvent(handler: (event: unknown) => void): Disposable;
-  registerSlot(slotId: PluginSlotId, contribution: PluginSlotRegistration): Disposable;
-  registerSurface(surfaceId: PluginSurfaceId, contribution: PluginSurfaceRegistration): Disposable;
   registerCommand(command: PluginCommandRegistration): Disposable;
   /** Show a session-local card at the bottom of a conversation. */
   showConversationCard(card: ConversationCardRegistration): ConversationCardHandle;
@@ -215,8 +172,6 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   registerViewType(definition: ViewTypeDefinition): Disposable;
   /** Request a default View placement in a stable host-owned region. */
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
-  /** Register a short, context-driven summary in the host-owned Inspector. */
-  registerInspectorSection(definition: InspectorSectionDefinition): Disposable;
   /** Register a custom content renderer (message, tool result, document, file). */
   registerRenderer(definition: RendererDefinition): Disposable;
   /** Apply theme token overrides for a specific theme. */
@@ -226,7 +181,6 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   /** Register a status bar item. */
   registerStatusItem(item: StatusItemDefinition): Disposable;
   registerPresenter(definition: PresenterDefinition): Disposable;
-  registerToolActivityPresenter(definition: ToolActivityPresenterDefinition): Disposable;
 }
 
 export interface PluginRuntimeInvokeOptions {
@@ -268,17 +222,6 @@ export interface ActivatePluginGenerationOptions {
   register(api: PluginGenerationApi): void | Promise<void>;
 }
 
-export interface RegisteredPluginSlotContribution extends PluginSlotRegistration {
-  readonly pluginId: string;
-  readonly generation: string;
-  readonly title?: string;
-}
-
-export interface RegisteredPluginSurfaceContribution extends PluginSurfaceRegistration {
-  readonly pluginId: string;
-  readonly generation: string;
-}
-
 export interface RegisteredPluginCommand extends PluginCommandRegistration {
   readonly pluginId: string;
   readonly generation: string;
@@ -313,12 +256,6 @@ export interface RegisteredConversationCard {
 }
 
 export interface RegisteredViewType extends ViewTypeDefinition {
-  readonly pluginId: string;
-  readonly generation: string;
-  readonly order: number;
-}
-
-export interface RegisteredInspectorSection extends InspectorSectionDefinition {
   readonly pluginId: string;
   readonly generation: string;
   readonly order: number;
@@ -359,11 +296,6 @@ export interface RegisteredComposerInlineCompletionProvider extends ComposerInli
   readonly order: number;
 }
 
-export interface RegisteredToolActivityPresenter extends ToolActivityPresenterDefinition {
-  readonly pluginId: string;
-  readonly generation: string;
-}
-
 export interface RegisteredPresenter extends PresenterDefinition {
   readonly pluginId: string;
   readonly generation: string;
@@ -381,7 +313,7 @@ export interface PluginConflictCandidate {
 
 export interface PluginContributionConflict {
   readonly key: string;
-  readonly kind: "surface" | "presenter";
+  readonly kind: "presenter";
   readonly target: string;
   readonly presentationKey?: string;
   readonly candidates: readonly PluginConflictCandidate[];
@@ -396,8 +328,6 @@ export interface PluginGenerationDiagnostic {
   readonly kind: PluginDiagnosticKind;
   readonly message: string;
   readonly cause: unknown;
-  readonly slotId?: PluginSlotId;
-  readonly surfaceId?: PluginSurfaceId;
   readonly contributionId?: string;
 }
 
@@ -462,19 +392,6 @@ interface OrderedRecord {
   removed: boolean;
 }
 
-interface SlotRecord extends OrderedRecord {
-  readonly slotId: PluginSlotId;
-  readonly title?: string;
-  readonly render: PluginSlotRegistration["render"];
-}
-
-interface SurfaceRecord extends OrderedRecord {
-  readonly surfaceId: PluginSurfaceId;
-  readonly mode: PluginSurfaceMode;
-  readonly title?: string;
-  readonly render: PluginSurfaceRegistration["render"];
-}
-
 interface CommandRecord extends OrderedRecord, PluginCommandPresentation {
   snapshot?: RegisteredPluginCommand;
   readonly contexts?: readonly string[];
@@ -509,12 +426,6 @@ interface ViewTypeRecord extends OrderedRecord {
 interface ViewPlacementRecord extends OrderedRecord {
   readonly view: string;
   readonly region: ViewPlacementRegion;
-}
-
-interface InspectorSectionRecord extends OrderedRecord {
-  readonly title: string;
-  readonly when: InspectorSectionDefinition["when"];
-  readonly render: InspectorSectionDefinition["render"];
 }
 
 interface RendererRecord extends OrderedRecord {
@@ -552,7 +463,6 @@ interface PresenterRecord extends OrderedRecord {
   readonly mode: PresentationMode;
   readonly title?: string;
   readonly render: PresenterDefinition["render"];
-  readonly compatibilityRender?: ToolActivityPresenterDefinition["render"];
 }
 
 interface ApplicationShellRecord extends OrderedRecord { readonly definition: RegisteredApplicationShell }
@@ -577,8 +487,6 @@ interface GenerationState {
   readonly pluginId: string;
   readonly generation: string;
   readonly declaredContributions?: PluginContributionDeclarations;
-  readonly slots: SlotRecord[];
-  readonly surfaces: SurfaceRecord[];
   readonly commands: CommandRecord[];
   readonly conversationCards: ConversationCardRecord[];
   readonly styles: StyleRecord[];
@@ -586,14 +494,13 @@ interface GenerationState {
   // Phase C — Workbench
   readonly views: ViewTypeRecord[];
   readonly viewPlacements: ViewPlacementRecord[];
-  readonly inspectorSections: InspectorSectionRecord[];
   readonly renderers: RendererRecord[];
   readonly themeTokens: ThemeTokenRecord[];
   readonly cssSnippets: CSSSnippetRecord[];
   readonly statusItems: StatusItemRecord[];
   readonly composerStatusSources: ComposerStatusSourceRecord[];
   readonly composerInlineCompletionProviders: ComposerInlineCompletionProviderRecord[];
-  readonly toolActivityPresenters: PresenterRecord[];
+  readonly presenters: PresenterRecord[];
   readonly registrationKeys: Set<string>;
   readonly hostEventHandlers: Set<(event: unknown) => void>;
   readonly teardown: Disposable[];
@@ -608,13 +515,10 @@ interface PendingActivation {
   readonly state: GenerationState;
 }
 
-const EMPTY_SLOT_SNAPSHOT: readonly RegisteredPluginSlotContribution[] = Object.freeze([]);
-const EMPTY_SURFACE_SNAPSHOT: readonly RegisteredPluginSurfaceContribution[] = Object.freeze([]);
 const EMPTY_COMMAND_SNAPSHOT: readonly RegisteredPluginCommand[] = Object.freeze([]);
 const EMPTY_CONVERSATION_CARD_SNAPSHOT: readonly RegisteredConversationCard[] = Object.freeze([]);
 const EMPTY_VIEW_SNAPSHOT: readonly RegisteredViewType[] = Object.freeze([]);
 const EMPTY_VIEW_PLACEMENT_SNAPSHOT: readonly RegisteredViewPlacement[] = Object.freeze([]);
-const EMPTY_INSPECTOR_SECTION_SNAPSHOT: readonly RegisteredInspectorSection[] = Object.freeze([]);
 const EMPTY_VIEW_ENTRY_SNAPSHOT: readonly RegisteredPluginViewEntry[] = Object.freeze([]);
 const EMPTY_RENDERER_SNAPSHOT: readonly RegisteredRenderer[] = Object.freeze([]);
 const EMPTY_THEME_TOKEN_SNAPSHOT: readonly RegisteredThemeTokens[] = Object.freeze([]);
@@ -622,7 +526,6 @@ const EMPTY_STATUS_ITEM_SNAPSHOT: readonly RegisteredStatusItem[] = Object.freez
 const EMPTY_COMPOSER_STATUS_SOURCE_SNAPSHOT: readonly RegisteredComposerStatusSource[] = Object.freeze([]);
 const EMPTY_COMPOSER_INLINE_COMPLETION_SNAPSHOT: readonly RegisteredComposerInlineCompletionProvider[] = Object.freeze([]);
 const EMPTY_PRESENTER_SNAPSHOT: readonly RegisteredPresenter[] = Object.freeze([]);
-const EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT: readonly RegisteredToolActivityPresenter[] = Object.freeze([]);
 const EMPTY_LOCALE_SNAPSHOT: Readonly<Record<string, string>> = Object.freeze({});
 const EMPTY_DIAGNOSTIC_SNAPSHOT: readonly PluginGenerationDiagnostic[] = Object.freeze([]);
 
@@ -664,10 +567,6 @@ export class PluginHost {
   private readonly reportedActivations = new Map<string, number>();
   private readonly activeGenerations = new Map<string, GenerationState>();
   private readonly pendingActivations = new Map<string, PendingActivation>();
-  private readonly slotSnapshots = new Map<PluginSlotId, readonly RegisteredPluginSlotContribution[]>();
-  private readonly slotListeners = new Map<PluginSlotId, Set<() => void>>();
-  private readonly surfaceSnapshots = new Map<PluginSurfaceId, readonly RegisteredPluginSurfaceContribution[]>();
-  private readonly surfaceListeners = new Map<PluginSurfaceId, Set<() => void>>();
   private readonly listeners = new Set<() => void>();
   private readonly localeSnapshots = new Map<string, Readonly<Record<string, string>>>();
   private readonly diagnostics = new Map<string, readonly PluginGenerationDiagnostic[]>();
@@ -681,7 +580,6 @@ export class PluginHost {
   private nextConversationCardSequence = 1;
   private viewSnapshot: readonly RegisteredViewType[] = EMPTY_VIEW_SNAPSHOT;
   private viewPlacementSnapshot: readonly RegisteredViewPlacement[] = EMPTY_VIEW_PLACEMENT_SNAPSHOT;
-  private inspectorSectionSnapshot: readonly RegisteredInspectorSection[] = EMPTY_INSPECTOR_SECTION_SNAPSHOT;
   private navigationSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
   private workspaceToolSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
   private settingsPageSnapshot: readonly RegisteredPluginViewEntry[] = EMPTY_VIEW_ENTRY_SNAPSHOT;
@@ -693,7 +591,6 @@ export class PluginHost {
   private composerInlineCompletionProviderSnapshot: readonly RegisteredComposerInlineCompletionProvider[] = EMPTY_COMPOSER_INLINE_COMPLETION_SNAPSHOT;
   private readonly composerInlineCompletionProviderListeners = new Set<() => void>();
   private presenterSnapshot: readonly RegisteredPresenter[] = EMPTY_PRESENTER_SNAPSHOT;
-  private toolActivityPresenterSnapshot: readonly RegisteredToolActivityPresenter[] = EMPTY_TOOL_ACTIVITY_PRESENTER_SNAPSHOT;
 
   constructor(options: PluginHostOptions) {
     this.activationTimeoutMs = options.activationTimeoutMs ?? ACTIVATION_TIMEOUT_MS;
@@ -745,7 +642,6 @@ export class PluginHost {
       this.assertDeclaredContributionsRegistered(state);
       this.assertViewPlacementTargets(state);
       this.assertDeclaredViewEntryTargets(state);
-      this.assertToolActivityPresenterOwnership(state);
       this.assertUIComposition(state);
     } catch (error: unknown) {
       state.acceptingRegistrations = false;
@@ -881,10 +777,14 @@ export class PluginHost {
     const generations = [...this.activeGenerations.values()].filter(state => state.pluginId !== staging.pluginId);
     generations.push(staging);
     for (const state of generations) for (const slot of state.uiSlots) {
-      if (slot.removed || slot.definition.cardinality !== "one" || slot.definition.service) continue;
+      if (slot.removed) continue;
       const contributions = generations.flatMap(candidate => candidate.uiContributions)
         .filter(item => !item.removed && item.definition.target === slot.definition.name);
-      if (contributions.length > 1) throw new Error(`UI slot conflict: ${slot.definition.name}`);
+      if (slot.definition.service) {
+        if (contributions.some(item => item.definition.mode === "wrap")) throw new Error(`Selected UI surfaces cannot be wrapped: ${slot.definition.name}`);
+      } else if (slot.definition.cardinality === "one" && contributions.filter(item => item.definition.mode !== "wrap").length > 1) {
+        throw new Error(`UI slot conflict: ${slot.definition.name}`);
+      }
     }
   }
 
@@ -976,38 +876,6 @@ export class PluginHost {
     });
   }
 
-  getSlotSnapshot(slotId: PluginSlotId): readonly RegisteredPluginSlotContribution[] {
-    return this.slotSnapshots.get(slotId) ?? EMPTY_SLOT_SNAPSHOT;
-  }
-
-  subscribeSlot(slotId: PluginSlotId, listener: () => void): () => void {
-    let listeners = this.slotListeners.get(slotId);
-    if (!listeners) {
-      listeners = new Set();
-      this.slotListeners.set(slotId, listeners);
-    }
-    listeners.add(listener);
-    return () => {
-      listeners?.delete(listener);
-    };
-  }
-
-  getSurfaceSnapshot(surfaceId: PluginSurfaceId): readonly RegisteredPluginSurfaceContribution[] {
-    return this.surfaceSnapshots.get(surfaceId) ?? EMPTY_SURFACE_SNAPSHOT;
-  }
-
-  subscribeSurface(surfaceId: PluginSurfaceId, listener: () => void): () => void {
-    let listeners = this.surfaceListeners.get(surfaceId);
-    if (!listeners) {
-      listeners = new Set();
-      this.surfaceListeners.set(surfaceId, listeners);
-    }
-    listeners.add(listener);
-    return () => {
-      listeners?.delete(listener);
-    };
-  }
-
   getCommands(): readonly RegisteredPluginCommand[] {
     return this.commandSnapshot;
   }
@@ -1035,10 +903,6 @@ export class PluginHost {
 
   getViewPlacements(): readonly RegisteredViewPlacement[] {
     return this.viewPlacementSnapshot;
-  }
-
-  getInspectorSections(): readonly RegisteredInspectorSection[] {
-    return this.inspectorSectionSnapshot;
   }
 
   getNavigationEntries(): readonly RegisteredPluginViewEntry[] {
@@ -1087,14 +951,6 @@ export class PluginHost {
   subscribeComposerInlineCompletionProviders(listener: () => void): () => void {
     this.composerInlineCompletionProviderListeners.add(listener);
     return () => this.composerInlineCompletionProviderListeners.delete(listener);
-  }
-
-  getToolActivityPresenters(): readonly RegisteredToolActivityPresenter[] {
-    return this.toolActivityPresenterSnapshot;
-  }
-
-  getToolActivityPresenter(key: string): RegisteredToolActivityPresenter | undefined {
-    return this.getToolActivityPresenters().find((presenter) => presenter.key === key);
   }
 
   getPresenters(target: PresentationTarget, key?: string): readonly RegisteredPresenter[] {
@@ -1149,26 +1005,6 @@ export class PluginHost {
     this.setConflictPreferences({ ...this.conflictPreferences, [key]: pluginId });
   }
 
-  recordRenderFailure(
-    contribution: RegisteredPluginSlotContribution | RegisteredPluginSurfaceContribution,
-    location: { slotId: PluginSlotId } | { surfaceId: PluginSurfaceId },
-    error: unknown,
-  ): void {
-    const current = "slotId" in location
-      ? this.getSlotSnapshot(location.slotId) : this.getSurfaceSnapshot(location.surfaceId);
-    if (!current.some((record) => record === contribution)) return;
-    const kind = "slotId" in location ? "slot" : "surface";
-    this.addDiagnostic({
-      pluginId: contribution.pluginId,
-      generation: contribution.generation,
-      kind: "render",
-      message: `Plugin ${kind} contribution ${contribution.id} failed to render: ${errorMessage(error)}`,
-      cause: error,
-      ...location,
-      contributionId: contribution.id,
-    });
-  }
-
   recordPresenterFailure(contribution: RegisteredPresenter, error: unknown): void {
     if (!this.presenterSnapshot.includes(contribution)) return;
     this.addDiagnostic({
@@ -1190,18 +1026,6 @@ export class PluginHost {
       message: `Plugin conversation card ${card.id} failed to render: ${errorMessage(error)}`,
       cause: error,
       contributionId: card.id,
-    });
-  }
-
-  recordInspectorFailure(contribution: RegisteredInspectorSection, error: unknown): void {
-    if (!this.inspectorSectionSnapshot.includes(contribution)) return;
-    this.addDiagnostic({
-      pluginId: contribution.pluginId,
-      generation: contribution.generation,
-      kind: "render",
-      message: `Plugin Inspector section ${contribution.id} failed to render: ${errorMessage(error)}`,
-      cause: error,
-      contributionId: contribution.id,
     });
   }
 
@@ -1312,6 +1136,7 @@ export class PluginHost {
         const id = this.claimRegistrationId(state, "ui-contribution", definition.id);
         const target = requireNonEmpty(definition.target, "UI slot target");
         if (!target.includes("/")) throw new Error("UI slot target must include its owner");
+        if (definition.mode !== undefined && definition.mode !== "content" && definition.mode !== "wrap") throw new Error("Invalid UI contribution mode");
         const record: UIContributionRecord = {
           pluginId: state.pluginId, generation: state.generation, id, order: normalizeOrder(definition.order), removed: false,
           definition: Object.freeze({ ...definition, id, target, pluginId: state.pluginId, generation: state.generation, application }),
@@ -1369,44 +1194,6 @@ export class PluginHost {
         const disposable = createDisposable(() => state.hostEventHandlers.delete(handler));
         state.teardown.push(disposable);
         return disposable;
-      },
-      registerSlot: (slotId: PluginSlotId, contribution: PluginSlotRegistration) => {
-        this.assertAccepting(state);
-        const id = this.claimRegistrationId(state, `slot:${slotId}`, contribution.id);
-        const order = normalizeOrder(contribution.order);
-        this.assertDeclaredContribution(state, "slot", { id, target: slotId, order });
-        const record: SlotRecord = {
-          pluginId: state.pluginId,
-          generation: state.generation,
-          id,
-          order,
-          slotId,
-          title: declaredContributionTitle(state, "slot", id),
-          render: contribution.render,
-          removed: false,
-        };
-        state.slots.push(record);
-        return this.ownRecord(state, record);
-      },
-      registerSurface: (surfaceId: PluginSurfaceId, contribution: PluginSurfaceRegistration) => {
-        this.assertAccepting(state);
-        const id = this.claimRegistrationId(state, `surface:${surfaceId}`, contribution.id);
-        const order = normalizeOrder(contribution.order);
-        const mode = normalizeSurfaceMode(contribution.mode);
-        this.assertDeclaredContribution(state, "surface", { id, target: surfaceId, mode, order });
-        const record: SurfaceRecord = {
-          pluginId: state.pluginId,
-          generation: state.generation,
-          id,
-          order,
-          surfaceId,
-          mode,
-          title: declaredContributionTitle(state, "surface", id),
-          render: contribution.render,
-          removed: false,
-        };
-        state.surfaces.push(record);
-        return this.ownRecord(state, record);
       },
       registerCommand: (command: PluginCommandRegistration) => {
         this.assertAccepting(state);
@@ -1648,23 +1435,6 @@ export class PluginHost {
         });
       },
 
-      registerInspectorSection: (definition: InspectorSectionDefinition) => {
-        this.assertAccepting(state);
-        const id = this.claimRegistrationId(state, "inspector-section", definition.id);
-        const record: InspectorSectionRecord = {
-          pluginId: state.pluginId,
-          generation: state.generation,
-          id,
-          order: normalizeOrder(definition.priority),
-          removed: false,
-          title: requireNonEmpty(definition.title, "Inspector section title"),
-          when: definition.when,
-          render: definition.render,
-        };
-        state.inspectorSections.push(record);
-        return this.ownRecord(state, record);
-      },
-
       registerRenderer: (definition: RendererDefinition) => {
         this.assertAccepting(state);
         const id = this.claimRegistrationId(state, "renderer", definition.id);
@@ -1719,39 +1489,16 @@ export class PluginHost {
         if (typeof definition.render !== "function") throw new Error("Plugin presenter render must be a function");
         const mode = normalizePresentationMode(definition.mode);
         const order = normalizeOrder(definition.priority);
-        this.assertDeclaredContribution(state, "presenter", { id, target, mode, priority: order });
+        this.assertDeclaredPresenter(state, { id, target, mode, priority: order });
         const record: PresenterRecord = {
           pluginId: state.pluginId, generation: state.generation, id, target, key,
-          mode, order, title: declaredContributionTitle(state, "presenter", id),
+          mode, order, title: state.declaredContributions?.presenters?.find(declaration => declaration.id === id)?.title,
           removed: false, render: definition.render,
         };
-        state.toolActivityPresenters.push(record);
+        state.presenters.push(record);
         return this.ownRecord(state, record);
       },
 
-      registerToolActivityPresenter: (definition: ToolActivityPresenterDefinition) => {
-        this.assertAccepting(state);
-        const id = this.claimExactRegistrationId(state, "tool activity presenter", definition.id);
-        const key = requireExactNonEmpty(definition.key, "tool activity presenter key");
-        if (typeof definition.render !== "function") {
-          throw new Error("Plugin tool activity presenter render must be a function");
-        }
-        if (state.toolActivityPresenters.some((record) => !record.removed && record.key === key)) {
-          throw new Error(`Duplicate plugin tool activity presenter key: ${key}`);
-        }
-        this.assertToolActivityPresenterKeyAvailable(state.pluginId, key);
-        const record: PresenterRecord = {
-          pluginId: state.pluginId, generation: state.generation, id, key,
-          target: "conversation.tool-activity", mode: "replace",
-          order: 0, removed: false,
-          render: (props) => this.react.createElement(definition.render, {
-            activity: props.snapshot as never, host: props.host, fallback: props.fallback,
-          }),
-          compatibilityRender: definition.render,
-        };
-        state.toolActivityPresenters.push(record);
-        return this.ownRecord(state, record);
-      },
     });
   }
 
@@ -1863,71 +1610,26 @@ export class PluginHost {
     return id;
   }
 
-  private assertToolActivityPresenterKeyAvailable(pluginId: string, key: string): void {
-    for (const state of this.activeGenerations.values()) {
-      if (state.pluginId !== pluginId && state.toolActivityPresenters.some((record) =>
-        !record.removed && record.compatibilityRender !== undefined && record.key === key)) {
-        throw new Error(`Tool activity presenter key is already owned by another plugin: ${key}`);
-      }
-    }
-    for (const pending of this.pendingActivations.values()) {
-      const state = pending.state;
-      if (!state.disposed && state.pluginId !== pluginId
-        && state.toolActivityPresenters.some((record) =>
-          !record.removed && record.compatibilityRender !== undefined && record.key === key)) {
-        throw new Error(`Tool activity presenter key is already owned by another plugin: ${key}`);
-      }
-    }
-  }
-
-  private assertToolActivityPresenterOwnership(state: GenerationState): void {
-    for (const presenter of state.toolActivityPresenters) {
-      if (!presenter.removed && presenter.compatibilityRender !== undefined && presenter.key !== undefined) {
-        this.assertToolActivityPresenterKeyAvailable(state.pluginId, presenter.key);
-      }
-    }
-  }
-
-  private assertDeclaredContribution(
+  private assertDeclaredPresenter(
     state: GenerationState,
-    kind: "slot" | "surface" | "presenter",
-    actual: Readonly<{ id: string; target: string; mode?: string; order?: number; priority?: number }>,
+    actual: Readonly<{ id: string; target: string; mode: string; priority: number }>,
   ): void {
-    const declarations = state.declaredContributions;
-    if (!declarations) return;
-    const declared = kind === "slot" ? declarations.slots
-      : kind === "surface" ? declarations.surfaces
-      : declarations.presenters;
+    const declared = state.declaredContributions?.presenters;
     if (declared === undefined) return;
-    const match = declared.find((candidate) => candidate.id === actual.id);
+    const match = declared.find(candidate => candidate.id === actual.id);
     if (!match) {
-      throw new Error(`Plugin ${kind} registration ${actual.id} is not declared in the manifest`);
+      throw new Error(`Plugin presenter registration ${actual.id} is not declared in the manifest`);
     }
-    const declaredOrder = "priority" in match
-      ? normalizeOrder(match.priority)
-      : normalizeOrder("order" in match ? match.order : undefined);
-    const actualOrder = actual.priority ?? actual.order ?? 0;
-    const declaredMode = "mode" in match ? match.mode : undefined;
-    if (match.target !== actual.target || declaredMode !== actual.mode || declaredOrder !== actualOrder) {
-      throw new Error(`Plugin ${kind} registration ${actual.id} does not match its manifest declaration`);
+    if (match.target !== actual.target || match.mode !== actual.mode || normalizeOrder(match.priority) !== actual.priority) {
+      throw new Error(`Plugin presenter registration ${actual.id} does not match its manifest declaration`);
     }
   }
 
   private assertDeclaredContributionsRegistered(state: GenerationState): void {
     const declarations = state.declaredContributions;
     if (!declarations) return;
-    for (const declaration of declarations.slots ?? []) {
-      if (!state.slots.some((record) => !record.removed && record.id === declaration.id)) {
-        throw new Error(`Manifest slot contribution ${declaration.id} was not registered during activation`);
-      }
-    }
-    for (const declaration of declarations.surfaces ?? []) {
-      if (!state.surfaces.some((record) => !record.removed && record.id === declaration.id)) {
-        throw new Error(`Manifest surface contribution ${declaration.id} was not registered during activation`);
-      }
-    }
     for (const declaration of declarations.presenters ?? []) {
-      if (!state.toolActivityPresenters.some((record) => !record.removed && record.id === declaration.id)) {
+      if (!state.presenters.some((record) => !record.removed && record.id === declaration.id)) {
         throw new Error(`Manifest presenter contribution ${declaration.id} was not registered during activation`);
       }
     }
@@ -2064,53 +1766,35 @@ export class PluginHost {
       changed = true;
     }
     const conflicts: PluginContributionConflict[] = [];
-    const slotRecords = new Map<PluginSlotId, SlotRecord[]>();
-    const surfaceRecords = new Map<PluginSurfaceId, SurfaceRecord[]>();
     const commands: CommandRecord[] = [];
     const locales: LocaleRecord[] = [];
     const styles: StyleRecord[] = [];
     const views: ViewTypeRecord[] = [];
     const viewPlacements: ViewPlacementRecord[] = [];
-    const inspectorSections: InspectorSectionRecord[] = [];
     const renderers: RendererRecord[] = [];
     const themeTokens: ThemeTokenRecord[] = [];
     const cssSnippets: CSSSnippetRecord[] = [];
     const statusItems: StatusItemRecord[] = [];
     const composerStatusSources: ComposerStatusSourceRecord[] = [];
     const composerInlineCompletionProviders: ComposerInlineCompletionProviderRecord[] = [];
-    const toolActivityPresenters: PresenterRecord[] = [];
+    const presenters: PresenterRecord[] = [];
     const navigationEntries: RegisteredPluginViewEntry[] = [];
     const workspaceTools: RegisteredPluginViewEntry[] = [];
     const settingsPages: RegisteredPluginViewEntry[] = [];
 
     for (const state of this.activeGenerations.values()) {
-      for (const record of state.slots) {
-        if (!record.removed) {
-          const records = slotRecords.get(record.slotId) ?? [];
-          records.push(record);
-          slotRecords.set(record.slotId, records);
-        }
-      }
-      for (const record of state.surfaces) {
-        if (!record.removed) {
-          const records = surfaceRecords.get(record.surfaceId) ?? [];
-          records.push(record);
-          surfaceRecords.set(record.surfaceId, records);
-        }
-      }
       commands.push(...state.commands.filter((record) => !record.removed));
       locales.push(...state.locales.filter((record) => !record.removed));
       styles.push(...state.styles.filter((record) => !record.removed));
       views.push(...state.views.filter((record) => !record.removed));
       viewPlacements.push(...state.viewPlacements.filter((record) => !record.removed));
-      inspectorSections.push(...state.inspectorSections.filter((record) => !record.removed));
       renderers.push(...state.renderers.filter((record) => !record.removed));
       themeTokens.push(...state.themeTokens.filter((record) => !record.removed));
       cssSnippets.push(...state.cssSnippets.filter((record) => !record.removed));
       statusItems.push(...state.statusItems.filter((record) => !record.removed));
       composerStatusSources.push(...state.composerStatusSources.filter((record) => !record.removed));
       composerInlineCompletionProviders.push(...state.composerInlineCompletionProviders.filter((record) => !record.removed));
-      toolActivityPresenters.push(...state.toolActivityPresenters.filter((record) => !record.removed));
+      presenters.push(...state.presenters.filter((record) => !record.removed));
       const declaredEntry = (entry: PluginViewEntryDeclaration): RegisteredPluginViewEntry => Object.freeze({
         ...entry,
         pluginId: state.pluginId,
@@ -2119,40 +1803,6 @@ export class PluginHost {
       navigationEntries.push(...(state.declaredContributions?.navigation ?? []).map(declaredEntry));
       workspaceTools.push(...(state.declaredContributions?.workspace_tools ?? []).map(declaredEntry));
       settingsPages.push(...(state.declaredContributions?.settings_pages ?? []).map(declaredEntry));
-    }
-
-    for (const slotId of PLUGIN_SLOT_IDS) {
-      const next = Object.freeze((slotRecords.get(slotId) ?? [])
-        .sort(compareOrdered)
-        .map(toPublicSlotContribution));
-      const previous = this.slotSnapshots.get(slotId) ?? EMPTY_SLOT_SNAPSHOT;
-      if (replaceSnapshots || !sameContributions(previous, next)) {
-        this.slotSnapshots.set(slotId, next);
-        changed = true;
-        for (const listener of this.slotListeners.get(slotId) ?? []) {
-          listener();
-        }
-      }
-    }
-
-    for (const surfaceId of PLUGIN_SURFACE_IDS) {
-      const resolved = resolveReplaceConflict(
-        "surface",
-        surfaceId,
-        undefined,
-        (surfaceRecords.get(surfaceId) ?? []).sort(compareOrdered),
-        this.conflictPreferences,
-      );
-      if (resolved.conflict) conflicts.push(resolved.conflict);
-      const next = Object.freeze(resolved.records.map(toPublicSurfaceContribution));
-      const previous = this.surfaceSnapshots.get(surfaceId) ?? EMPTY_SURFACE_SNAPSHOT;
-      if (replaceSnapshots || !sameContributions(previous, next)) {
-        this.surfaceSnapshots.set(surfaceId, next);
-        changed = true;
-        for (const listener of this.surfaceListeners.get(surfaceId) ?? []) {
-          listener();
-        }
-      }
     }
 
     const nextCommands = Object.freeze(commands.sort(compareOrdered).map(toPublicCommand));
@@ -2172,14 +1822,6 @@ export class PluginHost {
     );
     if (replaceSnapshots || !sameContributions(this.viewPlacementSnapshot, nextViewPlacements)) {
       this.viewPlacementSnapshot = nextViewPlacements;
-      changed = true;
-    }
-
-    const nextInspectorSections = Object.freeze(
-      inspectorSections.sort(compareOrdered).map(toPublicInspectorSection),
-    );
-    if (replaceSnapshots || !sameContributions(this.inspectorSectionSnapshot, nextInspectorSections)) {
-      this.inspectorSectionSnapshot = nextInspectorSections;
       changed = true;
     }
 
@@ -2248,7 +1890,7 @@ export class PluginHost {
     }
 
     const resolvedPresenters = resolvePresenterConflicts(
-      toolActivityPresenters.sort(compareOrdered),
+      presenters.sort(compareOrdered),
       this.conflictPreferences,
     );
     conflicts.push(...resolvedPresenters.conflicts);
@@ -2256,20 +1898,6 @@ export class PluginHost {
     if (replaceSnapshots || !sameContributions(this.presenterSnapshot, nextPresenters)) {
       this.presenterSnapshot = nextPresenters;
       this.presenterQuerySnapshots.clear();
-      changed = true;
-    }
-
-    const nextToolActivityPresenters = Object.freeze(toolActivityPresenters
-      .filter((record) => record.compatibilityRender !== undefined && record.key !== undefined)
-      .map((record) => Object.freeze({
-        pluginId: record.pluginId,
-        generation: record.generation,
-        id: record.id,
-        key: record.key!,
-        render: record.compatibilityRender!,
-      })));
-    if (replaceSnapshots || !sameContributions(this.toolActivityPresenterSnapshot, nextToolActivityPresenters)) {
-      this.toolActivityPresenterSnapshot = nextToolActivityPresenters;
       changed = true;
     }
 
@@ -2435,22 +2063,19 @@ function createGenerationState(
     shells: [],
     uiSlots: [],
     uiContributions: [],
-    slots: [],
-    surfaces: [],
     commands: [],
     conversationCards: [],
     styles: [],
     locales: [],
     views: [],
     viewPlacements: [],
-    inspectorSections: [],
     renderers: [],
     themeTokens: [],
     cssSnippets: [],
     statusItems: [],
     composerStatusSources: [],
     composerInlineCompletionProviders: [],
-    toolActivityPresenters: [],
+    presenters: [],
     registrationKeys: new Set(),
     hostEventHandlers: new Set(),
     teardown: [],
@@ -2460,28 +2085,6 @@ function createGenerationState(
     active: false,
     disposed: false,
   };
-}
-
-function toPublicSlotContribution(record: SlotRecord): RegisteredPluginSlotContribution {
-  return Object.freeze({
-    pluginId: record.pluginId,
-    generation: record.generation,
-    id: record.id,
-    order: record.order,
-    title: record.title,
-    render: record.render,
-  });
-}
-
-function toPublicSurfaceContribution(record: SurfaceRecord): RegisteredPluginSurfaceContribution {
-  return Object.freeze({
-    pluginId: record.pluginId,
-    generation: record.generation,
-    id: record.id,
-    order: record.order,
-    mode: record.mode,
-    render: record.render,
-  });
 }
 
 function toPublicCommand(record: CommandRecord): RegisteredPluginCommand {
@@ -2518,19 +2121,6 @@ function toPublicViewPlacement(record: ViewPlacementRecord): RegisteredViewPlace
     order: record.order,
     view: record.view,
     region: record.region,
-  });
-}
-
-function toPublicInspectorSection(record: InspectorSectionRecord): RegisteredInspectorSection {
-  return Object.freeze({
-    pluginId: record.pluginId,
-    generation: record.generation,
-    id: record.id,
-    title: record.title,
-    priority: record.order,
-    order: record.order,
-    when: record.when,
-    render: record.render,
   });
 }
 
@@ -2595,31 +2185,16 @@ function toPublicPresenter(record: PresenterRecord): RegisteredPresenter {
   });
 }
 
-function declaredContributionTitle(
-  state: GenerationState,
-  kind: "slot" | "surface" | "presenter",
-  id: string,
-): string | undefined {
-  const declarations = kind === "slot"
-    ? state.declaredContributions?.slots
-    : kind === "surface"
-      ? state.declaredContributions?.surfaces
-      : state.declaredContributions?.presenters;
-  return declarations?.find((declaration) => declaration.id === id)?.title;
-}
-
 function conflictPreferenceKey(
-  kind: "surface" | "presenter",
+  kind: "presenter",
   target: string,
   presentationKey?: string,
 ): string {
-  return kind === "surface"
-    ? `surface:${target}`
-    : `presenter:${target}:${presentationKey ?? ""}`;
+  return `${kind}:${target}:${presentationKey ?? ""}`;
 }
 
 function resolveReplaceConflict<T extends OrderedRecord & { mode: "replace" | "wrap"; title?: string }>(
-  kind: "surface" | "presenter",
+  kind: "presenter",
   target: string,
   presentationKey: string | undefined,
   records: T[],
@@ -2715,13 +2290,6 @@ function normalizeViewPlacementRegion(region: unknown): ViewPlacementContributio
     throw new Error(`Unsupported plugin View placement region: ${String(region)}`);
   }
   return region as ViewPlacementContribution["region"];
-}
-
-function normalizeSurfaceMode(mode: PluginSurfaceMode): PluginSurfaceMode {
-  if (mode !== "replace" && mode !== "wrap") {
-    throw new Error(`Unsupported plugin surface mode: ${String(mode)}`);
-  }
-  return mode;
 }
 
 function normalizePresentationMode(mode: PresentationMode | undefined): PresentationMode {

@@ -57,12 +57,12 @@ describe("ToolActivityPresenter", () => {
     expect(Object.isFrozen((snapshot.structuredResult?.content?.[0].resource as { nested: number[] }).nested)).toBe(true);
   });
 
-  it("resolves tool presentation through public identity-only composition", () => {
+  it("supplies the public tool snapshot with its composition identity", () => {
     container = document.createElement("div"); root = createRoot(container);
     const Slot = vi.fn(({ context }: { context?: Readonly<Record<string, unknown>> }) => <section data-public>{String(context?.itemId)}</section>);
     act(() => root!.render(<ConversationControlsTestProvider composition={{ Slot }}><ConversationTurnIdentityProvider threadId="thread" turnId="turn"><ToolActivityPresenter item={toolItem()} fallback={<span>default</span>} /></ConversationTurnIdentityProvider></ConversationControlsTestProvider>));
     expect(container.querySelector("[data-public]")?.textContent).toBe("call");
-    expect(Slot.mock.calls[0][0]).toMatchObject({ name: "wuu.default-conversation/conversation.tool-activity", context: { threadId: "thread", turnId: "turn", itemId: "call" } });
+    expect(Slot.mock.calls[0][0]).toMatchObject({ name: "wuu.default-conversation/conversation.tool-activity", context: { threadId: "thread", turnId: "turn", itemId: "call", snapshot: toToolActivitySnapshot(toolItem()) } });
   });
 });
 

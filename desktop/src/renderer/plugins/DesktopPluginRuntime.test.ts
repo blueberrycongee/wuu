@@ -226,6 +226,43 @@ describe("DesktopPluginRuntime", () => {
     }
   });
 
+  // Shutdown must fence late inventory updates, cancel staged activation, wait
+  // for mounted consumers, and flush cleanup reports while the backend is alive.
+  it("drains renderer generations before shutdown resolves", async () => {
+    const events: string[] = [];
+    let started!: () => void;
+    const pendingStarted = new Promise<void>(resolve => { started = resolve; });
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React, reportActivation: async report => { events.push(`report:${report.id}:${report.phase}`); } });
+    const runtime = new DesktopPluginRuntime(host, async id => ({ async activate(api: PluginGenerationApi) {
+      api.registerCleanup(() => events.push(`cleanup:${id}`));
+      if (id === "user:pending") {
+        started();
+        await new Promise<void>(resolve => api.signal.addEventListener("abort", () => resolve(), { once: true }));
+      }
+    } }));
+    const provider = { ...dependencyPlugin("provider"), graph_generation: "graph" };
+    const consumer = { ...dependencyPlugin("consumer", ["provider"]), graph_generation: "graph" };
+    expect(await runtime.sync([consumer, provider])).toEqual([]);
+    const releaseView = host.retainGeneration(consumer.id, consumer.fingerprint!);
+    const staging = runtime.sync([consumer, provider, { ...dependencyPlugin("pending", ["provider"]), graph_generation: "graph" }]);
+    await pendingStarted;
+    const stopping = runtime.shutdown();
+    let finished = false;
+    void stopping.then(() => { finished = true; });
+    await staging;
+    expect(finished).toBe(false);
+    expect(events).not.toContain("cleanup:user:provider");
+    releaseView();
+    await stopping;
+    expect(events.indexOf("cleanup:user:consumer")).toBeLessThan(events.indexOf("cleanup:user:provider"));
+    expect(events).toContain("cleanup:user:pending");
+    expect(events).toContain("report:user:provider:cleanup");
+    expect(await runtime.sync([consumer, provider])).toEqual([]);
+    expect(host.isGenerationActive(provider.id, provider.fingerprint!)).toBe(false);
+    await runtime.shutdown();
+  });
+
   it("orders dependency activation, reloads unchanged consumers, and cleans up in reverse", async () => {
     const events: string[] = [];
     installDesktopModuleLoader(vi.fn(async ({ id, fingerprint }) => ({
@@ -651,8 +688,8 @@ describe("DesktopPluginRuntime", () => {
     const runtime = new DesktopPluginRuntime(
       new PluginHost({ react: React }),
       async () => ({
-        activate: (api: { registerSlot(target: string, contribution: { id: string; render(): null }): unknown }) => {
-          api.registerSlot("composer.above", { id: "undeclared", render: () => null });
+        activate: (api: { registerPresenter(contribution: { id: string; target: string; mode: string; render(): null }): unknown }) => {
+          api.registerPresenter({ target: "conversation.item", mode: "wrap", id: "undeclared", render: () => null });
         },
       }),
     );

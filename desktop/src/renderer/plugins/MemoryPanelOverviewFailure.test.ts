@@ -22,8 +22,6 @@ interface FirstPartyManifest {
   id: string;
   desktop: { entry: string };
   contributes?: {
-    slots?: PluginContributionDeclarations["slots"];
-    surfaces?: PluginContributionDeclarations["surfaces"];
     presenters?: PluginContributionDeclarations["presenters"];
     navigation?: PluginContributionDeclarations["navigation"];
     workspaceTools?: PluginContributionDeclarations["workspace_tools"];
@@ -34,8 +32,6 @@ interface FirstPartyManifest {
 function contributionDeclarations(manifest: FirstPartyManifest): PluginContributionDeclarations {
   const contributions = manifest.contributes ?? {};
   return {
-    slots: contributions.slots ?? [],
-    surfaces: contributions.surfaces ?? [],
     presenters: contributions.presenters ?? [],
     navigation: contributions.navigation ?? [],
     workspace_tools: contributions.workspaceTools ?? [],

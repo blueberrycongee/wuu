@@ -70,7 +70,6 @@
       }
     },
     "presenters": [
-      { "id": "assistant-message", "target": "conversation.item", "mode": "wrap" },
       { "id": "composer", "target": "conversation.composer", "mode": "wrap" },
       { "id": "primary-navigation", "target": "navigation.primary", "mode": "wrap" },
       { "id": "markdown-preview", "target": "content.preview", "mode": "wrap" },

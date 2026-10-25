@@ -48,7 +48,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
   ),
 }));
 
-import { createDefaultApplicationTestView } from "./test-support/DefaultApplication";
+import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { initialState } from "./AppState";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
 import { getDesktopApplication } from "./plugins/ApplicationController";
@@ -296,12 +296,11 @@ describe("对话 (scratch) sidebar thread selection", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView("thread-scratch-a"));
     });
     await flushAsync();
 
-    // Boot auto-resumes the most recently updated thread (A, cwd A) —
-    // confirms the fixture loaded before we exercise the click path.
+    // Explicitly open A before exercising cross-workspace selection.
     expect(resumeThread).toHaveBeenCalledWith("thread-scratch-a");
     const rowA = threadRowButton("scratch conversation A");
     expect(rowA).toBeDefined();
@@ -354,11 +353,11 @@ describe("对话 (scratch) sidebar thread selection", () => {
 
     await act(async () => {
       root = createRoot(container);
-      root.render(await createDefaultApplicationTestView());
+      root.render(await createConversationTestView("thread-scratch-a"));
     });
     await flushAsync();
 
-    // Boot auto-resumes the only unpinned thread (A, cwd A).
+    // A is the explicitly selected starting conversation.
     expect(resumeThread).toHaveBeenCalledWith(threadA.id);
 
     const pinnedSection = container.querySelector(

@@ -1,4 +1,3 @@
-import type { ComponentType } from "react";
 import type { ComposerInlineCompletionProviderRegistration, ComposerInlineCompletionRefresh, ComposerStatusItem } from "./index.js";
 import type { ApplicationSettingsProviderSummaryV1, SettingsReadonly } from "./application-settings.js";
 import type { CatalogExtensionV1 } from "./ui-catalog.js";
@@ -53,21 +52,6 @@ export interface ApplicationComposerTelemetryV1 {
   readonly sampledAt?: number; readonly inputTokens: number; readonly outputTokens: number;
   readonly contextUsage?: ApplicationComposerContextUsageV1;
 }
-export interface ApplicationComposerContributionContextV1 {
-  readonly ownerTabId: string;
-  readonly variant: "hero" | "dock" | "document";
-  readonly mainConversation: boolean;
-  readonly running: boolean;
-  readonly readOnly: boolean;
-  readonly hasDraft: boolean;
-  readonly attachmentCount: number;
-}
-export interface ApplicationComposerContributionV1 {
-  readonly key: string;
-  readonly title?: string;
-  /** The host retains the provider's render/error/translation lifecycle. */
-  readonly View: ComponentType<{ readonly context: ApplicationComposerContributionContextV1 }>;
-}
 export interface ApplicationComposerStatusItemV1 extends ComposerStatusItem { readonly key: string }
 export interface ApplicationComposerStatusSnapshotV1 {
   readonly items: readonly ApplicationComposerStatusItemV1[];
@@ -90,7 +74,6 @@ export interface ApplicationComposerPresentationV1 {
   executeCommand(input: { readonly ownerTabId: string; readonly pluginId: string; readonly id: string; readonly args: string }): Promise<void>;
   getComposerInlineCompletionProviders(): readonly ApplicationComposerInlineProviderV1[];
   subscribeComposerInlineCompletionProviders(listener: () => void): () => void;
-  getContributions(slot: "composer.above" | "composer.toolbar"): readonly ApplicationComposerContributionV1[];
   getTelemetry(turnId?: string): ApplicationComposerTelemetryV1;
   subscribeTelemetry(listener: () => void): () => void;
 }

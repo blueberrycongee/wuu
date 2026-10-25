@@ -8,9 +8,8 @@ import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { ThreadItemView } from "./ThreadItemView";
 import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
-import { ConversationControlsTestProvider } from "./ConversationControlsTestProvider";
+import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
-import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
@@ -21,6 +20,11 @@ beforeEach(() => {
 });
 
 let composition: UICompositionV1 = { Slot: ({ fallback }) => fallback };
+let application: ReturnType<typeof createConversationTestApplication>;
+
+beforeEach(() => {
+  application = createConversationTestApplication();
+});
 let container: HTMLDivElement | undefined;
 let root: Root | undefined;
 const rangeBoundsDescriptor = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
@@ -73,7 +77,7 @@ function render({
   }
   act(() => {
     root!.render(
-      <ConversationControlsTestProvider composition={composition}>{<WuuUIRoot>
+      <ConversationControlsTestProvider composition={composition} service={application}>{<WuuUIRoot>
         <ImagePreviewProvider>
           <ArtifactThreadContext.Provider value={owningThreadID}>
             <ThreadItemView
@@ -121,7 +125,22 @@ afterEach(() => {
 });
 
 describe("ThreadItemView", () => {
-  it.each(["user_message", "agent_message"] as const)("mounts public contributed actions for %s with the owning address only", async (type) => {
+  it("supplies the rendered message and live text directly to public contributions", () => {
+    const snapshots: unknown[] = [];
+    composition = { Slot: ({ name, context, fallback }) => {
+      if (name.endsWith("/conversation.message")) snapshots.push(context?.snapshot);
+      return fallback;
+    } };
+    const item = { ...makeFinalAnswer("in_progress"), source_id: "private-source" };
+    render({ item, owningThreadID: "side-thread", turnStatus: "in_progress", streaming: true });
+    expect(snapshots.at(-1)).toMatchObject({ id: item.id, kind: "assistant-message", text: item.text, status: "streaming" });
+    expect(Object.isFrozen(snapshots.at(-1))).toBe(true);
+    expect(JSON.stringify(snapshots.at(-1))).not.toContain("private-source");
+    act(() => { streamTextStore.set(streamTextKey("turn-1", item.id, "text"), "Live answer"); });
+    render({ item: { ...item }, owningThreadID: "side-thread", turnStatus: "in_progress", streaming: true });
+    expect(snapshots.at(-1)).toMatchObject({ text: "Live answer" });
+  });
+  it.each(["user_message", "agent_message"] as const)("mounts public contributed actions for %s with the rendered item and owning address", async (type) => {
     const execute = vi.fn(); let enabled = true; let address: Readonly<Record<string, unknown>> | undefined;
     composition = { Slot: ({ name, context, fallback }) => name.endsWith("message.actions") && enabled
       ? <button aria-label="Inspect plugin message" onClick={() => { address = context; execute(); }}>Inspect</button> : fallback };
@@ -131,7 +150,7 @@ describe("ThreadItemView", () => {
     expect(action.closest(type === "user_message" ? ".user-message-actions" : ".agent-message-actions")).not.toBeNull();
     await act(async () => action.click());
     expect(execute).toHaveBeenCalledOnce();
-    expect(address).toEqual({ threadId: "public-thread", turnId: "turn-1", itemId: item.id });
+    expect(address).toMatchObject({ threadId: "public-thread", turnId: "turn-1", itemId: item.id, snapshot: { id: item.id, text: item.text } });
     enabled = false;
     render({ item: { ...item }, owningThreadID: "public-thread", turnStatus: "completed", streaming: false });
     expect(container!.querySelector('button[aria-label="Inspect plugin message"]')).toBeNull();
@@ -322,7 +341,7 @@ describe("ThreadItemView", () => {
     expect(container!.textContent).toContain(selection.comment);
     expect(container!.querySelector(".response-selection-source")).not.toBeNull();
     const submit = vi.fn();
-    act(() => root!.render(<ConversationControlsTestProvider composition={composition}>{<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />}</ConversationControlsTestProvider>));
+    act(() => root!.render(<ConversationControlsTestProvider composition={composition} service={application}>{<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />}</ConversationControlsTestProvider>));
     expect(container!.querySelector("textarea")!.value).toBe("  raw prompt  ");
     act(() => container!.querySelector<HTMLButtonElement>(".composer-send-button")!.click());
     expect(submit).toHaveBeenCalledWith("turn-1", item, message.text, [], [], message.contentParts);
@@ -336,7 +355,7 @@ describe("ThreadItemView", () => {
     } };
     render({ item: makeFinalAnswer("completed"), owningThreadID: "parent", turnStatus: "completed", streaming: false });
     expect(container!.querySelectorAll("[data-slot]")).toHaveLength(2);
-    expect(contexts[0]).toEqual({ threadId: "parent", turnId: "turn-1", itemId: "final-1" });
+    expect(contexts[0]).toEqual({ threadId: "parent", turnId: "turn-1", itemId: "final-1", snapshot: expect.objectContaining({ id: "final-1", kind: "assistant-message" }) });
     expect(Object.isFrozen(contexts[0])).toBe(true);
   });
 
@@ -351,7 +370,7 @@ describe("ThreadItemView", () => {
     let received: Readonly<Record<string, unknown>> | undefined;
     composition = { Slot: ({ name, context, fallback }) => { if (name.endsWith("/conversation.message")) { received = context; return null; } return fallback; } };
     render({ item: makeFinalAnswer("completed"), turnStatus: "completed", streaming: false });
-    expect(received).toEqual({ threadId: undefined, turnId: "turn-1", itemId: "final-1" });
+    expect(received).toEqual({ threadId: undefined, turnId: "turn-1", itemId: "final-1", snapshot: expect.objectContaining({ id: "final-1", kind: "assistant-message" }) });
   });
 
   it("shows short user messages in full without a collapse control", () => {
@@ -700,8 +719,7 @@ describe("ThreadItemView", () => {
   });
 
   it.each(["host", "plugin"])("expands and copies a %s session message body and opens its source without exposing internal input", async (origin) => {
-    const openInSplit = vi.fn();
-    setOpenThreadInSplitHandler(openInSplit);
+    const invoke = vi.spyOn(application, "invoke").mockResolvedValue(undefined);
     const copy = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: copy } });
     const body = "Coordination update.\n".repeat(100) + "End of update.";
@@ -727,11 +745,10 @@ describe("ThreadItemView", () => {
     await act(async () => actions[0].click());
     expect(copy).toHaveBeenCalledWith(body);
     act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
-    expect(openInSplit).toHaveBeenCalledWith("source-session");
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("thread.activate", { threadId: "source-session" });
     expect(onEditMessage).not.toHaveBeenCalled();
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");
-    setOpenThreadInSplitHandler(undefined);
   });
 
   it("shows the user message time before its copy action", () => {
@@ -751,9 +768,8 @@ describe("ThreadItemView", () => {
     expect(time?.nextElementSibling).toBe(copy);
   });
 
-  it("splits the conversation and opens the related session", () => {
-    const openInSplit = vi.fn();
-    setOpenThreadInSplitHandler(openInSplit);
+  it("navigates directly to the related session", () => {
+    const invoke = vi.spyOn(application, "invoke").mockResolvedValue(undefined);
     render({
       item: {
         id: "plugin-query-1",
@@ -777,9 +793,7 @@ describe("ThreadItemView", () => {
     expect(openRelated).toBeDefined();
 
     act(() => openRelated!.click());
-    expect(openInSplit).toHaveBeenCalledWith("20260817-171746-edd1069c0780f11a");
-
-    act(() => setOpenThreadInSplitHandler(undefined));
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("thread.activate", { threadId: "20260817-171746-edd1069c0780f11a" });
   });
 
 });

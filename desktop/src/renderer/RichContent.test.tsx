@@ -3,6 +3,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceFileReferenceResolveResult } from "../shared/protocol";
 import { ImagePreviewProvider } from "./ImagePreview";
+import { ArtifactsProvider } from "./ArtifactsContext";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
 import { MarkdownContent, RichContent } from "./RichContent";
 import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { PreviewContentProvider } from "./PreviewContentContext";
@@ -83,7 +85,9 @@ function render(element: JSX.Element, fileCapability = true): void {
 }
 
 function renderWithImagePreview(element: JSX.Element): void {
-  render(<ImagePreviewProvider>{element}</ImagePreviewProvider>);
+  render(<ArtifactsProvider application={{ artifacts: new ApplicationArtifacts(window.wuu, fileService) }}>
+    <ImagePreviewProvider>{element}</ImagePreviewProvider>
+  </ArtifactsProvider>);
 }
 
 async function settleFileReferenceResolution(): Promise<void> {

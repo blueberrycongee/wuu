@@ -22,6 +22,7 @@ import type { QueuedComposerMessage } from "./ComposerMessages";
 import { heldComposerMessagesFromResumeResult } from "./ComposerPendingState";
 import { applyDraftRuntimeMemory } from "./DraftRuntimeMemory";
 import { translateCurrent } from "./i18n";
+import { streamTextStore } from "./StreamText";
 
 export type LoadedRuntimeState = Partial<AppState> & {
   heldComposerMessages?: QueuedComposerMessage[];
@@ -65,6 +66,20 @@ export async function loadRuntimeThreadList(cwd?: string): Promise<Thread[]> {
   return sortThreads([...listed.threads, ...archived.threads]);
 }
 
+/** A complete recovery read can include a missed replacement, not just appended text. */
+export async function resumeThreadForRefresh(previous: Thread): Promise<Thread> {
+  const revisions = new Map(previous.turns.map(turn => [turn.id, streamTextStore.getTurnRevision(turn.id)]));
+  const resumed = (await window.wuu.resumeThread(previous.id)).thread;
+  if (!resumed) return previous;
+  for (const turn of resumed.turns) {
+    if (turn.status !== "in_progress" && turn.items_view === "full"
+      && revisions.get(turn.id) === streamTextStore.getTurnRevision(turn.id)) {
+      streamTextStore.clearTurn(turn.id);
+    }
+  }
+  return resumed;
+}
+
 export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> {
   const listed = await window.wuu.listThreads(state.activeContext?.cwd);
   const runningHistoryIDs = new Set(
@@ -79,7 +94,8 @@ export async function loadThreadListRefresh(state: AppState): Promise<Thread[]> 
     // An idle summary cannot settle cached turns or recover terminal items and
     // errors. Fetch only histories that need repair, not the whole catalog.
     try {
-      return (await window.wuu.resumeThread(thread.id)).thread ?? thread;
+      const previous = [state.thread, state.secondaryThread, ...state.threads].find(row => row?.id === thread.id);
+      return previous ? await resumeThreadForRefresh(previous) : thread;
     } catch {
       // Keep the cached history; the next refresh retries this thread without
       // blocking discovery or successful repairs for other conversations.

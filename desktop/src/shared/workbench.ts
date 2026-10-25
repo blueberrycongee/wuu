@@ -556,27 +556,8 @@ export interface InspectorSnapshotV1 {
   readonly todo?: InspectorTodoSnapshotV1;
 }
 
-export interface InspectorSectionHostAPI {
-  executeCommand(commandId: string, input?: unknown): Promise<unknown>;
-  openView(viewTypeId: ViewTypeId, options?: OpenViewOptions): Promise<void>;
-}
-
-export interface InspectorSectionRenderProps {
-  readonly snapshot: InspectorSnapshotV1;
-  readonly host: InspectorSectionHostAPI;
-}
-
-export interface InspectorSectionDefinition {
-  readonly id: string;
-  readonly title: string;
-  readonly priority?: number;
-  /** Return false when this section has no meaningful content for the snapshot. */
-  readonly when?: (snapshot: InspectorSnapshotV1) => boolean;
-  readonly render: React.ComponentType<InspectorSectionRenderProps>;
-}
-
 export const PRESENTATION_TARGETS = [
-  "conversation.item", "conversation.process", "conversation.tool-activity",
+  "conversation.item", "conversation.process",
   "conversation.composer", "header.conversation", "header.workspace",
   "navigation.primary", "app.status", "content.preview", "settings",
 ] as const;
@@ -1060,18 +1041,6 @@ export interface ToolActivitySnapshot {
   readonly resultText?: string;
   readonly structuredResult?: ToolActivityStructuredResult;
   readonly error?: string;
-}
-
-export interface ToolActivityPresenterProps {
-  readonly activity: ToolActivitySnapshot;
-  readonly host: ViewHostAPI;
-  readonly fallback: React.ReactNode;
-}
-
-export interface ToolActivityPresenterDefinition {
-  readonly id: string;
-  readonly key: string;
-  readonly render: React.ComponentType<ToolActivityPresenterProps>;
 }
 
 /** Current on-disk workbench state schema. */

@@ -1,32 +1,34 @@
 export async function activate(api) {
   const h = api.react.createElement;
 
-  api.registerPresenter({
-    id: "command-tool-card",
-    target: "conversation.tool-activity",
-    key: "command.bash",
-    mode: "replace",
-    priority: 40,
-    render({ snapshot, fallback }) {
-      if (!isToolActivitySnapshot(snapshot)) return fallback;
-      return h(
-        "section",
-        {
-          className: "tool-card-skin",
-          "data-status": snapshot.status,
-          "data-contract-version": String(snapshot.contractVersion),
-        },
-        h(
-          "header",
-          { className: "tool-card-skin-header" },
-          h("span", { className: "tool-card-skin-signal", "aria-hidden": true }),
-          h("span", { className: "tool-card-skin-title" }, snapshot.kind || "Command"),
-          h("span", { className: "tool-card-skin-status" }, statusLabel(snapshot.status)),
-        ),
-        h("div", { className: "tool-card-skin-content" }, fallback),
-      );
-    },
-  });
+  for (const owner of ["wuu.default-conversation", "wuu.default-preview"]) {
+    api.registerUIContribution({
+      id: `command-tool-card-${owner}`,
+      target: `${owner}/conversation.tool-activity`,
+      mode: "wrap",
+      order: 40,
+      render({ context, children }) {
+        const snapshot = context.snapshot;
+        if ((snapshot.capability ?? snapshot.toolName) !== "command.bash") return children;
+        return h(
+          "section",
+          {
+            className: "tool-card-skin",
+            "data-status": snapshot.status,
+            "data-contract-version": String(snapshot.contractVersion),
+          },
+          h(
+            "header",
+            { className: "tool-card-skin-header" },
+            h("span", { className: "tool-card-skin-signal", "aria-hidden": true }),
+            h("span", { className: "tool-card-skin-title" }, snapshot.kind || "Command"),
+            h("span", { className: "tool-card-skin-status" }, statusLabel(snapshot.status)),
+          ),
+          h("div", { className: "tool-card-skin-content" }, children),
+        );
+      },
+    });
+  }
 
   api.registerCSSSnippet({
     id: "tool-card-skin",
@@ -76,13 +78,6 @@ export async function activate(api) {
       }
     `,
   });
-}
-
-function isToolActivitySnapshot(value) {
-  return value !== null
-    && typeof value === "object"
-    && value.contractVersion === 1
-    && typeof value.status === "string";
 }
 
 function statusLabel(status) {

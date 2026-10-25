@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DesktopProject, InitializeResult } from "../shared/protocol";
 import { AppSidebar } from "./AppSidebar";
+import { DesktopControlsProvider } from "./DesktopControlsContext";
+import type { ApplicationDesktopControlsV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { DesktopWorkbench, WorkbenchController } from "./plugins/Workbench";
 import type { NavigationSnapshotV1 } from "../shared/workbench";
@@ -18,6 +20,9 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 let unreadViewOpen = false;
 let attentionStickyIDs = new Set<string>();
+const desktop: ApplicationDesktopControlsV1 = { hostKind: "desktop", popOut: { kind: null, threadID: null, context: null },
+  capabilities: { account: false, pets: false, nativeControls: false, chromeOverlay: false, notifications: false },
+  onVisibilityChange: () => () => {} };
 
 beforeEach(() => {
   window.wuu = { ...window.wuu, reportPluginDesktopActivation: vi.fn().mockResolvedValue(undefined) };
@@ -33,6 +38,7 @@ afterEach(() => {
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
   desktopPluginHost.unload("test:app-sidebar-view");
+  desktopPluginHost.unload("test:app-sidebar-other");
   root = null;
   container.remove();
   vi.useRealTimers();
@@ -73,6 +79,7 @@ const sidebarWorkspaces: DesktopProject[] = [
 ];
 
 interface RenderOptions {
+  workbenchController?: WorkbenchController;
   expandedSidebarSectionIDs?: Set<string>;
   pinnedThreads?: ThreadSummary[];
   onTogglePinned?: (thread: ThreadSummary) => void;
@@ -119,7 +126,8 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
     onStartNewThread = () => {},
   } = options;
   return (
-    <AppSidebar
+    <DesktopControlsProvider controls={desktop}><AppSidebar
+      workbenchController={options.workbenchController}
       initialized={Boolean(state.initialized)}
       activeContextKind={state.activeContext?.kind}
       activeSessionTabID={state.activeSessionTabID}
@@ -173,7 +181,7 @@ function SidebarHarness({ options }: { options: RenderOptions }): JSX.Element {
       onCreateProject={onCreateProject}
       onAdoptIntoProject={onAdoptIntoProject}
       onOpenSettings={() => {}}
-    />
+    /></DesktopControlsProvider>
   );
 }
 
@@ -185,6 +193,42 @@ function renderSidebar(options: RenderOptions = {}): void {
 }
 
 describe("AppSidebar layout", () => {
+  it("composes contextual sidebar content only for the active owner and removes it on unload", async () => {
+    const contexts: Readonly<Record<string, unknown>>[] = [];
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph", pluginId: "test:app-sidebar-navigation", manifestId: "wuu.default-navigation", generation: "one", register(api) {
+      api.registerUISlot({ id: "sidebar.primary", cardinality: "many" });
+      api.registerUISlot({ id: "sidebar.footer", cardinality: "many" });
+    } });
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph", pluginId: "test:app-sidebar-view", generation: "one", register(api) {
+      api.registerViewType({ id: "context.view", title: "Context view", render: () => null });
+      api.registerUIContribution({ id: "context-sidebar", target: "wuu.default-navigation/sidebar.primary", render: ({ context }) => {
+        contexts.push(context);
+        return <div data-owner-sidebar>{context.viewTypeId ? "contextual" : "general"}</div>;
+      } });
+      api.registerUIContribution({ id: "footer", target: "wuu.default-navigation/sidebar.footer", render: ({ context }) => <div data-sidebar-footer>{String(context.initialized)}</div> });
+    } });
+    await desktopPluginHost.activateGeneration({ graphGeneration: "renderer-test-graph", pluginId: "test:app-sidebar-other", generation: "one", register(api) {
+      api.registerUIContribution({ id: "other-sidebar", target: "wuu.default-navigation/sidebar.primary", render: ({ context }) => <div data-other-sidebar>{context.viewTypeId ? "leaked" : "general"}</div> });
+    } });
+    const controller = new WorkbenchController(desktopPluginHost, {}, { getItem: () => null, setItem: () => {}, removeItem: () => {} });
+    try {
+      renderSidebar({ workbenchController: controller });
+      expect(container.querySelector("[data-owner-sidebar]")?.textContent).toBe("general");
+      expect(container.querySelector("[data-sidebar-footer]")?.textContent).toBe("true");
+      expect(contexts.at(-1)).toMatchObject({ initialized: true, hasActiveThread: false, workspaceCount: 3 });
+      let viewID!: string;
+      await act(async () => { viewID = await controller.openPluginView("test:app-sidebar-view", "context.view", { region: "primary" }); });
+      const contextual = container.querySelector(".sidebar-section-scroll [data-owner-sidebar]");
+      expect(contextual?.textContent).toBe("contextual");
+      expect(container.querySelector(".sidebar-section-scroll [data-other-sidebar]")).toBeNull();
+      const context = contexts.find(item => item.viewTypeId === "context.view");
+      expect(context?.viewContext).toBe(controller.getSnapshot().views.find(view => view.id === viewID)?.context);
+      act(() => desktopPluginHost.unload("test:app-sidebar-view"));
+      expect(container.querySelector("[data-owner-sidebar]")).toBeNull();
+      expect(container.querySelector("[data-sidebar-footer]")).toBeNull();
+    } finally { controller.dispose(); }
+  });
+
   it("opens a recent conversation across workspaces and removes archived or pinned entries", () => {
     const thread = (id: string, day: number, extra: Partial<ThreadSummary> = {}): ThreadSummary => ({
       id, title: id, cwd: "/repo/wuu", status: "idle", source: "desktop", pinned: false, archived: false,

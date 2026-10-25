@@ -116,7 +116,8 @@ import type { PluginHost } from "./plugins/PluginHost";
 import { visibleWorkbenchView, type WorkbenchController } from "./plugins/Workbench";
 import type { SkillsCatalogSection } from "./SkillsCatalog";
 import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
-import { PluginSlot } from "./plugins/PluginSlot";
+import { createUIComposition } from "./plugins/ApplicationShell";
+import type { UISlotLayoutProps } from "../../../packages/plugin-sdk/src/ui";
 import { Tooltip } from "./Tooltip";
 import { HoverRevealScopeContext, useRetainHoverOwner } from "./HoverReveal";
 
@@ -433,6 +434,10 @@ export interface SidebarNavigationService {
   organization: SessionOrganizationController;
 }
 
+function ContextualSidebarLayout({ items, context }: UISlotLayoutProps): JSX.Element {
+  return <>{items.filter(item => item.pluginId === context.ownerPluginId).map(item => item.node)}</>;
+}
+
 export function AppSidebar({
   navigation,
   initialized,
@@ -600,6 +605,8 @@ export function AppSidebar({
   onSelectWebsite?: (website: RibbonWebsite) => void;
 } & RibbonBrowserActions): JSX.Element {
   const { locale, t } = useI18n();
+  const localSlots = useMemo(() => createUIComposition(pluginHost), [pluginHost]);
+  const slots = navigation?.slots ?? localSlots;
   const ribbonRef = useCallback((element: HTMLElement | null) => {
     onRibbonPresenceChange?.(element !== null);
   }, [onRibbonPresenceChange]);
@@ -2002,14 +2009,14 @@ export function AppSidebar({
                   <span className="sidebar-section-label">{entry.title}</span>
                 </button>
               ))}
-              <PluginSlot
-                host={pluginHost}
-                id="sidebar.primary"
-                pluginId={activePluginMain.view.pluginId}
-                context={Object.freeze({
+              <slots.Slot
+                name="wuu.default-navigation/sidebar.primary"
+                layout={ContextualSidebarLayout}
+                context={{
+                  ownerPluginId: activePluginMain.view.pluginId,
                   viewTypeId: activePluginMain.view.viewTypeId,
                   viewContext: activePluginMain.view.context,
-                })}
+                }}
               />
             </div>
           </nav>
@@ -2534,23 +2541,21 @@ export function AppSidebar({
             </DragOverlay>
           </DndContext>
         </div>
-        {navigation ? <navigation.slots.Slot name="wuu.default-navigation/sidebar.primary" /> : <PluginSlot
-          host={pluginHost}
-          id="sidebar.primary"
-          context={Object.freeze({
+        <slots.Slot
+          name="wuu.default-navigation/sidebar.primary"
+          context={{
             initialized: Boolean(initialized),
             hasActiveThread: activeThreadID !== undefined,
             workspaceCount: sidebarWorkspaces.length,
-          })}
-        />}
+          }}
+        />
           </>
         )}
         <div className="sidebar-settings">
-          {navigation ? <navigation.slots.Slot name="wuu.default-navigation/sidebar.footer" /> : <PluginSlot
-            host={pluginHost}
-            id="sidebar.footer"
-            context={Object.freeze({ initialized: Boolean(initialized) })}
-          />}
+          <slots.Slot
+            name="wuu.default-navigation/sidebar.footer"
+            context={{ initialized: Boolean(initialized) }}
+          />
         </div>
         {groupContextMenu ? (
           <ThreadContextMenu

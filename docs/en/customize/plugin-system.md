@@ -278,7 +278,7 @@ The UI extension points serve different purposes:
 | --- | --- |
 | Views and placements | Plugin-owned content in host-managed layout regions |
 | Slots | Small contributions at fixed insertion points |
-| Surfaces | Replacement or wrapping of a larger supported UI area |
+| UI contributions | Content or wrappers targeting an explicitly owned slot |
 | Presenters | Rendering of a versioned semantic snapshot with host-owned actions |
 | Themes and scoped styles | Appearance within the published token and styling contracts |
 

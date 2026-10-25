@@ -89,7 +89,7 @@ Commands under `contributes.commands` have a local ID and a kind. `prompt_templa
 
 First-run setup preserves applied plugin choices if it is interrupted before completion. Inventory distinguishes the effective `enabled` state from an optional `enabled_override` user policy; an absent override means the package default applies.
 
-UI declarations belong under `contributes.slots`, `surfaces`, `presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. See [desktop UI plugins](desktop-plugins.md) for matching and composition rules.
+Manifest UI declarations use `contributes.presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. For declared UI regions, call `registerUIContribution` with an owner-qualified target; no manifest entry is needed. The former `contributes.slots` and `surfaces` fields are rejected. See [desktop UI plugins](desktop-plugins.md) for composition rules.
 
 ### Shell skins
 

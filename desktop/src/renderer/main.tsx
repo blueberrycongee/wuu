@@ -2,6 +2,8 @@ import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { StandaloneAccountWindow } from "./StandaloneAccountWindow";
 import { DesktopApplicationRoot } from "./plugins/DesktopApplicationRoot";
+import { getDesktopApplication } from "./plugins/ApplicationController";
+import { desktopPluginRuntime, desktopWorkbenchController, desktopCompositionRoot } from "./plugins/DesktopPluginRuntime";
 import { startAppearanceSync } from "./AppearancePreferences";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
@@ -87,7 +89,8 @@ console.error = (...args: unknown[]): void => {
 
 const accountWindow = ENABLE_ACCOUNT && Boolean(window.wuu?.isAccountWindow);
 
-ReactDOM.createRoot(rendererRoot).render(
+const root = ReactDOM.createRoot(rendererRoot);
+root.render(
   <I18nProvider>
     <WuuUIRoot>
       {accountWindow
@@ -98,3 +101,12 @@ ReactDOM.createRoot(rendererRoot).render(
     </WuuUIRoot>
   </I18nProvider>,
 );
+
+window.wuu?.onPrepareToQuit?.(async () => {
+  root.unmount();
+  const results = await Promise.allSettled([desktopPluginRuntime.shutdown(), getDesktopApplication().flushCleanup()]);
+  desktopWorkbenchController.dispose();
+  await desktopCompositionRoot.fiber.dispose();
+  const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+  if (failures.length) throw new AggregateError(failures, "Renderer cleanup failed");
+});

@@ -6,9 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 import { PluginPresentation } from "./PluginPresentation";
-import { PluginSlot } from "./PluginSlot";
-import { PluginSurface } from "./PluginSurface";
-import { PluginInspectorSections } from "./PluginInspector";
+import { createUIComposition } from "./ApplicationShell";
 import { PluginConversationCards } from "./PluginConversationCards";
 import { WorkbenchController } from "./Workbench";
 
@@ -23,8 +21,13 @@ afterEach(() => {
 });
 
 describe("PluginPresentation", () => {
-  it.each(["slot", "surface", "presenter", "inspector", "card"] as const)("recovers a mounted %s after same-code reactivation without remounting ordinary updates", async (kind) => {
+  it.each(["slot", "presenter", "inspector", "card"] as const)("recovers a mounted %s after same-code reactivation without remounting ordinary updates", async (kind) => {
     const { host, controller } = setup();
+    const slots = createUIComposition(host);
+    if (kind === "inspector" || kind === "slot") await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "inspector.sections", cardinality: "many" });
+      api.registerUISlot({ id: "composer.above", cardinality: "many" });
+    } });
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let broken = true;
     let attempts = 0;
@@ -38,17 +41,15 @@ describe("PluginPresentation", () => {
     // The same function can be registered by separate activations of one module.
     const content = () => <Content />;
     const register = (api: PluginGenerationApi): void => {
-      if (kind === "slot") api.registerSlot("composer.above", { id: "item", render: content });
-      else if (kind === "surface") api.registerSurface("conversation.message", { id: "item", mode: "replace", render: content });
+      if (kind === "slot") api.registerUIContribution({ target: "shell/composer.above", id: "item", render: content });
       else if (kind === "presenter") api.registerPresenter({ id: "item", target: "content.preview", render: content });
-      else if (kind === "inspector") api.registerInspectorSection({ id: "item", title: "Item", render: Content });
+      else if (kind === "inspector") api.registerUIContribution({ id: "item", target: "shell/inspector.sections", render: Content });
       else api.showConversationCard({ id: "item", threadId: "thread", title: "Item", render: content });
     };
     const element = (): React.ReactNode => {
-      if (kind === "slot") return <PluginSlot host={host} id="composer.above" context={{}} />;
-      if (kind === "surface") return <PluginSurface host={host} id="conversation.message" fallback={<span>native</span>} />;
+      if (kind === "slot") return <slots.Slot name="shell/composer.above" context={{}} />;
       if (kind === "presenter") return <PluginPresentation host={host} controller={controller} target="content.preview" snapshot={{}} fallback={<span>native</span>} />;
-      if (kind === "inspector") return <PluginInspectorSections host={host} controller={controller} snapshot={{ contractVersion: 1, session: { status: "idle" } }} />;
+      if (kind === "inspector") return <slots.Slot name="shell/inspector.sections" context={{ snapshot: { contractVersion: 1, session: { status: "idle" } } }} />;
       return <PluginConversationCards host={host} threadId="thread" />;
     };
     try {

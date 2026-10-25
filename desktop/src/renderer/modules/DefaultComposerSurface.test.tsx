@@ -38,7 +38,7 @@ function setup() {
     getStatusSnapshot: () => emptyStatus, subscribeStatus: () => () => {},
     getSnapshot: () => presentationView, subscribe: listener => { subscribers.add(listener); return () => { subscribers.delete(listener); }; },
     setRuntimeMenu: (_ownerTabId: string, runtimeMenu: "model" | null) => { presentationView = Object.freeze({ ...presentationView, runtimeMenu }); publish(); }, getCommands: () => empty, executeCommand: async input => { calls.push(input); },
-    getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: () => empty,
+    getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {},
     getTelemetry: () => telemetry, subscribeTelemetry: () => () => {},
   };
   const environment = base.environment.getSnapshot(), fileSelection = base.fileSelection.getSnapshot({ ownerTabId: source });
@@ -57,7 +57,7 @@ function setup() {
   } as ApplicationServiceV1;
 
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);
-  const render = async (layout: DefaultComposerLayout = {}) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={application} {...layout} /></WuuUIRoot>)); };
+  const render = async (layout: DefaultComposerLayout = {}) => { await act(async () => root.render(<WuuUIRoot><DefaultComposerSurface application={application} slots={{ Slot: () => null }} {...layout} /></WuuUIRoot>)); };
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
@@ -83,7 +83,6 @@ describe("selected public composer continuity", () => {
       sideConversation: { ...view.sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "side question", streaming: false } },
     }));
     const publicPresentation = fixture.application.composerPresentation;
-    const readContributions = vi.spyOn(publicPresentation, "getContributions");
     const host = new PluginHost({ react: React, application: { ...fixture.application,
       createComposerPresentationScope: () => publicPresentation,
       createDesktopScope: () => fixture.application.desktop,
@@ -92,13 +91,16 @@ describe("selected public composer continuity", () => {
       api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
       api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="wuu.default-preview/application.composer" context={{ side: { parentThreadId: "parent" } }} /> });
     } });
-    await host.activateGeneration({ pluginId: "composer", generation: "one", register: activateComposer });
+    await host.activateGeneration({ pluginId: "composer", manifestId: "wuu.default-composer", generation: "one", register: activateComposer });
+    await host.activateGeneration({ pluginId: "side-extension", generation: "one", register: api => {
+      api.registerUIContribution({ id: "side", target: "wuu.default-composer/composer.above", render: ({ context }) => <span data-side-context>{String(context.mainConversation)}</span> });
+    } });
     const show = async (pluginId: string) => { await act(async () => root.render(<WuuUIRoot><ApplicationShellOutlet host={host}
       binding={{ pluginId: "wuu.default-preview", generation: "one", id: "shell" }}
       surfaceBindings={{ "ui.composer": { pluginId, generation: "one", id: "ui.composer" } }} /></WuuUIRoot>)); };
     await show("composer");
     expect(container.querySelector("textarea")?.value).toBe("side question");
-    expect(readContributions).toHaveBeenCalledWith("composer.above");
+    expect(container.querySelector("[data-side-context]")?.textContent).toBe("false");
     await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!.click());
     expect(fixture.calls).toContainEqual({ action: "side.send", input: { parentThreadId: "parent", text: "side question" } });
     await act(async () => { await host.activateGeneration({ pluginId: "alternative", generation: "one", register: api => {
@@ -111,7 +113,7 @@ describe("selected public composer continuity", () => {
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.querySelector("[role=alert]")?.textContent).toContain("Selected UI surface is unavailable");
     await act(async () => root.render(null));
-    host.unload("composer"); host.unload("wuu.default-preview");
+    host.unload("side-extension"); host.unload("composer"); host.unload("wuu.default-preview");
   });
   it("retains an open runtime picker when its shell remounts", async () => {
     const fixture = setup(); await fixture.render();

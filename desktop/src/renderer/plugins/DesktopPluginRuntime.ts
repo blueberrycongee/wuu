@@ -162,16 +162,52 @@ export class DesktopPluginRuntime {
   private syncController?: AbortController;
   private connectionGeneration = 0;
   private connectionReset?: Promise<void>;
+  private readonly synchronizations = new Set<Promise<readonly DesktopPluginFailure[]>>();
+  private shutdownPromise?: Promise<void>;
 
   constructor(
     readonly host: PluginHost,
     private readonly loadModule: ModuleLoader = importDesktopPluginModule,
   ) {}
 
-  async sync(
+  sync(
     inventory: readonly ExtensionInventoryRecord[],
     safeMode = false,
     connectionGeneration = 0,
+  ): Promise<readonly DesktopPluginFailure[]> {
+    if (this.shutdownPromise) return Promise.resolve([]);
+    const pending = this.synchronize(inventory, safeMode, connectionGeneration);
+    this.synchronizations.add(pending);
+    return pending.finally(() => this.synchronizations.delete(pending));
+  }
+
+  /** Call after unmounting React consumers, while the runtime bridge is alive. */
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    this.shutdownPromise = Promise.resolve().then(async () => {
+      ++this.syncEpoch;
+      this.syncController?.abort();
+      await this.connectionReset;
+      const order = dependencyOrder(this.desiredPlugins).reverse();
+      for (const id of new Set([...order, ...this.activeGenerations.keys(), ...this.pendingDependencies.keys()])) {
+        await this.host.unloadAndWait(id);
+      }
+      await Promise.allSettled([...this.synchronizations]);
+      await this.host.flushActivationReports();
+      this.activeGenerations.clear();
+      this.activeDependencies.clear();
+      this.pendingDependencies.clear();
+      this.desiredPlugins.clear();
+      const failure = this.host.getActivationReportFailure();
+      if (failure) throw new Error(failure);
+    });
+    return this.shutdownPromise;
+  }
+
+  private async synchronize(
+    inventory: readonly ExtensionInventoryRecord[],
+    safeMode: boolean,
+    connectionGeneration: number,
   ): Promise<readonly DesktopPluginFailure[]> {
     const epoch = ++this.syncEpoch;
     this.syncController?.abort();
@@ -381,8 +417,6 @@ function desktopContributionDeclarations(
     // Inventory omits empty manifest arrays. Desktop-loaded code still has a
     // manifest contract, so absence means no executable contribution was
     // declared rather than opting out of declaration enforcement.
-    slots: declarations.slots ?? [],
-    surfaces: declarations.surfaces ?? [],
     presenters: declarations.presenters ?? [],
   };
 }

@@ -97,6 +97,8 @@
     "dist/ui-onboarding.d.ts",
     "dist/ui.js",
     "dist/ui.d.ts",
+    "dist/localization.js",
+    "dist/localization.d.ts",
     "bin/preview.mjs",
     "preview/*.mjs",
     "preview/*.ts",

@@ -23,6 +23,8 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     vi.stubEnv("VITE_ENABLE_REMOTE_CONTROL", override);
     vi.resetModules();
     const { SidebarAccountMenu } = await import("./SidebarAccountMenu");
+    const { DesktopControlsProvider } = await import("./DesktopControlsContext");
+    const { ApplicationDesktop } = await import("./plugins/ApplicationDesktop");
     const { SettingsView } = await import("./SettingsView");
     const { translateCurrent: t } = await import("./i18n");
     const { PhoneNavigationContext } = await import("./PhoneNavigationContext");
@@ -44,9 +46,13 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     const onOpenSettings = vi.fn();
     const onOpenAccount = vi.fn();
     const openDevices = vi.fn();
+    const desktop = new ApplicationDesktop();
+    const lifetime = new AbortController();
     await act(async () => root!.render(
       <PhoneNavigationContext.Provider value={{ openDevices }}>
-        <SidebarAccountMenu disabled={false} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
+        <DesktopControlsProvider controls={desktop.createScope(lifetime.signal)}>
+          <SidebarAccountMenu disabled={false} onOpenSettings={onOpenSettings} onOpenAccount={onOpenAccount} />
+        </DesktopControlsProvider>
       </PhoneNavigationContext.Provider>,
     ));
     await act(async () => container!.querySelector<HTMLButtonElement>(".sidebar-account-trigger")!.click());
@@ -102,5 +108,7 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     expect(container.querySelector(".settings-nav-item.active")?.textContent).toBe(t("settings.providers"));
     expect(getRemoteControlSnapshot).not.toHaveBeenCalled();
     expect(onRemoteControlEvent).not.toHaveBeenCalled();
+    lifetime.abort();
+    await desktop.dispose();
   });
 });

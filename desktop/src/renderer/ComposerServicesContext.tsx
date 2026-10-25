@@ -1,10 +1,12 @@
 import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import type { ApplicationComposerPresentationV1, ApplicationComposerPresentationViewV1 } from "../../../packages/plugin-sdk/src/ui-composer-presentation";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
 import type { ApplicationSettingsControlsV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { connectionDisplayPreferences, connectionDisplaySnapshot, subscribeConnectionDisplay } from "./ConnectionDisplayPreferences";
 
 export interface ComposerServices {
+  slots: UICompositionV1;
   ownerTabId: string;
   presentation: ApplicationComposerPresentationV1;
   view: ApplicationComposerPresentationViewV1;

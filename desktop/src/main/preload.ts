@@ -530,6 +530,16 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:respond-server-request", id, result),
   rejectServerRequest: (id: string, message: string) =>
     ipcRenderer.invoke("wuu:reject-server-request", id, message),
+  onPrepareToQuit: (handler) => {
+    const listener = (): void => {
+      void Promise.resolve().then(handler).then(
+        () => ipcRenderer.send("wuu:renderer-shutdown-complete"),
+        (error: unknown) => ipcRenderer.send("wuu:renderer-shutdown-complete", String(error)),
+      );
+    };
+    ipcRenderer.once("wuu:renderer-shutdown", listener);
+    return () => ipcRenderer.removeListener("wuu:renderer-shutdown", listener);
+  },
   onServerEvent: (handler: (event: ServerEvent) => void) => {
     const listener = (
       _event: Electron.IpcRendererEvent,

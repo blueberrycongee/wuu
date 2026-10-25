@@ -87,7 +87,7 @@ test('synthetic application snapshots remain stable across subscriptions and own
   assert.equal(app.projects.getSnapshot('second').projectId, 'second');
   assert.strictEqual(project, app.projects.getSnapshot('first'));
   for (const read of [app.settingsControls.getPages, app.settingsControls.getConflicts, app.settingsControls.getDiagnostics,
-    app.composerPresentation.getComposerInlineCompletionProviders, app.composerPresentation.getContributions]) {
+    app.composerPresentation.getComposerInlineCompletionProviders]) {
     assert.strictEqual(read(), read());
   }
   const before = app.getSnapshot();

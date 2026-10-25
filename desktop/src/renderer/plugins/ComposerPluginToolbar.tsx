@@ -1,48 +1,53 @@
-import { useComposerServices } from "../ComposerServicesContext";
-import type { ApplicationComposerContributionV1, ApplicationComposerContributionContextV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
+import type { UISlotLayoutProps } from "../../../../packages/plugin-sdk/src/ui";
 import { Ellipsis } from "../WuuIcons";
 import {
   Fragment,
-  useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
-  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
 import { FloatingMenuPortal, isInsideFloatingMenu } from "../ComposerFloatingMenu";
 import { useI18n } from "../i18n";
-import type { PluginHost, PluginSlotRenderContext, RegisteredPluginSlotContribution } from "./PluginHost";
-import { PluginSlotContribution } from "./PluginSlot";
 
 const INLINE_PLUGIN_TOOL_LIMIT = 2;
 
-export function ComposerPluginToolbar({
-  host,
-  context,
-}: {
-  host: PluginHost;
-  context: PluginSlotRenderContext;
-}): ReactNode {
+export function ComposerPluginToolbar({ items }: UISlotLayoutProps): ReactNode {
   const { t } = useI18n();
-  const services = useComposerServices();
   const [open, setOpen] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const expandedWidth = useRef(0);
+  const measuredItems = useRef(items);
   const triggerRef = useRef<HTMLDivElement>(null);
-  const subscribe = useCallback(
-    (listener: () => void) => services ? services.presentation.subscribe(listener) : host.subscribeSlot("composer.toolbar", listener),
-    [host, services],
-  );
-  const getSnapshot = useCallback(
-    () => services ? services.presentation.getContributions("composer.toolbar") : host.getSlotSnapshot("composer.toolbar"),
-    [host, services],
-  );
-  const contributions = useSyncExternalStore<readonly RegisteredPluginSlotContribution[] | readonly ApplicationComposerContributionV1[]>(subscribe, getSnapshot, getSnapshot);
-  const items = contributions.map(contribution => "View" in contribution
-    ? { key: contribution.key, title: contribution.title || contribution.key, node: <contribution.View context={{ ownerTabId: services!.ownerTabId, variant: context.variant as ApplicationComposerContributionContextV1["variant"], mainConversation: context.mainConversation === true, running: context.running === true, readOnly: context.readOnly === true, hasDraft: context.hasDraft === true, attachmentCount: context.attachmentCount as number }} /> }
-    : { key: `${contribution.pluginId}:${contribution.generation}:${contribution.id}`, title: contribution.title || `${contribution.pluginId}: ${contribution.id}`, node: <PluginSlotContribution host={host} id="composer.toolbar" context={context} contribution={contribution} /> });
-  const inline = items.slice(0, INLINE_PLUGIN_TOOL_LIMIT);
-  const overflow = items.slice(INLINE_PLUGIN_TOOL_LIMIT);
+  const inlineCount = compact ? 0 : INLINE_PLUGIN_TOOL_LIMIT;
+  const inline = items.slice(0, inlineCount);
+  const overflow = items.slice(inlineCount);
+
+  useLayoutEffect(() => {
+    const toolbar = toolbarRef.current;
+    const parent = toolbar?.parentElement;
+    if (!toolbar || !parent) return;
+    const measure = (): void => {
+      if (compact && measuredItems.current !== items) {
+        setCompact(false);
+        return;
+      }
+      if (!compact) {
+        expandedWidth.current = toolbar.scrollWidth;
+        measuredItems.current = items;
+      }
+      const available = parent.getBoundingClientRect().right - toolbar.getBoundingClientRect().left;
+      setCompact(available < expandedWidth.current);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(parent);
+    observer.observe(toolbar);
+    return () => observer.disconnect();
+  }, [compact, items]);
 
   useEffect(() => {
     if (overflow.length === 0) {
@@ -77,12 +82,12 @@ export function ComposerPluginToolbar({
     };
   }, [open]);
 
-  if (contributions.length === 0) {
+  if (items.length === 0) {
     return null;
   }
 
   return (
-    <div className="composer-plugin-toolbar">
+    <div className="composer-plugin-toolbar" ref={toolbarRef}>
       {inline.map(item => <Fragment key={item.key}>{item.node}</Fragment>)}
       {overflow.length > 0 ? (
         <div className="composer-plugin-tools-anchor" ref={triggerRef}>

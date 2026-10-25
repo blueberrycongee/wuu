@@ -4,7 +4,7 @@ import { ImagePreviewProvider } from "../ImagePreview";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
 import { focusComposerTextarea } from "../ComposerFocus";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type Ref } from "react";
-import type { ApplicationGenerationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationGenerationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
 import { Composer, SplitPaneComposer } from "../ComposerView";
@@ -24,31 +24,32 @@ export interface DefaultComposerLayout {
   variant?: ComposerVariant;
   pane?: "primary" | "secondary";
   ownerTabId?: string;
+  visible?: boolean;
   containerRef?: Ref<HTMLElement>;
 }
 
 /** A selected composer receives geometry only; every operation retains its public draft owner. */
-export function DefaultComposerSurface({ application, ...layout }: DefaultComposerLayout & { application: ApplicationServiceV1 }): JSX.Element | null {
+export function DefaultComposerSurface({ application, slots, ...layout }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element | null {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   if (layout.side) {
     const parentThreadId = layout.side.parentThreadId;
     const ownerTabId = view.tabs.items.find(tab => tab.threadId === parentThreadId)?.id;
     if (!ownerTabId || view.sideConversation.parentThreadId !== parentThreadId || !view.sideConversation.entry) return null;
-    return <OwnedSideComposer application={application} ownerTabId={ownerTabId} parentThreadId={parentThreadId} variant={layout.variant} />;
+    return <OwnedSideComposer application={application} slots={slots} ownerTabId={ownerTabId} parentThreadId={parentThreadId} variant={layout.variant} />;
   }
   const pane = layout.pane ?? "primary";
   const ownerTabId = layout.ownerTabId ?? view.drafts[pane].ownerTabId;
   if (!ownerTabId || view.drafts[pane].ownerTabId !== ownerTabId) return null;
-  return <OwnedComposer key={pane} application={application} {...layout} pane={pane} ownerTabId={ownerTabId} />;
+  return <OwnedComposer key={pane} application={application} slots={slots} {...layout} pane={pane} ownerTabId={ownerTabId} />;
 }
 
-function OwnedSideComposer({ application, ownerTabId, parentThreadId, variant }: {
-  application: ApplicationServiceV1; ownerTabId: string; parentThreadId: string; variant?: ComposerVariant;
+function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, variant }: {
+  application: ApplicationServiceV1; slots: UICompositionV1; ownerTabId: string; parentThreadId: string; variant?: ComposerVariant;
 }): JSX.Element | null {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
   const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
-  const services = useMemo(() => ({ ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, ownerTabId, presentation]);
+  const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, slots, ownerTabId, presentation]);
   if (view.sideConversation.parentThreadId !== parentThreadId) return null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}>
     <ApplicationSideThreadComposer snapshot={view.sideConversation} invoke={application.invoke} variant={variant}
@@ -56,14 +57,14 @@ function OwnedSideComposer({ application, ownerTabId, parentThreadId, variant }:
   </ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 
-function OwnedComposer({ application, variant = "dock", pane, ownerTabId, containerRef }: DefaultComposerLayout & { application: ApplicationServiceV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
+function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
   const { t } = useI18n();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
   const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
   const environment = useSyncExternalStore(application.environment.subscribe, application.environment.getSnapshot);
   const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
-  const services = useMemo(() => ({ ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, ownerTabId, presentation]);
+  const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, slots, ownerTabId, presentation]);
   const [, redraw] = useReducer(value => value + 1, 0);
   const attachments = useMemo(() => createApplicationComposerAttachments(application, () => redraw()), [application]);
   useEffect(() => { attachments.resume(); return () => attachments.dispose(); }, [attachments]);
@@ -103,7 +104,7 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
   const switching = Boolean(view.tabs.pending && !view.tabs.pending.contentReady);
   const editingSubmitting = Boolean(view.conversationActions.editing?.threadId === presentation.threadId && view.conversationActions.editing?.submitting);
   const running = Boolean(creation || editingSubmitting || !presentation.readOnly && presentation.turnRunning || switching);
-  const configuration = presentationConfiguration && { ...presentationConfiguration, provider: selection.provider, model: selection.model,
+  const configuration = presentationConfiguration && { ...presentationConfiguration, provider: presentation.running ? presentationConfiguration.provider : selection.provider, model: presentation.running ? presentationConfiguration.model : selection.model,
     effort: selection.effort, variant: selection.variant, speed: selection.speed,
     permissions: { mode: selection.permissionMode, approve_for_me: selection.approveForMe } } as ComposerConfiguration;
   const offer = view.conversationActions.questions.find(row => row.thread_id === presentation.threadId && row.mode === "offer");
@@ -121,7 +122,7 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
     onCancel={() => application.invoke("question.cancel", { requestId: offer.request_id })}
     onHold={() => application.invoke("question.hold", { requestId: offer.request_id })}
     onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else focusComposerTextarea(contentRef.current?.querySelector("textarea") ?? null); }} /> : undefined;
-  return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}><FileSelectionProvider application={application} source={{ ownerTabId }}><div ref={contentRef} style={{ display: "contents" }}>
+  return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}><FileSelectionProvider application={application} source={{ ownerTabId }}><div ref={contentRef} hidden={!visible} inert={!visible} style={{ display: visible ? "contents" : "none" }}>
     <Input workspaceId={tab.workspaceId} workspaceRoot={runtime.cwd} turnId={presentation.turnId}
       queuedCount={pending?.queued.length ?? 0} pendingCount={(pending?.queued.length ?? 0) + (pending?.guides.length ?? 0)}
       variant={variant} mainConversation containerRef={containerRef} topAccessory={question}
@@ -187,6 +188,8 @@ function OwnedComposer({ application, variant = "dock", pane, ownerTabId, contai
 }
 
 export function activate(api: ApplicationGenerationAPI): void {
-  api.registerUIContribution({ id: "ui.composer", target: "wuu.default-shell/application.composer", render: ({ application, context }: UISlotRenderProps) =>
-    <DefaultComposerSurface application={application} {...context as DefaultComposerLayout} /> });
+  api.registerUISlot({ id: "composer.above", cardinality: "many" });
+  api.registerUISlot({ id: "composer.toolbar", cardinality: "many" });
+  api.registerUIContribution({ id: "ui.composer", target: "wuu.default-shell/application.composer", render: ({ application, slots, context }: UISlotRenderProps) =>
+    <DefaultComposerSurface application={application} slots={slots} {...context as DefaultComposerLayout} /> });
 }

@@ -5,7 +5,6 @@ import { once } from "node:events";
 import { cp, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { documentStore, documentStoreDescriptor, type StateExportPage, type StateExportPageRequest } from "./persistence.js";
 import type { RuntimeHost } from "./index.js";
 
@@ -92,16 +91,23 @@ async function startProvider() {
   const exited = once(child, "exit");
   let stderr = "";
   child.stderr.on("data", data => { stderr += data; });
-  const lines = createInterface({ input: child.stdout });
-  const responses = lines[Symbol.asyncIterator]();
+  // JSONL frames end at LF; Unicode separators inside JSON strings are data.
+  child.stdout.setEncoding("utf8");
+  const responses = child.stdout[Symbol.asyncIterator]();
+  let buffered = "";
   const timer = setTimeout(() => child.kill(), 15000);
   let id = 0;
   async function request(method: string, params?: unknown) {
     const requestId = String(++id);
     child.stdin.write(JSON.stringify({ id: requestId, method, params }) + "\n");
-    const line = await responses.next();
-    assert.equal(line.done, false, stderr);
-    const response = JSON.parse(line.value!);
+    while (!buffered.includes("\n")) {
+      const chunk = await responses.next();
+      assert.equal(chunk.done, false, stderr);
+      buffered += chunk.value;
+    }
+    const end = buffered.indexOf("\n");
+    const response = JSON.parse(buffered.slice(0, end));
+    buffered = buffered.slice(end + 1);
     assert.equal(response.id, requestId);
     return response;
   }
@@ -113,7 +119,7 @@ async function startProvider() {
       child.stdin.end();
       assert.equal((await exited)[0], 0, stderr);
     },
-    async dispose() { clearTimeout(timer); child.kill(); lines.close(); await exited; },
+    async dispose() { clearTimeout(timer); child.kill(); await exited; },
   };
 }
 let provider: Awaited<ReturnType<typeof startProvider>> | undefined;

@@ -832,6 +832,8 @@ export async function activate(api) {
         }) : null)));
   }
 
-  api.registerSlot("sidebar.primary", { id: "automation.schedule", render: (context) => context.viewTypeId === "automation.catalog" ? h(ScheduleSidebar, context) : null });
+  api.registerUIContribution({ id: "automation.schedule", target: "wuu.default-navigation/sidebar.primary",
+    render: ({ context, locale, translate }) => context.viewTypeId === "automation.catalog"
+      ? h(ScheduleSidebar, { viewContext: context.viewContext, locale, translate }) : null });
   api.registerViewType({ id: "automation.catalog", title: "Automations", icon: "clock", defaultRegion: "primary", persistence: "durable", render: (props) => h(Catalog, props) });
 }

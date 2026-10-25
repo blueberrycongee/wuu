@@ -11,6 +11,7 @@ import {
   loadRuntime,
   loadRuntimeRestore,
   loadThreadListRefresh,
+  resumeThreadForRefresh,
   applyRuntimeRestore,
 } from "./RuntimeLoadState";
 
@@ -521,5 +522,26 @@ describe("runtime restoration", () => {
     expect(restored.threads.map((item) => item.id)).not.toContain("removed");
     expect(restored.threads.find((item) => item.id === "archived")?.archived).toBe(false);
     expect(restored.sessionTabs).toHaveLength(1);
+  });
+});
+
+
+describe("authoritative completed resume streams", () => {
+  it.each([false, true])("replaces settled buffered text only without a newer delta (newer=%s)", async newer => {
+    const previous = thread("resume-stream", { turns: [{ id: "resume-stream-turn", status: "in_progress", items_view: "full", items: [] }] });
+    const key = streamTextKey(previous.turns[0].id, "answer", "text");
+    streamTextStore.set(key, "earlier streamed answer");
+    let finish!: (value: { thread: Thread }) => void;
+    const response = new Promise<{ thread: Thread }>(resolve => { finish = resolve; });
+    installWuuStub({ resumeThread: vi.fn(() => response) });
+    const pending = resumeThreadForRefresh(previous);
+    if (newer) streamTextStore.append(key, " with a newer delta");
+    const completed = thread(previous.id, { turns: [{ ...previous.turns[0], status: "completed",
+      items: [{ id: "answer", type: "agent_message", status: "completed", terminal: true, text: "Corrected answer" }] }] });
+    finish({ thread: completed });
+    expect(await pending).toEqual(completed);
+    expect(streamTextStore.has(key)).toBe(newer);
+    if (newer) expect(streamTextStore.get(key)).toBe("earlier streamed answer with a newer delta");
+    streamTextStore.clearTurn(previous.turns[0].id);
   });
 });

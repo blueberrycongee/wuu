@@ -18,7 +18,7 @@ export class ApplicationBrowser implements ApplicationBrowserV1 {
   private readonly leases = new Map<string, BrowserSurfaceHandleV1>();
   readonly available: boolean;
   constructor(private readonly host: { api: BrowserHost; onActivityChanged: (activity: ActivitySession) => void;
-    workspaceNavigation?: { enabled: boolean; getFocusState: () => WorkspaceBrowserFocusState; openBrowser: (activate: boolean) => void };
+    workspaceNavigation?: { enabled: boolean; getFocusState: () => WorkspaceBrowserFocusState; openBrowser: (activate: boolean) => void | Promise<void> };
   }) {
     const required = ["browserSurface", "browserCommand", "onBrowserSurface", "onBrowserTabAdopted",
       "onBrowserUserInput", "reportBrowserBounds", "suppressBrowserOverlay", "onBrowserDock", "onBrowserInvalidate"] as const;
@@ -120,7 +120,8 @@ export class ApplicationBrowser implements ApplicationBrowserV1 {
     if (!navigation) throw new Error("Embedded browser navigation unavailable");
     const focus = workspaceBrowserFocusDecision(navigation.getFocusState());
     requestWorkspaceBrowserNavigation(intent.target);
-    navigation.openBrowser(focus.stealFocus);
+    await navigation.openBrowser(focus.stealFocus);
+    this.check(options);
   }
 
   async openExternal(url: string, options?: BrowserOperationOptionsV1): Promise<void> {

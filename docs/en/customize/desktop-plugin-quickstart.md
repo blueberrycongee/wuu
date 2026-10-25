@@ -34,15 +34,17 @@ export function activate(api: PluginGenerationApi): void {
     }, enabled ? "Demo on" : "Demo off");
   }
 
-  api.registerSlot("composer.toolbar", {
+  api.registerUIContribution({
     id: "demo-toggle",
+    title: "Demo toggle",
+    target: "wuu.default-composer/composer.toolbar",
     order: 20,
     render: () => React.createElement(DemoToggle, null),
   });
 }
 ```
 
-`api.react` is the host's React instance. `api.ui.ToolbarToggle` supplies the shared control, while `composer.toolbar` places it without depending on the composer's private DOM. Register components through the API rather than bundling another React runtime.
+`api.react` is the host's React instance. `api.ui.ToolbarToggle` supplies the shared control, while `wuu.default-composer/composer.toolbar` places it without depending on the composer's private DOM. Register components through the API rather than bundling another React runtime.
 
 ## Build and load
 

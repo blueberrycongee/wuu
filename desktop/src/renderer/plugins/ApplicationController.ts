@@ -209,7 +209,10 @@ export class ApplicationController implements HostApplicationService {
     return this.browserOwner ??= new ApplicationBrowser({ api: window.wuu,
       workspaceNavigation: { enabled: ENABLE_EMBEDDED_BROWSER, getFocusState: () => ({ rightPanelOpen: this.previewVisible,
         activeTabID: this.applicationPreview.getSnapshot().activeTabId, browserForegroundOccupied: isForegroundControlled(this.activeBrowserActivity) }),
-        openBrowser: activate => { void this.applicationPreview.invoke("preview.open-tool", { toolId: "browser", activate }); } },
+        openBrowser: async activate => {
+          await this.applicationPreview.invoke("preview.open-tool", { toolId: "browser", activate });
+          if (activate) await this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" });
+        } },
       onActivityChanged: activity => {
       this.activitySessions = mergeActivityList(this.activitySessions, activity.workdir, activity.thread_id, [activity]);
       this.publish();
@@ -250,7 +253,7 @@ export class ApplicationController implements HostApplicationService {
       const project = this.state.projects.find(project => project.path === root);
       const context = this.state.activeContext?.cwd === root ? this.state.activeContext
         : project ? { kind: "project" as const, project_id: project.id, cwd: root } : { kind: "no_project" as const, cwd: root };
-      return this.applicationPreview.invoke("preview.open-file", { context, path });
+      return this.invoke("preview.open-file", { context, path });
     } });
   }
   readonly settingsControls = createApplicationSettingsControls();
@@ -312,6 +315,7 @@ export class ApplicationController implements HostApplicationService {
   private eventTimer?: ReturnType<typeof setTimeout>;
   private subscriptions: (() => void)[] = [];
   private consumers = 0;
+  private cleanup: Promise<void> = Promise.resolve();
   private lifetime?: AbortController;
   private navigationRequest = 0;
   private splitRequest = 0;
@@ -581,14 +585,19 @@ export class ApplicationController implements HostApplicationService {
       this.artifactsOwner = undefined;
       this.composerPresentationOwner?.dispose(); this.composerPresentationOwner = undefined;
       this.desktopOwner?.dispose(); this.desktopOwner = undefined;
-      void this.webWorkspaceOwner?.dispose().catch(error => console.error("Web workspace cleanup failed", error));
+      const webCleanup = this.webWorkspaceOwner?.dispose();
       this.webWorkspaceOwner = undefined;
       this.onboardingOwner?.dispose(); this.onboardingOwner = undefined;
       this.fileSelectionOwner = undefined;
       this.projectsOwner?.dispose();
       this.projectsOwner = undefined;
-      void this.terminalOwner?.dispose().catch(error => console.error("Terminal cleanup failed", error));
+      const terminalCleanup = this.terminalOwner?.dispose();
       this.terminalOwner = undefined;
+      this.cleanup = Promise.allSettled([this.cleanup, webCleanup, terminalCleanup]).then(results => {
+        const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+        if (failures.length) throw new AggregateError(failures, "Application resource cleanup failed");
+      });
+      void this.cleanup.catch(error => console.error("Application resource cleanup failed", error));
       this.previewContentOwner?.dispose();
       this.previewContentOwner = undefined;
       this.flushBackgroundEvents();
@@ -598,6 +607,9 @@ export class ApplicationController implements HostApplicationService {
       this.streamPublication = undefined;
     };
   }
+
+  /** Await resource releases started by the last consumer's synchronous cleanup. */
+  flushCleanup(): Promise<void> { return this.cleanup; }
 
   initialize(): Promise<LoadedRuntimeState> {
     if (this.state.initialized) return Promise.resolve({ ...this.state,
@@ -967,8 +979,16 @@ export class ApplicationController implements HostApplicationService {
     }
     if (isApplicationNavigationAction(action)) return this.applicationNavigation.invoke(action,
       input as ApplicationNavigationActionMapV1[keyof ApplicationNavigationActionMapV1]["input"], signal);
-    if (isApplicationPreviewAction(action)) return this.applicationPreview.invoke(action,
-      input as ApplicationPreviewActionMapV1[typeof action]["input"], signal);
+    if (isApplicationPreviewAction(action)) {
+      const result = await this.applicationPreview.invoke(action,
+        input as ApplicationPreviewActionMapV1[typeof action]["input"], signal);
+      const backgroundTool = action === "preview.open-tool"
+        && (input as ApplicationActionMapV1["preview.open-tool"]["input"]).activate === false;
+      if ((action.startsWith("preview.open-") && !backgroundTool) || action === "preview.new-tab" || action === "preview.focus-tab") {
+        await this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" }, signal);
+      }
+      return result;
+    }
     if (isApplicationSettingsAction(action)) return this.applicationSettings.invoke(action,
       input as ApplicationSettingsActionMapV1[keyof ApplicationSettingsActionMapV1]["input"], signal);
     switch (action) {
@@ -1101,7 +1121,8 @@ export class ApplicationController implements HostApplicationService {
       case "thread.activate": {
         const { threadId, workspaceId } = input as ApplicationActionMapV1["thread.activate"]["input"];
         const { threads } = this.navigationActions(signal);
-        await (workspaceId ? threads.selectWorkspaceThread(workspaceId, threadId) : threads.activateThread(threadId)); return;
+        const selecting = workspaceId ? threads.selectWorkspaceThread(workspaceId, threadId) : threads.activateThread(threadId);
+        await Promise.all([selecting, this.applicationNavigation.invoke("navigation.reveal-region", { region: "primary" }, signal)]); return;
       }
       case "draft.start":
       case "draft.start-with-content": {

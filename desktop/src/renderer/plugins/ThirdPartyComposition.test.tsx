@@ -8,13 +8,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { ThemeTokens } from "../../shared/workbench";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
-import { PluginSurface } from "./PluginSurface";
+import { createUIComposition } from "./ApplicationShell";
+import { ApplicationController } from "./ApplicationController";
+import { registerConversationSlots } from "../ConversationSlots";
 
 interface ExampleManifest {
   id: string;
   desktop: { entry: string };
   contributes?: {
-    surfaces?: readonly { id: string; target: "conversation.timeline"; mode: "wrap" }[];
     themes?: readonly (Omit<ThemeTokens, "theme"> & { id: string })[];
   };
 }
@@ -33,12 +34,14 @@ describe("third-party feature and theme composition", () => {
   it("keeps the feature surface intact when an independently installed theme is disabled", async () => {
     const feature = loadExample("deep-ui");
     const theme = loadExample("manga-studio");
-    const host = new PluginHost({ react: React });
+    window.wuu = {} as never;
+    const host = new PluginHost({ react: React, application: new ApplicationController() });
+    await host.activateGeneration({ pluginId: "wuu.default-conversation", generation: "one", register: registerConversationSlots });
+    const composition = createUIComposition(host);
 
     await host.activateGeneration({
       pluginId: feature.manifest.id,
       generation: "feature-one",
-      contributions: { surfaces: feature.manifest.contributes?.surfaces },
       register: feature.activate,
     });
     await host.activateGeneration({
@@ -62,9 +65,8 @@ describe("third-party feature and theme composition", () => {
     const root = createRoot(container);
     try {
       act(() => root.render(
-        <PluginSurface
-          host={host}
-          id="conversation.timeline"
+        <composition.Slot
+          name="wuu.default-conversation/conversation.turn"
           fallback={<span>Built in timeline</span>}
         />,
       ));
@@ -88,6 +90,7 @@ describe("third-party feature and theme composition", () => {
       act(() => root.unmount());
       container.remove();
       await host.unload("deep-ui-example");
+      host.unload("wuu.default-conversation");
     }
   });
 });

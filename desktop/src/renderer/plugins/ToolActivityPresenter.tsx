@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { useI18n } from "../i18n";
 
 import type { ThreadItem } from "../../shared/protocol";
 import { toolDisplayLabel } from "../ToolActivityHelpers";
@@ -12,12 +13,13 @@ export interface ToolActivityPresenterProps {
 
 export function ToolActivityPresenter({ item, fallback }: ToolActivityPresenterProps): JSX.Element {
   const { slots, slotOwner } = useConversationControls();
+  const { locale } = useI18n();
   const { threadId, turnId } = useConversationTurnIdentity();
   return item ? <slots.Slot name={`${slotOwner}/conversation.tool-activity`}
-    context={{ threadId, turnId, itemId: item.id }} fallback={fallback} /> : <>{fallback}</>;
+    context={{ threadId, turnId, itemId: item.id, snapshot: toToolActivitySnapshot(item, locale) }} fallback={fallback} /> : <>{fallback}</>;
 }
 
-/** Convert the private thread record into the complete public presenter DTO. */
+/** The leaf owns the immutable public payload supplied to tool UI contributions. */
 export function toToolActivitySnapshot(item: ThreadItem, locale?: string): ToolActivitySnapshot {
   const displayLabel = toolDisplayLabel(item.display, locale);
   const detail = item.result_detail;

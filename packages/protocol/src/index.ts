@@ -530,8 +530,6 @@ export type ExtensionContributions = {
   themes?: ExtensionThemeDescriptor[];
   skins?: ExtensionSkinDescriptor[];
   settings?: ExtensionSettingDescriptor[];
-  slots?: ExtensionSlotContributionDescriptor[];
-  surfaces?: ExtensionSurfaceContributionDescriptor[];
   presenters?: ExtensionPresenterContributionDescriptor[];
   navigation?: ExtensionViewEntryDescriptor[];
   workspace_tools?: ExtensionViewEntryDescriptor[];
@@ -551,21 +549,6 @@ export type ExtensionIconDescriptor =
   | { name: string; path?: never; light?: never; dark?: never }
   | { name?: never; path: string; light?: never; dark?: never }
   | { name?: never; path?: never; light: string; dark: string };
-
-export interface ExtensionSlotContributionDescriptor {
-  id: string;
-  target: string;
-  order?: number;
-  title?: string;
-}
-
-export interface ExtensionSurfaceContributionDescriptor {
-  id: string;
-  target: string;
-  mode: "replace" | "wrap";
-  order?: number;
-  title?: string;
-}
 
 export interface ExtensionPresenterContributionDescriptor {
   id: string;
@@ -3448,6 +3431,8 @@ export type WuuDesktopApi = {
   interruptTurn: (threadId: string) => Promise<{ ok: boolean }>;
   respondToServerRequest: (id: string, result: unknown) => Promise<void>;
   rejectServerRequest: (id: string, message: string) => Promise<void>;
+  /** Native desktop waits for renderer cleanup before closing backend processes. */
+  onPrepareToQuit?: (handler: () => Promise<void>) => () => void;
   onServerEvent: (handler: (event: ServerEvent) => void) => () => void;
   // Cross-workdir activity aggregate: which sessions are actively turning in
   // any workspace, computed by the host process from each runtime's own turn

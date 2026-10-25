@@ -122,7 +122,7 @@ func (m Manifest) HasCapabilitySurfaces() bool {
 	if m.Desktop != nil || len(m.Themes) > 0 || len(m.Skins) > 0 || len(m.Settings) > 0 {
 		return true
 	}
-	if len(m.Slots) > 0 || len(m.Surfaces) > 0 || len(m.Presenters) > 0 {
+	if len(m.Presenters) > 0 {
 		return true
 	}
 	return len(m.Navigation) > 0 || len(m.WorkspaceTools) > 0 || len(m.SettingsPages) > 0

@@ -52,6 +52,82 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("lays out translated contributions inside wrappers and retires mounted entries", async () => {
+    const { host } = fixture();
+    const released: string[] = [];
+    const Layout = ({ items }: import("../../../../packages/plugin-sdk/src/ui").UISlotLayoutProps) => <div data-layout>
+      {items.map(item => <section key={item.key} aria-label={item.title}>{item.node}</section>)}
+    </div>;
+    await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "tools", cardinality: "many" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="shell/tools" layout={Layout} /> });
+    } });
+    await host.activateGeneration({ pluginId: "tools", generation: "one", register: api => {
+      api.registerLocale({ id: "labels", locale: "en", entries: { "tools.label": "Translated" } });
+      api.registerCleanup(() => { released.push("provider"); });
+      api.registerUIContribution({ id: "second", target: "shell/tools", order: 2, title: "Second", render: () => <button>Second action</button> });
+      api.registerUIContribution({ id: "first", target: "shell/tools", title: "First", render: ({ translate }) => {
+        React.useEffect(() => () => { released.push("view"); }, []);
+        return <button>{translate("tools.label")}</button>;
+      } });
+      api.registerUIContribution({ id: "wrap", target: "shell/tools", mode: "wrap", render: ({ children }) => <aside>{children}</aside> });
+    } });
+    const container = document.createElement("div"); const root = createRoot(container);
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "one", id: "shell" }} />));
+      expect(container.querySelector("aside > [data-layout]")).not.toBeNull();
+      expect([...container.querySelectorAll("section")].map(node => node.getAttribute("aria-label"))).toEqual(["First", "Second"]);
+      expect(container.textContent).toBe("TranslatedSecond action");
+      await act(async () => { host.unload("tools"); });
+      expect(container.querySelector("button")).toBeNull();
+      expect(released).toEqual(["view", "provider"]);
+    } finally { act(() => root.unmount()); host.unload("tools"); host.unload("shell"); }
+  });
+
+  it("composes explicit wrappers around a slot, preserves children on failure, and drains retired views", async () => {
+    const { host } = fixture();
+    const cleanup: string[] = [];
+    await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "body", cardinality: "one" });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="shell/body" context={{ label: "content" }} fallback={<span>native</span>} /> });
+    } });
+    await host.activateGeneration({ pluginId: "content", generation: "one", register: api => {
+      api.registerUIContribution({ id: "body", target: "shell/body", render: ({ context }) => <span>{String(context.label)}</span> });
+    } });
+    const wrapper = (generation: string, broken = false) => host.activateGeneration({ pluginId: "frame", generation, register: api => {
+      api.registerCleanup(() => { cleanup.push(`provider:${generation}`); });
+      api.registerUIContribution({ id: "frame", target: "shell/body", mode: "wrap", render: ({ children }) => {
+        React.useEffect(() => () => { cleanup.push(`view:${generation}`); }, []);
+        if (broken) throw new Error("frame failed");
+        return <section data-frame={generation}>{children}</section>;
+      } });
+    } });
+    await wrapper("one");
+    const container = document.createElement("div"); const root = createRoot(container);
+    const logging = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "one", id: "shell" }} />));
+      expect(container.querySelector("section")?.textContent).toBe("content");
+      await act(async () => { await wrapper("two", true); });
+      expect(container.textContent).toBe("content");
+      expect(cleanup.indexOf("view:one")).toBeLessThan(cleanup.indexOf("provider:one"));
+      expect(host.getGenerationDiagnostics("frame", "two").some(item => item.kind === "render")).toBe(true);
+      await act(async () => { host.unload("content"); host.unload("frame"); });
+      expect(container.textContent).toBe("native");
+    } finally { act(() => root.unmount()); host.unload("shell"); host.unload("content"); host.unload("frame"); logging.mockRestore(); }
+  });
+
+  it("rejects wrappers for graph-selected surfaces without displacing the active contribution", async () => {
+    const { host } = fixture();
+    await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
+      api.registerUISlot({ id: "navigation", cardinality: "one", service: "ui.navigation" });
+    } });
+    await expect(host.activateGeneration({ pluginId: "wrapper", generation: "one", register: api => {
+      api.registerUIContribution({ id: "wrap", target: "shell/navigation", mode: "wrap", render: ({ children }) => children });
+    } })).rejects.toThrow("Selected UI surfaces cannot be wrapped");
+    expect(host.hasActivePlugin("shell")).toBe(true);
+  });
+
   it("renders owner-local slots using the manifest namespace of an installed shell", async () => {
     const { host } = fixture();
     await host.activateGeneration({ pluginId: "user:custom-shell", manifestId: "custom-shell", generation: "one", register: api => {
@@ -71,8 +147,7 @@ describe("application shell assembly", () => {
     } finally { act(() => root.unmount()); host.unload("body"); host.unload("user:custom-shell"); }
   });
 
-  it("automatically composes legacy registrations only within declared non-service slots", async () => {
-    window.wuu = {} as never;
+  it("renders contributions and fallback only within declared non-service slots", async () => {
     const { host } = fixture();
     await host.activateGeneration({ pluginId: "custom-shell", generation: "one", register: api => {
       api.registerUISlot({ id: "conversation.message.before", cardinality: "many" });
@@ -83,24 +158,19 @@ describe("application shell assembly", () => {
         <slots.Slot name="missing/conversation.message.before" fallback={<span>Forbidden missing fallback</span>} />
       </> });
     } });
-    await host.activateGeneration({ pluginId: "legacy", generation: "one", register: api => {
-      api.registerSlot("conversation.message.before", { id: "before", render: () => <span>Legacy before</span> });
-      api.registerSlot("workspace.header", { id: "header", render: () => <span>Forbidden legacy service</span> });
-    } });
     await host.activateGeneration({ pluginId: "public", generation: "one", register: api => {
       api.registerUIContribution({ id: "before", target: "custom-shell/conversation.message.before", render: () => <span>Public before</span> });
     } });
     const element = document.createElement("div"); const root = createRoot(element);
     try {
       act(() => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "custom-shell", generation: "one", id: "shell" }} />));
-      expect(element.textContent).toContain("Public beforeLegacy before");
+      expect(element.textContent).toContain("Public before");
+      expect(element.textContent).not.toContain("Native fallback");
       expect(element.textContent).not.toContain("Forbidden");
       await act(async () => { host.unload("public"); });
-      expect(element.textContent).toContain("Native fallbackLegacy before");
-      await act(async () => { host.unload("legacy"); });
-      expect(element.textContent).not.toContain("Legacy before");
       expect(element.textContent).toContain("Native fallback");
-    } finally { act(() => root.unmount()); host.unload("custom-shell"); host.unload("legacy"); host.unload("public"); }
+      expect(element.textContent).not.toContain("Forbidden");
+    } finally { act(() => root.unmount()); host.unload("custom-shell"); host.unload("public"); }
   });
 
   it("retains the declaring slot service and fences legacy view hosts across same-code replacement", async () => {

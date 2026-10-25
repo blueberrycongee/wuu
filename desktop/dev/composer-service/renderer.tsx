@@ -1,3 +1,6 @@
+import * as React from "react";
+import { PluginHost } from "../../src/renderer/plugins/PluginHost";
+import { createUIComposition } from "../../src/renderer/plugins/ApplicationShell";
 import { createRoot } from "react-dom/client";
 import { createPreviewApplication } from "../../../packages/plugin-sdk/preview/application";
 import { DefaultComposerSurface } from "../../src/renderer/modules/DefaultComposerSurface";
@@ -25,13 +28,12 @@ let presentationView = Object.freeze({ runtimeMenu: null as "model" | null, owne
   configuration: { provider: "fixture", model: "Model", providers: [] }, queryHistory: [], skillRevision: "one", workspaceCapabilities: { create: false, open: false } });
 const empty = Object.freeze([]);
 const telemetry = Object.freeze({ tokensPerSecond: 0, source: "none" as const, inputTokens: 0, outputTokens: 0 });
-const toolbar = Object.freeze([{ key: "fixture-tool", title: "Fixture tool", View: () => <button type="button" className="composer-tool-button" data-public-tool onClick={() => calls.push({ action: "fixture-tool" })}>Tool</button> }]);
 const emptyStatus = Object.freeze({ items: empty });
 const presentation: ApplicationComposerPresentationV1 = {
   getStatusSnapshot: () => emptyStatus, subscribeStatus: () => () => {},
   getSnapshot: () => presentationView, subscribe: listener => { subscribers.add(listener); return () => { subscribers.delete(listener); }; },
   setRuntimeMenu: (_ownerTabId, runtimeMenu) => { presentationView = Object.freeze({ ...presentationView, runtimeMenu }); publish(); }, getCommands: () => empty, executeCommand: async input => { calls.push(input); },
-  getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {}, getContributions: slot => slot === "composer.toolbar" ? toolbar : empty,
+  getComposerInlineCompletionProviders: () => empty, subscribeComposerInlineCompletionProviders: () => () => {},
   getTelemetry: () => telemetry, subscribeTelemetry: () => () => {},
 };
 const environment = base.environment.getSnapshot(), fileSelection = base.fileSelection.getSnapshot({ ownerTabId: source });
@@ -48,4 +50,12 @@ const application = { ...base, composerPresentation: presentation, getSnapshot: 
 } as ApplicationServiceV1 & { composerPresentation: ApplicationComposerPresentationV1 };
 Object.assign(window, { composerAcceptance: { calls, retire: () => { state = { ...state, drafts: { ...state.drafts, primary: { ...state.drafts.primary, ownerTabId: "closed" } } }; publish(); } } });
 document.documentElement.style.setProperty("--conversation-message-font-size", "15px");
-createRoot(document.getElementById("root")!).render(<I18nProvider><WuuUIRoot><main style={{ padding: 24, maxWidth: 850, margin: "360px auto 0" }}><DefaultComposerSurface application={application} variant="hero" /></main><ToastViewport /></WuuUIRoot></I18nProvider>);
+const host = new PluginHost({ react: React });
+await host.activateGeneration({ pluginId: "wuu.default-composer", generation: "fixture", register(api) {
+  api.registerUISlot({ id: "composer.above", cardinality: "many" });
+  api.registerUISlot({ id: "composer.toolbar", cardinality: "many" });
+  api.registerUIContribution({ id: "fixture-tool", title: "Fixture tool", target: "wuu.default-composer/composer.toolbar",
+    render: () => <button type="button" className="composer-tool-button" data-public-tool onClick={() => calls.push({ action: "fixture-tool" })}>Tool</button> });
+} });
+const slots = createUIComposition(host);
+createRoot(document.getElementById("root")!).render(<I18nProvider><WuuUIRoot><main style={{ padding: 24, maxWidth: 850, margin: "360px auto 0" }}><DefaultComposerSurface application={application} slots={slots} variant="hero" /></main><ToastViewport /></WuuUIRoot></I18nProvider>);
