@@ -3,7 +3,7 @@ import { _layout } from "blobatar";
 import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 import {
   WUU_MASCOT_BRAND_COLORS,
-  WUU_MASCOT_IDENTITY_PERSPECTIVE,
+  WUU_MASCOT_ACTIVITY_PERSPECTIVES,
   WUU_MASCOT_NAME,
   WUU_MASCOT_TRAITS,
 } from "./wuu-mascot-spec";
@@ -12,7 +12,7 @@ import "./styles/web-workspace-start-page.css";
 const mascot = _layout(WUU_MASCOT_NAME, {
   traits: WUU_MASCOT_TRAITS,
   palette: WUU_MASCOT_BRAND_COLORS,
-  perspective: WUU_MASCOT_IDENTITY_PERSPECTIVE,
+  perspective: WUU_MASCOT_ACTIVITY_PERSPECTIVES.idle,
 });
 // Supplying a perspective makes Blobatar return the projected contour of each eye.
 const eyePaths = mascot.eyes.map((eye) => (eye as typeof eye & { path: string }).path);
@@ -20,21 +20,32 @@ const eyePaths = mascot.eyes.map((eye) => (eye as typeof eye & { path: string })
 export function WebWorkspaceStartPage({ active, searchField }: { active: boolean; searchField: ReactNode }): JSX.Element {
   const mascotRef = useRef<SVGSVGElement>(null);
   const eyesRef = useRef<SVGGElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const svg = mascotRef.current;
     const eyes = eyesRef.current;
-    if (!active || !svg || !eyes) return;
+    const search = searchRef.current;
+    if (!active || !svg || !eyes || !search) return;
 
     let pointer: { x: number; y: number } | null = null;
     let frame: number | undefined;
     let visible = true;
     let listening = false;
-    const reset = () => {
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+    let typingTimer: ReturnType<typeof setTimeout> | undefined;
+    const settle = () => {
       if (frame !== undefined) cancelAnimationFrame(frame);
+      clearTimeout(settleTimer);
       frame = undefined;
+      settleTimer = undefined;
       pointer = null;
       eyes.removeAttribute("transform");
+    };
+    const reset = () => {
+      settle();
+      clearTimeout(typingTimer);
+      typingTimer = undefined;
     };
     const renderGaze = () => {
       frame = undefined;
@@ -45,14 +56,28 @@ export function WebWorkspaceStartPage({ active, searchField }: { active: boolean
       const dy = pointer.y - (rect.top + rect.height / 2);
       const reach = Math.max(80, Math.min(window.innerWidth, window.innerHeight) * 0.18);
       const distance = Math.max(reach, Math.hypot(dx, dy));
-      const transform = `translate(${(dx / distance * 4).toFixed(2)} ${(dy / distance * 3).toFixed(2)})`;
+      const transform = `translate(${(dx / distance * 3).toFixed(2)} ${(dy / distance * 2).toFixed(2)})`;
       if (eyes.getAttribute("transform") !== transform) eyes.setAttribute("transform", transform);
     };
     const move = (event: PointerEvent) => {
-      if (event.pointerType === "touch") return;
+      if (event.pointerType === "touch" || typingTimer !== undefined) return;
       pointer = { x: event.clientX, y: event.clientY };
-      // Only pointer input schedules work; the resting page has no animation loop.
+      clearTimeout(settleTimer);
+      settleTimer = setTimeout(settle, 1000);
+      // Only pointer input schedules frames; the resting page has no animation loop.
       if (frame === undefined) frame = requestAnimationFrame(renderGaze);
+    };
+    const input = () => {
+      if (!listening) return;
+      // Glance once per typing burst, then face the user even if typing continues.
+      // Focus alone (including new-tab autofocus) must not lower the gaze.
+      if (typingTimer === undefined) {
+        settle();
+        eyes.setAttribute("transform", "translate(0 5)");
+        settleTimer = setTimeout(settle, 700);
+      }
+      clearTimeout(typingTimer);
+      typingTimer = setTimeout(() => { typingTimer = undefined; }, 1200);
     };
     const refresh = () => {
       const enabled = visible && !document.hidden && document.hasFocus() && !prefersReducedMotion();
@@ -70,6 +95,8 @@ export function WebWorkspaceStartPage({ active, searchField }: { active: boolean
     window.addEventListener("blur", refresh);
     document.addEventListener("visibilitychange", refresh);
     document.documentElement.addEventListener("pointerleave", reset);
+    search.addEventListener("input", input);
+    search.addEventListener("focusout", reset);
     const stopReducedMotion = subscribeReducedMotion(refresh);
     refresh();
 
@@ -79,6 +106,8 @@ export function WebWorkspaceStartPage({ active, searchField }: { active: boolean
       window.removeEventListener("blur", refresh);
       document.removeEventListener("visibilitychange", refresh);
       document.documentElement.removeEventListener("pointerleave", reset);
+      search.removeEventListener("input", input);
+      search.removeEventListener("focusout", reset);
       stopReducedMotion();
       observer.disconnect();
       reset();
@@ -100,7 +129,7 @@ export function WebWorkspaceStartPage({ active, searchField }: { active: boolean
             {eyePaths.map((path, index) => <path key={index} d={path} />)}
           </g>
         </svg>
-        <div className="web-workspace-start-search">{searchField}</div>
+        <div ref={searchRef} className="web-workspace-start-search">{searchField}</div>
       </div>
     </div>
   );

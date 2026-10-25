@@ -475,7 +475,7 @@ export function WebWorkspacePanel({
               <button type="button" className="settings-button settings-button-ghost" disabled={blank} onClick={openExternal}>{t("webWorkspace.openExternal")}</button>
             </div>
           </div>
-        ) : blank ? <WebWorkspaceStartPage active={active} searchField={
+        ) : blank ? <WebWorkspaceStartPage key={`${site?.id}/${current?.activeTabId}`} active={active} searchField={
           <WebWorkspaceAddress className="web-workspace-start-address" api={api} destinationId={site?.id} pageKey={`${site?.id}/${current?.activeTabId}`} active={active}
             inputRef={startInputRef} value={address} disabled={!site || !api} invalid={Boolean(addressError)} errorID={addressErrorID}
             onChange={changeAddress} onSubmit={openAddress} onEscape={restoreAddress} leading={<Search className="icon" aria-hidden="true" />}>

@@ -163,6 +163,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Let the new-tab mascot rest facing forward, gently follow the pointer, and briefly glance at the search field only when typing.
+
 - Preserve newer conversation titles when a delayed recovery request returns no session snapshot.
 
 - Restore workspace extension icons and readable long titles, and preserve keyboard discovery, document selection, and attachment recovery through the public desktop paths.

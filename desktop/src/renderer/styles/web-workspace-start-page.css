@@ -27,6 +27,14 @@
   user-select: none;
 }
 
+.web-workspace-start-mascot-eyes {
+  transition: transform var(--motion-slower) var(--ease-out);
+}
+
+@container style(--motion-reduced: 1) {
+  .web-workspace-start-mascot-eyes { transition: none; }
+}
+
 .web-workspace-start-search {
   width: 100%;
   min-width: 0;
