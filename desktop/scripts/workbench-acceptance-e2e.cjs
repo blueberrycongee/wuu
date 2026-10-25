@@ -422,7 +422,7 @@ async function geometry(label) {
     const context = rect(settings ? '.settings-sidebar' : '.sidebar > .sidebar-content');
     const main = rect(settings ? '.settings-main' : '.conversation-pane');
     const chrome = rect('.workbench-window-chrome');
-    const conversation = !settings && document.querySelector('.sidebar')?.dataset.nativeSection === 'conversations';
+    const conversation = !settings && document.querySelector('.conversation-pane')?.dataset.nativeSection === 'conversations';
     const rightControlPresent = Boolean(document.querySelector('.shell-right-sidebar-toggle'));
     const controls = ['.section-sidebar-toggle', ...(conversation ? ['.shell-right-sidebar-toggle'] : [])].map(selector => {
       const node = document.querySelector(selector), r = node.getBoundingClientRect();
