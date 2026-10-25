@@ -14,6 +14,7 @@ const { app } = require('electron');
 
 const desktop = path.resolve(__dirname, '..');
 const output = process.env.WUU_WORKTREE_OUTPUT || path.resolve(desktop, '../artifacts/composer-worktree');
+const narrowWidth = Number(process.env.WUU_WORKTREE_NARROW_WIDTH || 760);
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-composer-worktree-'));
 const home = path.join(fixture, 'home');
 const project = path.join(fixture, 'project');
@@ -190,7 +191,7 @@ const workspaceRow = win => evaluate(win, () => {
     });
   const buttons = [...barNode.querySelectorAll('button')].map(button => {
     const rect = button.getBoundingClientRect();
-    return { left: rect.left, right: rect.right, height: rect.height,
+    return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height: rect.height,
       hittable: rect.width > 0 && button.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)) };
   });
   return { viewport: { width: innerWidth, height: innerHeight }, barLeft: bar.left, barRight: bar.right,
@@ -318,7 +319,7 @@ async function run() {
     name: 'compact', source: 'project', project: projectIdentity,
   });
   await capture(main, '08-explicit-skill-draft-light.png');
-  main.setSize(760, 820);
+  main.setSize(narrowWidth, 820);
   await evaluate(main, () => {
     document.documentElement.dataset.theme = 'dark';
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
@@ -357,7 +358,7 @@ async function run() {
   const threadIDsBeforeDismissal = await evaluate(main, async () => (await window.wuu.listThreads()).threads.map(item => item.id).sort());
   const worktreesBeforeDismissal = worktreeCount();
   const forkDismissals = [];
-  for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, 760]) {
+  for (const theme of ['light', 'dark']) for (const fontSize of [14, 20]) for (const width of [1280, narrowWidth]) {
     await setAppearance(main, { theme, fontSize, width });
     for (const dismissal of ['backdrop', 'Escape']) {
       await evaluate(main, () => {
@@ -455,7 +456,7 @@ async function run() {
   }), 'The workspace operation must follow its initiating message.');
   assert(await evaluate(main, root => document.querySelector('.workspace-tool-details')?.textContent.includes(root), fs.realpathSync(project)));
   await capture(main, '10-workspace-tool-light.png');
-  main.setSize(760, 820);
+  main.setSize(narrowWidth, 820);
   await evaluate(main, id => {
     document.documentElement.dataset.theme = 'dark';
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
@@ -487,7 +488,7 @@ async function run() {
 
   // Dark, large text, narrow window with worktree on.
   await click(main, '.composer-worktree-toggle');
-  main.setSize(760, 820);
+  main.setSize(narrowWidth, 820);
   await evaluate(main, () => {
     document.documentElement.setAttribute('data-theme', 'dark');
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
@@ -498,7 +499,7 @@ async function run() {
   await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
   await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
   await waitFor(main, branch => !document.querySelector('.composer-branch-menu') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
-  await setAppearance(main, { theme: 'dark', fontSize: 20, width: 760 });
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
   await capture(main, '05-draft-dark-large-narrow.png');
   const narrow = await workspaceRow(main);
   assert.equal(narrow.groups.length, 2);
@@ -510,7 +511,7 @@ async function run() {
     `The long branch truncates while the worktree toggle stays whole. Layout: ${JSON.stringify(narrow)}`);
 
   await evaluate(main, () => document.documentElement.style.setProperty('--appearance-scale', String(15 / 14)));
-  await setAppearance(main, { theme: 'dark', fontSize: 15, width: 760 });
+  await setAppearance(main, { theme: 'dark', fontSize: 15, width: narrowWidth });
   await capture(main, '05b-draft-dark-default-narrow.png');
   const defaultNarrow = await workspaceRow(main);
   assert.deepEqual(defaultNarrow.text.filter(item => item.clipped).map(item => item.text), [longBranch],
@@ -518,7 +519,7 @@ async function run() {
   assert(defaultNarrow.text[1].width >= defaultNarrow.text[1].prefixWidth,
     `The default-size branch retains its readable prefix. Layout: ${JSON.stringify(defaultNarrow)}`);
   await evaluate(main, () => document.documentElement.style.setProperty('--appearance-scale', String(20 / 14)));
-  await setAppearance(main, { theme: 'dark', fontSize: 20, width: 760 });
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
 
   // A genuinely long project must still leave the branch identifiable and
   // the worktree toggle accessible.
@@ -534,7 +535,7 @@ async function run() {
   await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
   await waitFor(main, branch => !document.querySelector('.composer-branch-menu')
     && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
-  await setAppearance(main, { theme: 'dark', fontSize: 20, width: 760 });
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
   await capture(main, '05a-draft-long-project-dark-large-narrow.png');
   const longProjectNarrow = await workspaceRow(main);
   assert.ok(longProjectNarrow.groups.every(rect => rect.right <= longProjectNarrow.barRight + 0.5),
@@ -547,7 +548,8 @@ async function run() {
     assert.equal(row.buttons.length, 3);
     assert(row.buttons.every((button, index) => button.left >= row.barLeft - 0.5
       && button.right <= row.barRight + 0.5 && button.hittable
-      && (index === 0 || button.left >= row.buttons[index - 1].right)),
+      && row.buttons.slice(0, index).every(previous => button.left >= previous.right
+        || button.top >= previous.bottom || button.bottom <= previous.top)),
     `Workspace controls stay in bounds, separate and clickable. Layout: ${JSON.stringify(row)}`);
   }
 

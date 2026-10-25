@@ -2262,6 +2262,17 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   }
 }
 
+/* A narrow pane cannot fit both a readable project name and the Git controls. */
+@container composer-shell (max-width: 320px) {
+  .composer-stack:not([data-document-composer]) .composer-workspace-bar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .composer-stack:not([data-document-composer]) .composer-git-controls::before {
+    display: none;
+  }
+}
+
 /* A shared prefix such as codex/ steps back so the part people scan for,
  * the branch's own name, carries the row. */
 .composer-branch-prefix {
