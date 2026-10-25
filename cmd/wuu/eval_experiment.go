@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,6 +47,23 @@ type evalExperimentPlan struct {
 }
 
 const evalAcceptance = "all tasks pass on both sides; fewer model turns or total tokens; duration at most 1.25 times baseline"
+
+// Freeze command-side grading and selection as well as task graders. This is
+// deliberately conservative: changes elsewhere in these files also rebaseline.
+//
+//go:embed eval.go eval_experiment.go
+var evalScoringSource embed.FS
+
+func evalScoringVersion() string {
+	hash := sha256.New()
+	fmt.Fprint(hash, evalharness.CatalogVersion())
+	for _, name := range []string{"eval.go", "eval_experiment.go"} {
+		source, _ := evalScoringSource.ReadFile(name)
+		fmt.Fprintf(hash, "%s\x00%d\x00", name, len(source))
+		hash.Write(source)
+	}
+	return fmt.Sprintf("sha256:%x", hash.Sum(nil))
+}
 
 type evalExperimentIdentity struct {
 	PlanHash       string            `json:"plan_sha256"`
@@ -173,7 +191,7 @@ func runEvalExperiment(opts evalExperimentOptions) (err error) {
 				err = errors.Join(err, fmt.Errorf("experiment failed: %d/%d passed", report.Summary.Passed, report.Summary.Total))
 			}
 		}()
-		if plan.CatalogVersion != evalharness.CatalogVersion() {
+		if plan.CatalogVersion != evalScoringVersion() {
 			return errors.New("frozen catalog/scorer differs from this executable; freeze a new plan and rebaseline")
 		}
 		if !reflect.DeepEqual(plan.Environment, evalEnvironment()) {
@@ -234,7 +252,7 @@ func runEvalExperiment(opts evalExperimentOptions) (err error) {
 		if err != nil {
 			return err
 		}
-		plan = evalExperimentPlan{Version: 1, CatalogVersion: evalharness.CatalogVersion(), Provider: provider, Model: pc.Model,
+		plan = evalExperimentPlan{Version: 1, CatalogVersion: evalScoringVersion(), Provider: provider, Model: pc.Model,
 			Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant, LiveCodex: live, MaxSteps: opts.MaxSteps, Timeout: opts.Timeout,
 			ConfigHash: evalDigest(configBytes), Packages: evalPackageIdentities(catalog), Environment: evalEnvironment(), Concurrency: 1, Acceptance: evalAcceptance}
 		seen := map[string]bool{}
@@ -289,8 +307,8 @@ func runEvalExperiment(opts evalExperimentOptions) (err error) {
 		if err := os.Mkdir(evidence, 0o700); err != nil {
 			return err
 		}
-		state, err := os.MkdirTemp("", "wuu-eval-state-")
-		if err != nil {
+		state := filepath.Join(evidence, "runtime-state")
+		if err := os.Mkdir(state, 0o700); err != nil {
 			return err
 		}
 		result := runEvalTask(evalTaskRunConfig{Task: task, Config: cfg, ProviderName: plan.Provider, ModelOverride: plan.Model,

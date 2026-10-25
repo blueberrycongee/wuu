@@ -602,6 +602,16 @@ func runEvalTask(cfg evalTaskRunConfig) (result evalharness.Result) {
 	userMessage := providers.ChatMessage{Role: "user", Content: cfg.Task.Prompt}
 	history = append(history, userMessage)
 
+	if cfg.EvidenceDir != "" {
+		if err := writeEvalEvidence(filepath.Join(cfg.EvidenceDir, "runtime-locations.json"), map[string]string{
+			"state_dir": rt.StateDir, "session_id": evalSessionID,
+			"session_dir": statepath.SessionArtifactDir(rt.StateDir, evalSessionID), "workdir": taskRoot,
+		}); err != nil {
+			result.RetainedStateDir = rt.StateDir
+			result.Error = fmt.Errorf("save recovery locations before admission: %w", err).Error()
+			return result
+		}
+	}
 	turnResult, runErr := engine.RunTurn(ctx, agentengine.TurnInput{History: history}, nil)
 	runResult := turnResult.Result
 	if cfg.EvidenceDir != "" {

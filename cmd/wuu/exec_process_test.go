@@ -417,3 +417,89 @@ func TestExecProcessDisconnectedStdoutSettlesRun(t *testing.T) {
 	waitExecProcess(t, cmd, stderr, wuuexec.ExitProtocol)
 	assertSettledExecRun(t, root)
 }
+
+func TestEvalProcessCrashRetainsRuntimeLocations(t *testing.T) {
+	root := t.TempDir()
+	configPath, started := stalledExecProvider(t, root, "partial answer")
+	state := filepath.Join(root, "state")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "config.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := func(args ...string) *exec.Cmd {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		t.Cleanup(cancel)
+		cmd := exec.CommandContext(ctx, binary, append([]string{"-test.run=^TestExecProcessHelper$", "--", "eval"}, args...)...)
+		cmd.Dir = root
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + root, "WUU_HOME=" + state, "WUU_EXEC_PROCESS_TEST=1"}
+		return cmd
+	}
+	plan := filepath.Join(root, "plan.json")
+	if output, err := command("--freeze", plan, "--task", "test_failure_fix", "--max-steps", "2", "--timeout", "1m").CombinedOutput(); err != nil {
+		t.Fatalf("freeze: %v\n%s", err, output)
+	}
+	evidence := filepath.Join(root, "evidence")
+	cmd := command("--plan", plan, "--artifacts", evidence)
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+	select {
+	case <-started:
+	case <-time.After(20 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("model never admitted: %s", output.String())
+	}
+	_ = cmd.Process.Kill()
+	_ = cmd.Wait()
+	data, err = os.ReadFile(filepath.Join(evidence, "test_failure_fix", "runtime-locations.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var locations struct {
+		StateDir   string `json:"state_dir"`
+		SessionID  string `json:"session_id"`
+		SessionDir string `json:"session_dir"`
+		Workdir    string `json:"workdir"`
+	}
+	if err := json.Unmarshal(data, &locations); err != nil {
+		t.Fatal(err)
+	}
+	if locations.SessionID == "" {
+		t.Fatal("missing admitted session identity")
+	}
+	for _, path := range []string{locations.StateDir, locations.Workdir} {
+		if path == "" {
+			t.Fatal("missing recovery path")
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if locations.SessionDir != statepath.SessionArtifactDir(locations.StateDir, locations.SessionID) {
+		t.Fatal("session evidence path does not belong to admitted session")
+	}
+	if !strings.HasPrefix(locations.StateDir, evidence+string(os.PathSeparator)) {
+		t.Fatal("crashed runtime state must remain inside controller evidence")
+	}
+	// The killed evaluation cannot run workspace cleanup.
+	t.Cleanup(func() { _ = os.RemoveAll(locations.Workdir) })
+}

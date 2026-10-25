@@ -155,6 +155,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Retain recoverable evaluation state and completed task results after interruption, and reject frozen plans when task or scoring code changes.
+
 - Keep conversation navigation responsive when its viewport remounts, and ignore stale model-discovery failures after switching tabs.
 
 - Center the startup icon, title, and progress bar without reserving invisible space for the delayed loading hint; showing the hint keeps the startup content in place.

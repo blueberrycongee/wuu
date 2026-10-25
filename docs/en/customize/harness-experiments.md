@@ -13,7 +13,11 @@ wuu eval --compare baseline/report.json,candidate/report.json
 
 Freeze makes no model calls. It resolves `all` once, then records ordered task IDs, the embedded task/setup/grader source digest, model, reasoning settings, configuration digest, parent package fingerprints, tool versions and budgets. Running the plan never filters its task list again. Initialization, authentication, missing tools, timeout and unfinished execution count as failures. A changed parent configuration, package set, grader or recorded environment rejects admission and records the fixed denominator as failed.
 
+The scorer identity covers `internal/evalharness/tasks.go`, `trace.go`, and the command-side `eval.go` and `eval_experiment.go`, including tool constraints and acceptance rules. It conservatively requires a new baseline for any edit to those files, even an edit unrelated to scoring.
+
 Each attempt needs a new evidence directory. It contains the original plan, executable digest and Go dependency/build metadata, parent package trees, candidate package and embedded SDK, selected service bindings, active modules and package fingerprints, complete returned execution messages, task results and copied session journals. Temporary state is removed only after evidence export; export errors retain state and fail the attempt. `--keep-workdirs` additionally preserves task workspaces. Artifacts may contain private conversation or tool data; they are not automatically published.
+
+Before model admission, each task writes `runtime-locations.json` with its state, session and workspace paths. Mutable state lives under that task’s evidence directory in `runtime-state/` until export succeeds. After a crash or forced cancellation, preserve that directory and the recorded workspace when investigating incomplete runs. In-flight usage that the provider has not reported remains unknown.
 
 The candidate is prepared through the same TypeScript snapshot adapter as `wuu plugin dev`. Explicit module selection still applies: a candidate excluded by the configured composition fails the loaded-package check. No fallback substitutes another implementation. Single-file imports support Node builtins and `@wuu/plugin-sdk`; use a package directory for other dependencies. `plugin validate` checks source loading and package structure; the evaluation also checks activation and readiness.
 
@@ -33,15 +37,16 @@ python3 examples/harness/run-pair.py --plan plan.json \
 # --candidate-host ./candidate-wuu --source-candidate ./candidate-source.tar
 ```
 
-`--timeout` is the predeclared wall-clock limit for each side. The controller retains stdout, stderr, process exit status, reports and a task ledger in `pair.json`. Crashes, incomplete reports and interruptions preserve the original denominator; missing tasks fail, and a failed process cannot be accepted. Complete reports are compared by the baseline executable's fixed grader rule. Candidate cleanup never removes these files. The controller does not retry, adjust budgets, copy credentials or change the selected configuration. An existing output directory is rejected. Process groups bound cancellation and failure cleanup; trusted plugins still have the user's filesystem access.
+`--timeout` is the predeclared wall-clock limit for each side. The controller retains stdout, stderr, process exit status, reports and a task ledger in `pair.json`. Crashes, incomplete reports and interruptions preserve the original denominator. The ledger recovers already written per-task results and usage even when the final report is missing, and retains the process record after interruption. Missing tasks fail, and a failed process cannot be accepted. Complete reports are compared by the baseline executable's fixed grader rule. Candidate cleanup never removes these files. The controller does not retry, adjust budgets, copy credentials or change the selected configuration. An existing output directory is rejected. Process groups bound cancellation and failure cleanup; trusted plugins still have the user's filesystem access.
 
 To check process cleanup without model calls, run:
 
 ```bash
 python3 examples/harness/check-process-cleanup.py --output ./cleanup-check
+python3 examples/harness/check-pair-recovery.py --output ./recovery-check
 ```
 
-The check covers clean exit, successful and failed parents that leave children running, and timeout with ignored termination signals.
+The cleanup check covers clean exit, successful and failed parents that leave children running, and timeout with ignored termination signals. The recovery check uses synthetic processes to verify completed task records survive a crash or controller cancellation while unfinished tasks remain failed.
 
 ## Step policy
 

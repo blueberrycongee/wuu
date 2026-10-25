@@ -137,29 +137,49 @@ def main():
             command = [binary, "eval", "--plan", plan_copy, "--artifacts", evidence]
             if name == "candidate" and candidate:
                 command += ["--candidate", candidate]
-            process = run(command, attempt, args.timeout)
             report_path = evidence / "report.json"
-            entry = {"side": name, "process": process, "report": str(report_path), "tasks": []}
+            entry = {"side": name, "report": str(report_path), "tasks": []}
             record["attempts"].append(entry)
-            # Never fabricate scorer output after a crash. Keep completed grader
-            # records, and mark every unreported task failed in this outer ledger.
-            report = None
-            if report_path.exists():
-                try:
-                    report = json.loads(report_path.read_text())
-                except (ValueError, OSError) as error:
-                    entry["report_error"] = str(error)
-            results = report.get("results", []) if isinstance(report, dict) else []
-            valid = (isinstance(report, dict)
-                     and report.get("experiment", {}).get("plan_sha256") == record["plan"]["sha256"]
-                     and [result.get("task_id") for result in results] == tasks)
-            entry["complete_report"] = valid
-            for task_id in tasks:
-                result = next((result for result in results if result.get("task_id") == task_id), None)
-                entry["tasks"].append({"task_id": task_id, "passed": bool(valid and result and result.get("success")),
-                                       "recorded": result is not None,
-                                       "failure": None if valid else "missing, incomplete or mismatched evaluation report"})
-            save(attempt / "ledger.json", entry)
+            try:
+                run(command, attempt, args.timeout)
+            finally:
+                entry["process"] = json.loads((attempt / "process.json").read_text())
+                report = None
+                if report_path.exists():
+                    try:
+                        report = json.loads(report_path.read_text())
+                    except (ValueError, OSError) as error:
+                        entry["report_error"] = str(error)
+                results = report.get("results", []) if isinstance(report, dict) else []
+                identity = report.get("experiment") if isinstance(report, dict) else None
+                valid = (isinstance(identity, dict)
+                         and identity.get("plan_sha256") == record["plan"]["sha256"]
+                         and isinstance(results, list)
+                         and all(isinstance(result, dict) for result in results)
+                         and [result.get("task_id") for result in results] == tasks)
+                entry["complete_report"] = valid
+                for index, task_id in enumerate(tasks):
+                    result = results[index] if valid else None
+                    task_path = evidence / task_id / "result.json"
+                    task_error = None
+                    if result is None and task_path.exists():
+                        try:
+                            result = json.loads(task_path.read_text())
+                            if not isinstance(result, dict) or result.get("task_id") != task_id:
+                                raise ValueError("task result identity differs from frozen task")
+                        except (ValueError, OSError) as error:
+                            result = None
+                            task_error = str(error)
+                    # Partial results retain the grader's verdict and usage, but
+                    # cannot authorize comparison or acceptance of a failed run.
+                    task = {"task_id": task_id, "passed": bool(result and result.get("success")),
+                            "recorded": result is not None,
+                            "failure": task_error or (None if result else "task did not produce a result")}
+                    if result is not None:
+                        task["result"] = result
+                        task["evidence"] = str(report_path if valid else task_path)
+                    entry["tasks"].append(task)
+                save(attempt / "ledger.json", entry)
         complete = all(attempt["complete_report"] for attempt in record["attempts"])
         if complete:
             comparison = output / "comparison"
