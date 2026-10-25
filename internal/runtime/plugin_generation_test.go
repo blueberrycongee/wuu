@@ -21,9 +21,11 @@ import (
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
 type generationClient struct {
@@ -252,14 +254,22 @@ func TestRefreshCandidatePreservesHealthyRuntimeOnFailure(t *testing.T) {
 	}
 }
 
-func TestRefreshCandidateAllowsRemovalAndIsolatesNewOptionalFailure(t *testing.T) {
+func TestRefreshCandidateRejectsSelectedModulePreparationFailure(t *testing.T) {
 	oldClient := &generationClient{id: "removed"}
-	session := testGenerationSession(t, testPluginGeneration("removed", oldClient))
+	old := testPluginGeneration("removed", oldClient)
+	session := testGenerationSession(t, old)
 	defer session.Cleanup()
 	candidate, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{testRuntimePlugin("new")}, nil, nil,
 		func(context.Context, pluginhost.ProcessConfig) (pluginhost.Client, error) {
-			return nil, errors.New("new optional runtime unavailable")
+			return nil, errors.New("selected runtime unavailable")
 		})
+	if err == nil || !strings.Contains(err.Error(), "selected runtime unavailable") || candidate != nil {
+		t.Fatalf("failed preparation returned candidate=%v error=%v", candidate, err)
+	}
+	if oldClient.closed || !session.IsCurrentPluginGeneration(old) {
+		t.Fatal("failed preparation retired the active generation")
+	}
+	candidate, err = session.buildPluginGeneration(config.Config{}, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,10 +279,6 @@ func TestRefreshCandidateAllowsRemovalAndIsolatesNewOptionalFailure(t *testing.T
 	}
 	if !oldClient.closed {
 		t.Fatal("removed runtime was not retired")
-	}
-	status := requireRuntimeStatus(t, session.PluginHost, "new")
-	if status.State != pluginhost.StateFailed {
-		t.Fatalf("optional failure diagnostics = %+v", status)
 	}
 }
 
@@ -320,6 +326,7 @@ func TestSuccessfulCandidateSwapsThenClosesOldGeneration(t *testing.T) {
 	candidate := testPluginGeneration("candidate", candidateClient)
 	candidate.systemPrompts = agent.NewSystemPromptAssembler()
 	candidate.systemPrompts.Add(agent.NewStaticPromptSection("candidate", "candidate section", 1))
+	candidate.systemPrompt, _ = candidate.systemPrompts.Assemble("")
 	candidate.compactions = agent.NewCompactionRegistry()
 	candidate.compactions.Register(&generationCompactionProvider{key: "candidate"})
 
@@ -636,16 +643,7 @@ func TestThreadModelRuntimeKeepsGenerationUntilReleased(t *testing.T) {
 			}
 			configuration := config.NewService(config.Module, session.ConfigPath, "")
 			consumer := &fakeServicePluginClient{id: StateServicesConsumer, required: []pluginhost.ServiceRequirement{{Name: config.ServiceName, MajorVersion: 1, Required: true}}}
-			session.PluginHost.Add(configuration)
-			session.PluginHost.Add(consumer)
-			registry, conflicts := pluginhost.BuildServiceRegistry(configuration, consumer)
-			if len(conflicts) != 0 {
-				t.Fatal(conflicts)
-			}
-			session.PluginHost.AttachServiceRegistry(registry, conflicts)
-			if err := session.PluginHost.Activate(context.Background()); err != nil {
-				t.Fatal(err)
-			}
+			attachTestExecutionServices(t, session.PluginHost, configuration, consumer)
 			defer session.Cleanup()
 			defer session.pluginGeneration.close()
 			selection := ThreadModelSelection{Provider: "fixture", Model: model}
@@ -1161,6 +1159,7 @@ func TestThreadModelConstructionPinsGenerationDependencies(t *testing.T) {
 	old.mcp = mcp.NewManager()
 	old.compactions = agent.NewCompactionRegistry()
 	s := testGenerationSession(t, old)
+	attachTestExecutionServices(t, s.PluginHost)
 	s.RootDir = t.TempDir()
 	s.WuuHome = t.TempDir()
 	s.StateDir = t.TempDir()
@@ -1179,6 +1178,10 @@ func TestThreadModelConstructionPinsGenerationDependencies(t *testing.T) {
 	}
 	defer s.ReleasePluginGeneration(shadow.pluginGeneration)
 	next := testPluginGeneration("plugin", &generationClient{id: "plugin"})
+	attachTestExecutionServices(t, next.host)
+	for _, id := range []string{toolservice.DefaultModule, promptservice.NativeModule, toolExecutionConsumer, sessionExecutionConsumer} {
+		next.active = append(next.active, pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: id}})
+	}
 	next.mcp = mcp.NewManager()
 	next.compactions = agent.NewCompactionRegistry()
 	if err := s.ActivatePluginGeneration(next, nil); err != nil {
@@ -1197,5 +1200,27 @@ func TestThreadModelConstructionPinsGenerationDependencies(t *testing.T) {
 	}
 	if rt.StreamRunner.CompactionRegistry != old.compactions {
 		t.Error("old-generation runtime inherited new-generation compaction registry")
+	}
+}
+
+// Lifecycle fixtures select the native execution services explicitly, while
+// retaining the fake plugin whose generation ownership they exercise.
+func attachTestExecutionServices(t *testing.T, host *pluginhost.Host, extra ...pluginhost.Client) {
+	t.Helper()
+	clients := append([]pluginhost.Client{
+		toolservice.NewService(), promptservice.NewService(),
+		&runtimeServiceConsumer{id: toolExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: toolservice.ServiceName, MajorVersion: 1, Required: true}}},
+		&runtimeServiceConsumer{id: sessionExecutionConsumer, state: pluginhost.StatePrepared, requirements: []pluginhost.ServiceRequirement{{Name: promptservice.ServiceName, MajorVersion: 1, Required: true}}},
+	}, extra...)
+	for _, client := range clients {
+		host.Add(client)
+	}
+	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host.AttachServiceRegistry(registry, conflicts)
+	if err := host.Activate(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }

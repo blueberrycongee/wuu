@@ -43,6 +43,7 @@ const (
 type sideThreadTurn struct {
 	store       *sidethread.Store
 	state       *runtime.State
+	execution   *runtime.State
 	generation  *runtime.PluginGeneration
 	pluginID    string
 	commandID   string
@@ -504,7 +505,31 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 			return nil, err
 		}
 	}
-	runner, err := s.rt.NewSideThreadRunnerForState(binding, sideThreadID, s.mainThreadRoot(binding, mainID), s.mainThreadModelSelection(binding, mainID), command.ResolvedPrompt.Text, mainID)
+	s.mu.Lock()
+	main := s.threads[mainID]
+	s.mu.Unlock()
+	var execution *runtime.State
+	if main != nil {
+		main.mu.Lock()
+		if main.running {
+			execution, err = s.rt.RetainSideThreadExecution(main.state, mainID, main.execRuntime)
+		} else {
+			execution, err = s.rt.RetainSideThreadExecution(binding, mainID, nil)
+		}
+		main.mu.Unlock()
+	} else {
+		execution, err = s.rt.RetainSideThreadExecution(binding, mainID, nil)
+	}
+	if err != nil {
+		return nil, err
+	}
+	executionOwned := true
+	defer func() {
+		if executionOwned {
+			_ = execution.Close()
+		}
+	}()
+	runner, err := s.rt.NewSideThreadRunnerForState(execution, sideThreadID, s.mainThreadRoot(binding, mainID), s.mainThreadModelSelection(binding, mainID), command.ResolvedPrompt.Text, mainID)
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +554,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	lifecycleLeaseOwned = false
 
 	ctx, cancel := context.WithCancel(context.Background())
-	turn := &sideThreadTurn{store: store, cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState}
+	turn := &sideThreadTurn{store: store, cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState, execution: execution}
 	s.sideTurnMu.Lock()
 	if s.closed.Load() {
 		s.sideTurnMu.Unlock()
@@ -555,6 +580,7 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	}
 	leaseOwned = false
 	generationOwned = false
+	executionOwned = false
 
 	return &SideThreadSendResult{
 		UserMessageID: userMessageID,
@@ -655,6 +681,7 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 		}
 		s.sideTurnMu.Unlock()
 		releaseSideThreadExecutionLease(mainID, turn.lease)
+		_ = turn.execution.Close()
 		_ = turn.state.Close()
 	}()
 	if start != nil {

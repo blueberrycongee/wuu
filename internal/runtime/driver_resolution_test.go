@@ -32,16 +32,17 @@ func (c *driverProviderClient) InvokeService(ctx context.Context, params pluginh
 
 func newDriverTestHost(t *testing.T, profile string, clients ...pluginhost.Client) *pluginhost.Host {
 	t.Helper()
-	kernel := newKernelHostServices(nil, nil)
-	clients = append(clients, kernel)
-	clients = append(clients, runtimeServiceConsumers(profile)...)
-	host := pluginhost.New(clients...)
-	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
-	kernel.bindRegistry(registry)
-	if len(conflicts) != 0 {
-		t.Fatalf("conflicts = %+v", conflicts)
+	root := t.TempDir()
+	home, state := testWorkspaceState(t, root)
+	factories := make([]NativeProviderFactory, 0, len(clients))
+	for _, client := range clients {
+		factories = append(factories, NativeProviderFactory{ID: client.ID(), DefaultEnabled: true,
+			Build: func(NativeProviderContext) (pluginhost.Client, error) { return client, nil }})
 	}
-	host.AttachServiceRegistry(registry, conflicts)
+	host, _, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, nil, profile, factories...)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := host.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}

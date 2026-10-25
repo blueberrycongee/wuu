@@ -72,7 +72,7 @@ func (g serviceGateway) AdmitInput(ctx context.Context) (InputAdmission, error) 
 	if err := g.callTurn(ctx, "admit_input", pluginprotocol.DriverTurnScope{ExecutionID: g.executionID}, &result); err != nil {
 		return InputAdmission{}, err
 	}
-	return InputAdmission{Messages: modelwire.DriverMessagesFromWire(result.Messages), Context: turnContextFromWire(result.Context)}, nil
+	return InputAdmission{Messages: modelwire.DriverMessagesFromWire(result.Messages), Context: turnContextFromWire(result.Context), Decision: result.Decision}, nil
 }
 
 func (g serviceGateway) ReadRequestContext(ctx context.Context) ([]ContextSegment, error) {

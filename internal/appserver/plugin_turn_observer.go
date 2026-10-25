@@ -23,7 +23,12 @@ func (s *Server) notifyPluginTurnLifecycle(binding *runtime.State, ctx context.C
 	if err != nil {
 		return err
 	}
-	return s.deliverPluginTurnLifecycle(binding, ctx, pluginID, input, terminal)
+	origin, err := s.retainPluginTurnOrigin(binding, pluginID, input.RequestID)
+	if err != nil {
+		return err
+	}
+	defer origin.Close()
+	return s.deliverPluginTurnLifecycle(origin, ctx, pluginID, input, terminal)
 }
 
 // notifyPluginTurnLifecycleAsync persists terminal observations before
@@ -41,7 +46,13 @@ func (s *Server) notifyPluginTurnLifecycleAsync(binding *runtime.State, pluginID
 		providers.DebugLogf("persist plugin turn lifecycle for %q: %v", input.RequestID, err)
 		return
 	}
-	if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
+	origin, err := s.retainPluginTurnOrigin(binding, pluginID, input.RequestID)
+	if err != nil {
+		providers.DebugLogf("retain plugin turn lifecycle origin for %q: %v", input.RequestID, err)
+		return
+	}
+	defer origin.Close()
+	if !s.startBackgroundWithState(origin, func(binding *runtime.State) {
 		ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
 		defer cancel()
 		if err := s.deliverPluginTurnLifecycle(binding, ctx, pluginID, input, terminal); err != nil {

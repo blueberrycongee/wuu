@@ -13,6 +13,7 @@ type invocationStateKey struct{}
 type invocationStateRetainer func() (*State, error)
 type modelInvocationOwner struct {
 	cancel           context.CancelFunc
+	stopScope        func() bool
 	binding          *State
 	receipts         *providers.ModelReceiptScope
 	settlement       *providers.ModelReceiptScope
@@ -42,6 +43,20 @@ func RetainInvocationState(ctx context.Context) (*State, error) {
 		return nil, serviceError("service_unavailable", "invocation has no session state")
 	}
 	return retain()
+}
+
+// RetainProductInvocationState routes session lifecycle operations to the
+// durable authority imported by a product composition. Model and tool calls
+// retain the invoking composition's own generation through RetainInvocationState.
+func RetainProductInvocationState(ctx context.Context) (*State, error) {
+	binding, err := RetainInvocationState(ctx)
+	for err == nil && binding.Generation != nil && binding.Generation.productParent != nil {
+		parent := binding.Generation.productParent
+		next, nextErr := parent.retainState()
+		_ = binding.Close()
+		binding, err = next, nextErr
+	}
+	return binding, err
 }
 
 // bindStateGeneration binds one graph before effectful lifecycle callbacks.
@@ -171,8 +186,19 @@ func registerModelInvocation(ctx context.Context, binding *State, cancel context
 	completionCtx, settlement := providers.NewModelReceiptScope(completionCtx)
 	owner := &modelInvocationOwner{settlement: settlement, cancel: cancel, binding: binding, receipts: receipts, ownsReceipts: ownsReceipts, endParentReceipt: endParent, completionCtx: completionCtx, cancelCompletion: cancelCompletion}
 	generation := binding.Generation
+	var admissionErr error
+	if selected := generation.composition; selected.scope != nil {
+		selected.service.mu.Lock()
+		if !selected.scope.published {
+			admissionErr = serviceError("composition_unavailable", "execution composition is preparing")
+		}
+		selected.service.mu.Unlock()
+	}
 	generation.modelMu.Lock()
 	if generation.modelStopped {
+		admissionErr = serviceError("generation_closed", "model invocation admission is closed")
+	}
+	if admissionErr != nil {
 		generation.modelMu.Unlock()
 		if ownsReceipts {
 			receipts.Seal()
@@ -181,10 +207,18 @@ func registerModelInvocation(ctx context.Context, binding *State, cancel context
 		settlement.Seal()
 		cancelCompletion(context.Canceled)
 		_ = binding.Close()
-		return nil, serviceError("generation_closed", "model invocation admission is closed")
+		return nil, admissionErr
 	}
 	if generation.modelOwners == nil {
 		generation.modelOwners = make(map[*modelInvocationOwner]struct{})
+	}
+	// All inference paths share this boundary, including native workers and
+	// direct plugin calls. Explicit disposal drains; owner retirement cancels.
+	if scope := generation.composition.scope; scope != nil {
+		owner.stopScope = context.AfterFunc(scope.ctx, cancel)
+		if scope.ctx.Err() != nil {
+			cancel()
+		}
 	}
 	generation.modelOwners[owner] = struct{}{}
 	generation.modelBodies.Add(1)
@@ -235,6 +269,9 @@ func (o *modelInvocationOwner) complete(callCtx context.Context, execution *prov
 }
 
 func (o *modelInvocationOwner) finish(callCtx context.Context, completionErr error) error {
+	if o.stopScope != nil {
+		o.stopScope()
+	}
 	o.settlement.Seal()
 	generation := o.binding.Generation
 	generation.recordModelCompletionError(completionErr)

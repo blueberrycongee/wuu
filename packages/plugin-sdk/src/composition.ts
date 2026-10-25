@@ -7,20 +7,37 @@ export function requireCompositionService(): ServiceRequirement {
 }
 
 export interface CompositionCreate {
-  readonly selection: ProductComposition;
+  /** Capture the parent's actual modules and bindings before applying selection overrides. */
+  readonly inherit?: boolean;
+  /** Required unless inherit is true. Inheritance cannot be combined with a profile. */
+  readonly selection?: ProductComposition;
+  /** Omit to inherit the parent's model; empty fields in an explicit choice use connection defaults. */
+  readonly model?: CompositionModel;
   /** Local directories, zip packages, or one-file TypeScript plugins. Installing grants trust in this scope. */
   readonly paths?: readonly string[];
+  /** Parent imports durable sessions, documents and artifacts; isolated is the default. */
+  readonly state?: "isolated" | "parent";
   /** Defaults to a new empty workspace. Explicit roots share their files. */
   readonly root?: string;
   readonly driver_profile?: string;
 }
 
+export interface CompositionModel {
+  readonly provider?: string;
+  readonly model?: string;
+  readonly variant?: string;
+  readonly effort?: string;
+}
+
 export interface CompositionView {
   readonly id: string;
+  readonly parent_generation: string;
+  readonly model: CompositionModel;
   readonly root: string;
   readonly state: "active";
   readonly running: number;
   readonly agents: readonly string[];
+  readonly state_source: "isolated" | "parent";
   readonly selection: {
     readonly profile?: string;
     readonly modules: readonly string[] | null;
@@ -34,9 +51,20 @@ export interface CompositionView {
 }
 
 export interface CompositionBinding {
-  readonly agent: string;
+  readonly agent?: string;
+  readonly session?: string;
   readonly id: string;
   readonly previous: string;
+}
+
+export interface CompositionSessionView {
+  readonly session: string;
+  readonly id: string;
+  readonly state: "default" | "active" | "unavailable";
+  readonly owner?: string;
+  readonly thread?: string;
+  /** Live when active; otherwise the immutable snapshot saved at binding. */
+  readonly composition?: CompositionView;
 }
 
 export interface CompositionRunResult {
@@ -63,8 +91,14 @@ export function compositionService(host: RuntimeHost) {
     inspect: (id: string) => call<CompositionView>("inspect", { id }),
     bind: (agent: string, id: string, expected: string) =>
       call<CompositionBinding>("bind", { agent, id, expected }),
+    /** Read durable selection and availability, including after disposal or restart. */
+    inspectSession: (session: string) => call<CompositionSessionView>("inspectSession", { session }),
+    /** Persist a parent-state scope for future turns. Missing resources fail closed after restart. */
+    bindSession: (session: string, id: string, expected: string) =>
+      call<CompositionBinding>("bind", { session, id, expected }),
     run: (params: CompositionRun) => call<CompositionRunResult>("run", params),
-    /** Unbinds this scope and stops admission. Admitted runs finish before cleanup. */
+    /** Stops admission and unbinds logical agents. Product selections remain inspectable;
+     * explicitly bindSession(session, "", oldID) to return to defaults. Admitted runs drain. */
     dispose: (id: string) => call<{ id: string; draining: boolean }>("dispose", { id }),
   };
 }

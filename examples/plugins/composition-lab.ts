@@ -4,9 +4,10 @@ import {
 } from "@wuu/plugin-sdk";
 
 type Request = {
-  action: "create" | "inspect" | "bind" | "run" | "dispose";
+  action: "create" | "inspect" | "inspectSession" | "bind" | "run" | "dispose";
   id?: string;
   agent?: string;
+  session?: string;
   expected?: string;
   prompt?: string;
 } & Partial<CompositionCreate>;
@@ -15,13 +16,16 @@ async function dispatch(host: RuntimeHost, input: Request) {
   const scopes = compositionService(host);
   switch (input.action) {
     case "create":
-      if (!input.selection) throw new Error("selection is required");
-      return scopes.create({ selection: input.selection, paths: input.paths, root: input.root, driver_profile: input.driver_profile });
+      if (!input.selection && !input.inherit) throw new Error("selection or inherit is required");
+      return scopes.create({ state: input.state, inherit: input.inherit, selection: input.selection, model: input.model, paths: input.paths, root: input.root, driver_profile: input.driver_profile });
     case "inspect": return scopes.inspect(input.id ?? "");
+    case "inspectSession": return scopes.inspectSession(input.session ?? "");
     case "dispose": return scopes.dispose(input.id ?? "");
     case "bind":
       if (input.expected === undefined) throw new Error("expected is required; use an empty string for the first binding");
-      return scopes.bind(input.agent ?? "", input.id ?? "", input.expected);
+      return input.session !== undefined
+        ? scopes.bindSession(input.session, input.id ?? "", input.expected)
+        : scopes.bind(input.agent ?? "", input.id ?? "", input.expected);
     case "run":
       return scopes.run({ id: input.id, agent: input.agent, prompt: input.prompt ?? "" } as CompositionRun);
     default: throw new Error("Unknown composition action");
@@ -40,9 +44,15 @@ export default {
         input_schema: {
           type: "object", required: ["action"], additionalProperties: false,
           properties: {
-            action: { type: "string", enum: ["create", "inspect", "bind", "run", "dispose"] },
+            action: { type: "string", enum: ["create", "inspect", "inspectSession", "bind", "run", "dispose"] },
             selection: { type: "object", description: "Public product composition configuration. Start with version:2, profile:headless; use patches to select replacements." },
+            inherit: { type: "boolean", description: "Capture the parent selection, then apply selection overrides. Do not combine with a profile." },
+            model: { type: "object", additionalProperties: false, properties: {
+              provider: { type: "string" }, model: { type: "string" }, variant: { type: "string" }, effort: { type: "string" },
+            } },
             paths: { type: "array", items: { type: "string" } },
+            state: { type: "string", enum: ["isolated", "parent"] },
+            session: { type: "string", description: "Existing product conversation to bind instead of a logical agent." },
             root: { type: "string", description: "Optional shared workspace. Omit for a new empty workspace." },
             driver_profile: { type: "string" }, id: { type: "string" }, agent: { type: "string" },
             expected: { type: "string", description: "Current binding for compare-and-exchange. Empty for the first binding or to represent unbound." },

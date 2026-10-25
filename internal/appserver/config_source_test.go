@@ -146,17 +146,7 @@ func bindConfigSourceForTest(t *testing.T, rt *runtime.Session) {
 	consumer := &configSourceConsumer{}
 	home := os.Getenv("HOME")
 	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
-	host := pluginhost.New(provider, credentials, consumer)
-	registry, conflicts := pluginhost.BuildServiceRegistry(provider, credentials, consumer)
-	if len(conflicts) != 0 {
-		t.Fatal(conflicts)
-	}
-	host.AttachServiceRegistry(registry, conflicts)
-	if err := host.Activate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rt.PluginHost = host
-	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	attachTestModelGeneration(t, rt, provider, credentials, consumer)
 }
 
 // A transport error cannot authorize restoring a stale credential over a

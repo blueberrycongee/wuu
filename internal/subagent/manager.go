@@ -65,6 +65,7 @@ type Manager struct {
 	wakeAuthority      func(agent.ToolExecutor)
 	selectedCompaction *compactionservice.Client
 	acquireLoopDriver  loopdriver.AcquireFunc
+	configureRunner    func(*agent.StreamRunner, string, string)
 	onSubagentStart    func(context.Context, string) error
 	onSubagentStop     func(context.Context, string) error
 }
@@ -94,8 +95,11 @@ type ManagerOptions struct {
 	// rejects the turn before lifecycle hooks, inference, or tool calls.
 	SelectedCompaction *compactionservice.Client
 	AcquireLoopDriver  loopdriver.AcquireFunc
-	OnSubagentStart    func(context.Context, string) error
-	OnSubagentStop     func(context.Context, string) error
+	// ConfigureRunner installs generation-bound policies using the resolved
+	// worker provider/model and its own transcript identity and workspace.
+	ConfigureRunner func(*agent.StreamRunner, string, string)
+	OnSubagentStart func(context.Context, string) error
+	OnSubagentStop  func(context.Context, string) error
 }
 
 type managerDefaults struct {
@@ -148,6 +152,7 @@ func NewManagerWithOptions(client providers.StreamClient, defaultModel string, o
 		BeginModelReceipts:     opts.BeginModelReceipts,
 		toolLedgerFactory:      opts.ToolLedgerFactory,
 		acquireLoopDriver:      opts.AcquireLoopDriver,
+		configureRunner:        opts.ConfigureRunner,
 		selectedCompaction:     opts.SelectedCompaction,
 		onSubagentStart:        opts.OnSubagentStart,
 		onSubagentStop:         opts.OnSubagentStop,
@@ -594,6 +599,9 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 		BeginModelReceipts:       defaults.BeginModelReceipts,
 		OnUsage:                  onUsage,
 		OnTokenUsage:             onTokenUsage,
+	}
+	if m.configureRunner != nil {
+		m.configureRunner(runner, sa.ID, sa.workerRoot)
 	}
 	if provider, ok := sa.toolkit.(toolContextBlockProvider); ok {
 		runner.BeforeRequestContext = func() []agent.ContextSegment {

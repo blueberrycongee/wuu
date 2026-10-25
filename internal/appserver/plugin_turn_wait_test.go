@@ -71,7 +71,7 @@ func TestPluginSessionInspectWaitsForPersistedTerminalLifecycle(t *testing.T) {
 			rt := newTestRuntime(t, client)
 			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 			observer := &blockingPluginTurnLifecycleClient{started: make(chan struct{}), release: observerRelease}
-			rt.PluginHost = pluginhost.New(observer)
+			attachTestModelGeneration(t, rt, observer)
 			out := newTerminalBlockingWriter()
 			srv := New(rt, out)
 			t.Cleanup(func() {

@@ -19,6 +19,7 @@ import (
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprogram"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/version"
@@ -748,6 +749,9 @@ func preparePluginSource(source string) (string, func(), error) {
 		return "", func() {}, err
 	}
 	if !info.IsDir() {
+		if filepath.Ext(abs) == ".ts" {
+			return pluginprogram.PrepareSingleFile(context.Background(), abs)
+		}
 		return abs, func() {}, nil
 	}
 	staging, err := os.MkdirTemp("", "wuu-plugin-package-")

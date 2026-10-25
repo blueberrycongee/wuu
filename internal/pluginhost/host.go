@@ -675,6 +675,10 @@ func (h *Host) callService(ctx context.Context, consumer, service, method string
 	if toolScope == nil && InShutdownCleanup(ctx) && h.serviceRegistry != nil {
 		registry := h.serviceRegistry
 		h.mu.RUnlock()
+		// Like ordinary CallService, cleanup starts a native consumer call.
+		// A bridge may carry another graph's callback marker; it cannot lend
+		// that marker to this consumer or constrain this fresh invocation.
+		ctx = context.WithValue(ctx, nativeInvocationKey{}, struct{}{})
 		return registry.Call(ctx, consumer, ServiceCallParams{Service: service, Method: method, Params: params})
 	}
 	if h.shutdown != nil {

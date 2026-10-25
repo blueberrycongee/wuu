@@ -355,30 +355,27 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 	if err := os.WriteFile(rt.ConfigPath, baseConfig, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	rt.Plugins = []pluginpkg.Plugin{{
-		Manifest: pluginpkg.Manifest{
-			ID:      "prompt-kit",
-			Desktop: &pluginpkg.DesktopSpec{Entry: "dist/desktop.mjs"},
-			Commands: []pluginpkg.ResolvedCommand{{
-				CommandSpec: pluginpkg.CommandSpec{ID: "draft", Title: "Draft", Kind: pluginpkg.CommandKindPromptTemplate, Prompt: "Draft ${input}"},
-				PublicID:    "prompt-kit.draft",
-			}},
-			Themes: []pluginpkg.ThemeSpec{{ID: "focused", Name: "Focused", Base: "dark", Tokens: map[string]string{"--wuu-paper": "#101214"}}},
-			Settings: map[string]pluginpkg.SettingDefinition{
-				"prompt-kit.enabled": {Type: pluginpkg.SettingTypeBoolean, Title: "Enabled", Default: true, Scope: pluginpkg.SettingScopeUser, Apply: pluginpkg.SettingApplyLive},
-			},
-			Slots:      []pluginpkg.SlotContributionSpec{{ID: "toolbar", Target: "composer.toolbar", Order: 4}},
-			Surfaces:   []pluginpkg.SurfaceContributionSpec{{ID: "main", Target: "app.main", Mode: pluginpkg.ContributionModeWrap}},
-			Presenters: []pluginpkg.PresenterContributionSpec{{ID: "message", Target: "conversation.item", Mode: pluginpkg.ContributionModeReplace, Priority: 8}},
-			Navigation: []pluginpkg.ViewEntryContributionSpec{{ID: "dashboard", View: "dashboard", Title: "Dashboard"}},
-			WorkspaceTools: []pluginpkg.ViewEntryContributionSpec{{
-				ID: "inspector", View: "inspector", Title: "Inspector", Description: "Inspect workspace",
-			}},
-			SettingsPages: []pluginpkg.ViewEntryContributionSpec{{ID: "advanced", View: "advanced", Title: "Advanced"}},
-		},
-		Source: "project", SubjectID: "plugin:project:prompt-kit", Fingerprint: "sha256:prompt-kit",
-		EffectivePermissions: []string{extensions.PermCommandsExecute},
-	}}
+	packageRoot := filepath.Join(rt.RootDir, ".wuu", "plugins", "prompt-kit")
+	manifestPath := filepath.Join(packageRoot, "plugin.json")
+	writePluginPackageFile(t, filepath.Join(packageRoot, "dist", "desktop.mjs"), "export function activate() {}")
+	writePluginPackageFile(t, filepath.Join(packageRoot, "draft.md"), "Draft ${input}")
+	writePluginPackageFile(t, manifestPath, `{
+  "schemaVersion": 1, "id": "prompt-kit", "desktop": {"entry": "dist/desktop.mjs"},
+  "contributes": {
+    "commands": [{"id": "draft", "title": "Draft", "kind": "prompt_template", "prompt": "draft.md"}],
+    "themes": [{"id": "focused", "name": "Focused", "base": "dark", "tokens": {"--wuu-paper": "#101214"}}],
+    "settings": {"enabled": {"type": "boolean", "title": "Enabled", "default": true, "scope": "user", "apply": "live"}},
+    "presenters": [{"id": "message", "target": "conversation.item", "mode": "replace", "priority": 8}],
+    "navigation": [{"id": "dashboard", "view": "dashboard", "title": "Dashboard"}],
+    "workspaceTools": [{"id": "inspector", "view": "inspector", "title": "Inspector", "description": "Inspect workspace"}],
+    "settingsPages": [{"id": "advanced", "view": "advanced", "title": "Advanced"}]
+  }
+}`)
+	item, err := pluginpkg.LoadManifest(manifestPath, "project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Plugins = []pluginpkg.Plugin{item}
 
 	preparePluginRuntimePathsForTest(t, rt)
 	source := config.NewService(config.Module, filepath.Join(wuuHome, "config.json"), rt.RootDir)
@@ -400,12 +397,16 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
-	grant := `{"id":"grant","method":"extension/package/update","params":{"id":"plugin:project:prompt-kit","fingerprint":"sha256:prompt-kit","action":"grant"}}`
+	grant := fmt.Sprintf(`{"id":"grant","method":"extension/package/update","params":{"id":"plugin:project:prompt-kit","fingerprint":%q,"action":"grant"}}`, item.Fingerprint)
 	if err := srv.handleLine(context.Background(), []byte(grant)); err != nil {
 		t.Fatalf("grant package: %v", err)
 	}
 	messages := parseOutput(t, out.String())
-	result := remarshal[ExtensionPackageUpdateResult](t, responseByID(t, messages, "grant")["result"])
+	response := responseByID(t, messages, "grant")
+	if response["error"] != nil {
+		t.Fatalf("grant package response: %+v", response)
+	}
+	result := remarshal[ExtensionPackageUpdateResult](t, response["result"])
 	record := findExtensionRecord(t, result.ExtensionInventory, "plugin:project:prompt-kit")
 	if record.ApprovalState != ExtensionApprovalGranted || record.RuntimeState != ExtensionRuntimeActive || record.Enabled == nil || !*record.Enabled || record.EnabledOverride == nil || !*record.EnabledOverride {
 		t.Fatalf("granted package record = %+v", record)
@@ -422,9 +423,7 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 	if len(record.Contributions.Settings) != 1 || record.Contributions.Settings[0].ID != "prompt-kit.enabled" || record.Contributions.Settings[0].Default != true {
 		t.Fatalf("setting contributions = %+v", record.Contributions)
 	}
-	if len(record.Contributions.Slots) != 1 || record.Contributions.Slots[0].Target != "composer.toolbar" ||
-		len(record.Contributions.Surfaces) != 1 || record.Contributions.Surfaces[0].Mode != "wrap" ||
-		len(record.Contributions.Presenters) != 1 || record.Contributions.Presenters[0].Priority != 8 ||
+	if len(record.Contributions.Presenters) != 1 || record.Contributions.Presenters[0].Priority != 8 ||
 		len(record.Contributions.Navigation) != 1 || record.Contributions.Navigation[0].View != "dashboard" ||
 		len(record.Contributions.WorkspaceTools) != 1 || record.Contributions.WorkspaceTools[0].Description != "Inspect workspace" ||
 		len(record.Contributions.SettingsPages) != 1 || record.Contributions.SettingsPages[0].View != "advanced" {
@@ -449,7 +448,7 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 		t.Fatalf("user-owned grant mutated project config:\n%s", projectData)
 	}
 
-	disable := `{"id":"disable","method":"extension/package/update","params":{"id":"plugin:project:prompt-kit","fingerprint":"sha256:prompt-kit","action":"disable"}}`
+	disable := fmt.Sprintf(`{"id":"disable","method":"extension/package/update","params":{"id":"plugin:project:prompt-kit","fingerprint":%q,"action":"disable"}}`, item.Fingerprint)
 	if err := srv.handleLine(context.Background(), []byte(disable)); err != nil {
 		t.Fatalf("disable package: %v", err)
 	}

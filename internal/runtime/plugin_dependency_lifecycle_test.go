@@ -46,6 +46,23 @@ func TestPackageDependencyFailureBlocksConsumers(t *testing.T) {
 					clients[cfg.ID] = client
 					return client, nil
 				})
+			if phase == "prepare" {
+				if err == nil || !strings.Contains(err.Error(), "provider initialization failed") || candidate != nil {
+					t.Fatalf("failed preparation returned candidate=%v error=%v", candidate, err)
+				}
+				if strings.Contains(strings.Join(initialized, ","), "consumer") {
+					t.Fatalf("initialized blocked consumer: %v", initialized)
+				}
+				if s.ActivePlugins[0].ID != "old" {
+					t.Fatal("failed preparation replaced active generation")
+				}
+				for _, client := range clients {
+					if !client.closed {
+						t.Fatal("failed candidate leaked prepared client")
+					}
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -161,6 +161,7 @@ type threadState struct {
 
 type threadRuntimeSubscription struct {
 	state               *runtime.State
+	modelState          *runtime.State
 	statusCh            chan subagent.Notification
 	streamCh            chan subagent.StreamNotification
 	processCh           chan process.Event
@@ -450,7 +451,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 			s.createPluginSession, s.sendPluginSession, s.listPluginSessions, s.cancelPluginSession,
 			s.inspectPluginSession, s.statusPluginWorkspace, s.applyPluginWorkspace, s.discardPluginWorkspace,
 			func(ctx context.Context, pluginID string, p pluginhost.SessionControlParams) (pluginhost.SessionControlResult, error) {
-				binding, err := runtime.RetainInvocationState(ctx)
+				binding, err := runtime.RetainProductInvocationState(ctx)
 				if err != nil {
 					return pluginhost.SessionControlResult{}, err
 				}

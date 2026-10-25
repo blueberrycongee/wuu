@@ -21,6 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // A separate provider process owns configuration bytes independently from the
@@ -63,7 +64,7 @@ func TestPluginCLISelectedConfig(t *testing.T) {
 			}
 			provider := userPluginByID(t, home, "external-config")
 			cfg := config.Default()
-			modules := []string{"wuu.session-state", persistence.SQLiteModule, runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, runtime.ArtifactModule, runtime.DataQueryModule, provider.ID}
+			modules := []string{"wuu.session-state", session.DefaultModule, persistence.SQLiteModule, runtime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, runtime.ArtifactModule, runtime.DataQueryModule, provider.ID}
 			cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: config.ServiceName, Major: 1, Provider: provider.ID}}}
 			cfg.Extensions = &extensions.Settings{}
 			for _, item := range []pluginpkg.Plugin{provider, installed.Plugin} {

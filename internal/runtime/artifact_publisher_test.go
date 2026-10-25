@@ -12,6 +12,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -39,11 +40,13 @@ func TestThreadRuntimeBindsArtifactPublisher(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		t.Cleanup(func() { s.ReleasePluginGeneration(thread.PluginGeneration) })
 		executor, ok := thread.StreamRunner.Tools.(agent.RichToolExecutor)
 		if !ok {
 			t.Fatal("thread executor lost rich results")
 		}
-		result, err := executor.ExecuteResult(context.Background(), providers.ToolCall{ID: "present", Name: "present_artifact", Arguments: `{"path":"chart.svg"}`})
+		ctx := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: id, ExecutionID: "artifact-turn"})
+		result, err := executor.ExecuteResult(ctx, providers.ToolCall{ID: "present", Name: "present_artifact", Arguments: `{"path":"chart.svg"}`})
 		if err != nil {
 			t.Fatal(err)
 		}

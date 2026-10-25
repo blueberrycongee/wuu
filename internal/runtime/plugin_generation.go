@@ -41,6 +41,8 @@ import (
 // Close retires the remaining resources in reverse ownership order and records
 // a structured revocation report.
 type PluginGeneration struct {
+	productParent     *kernelHostServices
+	composition       productCompositionBinding
 	systemPrompt      string
 	promptSections    []prompt.SectionInfo
 	tools             agent.ToolExecutor
@@ -1024,6 +1026,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		}
 		bindPluginCompactionHooks(s.StreamRunner, generation.hooks, "", s.RootDir)
 		s.StreamRunner.BeforeModelStep = pluginPreStepInjector(generation.host, s.ProviderName, s.Model, "", s.RootDir)
+		s.StreamRunner.StepPolicy = pluginStepPolicy(generation.host, s.ProviderName, s.Model, "", s.RootDir)
 		s.StreamRunner.BeforeRequest = pluginRequestInterceptorWithTransforms(generation.host, generation.requestTransforms, s.ProviderName, "", s.RootDir)
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions

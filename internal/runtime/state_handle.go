@@ -35,6 +35,7 @@ type State struct {
 	once                    sync.Once
 	close                   func() error
 	closeErr                error
+	execution               *compositionExecutionLease
 }
 
 // DispatchHook uses this capture's hooks and journal, joining required model
@@ -75,6 +76,9 @@ func (s *State) Close() error {
 		s.mu.Unlock()
 		if s.close != nil {
 			s.closeErr = s.close()
+		}
+		if s.execution != nil {
+			s.closeErr = errors.Join(s.closeErr, s.execution.release())
 		}
 	})
 	return s.closeErr
@@ -228,7 +232,10 @@ func (s *State) Retain() *State {
 		return nil
 	}
 	s.Generation.retain()
-	return &State{SystemPrompt: s.SystemPrompt, Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, models: s.models, hookDispatcher: s.hookDispatcher, close: s.close}
+	if s.execution != nil {
+		s.execution.refs.Add(1)
+	}
+	return &State{SystemPrompt: s.SystemPrompt, Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, models: s.models, hookDispatcher: s.hookDispatcher, close: s.close, execution: s.execution}
 }
 
 var ErrStateGenerationChanged = errors.New("state generation changed before runtime admission")
@@ -236,6 +243,9 @@ var ErrStateGenerationChanged = errors.New("state generation changed before runt
 // NewThreadRuntimeForState either constructs against the admitted generation or
 // rejects before effects so its caller can retry admission with a new capture.
 func (s *Session) NewThreadRuntimeForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection) (*ThreadRuntime, error) {
+	if thread, bound, err := s.productThreadRuntime(binding, sessionID, rootDir, selected); bound {
+		return thread, err
+	}
 	shadow, err := s.cloneForThreadModel(binding)
 	if err != nil {
 		return nil, err
@@ -253,11 +263,22 @@ func (s *Session) NewThreadCapabilityRuntimeForState(binding *State, sessionID, 
 	return shadow.NewThreadCapabilityRuntime(sessionID, rootDir, selected)
 }
 
+// NewSideThreadRunnerForState uses a retained execution chosen at admission.
+// The caller owns binding until the runner and its finalizers finish.
 func (s *Session) NewSideThreadRunnerForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection, prompt string, parentSession ...string) (*agent.StreamRunner, error) {
-	shadow, err := s.cloneForThreadModel(binding)
+	owner := s
+	if binding.Generation != nil && binding.Generation.composition.scope != nil {
+		owner = binding.Generation.composition.scope.runtime
+	}
+	shadow, err := owner.cloneForThreadModel(binding)
 	if err != nil {
 		return nil, err
 	}
-	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	defer owner.releasePluginGeneration(shadow.pluginGeneration)
+	if owner != s {
+		selected.Provider, selected.Model = shadow.ProviderName, shadow.Model
+		selected.Variant, selected.Effort = shadow.StreamRunner.Variant, shadow.StreamRunner.Effort
+		shadow.StateDir, shadow.SessionDir, shadow.WuuHome = s.StateDir, s.SessionDir, s.WuuHome
+	}
 	return shadow.newSideThreadRunner(sessionID, rootDir, selected, prompt, parentSession...)
 }

@@ -453,6 +453,17 @@ func RunToolLoop(
 				break
 			}
 		}
+		if cfg.DecideStep != nil {
+			decision, err := cfg.DecideStep(ctx)
+			if err = errors.Join(err, ctx.Err()); err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
+			if decision.Stop {
+				result := loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead)
+				result.Content, result.StopReason, result.FinishReason = decision.Content, decision.Reason, providers.FinishReasonStop
+				return result, nil
+			}
+		}
 		// No provider baseline means earlier assistant and tool-call tokens may
 		// be missing from the running total. Raise it to the outbound estimate
 		// before this send so compact or a fresh window can run first.

@@ -12,15 +12,20 @@ import (
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/titleservice"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
 // Embedded model fixtures still need a captured generation for receipt ownership.
-func attachTestModelGeneration(t *testing.T, rt *runtime.Session) {
+func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...pluginhost.Client) {
 	t.Helper()
 	// These fixtures supply model transport directly, but their execution still
 	// participates in the same selected prompt, context and title services.
-	clients := []pluginhost.Client{promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}}
+	clients := []pluginhost.Client{promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, toolservice.NewService(), &embeddedToolsConsumer{}}
+	clients = append(clients, additional...)
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
 	rt.PluginHost = pluginhost.New(clients...)
 	rt.PluginHost.AttachServiceRegistry(registry, conflicts)
 	if err := rt.PluginHost.Activate(context.Background()); err != nil {
@@ -95,3 +100,16 @@ func (*embeddedModelConsumer) RequiredServices() []pluginhost.ServiceRequirement
 }
 func (c *embeddedModelConsumer) Activate(context.Context) error { c.active.Store(true); return nil }
 func (c *embeddedModelConsumer) Close(context.Context) error    { c.active.Store(false); return nil }
+
+// These fixtures provide their own toolkit and permission authority.
+type embeddedToolsConsumer struct{ embeddedModelConsumer }
+
+func (*embeddedToolsConsumer) ID() string { return "wuu.tool-execution" }
+func (c *embeddedToolsConsumer) Status() pluginhost.Status {
+	status := c.embeddedModelConsumer.Status()
+	status.ID = c.ID()
+	return status
+}
+func (*embeddedToolsConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{{Name: toolservice.ServiceName, MajorVersion: 1, Required: true}}
+}

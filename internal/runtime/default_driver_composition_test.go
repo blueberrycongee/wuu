@@ -100,6 +100,62 @@ func TestDefaultDriverComposition(t *testing.T) {
 	})
 }
 
+// Step policy decisions must survive the same service transport as external
+// drivers, stop model admission, and preserve a visible terminal explanation.
+func TestDefaultDriverStepPolicy(t *testing.T) {
+	for _, mode := range []string{"continue", "stop", "error", "cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			home, state := testWorkspaceState(t, root)
+			host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, nil, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = host.Close(context.Background()) })
+			if err := host.Activate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			client := &defaultBindingModel{}
+			runner := &agent.StreamRunner{Client: client, Model: "controlled", LoopDriver: resolveLoopDriver("", host, kernel.driverGateways)}
+			runner.StepPolicy = func(ctx context.Context, step int, history []providers.ChatMessage) (loopdriver.StepDecision, error) {
+				if step != 0 || len(history) != 1 || history[0].Content != "task" {
+					t.Fatalf("policy received wrong admission: %d %+v", step, history)
+				}
+				switch mode {
+				case "error":
+					return loopdriver.StepDecision{}, errors.New("policy failed")
+				case "cancel":
+					cancel()
+					return loopdriver.StepDecision{Stop: true, Reason: "cancel", Content: "must not complete"}, nil
+				case "stop":
+					return loopdriver.StepDecision{Stop: true, Reason: "verified", Content: "Already verified", Source: "fixture.policy"}, nil
+				default:
+					return loopdriver.StepDecision{}, nil
+				}
+			}
+			result, err := runner.RunWithCallback(ctx, []providers.ChatMessage{{Role: "user", Content: "task"}}, nil)
+			if mode == "continue" {
+				if err != nil || client.calls != 1 {
+					t.Fatalf("continue: calls=%d err=%v", client.calls, err)
+				}
+				return
+			}
+			if client.calls != 0 {
+				t.Fatalf("policy allowed %d model calls", client.calls)
+			}
+			if mode == "stop" {
+				if err != nil || result.Content != "Already verified" || result.StopReason != "verified" || len(result.NewMessages) != 1 || result.NewMessages[0].OriginID != "fixture.policy" {
+					t.Fatalf("stop lost its terminal record: %+v err=%v", result, err)
+				}
+			} else if err == nil {
+				t.Fatalf("%s became success: %+v", mode, result)
+			}
+		})
+	}
+}
+
 type defaultBindingModel struct {
 	fail  bool
 	calls int

@@ -1,4 +1,5 @@
-# 独立 agent 组合
+# Agent 组合
+
 
 `host.composition` 版本 1 允许受信任插件创建独立的 Go 运行时，试跑 harness 组合，再显式绑定逻辑 agent。它复用主运行时的版本化服务、依赖图、激活检查和按依赖逆序清理机制。[组合实验室示例](../../../examples/plugins/composition-lab.ts) 将这些操作公开为 agent 工具和开发者客户端能力。
 
@@ -41,25 +42,69 @@ await scopes.dispose(baseline.id);
 
 `paths` 接受目录、zip 包和单个 `.ts` 文件。安装只在新组合内授予信任。候选目录包含所属 generation 已激活的插件包，但只启动明确选择的模块。源码会被复制到执行快照，创建后修改源文件不会改变已有组合。单文件模块 ID 与 `wuu plugin dev` 一致：`local-` 加绝对源文件路径的 SHA-256 前 24 位十六进制字符。可用 Node 的 `createHash("sha256").update(resolve(path)).digest("hex").slice(0, 24)` 计算；插件目录则使用 manifest 的 ID。创建结果返回实际激活的包 ID 和指纹，便于检查。
 
+`create({ inherit: true })` 复制父 generation 实际选择的模块和服务绑定。可通过 `selection` 覆盖模块、服务及补丁；继承不能同时选择 profile，因为 profile 会建立自己的选择。返回值中的 `parent_generation` 和 `model` 分别标明来源 generation 和实际模型。模型配置会被复制，持久状态默认隔离：
+
+```ts
+const scoped = await scopes.create({
+  inherit: true,
+  model: { provider: "research", model: "my-model", effort: "high" },
+});
+```
+
+省略 `model` 会保持捕获的父模型选择。显式提供模型对象时，缺省字段采用所选连接的默认值。嵌入宿主提供的原生 provider 也会使用候选自己的上下文重新构造。嵌套组合遵循同一规则：父组合导入了祖先状态时，隔离的后代会在自己的上下文中重新构造选中的状态 provider；嵌套的 `state: "parent"` 组合则共享捕获的同一状态权威，并可绑定其中的产品会话。
+
+## 产品会话
+
+产品会话绑定仅支持原生 Wuu 引擎。外部引擎会话不能绑定组合；已绑定会话后来切换到外部引擎时，新轮次会在派发前失败，必须先显式解除组合绑定。
+
+使用 `state: "parent"` 的组合导入父级选中的 session、document 和 artifact 服务。这项显式导入优先于状态服务的选择补丁。服务图、模型配置和插件进程仍独立。通过已有产品会话的 ID 绑定：
+
+```ts
+const candidate = await scopes.create({
+  inherit: true,
+  state: "parent",
+  model: { provider: "research", model: "my-model" },
+});
+const previous = await scopes.inspectSession(sessionID);
+await scopes.bindSession(sessionID, candidate.id, previous.id);
+// 后续产品轮次使用 candidate；已接纳轮次保留捕获的服务图。
+await scopes.bindSession(sessionID, "", candidate.id); // 恢复工作区选择
+await scopes.dispose(candidate.id);
+```
+
+候选模型优先于会话保存的默认模型；会话的权限和速度选择继续生效。产品工具使用会话工作目录。已接纳的父轮次创建子会话时，子会话捕获父轮次的组合；后续修改父绑定不会重定向子会话。内置 subagent 的前台执行和后台完成通知使用同一会话契约。
+
+旁路会话捕获正在运行的父轮次已接纳的组合；父会话空闲时则读取当前持久绑定。即使父轮次结束、改绑或释放组合，旁路会话也保留该组合直到自身完成。工具使用父会话的工作目录，原生工具集保持只读；选中服务图的步骤和请求策略同样生效。组合或显式模型不可用时，接纳失败，不会退回工作区默认实现。
+
+后台生命周期回调返回发起请求的插件实例，即使父轮次已经结束，或父会话的下一轮已选择另一组合。已接纳的子任务与回调投递会在释放期间保留原组合，完成后再清理其私有资源。请求 ID 在共享状态权威中按插件唯一；另一组合或另一目标会话复用该 ID 会在接纳前失败。若重启后原组合不可用，终态观察仍保留在持久状态中，重放不能把它交给默认插件实例。
+
+产品选择的权威记录保存在 `state.documents`，跨释放、generation 退休和进程重启保留。运行资源是临时的；资源缺失或父状态 generation 改变时，新轮次在推理前报错。`inspectSession` 返回 `default`、`active` 或 `unavailable`、选中 ID、选择者，以及实时组合或绑定时保存的快照。调用者可显式绑定新建组合，或以旧 ID 解除绑定。存储错误和提交结果未知会直接返回；重试写入前先查询。隔离状态的组合不能绑定产品会话。
+
 ## 执行边界与所有权
 
 | 方法 | 行为 |
 | --- | --- |
-| `create({selection, paths?, root?, driver_profile?})` | 在新的状态命名空间中准备并激活候选，返回 ID、工作目录、组合选择、模块和插件包。 |
+| `create({selection?, inherit?, model?, paths?, state?, root?, driver_profile?})` | 准备并激活候选，默认使用隔离状态，返回 ID、工作目录、组合选择、模块和插件包。 |
 | `inspect(id)` | 查看模块状态、已绑定的 agent 和正在执行的数量。 |
 | `bind(agent, id, expected)` | 原子比较并替换绑定。`expected: ""` 表示当前未绑定，`id: ""` 解除绑定。不匹配返回 `binding_conflict`。 |
+| `bindSession(session, id, expected)` | 比较并替换产品会话的持久选择。 |
+| `inspectSession(session)` | 查询持久选择及当前运行资源的可用性。 |
 | `run({id, prompt})` | 直接试跑组合，不改变选择。 |
 | `run({agent, prompt})` | 捕获 agent 当前的组合，开始一次新执行。返回 `id`、`execution_id`、`content` 和可选的推理 `error`。 |
-| `dispose(id)` | 解除指向该组合的绑定，停止接收新执行。已有执行尚未结束时返回 `draining: true`；最后一次执行完成后释放 provider 和临时状态。 |
+| `dispose(id)` | 解除逻辑 agent 绑定，停止接收新执行。产品选择保留不可用的 ID。已有执行尚未结束时返回 `draining: true`；最后一次执行完成后释放 provider 和临时状态。 |
 
 绑定与执行准入之间是原子边界。切换前已开始的执行保留原有 provider 图和 checkpoint 身份。重新绑定旧 ID 只恢复后续执行的选择，不撤销已经完成的效果。需要撤销选择时，应保留旧组合。
 
-组合 ID 和 agent 名称属于调用插件、会话及所属 generation。注册表提供身份，输入不能指定其他调用者或会话。没有会话身份的开发者客户端回调使用独立命名空间。每次 `run` 创建新的 session 和驱动绑定；此 API 不迁移已有桌面对话，也不把旧 checkpoint 交给替换后的驱动恢复。组合及绑定是临时状态，不跨所属 generation 退休或进程重启保留。
+组合 ID 和 agent 名称属于调用插件、会话及所属 generation。注册表提供身份，输入不能指定其他调用者或会话。没有会话身份的开发者客户端回调使用独立命名空间。每次试跑 `run` 创建新的 session 和驱动绑定。产品绑定选择已有会话后续轮次的实现，不把已接纳的 checkpoint 迁给替换驱动。逻辑 agent 绑定是临时状态；产品绑定按上文规则持久保留。
 
-调用者取消会传播到执行。插件退休会取消尚未完成的工作并关闭其组合；generation 关闭也会清理未显式释放的组合。消费者先完成清理，随后 provider 才关闭。清理失败会报告错误，并保留临时目录用于诊断。
+调用者取消会传播到执行。插件退休会取消其组合中的主轮次、原生子 Agent 和直接模型调用；generation 关闭也会清理未显式释放的组合。显式释放允许已接纳工作排空。消费者清理和推理记账完成后，provider 才关闭。清理失败会报告错误，并保留临时目录用于诊断。
+
+候选在插件激活前就拥有自己的组合身份。激活时可以检查捕获的状态，但只有创建流程发布就绪组合后才能接纳执行。准备失败不能把候选工作归到默认运行时。
+
+用带有产品版本信息的构建运行 `WUU_E2E_CORE=/path/to/wuu node scripts/composition-e2e.mjs`，可验证并行组合、模型路由、原生文件工具、准备失败、绑定冲突、执行中的释放、前台子会话继承、改绑和释放期间的旁路会话、重绑定和释放期间的后台投递、资源排空及进程重启后的产品选择。请求、app-server 消息、诊断及结果保存在 `.tmp/e2e/composition/run-*`。模型响应为合成数据；该检查不证明模型收益或实际 UI 渲染。
 
 ## 隔离边界
 
-每个组合有独立的状态目录、内存配置 provider、服务图、插件进程及默认的空工作目录。创建时复制所属 generation 的模型和运行时配置。进程共享的模型元数据由宿主初始化一次；创建组合不会替换它或再次启动刷新。不安装到全局插件目录，也不修改其他会话的配置。只有需要共享文件时才传入 `root`；相对源码路径和显式工作目录都相对于所属运行时的工作目录解析。
+默认 `state: "isolated"` 下，每个组合有独立的状态目录、内存配置 provider、服务图、插件进程及默认的空工作目录。创建时复制所属 generation 的模型和运行时配置。进程共享的模型元数据由宿主初始化一次；创建组合不会替换它或再次启动刷新。不安装到全局插件目录，也不修改其他会话的配置。只有需要共享文件时才传入 `root`；相对源码路径和显式工作目录都相对于所属运行时的工作目录解析。
 
 扩展仍是受信任代码。这里提供生命周期和状态隔离，不是操作系统安全沙箱。显式共享的目录、系统凭据、配置的外部服务，以及插件主动执行的效果仍可能共享。持久化 provider 替换和 checkpoint 迁移需要兼容协议或停止写入后的迁移；临时组合不会自动执行这些迁移。

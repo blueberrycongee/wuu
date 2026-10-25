@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -285,6 +286,8 @@ type LoopConfig struct {
 	// BeforeModelStep is the context-aware extension boundary for durable,
 	// append-only messages. The input is an immutable snapshot of live history.
 	BeforeModelStep func(context.Context, int, []providers.ChatMessage) ([]providers.ChatMessage, error)
+	// DecideStep consumes the decision from this step's input admission.
+	DecideStep func(context.Context) (loopdriver.StepDecision, error)
 	// BeforeRequestContext, when set, is called after live-history updates
 	// and before each provider request. Returned segments are assembled into
 	// the provider request without being appended to live or durable history.

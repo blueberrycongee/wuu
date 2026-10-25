@@ -233,17 +233,7 @@ func newTurnTraceIndexFixture(t *testing.T, provider *turnTraceIndexProvider) (*
 	t.Helper()
 	rt := newTestRuntime(t, &fakeClient{})
 	consumer := &turnTraceIndexConsumer{}
-	host := pluginhost.New(provider, consumer)
-	registry, conflicts := pluginhost.BuildServiceRegistry(provider, consumer)
-	if len(conflicts) != 0 {
-		t.Fatal(conflicts)
-	}
-	host.AttachServiceRegistry(registry, conflicts)
-	if err := host.Activate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = host.Close(context.Background()) })
-	rt.PluginHost = host
+	attachTestModelGeneration(t, rt, provider, consumer)
 	return &Server{rt: rt}, testRuntimeState(t, rt)
 }
 
@@ -264,15 +254,5 @@ func bindNativeTraceForTest(t *testing.T, rt *runtime.Session) {
 	})
 	index := runtime.NewDataQueryService(runtime.DataQueryModule, t.TempDir())
 	consumer := &nativeTraceServiceConsumer{}
-	host := pluginhost.New(source, credentials, index, consumer)
-	registry, conflicts := pluginhost.BuildServiceRegistry(source, credentials, index, consumer)
-	if len(conflicts) != 0 {
-		t.Fatal(conflicts)
-	}
-	host.AttachServiceRegistry(registry, conflicts)
-	if err := host.Activate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = host.Close(context.Background()) })
-	rt.PluginHost = host
+	attachTestModelGeneration(t, rt, source, credentials, index, consumer)
 }

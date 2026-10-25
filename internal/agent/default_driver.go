@@ -123,6 +123,8 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 	if request.CacheHint != nil {
 		cfg.PromptCacheKey = request.CacheHint.PromptCacheKey
 	}
+	var decision loopdriver.StepDecision
+	cfg.DecideStep = func(context.Context) (loopdriver.StepDecision, error) { return decision, nil }
 	cfg.BeforeModelStep = func(ctx context.Context, _ int, _ []providers.ChatMessage) ([]providers.ChatMessage, error) {
 		admitted, err := turn.AdmitInput(ctx)
 		if err != nil {
@@ -133,6 +135,7 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 			return nil, err
 		}
 		step.definitions = current.Tools
+		decision = admitted.Decision
 		return admitted.Messages, nil
 	}
 	cfg.BeforeRequestContext = func() []ContextSegment {
@@ -221,7 +224,11 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 	}
 	var receipt loopdriver.TurnReceipt
 	if runErr == nil {
-		receipt, runErr = turn.CompleteTurn(ctx, loopdriver.TurnResult{Content: result.Content, FinishReason: result.FinishReason, StopReason: result.StopReason, Truncated: result.Truncated})
+		var messages []providers.ChatMessage
+		if decision.Stop {
+			messages = []providers.ChatMessage{{Role: "assistant", Content: decision.Content, Origin: "plugin", OriginID: decision.Source, Cause: "agent.step.policy", StopReason: decision.Reason}}
+		}
+		receipt, runErr = turn.CompleteTurn(ctx, loopdriver.TurnResult{Content: result.Content, Messages: messages, FinishReason: result.FinishReason, StopReason: result.StopReason, Truncated: result.Truncated})
 	}
 	status := loopdriver.TerminalSucceeded
 	if runErr != nil {

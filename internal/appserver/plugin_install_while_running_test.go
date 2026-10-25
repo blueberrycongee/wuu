@@ -7,9 +7,6 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // TestPluginPackageInstallAllowedWhileTurnRunning is the install-while-active
@@ -22,13 +19,8 @@ func TestPluginPackageInstallAllowedWhileTurnRunning(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = stream
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
-	kit, err := tools.New(rt.RootDir)
-	if err != nil {
-		t.Fatalf("tools.New: %v", err)
-	}
-	rt.Toolkit = kit
-	activeHost := pluginhost.New()
-	rt.PluginHost = activeHost
+	attachTestModelGeneration(t, rt)
+	activeHost := rt.PluginHost
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() {
@@ -58,7 +50,7 @@ func TestPluginPackageInstallAllowedWhileTurnRunning(t *testing.T) {
 	select {
 	case <-stream.started:
 	case <-time.After(2 * time.Second):
-		t.Fatal("turn did not start")
+		t.Fatalf("turn did not start; output:\n%s", out.String())
 	}
 
 	source := t.TempDir()

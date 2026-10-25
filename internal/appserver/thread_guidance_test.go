@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	wuuRuntime "github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -208,7 +209,8 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		loaded, err := side.Tools.Execute(context.Background(), providers.ToolCall{Name: "load_skill", Arguments: `{"name":"release-check"}`})
+		sideContext := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "side-" + tc.name, ExecutionID: "side-guidance"})
+		loaded, err := side.Tools.Execute(sideContext, providers.ToolCall{ID: "load-checkout-skill", Name: "load_skill", Arguments: `{"name":"release-check"}`})
 		if err != nil || !strings.Contains(loaded, skill) {
 			t.Errorf("side thread has wrong skill: %s %v", loaded, err)
 		}

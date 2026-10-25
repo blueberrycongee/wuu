@@ -1294,17 +1294,7 @@ func bindThreadDeleteArtifacts(t *testing.T, rt *runtime.Session, artifacts *thr
 	cfg.Providers = map[string]config.ProviderConfig{rt.ProviderName: {Type: "openai-compatible", Model: rt.Model, BaseURL: "https://example.test/v1"}}
 	source := config.NewMemoryService("test.delete-config", cfg)
 	consumer := &threadDeleteServiceConsumer{}
-	host := pluginhost.New(source, artifacts, consumer)
-	registry, conflicts := pluginhost.BuildServiceRegistry(source, artifacts, consumer)
-	if len(conflicts) != 0 {
-		t.Fatal(conflicts)
-	}
-	host.AttachServiceRegistry(registry, conflicts)
-	if err := host.Activate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = host.Close(context.Background()) })
-	rt.PluginHost = host
+	attachTestModelGeneration(t, rt, source, artifacts, consumer)
 }
 
 // This failure targets side-history staging while session/lease reads stay usable.

@@ -45,6 +45,9 @@ const (
 	// CapabilityAgentPreStep lets a plugin append sourced, durable context at
 	// the model-step boundary. Plugins own emission and cache policy.
 	CapabilityAgentPreStep = "agent.pre_step"
+	// CapabilityAgentStepPolicy decides whether the default loop admits another
+	// model round after durable input. Higher priority runs first; stop bails.
+	CapabilityAgentStepPolicy = "agent.step.policy"
 	// CapabilityAgentSystemPromptSection contributes a generation-stable section
 	// evaluated before that plugin generation can become active.
 	CapabilityAgentSystemPromptSection = "agent.system_prompt.section"
@@ -906,7 +909,7 @@ func ValidateCapabilityDescriptor(c CapabilityDescriptor) error {
 		requiredKind = SeamTransform
 	case CapabilityAgentSystemPromptSection:
 		requiredKind = SeamTransform
-	case CapabilityAgentCompaction:
+	case CapabilityAgentCompaction, CapabilityAgentStepPolicy:
 		requiredKind = SeamDecision
 	case CapabilityAgentTurnCompleted, CapabilityModelRequestObserve:
 		requiredKind = SeamObserve
@@ -1011,7 +1014,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 			return err
 		}
 		switch capability.ID {
-		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilityModelAdapter:
+		case CapabilityModelRequestTransform, CapabilityModelRequestObserve, CapabilityModelMiddleware, CapabilityAgentRequestTransform, CapabilityAgentPreStep, CapabilityAgentStepPolicy, CapabilityAgentSystemPromptSection, CapabilityAgentCompaction, CapabilityAgentTurnCompleted, CapabilityAgentTurnLifecycle, CapabilityAgentTurnInterrupted, CapabilityPluginClientRequest, CapabilityModelAdapter:
 		default:
 			return fmt.Errorf("capability %s is not supported by this host", capability.ID)
 		}

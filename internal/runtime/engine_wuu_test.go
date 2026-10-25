@@ -65,6 +65,7 @@ func TestWuuEngineOwnedSessionsReleaseTheirGeneration(t *testing.T) {
 	client := &generationClient{id: "owned"}
 	generation := testPluginGeneration("owned", client)
 	s := testGenerationSession(t, generation)
+	attachTestExecutionServices(t, s.PluginHost)
 	s.RootDir, s.WuuHome, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
 	s.StreamRunner = &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: cloneGuardStreamClient{}, Model: "fixture"}
 	t.Cleanup(func() { _, _ = s.Cleanup(); _ = generation.close() })

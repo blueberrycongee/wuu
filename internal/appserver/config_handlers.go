@@ -481,18 +481,6 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 				CredentialOrigins: append([]string(nil), definition.CredentialOrigins...),
 			})
 		}
-		slots := make([]ExtensionSlotContributionDescriptor, 0, len(item.Slots))
-		for _, contribution := range item.Slots {
-			slots = append(slots, ExtensionSlotContributionDescriptor{
-				ID: contribution.ID, Target: contribution.Target, Order: contribution.Order, Title: contribution.Title,
-			})
-		}
-		surfaces := make([]ExtensionSurfaceContributionDescriptor, 0, len(item.Surfaces))
-		for _, contribution := range item.Surfaces {
-			surfaces = append(surfaces, ExtensionSurfaceContributionDescriptor{
-				ID: contribution.ID, Target: contribution.Target, Mode: string(contribution.Mode), Order: contribution.Order, Title: contribution.Title,
-			})
-		}
 		presenters := make([]ExtensionPresenterContributionDescriptor, 0, len(item.Presenters))
 		for _, contribution := range item.Presenters {
 			presenters = append(presenters, ExtensionPresenterContributionDescriptor{
@@ -559,10 +547,10 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		if item.Desktop != nil {
 			packageRecord.Desktop = &ExtensionDesktopDescriptor{Entry: item.Desktop.Entry}
 		}
-		if len(commands) > 0 || len(themes) > 0 || len(skins) > 0 || len(settings) > 0 || len(slots) > 0 || len(surfaces) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
+		if len(commands) > 0 || len(themes) > 0 || len(skins) > 0 || len(settings) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
 			packageRecord.Contributions = &ExtensionContributions{
 				Commands: commands, Themes: themes, Skins: skins, Settings: settings,
-				Slots: slots, Surfaces: surfaces, Presenters: presenters,
+				Presenters: presenters,
 				Navigation: navigation, WorkspaceTools: workspaceTools, SettingsPages: settingsPages,
 			}
 		}
@@ -2209,29 +2197,54 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 		}
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}
-	binding, err := s.rt.RetainState()
-	if err != nil {
-		return nil, "", err
+	var binding *runtime.State
+	var threadRuntime *runtime.ThreadRuntime
+	var engineID agentengine.EngineID
+	var root, baseRepo string
+	// Native skill availability during admitted work uses that work's binding. Loading
+	// a new state projection would collide with its execution lease after reload.
+	// Retain the state before releasing the thread lock so retirement cannot close
+	// the catalog's provider while discovery is in progress.
+	s.mu.Lock()
+	if s.closed.Load() {
+		s.mu.Unlock()
+		return nil, "", errServerClosed
 	}
-	defer binding.Close()
-	th, err := s.ensureThreadLoaded(binding, threadID)
-	if err != nil {
-		return nil, "", err
+	if th := s.threads[threadID]; th != nil {
+		th.mu.Lock()
+		if th.execRuntime != nil && (threadAdmissionProjectionBusyLocked(th) || s.activeExecutionRunID(threadID) != "") {
+			binding = th.state.Retain()
+			threadRuntime = th.execRuntime
+			engineID, root, baseRepo = agentengine.NormalizeEngineID(th.EngineID), th.CWD, th.WorktreeBaseRepo
+		}
+		th.mu.Unlock()
 	}
-	threadRuntime, err := s.ensureThreadRuntime(th)
-	if err != nil {
-		return nil, "", err
+	s.mu.Unlock()
+	if threadRuntime == nil {
+		var err error
+		binding, err = s.rt.RetainState()
+		if err != nil {
+			return nil, "", err
+		}
+		defer binding.Close()
+		th, err := s.ensureThreadLoaded(binding, threadID)
+		if err != nil {
+			return nil, "", err
+		}
+		threadRuntime, err = s.ensureThreadRuntime(th)
+		if err != nil {
+			return nil, "", err
+		}
+		th.mu.Lock()
+		engineID, root, baseRepo = agentengine.NormalizeEngineID(th.EngineID), th.CWD, th.WorktreeBaseRepo
+		th.mu.Unlock()
+	} else {
+		defer binding.Close()
 	}
-	th.mu.Lock()
-	engineID := agentengine.NormalizeEngineID(th.EngineID)
-	th.mu.Unlock()
 	// The external host toolkit describes only browser/CUA capabilities, not
 	// the engine's native tools or its ability to use explicitly selected skills.
 	if threadRuntime.Toolkit != nil && engineID == agentengine.EngineWuu {
-		root := threadRuntime.Toolkit.RootDir()
-		th.mu.Lock()
-		baseRepo := th.WorktreeBaseRepo
-		th.mu.Unlock()
+		root = threadRuntime.Toolkit.RootDir()
 		if skillDiscoveryRoot(root) != skillDiscoveryRoot(s.rt.RootDir) &&
 			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
 			root = ""
@@ -2242,9 +2255,6 @@ func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force
 		}
 		return tools.FilterSkillsForSurface(items, threadRuntime.Toolkit.ActiveSurface()), root, nil
 	}
-	th.mu.Lock()
-	root := th.CWD
-	th.mu.Unlock()
 	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
 		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
 	}

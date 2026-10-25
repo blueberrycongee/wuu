@@ -150,6 +150,9 @@ type StreamRunner struct {
 	// append-only plugin contributions. Returned messages join live history and
 	// are persisted with the rest of the turn.
 	BeforeModelStep func(context.Context, int, []providers.ChatMessage) ([]providers.ChatMessage, error)
+	// StepPolicy runs after durable input admission and before model dispatch.
+	// It is captured with this runner's generation; errors abort the turn.
+	StepPolicy func(context.Context, int, []providers.ChatMessage) (loopdriver.StepDecision, error)
 
 	// BeforeRequestContext, when set, is called before each provider request.
 	// Returned segments are assembled into that request but are not appended

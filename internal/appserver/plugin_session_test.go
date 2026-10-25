@@ -121,7 +121,7 @@ func TestPluginSessionCreateAndSendPersistProvenanceAndTargetLifecycle(t *testin
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 2)}
 	other := &pluginTurnLifecycleClient{id: "other", calls: make(chan pluginhost.AgentTurnLifecycleInput, 1)}
-	rt.PluginHost = pluginhost.New(owner, other)
+	attachTestModelGeneration(t, rt, owner, other)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -221,7 +221,7 @@ func TestPluginSessionInstructionsReachProviderAfterReload(t *testing.T) {
 	rt.WorkspaceID = "workspace-one"
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 4)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	created, err := rt.PluginSessionRouter.Create(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{
@@ -273,7 +273,7 @@ func TestPluginSessionSendTurnOutlivesHostCallContext(t *testing.T) {
 	rt.StreamRunner.Client = providers.AdaptStreamClient(client)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "subagent", calls: make(chan pluginhost.AgentTurnLifecycleInput, 1)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() {
@@ -378,7 +378,7 @@ func TestPluginSessionCancelIsTurnScopedAndBroadcastsInterruption(t *testing.T) 
 	rt := newTestRuntime(t, &fakeClient{response: providersResponse("done"), onChat: func(_ int, _ providers.ChatRequest) { close(chatStarted); <-release }})
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	observer := &pluginTurnInterruptedClient{id: "orchestrator", calls: make(chan pluginhost.AgentTurnInterruptedInput, 1)}
-	rt.PluginHost = pluginhost.New(observer)
+	attachTestModelGeneration(t, rt, observer)
 	srv := New(rt, &lockedBuffer{})
 	t.Cleanup(func() { close(release); srv.Close() })
 
@@ -435,7 +435,7 @@ func TestPluginSessionCancelDoesNotWaitForDiscardedLifecycleObserver(t *testing.
 	rt.StreamRunner.Client = providers.AdaptStreamClient(stream)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	lifecycle := &blockingPluginTurnLifecycleClient{started: make(chan struct{}), release: make(chan struct{})}
-	rt.PluginHost = pluginhost.New(lifecycle)
+	attachTestModelGeneration(t, rt, lifecycle)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() {
@@ -531,7 +531,7 @@ func TestPluginSessionSendQueuesBusyThreadAndReportsLaterTransitions(t *testing.
 	rt := newTestRuntime(t, client)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "schedule", calls: make(chan pluginhost.AgentTurnLifecycleInput, 8)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -603,7 +603,7 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 	rt := newTestRuntime(t, client)
 	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
 	owner := &pluginTurnLifecycleClient{id: "subagent", calls: make(chan pluginhost.AgentTurnLifecycleInput, 8)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() { unblockFirst(); unblockSecond(); srv.Close() })

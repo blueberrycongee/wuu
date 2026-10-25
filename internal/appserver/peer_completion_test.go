@@ -25,7 +25,7 @@ func newPeerCompletionFixture(t *testing.T) (*Server, *gatedProvider, *pluginTur
 	provider := newGatedProvider(4)
 	rt.StreamRunner.Client = providers.AdaptStreamClient(provider)
 	owner := &pluginTurnLifecycleClient{id: "peers", calls: make(chan pluginhost.AgentTurnLifecycleInput, 8)}
-	rt.PluginHost = pluginhost.New(owner)
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)

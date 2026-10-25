@@ -445,7 +445,7 @@ func newTurnHookFixture(t *testing.T, event hooks.Event, client providers.Client
 		t.Cleanup(func() { _ = ownedJournal.Close() })
 	}
 	if generation {
-		rt.PluginHost = pluginhost.New()
+		attachTestModelGeneration(t, rt)
 	}
 	t.Cleanup(func() { _, _ = rt.Cleanup() })
 	out := &turnHookOutput{terminal: make(chan struct{})}

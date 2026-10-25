@@ -11,15 +11,12 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/blueberrycongee/wuu/internal/composition"
-	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
-	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/pluginprogram"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 // Each kernel generation owns its scopes. Nothing is published to the process
@@ -42,15 +39,20 @@ type compositionAgent struct {
 	agent  string
 }
 type compositionScope struct {
-	id, directory string
-	caller        compositionOwner
-	ctx           context.Context
-	cancel        context.CancelFunc
-	runtime       *Session
-	selection     composition.Resolved
-	plugins       []pluginhost.CompositionPackage
-	running       int
-	disposed      bool
+	id, directory    string
+	parentGeneration string
+	stateGeneration  string
+	stateSource      string
+	caller           compositionOwner
+	ctx              context.Context
+	cancel           context.CancelFunc
+	runtime          *Session
+	selection        composition.Resolved
+	plugins          []pluginhost.CompositionPackage
+	productResources *productCompositionBindings
+	running          int
+	published        bool
+	disposed         bool
 }
 
 func newCompositionService(parent *kernelHostServices) *compositionService {
@@ -100,13 +102,24 @@ func (c *compositionService) InvokeService(ctx context.Context, params pluginhos
 			return nil, err
 		}
 		return json.Marshal(c.view(scope))
+	case "inspectSession":
+		var input struct {
+			Session string `json:"session"`
+		}
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		return c.inspectSession(ctx, input.Session)
 	case "bind":
 		var input pluginhost.CompositionBind
 		if err := decodeServiceParams(params.Params, &input); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(input.Agent) == "" || input.Expected == nil {
-			return nil, serviceError("invalid_params", "agent and expected binding are required")
+		if (strings.TrimSpace(input.Agent) == "") == (strings.TrimSpace(input.Session) == "") || input.Expected == nil {
+			return nil, serviceError("invalid_params", "exactly one of agent or session and expected binding are required")
+		}
+		if input.Session != "" {
+			return c.bindSession(ctx, caller, input)
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -181,49 +194,130 @@ func (c *compositionService) view(scope *compositionScope) pluginhost.Compositio
 	}
 	sort.Strings(agents)
 	return pluginhost.CompositionView{ID: scope.id, Root: scope.runtime.RootDir, State: "active", Running: scope.running,
-		Agents: agents, Selection: scope.selection, Modules: scope.runtime.PluginHost.Statuses(), Plugins: scope.plugins}
+		Agents: agents, StateSource: scope.stateSource, Selection: scope.selection, Modules: scope.runtime.PluginHost.Statuses(), Plugins: scope.plugins,
+		ParentGeneration: scope.parentGeneration, Model: pluginhost.CompositionModel{Provider: scope.runtime.ProviderName,
+			Model: scope.runtime.Model, Variant: scope.runtime.StreamRunner.Variant, Effort: scope.runtime.StreamRunner.Effort}}
 }
 
 func (c *compositionService) create(ctx context.Context, caller compositionOwner, input pluginhost.CompositionCreate) (_ json.RawMessage, err error) {
-	selection, err := input.Selection.Resolve()
-	if err != nil {
-		return nil, err
-	}
 	c.parent.mu.RLock()
 	owner, generation := c.parent.stateOwner, c.parent.stateGeneration
 	c.parent.mu.RUnlock()
 	if owner == nil || generation == nil {
 		return nil, serviceError("service_unavailable", "composition creation requires an initialized runtime")
 	}
-	// Clone the owning generation's configuration, never its mutable state or
-	// shell-specific factories. Explicit selection resolves normal public providers.
-	encoded, err := json.Marshal(generation.settings)
+	if input.State == "" {
+		input.State = "isolated"
+	}
+	if input.State != "isolated" && input.State != "parent" {
+		return nil, serviceError("invalid_params", "state must be isolated or parent")
+	}
+	authority := compositionStateGeneration(generation)
+	if input.Inherit {
+		if input.Selection.Profile != "" {
+			return nil, serviceError("invalid_params", "inherit and a selection profile are mutually exclusive")
+		}
+		if input.Selection.Version == 0 {
+			input.Selection.Version = composition.Version
+		}
+		parent := generation.host.ServiceRegistry().Snapshot(0)
+		// Reconstruct imported providers against the new candidate context when
+		// isolating. Preserve the selected implementations, not the live bridge.
+		isolatedProviders := make(map[string]bool)
+		if input.State == "isolated" {
+			for index, binding := range parent.Services {
+				if binding.Provider != parentStateModule {
+					continue
+				}
+				major, _ := pluginhost.ServiceVersionMajor(binding.Version)
+				provider, found := authority.host.ServiceRegistry().ProviderPluginID(binding.Service, major)
+				if !found {
+					return nil, serviceError("service_unavailable", "imported state provider is unavailable")
+				}
+				parent.Services[index].Provider = provider
+				isolatedProviders[provider] = true
+			}
+		}
+		if input.Selection.Modules == nil {
+			modules := make([]string, 0, len(parent.Composition.Modules))
+			for _, module := range parent.Composition.Modules {
+				if input.State == "isolated" && module.ID == parentStateModule {
+					continue
+				}
+				modules = append(modules, module.ID)
+				delete(isolatedProviders, module.ID)
+			}
+			for provider := range isolatedProviders {
+				modules = append(modules, provider)
+			}
+			sort.Strings(modules)
+			input.Selection.Modules = &modules
+		}
+		overrides := make(map[composition.ServiceKey]bool, len(input.Selection.Services))
+		for _, binding := range input.Selection.Services {
+			overrides[composition.ServiceKey{Service: binding.Service, Major: binding.Major}] = true
+		}
+		for _, binding := range parent.Services {
+			major, _ := pluginhost.ServiceVersionMajor(binding.Version)
+			if !overrides[composition.ServiceKey{Service: binding.Service, Major: major}] {
+				input.Selection.Services = append(input.Selection.Services, composition.Binding{Service: binding.Service, Major: major, Provider: binding.Provider})
+			}
+		}
+	}
+	var factories []NativeProviderFactory
+	for _, factory := range owner.nativeProviders {
+		if factory.ID != parentStateModule {
+			factories = append(factories, factory)
+		}
+	}
+	var productParent *kernelHostServices
+	var productRouter *PluginSessionRouter
+	if input.State == "parent" {
+		// This explicit import changes selection in the same graph as every
+		// other override; native and process consumers see the bridge provider.
+		imported := map[string]bool{persistence.ServiceName: true, session.ServiceName: true, ArtifactServiceName: true}
+		modules := map[string]bool{parentStateModule: true}
+		parentServices := generation.host.ServiceRegistry().Snapshot(0).Services
+		for _, service := range parentServices {
+			if imported[service.Service] {
+				modules[service.Provider] = false
+			}
+		}
+		for _, service := range parentServices {
+			if !imported[service.Service] {
+				delete(modules, service.Provider)
+			}
+		}
+		modules[parentStateModule] = true
+		input.Selection.Patches = append(input.Selection.Patches, composition.Patch{
+			Modules: modules,
+			Services: []composition.Binding{
+				{Service: persistence.ServiceName, Major: 1, Provider: parentStateModule},
+				{Service: session.ServiceName, Major: 1, Provider: parentStateModule},
+				{Service: ArtifactServiceName, Major: 1, Provider: parentStateModule},
+			},
+		})
+		factories = append(factories, NativeProviderFactory{ID: parentStateModule, Build: func(NativeProviderContext) (pluginhost.Client, error) {
+			return &compositionStateImport{parent: generation.host, state: pluginhost.StatePrepared}, nil
+		}})
+		productParent, productRouter = c.parent, owner.PluginSessionRouter
+	}
+	selection, err := input.Selection.Resolve()
 	if err != nil {
 		return nil, err
 	}
-	var cfg config.Config
-	if err = json.Unmarshal(encoded, &cfg); err != nil {
-		return nil, err
-	}
-	cfg.Composition = &input.Selection
-	if cfg.Extensions == nil {
-		cfg.Extensions = &extensions.Settings{}
-	}
-	generation.revokedMu.Lock()
-	catalog := make([]pluginpkg.Plugin, 0, len(generation.active))
-	for _, item := range generation.active {
-		if !generation.revokedPlugins[item.ID] {
-			catalog = append(catalog, item)
-		}
-	}
-	generation.revokedMu.Unlock()
+	catalog := generation.ActivePackages()
 	directory, err := os.MkdirTemp("", "wuu-composition-")
 	if err != nil {
 		return nil, err
 	}
+	scope := &compositionScope{id: rand.Text(), caller: caller, directory: directory, selection: selection, parentGeneration: generation.id, stateGeneration: authority.id, stateSource: input.State, productResources: owner.productCompositions,
+		plugins: []pluginhost.CompositionPackage{}}
+	scope.ctx, scope.cancel = context.WithCancel(c.ctx)
 	var runtime *Session
 	defer func() {
 		if err != nil {
+			scope.cancel()
 			if runtime != nil {
 				if _, cleanupErr := runtime.Cleanup(); cleanupErr != nil {
 					err = errors.Join(err, fmt.Errorf("candidate state retained at %s: %w", directory, cleanupErr))
@@ -243,48 +337,28 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 	if err = os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	for _, source := range input.Paths {
-		if err = ctx.Err(); err != nil {
-			return nil, err
-		}
-		if !filepath.IsAbs(source) {
-			source = filepath.Join(owner.RootDir, source)
-		}
-		cleanup := func() {}
-		if filepath.Ext(source) == ".ts" {
-			source, cleanup, err = pluginprogram.PrepareSingleFile(ctx, source)
-			if err != nil {
-				return nil, err
-			}
-		}
-		installed, installErr := pluginpkg.InstallPackage(home, source)
-		cleanup()
-		if installErr != nil {
-			return nil, installErr
-		}
-		item := installed.Plugin
-		if err = cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: item.SubjectID, Fingerprint: item.Fingerprint,
-			Scope: extensions.GrantScopeSession, Permissions: item.EffectivePermissions, ApprovedAt: time.Now().UTC()}); err != nil {
-			return nil, err
-		}
-		cfg.Extensions.SetEnabled(item.SubjectID, true)
-		replaced := false
-		for i := range catalog {
-			if catalog[i].ID == item.ID {
-				catalog[i], replaced = item, true
-				break
-			}
-		}
-		if !replaced {
-			catalog = append(catalog, item)
-		}
+	cfg, catalog, err := PrepareCompositionSources(ctx, generation.settings, catalog, home, owner.RootDir, input.Paths)
+	if err != nil {
+		return nil, err
 	}
+	cfg.Composition = &input.Selection
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
+	parentModels := captureGenerationStateModels(generation)
+	if parentModels.err != nil {
+		return nil, parentModels.err
+	}
+	main := parentModels.Roles.Main
+	model := pluginhost.CompositionModel{Provider: main.Provider, Model: main.Model, Variant: main.Variant, Effort: main.LegacyEffort}
+	if input.Model != nil {
+		model = *input.Model
+	}
+	cfg.Agent.Variant, cfg.Agent.Effort = model.Variant, model.Effort
 	runtime, err = NewSession(Options{RootDir: root, HomeDir: directory, WuuHome: home, Config: cfg,
-		DiscoveredPlugins: &catalog, NonInteractive: true, DriverProfile: input.DriverProfile,
-		ProviderName: owner.ProviderName, ModelOverride: owner.Model})
+		DiscoveredPlugins: &catalog, NativeProviders: factories, NonInteractive: true, DriverProfile: input.DriverProfile,
+		productParent: productParent, productRouter: productRouter, composition: productCompositionBinding{service: c, scope: scope},
+		ProviderName: model.Provider, ModelOverride: model.Model})
 	if err != nil {
 		return nil, err
 	}
@@ -299,8 +373,10 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	scope := &compositionScope{id: rand.Text(), caller: caller, directory: directory, runtime: runtime, selection: selection,
-		plugins: []pluginhost.CompositionPackage{}}
+	if input.State == "parent" {
+		runtime.productCompositions = owner.productCompositions
+	}
+	scope.runtime = runtime
 	for _, item := range runtime.pluginGeneration.active {
 		scope.plugins = append(scope.plugins, pluginhost.CompositionPackage{ID: item.ID, Fingerprint: item.Fingerprint})
 	}
@@ -313,8 +389,11 @@ func (c *compositionService) create(ctx context.Context, caller compositionOwner
 	if err != nil {
 		return nil, err
 	}
-	scope.ctx, scope.cancel = context.WithCancel(c.ctx)
+	scope.published = true
 	c.scopes[scope.id] = scope
+	scope.productResources.mu.Lock()
+	scope.productResources.scopes[scope.id] = runtime.pluginGeneration.composition
+	scope.productResources.mu.Unlock()
 	return view, nil
 }
 
@@ -386,6 +465,9 @@ func (c *compositionService) run(ctx context.Context, caller compositionOwner, i
 }
 
 func (s *compositionScope) close() error {
+	s.productResources.mu.Lock()
+	delete(s.productResources.scopes, s.id)
+	s.productResources.mu.Unlock()
 	s.cancel()
 	_, err := s.runtime.Cleanup()
 	// Preserve state for diagnosis if shutdown could not complete safely.

@@ -26,10 +26,12 @@ func (s *Server) retireIdlePluginRuntimes() {
 		if th.state != nil && th.state.Generation != nil &&
 			!th.running && !th.admissionReserved && th.executionLease == nil && !th.runtimeSelectionMutation &&
 			!th.nativeHistoryMutation && s.activeExecutionRunID(th.ID) == "" &&
-			!s.rt.IsCurrentPluginGeneration(th.state.Generation) && !threadRuntimeHasOutstandingWork(th.ID, rt) {
+			(!s.rt.IsCurrentPluginGeneration(th.state.Generation) || (rt != nil && rt.CompositionID != "")) && !threadRuntimeHasOutstandingWork(th.ID, rt) {
 			retired = append(retired, detachThreadRuntimeLocked(th))
 			th.maybeReleasePluginGenerationExecutionLeaseLocked()
-			states = append(states, th.state)
+			if !s.rt.IsCurrentPluginGeneration(th.state.Generation) {
+				states = append(states, th.state)
+			}
 		}
 		th.mu.Unlock()
 	}

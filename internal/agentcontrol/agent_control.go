@@ -274,15 +274,16 @@ type Config struct {
 	// ParticipantStore, when set, persists the ephemeral participant
 	// identity created for each spawned worker. Optional: when nil,
 	// participant IDs are still generated in-memory but not persisted.
-	ParticipantStore   ParticipantStore
-	MaxParallel        int
-	InferenceJournal   providers.InferenceJournal
-	BeginModelReceipts agent.BeginModelReceiptsFunc
-	ToolLedgerFactory  func(ownerID string) (*toolledger.Ledger, error)
-	SelectedCompaction *compactionservice.Client
-	AcquireLoopDriver  loopdriver.AcquireFunc
-	OnSubagentStart    func(context.Context, string) error
-	OnSubagentStop     func(context.Context, string) error
+	ParticipantStore      ParticipantStore
+	MaxParallel           int
+	InferenceJournal      providers.InferenceJournal
+	BeginModelReceipts    agent.BeginModelReceiptsFunc
+	ToolLedgerFactory     func(ownerID string) (*toolledger.Ledger, error)
+	SelectedCompaction    *compactionservice.Client
+	AcquireLoopDriver     loopdriver.AcquireFunc
+	ConfigureWorkerRunner func(*agent.StreamRunner, string, string)
+	OnSubagentStart       func(context.Context, string) error
+	OnSubagentStop        func(context.Context, string) error
 }
 
 // New constructs an AgentControl. Worktree isolation is only available
@@ -324,6 +325,7 @@ func New(cfg Config) (*AgentControl, error) {
 		BeginModelReceipts:      cfg.BeginModelReceipts,
 		ToolLedgerFactory:       cfg.ToolLedgerFactory,
 		AcquireLoopDriver:       cfg.AcquireLoopDriver,
+		ConfigureRunner:         cfg.ConfigureWorkerRunner,
 		SelectedCompaction:      cfg.SelectedCompaction,
 		OnSubagentStart:         cfg.OnSubagentStart,
 		OnSubagentStop:          cfg.OnSubagentStop,

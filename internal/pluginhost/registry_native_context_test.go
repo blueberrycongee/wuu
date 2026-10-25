@@ -6,6 +6,30 @@ import (
 	"testing"
 )
 
+// Native host bridges start a fresh declared consumer callback even while
+// forwarding cleanup from a different graph. Registry.Call still forbids
+// impersonating that consumer with the original callback identity.
+func TestNativeHostCleanupBridge(t *testing.T) {
+	descriptor := ServiceDescriptor{Name: "state.example", Version: "1.0.0", Methods: []ServiceMethodDescriptor{{Name: "close", Cleanup: true}}}
+	provider := &fakeServiceProcess{id: "provider", state: StateActive, provided: []ServiceDescriptor{descriptor}}
+	consumer := &fakeServiceProcess{id: "consumer", state: StateActive, required: []ServiceRequirement{{Name: descriptor.Name, MajorVersion: 1}}}
+	registry, _ := BuildServiceRegistry(provider, consumer)
+	host := New(provider, consumer)
+	host.AttachServiceRegistry(registry, nil)
+	registry.Activate()
+	ctx := context.WithValue(context.Background(), serviceCleanupKey{}, true)
+	ctx = context.WithValue(ctx, nativeInvocationKey{}, &nativeInvocation{registry: &ServiceRegistry{}, owner: "bridge", live: true})
+	if _, err := registry.Call(ctx, consumer.ID(), ServiceCallParams{Service: descriptor.Name, Method: "close"}); err == nil {
+		t.Fatal("foreign native callback impersonated the declared consumer")
+	}
+	if _, err := host.CallService(ctx, consumer.ID(), descriptor.Name, "close", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.invokeCalls) != 1 {
+		t.Fatalf("cleanup calls = %d", len(provider.invokeCalls))
+	}
+}
+
 // Native callbacks must retain admission without lending it to another caller,
 // generation, or a future autonomous invocation after the callback returns.
 func TestNativeCallbackContextAdmission(t *testing.T) {

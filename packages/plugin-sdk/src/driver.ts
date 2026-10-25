@@ -39,6 +39,7 @@ export interface DriverTurnContext {
   readonly can_replace: boolean;
 }
 export interface DriverInputAdmission {
+  readonly decision: { readonly stop: boolean; readonly reason?: string; readonly content?: string; readonly source?: string };
   readonly messages: readonly DriverMessage[];
   readonly context: DriverTurnContext;
 }

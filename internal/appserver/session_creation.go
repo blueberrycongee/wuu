@@ -300,6 +300,23 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		}
 		return nil, err
 	}
+	// Commit inheritance before publishing the session. A failed session create
+	// can leave an unreachable selection record, but can never expose a child
+	// that silently executes under defaults after a partial creation or retry.
+	if params.ParentSessionID != "" {
+		s.mu.Lock()
+		parent := s.threads[params.ParentSessionID]
+		s.mu.Unlock()
+		var admitted *runtime.ThreadRuntime
+		if parent != nil {
+			parent.mu.Lock()
+			admitted = parent.execRuntime
+			parent.mu.Unlock()
+		}
+		if err := s.rt.InheritSessionComposition(context.Background(), binding, params.ParentSessionID, id, admitted); err != nil {
+			return nil, err
+		}
+	}
 	var created *session.Session
 	var err error
 	if params.InitialInput != nil {

@@ -300,6 +300,10 @@ func (s *Server) threadRuntimePluginGenerationMatches(th *threadState) bool {
 	// pinned runtime only needs rebuilding when activation actually replaced
 	// its generation, not when package metadata was refreshed.
 	if s != nil && s.rt != nil && th != nil && th.execRuntime != nil && th.execRuntime.PluginGeneration != nil {
+		if th.execRuntime.CompositionID != "" {
+			// Composition availability and selection are checked at admission.
+			return true
+		}
 		return th.state != nil && th.execRuntime.PluginGeneration == th.state.Generation
 	}
 	return s != nil && th != nil &&
@@ -1252,6 +1256,13 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			return nil, errors.New("selected execution environment requires the built-in engine")
 		}
 	}
+	compositionID, err := s.rt.CheckSessionComposition(context.Background(), th.state, th.ID)
+	if err != nil {
+		return nil, err
+	}
+	if compositionID != "" && engineID != agentengine.EngineWuu {
+		return nil, errors.New("product compositions require the native Wuu engine; unbind the composition before using an external engine")
+	}
 	th.mu.Lock()
 	existing := th.execRuntime
 	running := th.running
@@ -1259,7 +1270,8 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 	if existing != nil && !running {
 		selectionMismatch := !s.threadRuntimeMatchesSelectionLocked(th, existing)
 		workspaceMismatch := existing.Toolkit != nil && sessionWorkspacePath(existing.Toolkit.RootDir()) != sessionWorkspacePath(th.CWD)
-		pluginMismatch := !s.threadRuntimePluginGenerationMatches(th)
+		compositionMismatch := existing.CompositionID != compositionID
+		pluginMismatch := compositionMismatch || !s.threadRuntimePluginGenerationMatches(th)
 		// A generation belongs to live work, not the lifetime of a conversation.
 		// Rebuild only after its turns and workers settle so tools, hooks and
 		// worker closures move together. The history and session cache key stay;
@@ -1268,6 +1280,9 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 			if !threadRuntimeHasOutstandingWork(th.ID, existing) && s.activeExecutionRunID(th.ID) == "" {
 				detached = detachThreadRuntimeLocked(th)
 				existing = nil
+			} else if compositionMismatch {
+				th.mu.Unlock()
+				return nil, errors.New("session composition changed while background work is running; retry after it settles")
 			} else if workspaceMismatch {
 				th.mu.Unlock()
 				return nil, errors.New("session workspace changed while background agents are running; retry after they settle")
@@ -1312,7 +1327,6 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 		PermissionMode: permissionMode,
 	}
 	var threadRuntime *runtime.ThreadRuntime
-	var err error
 	if engineID == agentengine.EngineWuu {
 		threadRuntime, err = s.rt.NewThreadRuntimeForState(th.state, th.ID, browserWorkdir, selection)
 	} else {
@@ -1561,6 +1575,7 @@ func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string,
 		return nil
 	}
 	control := threadRuntime.AgentControl
+	var modelState *runtime.State
 	// Per-participant model pins persist the raw pin but not the stream
 	// client (StreamClient is not serializable). When a queued spawn
 	// restores after a process restart the AgentControl calls the
@@ -1578,15 +1593,27 @@ func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string,
 		// this conversation's connection (issue #81 P3). Keep the construction
 		// value; only seed the workspace worker provider when the control never
 		// recorded one (a conversation that follows the workspace default).
-		models, modelsErr := binding.Models()
+		// Session finalization uses imported durable state; model resolution
+		// belongs to the admitted execution graph, including its private config.
+		var captureErr error
+		modelState, captureErr = s.retainThreadExecutionState(binding, threadRuntime)
+		var models runtime.StateModels
+		var services *runtime.StateServices
+		modelsErr, servicesErr := captureErr, captureErr
+		if captureErr == nil {
+			models, modelsErr = modelState.Models()
+			services, servicesErr = modelState.Services()
+		}
 		workerProvider := strings.TrimSpace(control.WorkerProviderName())
-		if workerProvider == "" {
+		if workerProvider == "" && modelsErr == nil {
 			workerProvider = firstNonEmpty(models.Roles.Worker.Provider, models.Roles.Main.Provider)
 			control.SetWorkerProviderName(workerProvider)
 		}
-		services, servicesErr := binding.Services()
 		ref := newRuntimeSessionReference(services)
 		control.SetModelPinClientResolver(func(rawPin string) (string, providers.StreamClient, error) {
+			if servicesErr != nil {
+				return "", nil, servicesErr
+			}
 			return resolveParticipantModelOverride(ref, "spawn", rawPin, control.WorkerProviderName())
 		})
 		control.SetModelAliasResolver(func(alias string) agentcontrol.AliasResolutionResult {
@@ -1607,6 +1634,7 @@ func (s *Server) subscribeThreadRuntime(binding *runtime.State, threadID string,
 	}
 	sub := &threadRuntimeSubscription{
 		state:          binding.Retain(),
+		modelState:     modelState,
 		statusCh:       make(chan subagent.Notification, 64),
 		streamCh:       make(chan subagent.StreamNotification, 256),
 		processCh:      make(chan process.Event, 64),
@@ -1690,6 +1718,12 @@ func detachThreadRuntimeLocked(th *threadState) detachedThreadRuntime {
 
 func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
+	if detached.runtime != nil && detached.runtime.CompositionID != "" {
+		if err := detached.runtime.CloseComposition(); err != nil {
+			providers.DebugLogf("close product composition: %v", err)
+		}
+		return
+	}
 	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
 		generation := detached.runtime.PluginGeneration
 		detached.runtime.PluginGeneration = nil
@@ -1701,6 +1735,12 @@ func (s *Server) releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 
 func releaseDetachedThreadRuntime(detached detachedThreadRuntime) {
 	releaseThreadRuntimeSubscription(detached.runtime, detached.subscription)
+	if detached.runtime != nil && detached.runtime.CompositionID != "" {
+		if err := detached.runtime.CloseComposition(); err != nil {
+			providers.DebugLogf("close product composition: %v", err)
+		}
+		return
+	}
 	if detached.runtime != nil && detached.runtime.PluginGeneration != nil {
 		generation := detached.runtime.PluginGeneration
 		detached.runtime.PluginGeneration = nil
@@ -1773,7 +1813,8 @@ func releaseThreadRuntimeSubscription(threadRuntime *runtime.ThreadRuntime, sub 
 	if threadRuntime != nil && threadRuntime.AgentControl != nil {
 		threadRuntime.AgentControl.Close()
 	}
-	if sub != nil && sub.state != nil {
+	if sub != nil {
+		_ = sub.modelState.Close()
 		_ = sub.state.Close()
 	}
 }
@@ -2205,11 +2246,17 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 	// synchronous observer callback here would otherwise re-enter that ordered
 	// process and prevent the cancellation response from ever being returned.
 	cancel()
-	s.notifyPluginTurnInterruptedAsync(binding, pluginhost.AgentTurnInterruptedInput{
-		ThreadID: threadID,
-		TurnID:   turnID,
-		Cause:    "turn_interrupted",
-	})
+	observer, observerErr := s.retainThreadExecutionState(binding, threadRuntime)
+	if observerErr != nil {
+		providers.DebugLogf("retain interrupted turn observer for %q: %v", threadID, observerErr)
+	} else {
+		s.notifyPluginTurnInterruptedAsync(observer, pluginhost.AgentTurnInterruptedInput{
+			ThreadID: threadID,
+			TurnID:   turnID,
+			Cause:    "turn_interrupted",
+		})
+		_ = observer.Close()
+	}
 	// turn/interrupt means "freeze this work", not "leave background workers
 	// running": cancel the whole anonymous-worker tree, clear its queued
 	// spawns, and keep partial results as resumable state. The next
@@ -3559,13 +3606,19 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// Observers are advisory and must not delay terminal state publication. In
 	// particular, a plugin helper can be blocked in a host service while core
 	// is trying to report the cancellation of that same service's child turn.
-	_ = s.startBackgroundWithState(binding, func(binding *runtime.State) {
-		ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
-		defer cancel()
-		if observerErr := s.notifyPluginTurnCompleted(binding, ctx, completedObservation); observerErr != nil {
-			providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
-		}
-	})
+	observer, observerErr := s.retainThreadExecutionState(binding, threadRuntime)
+	if observerErr != nil {
+		providers.DebugLogf("retain completed turn observer for %q: %v", th.ID, observerErr)
+	} else {
+		_ = s.startBackgroundWithState(observer, func(binding *runtime.State) {
+			ctx, cancel := context.WithTimeout(context.Background(), pluginObserverDeliveryTimeout)
+			defer cancel()
+			if observerErr := s.notifyPluginTurnCompleted(binding, ctx, completedObservation); observerErr != nil {
+				providers.DebugLogf("notify plugin turn observers for thread %q turn %q: %v", th.ID, turnID, observerErr)
+			}
+		})
+		_ = observer.Close()
+	}
 	s.afterProjectTurnForState(th, turn, turnRuntime.CompactOnly, binding)
 	if reference := turnRuntime.PluginTurn; reference != nil {
 		lifecycleState := pluginhost.TurnLifecycleCompleted
@@ -3577,7 +3630,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			}
 			errorText = err.Error()
 		}
-		s.notifyPluginTurnLifecycleAsync(binding, reference.PluginID, pluginhost.AgentTurnLifecycleInput{
+		s.notifyPluginReferenceLifecycle(binding, reference, pluginhost.AgentTurnLifecycleInput{
 			RequestID: reference.RequestID, State: lifecycleState, ThreadID: th.ID,
 			TurnID: turnID, QueueID: reference.QueueID, Error: errorText,
 			StartedAt: &startedAt, CompletedAt: &now,
@@ -4122,7 +4175,7 @@ func (s *Server) drainQueuedTurns(binding *runtime.State, threadID string) (capa
 			// background. The drain must never synchronously re-enter a plugin
 			// helper that may be blocked inside a host service call waiting on
 			// this very drain (single-worker plugin processes).
-			s.notifyPluginTurnLifecycleAsync(binding, reference.PluginID, pluginhost.AgentTurnLifecycleInput{
+			s.notifyPluginReferenceLifecycle(binding, reference, pluginhost.AgentTurnLifecycleInput{
 				RequestID: reference.RequestID, State: pluginhost.TurnLifecycleFailed,
 				ThreadID: threadID, QueueID: reference.QueueID, Error: err.Error(),
 			})
@@ -4580,7 +4633,7 @@ func (s *Server) startQueuedTurn(binding *runtime.State, ctx context.Context, th
 		// Best-effort background observation. Plugin helpers are single-worker
 		// processes; a synchronous call from the drain can re-enter a helper
 		// that is blocked in a host service waiting on this drain.
-		s.notifyPluginTurnLifecycleAsync(binding, reference.PluginID, pluginhost.AgentTurnLifecycleInput{
+		s.notifyPluginReferenceLifecycle(binding, reference, pluginhost.AgentTurnLifecycleInput{
 			RequestID: reference.RequestID, State: pluginhost.TurnLifecycleRunning,
 			ThreadID: threadID, TurnID: started.turnID, QueueID: reference.QueueID,
 			StartedAt: &started.admittedAt,

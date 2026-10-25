@@ -306,7 +306,16 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	// unpublished; missing transitive dependencies cannot expose capabilities.
 	conflicts = append(conflicts, registry.RegisterClients(started...)...)
 	conflicts = append(conflicts, registry.RegisterClients(rendererServices...)...)
-	if providerID, found := registry.ProviderPluginID(persistence.ServiceName, 1); found {
+	providerID, hasState := registry.ProviderPluginID(persistence.ServiceName, 1)
+	importedState := false
+	for _, client := range nativeModules {
+		if client.ID() == providerID {
+			_, importedState = client.(*compositionStateImport)
+		}
+	}
+	// Importing an admitted graph's state preserves its authority wrapper.
+	// A second authority would race the parent's revision and membership.
+	if hasState && !importedState {
 		authority, err := NewStateAuthority(wuuHome)
 		if err != nil {
 			return nil, nil, errors.Join(err, closeStarted())
@@ -482,6 +491,41 @@ func pluginPreStepInjector(host *pluginhost.Host, provider, model, threadID, cwd
 			currentHistory = append(currentHistory, providers.CloneChatMessages(converted)...)
 		}
 		return messages, nil
+	}
+}
+
+func pluginStepPolicy(host *pluginhost.Host, provider, model, threadID, cwd string) func(context.Context, int, []providers.ChatMessage) (loopdriver.StepDecision, error) {
+	if host == nil || len(host.Capabilities(pluginhost.CapabilityAgentStepPolicy)) == 0 {
+		return nil
+	}
+	return func(ctx context.Context, step int, history []providers.ChatMessage) (loopdriver.StepDecision, error) {
+		for _, capability := range host.Capabilities(pluginhost.CapabilityAgentStepPolicy) {
+			if err := ctx.Err(); err != nil {
+				return loopdriver.StepDecision{}, err
+			}
+			var output loopdriver.StepDecision
+			err := host.InvokeCapability(ctx, capability, pluginhost.AgentPreStepInput{
+				SessionID: threadID, ThreadID: threadID, CWD: cwd, Provider: provider, Model: model,
+				StepIndex: step, Messages: modelMessageViewsV1(history),
+			}, &output)
+			if ctx.Err() != nil {
+				return loopdriver.StepDecision{}, ctx.Err()
+			}
+			if err == nil && output.Stop && (strings.TrimSpace(output.Reason) == "" || strings.TrimSpace(output.Content) == "") {
+				err = errors.New("stopping step policy requires reason and content")
+			}
+			if err != nil {
+				if policyErr := host.HandleCapabilityError(capability, err); policyErr != nil {
+					return loopdriver.StepDecision{}, policyErr
+				}
+				continue
+			}
+			if output.Stop {
+				output.Source = capability.PluginID + ":" + capability.Descriptor.ID
+				return output, nil
+			}
+		}
+		return loopdriver.StepDecision{}, nil
 	}
 }
 

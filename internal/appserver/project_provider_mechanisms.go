@@ -193,7 +193,7 @@ func (m *managedSessionMechanisms) InvokeService(ctx context.Context, call plugi
 		snapshot.Control = input.Control
 		var admitted bool
 		if input.AllowStart {
-			_, admitted, err = s.trySubmitSessionInput(ctx, th, input.Message, sessionIfRunningSteer, snapshot)
+			_, admitted, _, err = s.trySubmitSessionInput(ctx, th, input.Message, sessionIfRunningSteer, snapshot)
 		} else {
 			_, admitted = s.steerSessionInput(th, input.Message, snapshot)
 		}

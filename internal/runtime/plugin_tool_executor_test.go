@@ -353,15 +353,16 @@ return JSON.parse(result.content[0].text).peers.map(peer => peer.session_id);`
 	if _, err := rich.ExecuteResult(nestedCtx, call); err == nil || listCalls.Load() != before {
 		t.Fatalf("retired peer binding remained executable: %v", err)
 	}
-	executor = replacePluginToolBindings(executor, pluginhost.New(), nil, "thread", root)
-	nested, err = kit.CodeModeNestedSurface()
+	emptyHost := pluginhost.New()
+	attachTestExecutionServices(t, emptyHost)
+	defer emptyHost.Close(context.Background())
+	executor = replacePluginToolBindings(executor, emptyHost, nil, "thread", root)
+	surface, err := selectedToolSurface(context.Background(), executor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, def := range nested {
-		if def.Name == name {
-			t.Fatal("replaced plugin host left a stale code-mode catalog")
-		}
+	if strings.Contains(surface.DeferredToolCatalog, name) {
+		t.Fatal("replaced plugin host left a stale code-mode catalog")
 	}
 }
 
@@ -423,12 +424,20 @@ func TestPTCProductionWrappersPinPluginSurfaceUntilRunEnds(t *testing.T) {
 	kit.ConfigurePTC(service, config.PTCConfig{Enabled: true})
 	client := &pluginToolTestClient{}
 	host := pluginhost.New(client)
+	attachTestExecutionServices(t, host)
+	defer host.Close(context.Background())
 	name := host.ToolDefinitions()[0].Name
 	executor := newPluginAwareToolExecutor(kit, host, hooks.NewDispatcher(hooks.NewRegistry(nil)), "thread", "thread", kit.RootDir())
 	freezer, ok := executor.(agent.ToolSurfaceFreezer)
 	if !ok {
 		t.Fatal("production wrapper lost snapshot lifecycle")
 	}
+	callContext := toolctx.WithNestedCall(loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "thread", ExecutionID: "turn"}))
+	call := providers.ToolCall{ID: "plugin-call", Name: name, Arguments: `{}`}
+	if _, err := executor.(agent.RichToolExecutor).ExecuteResult(callContext, call); err != nil || !client.executed {
+		t.Fatalf("active plugin was not executable: %v", err)
+	}
+	client.executed = false
 	freezer.FreezeToolSurface()
 	freezer.FreezeToolSurface()
 	defer freezer.UnfreezeToolSurface()
@@ -450,7 +459,7 @@ func TestPTCProductionWrappersPinPluginSurfaceUntilRunEnds(t *testing.T) {
 	if !found {
 		t.Fatal("frozen schema changed in active run")
 	}
-	if _, err := executor.(agent.RichToolExecutor).ExecuteResult(toolctx.WithNestedCall(context.Background()), providers.ToolCall{Name: name, Arguments: `{}`}); err == nil || client.executed {
+	if _, err := executor.(agent.RichToolExecutor).ExecuteResult(callContext, call); err == nil || client.executed {
 		t.Fatal("snapshot allowed a retired tool to execute")
 	}
 	freezer.UnfreezeToolSurface()

@@ -63,6 +63,9 @@ import (
 // attach without rebuilding the agent.
 type Options struct {
 	NativeProviders []NativeProviderFactory
+	productParent   *kernelHostServices
+	productRouter   *PluginSessionRouter
+	composition     productCompositionBinding
 	RootDir         string
 	// Host is immutable process metadata supplied by the shell or cloud
 	// control plane. Its zero value resolves to a local host.
@@ -156,6 +159,7 @@ type Session struct {
 	// diagnostics; the driver itself lives on the stream runner template.
 	DriverProfile       string
 	PluginSessionRouter *PluginSessionRouter
+	productCompositions *productCompositionBindings
 	systemPrompts       *agent.SystemPromptAssembler
 	InstructionFiles    []instructions.File
 	instructionConfig   config.InstructionFilesConfig
@@ -279,6 +283,7 @@ func (s *Session) cloneForThreadModel(expected ...*State) (*Session, error) {
 		UserQuestions:               s.UserQuestions,
 		DriverProfile:               s.DriverProfile,
 		PluginSessionRouter:         s.PluginSessionRouter,
+		productCompositions:         s.productCompositions,
 		systemPrompts:               s.systemPrompts,
 		InstructionFiles:            s.InstructionFiles,
 		instructionConfig:           s.instructionConfig,
@@ -343,13 +348,18 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
-	processScopeConfig tools.ProcessScopeConfig
-	processHooks       *hooks.Dispatcher
-	SessionID          string
-	PluginHost         *pluginhost.Host
-	Documents          persistence.Documents
-	Sessions           *session.Store
-	StreamRunner       *agent.StreamRunner
+	CompositionID        string
+	compositionBinding   productCompositionBinding
+	closeComposition     func() error
+	compositionCloseOnce sync.Once
+	compositionCloseErr  error
+	processScopeConfig   tools.ProcessScopeConfig
+	processHooks         *hooks.Dispatcher
+	SessionID            string
+	PluginHost           *pluginhost.Host
+	Documents            persistence.Documents
+	Sessions             *session.Store
+	StreamRunner         *agent.StreamRunner
 	// CapabilityTools exposes host capabilities to an external engine without
 	// creating an in-process model runner or worker runtime.
 	CapabilityTools   agent.ToolExecutor
@@ -492,7 +502,10 @@ func NewSession(opts Options) (*Session, error) {
 	if err := catalogLease.Release(); err != nil {
 		return nil, err
 	}
-	pluginTurnRouter := NewPluginSessionRouter()
+	pluginTurnRouter := opts.productRouter
+	if pluginTurnRouter == nil {
+		pluginTurnRouter = NewPluginSessionRouter()
+	}
 	var userQuestions *pluginhost.UserQuestionBroker
 	if !opts.NonInteractive {
 		userQuestions = pluginhost.NewUserQuestionBroker()
@@ -503,7 +516,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 
 	initialGeneration := &PluginGeneration{
-		id: newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state,
+		id: newPluginGenerationID(wuuHome), host: pluginHost, state: pluginKernel.state, productParent: opts.productParent, composition: opts.composition,
 		ownedRoots: initialSnapshotRoots, settings: cfg,
 		plugins: append([]pluginpkg.Plugin(nil), discoveredPlugins...),
 		active:  append([]pluginpkg.Plugin(nil), activePlugins...),
@@ -769,6 +782,7 @@ func NewSession(opts Options) (*Session, error) {
 		DisableAutoCompact:          cfg.Agent.DisableAutoCompact,
 		BeforeRequestContext:        RuntimeContextInjector(nil, agentthread.RootPath, toolkitContextBlockProvider(toolkit)),
 		BeforeModelStep:             pluginPreStepInjector(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
+		StepPolicy:                  pluginStepPolicy(pluginHost, resolvedName, providerCfg.Model, "", rootDir),
 		BeforeRequest:               pluginRequestInterceptor(pluginHost, resolvedName, "", rootDir),
 		InferenceOperationKind:      providers.InferenceOperationAgentRound,
 		InferenceWorkloadProfile:    providers.InferenceProfileInteractive,
@@ -806,6 +820,7 @@ func NewSession(opts Options) (*Session, error) {
 		PluginHost:                  pluginHost,
 		UserQuestions:               userQuestions,
 		PluginSessionRouter:         pluginTurnRouter,
+		productCompositions:         &productCompositionBindings{scopes: make(map[string]productCompositionBinding)},
 		systemPrompts:               systemPrompts,
 		InstructionFiles:            instructionFiles,
 		instructionConfig:           cfg.Instructions,
@@ -1554,6 +1569,15 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					applyWorkerToolFilter(workerKit, wt)
 					return newPluginAwareToolExecutor(workerKit, s.PluginHost, s.HookDispatcher, id, id, workerRoot), nil
 				},
+				ConfigureWorkerRunner: func(runner *agent.StreamRunner, workerID, workerRoot string) {
+					host := s.PluginHost
+					if generation != nil {
+						host = generation.host
+					}
+					runner.BeforeModelStep = pluginPreStepInjector(host, runner.ProviderName, runner.Model, workerID, workerRoot)
+					runner.StepPolicy = pluginStepPolicy(host, runner.ProviderName, runner.Model, workerID, workerRoot)
+					runner.BeforeRequest = pluginRequestInterceptor(host, runner.ProviderName, workerID, workerRoot)
+				},
 				AcquireLoopDriver:   s.driverResolver(generation),
 				SelectedCompaction:  s.StreamRunner.SelectedCompaction,
 				WorkerWakeAuthority: workerWakeAuthority(kit),
@@ -1664,6 +1688,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 	}
 	runner.BeforeModelStep = pluginPreStepInjector(pluginHost, s.ProviderName, s.Model, id, threadRoot)
+	runner.StepPolicy = pluginStepPolicy(pluginHost, s.ProviderName, s.Model, id, threadRoot)
 	runner.BeforeRequest = pluginRequestInterceptor(pluginHost, s.ProviderName, id, threadRoot)
 	runner.WrapModelClient = pluginModelClientWrapper(pluginHost, id)
 	releasedGeneration = true
@@ -1870,6 +1895,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		StreamingToolExecution:      base.StreamingToolExecution,
 		BeforeStep:                  base.BeforeStep,
 		BeforeModelStep:             base.BeforeModelStep,
+		StepPolicy:                  base.StepPolicy,
 		BeforeRequestContext:        base.BeforeRequestContext,
 		BeforeRequest:               base.BeforeRequest,
 		WrapModelClient:             base.WrapModelClient,

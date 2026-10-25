@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // TestServerThreadForkPreservesPreCheckpointPastAndSelectedAnswer reproduces the
@@ -305,7 +308,7 @@ func (c *interleavedThinkingForkClient) StreamChat(ctx context.Context, _ provid
 		ch <- providers.StreamEvent{Type: providers.EventThinkingDone}
 	}
 	useTool := func(id string) {
-		tool := providers.ToolCall{ID: id, Name: "echo_tool", Arguments: `{}`}
+		tool := providers.ToolCall{ID: id, Name: "read_file", Arguments: `{"path":"fixture.txt"}`}
 		ch <- providers.StreamEvent{Type: providers.EventToolUseStart, ToolCall: &providers.ToolCall{ID: id, Name: tool.Name}}
 		ch <- providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &tool}
 		ch <- providers.StreamEvent{Type: providers.EventDone, StopReason: "tool_use"}
@@ -347,7 +350,15 @@ func TestServerThreadForkLiveAnswerAfterInterleavedThinking(t *testing.T) {
 			client := &interleavedThinkingForkClient{firstText: firstText, blocked: make(chan struct{})}
 			rt := newTestRuntime(t, &fakeClient{})
 			rt.StreamRunner.Client = providers.AdaptStreamClient(client)
-			rt.StreamRunner.Tools = fastToolExecutor{}
+			kit, err := tools.New(rt.RootDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(rt.RootDir, "fixture.txt"), []byte("inspection fixture"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			rt.Toolkit = kit
+			rt.StreamRunner.Tools = kit
 			out := &lockedBuffer{}
 			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)

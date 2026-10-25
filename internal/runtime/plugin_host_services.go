@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
@@ -506,6 +507,8 @@ func (k *kernelHostServices) RequiredServices() []pluginhost.ServiceRequirement 
 		{Name: pluginsettings.ServiceName, MajorVersion: 1, Required: true},
 		{Name: config.ServiceName, MajorVersion: 1, Required: true},
 		{Name: ArtifactServiceName, MajorVersion: 1, Required: true},
+		{Name: persistence.ServiceName, MajorVersion: 1},
+		{Name: session.ServiceName, MajorVersion: 1},
 	}
 }
 func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration {

@@ -65,9 +65,10 @@ func (s *Server) validateInboxInput(binding *runtime.State, msg providers.ChatMe
 // trySubmitSessionInput is shared by extension sends and project sessions. The
 // caller retains queued work in its own durable policy/outbox; acceptance and
 // steering use the same host runtime, execution lease and control fence.
-func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (sessionInputResult, bool, error) {
+// The bools report handled input and transfer of snapshot ownership respectively.
+func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg providers.ChatMessage, mode string, snapshot turnRuntimeSnapshot) (sessionInputResult, bool, bool, error) {
 	if active, err := session.ThreadExecutionActive(s.rt.SessionDir, th.ID); err != nil {
-		return sessionInputResult{}, false, err
+		return sessionInputResult{}, false, false, err
 	} else if !active {
 		th.mu.Lock()
 		if !th.running {
@@ -75,34 +76,34 @@ func (s *Server) trySubmitSessionInput(ctx context.Context, th *threadState, msg
 		}
 		th.mu.Unlock()
 		if err != nil {
-			return sessionInputResult{}, false, err
+			return sessionInputResult{}, false, false, err
 		}
 	}
 	if prior, ok := s.findSessionInput(th, msg.ClientID); ok {
-		return prior, true, nil
+		return prior, true, false, nil
 	}
 	if snapshot.Control != nil {
 		if err := th.state.Sessions.ValidateControl(*snapshot.Control); err != nil {
-			return sessionInputResult{}, false, err
+			return sessionInputResult{}, false, false, err
 		}
 	}
 	if mode == sessionIfRunningSteer {
 		if turn, ok := s.steerSessionInput(th, msg, snapshot); ok {
-			return sessionInputResult{State: "running", SessionID: th.ID, TurnID: turn, Steered: true}, true, nil
+			return sessionInputResult{State: "running", SessionID: th.ID, TurnID: turn, Steered: true}, true, false, nil
 		}
 	}
 	started, ok, err := s.startSubmittedSessionTurn(ctx, th, msg, snapshot)
 	if errors.Is(err, errSessionInputApplied) {
 		prior, found := s.findSessionInput(th, msg.ClientID)
-		return prior, found, nil
+		return prior, found, false, nil
 	}
 	if err != nil {
-		return sessionInputResult{}, false, err
+		return sessionInputResult{}, false, false, err
 	}
 	if ok {
-		return sessionInputResult{State: "running", SessionID: th.ID, TurnID: started.turnID}, true, nil
+		return sessionInputResult{State: "running", SessionID: th.ID, TurnID: started.turnID}, true, true, nil
 	}
-	return sessionInputResult{State: "queued", SessionID: th.ID}, false, nil
+	return sessionInputResult{State: "queued", SessionID: th.ID}, false, false, nil
 }
 
 func (s *Server) steerSessionInput(th *threadState, msg providers.ChatMessage, snapshot turnRuntimeSnapshot) (string, bool) {

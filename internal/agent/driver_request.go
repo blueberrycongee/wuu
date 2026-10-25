@@ -63,7 +63,12 @@ func (g *streamTurnGateway) AdmitInput(ctx context.Context) (loopdriver.InputAdm
 			break
 		}
 	}
-	return loopdriver.InputAdmission{Messages: providers.CloneChatMessages(admitted), Context: g.contextSnapshot()}, admissionErr
+	var decision loopdriver.StepDecision
+	if admissionErr == nil && g.runner.StepPolicy != nil {
+		decision, admissionErr = g.runner.StepPolicy(ctx, g.step, providers.CloneChatMessages(g.activeHistory))
+	}
+	admissionErr = errors.Join(admissionErr, ctx.Err())
+	return loopdriver.InputAdmission{Messages: providers.CloneChatMessages(admitted), Context: g.contextSnapshot(), Decision: decision}, admissionErr
 }
 
 func (g *streamTurnGateway) ReadRequestContext(ctx context.Context) ([]loopdriver.ContextSegment, error) {

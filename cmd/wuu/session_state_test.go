@@ -28,9 +28,9 @@ func TestSessionCommandsUseSelectedStateComposition(t *testing.T) {
 			cfg := config.Default()
 			cfg.DefaultProvider = "openai"
 			cfg.Providers = map[string]config.ProviderConfig{"openai": {Type: "openai", BaseURL: "https://unused.invalid/v1", Model: "unconfigured-model"}}
-			modules := []string{"wuu.session-state", persistence.SQLiteModule}
+			modules := []string{"wuu.session-state", session.DefaultModule, persistence.SQLiteModule}
 			if backend == "jsonl" {
-				modules = []string{"wuu.session-state", persistence.JSONLModule}
+				modules = []string{"wuu.session-state", session.DefaultModule, persistence.JSONLModule}
 			}
 			cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 			path, err := statepath.ConfigPath("")

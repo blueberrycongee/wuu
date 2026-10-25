@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // Disabling a selected implementation must reject admission before it creates
@@ -391,6 +392,11 @@ func TestCodexPerTurnBindingSubprocessLifecycle(t *testing.T) {
 
 func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 	rt := newTestRuntime(t, &fakeClient{})
+	kit, err := tools.New(rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.Toolkit = kit
 	rt.SetEnginesForTest(agentengine.NewRegistry())
 	settings := map[string]any{
 		"default_engine": "codex",
@@ -414,6 +420,12 @@ func testCodexConcurrentDiscoveryRefresh(t *testing.T, binary string) {
 	}
 	out := &lockedBuffer{}
 	bindConfigSourceForTest(t, rt)
+	journal, err := rt.Sessions.NewInferenceJournalRuntime("engine-refresh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt.InferenceJournalRuntime = journal
+	t.Cleanup(func() { _ = journal.Close() })
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 	if err := rt.RefreshEngineSettings(); err != nil {

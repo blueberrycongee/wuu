@@ -33,7 +33,18 @@ type DriverTurnContextResult struct {
 	CanReplace  bool              `json:"can_replace"`
 }
 
+// DriverStepDecision is the default loop admission policy result. Replacement
+// algorithms receive the same decision and explicitly choose how to apply it.
+// Source is stamped by the host; stopping does not undo completed tool effects.
+type DriverStepDecision struct {
+	Stop    bool   `json:"stop"`
+	Reason  string `json:"reason,omitempty"`
+	Content string `json:"content,omitempty"`
+	Source  string `json:"source,omitempty"`
+}
+
 type DriverTurnAdmissionResult struct {
+	Decision DriverStepDecision      `json:"decision"`
 	Messages []DriverMessageV1       `json:"messages"`
 	Context  DriverTurnContextResult `json:"context"`
 }

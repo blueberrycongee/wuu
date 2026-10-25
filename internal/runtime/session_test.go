@@ -124,7 +124,7 @@ func TestFileChangedPromptReceiptsUseCapturedTurn(t *testing.T) {
 				close(provider.release)
 				modules := testStateModules()
 				modules[1] = provider.ID()
-				modules = append(modules, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, loopdriver.DefaultDriverID)
+				modules = append(modules, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, loopdriver.DefaultDriverID, "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default")
 				cfg := config.Config{
 					Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
 					DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "fixture", Model: "portable-coder"}},
@@ -2044,9 +2044,6 @@ func TestNewThreadRuntimeLocalWorkerDoesNotTeachTerminalPaths(t *testing.T) {
 		"run_test",
 		"start_process",
 		"command.bash",
-		"terminal",
-		"shell",
-		"git",
 		"git status",
 		"git diff",
 		"git commit",

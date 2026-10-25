@@ -106,10 +106,9 @@ func TestNewSideThreadRunnerUsesReadOnlyMainAgentTools(t *testing.T) {
 	}
 }
 
-// A read-only side chat must open even when the conversation's pinned model
-// cannot be resolved (no loadable config, a removed provider). The runner
-// degrades to the workspace model instead of failing the whole side chat.
-func TestNewSideThreadRunnerFallsBackWhenModelUnresolvable(t *testing.T) {
+// An unavailable explicit model must fail admission rather than execute with
+// another provider's credentials or model.
+func TestNewSideThreadRunnerRejectsUnresolvableModel(t *testing.T) {
 	base := &agent.StreamRunner{
 		LoopDriver: agent.DefaultDriver{},
 
@@ -122,11 +121,8 @@ func TestNewSideThreadRunnerFallsBackWhenModelUnresolvable(t *testing.T) {
 		Provider: "ghost-provider",
 		Model:    "ghost-model",
 	}, "Test side policy")
-	if err != nil {
-		t.Fatalf("NewSideThreadRunner: %v", err)
-	}
-	if runner.Model != "workspace-model" {
-		t.Fatalf("fallback runner model = %q, want workspace-model", runner.Model)
+	if err == nil || runner != nil {
+		t.Fatalf("unavailable explicit model returned runner=%v, error=%v", runner, err)
 	}
 }
 

@@ -599,6 +599,7 @@ export const CAPABILITY_PROTOCOL_V2 = 2 as const;
 export const CAPABILITY_PROTOCOL_V3 = 3 as const;
 export const REQUEST_TRANSFORM_CAPABILITY = "agent.request.transform" as const;
 export const AGENT_PRE_STEP_CAPABILITY = "agent.pre_step" as const;
+export const AGENT_STEP_POLICY_CAPABILITY = "agent.step.policy" as const;
 export const AGENT_TURN_COMPLETED_CAPABILITY = "agent.turn.completed" as const;
 export const AGENT_TURN_LIFECYCLE_CAPABILITY = "agent.turn.lifecycle" as const;
 export const AGENT_TURN_INTERRUPTED_CAPABILITY = "agent.turn.interrupted" as const;
@@ -1045,6 +1046,21 @@ export interface AgentPreStepInput {
   model?: string;
   step_index: number;
   messages: readonly ModelMessageViewV1[];
+}
+
+/** Evaluated after durable input admission, before compaction and model dispatch.
+ * The provider/model and generation are already bound. Descending priority,
+ * then plugin ID determines order. Stop short-circuits later policies. Errors
+ * follow the declared capability error policy; cancellation always propagates.
+ * Replacement drivers receive the decision through admitInput().
+ */
+export type AgentStepPolicyInput = AgentPreStepInput;
+export interface AgentStepPolicyOutput {
+  stop: boolean;
+  /** Required when stopping; preserved as the terminal stop reason. */
+  reason?: string;
+  /** Required when stopping; recorded as a visible policy-authored message. */
+  content?: string;
 }
 
 export interface AgentPreStepMessage {

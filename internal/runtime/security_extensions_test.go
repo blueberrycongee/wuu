@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/processsandbox"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
 type securityServiceProvider struct {
@@ -51,7 +52,7 @@ func (p *securityServiceProvider) InvokeService(_ context.Context, params plugin
 
 func securityTestHost(t *testing.T, providers ...pluginhost.Client) *pluginhost.Host {
 	t.Helper()
-	clients := append(providers, runtimeServiceConsumers("")[0])
+	clients := append(providers, toolservice.NewService(), runtimeServiceConsumers("")[0])
 	host := pluginhost.New(clients...)
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	if len(conflicts) != 0 {
@@ -167,7 +168,7 @@ func TestToolkitSecurityProcessProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = provider.Close(ctx) })
-	clients := []pluginhost.Client{permissionpolicy.NewService(permissionpolicy.Module), provider, runtimeServiceConsumers("")[0]}
+	clients := []pluginhost.Client{permissionpolicy.NewService(permissionpolicy.Module), provider, toolservice.NewService(), runtimeServiceConsumers("")[0]}
 	registry, err := pluginhost.NewServiceRegistryWithBindings([]composition.Binding{{Service: pluginhost.SecurityAuthorizeService, Major: 1, Provider: provider.ID()}})
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +233,7 @@ func TestToolkitSecurityPinsGenerationUntilRevocation(t *testing.T) {
 	}
 	newProvider := &securityServiceProvider{descriptors: oldProvider.descriptors, decision: json.RawMessage(`{"outcome":"deny","reason":"new policy"}`)}
 	configureToolkitSecurityExtensions(kit, securityTestHost(t, newProvider))
-	old.revokeMissingPlugins(map[string]bool{oldProvider.ID(): true, toolExecutionConsumer: true}, nil, "")
+	old.revokeMissingPlugins(map[string]bool{oldProvider.ID(): true, toolExecutionConsumer: true, toolservice.DefaultModule: true}, nil, "")
 	pinned.RefreshAuthorityFrom(kit)
 	call := providers.ToolCall{Name: "read_file", Arguments: `{"path":"source.txt"}`}
 	if text, err := pinned.Execute(context.Background(), call); err != nil || !strings.Contains(text, "generation-owned read") {
@@ -272,7 +273,7 @@ func TestPluginSecurityServicesAreRealCoreConsumers(t *testing.T) {
 	provider := &securityServiceProvider{descriptors: []pluginhost.ServiceDescriptor{
 		pluginhost.SecurityAuthorizeDescriptor(), pluginhost.ProcessSandboxDescriptor(),
 	}}
-	clients := append([]pluginhost.Client{provider}, runtimeServiceConsumers("")...)
+	clients := []pluginhost.Client{provider, toolservice.NewService(), runtimeServiceConsumers("")[0]}
 	host := pluginhost.New(clients...)
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	host.AttachServiceRegistry(registry, conflicts)

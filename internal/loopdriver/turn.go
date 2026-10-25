@@ -63,7 +63,10 @@ type ContextArchive struct {
 // InputAdmission contains new durable input and the resulting active context.
 // Admission runs only when requested by the driver, before its compaction or
 // request-building policy. It does not call a model or transform a request.
+type StepDecision = pluginprotocol.DriverStepDecision
+
 type InputAdmission struct {
+	Decision StepDecision
 	Messages []providers.ChatMessage
 	Context  TurnContext
 }

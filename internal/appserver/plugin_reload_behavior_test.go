@@ -539,6 +539,13 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 				shutdown, err := os.ReadFile(shutdownPath)
 				return retired && err == nil && string(shutdown) == "old implementation"
 			})
+			// The plugin shutdown marker precedes dependency cleanup. Observe
+			// the host barrier before checking that all registrations drained.
+			select {
+			case <-oldHost.ShutdownDone():
+			case <-time.After(3 * time.Second):
+				t.Fatal("quiescent background generation did not finish host cleanup")
+			}
 			if len(oldHost.Statuses()) != 0 || len(oldHost.ToolDefinitions()) != 0 {
 				t.Fatal("quiescent background generation retained its host registrations")
 			}
@@ -760,6 +767,12 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 			callPluginPackageRPC(t, srv, "thread", MethodThreadStart, ThreadStartParams{})
 			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
 			root := t.TempDir()
+			// Close the callback process before its shutdown evidence directory.
+			t.Cleanup(func() {
+				if _, err := rt.Cleanup(); err != nil {
+					t.Error(err)
+				}
+			})
 			resultPath := filepath.Join(root, "callback-result")
 			manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "reload-callback", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"}, Env: map[string]string{"WUU_RELOAD_TEST_MARKER": "callback", "WUU_RELOAD_TEST_DESCRIPTION": "read fixture", "WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(root, "shutdown"), "WUU_RELOAD_TEST_SESSION": threadID, "WUU_RELOAD_TEST_CALLBACK_RESULT": resultPath}}}
 			raw, _ := json.Marshal(manifest)

@@ -92,7 +92,7 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		if err != nil {
 			return nil, err
 		}
-		return marshalServiceResult(pluginprotocol.DriverTurnAdmissionResult{Messages: modelwire.DriverMessagesToWire(admitted.Messages), Context: driverContextToWire(admitted.Context)})
+		return marshalServiceResult(pluginprotocol.DriverTurnAdmissionResult{Messages: modelwire.DriverMessagesToWire(admitted.Messages), Context: driverContextToWire(admitted.Context), Decision: admitted.Decision})
 	case "request_context":
 		if err := decodeServiceParams(params.Params, &scope); err != nil {
 			return nil, err

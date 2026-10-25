@@ -129,7 +129,8 @@ func TestGoalExtensionContinuesUserSessionThroughRealTurnLifecycle(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	rt.PluginHost = pluginhost.New(client)
+	attachTestModelGeneration(t, rt)
+	rt.PluginHost.Add(client)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	bridge.server = srv

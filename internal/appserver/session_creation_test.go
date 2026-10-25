@@ -1,15 +1,48 @@
 package appserver
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
+
+// A child must not become discoverable before its inherited composition is
+// durable. Otherwise retry after a failed write can execute workspace defaults.
+func TestSessionCreationRequiresDurableCompositionInheritance(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	if _, err := rt.Sessions.CreateWithMetadata("parent", rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	binding := testRuntimeState(t, rt)
+	failure := errors.New("composition storage unavailable")
+	binding.Documents = &rejectedCompositionDocuments{Documents: binding.Documents, err: failure}
+	srv := &Server{rt: rt}
+	_, err := srv.createHostSessionThreadWithStore(binding, binding.Sessions, "test", "test", "child", hostSessionCreateParams{
+		ContextSource: sessionContextFresh, ParentSessionID: "parent",
+	})
+	if !errors.Is(err, failure) {
+		t.Fatalf("creation did not report inheritance failure: %v", err)
+	}
+	if _, found, err := rt.Sessions.Find("child"); err != nil || found {
+		t.Fatalf("child exposed without durable composition: found=%v err=%v", found, err)
+	}
+}
+
+type rejectedCompositionDocuments struct {
+	persistence.Documents
+	err error
+}
+
+func (d *rejectedCompositionDocuments) Commit(context.Context, persistence.Transaction) (persistence.Receipt, error) {
+	return persistence.Receipt{}, d.err
+}
 
 func TestFailedForkCreationUsesSelectedArtifactCleanup(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})

@@ -170,6 +170,12 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 		}
 		return errPluginGenerationRefreshBusy
 	}
+	// Admission can hold a thread lock, while config updates retire thread
+	// runtimes. Defer this observation rather than wait in the reverse order.
+	if !s.configRefreshMu.TryLock() {
+		s.pluginGenerationRefreshMu.Unlock()
+		return errPluginGenerationRefreshBusy
+	}
 	refreshed := false
 	invalidated := false
 	defer func() {
@@ -184,6 +190,7 @@ func (s *Server) refreshPluginGenerationIfChanged() error {
 			}
 		}
 		s.pluginGenerationRefreshing.Store(false)
+		s.configRefreshMu.Unlock()
 		s.pluginGenerationRefreshMu.Unlock()
 		if refreshed {
 			s.retireIdlePluginRuntimes()

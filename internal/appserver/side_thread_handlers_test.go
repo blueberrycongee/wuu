@@ -764,7 +764,9 @@ func TestRemoteInterruptCancelsOwningSideThreadProcess(t *testing.T) {
 
 func TestSideThreadSnapshotIncludesLiveMainTurn(t *testing.T) {
 	client := &sideThreadTestClient{response: "live status"}
-	s, _, _ := newSideThreadServer(t, client)
+	s, rt, _ := newSideThreadServer(t, client)
+	rt.ProviderName, rt.Model = "live-provider", "live-model"
+	rt.StreamRunner.ProviderName, rt.StreamRunner.Model = rt.ProviderName, rt.Model
 	createSideThreadMain(t, s, "main_live")
 	now := time.Now().UTC()
 	history := []providers.ChatMessage{{Role: "system", Content: "main prompt"}, {Role: "user", Content: "LATEST_MAIN_OBJECTIVE"}}
@@ -805,7 +807,7 @@ func TestSideThreadContextUsesResolvedModelBudget(t *testing.T) {
 		history = append(history, providers.ChatMessage{Role: "user", Content: strings.Repeat("old context ", 200)})
 	}
 	history = append(history, providers.ChatMessage{Role: "user", Content: "LATEST_LONG_MAIN_MARKER"})
-	th := newThreadState("main_long", history, "provider", "model", rt.RootDir, true, now)
+	th := newThreadState("main_long", history, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	th.running = true
 	th.currentTurn = "turn-long"
 	th.Turns = []Turn{{ID: "turn-long", Status: TurnStatusInProgress, ItemsView: TurnItemsViewFull, Items: []ThreadItem{{

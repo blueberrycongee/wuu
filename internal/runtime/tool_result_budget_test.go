@@ -131,7 +131,7 @@ func TestNativeToolResultBudgetHTTP(t *testing.T) {
 				fmt.Fprintf(w, "data: %s\n\ndata: [DONE]\n\n", frame)
 			}))
 			defer server.Close()
-			modules := append(testStateModules(), kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer)
+			modules := append(testStateModules(), kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default")
 			rt, err := NewSession(Options{RootDir: root, HomeDir: home, Config: config.Config{
 				Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
 				DefaultProvider: "synthetic", Providers: map[string]config.ProviderConfig{

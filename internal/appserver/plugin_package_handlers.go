@@ -560,7 +560,11 @@ func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerat
 	// share the same serialization boundary as the watcher for their complete
 	// disk and runtime transaction.
 	s.pluginGenerationRefreshMu.Lock()
+	// A policy commit also wakes the config watcher. Keep its model updates
+	// outside preparation, activation and publication of this generation.
+	s.configRefreshMu.Lock()
 	releaseLocal := func() {
+		s.configRefreshMu.Unlock()
 		s.pluginGenerationRefreshMu.Unlock()
 		releaseAdmission()
 	}

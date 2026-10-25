@@ -10,7 +10,7 @@ import (
 )
 
 func (s *Server) resolvePluginProcessSession(ctx context.Context, id string, followParent bool) (string, bool, error) {
-	binding, err := runtime.RetainInvocationState(ctx)
+	binding, err := runtime.RetainProductInvocationState(ctx)
 	if err != nil {
 		return id, false, err
 	}
