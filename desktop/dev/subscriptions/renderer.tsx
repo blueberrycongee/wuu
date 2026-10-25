@@ -2,6 +2,8 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import type { EngineListResult, ProviderSummary } from "../../src/shared/protocol";
 import { SubscriptionDashboard } from "../../src/renderer/SubscriptionDashboard";
+import { SettingsControlsProvider } from "../../src/renderer/SettingsControlsContext";
+import { createApplicationSettingsControls } from "../../src/renderer/plugins/hostApplicationSettingsControls";
 import { startFocusModality } from "../../src/renderer/FocusModality";
 import { I18nProvider } from "../../src/renderer/i18n";
 import "../../src/renderer/styles.css";
@@ -126,4 +128,8 @@ function Preview() {
     <SubscriptionDashboard inventory={params.has("detecting") ? undefined : parentInventory} providers={params.has("detecting") ? undefined : sources} onSelectBuiltinModel={async (name, model) => setSources((current) => current.map((source) => source.name === name ? { ...source, model } : source))} />
   </div></main>;
 }
-createRoot(document.getElementById("root")!).render(<I18nProvider><Preview /></I18nProvider>);
+createRoot(document.getElementById("root")!).render(
+  <SettingsControlsProvider controls={createApplicationSettingsControls()}>
+    <I18nProvider><Preview /></I18nProvider>
+  </SettingsControlsProvider>,
+);
