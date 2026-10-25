@@ -119,7 +119,7 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
     }
   }
 
-  const searchLabel = t(canCreate ? "composer.findOrCreateBranch" : "environment.searchBranches");
+  const searchLabel = t("environment.searchBranches");
   return (
     <div ref={menuRef} className="composer-project-menu composer-branch-menu" role="menu" onKeyDown={onKeyDown}
       aria-label={t(checkout ? "git.branch" : "composer.worktreeStartBranch")} aria-busy={pending}
@@ -134,7 +134,7 @@ function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onC
             submit();
           }} />
       </label>
-      <div className="project-picker-heading">{t(checkout ? "git.switchInCurrentWorktree" : "composer.worktreeStartBranch")}</div>
+      {!checkout ? <div className="project-picker-heading">{t("composer.worktreeStartBranch")}</div> : null}
       {branches.length > 0 || !offerCreate ? <div className="project-picker-list">
         {branches.length === 0 ? <div className="project-picker-empty">{t("environment.noMatchingBranches")}</div> : null}
         {branches.map((branch) => {

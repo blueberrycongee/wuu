@@ -4437,13 +4437,13 @@ pre {
   position: relative;
   grid-column: 1 / -1;
   display: grid;
-  row-gap: var(--space-5);
+  row-gap: var(--space-4);
   min-width: 0;
   border: 1px solid var(--hairline-soft);
   border-radius: var(--message-flow-card-radius);
   background: var(--surface-1);
   box-shadow: var(--shadow-card);
-  padding: var(--panel-padding);
+  padding: var(--card-padding);
   --enter-y: 6px;
   animation: wuu-enter var(--motion-slow) var(--ease-out) both;
 }

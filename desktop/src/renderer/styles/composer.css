@@ -407,14 +407,9 @@
      rests near the window edge. The top space belongs to the latest-turn
      clearance (conversation-shell.css). */
   padding-block: var(--conversation-dock-top-space) var(--composer-dock-bottom-space);
-  /* Mirror the scroll region's reserved gutter. That region keeps its stable
-     gutter on BOTH edges (see .scroll-region) so the message flow is centered
-     on the pane's own centerline; matching it with an equal inset on each side
-     keeps the dock composer on the same centerline instead of half a gutter to
-     the left of it. --scrollbar-width is stamped from a runtime measurement
-     (see ScrollbarMetrics.ts): 0 on overlay-scrollbar platforms such as macOS,
-     and the platform's real thin-scrollbar width where scrollbars are classic,
-     so this stays correct on every machine. */
+  /* Mirror the scroll region's symmetric scrollbar gutters to keep the
+     composer centered. ScrollbarMetrics.ts measures --scrollbar-width at
+     runtime: zero for overlay scrollbars, the actual width for classic ones. */
   padding-inline: var(--scrollbar-width);
   background: transparent;
   pointer-events: none;
@@ -438,8 +433,8 @@
   pointer-events: none;
 }
 
-/* The dock composer shares the message flow's content cap and fluid gutters
-   so the input box and the answer prose keep the same edges. */
+/* The dock composer uses the reading column's cap and fluid gutters,
+   centered in its available pane. */
 .dock-composer-wrap .composer-stack {
   position: relative;
   z-index: 1;

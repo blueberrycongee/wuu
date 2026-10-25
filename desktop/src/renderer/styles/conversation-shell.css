@@ -206,8 +206,10 @@
     ),
     var(--environment-panel-reserved-width)
   );
+  /* Bottom controls center on the pane; the upper tool rail reserves space
+   * in the scrolling content without narrowing the composer. */
   --conversation-visible-inset-left: 0px;
-  --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
+  --conversation-visible-inset-right: 0px;
   --dock-composer-height: 0px;
   grid-column: 2;
   grid-row: 1;
@@ -1186,10 +1188,8 @@
   position: absolute;
   bottom: calc(var(--dock-composer-height, 0px) + var(--conversation-status-gap));
   left: var(--conversation-visible-inset-left);
-  /* The message flow centers inside .scroll-region's content box, which
-     reserves the stable scrollbar gutter on both edges (see .scroll-region),
-     so the flow's centerline is the pane's own centerline. The pill shares it
-     by centering in the same inset box, with no gutter term. */
+  /* Status controls share the composer's centerline. Its symmetric scrollbar
+     gutters do not shift the center, so no scrollbar term is needed here. */
   right: var(--conversation-visible-inset-right);
   /* The width fits between the insets like the composer's does; a wider
      box would be pinned to the left inset and leave the centreline. */

@@ -1,7 +1,7 @@
 import type { CodexModelSummary, InitializeResult, DesktopProject } from "../shared/protocol";
 import { resolveLocalizedText } from "./i18n";
 
-export const COMPOSER_PROJECT_MENU_WIDTH = 320;
+export const COMPOSER_PROJECT_MENU_WIDTH = 256;
 // The plus and slash menus share one compact card, drawn at this width for the
 // default UI size.
 export const COMPOSER_COMMAND_MENU_WIDTH = 304;

@@ -99,6 +99,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Center the conversation composer with equal side gutters when the right-side tool rail is visible.
+
+- Use narrower workspace and branch menus, tighter shared menu spacing, and less padding in the home usage card. Simplify the branch picker to a search field and branch list, showing branch creation only after a new name is entered.
+
 - Balance composer and sent-message shadows between the previous and lighter treatments in both light and dark themes.
 
 - Simplify delivered file cards to a single filename row, removing the redundant format and size subtitle.

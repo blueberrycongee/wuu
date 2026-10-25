@@ -30,8 +30,8 @@
 
   --control-padding-block: var(--space-1);
   --control-padding-inline: var(--space-3);
-  --menu-inset: calc(var(--space-1) * 1.5);
-  --menu-item-padding-block: calc(var(--space-1) * 1.5);
+  --menu-inset: var(--space-1);
+  --menu-item-padding-block: var(--space-1);
   --menu-item-padding-inline: var(--space-2);
   --menu-item-gap: var(--space-2);
   --menu-shell-radius: calc(var(--radius-xs) + var(--menu-inset));
@@ -40,7 +40,7 @@
    * beyond these floors; consumers use auto height and natural line boxes.
    * Floors land on the 4px grid so adjacent rows and fields share edges. */
   --control-field-height: max(36px, round(up, calc(var(--font-ui) * 1.5 + var(--control-padding-block) * 2 + 2px), 4px));
-  --control-row-height: max(36px, round(up, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2), 4px));
+  --control-row-height: max(32px, round(up, calc(var(--font-ui) * 1.4 + var(--menu-item-padding-block) * 2), 4px));
   --control-search-height: var(--control-field-height);
 }
 
