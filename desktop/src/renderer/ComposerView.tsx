@@ -408,9 +408,14 @@ export function Composer({
   // recalculate the whole desktop shell. Marking that propagation as a
   // transition lets React yield to subsequent keystrokes instead of putting
   // the shell's render cost directly on the input event.
-  const [prompt, setLocalPrompt] = useState(committedPrompt);
+  // Keep the revision with the value: React can replay deferred input updates
+  // after an authoritative clear, so each replay must retain its old revision.
+  const [localPrompt, setLocalPromptState] = useState({ value: committedPrompt, revision: promptRevision });
+  const { value: prompt, revision: lastPromptRevision } = localPrompt;
   const [lastCommittedPrompt, setLastCommittedPrompt] = useState(committedPrompt);
-  const [lastPromptRevision, setLastPromptRevision] = useState(promptRevision);
+  function setLocalPrompt(value: string): void {
+    setLocalPromptState({ value, revision: promptRevision });
+  }
   const [programmaticPromptRevision, setProgrammaticPromptRevision] = useState(0);
   const optimisticPromptQueueRef = useRef<string[]>([]);
   // Parent draft clearing crosses an async/transition boundary. Close the
@@ -419,7 +424,6 @@ export function Composer({
   const submittedDraftSignatureRef = useRef<string | null>(null);
   const inlineCompletionActionsRef = useRef<ComposerInlineCompletionActions | null>(null);
   if (promptRevision !== lastPromptRevision) {
-    setLastPromptRevision(promptRevision);
     setLastCommittedPrompt(committedPrompt);
     optimisticPromptQueueRef.current.length = 0;
     if (committedPrompt !== "") submittedDraftSignatureRef.current = null;
