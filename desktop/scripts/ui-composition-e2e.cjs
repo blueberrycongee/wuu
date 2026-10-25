@@ -27,6 +27,12 @@ fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({ name: 'ui-c
 const entry = path.join(source, 'desktop.js');
 fs.writeFileSync(entry, fs.readFileSync(entry, 'utf8').replace('  const React = api.react;', `  const React = api.react;
   api.registerLocale({ id: 'toolbar-labels', locale: 'en', entries: { 'composition.tool': 'Composition tool {number}' } });
+  for (const [id, target] of [['composer', 'wuu.default-composer/composer.above'], ['navigation', 'wuu.default-navigation/sidebar.footer']]) {
+    api.registerUIContribution({ id: 'public-' + id, target, render({ application }) {
+      const snapshot = React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
+      return React.createElement('span', { hidden: true, ['data-public-' + id]: JSON.stringify(snapshot[id]) });
+    } });
+  }
   const toolbarRegistrations = [];
   for (const number of [1, 2, 3]) toolbarRegistrations.push(api.registerUIContribution({ id: 'toolbar-' + number,
     title: 'Composition tool ' + number, target: 'wuu.default-composer/composer.toolbar', order: number,
@@ -278,6 +284,32 @@ async function main() {
   const published = spawnSync(core, ['plugin', 'dev', '--watch=false', source], { cwd: workspace, env: process.env, encoding: 'utf8', timeout: 30000 });
   fs.writeFileSync(path.join(run, 'dev.log'), `${published.stdout}\n${published.stderr}`);
   assert.equal(published.status, 0, 'public plugin dev publication');
+  const developer = path.join(run, 'developer-loop');
+  fs.mkdirSync(developer);
+  for (const name of ['src', 'plugin.json', 'package.json', 'tsconfig.json']) {
+    fs.cpSync(path.join(repository, 'examples/plugins/developer-loop', name), path.join(developer, name), { recursive: true });
+  }
+  const packed = spawnSync('npm', ['pack', '--json', '--pack-destination', run], {
+    cwd: path.join(repository, 'packages/plugin-sdk'), encoding: 'utf8', timeout: 180000,
+  });
+  fs.writeFileSync(path.join(run, 'sdk-pack.log'), `${packed.stdout}\n${packed.stderr}`);
+  assert.equal(packed.status, 0, 'pack actual public SDK');
+  const tarball = path.join(run, JSON.parse(packed.stdout)[0].filename);
+  const developerPackage = JSON.parse(fs.readFileSync(path.join(developer, 'package.json'), 'utf8'));
+  developerPackage.devDependencies['@wuu/plugin-sdk'] = `file:${tarball}`;
+  fs.writeFileSync(path.join(developer, 'package.json'), JSON.stringify(developerPackage, null, 2));
+  for (const args of [['install', '--no-audit', '--no-fund'], ['run', 'build']]) {
+    const built = spawnSync('npm', args, { cwd: developer, encoding: 'utf8', timeout: 180000 });
+    fs.appendFileSync(path.join(run, 'developer-build.log'), `${args.join(' ')}\n${built.stdout}\n${built.stderr}\n`);
+    assert.equal(built.status, 0, 'build unchanged developer-loop against the packed public SDK');
+  }
+  const archive = path.join(run, 'developer-loop.zip');
+  const packaged = spawnSync(core, ['plugin', 'pack', '--output', archive, developer], { cwd: workspace, env: process.env, encoding: 'utf8', timeout: 30000 });
+  fs.writeFileSync(path.join(run, 'developer-pack.log'), `${packaged.stdout}\n${packaged.stderr}`);
+  assert.equal(packaged.status, 0, 'package developer-loop through the public CLI');
+  const installed = spawnSync(core, ['plugin', 'install', '--json', archive], { cwd: workspace, env: process.env, encoding: 'utf8', timeout: 30000 });
+  fs.writeFileSync(path.join(run, 'developer-install.log'), `${installed.stdout}\n${installed.stderr}`);
+  assert.equal(installed.status, 0, 'install actual developer-loop package');
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   await created;
   // Use the product's reduced-motion setting for stable isolated captures;
@@ -291,8 +323,16 @@ async function main() {
   const inventory = (await evaluate(() => window.wuu.initialize())).extension_inventory;
   const plugin = inventory.find(item => item.provenance.plugin_id === 'deep-ui-example');
   assert.ok(plugin, 'published example appears in actual inventory');
+  const developerPlugin = inventory.find(item => item.provenance.plugin_id === 'developer-loop-example');
+  assert.equal(developerPlugin?.runtime_state, 'active', 'actual developer-loop runtime activated');
+  await until(() => document.querySelector('[data-developer-loop-presenter="composer"]') && document.querySelector('[data-developer-loop-presenter="navigation"]'));
   fs.writeFileSync(path.join(run, 'inventory.json'), JSON.stringify(inventory, null, 2));
   await until(() => document.querySelectorAll('[data-composition-tool]').length === 2);
+  await until(() => document.querySelector('[data-public-composer]') && document.querySelector('[data-public-navigation]'));
+  const publicSnapshots = await evaluate(() => Object.fromEntries(['composer', 'navigation'].map(id => [id, JSON.parse(document.querySelector('[data-public-' + id + ']').getAttribute('data-public-' + id))])));
+  assert.equal(publicSnapshots.composer.contractVersion, 1);
+  assert.ok(Array.isArray(publicSnapshots.navigation.nodes));
+
   await evaluate(() => document.querySelector('.composer-plugin-tools-trigger').click());
   await until(() => document.querySelector('[data-composition-tool="3"]'));
   assert.equal(await evaluate(() => document.querySelector('[data-composition-tool="3"]').textContent), 'Composition tool 3', 'generic contributions retain registered translations');
@@ -399,6 +439,8 @@ async function main() {
   await evaluate(record => window.wuu.updateExtensionPackage({ id: record.id, fingerprint: record.fingerprint, action: 'disable' }), plugin);
   await until(() => !document.querySelector('.deep-ui-timeline'));
   assert.equal(await evaluate(() => document.querySelectorAll('[data-composition-tool]').length), 0, 'disable removes toolbar contributions');
+  assert.equal(await evaluate(() => document.querySelectorAll('[data-public-composer], [data-public-navigation]').length), 0, 'disable removes composer and navigation contributions');
+
   assert.ok(await evaluate(() => document.body.textContent.includes('UI composition verified')), 'disable preserves original message');
   await capture('disabled-content-preserved');
   const retired = logs.slice(before).flat().filter(value => typeof value === 'string' && value.startsWith('ui-composition:'));
@@ -412,6 +454,31 @@ async function main() {
   await evaluate(record => window.wuu.updateExtensionPackage({ id: record.id, fingerprint: record.fingerprint, action: 'enable' }), plugin);
   await until(() => document.querySelector('.deep-ui-timeline') && document.querySelectorAll('[data-composition-tool]').length === 2);
   await waitForTerminal(terminalsBeforeEnable + 1);
+  phase = 'developer-loop';
+  const openDeveloperCounter = () => evaluate(() => {
+    const tab = [...document.querySelectorAll('[data-wuu-component="workspace-tool-tab"]')].find(element => element.textContent.includes('Acceptance Counter'));
+    const navigation = [...document.querySelectorAll('button')].find(element => element.textContent.trim() === 'Developer Loop' || element.getAttribute('aria-label') === 'Developer Loop');
+    const target = tab ?? navigation;
+    if (!target) throw new Error('Developer Loop public view is not discoverable');
+    target.click();
+  });
+  await openDeveloperCounter();
+  phase = 'developer-loop-counter';
+  await until(() => [...document.querySelectorAll('[data-counter-button]')].some(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && !node.disabled));
+  await evaluate(() => [...document.querySelectorAll('[data-counter-button]')].find(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true })).click());
+  await until(() => [...document.querySelectorAll('[data-counter-value]')].some(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && node.textContent === '1'));
+  await capture('developer-loop-counter');
+  phase = 'disable';
+  await evaluate(record => window.wuu.updateExtensionPackage({ id: record.id, fingerprint: record.fingerprint, action: 'disable' }), developerPlugin);
+  await until(() => !document.querySelector('[data-developer-loop-presenter="composer"]') && !document.querySelector('[data-developer-loop-presenter="navigation"]') && !document.querySelector('[data-counter-button]'));
+  phase = 'reenable';
+  await evaluate(record => window.wuu.updateExtensionPackage({ id: record.id, fingerprint: record.fingerprint, action: 'enable' }), developerPlugin);
+  await until(() => document.querySelector('[data-developer-loop-presenter="composer"]') && document.querySelector('[data-developer-loop-presenter="navigation"]'));
+  await openDeveloperCounter();
+  phase = 'developer-loop-restored';
+  await until(() => [...document.querySelectorAll('[data-counter-value]')].some(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && node.textContent === '1'));
+  await evaluate(() => document.querySelector('[data-wuu-component="page-history-back"]').click());
+  await until(() => document.querySelector('.deep-ui-timeline'));
   phase = 'shutdown';
   const quitting = logs.length;
   app.once('will-quit', event => {
@@ -426,7 +493,7 @@ async function main() {
       const startedTerminals = terminalCalls.filter(call => call.action === 'start');
       assert.ok(startedTerminals.length >= 2, 'native terminal created before and after disable');
       assert.ok(startedTerminals.every(start => terminalCalls.some(call => call.action === 'stop' && call.id === start.id)), 'every native terminal stop completed before quit');
-      save({ passed: true, core, run, checks: ['public dev publication and Go inventory', 'generic composer toolbar preserves translation, first-two layout, overflow interaction and unload', 'automation sidebar uses shared view context, excludes foreign contributions, opens stored tasks and disappears on disable', 'real composer, read_file and TODO tools and synthetic model message', 'TODO tool UI and inspector use generic slots and survive disable/reenable with native tool output retained', 'explicit wrappers render in the selected conversation with immutable message and process payloads from the actual leaves', 'light wide/default and dark narrow/large captures', 'disable preserves content, aborts scope and drains view before provider', 'reenable and application quit drain live renderer resources and native terminals before backend shutdown'], limits: ['synthetic model', 'reduced-motion captures; tool text checked for clipping and occlusion', 'stock environment panel is feature-disabled; an external layout probe renders its declared Inspector slot using real application state', 'does not cover product Agent composition binding or full workbench migration', 'requests crossing a graph replacement can be rejected; main-errors.json preserves those responses'] });
+      save({ passed: true, core, run, checks: ['public dev publication and Go inventory', 'unchanged developer-loop source built against packed SDK, installed without separate approval, public composer/navigation contributions and counter storage restored after disable/enable', 'generic composer toolbar preserves translation, first-two layout, overflow interaction and unload', 'automation sidebar uses shared view context, excludes foreign contributions, opens stored tasks and disappears on disable', 'real composer, read_file and TODO tools and synthetic model message', 'TODO tool UI and inspector use generic slots and survive disable/reenable with native tool output retained', 'explicit wrappers render in the selected conversation with immutable message and process payloads from the actual leaves', 'light wide/default and dark narrow/large captures', 'disable preserves content, aborts scope and drains view before provider', 'reenable and application quit drain live renderer resources and native terminals before backend shutdown'], limits: ['synthetic model', 'reduced-motion captures; tool text checked for clipping and occlusion', 'stock environment panel is feature-disabled; an external layout probe renders its declared Inspector slot using real application state', 'does not cover product Agent composition binding or full workbench migration', 'requests crossing a graph replacement can be rejected; main-errors.json preserves those responses'] });
       console.log(`PASS UI composition and shutdown; evidence ${run}`);
     } catch (error) {
       event.preventDefault();

@@ -155,6 +155,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Migrate composer and navigation observations to public slots, remove obsolete presenters, and preserve developer-loop counter state across rendering and plugin reload.
+
 - Enable plugins when installed, retain trust and disabled state on same-source updates, and allow CLI and Agent callers to toggle bundled plugins. Preserve installation recovery and committed activation diagnostics.
 
 - Keep new child agents on the current composition while existing workers retain admitted bindings, and preserve tool call identities in handoff history.

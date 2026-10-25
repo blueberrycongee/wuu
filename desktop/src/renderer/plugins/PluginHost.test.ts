@@ -765,11 +765,18 @@ describe("PluginHost", () => {
     expect(host.getUIContributions("owner/tool")[0]).toBeUndefined();
   });
 
+  it.each(["conversation.composer", "navigation.primary"])("rejects retired presenter %s instead of silently ignoring it", async target => {
+    const host = new PluginHost({ react: React });
+    await expect(host.activateGeneration({ pluginId: "retired-presenter", generation: "one", register(api) {
+      api.registerPresenter({ id: "retired", target, render: () => null });
+    } })).rejects.toThrow("registerUIContribution");
+  });
+
   it("publishes stable exact-match presenter snapshots in deterministic order", async () => {
     expect(PRESENTATION_TARGETS).toEqual([
       "conversation.item", "conversation.process",
-      "conversation.composer", "header.conversation", "header.workspace",
-      "navigation.primary", "app.status", "content.preview", "settings",
+      "header.conversation", "header.workspace",
+      "app.status", "content.preview", "settings",
     ]);
     const host = new PluginHost({ react: React });
     await host.activateGeneration({

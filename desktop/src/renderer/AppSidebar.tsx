@@ -105,10 +105,6 @@ import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
 import {
-  NavigationPresentation,
-  type NavigationSourceNode,
-} from "./plugins/NavigationPresentation";
-import {
   desktopPluginHost,
   desktopWorkbenchController,
 } from "./plugins/DesktopPluginRuntime";
@@ -1594,292 +1590,6 @@ export function AppSidebar({
     );
   }
 
-  // Top-level actions stay above every group: new conversation, search, and the
-  // plugin catalog entry.
-  const primaryNavigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
-    const nodes: NavigationSourceNode[] = [
-      {
-        id: "command:new-conversation",
-        kind: "command",
-        label: t("sidebar.newConversation"),
-        icon: "message-square-plus",
-        disabled: !hasRuntimeContext,
-        onActivate: () => activateNative(onStartNewThread),
-      },
-      {
-        id: "command:search-conversations",
-        kind: "command",
-        label: t("sidebar.searchConversations"),
-        icon: "search",
-        active: searchOpen,
-        disabled: !hasRuntimeContext,
-        onActivate: () => activateNative(onToggleConversationSearch),
-      },
-    ];
-    return Object.freeze(nodes);
-  }, [
-    activateNative, hasRuntimeContext, onStartNewThread,
-    onToggleConversationSearch, searchOpen, t,
-  ]);
-
-  // App destinations follow conversation navigation in both the native
-  // sidebar and extension presentations.
-  const pluginNavigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
-    const nodes: NavigationSourceNode[] = [{
-      id: "section:plugins",
-      kind: "section",
-      label: t("skills.sectionPlugins"),
-      icon: "plugin-blocks",
-      depth: 0,
-    }, {
-      id: "command:skills",
-      kind: "command",
-      parentId: "section:plugins",
-      depth: 1,
-      label: t("skills.sectionSkills"),
-      icon: "plugin-blocks",
-      active: pluginCatalogActive,
-      disabled: !hasRuntimeContext,
-      onActivate: () => activateNative(onOpenSkillsTab),
-    }];
-    for (const entry of pluginNavigationEntries) {
-      nodes.push({
-        id: `plugin:${entry.pluginId}:${entry.id}`,
-        kind: "command",
-        parentId: "section:plugins",
-        depth: 1,
-        label: entry.title,
-        icon: entry.icon && "name" in entry.icon ? entry.icon.name : "plugin-blocks",
-        active: activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
-        onActivate: () => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId),
-      });
-    }
-    return Object.freeze(nodes);
-  }, [activePluginMainView, activateNative, hasRuntimeContext, onOpenSkillsTab, openPluginNavigation, pluginCatalogActive, pluginNavigationEntries, t]);
-
-  const navigationNodes = useMemo<readonly NavigationSourceNode[]>(() => {
-    const nodes: NavigationSourceNode[] = [];
-    const functionalGroupNodes: Record<SidebarFunctionalGroupID, NavigationSourceNode[]> = {
-      projects: [],
-      pinned: [],
-      folders: [],
-      workspace: [],
-    };
-    if (projectRows.length > 0) {
-      functionalGroupNodes.projects.push({ id: "section:projects", kind: "section", label: t("sidebar.projects"), depth: 0 });
-      for (const thread of projectRows) {
-        const summary = projectIndex.summaries.get(thread.id);
-        functionalGroupNodes.projects.push({
-          ...threadNavigationNode(
-            thread,
-            "section:projects",
-            activeThreadID,
-            lastViewedTurnByThreadID,
-            () => onSelectThread(thread.id),
-            () => toggleThreadPinned(thread),
-            1,
-          ),
-          running: summary?.running,
-          unread: summary?.unread,
-        });
-      }
-    }
-    if (hasPinnedRows) {
-      functionalGroupNodes.pinned.push({
-        id: "section:pinned",
-        kind: "section",
-        label: t("sidebar.pinned"),
-        icon: "pin",
-        depth: 0,
-        running: pinnedHasRunning,
-        unread: pinnedHasUnread,
-      });
-      for (const entry of validPinnedItems) {
-        if (entry.kind === "thread") {
-          const thread = pinnedRows.find((candidate) => candidate.id === entry.id);
-          if (thread) {
-            functionalGroupNodes.pinned.push(threadNavigationNode(
-              thread,
-              "section:pinned",
-              activeThreadID,
-              lastViewedTurnByThreadID,
-              () => onSelectThread(thread.id),
-              () => toggleThreadPinned(thread),
-              1,
-            ));
-          }
-          continue;
-        }
-        const folder = entry.kind === "folder"
-          ? organization.folders.find((candidate) => candidate.id === entry.id)
-          : undefined;
-        const project = entry.kind === "workspace"
-          ? sidebarWorkspaces.find((candidate) => candidate.id === entry.id)
-          : undefined;
-        const label = folder?.name ?? project?.name;
-        if (!label) continue;
-        const parentID = `pinned-${entry.kind}:${entry.id}`;
-        const threads = folder
-          ? (folderThreadsByID[folder.id] ?? [])
-          : (visibleWorkspaceThreadsByWorkspaceID[entry.id] ?? []);
-        functionalGroupNodes.pinned.push({
-          id: parentID,
-          kind: "project",
-          label,
-          parentId: "section:pinned",
-          depth: 1,
-          icon: "folder",
-          running: threads.some((thread) => isThreadExecuting(thread)),
-          unread: threads.some((thread) => sidebarThreadUnread(
-            thread,
-            lastViewedTurnByThreadID,
-          )),
-          disabled: project ? onFocusWorkspace === undefined : undefined,
-          onActivate: project && onFocusWorkspace
-            ? () => onFocusWorkspace(project.id)
-            : undefined,
-        });
-        for (const thread of threads) {
-          functionalGroupNodes.pinned.push(threadNavigationNode(
-            thread,
-            parentID,
-            activeThreadID,
-            lastViewedTurnByThreadID,
-            () => project
-              ? onSelectWorkspaceThread(project.id, thread.id)
-              : onSelectThread(thread.id),
-            () => toggleThreadPinned(thread),
-          ));
-        }
-      }
-    }
-    if (organization.folders.some((folder) => !pinnedFolderIDs.has(folder.id))) {
-      functionalGroupNodes.folders.push({ id: "section:folders", kind: "section", label: t("sidebar.folders"), icon: "folder", depth: 0 });
-      for (const folder of organization.folders) {
-        if (pinnedFolderIDs.has(folder.id)) continue;
-        const parentID = `folder:${folder.id}`;
-        const folderThreads = folderThreadsByID[folder.id] ?? [];
-        functionalGroupNodes.folders.push({
-          id: parentID,
-          kind: "project",
-          label: folder.name,
-          parentId: "section:folders",
-          depth: 1,
-          icon: "folder",
-          running: folderThreads.some((thread) => isThreadExecuting(thread)),
-          unread: folderThreads.some((thread) => sidebarThreadUnread(
-            thread,
-            lastViewedTurnByThreadID,
-          )),
-        });
-        for (const thread of folderThreads) {
-          functionalGroupNodes.folders.push(threadNavigationNode(
-            thread,
-            parentID,
-            activeThreadID,
-            lastViewedTurnByThreadID,
-            () => onSelectThread(thread.id),
-            () => toggleThreadPinned(thread),
-          ));
-        }
-      }
-    }
-
-    if (sectionOrder.length > 0) {
-      functionalGroupNodes.workspace.push({
-        id: "section:workspace",
-        kind: "section",
-        label: t("sidebar.workspace"),
-        depth: 0,
-      });
-      for (const workspaceID of visibleWorkspaceSectionOrder) {
-        const project = sidebarWorkspaces.find((candidate) => candidate.id === workspaceID);
-        if (!project) continue;
-        const threads = (visibleWorkspaceThreadsByWorkspaceID[workspaceID] ?? []).filter(
-          (thread) => !thread.pinned,
-        );
-        const isScratch = workspaceID === SCRATCH_PSEUDO_PROJECT_ID;
-        const workspaceActive = (isScratch
-          ? sidebarScratchPseudoActive
-          : workspaceID === (activeWorkspaceID ?? selectedWorkspaceID)) &&
-          !threads.some((thread) => thread.id === activeThreadID);
-        functionalGroupNodes.workspace.push({
-          id: `project:${workspaceID}`,
-          kind: "project",
-          label: isScratch ? t("sidebar.conversations") : project.name,
-          parentId: "section:workspace",
-          depth: 1,
-          icon: isScratch ? "messages" : "folder",
-          active: workspaceActive,
-          unread: threads.some((thread) => isThreadUnread(
-            thread,
-            lastViewedTurnByThreadID[thread.id],
-          )),
-          running: threads.some((thread) => isThreadExecuting(thread)),
-          disabled: onFocusWorkspace === undefined,
-          onActivate: onFocusWorkspace === undefined
-            ? undefined
-            : () => onFocusWorkspace(workspaceID),
-        });
-        for (const pending of pendingConversations) {
-          if (pending.context.kind === "project" ? pending.context.project_id !== workspaceID : !isScratch) continue;
-          functionalGroupNodes.workspace.push({
-            id: pending.id, kind: "thread", parentId: `project:${workspaceID}`, depth: 2,
-            label: pending.title, running: true, active: pending.id === activeSessionTabID,
-            onActivate: () => onSelectPendingConversation?.(pending.id),
-          });
-        }
-        for (const thread of threads) {
-          functionalGroupNodes.workspace.push(threadNavigationNode(
-            thread,
-            `project:${workspaceID}`,
-            activeThreadID,
-            lastViewedTurnByThreadID,
-            () => onSelectWorkspaceThread(workspaceID, thread.id),
-            () => toggleThreadPinned(thread),
-          ));
-        }
-      }
-    }
-    for (const groupID of visibleFunctionalGroupOrder) {
-      nodes.push(...functionalGroupNodes[groupID]);
-    }
-    if (recentConversations.length > 0) {
-      nodes.push({
-        id: "section:recent", kind: "section", label: t("sidebar.recentActivity"), depth: 0,
-      });
-      for (const thread of recentConversations) {
-        nodes.push({
-          ...threadNavigationNode(thread, "section:recent", activeThreadID, lastViewedTurnByThreadID,
-            () => onSelectThread(thread.id), () => toggleThreadPinned(thread), 1),
-          id: `recent-thread:${thread.id}`,
-        });
-      }
-    }
-    nodes.push(...pluginNavigationNodes);
-    nodes.push({
-      id: "command:settings",
-      kind: "command",
-      label: t("sidebar.settings"),
-      icon: "settings",
-      disabled: !initialized,
-      onActivate: () => activateNative(onOpenSettings),
-    });
-    return Object.freeze(nodes);
-  }, [
-    pendingConversations, onSelectPendingConversation, activeSessionTabID, pluginNavigationNodes,
-    activateNative, activeWorkspaceID, activeThreadID,
-    hasPinnedRows,
-    onOpenSettings,
-    onSelectWorkspaceThread, onFocusWorkspace, onSelectThread,
-    onTogglePinned, pendingThreadID, pinnedHasRunning,
-    pinnedHasUnread, pinnedRows, validPinnedItems,
-    projectRows, projectIndex, recentConversations, visibleWorkspaceThreadsByWorkspaceID,
-    folderThreadsByID, visibleFunctionalGroupOrder, organization.folders, pinnedFolderIDs,
-    sidebarWorkspaces, sidebarScratchPseudoActive, visibleWorkspaceSectionOrder,
-    selectedWorkspaceID, initialized, lastViewedTurnByThreadID, t,
-  ]);
-
   const nativeSidebar = (
     <>
       <HoverRevealScopeContext.Provider value={null}>
@@ -2623,20 +2333,14 @@ export function AppSidebar({
     </SessionOrganizationProvider>
   );
   return (
-    <NavigationPresentation
-      publicSurface={Boolean(navigation)}
-      nodes={[
-        ...primaryNavigationNodes,
-        ...navigationNodes,
-      ]}
-      fallback={organizedSidebar}
+    <aside className="sidebar" data-wuu-component="sidebar" data-workbench-region="navigation"
       onPointerEnter={(event) => {
         if (!(event.target instanceof Element) || !event.target.closest(".sidebar-ribbon, .ribbon-resizer")) {
           onPointerEnter?.();
         }
       }}
       onPointerLeave={onPointerLeave}
-    />
+    >{organizedSidebar}</aside>
   );
 }
 
@@ -2802,30 +2506,6 @@ function SortableFunctionalGroup({
       </SidebarCollapseBody>
     </section>
   );
-}
-
-function threadNavigationNode(
-  thread: ThreadSummary,
-  parentId: string,
-  activeThreadID: string | undefined,
-  lastViewedTurnByThreadID: Readonly<Record<string, string>>,
-  onActivate: () => void,
-  onTogglePinned: () => void,
-  depth = 2,
-): NavigationSourceNode {
-  return {
-    id: `thread:${thread.id}`,
-    kind: "thread",
-    label: sidebarThreadLabel(thread),
-    parentId,
-    depth,
-    active: thread.id === activeThreadID,
-    pinned: Boolean(thread.pinned),
-    unread: isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]),
-    running: isThreadExecuting(thread),
-    onActivate,
-    onTogglePinned,
-  };
 }
 
 function sidebarThreadLabel(thread: ThreadSummary): string {

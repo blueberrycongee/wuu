@@ -4,46 +4,41 @@ These examples build on the [desktop quickstart](desktop-plugin-quickstart.md). 
 
 ## Add a review prompt to the draft
 
-A composer presenter can read the public draft snapshot and invoke a host action. This wrapper keeps the native composer and lets the user review the new text before sending it.
+A composer contribution reads the public application snapshot and updates the owning draft. The native composer stays in place so the user can review the text before sending it.
 
 ```ts
-import type { ComposerSnapshotV1, PluginGenerationApi, PresenterProps } from "@wuu/plugin-sdk";
+import type { PluginGenerationApi, UISlotRenderProps } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const Button = api.ui.Button as unknown as
-    (props: Readonly<Record<string, unknown>>) => unknown;
-  const action = "conversation.composer.set-draft";
-
-  function ReviewPrompt(input: Readonly<Record<string, unknown>>) {
-    const props = input.presenter as PresenterProps;
-    const snapshot = props.snapshot as ComposerSnapshotV1;
+  function ReviewPrompt({ application }: UISlotRenderProps) {
+    const snapshot = React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
     const [error, setError] = React.useState("");
-    const disabled = snapshot.readOnly || !props.host.actions.includes(action);
+    const draft = snapshot.drafts[snapshot.drafts.activePane];
+    const ownerTabId = draft.ownerTabId;
     async function append() {
+      if (!ownerTabId) return;
       try {
-        const draft = snapshot.draftText?.trimEnd() ?? "";
-        await props.host.invoke(action,
-          `${draft}${draft ? "\n\n" : ""}Review the current changes for concrete bugs.`);
+        const text = draft.text.trimEnd();
+        await application.invoke("composer.set-draft", {
+          ownerTabId, text: `${text}${text ? "\n\n" : ""}Review the current changes for concrete bugs.`,
+        });
         setError("");
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     }
     return React.createElement("div", null,
-      props.fallback,
-      React.createElement(Button, { disabled, onClick: append }, "Add review prompt"),
+      React.createElement("button", { disabled: !ownerTabId || snapshot.composer.readOnly, onClick: append }, "Add review prompt"),
       error ? React.createElement("p", { role: "alert" }, error) : null);
   }
-
-  api.registerPresenter({
-    id: "review-prompt", target: "conversation.composer", mode: "wrap",
-    render: props => React.createElement(ReviewPrompt, { presenter: props }),
+  api.registerUIContribution({
+    id: "review-prompt", target: "wuu.default-composer/composer.above", render: ReviewPrompt,
   });
 }
 ```
 
-The action accepts a string, not a DOM event or a reference to the textarea. The host still checks read-only state. For a selection-to-draft feature, obtain plain text with the browser Selection API, verify it belongs to a public message anchor, then pass the text through the same action. Remove selection listeners on unmount, preserve the user's selection while clicking, and account for scrolling and viewport edges.
+The application validates the draft owner and generation lifetime. Use the same operation for selection-to-draft features; remove selection listeners when the contribution unmounts.
 
 ## Add a workspace page
 

@@ -1485,6 +1485,9 @@ export class PluginHost {
         this.assertAccepting(state);
         const id = this.claimExactRegistrationId(state, "presenter", definition.id);
         const target = requireExactNonEmpty(definition.target, "presenter target");
+        if (target === "conversation.composer" || target === "navigation.primary") {
+          throw new Error(`Retired presenter target ${target}; use registerUIContribution with the selected composer's or navigation provider's slots`);
+        }
         const key = definition.key === undefined ? undefined : requireExactNonEmpty(definition.key, "presenter key");
         if (typeof definition.render !== "function") throw new Error("Plugin presenter render must be a function");
         const mode = normalizePresentationMode(definition.mode);

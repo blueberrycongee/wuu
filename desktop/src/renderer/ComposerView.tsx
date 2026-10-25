@@ -114,7 +114,6 @@ import type {
 import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH, composerStatusText } from "./ComposerTypes";
 import type { WorkspacePanelView } from "./WorkspacePanels";
 import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
-import { ComposerPresentation } from "./plugins/ComposerPresentation";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
@@ -1657,41 +1656,7 @@ export function Composer({
       {content}
     </footer>
   );
-  const availableSubmissionModes = running
-    ? ([...(onSteer ? ["steer" as const] : []), ...(onQueue ? ["queue" as const] : [])])
-    : (["send" as const]);
-  const activeSubmissionMode = running && onSteer ? "steer" : running && onQueue ? "queue" : "send";
-  return (
-    <>
-      {attachmentPickers}
-      {services ? nativeComposer : <ComposerPresentation
-        enabled={mainConversation}
-        fallback={nativeComposer}
-        draftText={prompt}
-        files={files}
-        images={images}
-        queuedMessages={queuedMessages}
-        pendingMessages={guideMessages}
-        running={running}
-        readOnly={readOnly}
-        sendDisabled={effectiveSendDisabled}
-        variant={variant}
-        threadId={queryHistorySessionID}
-        initialized={initialized}
-        contextUsage={contextUsage}
-        disabledReason={readOnly || effectiveSendDisabled ? disabledReason || statusText || undefined : undefined}
-        activeSubmissionMode={activeSubmissionMode}
-        availableSubmissionModes={availableSubmissionModes}
-        attachmentInputRef={attachmentInputRef}
-        attachmentsEnabled={!textOnly}
-        onSetDraft={setPrompt}
-        onRemoveFile={onRemoveFile}
-        onRemoveImage={onRemoveImage}
-        onSubmit={submitDraft}
-        onStop={onInterrupt}
-      />}
-    </>
-  );
+  return <>{attachmentPickers}{nativeComposer}</>;
 }
 
 type ComposerTextareaProps = {

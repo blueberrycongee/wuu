@@ -70,8 +70,6 @@
       }
     },
     "presenters": [
-      { "id": "composer", "target": "conversation.composer", "mode": "wrap" },
-      { "id": "primary-navigation", "target": "navigation.primary", "mode": "wrap" },
       { "id": "markdown-preview", "target": "content.preview", "mode": "wrap" },
       { "id": "application-status", "target": "app.status", "mode": "wrap" },
       { "id": "conversation-header", "target": "header.conversation", "mode": "wrap" }

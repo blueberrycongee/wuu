@@ -4,46 +4,41 @@
 
 ## 向草稿添加审查提示
 
-输入框 Presenter 可以读取公开的草稿快照并调用宿主动作。本例使用包装模式保留原生输入框，让用户检查新增文本后自行发送。
+输入框贡献读取公开应用快照并更新所属草稿。原生输入框保持不变，用户可以检查新增文本后自行发送。
 
 ```ts
-import type { ComposerSnapshotV1, PluginGenerationApi, PresenterProps } from "@wuu/plugin-sdk";
+import type { PluginGenerationApi, UISlotRenderProps } from "@wuu/plugin-sdk";
 
 export function activate(api: PluginGenerationApi): void {
   const React = api.react;
-  const Button = api.ui.Button as unknown as
-    (props: Readonly<Record<string, unknown>>) => unknown;
-  const action = "conversation.composer.set-draft";
-
-  function ReviewPrompt(input: Readonly<Record<string, unknown>>) {
-    const props = input.presenter as PresenterProps;
-    const snapshot = props.snapshot as ComposerSnapshotV1;
+  function ReviewPrompt({ application }: UISlotRenderProps) {
+    const snapshot = React.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
     const [error, setError] = React.useState("");
-    const disabled = snapshot.readOnly || !props.host.actions.includes(action);
+    const draft = snapshot.drafts[snapshot.drafts.activePane];
+    const ownerTabId = draft.ownerTabId;
     async function append() {
+      if (!ownerTabId) return;
       try {
-        const draft = snapshot.draftText?.trimEnd() ?? "";
-        await props.host.invoke(action,
-          `${draft}${draft ? "\n\n" : ""}Review the current changes for concrete bugs.`);
+        const text = draft.text.trimEnd();
+        await application.invoke("composer.set-draft", {
+          ownerTabId, text: `${text}${text ? "\n\n" : ""}Review the current changes for concrete bugs.`,
+        });
         setError("");
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
       }
     }
     return React.createElement("div", null,
-      props.fallback,
-      React.createElement(Button, { disabled, onClick: append }, "Add review prompt"),
+      React.createElement("button", { disabled: !ownerTabId || snapshot.composer.readOnly, onClick: append }, "Add review prompt"),
       error ? React.createElement("p", { role: "alert" }, error) : null);
   }
-
-  api.registerPresenter({
-    id: "review-prompt", target: "conversation.composer", mode: "wrap",
-    render: props => React.createElement(ReviewPrompt, { presenter: props }),
+  api.registerUIContribution({
+    id: "review-prompt", target: "wuu.default-composer/composer.above", render: ReviewPrompt,
   });
 }
 ```
 
-动作接受字符串，不接受 DOM 事件或 textarea 引用，宿主仍会检查只读状态。实现“将选区加入草稿”时，可通过浏览器 Selection API 获取纯文本，确认选区属于公开的消息锚点，再通过相同动作传入文本。卸载时移除选区监听器，点击时保留用户选区，并处理滚动和视口边缘。
+应用会验证草稿归属和 generation 生命周期。选中文本后写入草稿也使用同一操作；贡献卸载时移除选择监听器。
 
 ## 添加工作区页面
 

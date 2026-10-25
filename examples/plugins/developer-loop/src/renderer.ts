@@ -1,9 +1,7 @@
 import type {
-  ComposerSnapshotV1,
   ConversationItemSnapshotV1,
   FilePreviewSnapshotV1,
   HeaderSnapshotV1,
-  NavigationSnapshotV1,
   PluginGenerationApi,
   PresentationHost,
   PresenterProps,
@@ -18,18 +16,11 @@ const COMMAND_ID = "open-acceptance-counter";
 const STORAGE_KEY = "counter";
 let activeViewHost: ViewHostAPI | undefined;
 
-type ViewElement = {
-  querySelector(selector: string): ViewElement | null;
-  textContent: string | null;
-  disabled?: boolean;
-  dataset?: Record<string, string | undefined>;
-};
-
 interface AcceptanceSettings {
   enabled: boolean;
   label: string;
   step: number;
-  density: string;
+  density: "comfortable" | "compact";
 }
 
 export async function invokePresentationAction(
@@ -57,29 +48,29 @@ function registerAcceptancePresenters(api: PluginGenerationApi): void {
       });
     },
   });
-  api.registerPresenter({
+  api.registerUIContribution({
     id: "composer",
-    target: "conversation.composer",
-    mode: "wrap",
-    render({ snapshot, fallback }) {
-      const composer = snapshot as ComposerSnapshotV1;
-      return observedFallback(api, fallback, {
-          "data-developer-loop-presenter": "composer",
-          "data-thread-id": composer.threadId ?? "none",
-          "data-submission-mode": composer.activeSubmissionMode ?? "send",
+    target: "wuu.default-composer/composer.above",
+    render({ application }) {
+      const { composer } = api.react.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
+      return api.react.createElement("span", {
+        hidden: true,
+        "data-developer-loop-presenter": "composer",
+        "data-thread-id": composer.threadId ?? "none",
+        "data-submission-mode": composer.activeSubmissionMode ?? "send",
       });
     },
   });
-  api.registerPresenter({
+  api.registerUIContribution({
     id: "primary-navigation",
-    target: "navigation.primary",
-    mode: "wrap",
-    render({ snapshot, fallback }) {
-      const navigation = snapshot as NavigationSnapshotV1;
-      return observedFallback(api, fallback, {
-          "data-developer-loop-presenter": "navigation",
-          "data-active-node": navigation.activeNodeId ?? "none",
-          "data-node-count": String(navigation.nodes.length),
+    target: "wuu.default-navigation/sidebar.footer",
+    render({ application }) {
+      const { navigation } = api.react.useSyncExternalStore(application.subscribe, application.getSnapshot, application.getSnapshot);
+      return api.react.createElement("span", {
+        hidden: true,
+        "data-developer-loop-presenter": "navigation",
+        "data-active-node": navigation.activeNodeId ?? "none",
+        "data-node-count": String(navigation.nodes.length),
       });
     },
   });
@@ -142,52 +133,36 @@ function acceptanceView(api: PluginGenerationApi, props: ViewRenderProps) {
   const { host } = props;
   const { Button, Card, Page, Row, Section, Stack } = api.ui;
   activeViewHost = host;
-  let count = 0;
-  let settings: AcceptanceSettings = {
-    enabled: true,
-    label: "Accepted runs",
-    step: 1,
-    density: "comfortable",
-  };
-
-  const update = (root: ViewElement): void => {
-    const value = root.querySelector("[data-counter-value]");
-    const label = root.querySelector("[data-counter-label]");
-    const button = root.querySelector("[data-counter-button]");
-    if (value) value.textContent = String(count);
-    if (label) label.textContent = settings.label;
-    if (button) button.disabled = !settings.enabled;
-    if (root.dataset) root.dataset.wuuDensity = settings.density;
-  };
-
-  const restore = async (root: ViewElement): Promise<void> => {
-    const [stored, enabled, label, step, density] = await Promise.all([
-      host.getStorage(STORAGE_KEY),
-      host.getSetting("enabled"),
-      host.getSetting("label"),
-      host.getSetting("step"),
-      host.getSetting("density"),
-    ]);
-    const restored = Number.parseInt(stored ?? "0", 10);
-    count = Number.isFinite(restored) ? restored : 0;
-    settings = {
-      enabled: typeof enabled === "boolean" ? enabled : true,
-      label: typeof label === "string" ? label : "Accepted runs",
-      step: typeof step === "number" && Number.isFinite(step) ? step : 1,
-      density: typeof density === "string" ? density : "comfortable",
-    };
-    update(root);
-  };
-
-  let root: ViewElement | null = null;
+  const [count, setCount] = api.react.useState<number>();
+  const [settings, setSettings] = api.react.useState<AcceptanceSettings>({
+    enabled: true, label: "Accepted runs", step: 1, density: "comfortable",
+  });
+  const [saving, setSaving] = api.react.useState(false);
+  const [error, setError] = api.react.useState<string>();
+  const pending = api.react.useRef(false);
+  api.react.useEffect(() => {
+    let active = true;
+    setCount(undefined);
+    setError(undefined);
+    void Promise.all([
+      host.getStorage(STORAGE_KEY), host.getSetting("enabled"), host.getSetting("label"),
+      host.getSetting("step"), host.getSetting("density"),
+    ]).then(([stored, enabled, label, step, density]) => {
+      if (!active) return;
+      const restored = Number.parseInt(stored ?? "0", 10);
+      setCount(Number.isFinite(restored) ? restored : 0);
+      setSettings({
+        enabled: typeof enabled === "boolean" ? enabled : true,
+        label: typeof label === "string" ? label : "Accepted runs",
+        step: typeof step === "number" && Number.isFinite(step) ? step : 1,
+        density: density === "compact" ? "compact" : "comfortable",
+      });
+    }).catch(error => { if (active) setError(String(error)); });
+    return () => { active = false; };
+  }, [host]);
   return api.react.createElement(
     Page,
-    {
-      ref: (node: ViewElement | null) => {
-        root = node;
-        if (node) void restore(node);
-      },
-    },
+    { density: settings.density },
     api.react.createElement(
       Stack,
       { gap: "large" },
@@ -202,7 +177,8 @@ function acceptanceView(api: PluginGenerationApi, props: ViewRenderProps) {
           Stack,
           null,
           api.react.createElement("span", null, "SDK v3 acceptance"),
-          api.react.createElement("strong", { "data-counter-value": "" }, "0"),
+          api.react.createElement("strong", { "data-counter-value": "" }, count === undefined ? "Loading…" : String(count)),
+          error ? api.react.createElement("span", { role: "alert" }, error) : null,
           api.react.createElement(
             Row,
             null,
@@ -211,11 +187,22 @@ function acceptanceView(api: PluginGenerationApi, props: ViewRenderProps) {
               {
                 variant: "primary",
                 "data-counter-button": "",
+                disabled: count === undefined || !settings.enabled || saving,
                 onClick: async () => {
-                  if (!settings.enabled) return;
-                  count += settings.step;
-                  await host.setStorage(STORAGE_KEY, String(count));
-                  if (root) update(root);
+                  if (count === undefined || !settings.enabled || pending.current) return;
+                  pending.current = true;
+                  setSaving(true);
+                  setError(undefined);
+                  try {
+                    const next = count + settings.step;
+                    await host.setStorage(STORAGE_KEY, String(next));
+                    setCount(next);
+                  } catch (error) {
+                    setError(String(error));
+                  } finally {
+                    pending.current = false;
+                    setSaving(false);
+                  }
                 },
               },
               "Increment and save",

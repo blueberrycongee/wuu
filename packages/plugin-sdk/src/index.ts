@@ -2124,8 +2124,8 @@ export interface Disposable {
 
 export const PRESENTATION_TARGETS = [
   "conversation.item", "conversation.process",
-  "conversation.composer", "header.conversation", "header.workspace",
-  "navigation.primary", "app.status", "content.preview", "settings",
+  "header.conversation", "header.workspace",
+  "app.status", "content.preview", "settings",
 ] as const;
 export type BuiltInPresentationTarget = (typeof PRESENTATION_TARGETS)[number];
 /** Built-in targets plus future dotted, namespaced targets. */
@@ -2492,16 +2492,6 @@ export const CONVERSATION_ITEM_ACTIONS = {
 } as const;
 export type ConversationItemActionId = (typeof CONVERSATION_ITEM_ACTIONS)[keyof typeof CONVERSATION_ITEM_ACTIONS];
 
-export const COMPOSER_ACTIONS = {
-  setDraft: "conversation.composer.set-draft",
-  addAttachment: "conversation.composer.add-attachment",
-  removeAttachment: "conversation.composer.remove-attachment",
-  setSubmissionMode: "conversation.composer.set-submission-mode",
-  submit: "conversation.composer.submit",
-  stop: "conversation.composer.stop",
-} as const;
-export type ComposerActionId = (typeof COMPOSER_ACTIONS)[keyof typeof COMPOSER_ACTIONS];
-
 export const HEADER_ACTIONS = {
   selectTab: "header.select-tab",
   closeTab: "header.close-tab",
@@ -2509,13 +2499,6 @@ export const HEADER_ACTIONS = {
   navigateForward: "header.navigate-forward",
 } as const;
 export type HeaderActionId = (typeof HEADER_ACTIONS)[keyof typeof HEADER_ACTIONS];
-
-export const NAVIGATION_ACTIONS = {
-  activateNode: "navigation.activate-node",
-  pinNode: "navigation.pin-node",
-  unpinNode: "navigation.unpin-node",
-} as const;
-export type NavigationActionId = (typeof NAVIGATION_ACTIONS)[keyof typeof NAVIGATION_ACTIONS];
 
 export const STATUS_ACTIONS = { activateItem: "status.activate-item" } as const;
 export type StatusActionId = (typeof STATUS_ACTIONS)[keyof typeof STATUS_ACTIONS];

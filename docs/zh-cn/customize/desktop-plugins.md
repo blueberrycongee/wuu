@@ -67,11 +67,11 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 贡献渲染失败时，使用其未经修改的传入快照回退到下一个 Presenter。插件的其余部分保持加载；重新激活后，失败的贡献可再次运行。
 
-尚未迁移的 Presenter 目标为 `conversation.composer`、`header.conversation`、`header.workspace`、`navigation.primary`、`app.status`、`content.preview` 和 `settings`。TypeScript 类型允许更多字符串，不代表宿主会渲染任意新目标。
+尚未迁移的 Presenter 目标为 `header.conversation`、`header.workspace`、`app.status`、`content.preview` 和 `settings`。TypeScript 类型允许更多字符串，不代表宿主会渲染任意新目标。
 
 通过 `host.actions` 查看本次渲染公布的动作，再用 `host.invoke(action, input)` 调用。宿主检查 generation 是否仍然有效，并验证动作输入和当前状态。动作即使已公布，也可能因输入框只读或禁止发送而拒绝执行。
 
-例如，`conversation.composer.set-draft` 接受字符串，移除附件接受附件 ID，发送和停止不接受输入。不要把 SDK 常量当作已实现动作：当前输入框并不公布 `conversation.composer.set-submission-mode`。
+输入框和导航定制使用公开 UI contribution。在 `wuu.default-composer/composer.above` 或 `composer.toolbar` 添加控件，在 `wuu.default-navigation/sidebar.primary` 或 `sidebar.footer` 添加导航内容。通过 `application.getSnapshot()` 读取当前状态，并使用 `application.subscribe` 订阅；修改草稿调用 `application.invoke("composer.set-draft", { text, ownerTabId })`。完整替换界面时选择 `ui.composer` 或 `ui.navigation` provider。已移除的 `conversation.composer` 和 `navigation.primary` Presenter 目标会在注册时报错；同时删除对应的 manifest presenter 声明。
 
 消息和过程组使用 `wuu.default-conversation` 或 `wuu.default-preview` 下的完整 `conversation.message`、`conversation.process` slot。实际渲染组件直接提供不可变的 `context.snapshot`（`ConversationItemSnapshotV1` 或 `ConversationProcessSnapshotV1`），同时提供 `threadId`、`turnId` 及 `itemId` 或 `itemIds`。消息快照包含流式正文，过程快照反映该组真实的 `active` 和 `streaming` 状态；消息动作也接收同样的语义快照，不再按 ID 查找另一份会话数据。设置 `mode: "wrap"`，不处理的消息类型返回 `children`。编辑消息使用 `application.invoke("history.begin-edit", { threadId, turnId, itemId })`，由应用验证当前状态和 generation 寿命。将 `conversation.item` 和 `conversation.process` Presenter 注册迁移到这些 slot，并删除对应 manifest 声明。过程快照尚不描述压缩通知，因此包含压缩通知的组保留原生渲染。
 
