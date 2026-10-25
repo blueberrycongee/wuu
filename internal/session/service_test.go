@@ -375,3 +375,50 @@ func TestSessionDomainDescriptorPassesPublicNegotiation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestSessionServiceStreamingKeepsDurableWritesAtBoundaries(t *testing.T) {
+	forEachSessionStore(t, func(t *testing.T, native *documentStore) {
+		service := NewService("sessions", native.documents)
+		if err := service.Activate(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		defer service.Close(context.Background())
+		var upserts int
+		client := NewClient(context.Background(), func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
+			if method == "Journal.UpsertSubmission" {
+				upserts++
+			}
+			return service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: "test", Method: method, Params: raw})
+		})
+		journalRuntime := NewLazyInferenceJournalRuntime(func(context.Context) (*InferenceJournalRuntime, error) {
+			return client.NewInferenceJournalRuntime("streaming")
+		})
+		defer journalRuntime.Close()
+		ctx := providers.WithInferenceJournal(context.Background(), journalRuntime.ForOwner("thread"))
+		request, err := providers.EnsureInferenceAttemptContext(ctx, providers.ChatRequest{Model: "fixture"}, providers.InferenceOperationAuxiliary, providers.InferenceProfileInteractive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		submission, err := request.Attempt.RecordSubmission(providers.InferenceSubmissionMeta{Provider: "fixture", Transport: "http", Mode: "stream"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for range 200 {
+			submission.ObserveOutput("hello")
+		}
+		if upserts != 1 {
+			t.Fatalf("streaming issued %d durable writes, want only the initial checkpoint", upserts)
+		}
+		submission.CompleteSuccess(&providers.TokenUsage{InputTokens: 10, OutputTokens: 250})
+		if err := request.Attempt.Complete(providers.InferenceOutcomeSucceeded, providers.NormalizedFailure{}); err != nil {
+			t.Fatal(err)
+		}
+		outputBytes, outcome, costState := readInferenceSubmissionProgress(t, native, submission.ID)
+		if outputBytes != 1000 || outcome != string(providers.InferenceSubmissionSucceeded) || costState != string(providers.InferenceCostKnown) {
+			t.Fatalf("terminal evidence lost: bytes=%d outcome=%s cost=%s", outputBytes, outcome, costState)
+		}
+		if upserts != 3 {
+			t.Fatalf("checkpoint writes=%d, want initial, terminal observation, and completion barrier", upserts)
+		}
+	})
+}

@@ -983,17 +983,14 @@ func (e *InferenceExecution) updateSubmission(id string, update func(*InferenceS
 				workflow.spend.SettleSubmission(submission)
 			}
 			e.mu.Unlock()
-			// A per-delta submission update is streaming cost telemetry, not a
-			// durability checkpoint. Hand it to the journal's async progress
-			// path when available so the write never blocks token delivery, and
-			// never let a bookkeeping failure poison the execution or abort the
-			// stream. Completion and recovery boundaries synchronously
-			// checkpoint the current submission before advancing.
-			if journal != nil {
-				record := journalSubmission(operationID, submission)
-				if progress, ok := journal.(InferenceProgressJournal); ok {
-					progress.RecordSubmissionProgress(record)
-				} else if err := journal.UpsertSubmission(context.Background(), record); err != nil {
+			// Progress is optional telemetry. Checkpoint-only journals (including
+			// service proxies) must not turn every delta into a synchronous
+			// durable write. Keep terminal observations durable, including usage
+			// arriving after a completion timeout and its final checkpoint.
+			if progress, ok := journal.(InferenceProgressJournal); ok {
+				progress.RecordSubmissionProgress(journalSubmission(operationID, submission))
+			} else if journal != nil && submission.Outcome != InferenceSubmissionInFlight {
+				if err := journal.UpsertSubmission(context.Background(), journalSubmission(operationID, submission)); err != nil {
 					e.noteJournalDegraded(err)
 				}
 			}

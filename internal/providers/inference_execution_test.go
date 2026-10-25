@@ -55,11 +55,7 @@ func TestInferenceLineageRetryPreservesOperationParentWithoutJournal(t *testing.
 	}
 }
 
-// failAfterFirstSubmissionJournal accepts the pre-send submission checkpoint and
-// then fails every subsequent (streaming) UpsertSubmission. It does NOT implement
-// InferenceProgressJournal, so streaming updates fall back to the synchronous
-// UpsertSubmission path — the strictest test of "a streaming journal failure must
-// degrade bookkeeping without aborting the stream."
+// A checkpoint-only journal must not receive streaming telemetry.
 type failAfterFirstSubmissionJournal struct {
 	upserts int
 }
@@ -93,7 +89,7 @@ func (j *failAfterFirstSubmissionJournal) CompleteWorkflow(InferenceWorkflowTerm
 	return nil
 }
 
-func TestStreamingJournalFailureDegradesButDoesNotAbortStream(t *testing.T) {
+func TestStreamingWithoutProgressCapabilityDoesNotWriteCheckpoints(t *testing.T) {
 	execution := NewInferenceExecution(NewInferenceOperation(InferenceOperationAgentRound, InferenceProfileInteractive))
 	journal := &failAfterFirstSubmissionJournal{}
 	execution.journal = journal
@@ -103,14 +99,11 @@ func TestStreamingJournalFailureDegradesButDoesNotAbortStream(t *testing.T) {
 		t.Fatalf("pre-send submission checkpoint must succeed: %v", err)
 	}
 
-	// Every streaming observation's journal write fails. None may return an
-	// error (forwardAttempt treats a non-nil return as fatal and kills the
-	// stream) or poison the execution.
+	// Stream observations stay in memory until a required checkpoint.
 	for _, ev := range []StreamEvent{
 		{Type: EventContentDelta, Content: "hel"},
 		{Type: EventThinkingDelta, Content: "think"},
 		{Type: EventContentDelta, Content: "lo"},
-		{Type: EventDone, Usage: &TokenUsage{InputTokens: 4, OutputTokens: 2}},
 	} {
 		if err := attempt.ObserveStreamEvent(ev); err != nil {
 			t.Fatalf("event %v aborted the stream: %v", ev.Type, err)
@@ -120,11 +113,17 @@ func TestStreamingJournalFailureDegradesButDoesNotAbortStream(t *testing.T) {
 	if err := attempt.JournalError(); err != nil {
 		t.Fatalf("streaming journal failure poisoned journalErr: %v", err)
 	}
-	if execution.JournalDegraded() == nil {
-		t.Fatal("expected the streaming journal failure to be recorded as a degradation")
+	if journal.upserts != 1 || execution.JournalDegraded() != nil {
+		t.Fatalf("streaming invoked a durability checkpoint: writes=%d degraded=%v", journal.upserts, execution.JournalDegraded())
 	}
 
-	// In-memory accounting still completed end to end despite the failing journal.
+	// Terminal observations still attempt persistence and degrade on failure.
+	if err := attempt.ObserveStreamEvent(StreamEvent{Type: EventDone, Usage: &TokenUsage{InputTokens: 4, OutputTokens: 2}}); err != nil {
+		t.Fatal(err)
+	}
+	if journal.upserts != 2 || execution.JournalDegraded() == nil {
+		t.Fatal("terminal evidence was not sent to the checkpoint writer")
+	}
 	// OutputBytes accumulates every observed delta kind (content + thinking).
 	wantBytes := len("hel") + len("think") + len("lo")
 	subs := execution.Snapshot().Submissions
@@ -279,7 +278,7 @@ func TestInferenceTerminalCheckpointFailureStopsAdvancement(t *testing.T) {
 	}
 }
 
-func TestInferenceDeltaJournalFailureDoesNotPoisonCheckpoints(t *testing.T) {
+func TestInferenceDeltasDoNotUseCheckpointOnlyJournal(t *testing.T) {
 	journal := &submissionCheckpointJournal{beforeTransition: func() {}}
 	first := NewInferenceExecution(NewInferenceOperation(InferenceOperationAgentRound, InferenceProfileInteractive))
 	first.journal = journal
@@ -292,7 +291,7 @@ func TestInferenceDeltaJournalFailureDoesNotPoisonCheckpoints(t *testing.T) {
 	if err := attempt.ObserveStreamEvent(StreamEvent{Type: EventContentDelta, Content: "hello"}); err != nil {
 		t.Fatalf("advisory failure aborted stream: %v", err)
 	}
-	if first.JournalDegraded() != deltaErr || first.JournalError() != nil {
+	if journal.upserts != 1 || first.JournalDegraded() != nil || first.JournalError() != nil {
 		t.Fatalf("advisory error promoted to required failure: degraded=%v required=%v", first.JournalDegraded(), first.JournalError())
 	}
 	journal.failSubmission = nil
