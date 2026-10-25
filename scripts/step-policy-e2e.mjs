@@ -140,7 +140,9 @@ try {
   assert.deepEqual((await probes("isolate")).map(event => event.name), ["isolated", "first", "last"]);
   assert.equal(calls.filter(call => call.tag === "isolate").length, 1);
   result.checks.push("propagated failure blocks inference; isolated failure permits later policy and model");
-  const cancelled = await execute("cancel", "2s");
+  // The CLI deadline includes cold process/graph preparation. Leave room to
+  // enter the policy; the probe below proves cancellation reached that phase.
+  const cancelled = await execute("cancel", "10s");
   assert.notEqual(cancelled.code, 0);
   assert.equal(cancelled.timedOut, false, "CLI failed to cancel its own policy invocation");
   assert.equal(calls.filter(call => call.tag === "cancel").length, 0);

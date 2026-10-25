@@ -310,7 +310,9 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		var admitted *runtime.ThreadRuntime
 		if parent != nil {
 			parent.mu.Lock()
-			admitted = parent.execRuntime
+			if parent.running {
+				admitted = parent.execRuntime
+			}
 			parent.mu.Unlock()
 		}
 		if err := s.rt.InheritSessionComposition(context.Background(), binding, params.ParentSessionID, id, admitted); err != nil {

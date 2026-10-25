@@ -8,7 +8,6 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -44,7 +43,15 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 	if params.Seed.Source.ThroughSeq < 1 {
 		params.Seed.Source.ThroughSeq = page.HeadSeq
 	}
-	messages := chatMessagesFromHistoryRecords(page.Records)
+	records := make([]persistedMessage, 0, len(page.Records))
+	for _, record := range page.Records {
+		message, err := persistedMessageFromHistoryRecord(record)
+		if err != nil {
+			return params, err
+		}
+		records = append(records, message)
+	}
+	messages := chatMessagesFromPersistedMessages(records)
 	previous := agent.CompactionNote{}
 	if note, ok, err := binding.Sessions.LoadCompactionNote(sourceID, provider.CompactionKey()); err != nil {
 		return params, err
@@ -85,14 +92,4 @@ func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context,
 		params.Seed.Provenance.SourceModel = strings.TrimSpace(model)
 	}
 	return params, nil
-}
-
-func chatMessagesFromHistoryRecords(records []session.HistoryRecord) []providers.ChatMessage {
-	messages := make([]providers.ChatMessage, 0, len(records))
-	for _, record := range records {
-		messages = append(messages, providers.ChatMessage{
-			Role: record.Role, Content: record.Content, Name: record.Name, Seq: record.Seq,
-		})
-	}
-	return messages
 }

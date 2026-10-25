@@ -92,7 +92,8 @@ const provider = createServer(async (request, response) => {
     for await (const part of request) bytes += part;
     const body = JSON.parse(bytes);
     const prompt = body.messages.filter(message => message.role === "user").map(message => typeof message.content === "string" ? message.content : "").join("\n");
-    const tag = body.tools?.length ? [...prompt.matchAll(/scope-case:([a-z-]+)/g)].at(-1)?.[1] : undefined;
+    const handoff = prompt.includes("You are preparing a bounded handoff brief");
+    const tag = body.tools?.length && !handoff ? [...prompt.matchAll(/scope-case:([a-z-]+)/g)].at(-1)?.[1] : undefined;
     const ordinal = requests.filter(request => request.tag === tag).length;
     const record = { tag: tag ?? "auxiliary", body };
     requests.push(record); events.emit("request", record);
@@ -226,6 +227,16 @@ try {
   releaseProduct();
   const productDone = await waitFor("message", transcript, message => message.method === "turn/completed" && message.params?.turn?.id === productTurn.id, "bound product turn");
   assert.equal(productDone.params.turn.status, "completed", JSON.stringify(productDone));
+  const { thread: idleChild } = await rpc("thread/start", { provider: "first", model: "model-first",
+    handoff: { request_id: "idle-composition-child", parent_session_id: thread.id } });
+  const idleChildBinding = await client("inspectSession", { session: idleChild.id });
+  assert.equal(idleChildBinding.id, productSecond.id, "idle parent must contribute its current durable composition");
+  const { turn: idleChildTurn } = await rpc("turn/start", { thread_id: idleChild.id, prompt: "scope-case:idle-child Read marker.txt." });
+  await waitFor("message", transcript, message => message.method === "turn/completed" && message.params?.turn?.id === idleChildTurn.id, "idle parent's child turn");
+  const idleChildCalls = requests.filter(request => request.tag === "idle-child");
+  assert(idleChildCalls.length >= 2 && idleChildCalls.every(request => request.body.model === "model-first"));
+  assert(JSON.stringify(idleChildCalls).includes("PARENT-MARKER"));
+  result.checks.push("handoff preserves tool history and children inherit the idle parent's current durable composition");
   const { turn: nextTurn } = await rpc("turn/start", { thread_id: thread.id, prompt: "scope-case:product-next Read marker.txt." });
   const nextDone = await waitFor("message", transcript, message => message.method === "turn/completed" && message.params?.turn?.id === nextTurn.id, "rebound product turn");
   assert.equal(nextDone.params.turn.status, "completed", JSON.stringify(nextDone));
