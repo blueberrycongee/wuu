@@ -1,5 +1,14 @@
+@font-face {
+  font-family: "vivo Sans SC";
+  src: url("../assets/fonts/vivo-sans/vivoSansSCVF.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 /* Saved font sizes stay in CSS pixels, independent of the desktop page scale. */
 :root {
+  --appearance-ui-font: "vivo Sans SC", system-ui, sans-serif;
   font-family: var(--appearance-ui-font, system-ui, sans-serif);
   /* Preserve the font's natural spacing in both navigation and prose.
    * Their reading rhythm comes from line and block spacing, not tracking. */

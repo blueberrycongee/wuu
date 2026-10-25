@@ -61,8 +61,8 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     const names = key === "codeFont" ? monoFonts : localFonts;
     const current = preferences[key];
     const defaultLabel = key === "contentFont"
-      ? t("settings.defaultContentFont", { font: preferences.uiFont || t("settings.systemFontFamily") })
-      : t("settings.systemFont");
+      ? t("settings.defaultContentFont", { font: preferences.uiFont || "vivo Sans SC" })
+      : key === "uiFont" ? t("settings.defaultContentFont", { font: "vivo Sans SC" }) : t("settings.systemFont");
     const options = [{ value: "", label: defaultLabel }, ...names.map((name) => ({ value: name, label: name }))];
     if (current && !names.includes(current)) options.push({ value: current, label: current });
     return <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>

@@ -68,8 +68,12 @@ export function applyAppearance(value: AppearancePreferences): void {
   root.style.setProperty("--appearance-scale", String(uiSize / 14));
   root.style.setProperty("--appearance-code-size", `${preferences.codeSize}px`);
   root.style.setProperty("--appearance-code-line-height", `${codeLineHeight(preferences.codeSize)}px`);
-  const uiFont = fontFamily(preferences.uiFont, "system-ui, sans-serif");
-  root.style.setProperty("--appearance-ui-font", uiFont);
+  if (preferences.uiFont) {
+    root.style.setProperty("--appearance-ui-font", fontFamily(preferences.uiFont, "system-ui, sans-serif"));
+  } else {
+    root.style.removeProperty("--appearance-ui-font");
+  }
+  const uiFont = getComputedStyle(root).getPropertyValue("--appearance-ui-font").trim();
   // Center control labels on the rendered capital band, not the font's
   // asymmetric ascent/descent box. H keeps the baseline stable across labels;
   // measuring at a large size avoids whole-pixel rounding at small UI sizes.
