@@ -103,7 +103,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   attachments.retainVisible(visibleResources);
   const creation = view.submission.pendingCreations.find(row => row.ownerTabId === ownerTabId);
   const stop = view.submission.stopRequests.find(row => row.threadId === presentation.threadId);
-  const switching = Boolean(view.tabs.pending && !view.tabs.pending.contentReady);
+  const switching = Boolean(view.tabs.pending);
   const editingSubmitting = Boolean(view.conversationActions.editing?.threadId === presentation.threadId && view.conversationActions.editing?.submitting);
   const running = Boolean(creation || editingSubmitting || !presentation.readOnly && presentation.turnRunning || switching);
   const configuration = presentationConfiguration && { ...presentationConfiguration, provider: presentation.running ? presentationConfiguration.provider : selection.provider, model: presentation.running ? presentationConfiguration.model : selection.model,

@@ -346,7 +346,8 @@ async function run() {
     await openPanel();
     await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
     await key(main, 'End');
-    await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_effort === 'high', native);
+    await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_effort === 'high'
+      && document.querySelector('.codex-effort-slider input')?.getAttribute('aria-busy') !== 'true', native);
     if (effort === 'low') await key(main, 'Left');
     await waitFor(main, async ({ id, effort }) => (await window.wuu.resumeThread(id)).thread.model_effort === effort, { id: native, effort });
     if (slash) {

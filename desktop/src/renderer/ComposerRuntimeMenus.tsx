@@ -267,7 +267,7 @@ function RuntimePanelSummary({
   const fastModeHint = `${t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")} · ${t("runtime.fastModeHint")}`;
   // A saving toggle stays focusable; native disabled would blur keyboard input.
   const changeSpeed = async (next: string): Promise<void> => {
-    if (!onSelectSpeed || speedSaving) return;
+    if (!onSelectSpeed || speedSaving || speedDisabled) return;
     setSpeedCharging(next === "fast");
     setPendingSpeed(next);
     setSpeedSaving(true);
@@ -330,8 +330,8 @@ function RuntimePanelSummary({
                 aria-label={t("runtime.fastMode")}
                 aria-description={fastModeHint}
                 aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
-                disabled={speedDisabled}
-                aria-disabled={speedSaving || undefined}
+                disabled={speedDisabled && !speedSaving}
+                aria-disabled={speedDisabled || speedSaving || undefined}
                 aria-busy={speedSaving || undefined}
                 onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
               >
@@ -1353,8 +1353,8 @@ function EffortSelector({
         max={orderedOptions.length - 1}
         step={1}
         value={displayIndex}
-        disabled={disabled}
-        aria-disabled={busy || undefined}
+        disabled={disabled && !busy}
+        aria-disabled={disabled || busy || undefined}
         aria-busy={busy || undefined}
         aria-label={translate("runtime.reasoningEffort")}
         aria-valuetext={variantLabel(orderedOptions[displayIndex] ?? selectedVariant)}
