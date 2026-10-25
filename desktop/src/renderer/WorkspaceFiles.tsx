@@ -71,11 +71,16 @@ const WORKSPACE_TREE_CSS = `
     --trees-padding-inline-override: var(--workspace-row-inset);
     --trees-item-margin-x-override: 0px;
     --trees-item-padding-x-override: var(--workspace-row-pad-x);
+    --workspace-tree-content-inset-end: calc(var(--workspace-file-tree-rail-inset, 0px) + max(
+      var(--trees-padding-inline),
+      var(--trees-scrollbar-gutter-measured, var(--trees-scrollbar-gutter))
+    ));
   }
 
   /* Document styles stop at the shadow boundary, so the tree restates the
      renderer's scrollbar policy (styles/scrollbars.css) for its scroller. */
   [data-file-tree-virtualized-scroll='true'] {
+    padding-inline-end: calc(var(--workspace-tree-content-inset-end) - var(--trees-scrollbar-gutter-measured, var(--trees-scrollbar-gutter)));
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-ink) var(--scrollbar-track-bg);
     transition: --scrollbar-ink var(--motion-slower) var(--ease-out);
@@ -86,16 +91,12 @@ const WORKSPACE_TREE_CSS = `
     transition-duration: var(--motion-base);
   }
 
-  /* Rows end where the scroller's padding or its gutter does, whichever is
-     wider; the field ends there too. */
+  /* Search and rows share the rail inset; the scrollbar stays outside it. */
   [data-file-tree-search-container] {
     box-sizing: border-box;
     width: 100%;
     margin-inline: 0;
-    padding-inline-end: max(
-      var(--trees-padding-inline),
-      var(--trees-scrollbar-gutter-measured, var(--trees-scrollbar-gutter))
-    );
+    padding-inline-end: var(--workspace-tree-content-inset-end);
   }
 
   /* The shared field box. The document's border-box sizing stops at the shadow

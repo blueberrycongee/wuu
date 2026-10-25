@@ -121,6 +121,13 @@
   margin-right: var(--workspace-tool-rail-reserve);
 }
 
+/* The standalone tree keeps its scrollbar at the panel edge. Reserve the
+ * floating rail inside its search field and rows instead of the viewport. */
+.app-shell:has(.workspace-tool-rail) .workspace-right-panel[data-wuu-view="files"] .workspace-panel-body {
+  --workspace-file-tree-rail-inset: var(--workspace-tool-rail-reserve);
+  margin-right: 0;
+}
+
 .workspace-right-panel {
   grid-column: 3;
   grid-row: 1 / 3;
