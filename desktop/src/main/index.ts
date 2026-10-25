@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { AppContextCapture } from "./appContextCapture";
 import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
@@ -943,6 +944,37 @@ function persistMainWindowBoundsNow(win: BrowserWindow): void {
 
 const nativeBrowserPopovers = new WeakMap<BrowserWindow, NativeBrowserPopover>();
 function loadRenderer(window: BrowserWindow): void {
+  window.webContents.on("context-menu", (_event, params) => {
+    if (params.mediaType !== "image") return;
+    const contents = window.webContents;
+    const zoom = contents.getZoomFactor();
+    void showContextMenu(contents, {
+      token: randomUUID(),
+      x: params.x / zoom,
+      y: params.y / zoom,
+      items: [
+        { id: "copy-image", label: mainTranslate("copyImage"), disabled: !params.hasImageContents },
+        { id: "save-image", label: mainTranslate("saveArtifactAs"), disabled: !params.hasImageContents },
+      ],
+    }).then(async action => {
+      if (contents.isDestroyed()) return;
+      if (action === "copy-image") {
+        // Chromium copies the original image, including cross-origin sources,
+        // without applying the preview's zoom, rotation, or viewport crop.
+        contents.copyImageAt(params.x, params.y);
+      } else if (action === "save-image") {
+        try {
+          await saveArtifactFile(window, contents.session, params.suggestedFilename ||
+            (/^(https?|wuu-file|wuu-artifact):/i.test(params.srcURL) ? params.srcURL : "image"), params.srcURL);
+        } catch (error) {
+          if (!window.isDestroyed()) await dialog.showMessageBox(window, {
+            type: "error", message: mainTranslate("saveImageFailed"),
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }).catch(error => console.error("[desktop] image context menu failed", error));
+  });
   // Shell windows only: browser and observation surfaces keep their own zoom.
   window.webContents.on("before-input-event", (event, input) => {
     if (event.defaultPrevented || webWorkspaceHost.handleShellInput(window.webContents, event, input)) return;

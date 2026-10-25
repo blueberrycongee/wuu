@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Add native Copy Image and Save As context menu actions for desktop images, including enlarged previews and popped-out conversations.
+
 - Keep new-page, browser, terminal, and file tools available in a compact right-side rail, with content space reserved while the workspace panel is closed or open. Let users collapse the rail to widen the conversation and composer, restore it from the header, and retain that choice across reloads.
 
 - Expose caller-owned temporary agent compositions through `host.composition` and the public SDK: snapshot local TypeScript or package sources, try isolated runtimes, compare-and-exchange agent selections, and undo selection. Admitted runs retain their original providers; disposal drains executions before dependency-ordered cleanup. Creating a composition preserves the host's process-wide model catalog and refresh ownership. Include a directly loadable agent tool example and complete the embedded SDK source set used by single-file plugins.
