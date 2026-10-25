@@ -1320,14 +1320,14 @@ it("does not let uncertain draft status failure suppress a peer terminal state o
  expect(ui.invoke.mock.calls.filter(([r])=>r.method==="agents.send")).toHaveLength(1);
 });
 
-it("renders Personal interactive parts with scoped actions, preserves prose, and keeps local edits quiet", async () => {
+it("renders Personal interactive parts with automatic sync, preserves prose, and keeps local edits quiet", async () => {
   const spec = genuiFixtures.checklist;
   let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "fixture-surface", messageId: "fixture-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
   const observer = vi.fn(() => <p>Coding observer</p>);
   await desktopPluginHost.activateGeneration({ pluginId: "test:genui-observer", generation: "one", register(api) { api.registerRenderer({ id: "observer", category: "message", match: "text/markdown", render: observer }); } });
   cleanups.push(() => act(() => desktopPluginHost.unload("test:genui-observer")));
   const ui = await mount(async (method, input) => {
-    if (method === "genui.action") {
+    if (method === "genui.sync") {
       const payload = input as { agent_id: string; request: ActionRequest };
       expect(payload.agent_id).toBe(main.agent_id);
       expect(payload.request.state.items).toEqual(expect.arrayContaining([expect.objectContaining({ done: true })]));
@@ -1340,9 +1340,10 @@ it("renders Personal interactive parts with scoped actions, preserves prose, and
   expect(ui.container.querySelectorAll(".personal-genui")).toHaveLength(1);
   await ui.click('[data-genui-node="done"]');
   expect(ui.invoke.mock.calls.some(([request]) => request.method === "genui.action")).toBe(false);
-  await act(async () => { const button = ui.container.querySelector<HTMLButtonElement>('[data-genui-node="save"]')!; button.click(); button.click(); });
-  expect(ui.invoke.mock.calls.filter(([request]) => request.method === "genui.action")).toHaveLength(1);
-  expect(ui.container.textContent).toContain("选择已保存");
+  expect(ui.container.querySelector('[data-genui-node="save"]')).toBeNull();
+  expect(ui.container.querySelector('[data-genui-node="submit"]')).toBeNull();
+  expect(ui.invoke.mock.calls.filter(([request]) => request.method === "genui.sync")).toHaveLength(1);
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "agents.send" || request.method === "genui.retry")).toBe(false);
   expect(observer).not.toHaveBeenCalled();
 });
 
@@ -1350,11 +1351,11 @@ it("requires an explicit reload after a GenUI revision conflict and renders fall
   const spec = genuiFixtures.calculator;
   const snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "conflict-surface", messageId: "message-conflict", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
   const ui = await mount(async method => {
-    if (method === "genui.action") throw new Error("genui_revision_conflict");
+    if (method === "genui.sync") throw new Error("genui_revision_conflict");
     if (method === "genui.read") return { ...snapshot, surface: { ...snapshot.surface, revision: 1, state: { count: 10, price: 20 } }, acceptedRevision: 1 };
     return {};
   }, main, [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_text: "", ui_parts: [snapshot] }]);
-  await ui.click('[data-genui-node="save"]');
+  await act(async () => { const slider = ui.container.querySelector('input[type="range"]')!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "8"); slider.dispatchEvent(new Event("input", { bubbles: true })); });
   expect(ui.container.querySelector('[role="alert"]')?.textContent).toContain("另一处已更新");
   const reload = [...ui.container.querySelectorAll<HTMLButtonElement>(".personal-genui button")].find(button => button.textContent === "载入已保存选择")!;
   await act(async () => reload.click());
@@ -1365,15 +1366,10 @@ it("requires an explicit reload after a GenUI revision conflict and renders fall
   expect(fallback.container.textContent).toContain(spec.fallbackText);
 });
 
-it("binds GenUI submit to authenticated durable input and resumes held state only after an explicit continue", async () => {
+it("recovers a historical GenUI submission and resumes held state only after an explicit continue", async () => {
   const spec = genuiFixtures.calculator;
-  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "submit-surface", messageId: "message-submit", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "submit-surface", messageId: "message-submit", spec, state: genuiInitialState(spec), revision: 1, submitted: true }, acceptedRevision: 1, delivery: "pending", submission: { requestId: "legacy-submit", prompt: "Synthetic explicit input" } };
   const ui = await mount(async (method, input) => {
-    if (method === "genui.action") {
-      const request = (input as { request: ActionRequest }).request;
-      snapshot = { surface: { ...snapshot.surface, revision: 1, submitted: true, state: request.state }, acceptedRevision: 1, delivery: "pending", submission: { requestId: request.eventId, prompt: "Synthetic explicit input" } };
-      return snapshot;
-    }
     if (method === "genui.retry") {
       snapshot = input.receipt_id ? { ...snapshot, delivery: "accepted", submission: undefined } : { ...snapshot, delivery: "held", submission: { requestId: snapshot.submission!.requestId, prompt: "", resumeReceiptId: "receipt-held" } };
       if (input.receipt_id) delete snapshot.submission;
@@ -1382,7 +1378,7 @@ it("binds GenUI submit to authenticated durable input and resumes held state onl
     if (method === "genui.read") return snapshot;
     return {};
   }, main, [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }]);
-  await act(async () => { const button = ui.container.querySelector<HTMLButtonElement>('[data-genui-node="submit"]')!; button.click(); button.click(); });
+  await act(async () => { const button = ui.container.querySelector<HTMLButtonElement>('[data-action="retry-genui"]')!; button.click(); button.click(); });
   const first = ui.invoke.mock.calls.filter(([r]) => r.method === "genui.retry");
   expect(first).toHaveLength(1);
   expect(first[0][0]).toEqual(expect.objectContaining({ productDomain: "personal", userSpaceId: "local", userInput: { requestId: expect.any(String), prompt: "Synthetic explicit input" } }));
@@ -1401,7 +1397,7 @@ it("updates same-key GenUI authority through Personal polling without discarding
   let snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "poll-surface", messageId: "poll-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
   const history = async () => ({ records: [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }] });
   const ui = await mount(async (method, input) => {
-    if (method === "genui.action") { expect(input.request.expectedRevision).toBe(2); expect(input.request.state.count).toBe(8); return { surface: { ...snapshot.surface, revision: 3, state: input.request.state }, acceptedRevision: 3 }; }
+    if (method === "genui.sync") { if (input.request.expectedRevision === 1) throw new Error("genui_revision_conflict"); expect(input.request.expectedRevision).toBe(2); expect(input.request.state.count).toBe(8); return { surface: { ...snapshot.surface, revision: 3, state: input.request.state }, acceptedRevision: 3 }; }
     return {};
   }, main, [], { history });
   const element = ui.container.querySelector('.personal-genui');
@@ -1413,10 +1409,9 @@ it("updates same-key GenUI authority through Personal polling without discarding
   snapshot = { surface: { ...snapshot.surface, revision: 2, state: { count: 9, price: 40 } }, acceptedRevision: 2 };
   await act(async () => ui.publish());
   expect(ui.container.querySelector('input[type="range"]')).toHaveProperty("value", "8");
-  expect(ui.container.querySelector('[data-genui-node="save"]')).toHaveProperty("disabled", true);
+  expect(ui.container.querySelector('[data-genui-node="save"]')).toBeNull();
   expect(ui.container.querySelector('[data-genui-conflict]')).not.toBeNull();
   await ui.click('[data-action="keep-genui-draft"]');
-  await ui.click('[data-genui-node="save"]');
   snapshot = { surface: { ...snapshot.surface, revision: 1, state: { count: 1, price: 10 } }, acceptedRevision: 1 };
   await act(async () => ui.publish());
   expect(ui.container.querySelector('input[type="range"]')).toHaveProperty("value", "8");
@@ -1543,4 +1538,30 @@ it("keeps the current Calendar grant usable when an older authorization promise 
   const notices=Array.from(view.container.querySelectorAll('.gcal-notice[role="alert"]'));
   expect(notices.length).toBeGreaterThan(0);
   expect(notices.every(notice=>!notice.textContent?.includes('连接已停用'))).toBe(true);
+});
+
+it("freezes current GenUI input for ordinary chat before autosync finishes and across uncertain retries", async () => {
+  const spec = genuiFixtures.checklist;
+  const snapshot: ActionResult = { surface: { schemaVersion: 1, surfaceId: "auto-surface", messageId: "auto-message", spec, state: genuiInitialState(spec), revision: 0, submitted: false }, acceptedRevision: 0 };
+  let finish!: (value: unknown) => void;
+  const ui = await mount(async (method) => {
+    if (method === "genui.sync") return new Promise(resolve => { finish = resolve; });
+    if (method === "agents.send") throw new Error("offline");
+    return {};
+  }, main, [{ seq: 2, role: "assistant", content: spec.fallbackText, ui_parts: [snapshot] }]);
+  await ui.click('[data-genui-node="done"]');
+  expect(ui.invoke.mock.calls.filter(([r]) => r.method === "genui.sync")).toHaveLength(1);
+  expect(ui.invoke.mock.calls.some(([r]) => r.method === "agents.send" || r.method === "genui.action")).toBe(false);
+  await act(async () => {
+    const node = ui.container.querySelector<HTMLTextAreaElement>(".composer textarea") ?? [...ui.container.querySelectorAll<HTMLTextAreaElement>("textarea")].find(node => !node.closest(".personal-genui"))!;
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(node, "What did I select?");
+    node.dispatchEvent(new Event("input", { bubbles: true }));
+  }); await ui.click('.composer-send-button');
+  const sent = ui.invoke.mock.calls.filter(([r]) => r.method === "agents.send")[0][0].input as any;
+  expect(sent.genui_context[0].state.items[0].done).toBe(true);
+  await ui.click('[data-genui-node="done"]');
+  await ui.click('.composer-send-button');
+  const retry = ui.invoke.mock.calls.filter(([r]) => r.method === "agents.send")[1][0].input;
+  expect(retry).toEqual(sent);
+  await act(async () => finish({ ...snapshot, surface: { ...snapshot.surface, state: sent.genui_context[0].state, revision: 1 }, acceptedRevision: 1 }));
 });

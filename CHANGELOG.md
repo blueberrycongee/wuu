@@ -46,6 +46,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Automatically synchronize Personal interactive answers and include current field values in the next ordinary message. Remove redundant save and explanation buttons, preserve retry snapshots, and fix surface storage keys and direct tool-result projection.
+
 - Forward Electron launch arguments, including isolated user-data directories, through the desktop development launcher.
 
 - Interrupt desktop owner admission when the bootstrap pipe times out or its context is cancelled.

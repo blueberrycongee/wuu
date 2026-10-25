@@ -248,6 +248,8 @@ export interface PluginUIAvatarProps {
 export interface PluginUIInteractiveAnswerProps {
   snapshot: unknown;
   fallbackText?: string;
+  onStateChange?(state: unknown): void;
+  onSync?(input: unknown): Promise<unknown>;
   onAction(input: unknown): Promise<unknown>;
   onRefresh(): Promise<unknown>;
   onRetry(resumeHeld?: boolean): Promise<unknown>;

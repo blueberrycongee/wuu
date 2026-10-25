@@ -13,6 +13,7 @@ import (
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
@@ -56,6 +57,9 @@ func (b *genuiRefusalBridge) InvokeService(ctx context.Context, p pluginhost.Ser
 		if err := json.Unmarshal(p.Params, &q); err != nil {
 			return nil, err
 		}
+		if err := pluginsettings.ValidateStateKey(q.Key); err != nil {
+			return nil, err
+		}
 		result = pluginhost.StorageGetResult{Value: b.storage[q.Key]}
 	case "host.storage.keys":
 		keys := []string{}
@@ -66,6 +70,9 @@ func (b *genuiRefusalBridge) InvokeService(ctx context.Context, p pluginhost.Ser
 	case "host.storage.compare-exchange":
 		var q pluginhost.StorageCompareExchangeParams
 		if err := json.Unmarshal(p.Params, &q); err != nil {
+			return nil, err
+		}
+		if err := pluginsettings.ValidateStateKey(q.Key); err != nil {
 			return nil, err
 		}
 		old := b.storage[q.Key]

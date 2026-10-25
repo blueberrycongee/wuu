@@ -6,7 +6,7 @@ import "./personal-genui.css";
 
 const defaultUI = createPluginUIKit(React);
 type Controls = Pick<PluginUIKit, "Stack" | "Row" | "Card" | "Button" | "TextInput" | "TextArea" | "Select" | "Checkbox">;
-export type SurfaceTransport = { dispatch(request: ActionRequest): Promise<ActionResult>; read(): Promise<ActionResult>; retry(resumeHeld?: boolean): Promise<ActionResult> };
+export type SurfaceTransport = { onStateChange?(state: State): void; sync?(request: { surfaceId: string; expectedRevision: number; state: State }): Promise<ActionResult>; dispatch(request: ActionRequest): Promise<ActionResult>; read(): Promise<ActionResult>; retry(resumeHeld?: boolean): Promise<ActionResult> };
 type Props = { initial: ActionResult; transport: SurfaceTransport; ui?: Controls; submittedNotice?: string; submissionHelp?: string };
 type RowContext = { field: string; index: number; item: Record<string, Scalar> };
 
@@ -39,6 +39,11 @@ function ValidatedSurface({ initial, transport, ui = defaultUI, submittedNotice 
   const { result, state, conflict, pending, error, notice } = view;
   const spec = React.useMemo(() => validateSpec(result.surface.spec), [result.surface.spec]);
   const [busy, setBusy] = React.useState(false);
+  const draft = React.useRef(state), authority = React.useRef(result);
+  const syncWork = React.useRef<Promise<void> | undefined>(undefined), editVersion = React.useRef(0), syncBlocked = React.useRef(false);
+  const [syncing, setSyncing] = React.useState(false);
+  draft.current = state; authority.current = result;
+  React.useEffect(() => { transport.onStateChange?.(state); }, [state, transport.onStateChange]);
   const inFlight = React.useRef(false), alive = React.useRef(true);
   React.useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const receive = React.useCallback((next: ActionResult, mode: "observe" | "ack" | "replace" = "observe") => {
@@ -55,7 +60,7 @@ function ValidatedSurface({ initial, transport, ui = defaultUI, submittedNotice 
         notice: mode === "ack" && !next.surface.submitted ? next.delivery === "rejected" ? "提交未被接收，可修改选择后重新提交。" : "选择已保存。" : previous.notice };
     });
   }, []);
-  React.useEffect(() => receive(initial), [initial, receive]);
+  React.useEffect(() => { if (!syncWork.current) receive(initial); }, [initial, receive]);
   const disabled = busy || result.surface.submitted || Boolean(pending);
   const deliveryNotice = (next: ActionResult): string => {
     switch (next.delivery) {
@@ -71,7 +76,7 @@ function ValidatedSurface({ initial, transport, ui = defaultUI, submittedNotice 
   const execute = async (operation: () => Promise<ActionResult>, mode: "observe" | "ack" | "replace" = "ack") => {
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setView(previous => ({ ...previous, error: "" }));
-    try { const next = await operation(); if (alive.current) receive(next, mode); }
+    try { const next = await operation(); if (alive.current) { if (mode === "replace") syncBlocked.current = false; receive(next, mode); } }
     catch (cause) {
       const message = String(cause), stale = message.includes("revision_conflict"), tooLarge = message.includes("submission_too_large");
       const rejected = tooLarge || stale || message.includes("submission_rejected") || message.includes("invalid_genui");
@@ -80,17 +85,47 @@ function ValidatedSurface({ initial, transport, ui = defaultUI, submittedNotice 
     }
     finally { inFlight.current = false; if (alive.current) setBusy(false); }
   };
+  const synchronize = (): Promise<void> => {
+    if (!transport.sync || syncBlocked.current) return Promise.resolve();
+    if (syncWork.current) return syncWork.current;
+    setSyncing(true);
+    const run = async () => {
+      let version: number;
+      do {
+        version = editVersion.current;
+        const current = authority.current;
+        const next = await transport.sync!({ surfaceId: current.surface.surfaceId, expectedRevision: current.surface.revision, state: structuredClone(draft.current) });
+        authority.current = next;
+        if (alive.current) setView(previous => ({ ...previous, result: next, error: "", notice: "已同步" }));
+      } while (version !== editVersion.current);
+    };
+    syncWork.current = run().catch(cause => {
+      syncBlocked.current = true;
+      if (alive.current) setView(previous => ({ ...previous, error: String(cause).includes("revision_conflict") ? "另一处已更新这个界面。请载入已保存的选择后重试。" : "自动同步未完成。当前填写仍会随下一条消息发送，请重试同步以保存。" }));
+    }).finally(() => { syncWork.current = undefined; if (alive.current) setSyncing(false); });
+    return syncWork.current;
+  };
+  const changeState = (next: State) => {
+    draft.current = next; editVersion.current++;
+    transport.onStateChange?.(next);
+    setView(previous => ({ ...previous, state: next, notice: "" }));
+    void synchronize();
+  };
   const dispatch = (actionId: string) => {
     if (disabled || conflict || inFlight.current) return;
-    const request = { surfaceId: result.surface.surfaceId, actionId, expectedRevision: result.surface.revision, eventId: `event-${crypto.randomUUID()}`, state: structuredClone(state) };
-    setView(previous => ({ ...previous, pending: request }));
-    void execute(() => transport.dispatch(request));
+    void execute(async () => {
+      await syncWork.current;
+      const request = { surfaceId: result.surface.surfaceId, actionId, expectedRevision: authority.current.surface.revision, eventId: `event-${crypto.randomUUID()}`, state: structuredClone(draft.current) };
+      setView(previous => ({ ...previous, pending: request }));
+      return transport.dispatch(request);
+    });
   };
   const update = (key: string, value: Scalar, row?: RowContext, itemField?: string) => {
     if (disabled) return;
-    setView(previous => ({ ...previous, notice: "", state: itemField && row
-      ? { ...previous.state, [row.field]: (previous.state[row.field] as Record<string, Scalar>[]).map((item, index) => index === row.index ? { ...item, [itemField]: value } : item) }
-      : { ...previous.state, [key]: value } }));
+    const previous = draft.current;
+    changeState(itemField && row
+      ? { ...previous, [row.field]: (previous[row.field] as Record<string, Scalar>[]).map((item, index) => index === row.index ? { ...item, [itemField]: value } : item) }
+      : { ...previous, [key]: value });
   };
   const render = (node: Node, row?: RowContext): React.ReactNode => {
     if (node.visible !== undefined) {
@@ -115,6 +150,9 @@ function ValidatedSurface({ initial, transport, ui = defaultUI, submittedNotice 
       case "repeat": return <ui.Stack key={key} {...attrs}>{(state[node.field] as Record<string, Scalar>[]).map((item, index) => <React.Fragment key={`${node.id}-${index}`}>{node.children.map(child => render(child, { field: node.field, index, item }))}</React.Fragment>)}</ui.Stack>;
       case "button": {
         const action = node.action ? spec.actions.find(a => a.id === node.action) : undefined;
+        // Autosynced conversations continue through the ordinary composer.
+        // Standalone previews without sync still need explicit persistence.
+        if (transport.sync && action) return null;
         const field = node.field ? spec.fields[node.field] : undefined;
         const atLimit = node.local === "append" && field?.type === "list" && (state[node.field] as Record<string, Scalar>[]).length >= field.maxItems;
         return <ui.Button key={key} {...attrs} disabled={disabled || atLimit || Boolean(action && conflict)} variant={action?.kind === "submit" ? "primary" : "secondary"} onClick={() => {
@@ -122,7 +160,7 @@ function ValidatedSurface({ initial, transport, ui = defaultUI, submittedNotice 
           if (field?.type !== "list") return;
           const rows = state[node.field] as Record<string, Scalar>[];
           const next = node.local === "append" ? [...rows, Object.fromEntries(Object.entries(field.item).map(([name, value]) => [name, value.initial]))] : rows.filter((_, index) => index !== row?.index);
-          setView(previous => ({ ...previous, state: { ...previous.state, [node.field]: next }, notice: "" }));
+          changeState({ ...draft.current, [node.field]: next });
         }}>{action?.kind === "submit" ? "解释这些选择" : action?.kind === "save" ? "保存选择" : node.label}</ui.Button>;
       }
       case "input": case "textarea": case "checkbox": case "slider": case "select": {
@@ -140,18 +178,20 @@ function ValidatedSurface({ initial, transport, ui = defaultUI, submittedNotice 
   };
   return <section className="personal-genui" aria-label={spec.title} data-surface-id={result.surface.surfaceId} aria-busy={busy}>
     <h3>{spec.title}</h3>
-    {spec.actions.some(action => action.kind === "submit") && <p className="personal-genui-feedback">{submissionHelp}</p>}
+    {transport.sync && <p className="personal-genui-feedback">填写内容会自动同步到下一轮对话。</p>}
+    {!transport.sync && spec.actions.some(action => action.kind === "submit") && <p className="personal-genui-feedback">{submissionHelp}</p>}
     {conflict && <div data-genui-conflict role="status">
       <p>{result.surface.submitted ? "另一处已提交。这里仍保留你的未保存草稿供查看，不能再次提交到此界面。" : "已保存选择有更新。你的未保存草稿仍保留，请选择使用哪一份。"}</p>
-      <ui.Button disabled={busy} data-action="use-genui-authority" onClick={() => receive(result, "replace")}>放弃草稿，使用已保存选择</ui.Button>
-      {!result.surface.submitted && <ui.Button disabled={busy} data-action="keep-genui-draft" onClick={() => setView(previous => ({ ...previous, conflict: false, error: "", notice: "草稿已保留。重新保存会替换已保存选择。" }))}>保留草稿并重新编辑</ui.Button>}
+      <ui.Button disabled={busy || syncing} data-action="use-genui-authority" onClick={() => { syncBlocked.current = false; receive(result, "replace"); }}>放弃草稿，使用已保存选择</ui.Button>
+      {!result.surface.submitted && <ui.Button disabled={busy || syncing} data-action="keep-genui-draft" onClick={() => { syncBlocked.current = false; setView(previous => ({ ...previous, conflict: false, error: "", notice: "草稿已保留。重新保存会替换已保存选择。" })); void synchronize(); }}>保留草稿并重新编辑</ui.Button>}
     </div>}
     {render(spec.tree)}
-    <div className="personal-genui-feedback" role="status" aria-live="polite">{deliveryNotice(result) || notice}</div>
+    <div className="personal-genui-feedback" role="status" aria-live="polite">{deliveryNotice(result) || (syncing ? "正在同步…" : notice)}</div>
     {error && <p role="alert">{error}</p>}
     {(pending || result.submission) && <ui.Button data-action="retry-genui" disabled={busy} onClick={() => void execute(() => pending ? transport.dispatch(pending) : transport.retry(result.delivery === "held"))}>{result.delivery === "held" ? "继续文字解释" : "重试确认"}</ui.Button>}
     {result.surface.submitted && <ui.Button disabled={busy} onClick={() => void execute(() => transport.read(), "observe")}>刷新状态</ui.Button>}
-    {error && <ui.Button disabled={busy} onClick={() => void execute(() => transport.read(), "replace")}>载入已保存选择</ui.Button>}
+    {error && transport.sync && <ui.Button disabled={busy || syncing} onClick={() => { syncBlocked.current = false; void synchronize(); }}>重试同步</ui.Button>}
+    {error && <ui.Button disabled={busy || syncing} onClick={() => void execute(() => transport.read(), "replace")}>载入已保存选择</ui.Button>}
   </section>;
 }
 

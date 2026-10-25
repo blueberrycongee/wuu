@@ -39,8 +39,8 @@ test("shipped Personal GenUI model-output to history to owner action survives re
       case "host.session.inspect": return { session: contexts[p.session_id], receipt: receipts.get(p.request_id) };
       case "host.session.history.read": return { session_id: p.session_id, records: p.session_id === main ? [{ seq: 1, role: "user", origin: "user", content: "Synthetic checklist request" }, source, ...(publishedResult ? [{ seq: 3, role: "tool", name: historyToolName, tool_call_id: "model-call-one", tool_result: JSON.stringify(publishedResult) }] : [])] : [], head_seq: 3, snapshot_seq: 3, has_more: false };
       case "host.session.send": {
-        assert.equal(p.session_id, main); assert.equal(p.disable_tools, true);
-        assert.equal(p.user_input_request_id, "owner-submit");
+        assert.equal(p.session_id, main); assert.equal(p.disable_tools, p.cause === "personal.chat" ? undefined : true);
+        assert.equal(p.user_input_request_id, p.cause === "personal.chat" ? "owner-chat" : "owner-submit");
         assert.match(frame.params.execution_id, /owner-/);
         if (!deliveries.has(p.request_id)) {
           deliveries.set(p.request_id, p);
@@ -114,6 +114,21 @@ test("shipped Personal GenUI model-output to history to owner action survives re
   await runtime.close(); runtime = await start();
   const recovered = await runtime.client("genui.retry", { surface_id: surface.surfaceId }); assert.equal(recovered.delivery, "accepted"); assert.equal(deliveries.size, 1);
   const sent = [...deliveries.values()][0]; assert.equal(JSON.parse(sent.input.context_blocks[0].content).state.items[0].done, true);
+  const second = await runtime.call("tool.execute", { tool_id: "present_interactive_answer", tool: genuiToolName, turn_id: "host-turn-two", arguments: { spec: fixtures.checklist }, session_id: main, thread_id: main, call_id: "model-call-two", execution_id: "model-execution" });
+  const fresh = second.result.meta.personal_genui;
+  const edited = structuredClone(fresh.state); edited.items[0].done = true;
+  await runtime.client("genui.sync", { request: { surfaceId: fresh.surfaceId, expectedRevision: 0, state: edited } });
+  assert.equal(deliveries.size, 1);
+  const chat = { request_id: "owner-chat", prompt: "Read my current choices", genui_context: [{ surfaceId: fresh.surfaceId, state: edited }] };
+  await runtime.client("agents.send", chat);
+  const normal = [...deliveries.values()].find(p => p.cause === "personal.chat");
+  assert.equal(JSON.parse(normal.input.context_blocks[0].content).surfaces[0].state.items[0].done, true);
+  await runtime.close(); runtime = await start();
+  assert.equal((await runtime.client("genui.read", { surface_id: fresh.surfaceId })).surface.state.items[0].done, true);
+  await runtime.client("agents.send", chat);
+  const changed = structuredClone(chat); changed.genui_context[0].state.items[0].done = false;
+  await assert.rejects(() => runtime.client("agents.send", changed), /request_id_conflict/);
+  assert.equal(deliveries.size, 2);
   await runtime.close();
   const coding = await start("coding"); assert.equal(coding.definition.tools.length, 0); await coding.close();
 });

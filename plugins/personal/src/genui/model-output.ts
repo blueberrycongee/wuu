@@ -20,12 +20,14 @@ const definitions = {
 };
 export const personalGenUITool: ToolRegistration = {
   id: "present_interactive_answer",
-  description: "Present a composable interactive answer in this Personal main conversation. Use bounded stack/row/card/text, inputs, sliders, selects, checkboxes, repeat lists and buttons. Expressions are pure AST values, never code. Reference a top-level field with {get:name}; in repeat use {item:name}. Controls bind exactly one field or itemField. Persistent fields save only on save/submit; temporary fields reset on refresh. Define save/submit actions and bind buttons by action ID, or use local append/remove for lists. A checkbox never changes a PersonalTask. Submit requests a text-only explanation of actual saved state in this conversation. The entire follow-up turn has all tools disabled: it cannot generate another UI or execute tasks. No URLs, HTML, scripts, tool calls, permissions or external effects are supported. Always include a useful fallbackText. Do not use this for an ordinary clarification question.",
+  // History projection needs the structured top-level result, not program text.
+  direct_only: true,
+  description: "Present a composable interactive answer in this Personal main conversation. Use bounded stack/row/card/text, inputs, sliders, selects, checkboxes, repeat lists and buttons. Expressions are pure AST values, never code. Reference a top-level field with {get:name}; in repeat use {item:name}. Controls bind exactly one field or itemField. Persistent fields automatically save as the owner edits. Current fields accompany their next ordinary chat message without requiring a save or submit button. Temporary fields reset on refresh. Set actions to an empty array. Do not add save or submit buttons or tell the owner to click them; they continue in ordinary chat after editing. Buttons are only for local append/remove list edits. A checkbox never changes a PersonalTask. No URLs, HTML, scripts, tool calls, permissions or external effects are supported. Always include a useful fallbackText. Do not use this for an ordinary clarification question.",
   input_schema: {
     ...object({ spec: object({ schemaVersion: { const: 1 }, title: { type: "string", maxLength: 160 }, fallbackText: { type: "string", maxLength: 4000 }, fields: { type: "object", maxProperties: 32, additionalProperties: { anyOf: [
       { ...scalar, properties: { ...scalar.properties, scope: { enum: ["persistent", "temporary"] } }, required: ["type", "initial", "scope"] },
       object({ type: { const: "list" }, scope: { enum: ["persistent", "temporary"] }, maxItems: { type: "integer", minimum: 1, maximum: 50 }, item: { type: "object", additionalProperties: { $ref: "#/$defs/scalar" }, minProperties: 1, maxProperties: 8 }, initial: { type: "array", items: { type: "object", additionalProperties: { type: ["string", "number", "boolean"] } }, maxItems: 50 } }),
-    ] } }, tree: node, actions: { type: "array", maxItems: 8, items: object({ id: identifier, kind: { enum: ["save", "submit"] }, label: { type: "string", maxLength: 100 } }) } }) }),
+    ] } }, tree: node, actions: { type: "array", maxItems: 0, items: object({ id: identifier, kind: { enum: ["save", "submit"] }, label: { type: "string", maxLength: 100 } }) } }) }),
     $defs: definitions,
   },
   activity: { concurrency_safe: true },

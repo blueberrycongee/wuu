@@ -265,3 +265,27 @@ test("registry refusal mapping is exact and generic service_unavailable remains 
     assert.equal(h.sends(), 0);
   }
 });
+
+// Autosync must remain quiet, reject stale owners, and freeze unsaved input for a queued turn.
+test("autosync persists without delivery and context captures unsynced edits with owner isolation", async () => {
+  const h = harness(), s = h.service(), a = await publish(s), b = await publish(s, "checklist", "other");
+  const state = structuredClone(a.state); state.items[0].done = true;
+  const request = { surfaceId: a.surfaceId, expectedRevision: 0, state };
+  const saved = await s.sync(request, owner);
+  assert.equal(saved.surface.revision, 1);
+  assert.equal((await s.sync(request, owner)).surface.revision, 1);
+  assert.equal((await h.service().read(a.surfaceId, owner)).state.items[0].done, true);
+  assert.equal((await s.read(b.surfaceId, owner)).state.items[0].done, false);
+  await assert.rejects(() => s.sync({ ...request, state: a.state }, owner), /revision_conflict/);
+  await assert.rejects(() => s.sync(request, model), /forbidden/);
+  const draft = structuredClone(state); draft.items[0].text = "latest unsynced edit";
+  const blocks = await s.context([{ surfaceId: a.surfaceId, state: draft }, { surfaceId: b.surfaceId, state: b.state }], owner);
+  draft.items[0].text = "later edit";
+  const data = JSON.parse(blocks[0].content);
+  assert.equal(data.surfaces[0].state.items[0].text, "latest unsynced edit");
+  assert.equal(data.surfaces[1].state.items[0].done, false);
+  await assert.rejects(() => s.context([{ surfaceId: a.surfaceId, state: { ...state, tool: "run" } }], owner), /invalid/);
+  await assert.rejects(() => s.context([{ surfaceId: a.surfaceId, state }], { ...owner, agent: "other" }), /forbidden/);
+  await assert.rejects(() => s.context([{ surfaceId: a.surfaceId, state }, { surfaceId: a.surfaceId, state }], owner), /invalid/);
+  assert.equal(h.sends(), 0);
+});

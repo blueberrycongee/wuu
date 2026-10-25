@@ -1336,6 +1336,7 @@ ${personalReviewStyles}
     const recoveryPrefix = `wuu.personal.draftRecovery.v1:${route.userSpaceId}:`;
     const recoveryAge = 24 * 60 * 60 * 1e3, recoveryLimit = 64 * 1024;
     const conversations = /* @__PURE__ */ new Map(), draftListeners = /* @__PURE__ */ new Set();
+    const genuiDrafts = /* @__PURE__ */ new Map();
     const recoveryKey = (id) => recoveryPrefix + encodeURIComponent(id);
     const readRecovery = (raw) => {
       if (!raw || raw.length > recoveryLimit) return null;
@@ -1343,7 +1344,7 @@ ${personalReviewStyles}
       if (value.version !== 1 || typeof value.prompt !== "string" || value.prompt.length > 32 * 1024 || !Number.isFinite(value.updatedAt) || value.updatedAt > Date.now() || Date.now() - value.updatedAt >= recoveryAge || typeof value.attachmentsMissing !== "boolean") return null;
       const pending = value.pending;
       if (pending && (typeof pending.requestID !== "string" || pending.requestID.length > 128 || pending.prompt !== value.prompt || typeof pending.fileKey !== "string" || pending.relationKey !== void 0 && typeof pending.relationKey !== "string")) return null;
-      return { prompt: value.prompt, attachmentsMissing: value.attachmentsMissing, pending: pending ? { prompt: pending.prompt, fileKey: pending.fileKey, relationKey: pending.relationKey, requestID: pending.requestID, uncertain: true } : null, recoveryUpdatedAt: value.updatedAt };
+      return { prompt: value.prompt, attachmentsMissing: value.attachmentsMissing, pending: pending ? { prompt: pending.prompt, fileKey: pending.fileKey, relationKey: pending.relationKey, requestID: pending.requestID, genuiContext: pending.genuiContext, uncertain: true } : null, recoveryUpdatedAt: value.updatedAt };
     };
     const draftFor = (id) => {
       if (!conversations.has(id)) {
@@ -2388,11 +2389,20 @@ ${personalReviewStyles}
           cancelAnimationFrame(frame);
         };
       }, [replySelection?.key, replyHistory]);
+      const genuiContext = () => {
+        const surfaces = /* @__PURE__ */ new Map();
+        for (const record2 of [...records, ...replyHistory?.records || []]) for (const part of record2.ui_parts || []) {
+          const surface = part.surface;
+          if (surface?.schemaVersion === 1) surfaces.set(surface.surfaceId, { surfaceId: surface.surfaceId, state: surface.state });
+        }
+        for (const [key, draft2] of genuiDrafts) if (key.startsWith(`${agent.agent_id}:`)) surfaces.set(draft2.surfaceId, draft2);
+        return structuredClone([...surfaces.values()]);
+      };
       const send = async (submitted, draftID = conversationID) => {
         const id = draftID, state = draftFor(id), text2 = submitted ?? state.prompt, sentFiles = state.files, sentTarget = state.replyTarget;
         if (!agent || state.submitting || state.attachmentsMissing || readingRef.current || !text2.trim() && !sentFiles.length) return;
         const references = sentFiles.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type })), fileKey = JSON.stringify(references), relationKey = JSON.stringify(sentTarget?.relation);
-        if (!state.pending || state.pending.prompt !== text2 || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey) state.pending = { prompt: text2, fileKey, relationKey, requestID: crypto.randomUUID() };
+        if (!state.pending || state.pending.prompt !== text2 || state.pending.fileKey !== fileKey || state.pending.relationKey !== relationKey) state.pending = { prompt: text2, fileKey, relationKey, requestID: crypto.randomUUID(), genuiContext: genuiContext() };
         const requestID = state.pending.requestID, editVersion = state.editVersion;
         const stream2 = streamFor(conversationID), version = stream2.version;
         updateDraft(id, { submitting: true, error: "" });
@@ -2405,7 +2415,7 @@ ${personalReviewStyles}
         };
         try {
           let result = state.pending.uncertain ? await recover() : null;
-          if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text2, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: references } : {} }, { ...route, userInput: { requestId: requestID, prompt: text2, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {} } });
+          if (!result) result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt: text2, ...state.pending.genuiContext?.length ? { genui_context: state.pending.genuiContext } : {}, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: references } : {} }, { ...route, userInput: { requestId: requestID, prompt: text2, ...sentTarget ? { relation: sentTarget.relation } : {}, ...sentFiles.length ? { attachments: sentFiles.map(({ size, ...file }) => file) } : {} } });
           if (!acceptReceipt(result?.receipt, detail)) {
             result = await recover();
             if (!result) throw new Error(locale?.startsWith("zh") ? "\u5C1A\u672A\u786E\u8BA4\u6301\u4E45\u63A5\u6536\uFF0C\u8BF7\u4FDD\u7559\u8349\u7A3F\u5E76\u91CD\u8BD5\u3002" : "Durable delivery is not confirmed. Keep the draft and retry.");
@@ -2467,7 +2477,9 @@ ${personalReviewStyles}
       };
       const replyToQuestion = async (questionID, prompt, relation) => {
         const requestID = `question-${questionID}`;
-        const result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt, ...relation ? { relation } : {} }, { ...route, userInput: { requestId: requestID, prompt, ...relation ? { relation } : {} } });
+        const questionDraft = draftFor(`${conversationID}:${requestID}`);
+        questionDraft.genuiContext ??= genuiContext();
+        const result = await api.invokeRuntime("agents.send", { agent_id: agent.agent_id, request_id: requestID, prompt, ...questionDraft.genuiContext.length ? { genui_context: questionDraft.genuiContext } : {}, ...relation ? { relation } : {} }, { ...route, userInput: { requestId: requestID, prompt, ...relation ? { relation } : {} } });
         if (result?.state === "queued" && result.queue_id && !draftFor(conversationID).dequeuedIds.has(result.queue_id)) {
           draftFor(conversationID).queueIds.add(result.queue_id);
           updateDraft(conversationID, {});
@@ -2628,6 +2640,8 @@ ${personalReviewStyles}
         return {
           snapshot: snapshot2,
           fallbackText: snapshot2.surface.spec.fallbackText,
+          onStateChange: (state) => genuiDrafts.set(`${agent.agent_id}:${snapshot2.surface.surfaceId}`, { surfaceId: snapshot2.surface.surfaceId, state: structuredClone(state) }),
+          onSync: (request) => call("genui.sync", { agent_id: agent.agent_id, request }),
           onAction: async (request) => deliver(await call("genui.action", { agent_id: agent.agent_id, request })),
           onRefresh: () => call("genui.read", input),
           onRetry: async (resumeHeld) => deliver(await call("genui.read", input), resumeHeld)

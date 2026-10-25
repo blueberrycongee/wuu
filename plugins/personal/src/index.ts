@@ -1126,12 +1126,13 @@ export class PersonalPlugin implements RuntimePlugin {
       return response;
     }
     switch (method) {
-      case "genui.action": case "genui.read": case "genui.retry": {
+      case "genui.sync": case "genui.action": case "genui.read": case "genui.retry": {
         if (!ownerClient) throw new Error("GenUI requires the authenticated owner client capability");
-        exactGenUI(genuiRecord(input), ["agent_id", method === "genui.action" ? "request" : "surface_id", ...(method === "genui.retry" ? ["receipt_id"] : [])]);
+        exactGenUI(genuiRecord(input), ["agent_id", (method === "genui.action" || method === "genui.sync") ? "request" : "surface_id", ...(method === "genui.retry" ? ["receipt_id"] : [])]);
         const agent = await this.conversation(input, method === "genui.read");
         await this.resolve(agent.main_session_id);
         const surface = this.genui(agent), actor = this.genuiActor(agent, "owner");
+        if (method === "genui.sync") return surface.sync(input.request, actor);
         if (method === "genui.action") return surface.act(input.request, actor);
         if (method === "genui.retry") return surface.retrySubmission(text(input, "surface_id", true), actor, clientHost, input.receipt_id === undefined ? undefined : text(input, "receipt_id", true));
         return surface.inspect(text(input, "surface_id", true), actor);
@@ -1212,7 +1213,9 @@ export class PersonalPlugin implements RuntimePlugin {
         const attachments = this.attachmentRefs(input);
         if (typeof input.prompt !== "string") throw new Error("prompt must preserve the exact user input string");
         text(input, "prompt", !attachments?.length); text(input, "request_id", true);
-        const fingerprint = createHash("sha256").update(JSON.stringify({ prompt: input.prompt, attachments, relation: input.relation })).digest("hex");
+        if (input.genui_context !== undefined && !ownerClient) throw new Error("GenUI requires the authenticated owner client capability");
+        const context_blocks = input.genui_context === undefined ? undefined : await this.genui(agent).context(input.genui_context, this.genuiActor(agent, "owner"));
+        const fingerprint = createHash("sha256").update(JSON.stringify({ prompt: input.prompt, attachments, relation: input.relation, genui_context: input.genui_context })).digest("hex");
         const receiptID = id(agent.agent_id, input.request_id as string);
         const receipt = await this.read<InputReceipt>("input", receiptID);
         if (receipt.value && receipt.value.fingerprint !== fingerprint) throw new Error("request_id_conflict");
@@ -1223,7 +1226,7 @@ export class PersonalPlugin implements RuntimePlugin {
             return { fingerprint, revision: 0, created_at: now(), updated_at: now() };
           });
         }
-        return (clientHost ?? this.host).call("host.session.send", { request_id: `personal-chat-${id(agent.agent_id, input.request_id as string)}`, user_input_request_id: input.request_id as string, session_id: agent.main_session_id, ...(input.relation === undefined ? {} : { relation: input.relation as MessageRelation }), input: { prompt: input.prompt, ...(attachments ? { attachments } : {}) }, cause: "personal.chat", if_running: "queue" });
+        return (clientHost ?? this.host).call("host.session.send", { request_id: `personal-chat-${id(agent.agent_id, input.request_id as string)}`, user_input_request_id: input.request_id as string, session_id: agent.main_session_id, ...(input.relation === undefined ? {} : { relation: input.relation as MessageRelation }), input: { prompt: input.prompt, ...(attachments ? { attachments } : {}), ...(context_blocks?.length ? { context_blocks } : {}) }, cause: "personal.chat", if_running: "queue" });
         });
       }
       case "agents.history": {
