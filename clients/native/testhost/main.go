@@ -24,6 +24,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/appserver"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
@@ -140,7 +141,8 @@ func main() {
 	must(os.WriteFile(filepath.Join(root, "published.png"), imageData.Bytes(), 0600))
 	artifactRuntime, err := rt.NewThreadRuntimeForRoot(artifactID, root)
 	must(err)
-	published, err := artifactRuntime.StreamRunner.Tools.(agent.RichToolExecutor).ExecuteResult(ctx,
+	artifactContext := loopdriver.WithExecutionContext(ctx, loopdriver.ExecutionContext{SessionID: artifactID, ExecutionID: "publish-fixture"})
+	published, err := artifactRuntime.StreamRunner.Tools.(agent.RichToolExecutor).ExecuteResult(artifactContext,
 		providers.ToolCall{ID: "publish", Name: "present_artifact", Arguments: `{"path":"published.png"}`})
 	must(err)
 	publishedJSON, err := json.Marshal(published)
