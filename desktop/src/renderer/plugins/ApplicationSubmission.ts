@@ -404,6 +404,11 @@ export class ApplicationSubmission {
     }
     for (const [id, view] of this.results) if (!this.resultOwnerExists(view)) this.results.delete(id);
     for (const operation of this.operations.values()) {
+      const thread = operation.thread && threadForTab(state, operation.thread.id);
+      if (operation.view.phase === "sending" && operation.view.mode === "send" && thread
+        && threadHasAcceptedComposerMessage(thread, operation.message, operation.optimistic.id, operation.previousTurnIDs)) {
+        this.phase(operation, "completed");
+      }
       if (this.resultOwnerExists(operation.view)) continue;
       operation.retainResult = false;
       // Background thread requests still have a real thread owner. Only a

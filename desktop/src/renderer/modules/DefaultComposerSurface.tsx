@@ -134,7 +134,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onRemoveSelection={id => run(controls.setSelections(draft.selections.filter(row => row.id !== id)))}
       queuedMessages={queued(pending?.queued)} guideMessages={queued(pending?.guides)} running={running}
       sendDisabled={!view.tabs.canSubmit || runtime.engineSelectionPending || Boolean(stop)}
-      submitting={editingSubmitting || view.submission.operations.some(row => row.ownerTabId === ownerTabId && (row.phase === "preparing" || row.phase === "sending"))}
+      submitting={editingSubmitting || view.submission.operations.some(row => (row.ownerTabId === ownerTabId || Boolean(presentation.threadId && row.threadId === presentation.threadId)) && (row.phase === "preparing" || row.phase === "sending"))}
       continuation={threadContinuationTarget(view.conversationWorkspace.threads.find(thread => thread.id === presentation.threadId), application.invoke)}
       stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || editingSubmitting || runtime.busy || switching)}
       telemetryTurnID={presentation.turnId} contextUsage={presentation.contextUsage} status={presentation.status}
