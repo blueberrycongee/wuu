@@ -89,10 +89,11 @@ type responsesWebSocketReadEvent struct {
 }
 
 type responsesWebSocketFallbackState struct {
-	active bool
-	reason string
-	until  time.Time
-	ttl    time.Duration
+	active       bool
+	reason       string
+	until        time.Time
+	ttl          time.Duration
+	refreshOnUse bool
 }
 
 // fallbackActiveLocked reports whether the SSE pin is still in force and
@@ -260,6 +261,13 @@ func (c *Client) responsesStreamChatWebSocketAttempt(ctx context.Context, payloa
 	session.mu.Lock()
 	now := time.Now()
 	if session.fallbackActiveLocked(now) {
+		// A peer's message-size limit will not recover while a conversation
+		// keeps growing. Keep active sessions on SSE, but allow an idle
+		// session to expire and probe WebSocket again later.
+		if session.fallback.refreshOnUse {
+			session.fallback.until = now.Add(session.fallback.ttl)
+			c.responsesWebSocketScheduleFallbackExpiryLocked(session, session.fallback.ttl)
+		}
 		reason := session.fallback.reason
 		fallback := session.responsesWebSocketFallbackMetaLocked(now, responsesWebSocketFallbackPinReused)
 		session.mu.Unlock()
@@ -669,13 +677,13 @@ func (c *Client) readResponsesWebSocket(ctx context.Context, session, fallbackSe
 			c.responsesWebSocketReleaseLocked(session, readCh)
 			var fallback responsesWebSocketFallbackMeta
 			if cacheConnection {
-				fallback = c.responsesWebSocketActivateFallbackLocked(session, "stream_error_after_provider_event", streamCause)
+				fallback = c.responsesWebSocketActivateFallbackLocked(session, "stream_error_after_provider_event", frame.err)
 			} else {
 				c.responsesWebSocketInvalidateConnectionLocked(session, websocket.StatusInternalError, "stream_error_after_provider_event")
 			}
 			session.mu.Unlock()
 			if !cacheConnection {
-				fallback = c.responsesWebSocketMarkFallback(fallbackSession, "stream_error_after_provider_event", streamCause)
+				fallback = c.responsesWebSocketMarkFallback(fallbackSession, "stream_error_after_provider_event", frame.err)
 			}
 			streamErr := newResponsesWebSocketFallbackError(
 				"stream_error_after_provider_event",
@@ -1038,10 +1046,11 @@ func (c *Client) responsesWebSocketMarkFallbackLocked(session *responsesWebSocke
 		pinStatus = responsesWebSocketFallbackPinExtended
 	}
 	session.fallback = responsesWebSocketFallbackState{
-		active: true,
-		reason: reason,
-		until:  until,
-		ttl:    ttl,
+		active:       true,
+		reason:       reason,
+		until:        until,
+		ttl:          ttl,
+		refreshOnUse: websocket.CloseStatus(err) == websocket.StatusMessageTooBig,
 	}
 	// A pinned session holds no connection, so the regular idle expiry never
 	// runs for it. Arm a timer so the entry is reclaimed (and the websocket
@@ -1078,6 +1087,9 @@ func (s *responsesWebSocketSession) responsesWebSocketFallbackMetaLocked(now tim
 }
 
 func responsesWebSocketFallbackTTL(reason string, err error) time.Duration {
+	if websocket.CloseStatus(err) == websocket.StatusMessageTooBig {
+		return responsesWebSocketLongFallbackTTL
+	}
 	if strings.TrimSpace(reason) == responsesWebSocketConnectionLimitCode {
 		return responsesWebSocketPressureFallbackTTL
 	}
