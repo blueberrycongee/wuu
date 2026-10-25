@@ -47,6 +47,7 @@ app.whenReady().then(async () => {
         focused: document.hasFocus(),
         scrollTop: node.scrollTop, scrollHeight: node.scrollHeight, clientHeight: node.clientHeight,
         mask: style.maskImage,
+        motion: { preference: document.documentElement.dataset.appearanceMotion, reduced: style.getPropertyValue("--motion-reduced"), parentReduced: getComputedStyle(node.parentElement).getPropertyValue("--motion-reduced") },
         bounds: node.getBoundingClientRect().toJSON(),
         animations: node.getAnimations().map(animation => ({
           name: animation.animationName, playState: animation.playState,
@@ -516,7 +517,12 @@ app.whenReady().then(async () => {
       assert.equal((await sample(name)).mask, "none", `${name} remains unmasked`);
     }
     await media();
-    await evaluate(() => { document.documentElement.dataset.appearanceMotion = "reduce"; });
+    await evaluate(() => {
+      const preferences = JSON.parse(localStorage.getItem("wuu.appearance.v1") || "{}");
+      localStorage.setItem("wuu.appearance.v1", JSON.stringify({ ...preferences, motion: "reduce" }));
+      window.dispatchEvent(new Event("wuu-appearance-change"));
+    });
+    await waitFor(() => document.documentElement.dataset.appearanceMotion === "reduce");
     assert.equal((await sample("app-reduced-motion")).mask, "none");
     console.log("PASS: sidebar fades track scroll bounds across stream, control/window focus, light/dark, 14/20px, wide/narrow, and accessibility states.");
     }

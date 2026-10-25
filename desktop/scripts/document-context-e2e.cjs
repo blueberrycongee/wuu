@@ -163,7 +163,9 @@ async function dragFirstPage() {
   });
   const bounds = await evaluate(() => {
     const span = document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"] .textLayer span');
-    const r = span.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(span);
+    const r = range.getBoundingClientRect();
     window.__pdfDragEvents = [];
     window.__pdfDragAbort = new AbortController();
     for (const type of ['pointerdown', 'pointermove', 'pointerup']) document.addEventListener(type, event => {
@@ -171,8 +173,8 @@ async function dragFirstPage() {
       if (window.__pdfDragEvents.length < 32) window.__pdfDragEvents.push({ type, buttons: event.buttons,
         trusted: event.isTrusted, x: event.clientX, y: event.clientY, target: `${target.nodeName}.${target.className || ''}` });
     }, { capture: true, signal: window.__pdfDragAbort.signal });
-    // Start and end inside the glyph span, rather than on the surrounding PDF layer.
-    return { start: Math.ceil(r.left), end: Math.floor(r.right), y: Math.round((r.top + r.bottom) / 2) };
+    // Use glyph geometry: PDF text spans can be narrower than their text range.
+    return { start: Math.ceil(r.left), end: Math.floor(r.right) - 1, y: Math.round((r.top + r.bottom) / 2) };
   });
   await focusWindow();
   const ranges = [];
@@ -396,9 +398,12 @@ async function run() {
   await click('.pdf-quote-entry .pdf-quote-source-link');
   await waitFor(() => {
     const root = document.querySelector('[data-workspace-pdf-preview]').shadowRoot;
-    const top = root.querySelector('.workspace-pdf-container').getBoundingClientRect().top;
+    const container = root.querySelector('.workspace-pdf-container');
+    const top = container.getBoundingClientRect().top;
     const pageTop = root.querySelector('.page[data-page-number="2"]').getBoundingClientRect().top;
-    return root.querySelector('.workspace-pdf-page-count')?.textContent === '2 / 3' && Math.abs(pageTop - top) <= 4;
+    const destination = Math.min(pageTop - top + container.scrollTop, container.scrollHeight - container.clientHeight);
+    return root.querySelector('.workspace-pdf-page-count')?.textContent === '2 / 3'
+      && Math.abs(container.scrollTop - destination) <= 4;
   });
   await capture('03-second-page-sent-source-return');
   assert.equal(await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.workspace-pdf-page-count').textContent), '2 / 3');
@@ -461,8 +466,8 @@ async function run() {
   assert.notEqual(revision(beforeReplacement), revision(afterReplacement));
   assert.equal(await selectPages(), refreshedQuote); await quoteSelection();
   await waitFor(() => document.querySelectorAll('.composer-file-selection-card').length === 2);
-  await nativeText('.workspace-document-composer textarea', 'Compare these two observed workspace revisions.');
-  await click('.workspace-document-composer .composer-send-button');
+  await nativeText('[data-main-conversation-composer] textarea', 'Compare these two observed workspace revisions.');
+  await click('[data-main-conversation-composer] .composer-send-button');
   await waitFor(async id => (await window.wuu.resumeThread(id)).thread.turns.filter(turn => turn.status === 'completed').length >= 5, threadID, 60000);
   const workspaceParts = (await currentParts()).filter(part => part.source?.pdf && !part.source.pdf.artifact_uri);
   assert.equal(workspaceParts.length, 2);
