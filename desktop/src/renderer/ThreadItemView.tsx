@@ -225,7 +225,7 @@ function BuiltInThreadItemView({
         && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
-          void application.invoke("thread.activate", { threadId: relatedSessionID }).catch(showErrorToast);
+          void application.invoke("conversation.open-split", { threadId: relatedSessionID }).catch(showErrorToast);
         }
       };
       return (

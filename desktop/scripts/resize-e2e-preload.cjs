@@ -359,7 +359,11 @@ const desktopAPI = {
     browserSurface: async (workdir, tabID) => ({ workdir, tabID, url: "https://resize.invalid/local-fixture", title: "Local responsive fixture", loading: false, canGoBack: false, canGoForward: false }),
     reportBrowserBounds: (workdir, tabID, rect) => ipcRenderer.send("test:browser-bounds", { workdir, tabID, rect }),
     reportBrowserPiPHostLayout: payload => ipcRenderer.send("test:pip-host", payload),
+    browserCommand: async ({ workdir, tabID }) => desktopAPI.browserSurface(workdir, tabID),
     onBrowserSurface: () => () => undefined,
+    onBrowserTabAdopted: () => () => undefined,
+    onBrowserUserInput: () => () => undefined,
+    onBrowserDock: () => () => undefined,
     onBrowserInvalidate: () => () => undefined,
     suppressBrowserOverlay: () => undefined
   } : {}),

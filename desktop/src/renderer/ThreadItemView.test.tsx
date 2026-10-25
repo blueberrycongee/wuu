@@ -745,7 +745,7 @@ describe("ThreadItemView", () => {
     await act(async () => actions[0].click());
     expect(copy).toHaveBeenCalledWith(body);
     act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("thread.activate", { threadId: "source-session" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("conversation.open-split", { threadId: "source-session" });
     expect(onEditMessage).not.toHaveBeenCalled();
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");
@@ -768,7 +768,7 @@ describe("ThreadItemView", () => {
     expect(time?.nextElementSibling).toBe(copy);
   });
 
-  it("navigates directly to the related session", () => {
+  it("opens the related session in a split pane", () => {
     const invoke = vi.spyOn(application, "invoke").mockResolvedValue(undefined);
     render({
       item: {
@@ -793,7 +793,7 @@ describe("ThreadItemView", () => {
     expect(openRelated).toBeDefined();
 
     act(() => openRelated!.click());
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("thread.activate", { threadId: "20260817-171746-edd1069c0780f11a" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("conversation.open-split", { threadId: "20260817-171746-edd1069c0780f11a" });
   });
 
 });
