@@ -122,6 +122,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Keep the main conversation input centered across the full canvas regardless of the right tool rail. Let the rail scroll above the input in short windows and when drafts expand.
+
 - Reduce redundant desktop hover labels, reveal clipped names only when needed, and unify useful hints at the saved UI text size with readable wrapping. Keep hints next to their controls, prevent nested duplicates, and preserve control layout and click targets.
 
 - Remove the app-wide Back and Forward buttons and page-history stack, reclaiming their header space. Website navigation keeps its own Back and Forward controls.

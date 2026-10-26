@@ -377,6 +377,8 @@ export function useConversationScrollState({
     dockComposerHeightRef.current = nextHeight;
     pane?.style.setProperty("--dock-composer-height", heightValue);
     pane?.style.setProperty("--conversation-input-inset", insetValue);
+    // The sibling tool rail scrolls above the dock instead of narrowing it.
+    pane?.closest<HTMLElement>(".app-shell")?.style.setProperty("--workspace-conversation-dock-height", heightValue);
   }, [dockComposerNode]);
   /** Returns whether the reserved status-row space changed. */
   const syncConversationStatusSpace = useCallback((): boolean => {

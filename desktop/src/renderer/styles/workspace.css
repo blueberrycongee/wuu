@@ -93,7 +93,7 @@
   align-items: center;
   gap: var(--space-1);
   width: var(--workspace-tool-rail-width);
-  max-height: calc(100% - var(--workbench-top, 0px) - var(--canvas-titlebar-height) - var(--space-2) * 2 - var(--conversation-pane-inset));
+  max-height: calc(100% - var(--workbench-top, 0px) - var(--canvas-titlebar-height) - var(--space-2) * 2 - var(--conversation-pane-inset) - var(--workspace-tool-rail-bottom-clearance, 0px));
   overflow-y: auto;
   padding: var(--space-1) calc(var(--space-1) / 2);
   border: 1px solid var(--hairline);
@@ -120,8 +120,15 @@
   --workspace-tool-rail-inset: var(--workspace-tool-rail-reserve);
 }
 
+/* The dock uses the full canvas width. In short windows the rail scrolls
+ * above it, including when attachments or an expanded draft grow upward. */
+.app-shell:not(.right-panel-open):has([data-main-conversation-composer="dock"]) .workspace-tool-rail,
+.app-shell.workspace-conversation-active:has([data-main-conversation-composer="dock"]) .workspace-tool-rail {
+  --workspace-tool-rail-bottom-clearance: var(--workspace-conversation-dock-height, 0px);
+}
+
 /* Keep the viewport and its scrollbar at the canvas edge. Only the message
- * content and floating controls yield space to the rail. */
+ * content and floating status controls yield space to the rail. */
 .conversation-pane .scroll-region-content {
   padding-right: var(--workspace-tool-rail-inset, 0px);
 }

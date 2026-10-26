@@ -209,8 +209,8 @@
     ),
     var(--environment-panel-reserved-width)
   );
-  /* Bottom controls and the reading content share the available width beside
-     the tool rail, so their centerline stays aligned as the rail changes. */
+  /* Floating status controls follow the reading content beside the tool rail.
+     The bottom composer uses the full canvas independently of the rail. */
   --conversation-visible-inset-left: 0px;
   --conversation-visible-inset-right: var(--workspace-tool-rail-inset, 0px);
   --dock-composer-height: 0px;
@@ -1190,8 +1190,8 @@
   position: absolute;
   bottom: calc(var(--dock-composer-height, 0px) + var(--conversation-status-gap));
   left: var(--conversation-visible-inset-left);
-  /* Status controls share the composer's centerline. Its symmetric scrollbar
-     gutters do not shift the center, so no scrollbar term is needed here. */
+  /* Status controls share the reading column's centerline. Its symmetric
+     scrollbar gutters do not shift the center. */
   right: var(--conversation-visible-inset-right);
   /* The width fits between the insets like the composer's does; a wider
      box would be pinned to the left inset and leave the centreline. */
