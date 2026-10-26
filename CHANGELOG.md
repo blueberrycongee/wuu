@@ -12,6 +12,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Preview `run_code` source in activity rows without a description, and show program output alongside the full source when expanded.
 
+- Hide the navigation ribbon with a footer button or by dragging left past its compact width, and restore it from the upper-left corner. Preview drag collapse before release, with pull-back and Escape cancellation. Remember its visibility and previous width independently of the conversation sidebar.
+
 - Show a temporary conversation immediately in the sidebar's Recent section when starting a draft. Keep its title stable while typing. Hide unsent drafts when switching conversations, preserve their input, and keep submitted conversations visible.
 
 - Select application business state, complete agent engines, model transports, retry/scheduling policies, and shared model capacity through public provider contracts. Expose immutable graph identities, resolved dependencies, and exact authoring types; composition version 3 retains explicit legacy migration provenance.
@@ -185,6 +187,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Align the navigation ribbon's collapse and account controls with the main composer and status icons, including wrapped footer rows and larger UI fonts.
 
 - Round the main conversation dock's own background and restore exposed canvas corners immediately when closing the workspace panel, preventing transient square corners during compositing.
 

@@ -19,6 +19,7 @@ export interface NavigationRibbonPreferences {
   order: string[];
   browserTabsMigrated?: true;
   width?: number;
+  collapsed?: boolean;
 }
 
 const storageKey = "wuu.navigation-ribbon.v1";
@@ -57,6 +58,7 @@ function normalizePreferences(value: unknown): NavigationRibbonPreferences {
   }
   return {
     websites,
+    ...(input.collapsed === true ? { collapsed: true } : {}),
     ...(typeof input.width === "number" && Number.isFinite(input.width) ? { width: Math.max(RIBBON_COMPACT_WIDTH, Math.min(RIBBON_MAX_WIDTH, input.width)) } : {}),
     ...(input.browserTabsMigrated === true ? { browserTabsMigrated: true as const } : {}),
     order: Array.isArray(input.order)

@@ -88,6 +88,7 @@ import { JumpToLatestPill } from "./JumpToLatestPill";
 import { useApplicationNavigationState } from "./modules/ApplicationNavigationState";
 import { motionDurationMs } from "./motion";
 import { useNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
+import { RibbonVisibilityToggle } from "./RibbonVisibilityToggle";
 import { ProjectActionsProvider } from "./ProjectActions";
 import { isProjectCoordinator, PROJECT_SESSION_SOURCE, projectSessionsOf } from "./ProjectSessions";
 import { ProjectStatusCapsule } from "./ProjectViews";
@@ -262,8 +263,21 @@ export function App({ application, slots, shellPluginId }: {
   }, [application]);
   const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
   const [runtimeControlsTarget, setRuntimeControlsTarget] = useState<HTMLElement | null>(null);
-  const savedRibbonWidth = useNavigationRibbonPreferences().width ?? SIDEBAR_RIBBON_WIDTH;
-  const ribbonWidth = nativeRibbonPresent ? savedRibbonWidth : SIDEBAR_RIBBON_WIDTH;
+  const ribbonPreferences = useNavigationRibbonPreferences();
+  const ribbonCollapsed = nativeRibbonPresent && ribbonPreferences.collapsed === true;
+  const [ribbonInset, setRibbonInset] = useState(0);
+  const ribbonWidth = ribbonCollapsed ? ribbonInset : nativeRibbonPresent ? ribbonPreferences.width ?? SIDEBAR_RIBBON_WIDTH : SIDEBAR_RIBBON_WIDTH;
+  useLayoutEffect(() => {
+    if (!ribbonCollapsed) return;
+    const shell = appShellRef.current!;
+    // CSS owns the concentric frame inset; panel docking uses its resolved width.
+    const measure = () => setRibbonInset(Number.parseFloat(getComputedStyle(shell, "::before").left));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(shell);
+    const stopObserving = observeAppearance(measure);
+    return () => { observer.disconnect(); stopObserving(); };
+  }, [ribbonCollapsed]);
   const embeddedSettings = !poppedOutMode && nativeRibbonPresent;
   const [mainComposerFocusRequest, setMainComposerFocusRequest] =
     useState<MainComposerFocusRequest | null>(null);
@@ -1324,7 +1338,7 @@ export function App({ application, slots, shellPluginId }: {
   const sidebarVisible = !poppedOutMode;
   const sidebarToggleVisible = sidebarVisible;
 
-  const shellClassName = `app-shell navigation-ribbon-layout${poppedOutMode ? " popped-out-shell" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+  const shellClassName = `app-shell navigation-ribbon-layout${ribbonCollapsed ? " ribbon-collapsed" : ""}${poppedOutMode ? " popped-out-shell" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
     sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
   }${
     sidebarDrawerMode &&
@@ -1343,8 +1357,8 @@ export function App({ application, slots, shellPluginId }: {
   }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${workspaceConversationActive ? " workspace-conversation-active" : ""}${resizingSplit ? " resizing-split" : ""}`;
   const shellStyle = {
     "--sidebar-width": `${effectiveSidebarWidth}px`,
-    "--sidebar-ribbon-width": `${ribbonWidth}px`,
-    "--sidebar-ribbon-extra": `${ribbonWidth - SIDEBAR_RIBBON_WIDTH}px`,
+    "--sidebar-ribbon-width": ribbonCollapsed ? "var(--conversation-pane-inset)" : `${ribbonWidth}px`,
+    "--sidebar-ribbon-extra": `calc(var(--sidebar-ribbon-width) - ${SIDEBAR_RIBBON_WIDTH}px)`,
     "--sidebar-ribbon-compact-width": `${SIDEBAR_RIBBON_WIDTH}px`,
     "--sidebar-open-width": `${sidebarWidth}px`,
     "--workspace-sheet-left": `${effectiveSidebarWidth}px`,
@@ -1959,6 +1973,7 @@ export function App({ application, slots, shellPluginId }: {
           <SidePanelToggleIcon side="left" open={!sidebarCollapsed || sidebarDrawerVisible} />
         </button>
       ) : null}
+      {!poppedOutMode && ribbonCollapsed ? <RibbonVisibilityToggle collapsed nativeTooltip={showingWebPage && !settingsOpen && !accountOpen} /> : null}
       {!poppedOutMode && workspaceControlsVisible ? (
         <button
           className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"

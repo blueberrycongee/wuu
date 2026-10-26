@@ -1586,7 +1586,7 @@ export function Composer({
           </div>
           </div>
         {controlsBelowInput ? (
-          <ComposerFooter collapsed={controlsInRail}>
+          <ComposerFooter collapsed={controlsInRail} alignNavigation={mainConversation && variant === "dock"}>
             {controlsInRail ? null : workspaceControls}
             {!controlsInRail && !topAccessory ? <div className="composer-footer-runtime">{runtimeControls}</div> : null}
           </ComposerFooter>
@@ -1697,21 +1697,51 @@ export function Composer({
   return <>{attachmentPickers}{nativeComposer}</>;
 }
 
-function ComposerFooter({ collapsed, children }: { collapsed: boolean; children: ReactNode }): JSX.Element {
+function ComposerFooter({ collapsed, alignNavigation, children }: { collapsed: boolean; alignNavigation: boolean; children: ReactNode }): JSX.Element {
   const shellRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (collapsed) return;
+    if (collapsed && !alignNavigation) return;
     const shell = shellRef.current!;
     const content = contentRef.current!;
     // Keep the last measured height while controls move into the rail, so the
     // dock releases their actual footprint smoothly, including wrapped rows.
-    const measure = () => shell.style.setProperty("--composer-footer-height", `${content.offsetHeight}px`);
+    const dock = alignNavigation ? content.closest<HTMLElement>('[data-main-conversation-composer="dock"]') : null;
+    const appShell = dock?.closest<HTMLElement>(".app-shell");
+    const clearAlignment = () => {
+      appShell?.style.removeProperty("--main-composer-row-distance");
+      appShell?.style.removeProperty("--main-composer-status-bottom");
+    };
+    const measure = () => {
+      if (!collapsed) shell.style.setProperty("--composer-footer-height", `${content.offsetHeight}px`);
+      const actions = dock?.querySelector<HTMLElement>(".composer-input-actions");
+      const status = content.querySelector<HTMLElement>(".composer-footer-runtime");
+      if (!appShell || !actions || !dock?.offsetWidth) {
+        clearAlignment();
+        return;
+      }
+      // Align the bottom navigation row with the lowest visible composer row.
+      // When status controls move into the tool rail, that row is the input.
+      const bottom = appShell.getBoundingClientRect().bottom;
+      const actionRect = actions.getBoundingClientRect();
+      const actionCenter = actionRect.top + actionRect.height / 2;
+      const statusRect = !collapsed && status?.offsetHeight ? status.getBoundingClientRect() : null;
+      const statusCenter = statusRect ? statusRect.top + statusRect.height / 2 : actionCenter;
+      appShell.style.setProperty("--main-composer-status-bottom", `${bottom - statusCenter}px`);
+      if (statusRect) appShell.style.setProperty("--main-composer-row-distance", `${statusCenter - actionCenter}px`);
+      else appShell.style.removeProperty("--main-composer-row-distance");
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(content);
-    return () => observer.disconnect();
-  }, [collapsed]);
+    if (dock) observer.observe(dock);
+    if (appShell) observer.observe(appShell);
+    const visibility = new MutationObserver(measure);
+    for (let ancestor = dock; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+      visibility.observe(ancestor, { attributes: true, attributeFilter: ["hidden", "inert"] });
+    }
+    return () => { observer.disconnect(); visibility.disconnect(); clearAlignment(); };
+  }, [collapsed, alignNavigation]);
   return (
     <div ref={shellRef} className="composer-footer-shell" data-collapsed={collapsed || undefined} inert={collapsed}>
       <div ref={contentRef} className="composer-footer">{children}</div>
