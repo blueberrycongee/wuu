@@ -225,6 +225,27 @@ the same self-started fixture server across both themes, 1000/420px windows and
 15/20px text. Measurements and screenshots go to `desktop/out/stream-code-cursor/`
 (`WUU_CODE_CURSOR_OUTPUT` overrides this).
 
+### First-message continuity acceptance
+
+After building the desktop and core, run `npm --prefix desktop run test:e2e:first-send`.
+`WUU_DESKTOP_CORE` selects the tested core. The fixture uses a fresh temporary
+profile and a loopback scripted provider, with real Electron input, preload,
+main process and Go admission. It gates thread creation, turn admission and
+notifications separately; `WUU_FIRST_SEND_ORDER=event-first|ack-first|rejected`
+selects the delivery order or an explicit rejection. Repeated Enter must admit
+one message, and its bubble must remain visible in every sampled frame without
+restarting its entrance. Later draft edits must survive admission and failures.
+Set `WUU_FIRST_SEND_ATTACHMENT=1` for an attached file, and
+`WUU_FIRST_SEND_THEME`, `WUU_FIRST_SEND_FONT`, and `WUU_FIRST_SEND_WIDTH` for the
+visual matrix. Chinese input uses native text insertion, not OS IME candidates.
+
+Desktop session CI runs all three orders plus rapid identity adoption during the
+entrance, including dark/narrow/large-text attachment coverage, and uploads `report.json`, per-frame `frames.json`, logs,
+screenshots and core/renderer hashes. `WUU_FIRST_SEND_OUTPUT` chooses the evidence
+directory; `WUU_FIRST_SEND_DESKTOP` can select an already-built baseline for a
+repeatable RED comparison. Linux headless rendering is not physical macOS
+acceptance; use the documented disposable Electron test rig.
+
 ### Next-message suggestion acceptance
 
 `make test-plugins` includes the shipped next-message JSONL runtime and desktop

@@ -189,6 +189,25 @@ open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
 窗口和 15/20px 字号。测量结果和截图保存在 `desktop/out/stream-code-cursor/`，可用
 `WUU_CODE_CURSOR_OUTPUT` 更改目录。
 
+### 首条消息连续性验收
+
+构建桌面和核心后，运行 `npm --prefix desktop run test:e2e:first-send`；
+`WUU_DESKTOP_CORE` 指定被测核心。脚本使用独立临时配置和 loopback 合成模型服务，
+通过真实 Electron 键盘输入、preload、主进程与 Go 接收链路，分别暂停会话创建、
+消息接收与通知。用 `WUU_FIRST_SEND_ORDER=event-first|ack-first|rejected` 选择
+通知先到、响应先到或明确拒绝。重复 Enter 只能接收一条消息；气泡在每个采样帧中
+必须连续可见，不能重新播放入场动画。确认或失败均不得覆盖用户后来编辑的草稿。
+`WUU_FIRST_SEND_ATTACHMENT=1` 添加附件；`WUU_FIRST_SEND_THEME`、
+`WUU_FIRST_SEND_FONT`、`WUU_FIRST_SEND_WIDTH` 控制主题、字号与窗口宽度。
+中文采用原生文本插入，不模拟操作系统输入法候选词选择。
+
+桌面 session CI 运行三种顺序和入场动画期间快速确认的场景，包含深色、窄窗口、
+大字号和附件，并上传
+`report.json`、逐帧 `frames.json`、日志、截图以及核心和渲染器哈希。
+`WUU_FIRST_SEND_OUTPUT` 指定证据目录，`WUU_FIRST_SEND_DESKTOP` 可选择已构建的
+基线，复现修复前失败。Linux 无头渲染不等同于实体 macOS 验收；使用本文说明的
+独立 Electron 测试环境。
+
 ### MCP 连接生命周期
 
 构建核心后，运行 loopback 生命周期验收：

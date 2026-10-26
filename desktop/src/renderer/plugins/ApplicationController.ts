@@ -346,7 +346,7 @@ export class ApplicationController implements HostApplicationService {
     getState: () => this.state, updateState: update => this.updateState(update), subscribeState: listener => this.subscribe(listener),
     changed: () => this.publish(), cacheThreads: threads => this.sidebarCache.cacheSidebarThreads(threads),
     activateThread: (threadId, signal) => this.invoke("thread.activate", { threadId }, { signal }),
-    getNavigation: () => ({ revision: this.navigationRequest, pending: Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady) }),
+    getNavigation: () => ({ revision: this.navigationRequest, pending: Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady), intentId: this.navigationIntent?.id }),
   });
   private conversationActionsOwner?: ApplicationConversationActions;
   private get applicationConversationActions(): ApplicationConversationActions {

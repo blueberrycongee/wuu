@@ -325,7 +325,9 @@ export class ApplicationSubmission {
         }
         const draft = this.options.getDraft(source.id);
         rememberCollapsedPromptParts(thread.id, draft.prompt, readCollapsedPromptParts(source.id, draft.prompt));
-        const created = thread;
+        // Thread identity adoption must also adopt the already-visible first
+        // message. Keeping only the draft would erase its bubble until admission.
+        const created = upsertTurn(thread, optimistic);
         this.options.updateState(state => {
           const stillTarget = state.activeSessionTabID === source.id && sameRuntimeContext(state.activeContext, context);
           return { ...(stillTarget ? setThreadForPane(state, state.activePane, created) : state),

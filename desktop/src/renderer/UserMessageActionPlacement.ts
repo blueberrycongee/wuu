@@ -11,6 +11,7 @@ export function placeUserMessageActions(actions: HTMLDivElement | null): (() => 
   const visible = (): boolean => (touch.matches && inView) || block.matches(":hover, :focus-within");
   let frame = 0;
   let tracking = false;
+  let disposed = false;
 
   const place = (): void => {
     if (!visible()) return;
@@ -126,8 +127,14 @@ export function placeUserMessageActions(actions: HTMLDivElement | null): (() => 
   // Focusout fires before the browser updates :focus-within.
   function scheduleTracking(): void { queueMicrotask(track); }
   track();
-  void document.fonts?.ready.then(() => { if (block.isConnected) schedule(); });
+  // FontFaceSet.ready flushes pending styles. Read it after this commit's refs
+  // attach so each message does not flush the preceding message's style writes.
+  queueMicrotask(() => {
+    if (disposed || !block.isConnected) return;
+    void document.fonts?.ready.then(() => { if (!disposed && block.isConnected) schedule(); });
+  });
   return () => {
+    disposed = true;
     cancelAnimationFrame(frame);
     observer.disconnect();
     intersection.disconnect();

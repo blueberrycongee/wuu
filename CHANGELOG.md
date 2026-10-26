@@ -184,6 +184,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep the first sent message visible through new-conversation creation and admission, without flashing or replaying its entrance; preserve newer drafts and recover rejected sends.
+
 - Round the main conversation dock's own background and restore exposed canvas corners immediately when closing the workspace panel, preventing transient square corners during compositing.
 
 - Keep maximized workspace conversations and tools in one tab switching flow: restore the last visited conversation when closing a resource, retain the expanded strip when switching conversations or closing the final tool, and prevent double-clicks from closing tool tabs.

@@ -957,6 +957,11 @@ export function useConversationScrollState({
       suppressAutoFollowRearmRef.current = false;
       setAutoFollowOverflowAnchor(node, true);
       rememberActiveThreadScrollSnapshot(node, false);
+      // App can register the submission after this hook's layout pass, with
+      // the bubble already mounted. Install both motions before its first
+      // paint rather than flashing full opacity before the observer catches up.
+      positionSubmittedMessageRef.current?.(true);
+      reconcileSubmittedArrival();
       return;
     }
     const smooth = !prefersReducedMotion();
@@ -1005,6 +1010,7 @@ export function useConversationScrollState({
     cancelScrollMotion,
     setAutoFollow,
     splitConversation,
+    reconcileSubmittedArrival,
   ]);
 
   useLayoutEffect(() => {
