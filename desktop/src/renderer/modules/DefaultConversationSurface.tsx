@@ -71,7 +71,8 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
   const editing = view.conversationActions.editing;
   const editState = editing ? { threadID: editing.threadId, turnID: editing.turnId, itemID: editing.itemId, pane: editing.pane, submitting: editing.submitting } : undefined;
   const questions = useMemo(() => structuredClone(view.conversationActions.questions) as UserQuestionRequest[], [view.conversationActions.questions]);
-  const pending = view.submission.pendingCreations.find(row => row.ownerTabId === view.tabs.activeTabId);
+  const pending = view.submission.pendingCreations.find(row => row.ownerTabId === view.tabs.activeTabId
+    && !view.submission.operations.some(operation => operation.operationID === row.operationID && operation.draftPending));
   const split = Boolean(primary && secondary);
   const empty = !pending && !primary?.turns.length && !details.some(entry => entry.threadID === primary?.id);
   const switching = Boolean(view.tabs.pending && !view.tabs.pending.contentReady);

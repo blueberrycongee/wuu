@@ -325,9 +325,9 @@ export class ApplicationSubmission {
         }
         const draft = this.options.getDraft(source.id);
         rememberCollapsedPromptParts(thread.id, draft.prompt, readCollapsedPromptParts(source.id, draft.prompt));
-        // Thread identity adoption must also adopt the already-visible first
-        // message. Keeping only the draft would erase its bubble until admission.
-        const created = upsertTurn(thread, optimistic);
+        // A retained draft owns the waiting input until turn admission. Only
+        // independent submissions already have a visible optimistic message.
+        const created = operation.draft ? thread : upsertTurn(thread, optimistic);
         this.options.updateState(state => {
           const stillTarget = state.activeSessionTabID === source.id && sameRuntimeContext(state.activeContext, context);
           return { ...(stillTarget ? setThreadForPane(state, state.activePane, created) : state),
@@ -447,6 +447,7 @@ export class ApplicationSubmission {
       const thread = operation.thread && threadForTab(state, operation.thread.id);
       if (operation.view.phase === "sending" && operation.view.mode === "send" && thread
         && threadHasAcceptedComposerMessage(thread, operation.message, operation.optimistic.id, operation.previousTurnIDs)) {
+        this.releaseDraft(operation);
         this.phase(operation, "completed");
       }
       if (operation.view.draftPending && operation.thread) {

@@ -23,7 +23,7 @@ Object.assign(process.env, { WUU_HOME: home, WUU_DESKTOP_CORE: process.env.WUU_D
 delete process.env.ELECTRON_RENDERER_URL;
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const creation = deferred(), admission = deferred(), acknowledgement = deferred();
-const report = { status: 'running', order, source: process.env.WUU_E2E_SOURCE_COMMIT, checks: [], ipc: [], events: [], milestones: [], requests: [], screenshots: [], limitations: ['Linux Electron rendering and native keyboard input; not physical macOS acceptance.', 'Chinese text uses native insertText; OS IME candidate selection is not simulated.', 'The real transport is gated deterministically; no paid model or user profile.'] };
+const report = { status: 'running', order, source: process.env.WUU_E2E_SOURCE_COMMIT, checks: [], ipc: [], events: [], milestones: [], requests: [], screenshots: [], limitations: [`${process.platform} Electron rendering and native keyboard input; not physical-device acceptance.`, 'Chinese text uses native insertText; OS IME candidate selection is not simulated.', 'The real transport is gated deterministically; no paid model or user profile.'] };
 let win, creating = false, admitting = false, admitted, heldEvents = [], holdEvents = false, sendEvent, providerResponse, acknowledgementReturned = false, sequence = 0;
 const milestone = name => { const entry = { name, sequence: ++sequence }; report.milestones.push(entry); return entry.sequence; };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
@@ -36,7 +36,7 @@ ipcMain.handle = (channel, handler) => register(channel, async (event, ...args) 
   if (channel === 'wuu:thread-start') { report.ipc.push({ channel, args }); creating = true; await creation.promise; }
   if (channel === 'wuu:turn-queue') report.ipc.push({ channel, args });
   if (channel === 'wuu:turn-start') {
-    report.ipc.push({ channel, thread: args[0], prompt: args[1], files: args[3], clientId: args[8] }); admitting = true;
+    report.ipc.push({ channel, thread: args[0], prompt: args[1], images: args[2], files: args[3], clientId: args[8] }); admitting = true;
     await admission.promise;
     if (order === 'rejected') throw new Error('First-send fixture: admission rejected');
     holdEvents = true;
@@ -94,7 +94,7 @@ const composer = '[data-main-conversation-composer] textarea:not(.composer-respo
 async function nativeTarget(selector) {
   // Focus and startup layout can move the composer after its first render.
   // Observe a stable, editable hit target before sending the single native click.
-  win.focus(); win.webContents.focus();
+  win.show(); win.focus(); win.webContents.focus();
   await until(() => win.isFocused() && win.webContents.isFocused(), 'native window focus');
   await evaluate(() => document.fonts.ready.then(() => undefined));
   const point = await until(() => evaluate(async selector => {
@@ -124,11 +124,13 @@ async function type(text) {
   const point = await nativeTarget(composer);
   for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) win.webContents.sendInputEvent({ type, button: 'left', clickCount: 1, ...point });
   await until(() => evaluate(selector => [...document.querySelectorAll(selector)].some(el => document.activeElement === el), composer), 'native composer focus');
-  win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'a', modifiers: ['control'] });
-  win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'a', modifiers: ['control'] });
+  win.webContents.selectAll();
   await until(() => evaluate(selector => [...document.querySelectorAll(selector)].some(el => document.activeElement === el && el.selectionStart === 0 && el.selectionEnd === el.value.length), composer), 'native select all');
   await win.webContents.insertText(text);
   await until(() => evaluate(({ selector, text }) => [...document.querySelectorAll(selector)].some(el => el.value === text), { selector: composer, text }), 'native text inserted');
+  // Subsequent input goes directly to webContents; keep real user typing out
+  // of the isolated fixture while admission and rendering are observed.
+  win.hide();
 }
 async function capture(name) { await frames(2); fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG()); report.screenshots.push(`${name}.png`); }
 async function phase(name) { await evaluate(name => { window.firstSend.phase = name; }, name); await frames(); if (!fast || name === 'completed') await capture(name); }
@@ -147,8 +149,16 @@ async function run() {
   const prompt = '第一条消息 — retain this first message';
   await type(prompt);
   if (process.env.WUU_FIRST_SEND_ATTACHMENT === '1') {
-    await evaluate(selector => { const input = document.querySelector(selector); const data = new DataTransfer(); data.items.add(new File(['FIRST_SEND_ATTACHMENT'], 'context.txt', { type: 'text/plain' })); input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true })); }, composer);
-    await until(() => evaluate(() => document.body.innerText.includes('context.txt')), 'attachment preview');
+    await evaluate(selector => {
+      const input = document.querySelector(selector), data = new DataTransfer();
+      data.items.add(new File(['FIRST_SEND_ATTACHMENT'], 'context.txt', { type: 'text/plain' }));
+      const canvas = document.createElement('canvas'); canvas.width = 80; canvas.height = 60;
+      const context = canvas.getContext('2d'); context.fillStyle = '#4682b4'; context.fillRect(0, 0, 80, 60);
+      const bytes = Uint8Array.from(atob(canvas.toDataURL('image/png').split(',')[1]), char => char.charCodeAt(0));
+      data.items.add(new File([bytes], 'image.png', { type: 'image/png' }));
+      input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+    }, composer);
+    await until(() => evaluate(() => document.querySelectorAll('[data-main-conversation-composer] .composer-attachment-tray-item').length === 2), 'image and file attachment previews');
   }
   await evaluate(({ prompt, selector }) => {
     const nodes = new WeakMap(), animations = new WeakMap(); let nextNode = 0, nextAnimation = 0;
@@ -166,19 +176,23 @@ async function run() {
         for (let parent = bubble; parent; parent = parent.parentElement) { const css = getComputedStyle(parent); opacity *= Number(css.opacity); if (css.display === 'none' || css.visibility === 'hidden') visible = false; }
         return { id: row.dataset.userMessageId, node: identity(nodes, row, () => ++nextNode), top: r.top, bottom: r.bottom, left: r.left, width: r.width, height: r.height, opacity, visible: visible && r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight, animations: bubble.getAnimations().map(a => ({ id: identity(animations, a, () => ++nextAnimation), time: a.currentTime, start: a.startTime, duration: a.effect?.getComputedTiming().duration, state: a.playState })) };
       });
-      window.firstSend.frames.push({ time: performance.now(), phase: window.firstSend.phase, bubbles, draft: [...document.querySelectorAll(selector)].find(el => el.getBoundingClientRect().height)?.value });
+      const input = [...document.querySelectorAll(selector)].find(el => el.getBoundingClientRect().height);
+      const attachments = input?.closest('.composer-wrap')?.querySelectorAll('.composer-attachment-tray-item:not([data-exiting])').length ?? 0;
+      window.firstSend.frames.push({ time: performance.now(), phase: window.firstSend.phase, bubbles, draft: input?.value, attachments });
       requestAnimationFrame(sample);
     }; sample();
   }, { prompt, selector: composer });
   enter(); await until(() => creating, 'real thread creation requested'); await phase('creation-held');
+  assert.equal(await evaluate(() => document.querySelectorAll('[data-user-message-id]').length), 0, 'thread creation retains the input without displaying a sent bubble');
   enter(); await frames(3);
   assert.equal(report.ipc.filter(row => row.channel === 'wuu:thread-start').length, 1, 'double Enter creates one thread');
   const newer = process.env.WUU_FIRST_SEND_NEWER !== '0';
   if (newer) await type('Newer draft 内容 remains mine');
   creation.resolve(); await until(() => admitting, 'real turn admission requested'); await phase('identity-bound-admission-held');
+  assert.equal(await evaluate(() => document.querySelectorAll('[data-user-message-id]').length), 0, 'binding the thread does not display an unaccepted message');
   enter(); await frames(3);
   assert.equal(report.ipc.filter(row => row.channel === 'wuu:turn-start').length, 1, 'double Enter admits once');
-  if (order === 'rejected') await evaluate(() => { window.firstSend.phase = 'rejected-recoverable'; });
+  await evaluate(phase => { window.firstSend.phase = phase; }, order === 'rejected' ? 'rejected-recoverable' : 'admission-requested');
   admission.resolve();
   if (order !== 'rejected') {
     await until(() => admitted, 'real core admitted the turn');
@@ -219,7 +233,8 @@ async function run() {
     assert.equal(snapshot.thread.turns.flatMap(turn => turn.items).filter(item => item.type === 'user_message' && item.text === prompt).length, 1, 'one durable backend user message');
     report.checks.push('Exactly one thread/start, one turn/start, and one durable user message');
   } else {
-    await until(() => evaluate(() => Boolean(document.querySelector('.turn[data-turn-status="failed"]')) && Boolean(document.querySelector('[role="alert"] .archive-tip-action'))), 'failed message and recovery action are visible');
+    if (newer) await until(() => evaluate(() => Boolean(document.querySelector('.turn[data-turn-status="failed"]')) && Boolean(document.querySelector('[role="alert"] .archive-tip-action'))), 'failed message and recovery action are visible');
+    else await until(() => evaluate(() => !document.querySelector('[data-main-conversation-composer] [data-wuu-state="submitting"]')), 'rejection releases the pending input');
     await phase('rejected-recoverable');
     assert.equal(report.requests.filter(row => row.stream).length, 0, 'rejected admission never reaches a model');
   }
@@ -227,7 +242,11 @@ async function run() {
   const samples = await evaluate(() => { window.firstSend.record = false; return window.firstSend.frames; });
   fs.writeFileSync(path.join(output, 'frames.json'), JSON.stringify(samples, null, 2));
   assert.equal(report.ipc.filter(row => row.channel === 'wuu:turn-queue').length, 0, 'Enter was never converted into a duplicate queued send');
-  if (process.env.WUU_FIRST_SEND_ATTACHMENT === '1') assert.equal(report.ipc.find(row => row.channel === 'wuu:turn-start').files.length, 1, 'attachment retained through thread binding');
+  if (process.env.WUU_FIRST_SEND_ATTACHMENT === '1') {
+    const sent = report.ipc.find(row => row.channel === 'wuu:turn-start');
+    assert.equal(sent.files.length, 1, 'file retained through thread binding');
+    assert.equal(sent.images.length, 1, 'image retained through thread binding');
+  }
   const finalDraft = await evaluate(selector => document.querySelector(selector)?.value, composer);
   assert.equal(finalDraft, newer ? 'Newer draft 内容 remains mine' : order === 'rejected' ? prompt : '', 'admission only releases the draft it owns');
   if (order === 'rejected' && newer) {
@@ -243,17 +262,25 @@ async function run() {
     report.checks.push('Rejection preserves newer input and offers native recovery of the original without automatic resubmission');
   }
   const visibleFrom = samples.findIndex(frame => frame.bubbles.some(bubble => bubble.visible && bubble.opacity > 0.05));
-  assert.ok(visibleFrom >= 0, 'Enter displays its message immediately');
-  const continuous = samples.slice(visibleFrom).filter(frame => frame.phase !== 'rejected-recoverable');
+  if (order !== 'rejected') assert.ok(visibleFrom >= 0, 'admission displays the message');
+  const waiting = samples.filter(frame => ['creation-held', 'identity-bound-admission-held'].includes(frame.phase));
+  assert.ok(waiting.length > 0, 'waiting states were sampled');
+  assert.ok(waiting.every(frame => !frame.bubbles.some(bubble => bubble.visible)), 'waiting input is never also displayed as a sent message');
+  const duplicates = samples.filter(frame => frame.draft === prompt && frame.bubbles.some(bubble => bubble.visible));
+  assert.equal(duplicates.length, 0, 'no painted frame displays the submitted text in both input and conversation');
+  const continuous = visibleFrom < 0 ? [] : samples.slice(visibleFrom).filter(frame => frame.phase !== 'rejected-recoverable');
+  if (!newer && order !== 'rejected' && process.env.WUU_FIRST_SEND_ATTACHMENT === '1') {
+    assert.ok(continuous.every(frame => frame.attachments === 0), 'admission releases attachments together with the submitted text');
+  }
   const absent = continuous.filter(frame => frame.bubbles.filter(bubble => bubble.visible && bubble.opacity > 0.05).length !== 1);
   report.continuity = { totalFrames: samples.length, retainedFrames: continuous.length, absentFrames: absent.length, missingPhases: [...new Set(absent.map(frame => frame.phase))] };
   save();
-  assert.equal(absent.length, 0, 'first bubble remains visible exactly once on every painted frame through creation and admission');
+  assert.equal(absent.length, 0, 'first bubble remains visible exactly once on every painted frame after admission');
   const opacityDrops = continuous.slice(1).filter((frame, i) => frame.bubbles[0]?.opacity + 0.08 < continuous[i].bubbles[0]?.opacity);
   assert.equal(opacityDrops.length, 0, 'thread binding and acknowledgement never restart the entrance fade');
   const downwardJumps = continuous.slice(1).filter((frame, i) => frame.bubbles[0]?.top > continuous[i].bubbles[0]?.top + 2);
   assert.equal(downwardJumps.length, 0, 'first-message identity handoff never moves its settled bubble back down for another entrance');
-  report.checks.push('Every sampled frame retains exactly one bubble, without a second entrance or lost newer draft');
+  report.checks.push('Waiting input transfers to one admitted bubble without duplicate text, retained attachments, a second entrance, or lost newer draft');
   report.status = 'passed'; save(); console.log(`PASS first-send continuity ${order}: ${output}`);
 }
 function finish(code) { server.closeAllConnections(); server.close(); app.once('will-quit', () => app.exit(code)); app.quit(); }

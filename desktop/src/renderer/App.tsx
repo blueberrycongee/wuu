@@ -981,7 +981,8 @@ export function App({ application, slots, shellPluginId }: {
     document.title = windowTitle;
   }, [windowTitle]);
   const activePendingThreadCreation = submissionView.pendingCreations.find(
-    (pending) => pending.ownerTabId === tabs.activeTabId,
+    (pending) => pending.ownerTabId === tabs.activeTabId
+      && !submissionView.operations.some(operation => operation.operationID === pending.operationID && operation.draftPending),
   );
   const activePendingNewThreadTurn = activePendingThreadCreation?.turn;
   const turns = activeThread?.turns ?? [];
@@ -1117,7 +1118,7 @@ export function App({ application, slots, shellPluginId }: {
         placedSubmissions.current.delete(operation.operationID);
         continue;
       }
-      if (placed || operation.mode !== "send") continue;
+      if (placed || operation.draftPending || operation.mode !== "send") continue;
       if (operation.ownerTabId !== tabs.activeTabId && operation.threadId !== activeThreadID) {
         initialSubmissionIds.current.add(operation.operationID);
         continue;
