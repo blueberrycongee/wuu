@@ -1468,8 +1468,6 @@ export const zhCN = {
   "worktree.current": "当前工作树",
   "worktree.copyInfo": "复制工作树信息",
   "worktree.infoCopied": "已复制工作树信息",
-  "app.historyBack": "返回上一应用页面",
-  "app.historyForward": "前进到下一应用页面",
   "app.workspaceSwitched": "已切换到新的工作区",
   "toolActivity.switchWorkspace": "切换工作区",
   "toolActivity.workspaceSwitching": "正在切换工作区",

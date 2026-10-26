@@ -70,7 +70,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Add per-tab audio controls, keyboard navigation for long vertical tab lists, persistent download history, bookmark renaming, and individual history deletion.
 - Open browser extension options in isolated windows and provide an explicit screen/window sharing picker.
 
-- Navigate window-local app page history across conversations, settings, workspace tools, and workbench destinations without changing website Back/Forward history.
 - Reclaim eligible website tabs after 30 minutes in the background, restoring their history and scroll position on selection while protecting edited, pinned, media, and other stateful pages.
 - Review local browser extension permissions before loading, manage installed snapshots with details and reload controls, and preserve the previous working copy when an update fails.
 
@@ -110,6 +109,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   with process-tree cleanup and optional handoff from completed child sessions.
 
 ### Changed
+
+- Remove the app-wide Back and Forward buttons and page-history stack, reclaiming their header space. Website navigation keeps its own Back and Forward controls.
 
 - Use a compact capsule composer with a 44px single-line height at the default text size, attachments at the leading edge and permission, model, and send controls beside the draft. Keep single-line text vertically centered at saved font sizes and grow longer drafts upward in main and split conversations.
 
@@ -344,7 +345,6 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 - Avoid remeasuring covered conversation inputs during website window resizing, and refit retained drafts when their workspace becomes visible again.
 - Keep full-workspace websites attached to the native window edges during live resizing, including when the shell renderer is busy.
 - Keep explicit workbench sidebar collapse separate from hover previews, and remove the redundant settings breadcrumb root.
-- Reserve app-history controls in the existing content header so narrow Mac sidebars keep notification and search hit areas clear, including zoomed layouts, hover previews, and the expanded navigation ribbon.
 - Stabilize PDF fit-width layout when a non-overlay scrollbar would otherwise alternate between appearing and disappearing.
 
 - Keep the account menu above browser pages while preserving native website visibility on dismissal.

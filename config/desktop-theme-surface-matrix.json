@@ -128,21 +128,6 @@
       "rows": 0
     },
     {
-      "name": "page-history-back",
-      "synthetic": false,
-      "rows": 0
-    },
-    {
-      "name": "page-history-controls",
-      "synthetic": false,
-      "rows": 0
-    },
-    {
-      "name": "page-history-forward",
-      "synthetic": false,
-      "rows": 0
-    },
-    {
       "name": "pdf-selection-comment",
       "synthetic": false,
       "rows": 0

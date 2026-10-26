@@ -100,14 +100,14 @@ app.whenReady().then(async () => {
       const clipInset = panelClip === 'none' ? 0 : parseFloat(panelClip.slice('inset('.length));
       const box = (node) => node?.getBoundingClientRect().toJSON() ?? null;
       const peers = [...document.querySelectorAll([
-        '[data-wuu-component="sidebar-toggle"]', '[data-wuu-component="right-sidebar-toggle"]', '.shell-page-history-controls button',
+        '[data-wuu-component="sidebar-toggle"]', '[data-wuu-component="right-sidebar-toggle"]',
         '.conversation-title-heading h1', '.conversation-title-heading .icon-button',
         '.workspace-panel-add', '.workspace-panel-globalize',
       ].join(','))].filter(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
         .map(node => {
           const rect = node.getBoundingClientRect();
           const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-          const shellControl = !!node.closest('.shell-page-history-controls') || node.matches('.section-sidebar-toggle, .shell-right-sidebar-toggle');
+          const shellControl = node.matches('.section-sidebar-toggle, .shell-right-sidebar-toggle');
           const row = shellControl
             ? document.querySelector('.mac-window-controls') ? document.querySelector('.titlebar') : document.querySelector('.workbench-window-chrome')
             : node.closest('.titlebar, .workspace-panel-tabbar');

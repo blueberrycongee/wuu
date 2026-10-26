@@ -1471,8 +1471,6 @@ export const enUS = {
   "worktree.current": "Current worktree",
   "worktree.copyInfo": "Copy worktree information",
   "worktree.infoCopied": "Worktree information copied",
-  "app.historyBack": "Back to previous app page",
-  "app.historyForward": "Forward to next app page",
   "app.workspaceSwitched": "Switched to the new workspace",
   "toolActivity.switchWorkspace": "Switch workspace",
   "toolActivity.workspaceSwitching": "Switching workspace",

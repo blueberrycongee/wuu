@@ -696,21 +696,6 @@ async function run() {
     await goSettings('General');
     await click(plugins, 'draft-to-plugins');
     await goConversations();
-    const back = '[data-wuu-component="page-history-back"]';
-    const forward = '[data-wuu-component="page-history-forward"]';
-    await click(back, 'history-back-to-extensions');
-    await waitFor(() => !!document.querySelector('.catalog-section-pane:not([hidden]) .skills-catalog')
-      && !document.querySelector('.app-shell').hasAttribute('data-settings-open'));
-    await click(back, 'history-back-to-settings');
-    await waitFor(() => document.querySelector('.app-shell').hasAttribute('data-settings-open')
-      && document.querySelector('[data-wuu-component="settings-page"]')?.dataset.wuuPage === 'general');
-    await click(forward, 'history-forward-to-extensions');
-    await waitFor(() => !!document.querySelector('.catalog-section-pane:not([hidden]) .skills-catalog')
-      && !document.querySelector('.app-shell').hasAttribute('data-settings-open'));
-    await click(forward, 'history-forward-to-conversation');
-    await waitFor(() => !document.querySelector('.app-shell').hasAttribute('data-settings-open')
-      && !document.querySelector('.catalog-section-pane:not([hidden])')
-      && document.querySelector('.cached-conversation-pane[data-active="true"]')?.dataset.threadId === 'acceptance-reading');
     const after = await evaluate(({ selector, input }) => ({ top: document.querySelector(selector).scrollTop, draft: document.querySelector(input).value }), { selector: scroller, input: composer });
     assert.equal(after.draft, 'Unsent acceptance draft: keep this exactly.');
     assert.ok(Math.abs(after.top - before.top) <= 8, `Reading position moved ${before.top} -> ${after.top}`);
@@ -718,7 +703,7 @@ async function run() {
     assert.equal(await evaluate(selector => document.querySelector(selector).value, composer), '');
     await selectThread('acceptance-reading');
     assert.equal(await evaluate(selector => document.querySelector(selector).value, composer), after.draft);
-    return { before, after, history: ['conversation', 'extensions', 'settings:general', 'extensions', 'conversation'] };
+    return { before, after, sections: ['conversation', 'settings:general', 'extensions', 'conversation'] };
   });
 
   await test('search opens by mouse, selects by Enter, and restores focus', async () => {

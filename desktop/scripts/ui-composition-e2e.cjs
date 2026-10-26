@@ -477,7 +477,7 @@ async function main() {
   await openDeveloperCounter();
   phase = 'developer-loop-restored';
   await until(() => [...document.querySelectorAll('[data-counter-value]')].some(node => node.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }) && node.textContent === '1'));
-  await evaluate(() => document.querySelector('[data-wuu-component="page-history-back"]').click());
+  await evaluate(() => document.querySelector('[data-ribbon-id="conversations"]').click());
   await until(() => document.querySelector('.deep-ui-timeline'));
   phase = 'shutdown';
   const quitting = logs.length;

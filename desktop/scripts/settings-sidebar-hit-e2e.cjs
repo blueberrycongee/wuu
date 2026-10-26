@@ -274,7 +274,6 @@ async function verifyNarrowSidebarControls(win) {
       await settleChrome(win);
     }
     if (fixturePlatform === "darwin" && totalWidth === 240) {
-      await verifyRibbonHistoryOcclusion(win);
       await verifyRibbonControlFocus(win, "conversation");
     }
     let collapsedGeometry;
@@ -315,7 +314,6 @@ async function verifyNarrowSidebarControls(win) {
     await settleChrome(win);
     const restored = await chromeToggleGeometry(win);
     assertControlSeparation(restored, { totalWidth, page: "conversation-restored" });
-    assert.equal(restored.historyState.hidden, false, "App history returns when preview closes");
   }
   await evaluate(win, width => {
     if (width === null) localStorage.removeItem("wuu.desktop.sidebarWidth");
@@ -328,62 +326,13 @@ async function verifyNarrowSidebarControls(win) {
   await waitFor(win, () => !!document.querySelector(".conversation-pane"), 5000);
 }
 
-async function verifyRibbonHistoryOcclusion(win) {
-  const savedSize = win.getContentSize();
-  const savedZoom = win.webContents.getZoomFactor();
-  win.setContentSize(2400, 1200);
-  win.webContents.setZoomFactor(2);
-  await evaluate(win, () => document.documentElement.style.setProperty('--desktop-page-zoom', '2'));
-  await preparePointerInput(win);
-  await settleChrome(win);
-  const snapshot = () => evaluate(win, () => {
-    const history = document.querySelector('.shell-page-history-controls');
-    return { history: { hidden: history.hidden, inert: history.inert, bounds: history.getBoundingClientRect().toJSON() },
-      ribbon: document.querySelector('.sidebar-ribbon').getBoundingClientRect().toJSON(),
-      title: document.querySelector('.conversation-title-heading').getBoundingClientRect().toJSON(),
-      content: document.querySelector('.conversation-pane').getBoundingClientRect().toJSON() };
-  });
-  for (const collapsed of [false, true]) {
-    await evaluate(win, collapsed => {
-      const shell = document.querySelector('.app-shell');
-      if (shell.classList.contains('sidebar-collapsed') !== collapsed) document.querySelector('.section-sidebar-toggle').click();
-    }, collapsed);
-    await settleChrome(win);
-    const before = await snapshot();
-    assert.equal(before.history.hidden, false, 'History starts visible with the ribbon closed');
-    await hoverCompactRibbon(win);
-    assert.deepEqual(await snapshot(), before, 'Hover keeps the compact ribbon and history geometry unchanged');
-    await focusRibbonWithKeyboard(win);
-    const expanded = await snapshot();
-    assert.deepEqual(expanded, before, 'Keyboard focus preserves the compact ribbon, history and content geometry');
-    results.push({ scenario: `ribbon-history-240-20px-2-${collapsed ? 'collapsed' : 'docked'}`, before, focused: expanded });
-    saveResults();
-    await capture(win, `ribbon-history-240-20px-2-${collapsed ? 'collapsed' : 'docked'}.png`);
-    await evaluate(win, () => document.querySelector('.app-shell').focus());
-    await preparePointerInput(win);
-    await waitFor(win, () => !document.querySelector('.shell-page-history-controls').hidden, 3000);
-    const restored = await snapshot();
-    assert.equal(restored.history.inert, false, 'History regains keyboard access after ribbon leaves');
-    assert.deepEqual(restored.title, before.title, 'Closing ribbon preserves title geometry');
-    assert.deepEqual(restored.content, before.content, 'Closing ribbon preserves content geometry');
-  }
-  await evaluate(win, () => document.querySelector('.section-sidebar-toggle').click());
-  win.setContentSize(...savedSize);
-  win.webContents.setZoomFactor(savedZoom);
-  await evaluate(win, zoom => document.documentElement.style.setProperty('--desktop-page-zoom', String(zoom)), savedZoom);
-  await preparePointerInput(win);
-  await settleChrome(win);
-}
-
 async function verifyRibbonControlFocus(win, page) {
   const originalCollapsed = await evaluate(win, () => document.querySelector('.app-shell').classList.contains('sidebar-collapsed'));
   const snapshot = () => evaluate(win, () => {
     const toggle = document.querySelector('.section-sidebar-toggle');
-    const history = document.querySelector('.shell-page-history-controls');
     const shell = document.querySelector('.app-shell');
     const settings = shell.hasAttribute('data-settings-open');
     return { toggle: { hidden: toggle.hidden, inert: toggle.inert, rect: toggle.getBoundingClientRect().toJSON() },
-      history: { hidden: history.hidden, inert: history.inert },
       title: document.querySelector(settings ? '.settings-page-title' : '.conversation-title-heading').getBoundingClientRect().toJSON(),
       content: document.querySelector(settings ? '.settings-workbench-layer' : '.conversation-pane').getBoundingClientRect().toJSON(),
       ribbonExpanded: !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'),
@@ -402,17 +351,15 @@ async function verifyRibbonControlFocus(win, page) {
     }, layout !== 'docked');
     await settleChrome(win);
     if (layout === 'drawer') { await revealDrawerAtEdge(win); await settleChrome(win); }
-    for (const owner of layout === 'drawer' ? ['toggle'] : ['toggle', 'history']) {
+    for (const owner of ['toggle']) {
       const focused = await evaluate(win, owner => {
-        const target = document.querySelector(owner === 'toggle' ? '.section-sidebar-toggle' : '.shell-page-history-controls button:not(:disabled)');
+        const target = document.querySelector('.section-sidebar-toggle');
         if (!target || target.closest('[hidden], [inert]')) return false;
         target.focus(); return document.activeElement === target;
       }, owner);
       assert.ok(focused, `${page}/${layout}/${owner}: the tested control must own focus`);
       const before = await snapshot();
       assert.equal(before.drawerVisible, layout === 'drawer', `${page}/${layout}/${owner}: the requested drawer state is active`);
-      assert.deepEqual(before.history, { hidden: layout === 'drawer', inert: layout === 'drawer' },
-        `${page}/${layout}/${owner}: only an open drawer covers the compact-ribbon history lane`);
       await hoverCompactRibbon(win);
       await settleChrome(win);
       const hovered = await snapshot();
@@ -420,9 +367,9 @@ async function verifyRibbonControlFocus(win, page) {
       saveResults();
       if (page === 'settings' && layout === 'drawer') {
         // The ribbon is outside .settings-sidebar, so leaving that hover
-        // drawer restores history. Reopen it before testing keyboard reveal.
-        assert.deepEqual(hovered, { ...before, drawerVisible: false, history: { hidden: false, inert: false } },
-          'Leaving the settings drawer restores history without moving controls or their focus');
+        // drawer closes it. Reopen it before testing keyboard reveal.
+        assert.deepEqual(hovered, { ...before, drawerVisible: false },
+          'Leaving the drawer preserves controls and their focus');
         await revealDrawerAtEdge(win);
         await settleChrome(win);
         assert.deepEqual(await snapshot(), before, 'The same drawer and focused control return before keyboard reveal');
@@ -432,8 +379,6 @@ async function verifyRibbonControlFocus(win, page) {
       await focusRibbonWithKeyboard(win);
       const expanded = await snapshot();
       assert.ok(!expanded.toggle.hidden && !expanded.toggle.inert, "The compact ribbon keeps its sidebar toggle reachable");
-      assert.equal(expanded.history.hidden, expanded.drawerVisible, 'Only the drawer can cover app history');
-      assert.equal(expanded.history.inert, expanded.history.hidden);
       assert.equal(expanded.focusInRibbon, true, 'Keyboard navigation retains focus in the ribbon');
       assert.deepEqual(expanded.title, before.title);
       assert.deepEqual(expanded.content, before.content);
@@ -476,8 +421,6 @@ async function notificationRouteState(win) {
     draft: document.querySelector('.composer textarea')?.value,
     settingsOpen: document.querySelector('.app-shell').hasAttribute('data-settings-open'),
     activeRibbon: [...document.querySelectorAll('[data-ribbon-id][aria-current="page"]')].map(node => node.dataset.ribbonId),
-    backEnabled: !document.querySelector('[data-wuu-component="page-history-back"]').disabled,
-    forwardEnabled: !document.querySelector('[data-wuu-component="page-history-forward"]').disabled,
   }));
 }
 
@@ -601,8 +544,6 @@ async function pointerClick(win, selector) {
 }
 
 async function verifyNotificationClick(win, zoom) {
-  // Seed a real forward destination so an overlapping app-forward hit cannot
-  // pass merely because the history button happens to be disabled.
   await evaluate(win, () => {
     const input = document.querySelector('.composer textarea');
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Keep notification click draft');
@@ -612,25 +553,20 @@ async function verifyNotificationClick(win, zoom) {
   await waitFor(win, () => !!document.querySelector('[data-settings-page="providers"]'), 3000);
   await evaluate(win, () => document.querySelector('[data-settings-page="providers"]').click());
   await waitFor(win, () => !!document.querySelector('.settings-shell'), 3000);
-  await waitFor(win, () => !document.querySelector('[data-wuu-component="page-history-back"]').disabled, 3000);
   await evaluate(win, () => {
-    const back = document.querySelector('[data-wuu-component="page-history-back"]');
-    // Match keyboard activation's focus transfer instead of retaining focus in
-    // the account menu's ribbon anchor after a programmatic click.
-    back.focus();
-    back.click();
+    const conversations = document.querySelector('[data-ribbon-id="conversations"]');
+    conversations.focus();
+    conversations.click();
   });
-  await waitFor(win, () => !document.querySelector('.app-shell[data-settings-open]') &&
-    !document.querySelector('[data-wuu-component="page-history-forward"]').disabled, 3000);
+  await waitFor(win, () => !document.querySelector('.app-shell[data-settings-open]'), 3000);
   await settleChrome(win);
   const before = await notificationRouteState(win);
   assert.equal(before.draft, 'Keep notification click draft');
-  assert.equal(before.forwardEnabled, true, 'Notification test has an actionable forward destination');
   await pointerClick(win, '.sidebar-notifications-button');
   await waitFor(win, () => document.querySelector('.sidebar-notifications-button')?.getAttribute('aria-pressed') === 'true' &&
     !!document.querySelector('.sidebar-unread-view'), 3000);
   const after = await notificationRouteState(win);
-  assert.deepEqual(after, before, 'A physical notification click must not navigate or change the active conversation draft/history availability');
+  assert.deepEqual(after, before, 'A physical notification click must not navigate or change the active conversation draft');
   results.push({ scenario: `notification-click-240-20px-${zoom}`, before, after, attentionOpen: true });
   saveResults();
   await capture(win, `notification-click-240-20px-${zoom}.png`);
@@ -769,7 +705,7 @@ async function chromeToggleGeometry(win) {
     const shellRow = document.querySelector('.mac-window-controls') ? activeHeader : document.querySelector('.workbench-window-chrome');
     const shellBounds = shellRow.getBoundingClientRect();
     const shellStyle = getComputedStyle(shellRow);
-    const shellControls = [...document.querySelectorAll('.section-sidebar-toggle, .shell-right-sidebar-toggle, .shell-page-history-controls button')]
+    const shellControls = [...document.querySelectorAll('.section-sidebar-toggle, .shell-right-sidebar-toggle')]
       .filter(element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true }))
       .map(element => {
         const box = element.getBoundingClientRect();
@@ -779,16 +715,9 @@ async function chromeToggleGeometry(win) {
           noDrag: getComputedStyle(element).getPropertyValue('-webkit-app-region') === 'no-drag' };
       });
     const shell = document.querySelector('.app-shell');
-    const historyGroup = document.querySelector('.shell-page-history-controls');
-    const ribbonCoversHistory = !!document.querySelector('.sidebar-ribbon[data-expanded="true"]') &&
-      (shell.classList.contains('sidebar-collapsed') || (shell.hasAttribute('data-web-workspace-open') && !settingsOpen));
-    const drawerCoversHistory = !shell.hasAttribute('data-web-workspace-open') &&
-      ['sidebar-drawer-open', 'sidebar-drawer-closing', 'sidebar-drawer-docking'].some(name => shell.classList.contains(name));
-    const historySuppressed = !!document.querySelector('.mac-window-controls') && (ribbonCoversHistory || drawerCoversHistory);
-    const historyState = { expectedSuppressed: historySuppressed, hidden: historyGroup.hidden, inert: historyGroup.inert };
     const visible = element => element.checkVisibility({ checkVisibilityCSS: true, checkOpacity: true });
     const guardElements = [...new Set([
-      ...document.querySelectorAll('.section-sidebar-toggle, .shell-page-history-controls button, .sidebar-notifications-button, .sidebar-brand .conversation-search-trigger'),
+      ...document.querySelectorAll('.section-sidebar-toggle, .sidebar-notifications-button, .sidebar-brand .conversation-search-trigger'),
       ...activeHeader.querySelectorAll('h1, button'),
     ])].filter(visible);
     const drawer = shell.classList.contains('sidebar-drawer-open')
@@ -806,11 +735,10 @@ async function chromeToggleGeometry(win) {
       return { target: element.dataset.wuuComponent || element.className || element.tagName,
         bounds: box.toJSON(), button: element instanceof HTMLButtonElement,
         contentHeader: activeHeader.contains(element),
-        history: !!element.closest('.shell-page-history-controls'),
         drawerOwned: !!element.closest(settingsOpen ? '.settings-sidebar' : '.sidebar-content'), samples };
     });
     return {
-      header: header.toJSON(), peers, separationTargets, historyState, drawerBounds,
+      header: header.toJSON(), peers, separationTargets, drawerBounds,
       toggleState: { expectedSuppressed: !!document.querySelector('.mac-window-controls') && !!document.querySelector('.sidebar-ribbon[data-expanded="true"]'), hidden: button.hidden, inert: button.inert },
       contentAxis: (header.top + parseFloat(headerStyle.paddingTop) + header.bottom - parseFloat(headerStyle.paddingBottom)) / 2,
       shellRow: shellBounds.toJSON(), shellControls,
@@ -909,10 +837,9 @@ function assertTopRow(geometry, context) {
   const axis = geometry.contentAxis;
   assert.ok(geometry.peers.length >= 2, `Active page title and actions must remain present: ${details}`);
   const expectedControls = [...(geometry.toggleState.expectedSuppressed ? [] : ["sidebar-toggle"]),
-    ...(geometry.historyState.expectedSuppressed ? [] : ["page-history-back", "page-history-forward"]),
     ...(context.page === "settings" ? [] : ["right-sidebar-toggle"])];
   assert.deepEqual(geometry.shellControls.map(control => control.target).sort(), expectedControls.sort(),
-    `The active surface exposes its history and sidebar controls: ${details}`);
+    `The active surface exposes its sidebar controls: ${details}`);
   for (const control of geometry.shellControls) {
     const box = control.bounds;
     assert.ok(control.hit && control.noDrag, `Shell controls retain no-drag click targets: ${details}`);
@@ -941,27 +868,10 @@ function assertControlSeparation(geometry, context) {
   assert.equal(geometry.toggleState.hidden, geometry.toggleState.expectedSuppressed, `Ribbon toggle visibility is explicit: ${details}`);
   assert.equal(geometry.toggleState.inert, geometry.toggleState.expectedSuppressed, `Covered toggle cannot receive keyboard input: ${details}`);
   const targets = geometry.separationTargets;
-  const histories = targets.filter(target => target.history);
-  const suppressed = geometry.historyState.expectedSuppressed;
-  assert.equal(histories.length, suppressed ? 0 : 2, `App history follows the preview visibility policy: ${details}`);
-  assert.equal(geometry.historyState.hidden, suppressed, `Preview visibility is explicit: ${details}`);
-  assert.equal(geometry.historyState.inert, suppressed, `Hidden history cannot receive keyboard input: ${details}`);
   for (const target of targets) {
     if (target.button) {
       assert.ok(target.samples.every(sample => ownsHeaderSample(target, sample, geometry.drawerBounds)),
         `Visible controls own their interior, not only their center: ${details}`);
-    }
-    for (const history of histories) {
-      if (target === history) continue;
-      // The preview legitimately covers underlying content; its own visible
-      // notification/search controls still have to remain independently usable.
-      if (target.contentHeader && !target.drawerOwned && target.samples.every(sample =>
-        !sample.owned && ownsHeaderSample(target, sample, geometry.drawerBounds))) continue;
-      const a = history.bounds, b = target.bounds;
-      const overlapX = Math.min(a.right, b.right) - Math.max(a.left, b.left);
-      const overlapY = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
-      assert.ok(overlapX <= 0.1 || overlapY <= 0.1,
-        `App-history hitboxes must not overlap another visible header target: ${details}`);
     }
   }
 }

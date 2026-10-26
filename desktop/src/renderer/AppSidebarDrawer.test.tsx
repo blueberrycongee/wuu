@@ -419,49 +419,6 @@ describe("collapsed sidebar hover drawer", () => {
     expect(appShell()?.classList.contains("sidebar-drawer-docking")).toBe(false);
   });
 
-  it("occludes Mac app history during drawer preview and restores the same controls after close", async () => {
-    Object.defineProperty(window.wuu, "platform", { configurable: true, value: "darwin" });
-    await renderCollapsedApp();
-    const history = container.querySelector<HTMLElement>('[data-wuu-component="page-history-controls"]')!;
-    expect(history.hidden).toBe(false);
-    await openDrawerViaHoverZone();
-    expect(history.hidden).toBe(true);
-    expect(history.hasAttribute("inert")).toBe(true);
-    await act(async () => window.dispatchEvent(new Event("blur")));
-    await act(async () => { vi.advanceTimersByTime(400); });
-    expect(container.querySelector('[data-wuu-component="page-history-controls"]')).toBe(history);
-    expect(history.hidden).toBe(false);
-    expect(history.hasAttribute("inert")).toBe(false);
-  });
-
-  it.each([true, false])("keeps Mac app history visible and focused while hovering the compact ribbon (collapsed=%s)", async (collapsed) => {
-    Object.defineProperty(window.wuu, "platform", { configurable: true, value: "darwin" });
-    await renderCollapsedApp();
-    if (!collapsed) {
-      await act(async () => container.querySelector<HTMLButtonElement>(".section-sidebar-toggle")!.click());
-      await act(async () => { vi.advanceTimersByTime(400); });
-    }
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-ribbon-id="catalog"]')!.click());
-    const history = container.querySelector<HTMLElement>('[data-wuu-component="page-history-controls"]')!;
-    const back = history.querySelector<HTMLButtonElement>('[data-wuu-component="page-history-back"]')!;
-    expect(back.disabled).toBe(false);
-    await act(async () => back.focus());
-    const ribbon = container.querySelector<HTMLElement>(".sidebar-ribbon")!;
-    await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
-    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
-    expect(ribbon.dataset.expanded).toBeUndefined();
-    expect(history.hidden).toBe(false);
-    expect(history.hasAttribute("inert")).toBe(false);
-    expect(document.activeElement).toBe(back);
-    await act(async () => ribbon.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })));
-    expect(document.activeElement).toBe(back);
-    await act(async () => { await vi.advanceTimersByTimeAsync(120); });
-    expect(ribbon.dataset.expanded).toBeUndefined();
-    expect(history.hidden).toBe(false);
-    expect(history.hasAttribute("inert")).toBe(false);
-    expect(container.querySelector('[data-wuu-component="page-history-controls"]')).toBe(history);
-  });
-
   it.each(["darwin", "linux"])("keeps the sidebar toggle reachable and focused while hovering the compact ribbon on %s", async (platform) => {
     Object.defineProperty(window.wuu, "platform", { configurable: true, value: platform });
     await renderCollapsedApp();

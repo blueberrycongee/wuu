@@ -7,15 +7,6 @@
   color: var(--ink);
 }
 
-
-.account-screen-with-history {
-  --page-history-controls-width: calc(var(--control-size-toolbar) * 2 + var(--control-toolbar-gap));
-}
-
-.account-screen-with-history .account-screen-titlebar {
-  padding-left: calc(var(--window-titlebar-leading-inset) + var(--page-history-controls-width) + var(--control-toolbar-gap));
-}
-
 .account-screen-titlebar {
   display: flex;
   height: var(--window-titlebar-height);

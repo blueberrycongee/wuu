@@ -3,8 +3,6 @@ import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1 } fro
 import { AccountScreen } from "./AccountScreen";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
-import { usePageHistory } from "./PageHistory";
-import { PageHistoryControls } from "./PageHistoryControls";
 import { SideConversationAvailableContext } from "./ResponseSelection";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
 /// <reference path="../shared/jsx-compat.d.ts" />
@@ -545,9 +543,6 @@ export function App({ application, slots, shellPluginId }: {
     viewSwitchPending,
     viewContextSwitchPending,
     finishViewSwitch,
-    cancelViewSwitch,
-    isCurrentViewSwitchRequest,
-    getCurrentViewSwitchRequestID,
   } = useApplicationNavigationState(application);
   const windowResizingRef = useRef(false);
   const environmentPanelHasRoomRef = useRef(environmentPanelHasRoom);
@@ -1604,140 +1599,6 @@ export function App({ application, slots, shellPluginId }: {
     return () => window.removeEventListener("wuu:workbench-back", back);
   }, [accountOpen, settingsOpen, showingWebsite, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion, nativeSection, showingPrimaryPluginView]);
 
-
-  // This is a window history of existing destinations, never a second owner of
-  // session content. Docked panels and split-pane focus are not page visits.
-  const currentPage = !onboardingComplete || !initialized ? undefined
-    : settingsOpen ? JSON.stringify(["settings", settingsInitialPage])
-    : accountOpen ? JSON.stringify(["account", ""])
-    : showingWebsite ? JSON.stringify(["website", activeWebsite?.id])
-    : workspaceToolsCoverConversation && rightPanelOpen && workspaceActiveViewTabID
-      ? JSON.stringify(["workspace", workspaceActiveViewTabID])
-    : primaryPageView ? JSON.stringify(["plugin", primaryPageView.id])
-    : showingSkillsCatalog ? JSON.stringify(["catalog", catalogSection])
-    : tabs.activeTabId ? JSON.stringify(["session", tabs.activeTabId]) : undefined;
-  const pageLayoutIntent = JSON.stringify([
-    tabs.activeTabId, settingsOpen, settingsInitialPage, accountOpen, activeWebsiteID, activeWebsite?.id, nativeSection, catalogSection,
-    primaryPageView?.id, workspaceActiveViewTabID, rightPanelOpen, rightPanelManualGlobalized,
-  ]);
-  const previousPageLayout = useRef({ intent: pageLayoutIntent, autoGlobalized: rightPanelAutoGlobalized });
-  const layoutOnlyPageChange = previousPageLayout.current.intent === pageLayoutIntent
-    && previousPageLayout.current.autoGlobalized !== rightPanelAutoGlobalized;
-  useLayoutEffect(() => {
-    previousPageLayout.current = { intent: pageLayoutIntent, autoGlobalized: rightPanelAutoGlobalized };
-  }, [pageLayoutIntent, rightPanelAutoGlobalized]);
-  const [historySessionRestore, setHistorySessionRestore] = useState<{
-    id: string; origin: string | undefined; isCurrent: () => boolean; done: () => void;
-    finished: boolean; viewRequestID: number;
-  }>();
-  useLayoutEffect(() => {
-    const request = historySessionRestore;
-    if (!request) return;
-    const targetUnavailable = !isHistoryPageAvailable(JSON.stringify(["session", request.id]));
-    if (targetUnavailable || !request.isCurrent() || !isCurrentViewSwitchRequest(request.viewRequestID)
-      || (currentPage !== request.origin
-      && currentPage !== JSON.stringify(["session", request.id]))) {
-      // Settings/tool pages do not switch runtimes themselves. Re-select the
-      // source while the pending context marker still exists: cancellation
-      // alone would leave the main process on the abandoned target runtime.
-      if (isCurrentViewSwitchRequest(request.viewRequestID)
-        && (targetUnavailable || (currentPage && JSON.parse(currentPage)[0] !== "session"))) {
-        if (pendingViewSwitch?.contextSwitching) void selectSessionTab(tabs.activeTabId);
-        else cancelViewSwitch();
-      }
-      request.done();
-      setHistorySessionRestore(undefined);
-      return;
-    }
-    if (tabs.activeTabId === request.id) {
-      closePrimaryPluginView();
-      focusWorkspaceConversation();
-      setSettingsOpen(false);
-      setAccountOpen(false);
-      request.done();
-      setHistorySessionRestore(undefined);
-    } else if (request.finished) {
-      request.done();
-      setHistorySessionRestore(undefined);
-    }
-  }, [historySessionRestore, tabs.activeTabId, tabs.items, navigationWorkspace.workspaces, currentPage, pendingViewSwitch]);
-  function isHistoryPageAvailable(page: string): boolean {
-    const [kind, id] = JSON.parse(page) as [string, string];
-    if (kind === "settings") {
-      if (id === "subscriptions" || id === "agents") return false;
-      if (id === "remote") return application.settingsControls.capabilities.remote;
-      if (id === "browser") return !poppedOutMode && application.settingsControls.capabilities.browser;
-      if (id.startsWith("plugin-view:")) return application.settingsControls.getPages().some(page => `plugin-view:${page.pluginId}:${page.id}` === id);
-      if (id.startsWith("plugin-settings:")) return configuration?.extension_inventory?.some(plugin =>
-        `plugin-settings:${plugin.id}` === id && plugin.kind === "plugin" && plugin.enabled !== false
-        && (plugin.approval_state === "official" || plugin.approval_state === "granted")
-        && (plugin.contributions?.settings?.length ?? 0) > 0) ?? false;
-      return true;
-    }
-    if (kind === "website") return !poppedOutMode && Boolean(ribbonBrowser.state?.tabs?.some(website => website.id === id));
-    if (kind === "catalog") return Boolean(activeContext);
-    if (kind === "account") return ENABLE_ACCOUNT && Boolean(application.desktop.account);
-    if (kind === "workspace") {
-      const tab = workspaceViewTabs.find(tab => tab.id === id);
-      return Boolean(tab);
-    }
-    if (kind === "plugin") return navigationWorkspace.destinations.some(view => view.instanceId === id);
-    const tab = tabs.items.find(tab => tab.id === id);
-    if (!tab) return false;
-    return !tab.workspaceId
-      || navigationWorkspace.workspaces.some(project => project.id === tab.workspaceId && !project.missing);
-  }
-  const pageHistory = usePageHistory(currentPage, isHistoryPageAvailable, async (page, isCurrent) => {
-    const [kind, id] = JSON.parse(page) as [string, string];
-    if (kind === "settings") {
-      setAccountOpen(false);
-      setSettingsInitialPage(id as SettingsPage);
-      setSettingsOpen(true);
-      return;
-    }
-    if (kind === "account") { setSettingsOpen(false); setAccountOpen(true); return; }
-    if (kind === "website") {
-      const api = application.webWorkspace;
-      if (!api.capabilities.available) return;
-      try {
-        // Replay only the existing native tab ID. Its own URL/back-forward
-        // history stays owned by WebContents and onState remains authoritative.
-        await application.invoke("navigation.select-browser-tab", { tabId: id });
-        if (isCurrent()) revealWebsite();
-      } catch (error) {
-        if (isCurrent()) showErrorToast(error);
-      }
-      return;
-    }
-    if (kind === "catalog") { setAccountOpen(false); setCatalogSection(id as SkillsCatalogSection); openSkillsTab(); return; }
-    if (kind === "session") {
-      await new Promise<void>((done) => {
-        const activation = selectSessionTab(id);
-        const request = { id, origin: currentPage, isCurrent, done, finished: false,
-          viewRequestID: getCurrentViewSwitchRequestID() };
-        setHistorySessionRestore(request);
-        void activation.finally(() => {
-          setHistorySessionRestore(current => current === request ? { ...current, finished: true } : current);
-        });
-      });
-      return;
-    } else if (kind === "workspace") {
-      closePrimaryPluginView();
-      focusWorkspaceViewTab(id);
-      setRightPanelOpenWithMotion(true);
-      setRightPanelManualGlobalized(true);
-    } else if (kind === "plugin") {
-      setActiveWebsiteID(undefined);
-      setNativeSection("conversations");
-      const destination = application.getSnapshot().navigationWorkspace.destinations.find(view => view.instanceId === id);
-      if (!destination) return;
-      await application.invoke("navigation.open-plugin", { pluginId: destination.pluginId, viewTypeId: destination.view, instanceId: id });
-      focusWorkspaceConversation();
-    }
-    setSettingsOpen(false);
-    setAccountOpen(false);
-  }, layoutOnlyPageChange);
-
   const contextCapsule = !poppedOutMode && onboardingComplete && initialized && activeContext
     ? (
     // Restore visibility when the workbench experiment re-enables the floating context chat.
@@ -1751,7 +1612,7 @@ export function App({ application, slots, shellPluginId }: {
   ) : null;
 
   if (ENABLE_ACCOUNT && accountOpen && application.desktop.account) {
-    return <><AccountScreen pageHistory={isTouchWebShell() ? undefined : pageHistory} driver={application.desktop.account} openExternal={application.settingsControls.openExternal} onBack={() => setAccountOpen(false)} />{contextCapsule}</>;
+    return <><AccountScreen driver={application.desktop.account} openExternal={application.settingsControls.openExternal} onBack={() => setAccountOpen(false)} />{contextCapsule}</>;
   }
 
 
@@ -2085,9 +1946,6 @@ export function App({ application, slots, shellPluginId }: {
         </section>
       ) : null}
       <slots.Slot name={`${shellPluginId}/workbench.layers`} context={{ settingsOnly: settingsOpen }} />
-      {!poppedOutMode && !isTouchWebShell() ? <PageHistoryControls {...pageHistory}
-        hidden={(showingWebPage && !settingsOpen) || (application.desktop.platform === "darwin" && nativeRibbonPresent && sidebarDrawerPhase !== "closed")}
-      /> : null}
       {contextCapsule}
       {/* macOS applies app regions in DOM order, so a later drag titlebar would
         * cover this no-drag control. Keep it as the shell's last child. */}
