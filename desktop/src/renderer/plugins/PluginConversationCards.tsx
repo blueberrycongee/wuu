@@ -1,3 +1,4 @@
+import * as React from "react";
 import {
   Component,
   createElement,
@@ -9,7 +10,7 @@ import {
 } from "react";
 import { X } from "../WuuIcons";
 
-import type { PluginHost, RegisteredConversationCard } from "./PluginHost";
+import type { UIContributionRegistryV1 as PluginHost, RegisteredConversationCardV1 as RegisteredConversationCard } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { useI18n } from "../i18n";
 
 export interface PluginConversationCardsProps {
@@ -49,7 +50,7 @@ class ConversationCardBoundary extends Component<{
 }
 
 function ConversationCardContent({ card }: { card: RegisteredConversationCard }): ReactNode {
-  return card.render(Object.freeze({
+  return React.createElement(card.render, Object.freeze({
     id: card.id,
     threadId: card.threadId,
     state: card.state,

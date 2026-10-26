@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 )
 
 // newSelectedCompactionClient captures this generation's host. The runner binds
@@ -27,4 +29,22 @@ func newSelectedCompactionClient(host *pluginhost.Host) *compactionservice.Clien
 
 func compactionProviderFactory() NativeProviderFactory {
 	return NativeProviderFactory{ID: compactionservice.NativeModule, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) { return compactionservice.NewService(), nil }}
+}
+
+func newSelectedLoopPolicyClient(host *pluginhost.Host) *loopdriver.PolicyClient {
+	return loopdriver.NewPolicyClient(func(ctx context.Context, raw json.RawMessage) (json.RawMessage, error) {
+		if host == nil {
+			return nil, &pluginhost.HostServiceError{Code: "service_unavailable", Message: "selected agent policy host is unavailable"}
+		}
+		result, err := host.CallService(ctx, sessionExecutionConsumer, pluginprotocol.AgentPolicyService, "evaluate", raw)
+		if err != nil {
+			return nil, err
+		}
+		return result, nil
+	})
+}
+func loopPolicyProviderFactory() NativeProviderFactory {
+	return NativeProviderFactory{ID: loopdriver.NativePolicyModule, DefaultEnabled: true, Build: func(NativeProviderContext) (pluginhost.Client, error) {
+		return loopdriver.NewNativePolicyService(), nil
+	}}
 }

@@ -43,11 +43,15 @@ func (s *Service) Status() pluginhost.Status {
 	return pluginhost.Status{ID: s.id, State: s.state}
 }
 func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return []pluginhost.ServiceDescriptor{{Name: s.name, Version: DriverServiceVersion, Methods: []pluginhost.ServiceMethodDescriptor{
-		{Name: RemoteMethodDescriptor, Preparation: true},
-		{Name: RemoteMethodCreate}, {Name: RemoteMethodResume}, {Name: RemoteMethodRun},
-		{Name: RemoteMethodShutdown, Cleanup: true},
-	}}}
+	methods := []pluginhost.ServiceMethodDescriptor{}
+	for _, name := range []string{RemoteMethodDescriptor, RemoteMethodCreate, RemoteMethodResume, RemoteMethodRun, RemoteMethodShutdown} {
+		outputVersion := "1"
+		if name == RemoteMethodRun {
+			outputVersion = "2"
+		}
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{Name: name, InputSchema: "driver." + name + ".input.v1", OutputSchema: "driver." + name + ".output.v" + outputVersion, Preparation: name == RemoteMethodDescriptor, Cleanup: name == RemoteMethodShutdown})
+	}
+	return []pluginhost.ServiceDescriptor{{Name: s.name, Version: DriverServiceVersion, Methods: methods}}
 }
 func (s *Service) RequiredServices() []pluginhost.ServiceRequirement {
 	return slices.Clone(s.requires)

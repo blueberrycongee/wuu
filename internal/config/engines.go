@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 )
 
 // EnginesConfig configures external agent engines in the
@@ -69,9 +67,20 @@ func (c *EnginesConfig) validate() error {
 	if id == "" || id == "wuu" {
 		return nil
 	}
-	if _, ok := enginecatalog.Lookup(id); !ok {
-		return fmt.Errorf("engines.default_engine %q is not supported", id)
+	// Availability belongs to the selected graph, not the native CLI catalog.
+	// Keep persisted IDs safe to embed in the engine.<id> service name.
+	for _, segment := range strings.Split(id, ".") {
+		if segment == "" {
+			return fmt.Errorf("engines.default_engine %q is not a valid service ID", id)
+		}
+		for index, c := range segment {
+			if c >= 'a' && c <= 'z' || index > 0 && (c >= '0' && c <= '9' || c == '-') {
+				continue
+			}
+			return fmt.Errorf("engines.default_engine %q is not a valid service ID", id)
+		}
 	}
+
 	return nil
 }
 

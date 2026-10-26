@@ -181,7 +181,7 @@ func KernelDriverCheckpointDescriptor() ServiceDescriptor {
 var (
 	serviceNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+$`)
 	// Method names are case-sensitive API identifiers, unlike service namespaces.
-	serviceMethodPattern  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z][A-Za-z0-9-]*)*$`)
+	serviceMethodPattern  = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z][A-Za-z0-9_-]*)*$`)
 	serviceSchemaPattern  = regexp.MustCompile(`^[a-z][a-z0-9-]*(\.[A-Za-z0-9-]+)+$`)
 	serviceVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 )
@@ -218,6 +218,8 @@ type ServiceRequirement struct {
 
 // ServiceCallParams is the payload of the service.call gateway frame.
 type ServiceCallParams struct {
+	// Cleanup requests an independently owned release call; it cannot start work.
+	Cleanup     bool            `json:"cleanup,omitempty"`
 	Service     string          `json:"service"`
 	Method      string          `json:"method"`
 	ExecutionID string          `json:"execution_id,omitempty"`

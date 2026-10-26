@@ -39,6 +39,7 @@ func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) 
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
+			"canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering",
 		},
 	}, nil
 }
@@ -181,6 +182,18 @@ func (s *Session) refreshEngineSettings() error {
 }
 
 func (s *Session) applyEngineSettings(cfg config.Config) error {
+	if s.engines != nil && s.engines.IsResolved() {
+		id := agentengine.EngineWuu
+		if cfg.Engines != nil {
+			id = agentengine.NormalizeEngineID(cfg.Engines.DefaultEngine)
+		}
+		s.defaultEngineMu.Lock()
+		s.defaultEngine = id
+		s.defaultEngineMu.Unlock()
+		// Native and external providers read their selected configuration on binding.
+		return nil
+	}
+
 	codexBinary, codexResolveErr := codexengine.ResolveBinary()
 	codexEnabled := codexResolveErr == nil
 	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()
@@ -298,12 +311,10 @@ func (s *Session) CodexHost() *codexengine.Host {
 
 // WuuEngine returns the registered native engine provider, or nil when it is
 // absent or replaced. Lookup never constructs a substitute implementation.
-func (s *Session) WuuEngine() *WuuEngine {
+func (s *Session) WuuEngine() agentengine.Factory {
 	if s != nil && s.engines != nil {
 		if f, ok := s.engines.Lookup(agentengine.EngineWuu); ok {
-			if w, ok := f.(*WuuEngine); ok {
-				return w
-			}
+			return f
 		}
 	}
 	return nil
@@ -320,6 +331,13 @@ func (s *Session) EngineSessionForThread(ctx context.Context, rt *ThreadRuntime,
 	id := agentengine.NormalizeEngineID(string(rt.EngineID))
 	if s == nil || s.engines == nil {
 		return &unavailableEngineSession{id: id}
+	}
+	if s.engines.IsResolved() {
+		session, err := s.bindSelectedEngine(ctx, rt, binding, id)
+		if err != nil {
+			return agentengine.FailedSession(err)
+		}
+		return session
 	}
 	f, ok := s.engines.Lookup(id)
 	if !ok {

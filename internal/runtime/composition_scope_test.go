@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +70,15 @@ func TestCompositionActivationHasOriginBeforePublication(t *testing.T) {
 	var scope pluginhost.CompositionView
 	if err := json.Unmarshal(raw, &scope); err != nil {
 		t.Fatal(err)
+	}
+	if scope.Services.GraphGeneration == "" || scope.Services.GraphGeneration == owner.pluginGeneration.id {
+		t.Fatalf("candidate discovery did not preserve isolated graph identity: %+v", scope.Services)
+	}
+	if scope.Services.GraphGeneration != kernel.compositions.scopes[scope.ID].runtime.pluginGeneration.id {
+		t.Fatal("candidate discovery does not identify its running implementation")
+	}
+	if len(scope.Services.Dependencies) == 0 || len(scope.Services.Requirements) == 0 {
+		t.Fatal("candidate discovery omitted authoritative dependency graph")
 	}
 	if len(captures) != 2 {
 		t.Fatalf("expected root and candidate activations, got %d", len(captures))
@@ -335,12 +343,28 @@ func TestCompositionInheritance(t *testing.T) {
 	if _, err := owner.Sessions.SetEngine("external-session", "codex"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := invoke("bind", fmt.Sprintf(`{"session":"external-session","id":%q,"expected":""}`, shared.ID)); err == nil || !strings.Contains(err.Error(), "native Wuu engine") {
-		t.Fatalf("external engine accepted product composition: %v", err)
+	if _, err := invoke("bind", fmt.Sprintf(`{"session":"external-session","id":%q,"expected":""}`, shared.ID)); err != nil {
+		t.Fatal(err)
 	}
-	if record, _, found, err := readProductComposition(context.Background(), owner.Documents, "external-session"); err != nil || found || record.ID != "" {
-		t.Fatalf("rejected external binding changed persisted selection: %+v found=%v err=%v", record, found, err)
+	externalState, err := owner.RetainState()
+	if err != nil {
+		t.Fatal(err)
 	}
+	externalRuntime, err := owner.NewThreadCapabilityRuntimeForState(externalState, "external-session", owner.RootDir, ThreadModelSelection{})
+	_ = externalState.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if externalRuntime.CompositionID != shared.ID || externalRuntime.StreamRunner != nil {
+		t.Fatal("external composition lost its selected graph or constructed a native loop")
+	}
+	if err := externalRuntime.CloseComposition(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invoke("bind", fmt.Sprintf(`{"session":"external-session","id":"","expected":%q}`, shared.ID)); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := invoke("bind", fmt.Sprintf(`{"session":"product-main","id":%q,"expected":""}`, shared.ID)); err != nil {
 		t.Fatal(err)
 	}

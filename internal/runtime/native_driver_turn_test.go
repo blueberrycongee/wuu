@@ -54,7 +54,11 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 		{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 		{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 	})
-	clients := append(testKernelStateProviders(t, dir), kernel, provider, promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
+	nativeModel, err := nativeModelProviderFactory().Build(NativeProviderContext{Registry: registry, WuuHome: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, loopdriver.NewNativePolicyService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
 	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)
@@ -131,7 +135,11 @@ func testNativeDriverIndependentTurn(t *testing.T, streaming bool) {
 		{Name: pluginprotocol.DriverTurnService, MajorVersion: pluginprotocol.DriverTurnMajor, Required: true},
 		{Name: loopdriver.DriverCheckpointService, MajorVersion: 1, Required: true},
 	})
-	clients := append(testKernelStateProviders(t, dir), kernel, provider, promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
+	nativeModel, err := nativeModelProviderFactory().Build(NativeProviderContext{Registry: registry, WuuHome: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, loopdriver.NewNativePolicyService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
 	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)

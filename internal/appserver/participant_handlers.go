@@ -9,7 +9,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/participant"
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -53,7 +52,7 @@ func resolveParticipantModelOverride(rt *runtimeSessionReference, participantNam
 	if !found {
 		return "", nil, fmt.Errorf("participant %q pins model %q but provider %q is not configured", participantName, rawPin, providerName)
 	}
-	client, buildErr := providerfactory.BuildStreamClient(providerCfg, providerName, providerfactory.Bindings{Credentials: rt.services.Credentials, ChatGPT: rt.services.ChatGPT})
+	client, buildErr := rt.services.ModelClient(providerCfg, providerName)
 	if buildErr != nil {
 		return "", nil, fmt.Errorf("participant %q pins model %q but provider %q failed to build: %w", participantName, rawPin, providerName, buildErr)
 	}

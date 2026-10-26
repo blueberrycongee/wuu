@@ -18,8 +18,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/claudeengine"
-	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/modelcatalog"
@@ -272,10 +270,6 @@ type Server struct {
 	codexModelsMu   sync.Mutex
 	codexModelCache map[string]map[string]config.ProviderModelConfig
 
-	claudeEngineModelCatalog claudeengine.ModelCatalog
-	engineModelCatalogMu     sync.Mutex
-	engineModelCatalogCache  map[string]*engineModelCatalogCacheEntry
-
 	chatGPTMu         sync.Mutex
 	chatGPTManager    *siwc.Manager
 	chatGPTBindings   map[string]*chatGPTBinding
@@ -303,9 +297,8 @@ type Server struct {
 	activityUnsubscribe          func()
 	backgroundMu                 sync.Mutex
 	backgroundWG                 sync.WaitGroup
-	engineHostMu                 sync.Mutex
-	codexHost                    *codexengine.Host
-	codexHostRelease             func()
+	engineScopeMu                sync.Mutex
+	engineScopes                 map[agentengine.EngineID]engineScope
 	engineAuthMu                 sync.Mutex
 	engineAuthCancels            map[string]context.CancelFunc
 	nativeHistoryCtx             context.Context
@@ -362,7 +355,6 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		activeRunByThread:            make(map[string]string),
 		modelCatalogHTTPClient:       http.DefaultClient,
 	}
-	s.retainCodexHost()
 	s.bindUserQuestions()
 	if rt != nil {
 		catalogHome := strings.TrimSpace(rt.WuuHome)
@@ -874,13 +866,7 @@ func (s *Server) Close() {
 				_ = th.state.Close()
 			}
 		}
-		s.engineHostMu.Lock()
-		releaseHost := s.codexHostRelease
-		s.codexHost, s.codexHostRelease = nil, nil
-		s.engineHostMu.Unlock()
-		if releaseHost != nil {
-			releaseHost()
-		}
+		s.releaseEngineScopes()
 		s.releasePresence()
 	})
 }

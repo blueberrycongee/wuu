@@ -170,3 +170,20 @@ func wrapDialContextWithTimeout(
 		return next(dialCtx, network, addr)
 	}
 }
+
+// CloseOwnedStreamingHTTPClient releases only the transport cloned by
+// BuildStreamingHTTPClient. Injected/custom transports remain their owner's
+// responsibility, including the process-wide default transport.
+func CloseOwnedStreamingHTTPClient(base, stream *http.Client) {
+	if stream == nil {
+		return
+	}
+	transport, ok := stream.Transport.(*http.Transport)
+	if !ok || transport == nil || transport == http.DefaultTransport {
+		return
+	}
+	if base != nil && transport == base.Transport {
+		return
+	}
+	transport.CloseIdleConnections()
+}

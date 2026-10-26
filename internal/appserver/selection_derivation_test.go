@@ -457,6 +457,9 @@ func TestServerThreadForkPreservesExternalNativeSelection(t *testing.T) {
 	for _, model := range []string{"", "native-model"} {
 		t.Run("model="+model, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
+			if err := rt.Engines().Register(stubProtocolEngine{id: "cursor"}); err != nil {
+				t.Fatal(err)
+			}
 			out := &lockedBuffer{}
 			bindThreadDeleteArtifacts(t, rt, &threadDeleteArtifactProvider{})
 			srv := New(rt, out)

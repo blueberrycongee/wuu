@@ -21,7 +21,7 @@ func (*metadataSessionDomain) Status() pluginhost.Status {
 func (*metadataSessionDomain) Close(context.Context) error                       { return nil }
 func (*metadataSessionDomain) RequiredServices() []pluginhost.ServiceRequirement { return nil }
 func (*metadataSessionDomain) ProvidedServices() []pluginhost.ServiceDescriptor {
-	return []pluginhost.ServiceDescriptor{{Name: session.ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "Find"}}}}
+	return []pluginhost.ServiceDescriptor{{Name: session.ServiceName, Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "Find", InputSchema: session.ServiceName + ".Find.input.v1", OutputSchema: session.ServiceName + ".Find.output.v1"}}}}
 }
 func (s *metadataSessionDomain) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 	s.calls.Add(1)

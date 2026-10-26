@@ -15,9 +15,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/blueberrycongee/wuu/internal/agentengine"
-	"github.com/blueberrycongee/wuu/internal/codexengine"
+	configpkg "github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
@@ -27,8 +27,24 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	t.Setenv("WUU_HOME", t.TempDir())
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("GROK_HOME", t.TempDir())
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.WuuHome = t.TempDir()
+	root, home := t.TempDir(), t.TempDir()
+	rt := &runtime.Session{RootDir: root, WuuHome: home, ConfigPath: filepath.Join(root, "config.json")}
+	openRuntime := func() *runtime.Session {
+		raw, err := os.ReadFile(rt.ConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg configpkg.Config
+		if err = json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		current, err := runtime.NewSession(runtime.Options{RootDir: root, HomeDir: home, ConfigPath: rt.ConfigPath, ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg, NoTools: true, NonInteractive: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = current.Cleanup() })
+		return current
+	}
 	var requests atomic.Int32
 	var status atomic.Int32
 	status.Store(http.StatusOK)
@@ -61,9 +77,22 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 		if err := os.WriteFile(rt.ConfigPath, data, 0o600); err != nil {
 			t.Fatal(err)
 		}
+		if rt.PluginHost != nil {
+			var selected configpkg.Config
+			if err := json.Unmarshal(data, &selected); err != nil {
+				t.Fatal(err)
+			}
+			candidate, err := rt.PreflightExtensions(selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = rt.ActivatePluginGeneration(candidate, nil); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	writeConfig(firstToken)
-	bindConfigSourceForTest(t, rt)
+	rt = openRuntime()
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -97,6 +126,15 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	if requests.Load() != 0 {
 		t.Fatal("navigation requested account allowances")
 	}
+	state, stateErr := rt.RetainState()
+	if stateErr != nil {
+		t.Fatal(stateErr)
+	}
+	_, quotaErr := state.ReadModelQuota(context.Background(), "first")
+	_ = state.Close()
+	if quotaErr != nil {
+		t.Fatalf("selected quota route: %v", quotaErr)
+	}
 	fresh := list("fresh", true)
 	first, second := quota(fresh, "first"), quota(fresh, "second")
 	if first.Status != "available" || first.Account == nil || first.Account.Label != "first@example.test" || first.ObservedAt == "" || first.ExpiresAt == "" || len(first.Windows) != 2 || first.Windows[0].UsedPercent == nil || *first.Windows[0].UsedPercent != 37 || *first.Windows[1].UsedPercent != 125 {
@@ -116,12 +154,9 @@ func TestProviderQuotaAttributionAndRecovery(t *testing.T) {
 	// Restart with a new runtime after the old server's owned watchers stop.
 	// Only persisted configuration and credential-scoped observations survive.
 	srv.Close()
-	restartedRuntime := newTestRuntime(t, &fakeClient{})
-	restartedRuntime.RootDir, restartedRuntime.ConfigPath = rt.RootDir, rt.ConfigPath
-	restartedRuntime.WuuHome, restartedRuntime.SessionDir = rt.WuuHome, rt.SessionDir
-	rt = restartedRuntime
+	_, _ = rt.Cleanup()
+	rt = openRuntime()
 	out = &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
 	srv = New(rt, out)
 	t.Cleanup(srv.Close)
 	if restarted := quota(list("restart", true), "first"); restarted.Status != "stale" || restarted.ObservedAt != first.ObservedAt {
@@ -249,44 +284,19 @@ func TestSubscriptionHistoryIsLoadedOnlyOnDemand(t *testing.T) {
 	initialize("failed-history-navigation")
 }
 
-func TestSubscriptionQuotaPreservesExhaustionAndRejectsMissingPercent(t *testing.T) {
-	var response codexengine.RateLimitsResponse
-	if err := json.Unmarshal([]byte(`{"rateLimits":{"primary":{"usedPercent":0,"windowDurationMins":300},"secondary":{"windowDurationMins":10080}},"rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":105,"windowDurationMins":300,"resetsAt":1800000000},"secondary":{"usedPercent":0,"windowDurationMins":10080}}}}`), &response); err != nil {
-		t.Fatal(err)
-	}
-	got := subscriptionQuotaWindows(response)
-	if len(got) != 2 || got[0].UsedPercent == nil || *got[0].UsedPercent != 105 || got[1].UsedPercent == nil || *got[1].UsedPercent != 0 || got[0].ResetsAt == "" {
-		t.Fatalf("quota windows = %+v", got)
-	}
-	// The map is authoritative; the legacy mirror must not be counted twice.
-	response.ByLimitID = nil
-	got = subscriptionQuotaWindows(response)
-	if len(got) != 2 || got[0].UsedPercent == nil || *got[0].UsedPercent != 0 || got[0].WindowMinutes != 300 || got[1].UsedPercent != nil {
-		t.Fatalf("legacy windows = %+v", got)
-	}
-	response.RateLimits.Primary.UsedPercent = nil
-	if got := subscriptionQuotaWindows(response); len(got) != 2 || got[0].UsedPercent != nil || got[1].UsedPercent != nil {
-		t.Fatalf("missing allowance became quota: %+v", got)
-	}
-}
-
-// Subscription clients reserve allowance space from engine/list capabilities
-// before the slower include_quota read, so every engine that receives quota
-// must advertise it.
 func TestSubscriptionQuotaGoesOnlyToEnginesAdvertisingIt(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
 	// A binary the host cannot start fails the allowance read, which still
 	// attaches an unavailable quota without running an app-server.
 	binary := filepath.Join(t.TempDir(), "codex")
-	if err := os.WriteFile(binary, nil, 0o600); err != nil {
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	config := fmt.Sprintf(`{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","api_key":"test-key","model":"fake-model"}},"engines":{"codex":{"binary_path":%q}}}`, binary)
-	if err := os.WriteFile(rt.ConfigPath, []byte(config), 0o600); err != nil {
+	var cfg configpkg.Config
+	if err := json.Unmarshal([]byte(config), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	rt.SetEnginesForTest(agentengine.NewRegistry())
-	rt.RebuildCodexEngine(true, binary)
+	rt := newEngineAdminRuntime(t, cfg)
 	srv := &Server{rt: rt}
 
 	engines := srv.engineInventory()
@@ -302,7 +312,7 @@ func TestSubscriptionQuotaGoesOnlyToEnginesAdvertisingIt(t *testing.T) {
 		}
 	}
 	if quoted == 0 {
-		t.Fatal("no engine received quota")
+		t.Fatalf("no engine received quota: %+v", engines)
 	}
 }
 

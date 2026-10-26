@@ -972,3 +972,19 @@ function registerCompleteGeneration(api: PluginGenerationApi, label: string): vo
   api.registerStyle({ id: `${label}-style`, css: `.${label} {}` });
   api.registerLocale({ id: `${label}-copy`, locale: "en", entries: { label } });
 }
+
+it("owns central notices by generation and rejects notices from retired handles", async () => {
+  const toast = await import("../Toast");
+  const show = vi.spyOn(toast, "showToast").mockReturnValue(71);
+  const dismiss = vi.spyOn(toast, "dismissToast");
+  const host = new PluginHost({ react: React });
+  let api!: PluginGenerationApi;
+  try {
+    await host.activateGeneration({ pluginId: "notices", generation: "one", register: value => { api = value; } });
+    api.showNotice({ message: "Could not refresh. Try again.", tone: "error", key: "refresh" });
+    expect(show).toHaveBeenCalledWith({ message: "Could not refresh. Try again.", tone: "error", dedupeKey: "plugin:notices:refresh" });
+    host.unload("notices");
+    expect(dismiss).toHaveBeenCalledWith(71);
+    expect(() => api.showNotice({ message: "stale" })).toThrow();
+  } finally { await host.unloadAndWait("notices"); show.mockRestore(); dismiss.mockRestore(); }
+});

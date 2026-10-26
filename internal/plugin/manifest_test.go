@@ -305,3 +305,21 @@ func TestMangaStudioExampleManifestLoads(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDesktopServicesAdmitPublicApplicationAndSurfaceProviders(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "desktop.js"), "export function activate() {}")
+	for _, name := range []string{"ui.application", "ui.shell", "ui.navigation", "ui.conversation", "ui.composer", "ui.settings", "ui.preview", "ui.custom-surface"} {
+		t.Run(name, func(t *testing.T) {
+			raw := `{"entry":"desktop.js","services":[{"name":"` + name + `","version":"1.0.0","methods":[{"name":"describe","input_schema":"` + name + `.describe.input.v1","output_schema":"` + name + `.describe.output.v1"}]}]}`
+			if _, err := normalizeDesktop(root, []byte(raw)); err != nil {
+				t.Fatalf("public renderer descriptor rejected: %v", err)
+			}
+			for _, invalid := range []string{strings.Replace(raw, name, "agent.policy", 1), strings.Replace(raw, `"version":"1.0.0"`, `"version":"2.0.0"`, 1), strings.Replace(raw, `"name":"describe"`, `"name":"invoke"`, 1)} {
+				if _, err := normalizeDesktop(root, []byte(invalid)); err == nil {
+					t.Fatal("non-renderer contract accepted")
+				}
+			}
+		})
+	}
+}

@@ -30,6 +30,16 @@ func (i *driverTurnInvoker) InvokeService(ctx context.Context, params pluginhost
 		return nil, serviceError("service_unavailable", "execution does not expose independent turn operations")
 	}
 	switch params.Method {
+	case "evaluate_policy":
+		var input pluginprotocol.DriverTurnPolicyParams
+		if err := decodeServiceParams(params.Params, &input); err != nil {
+			return nil, err
+		}
+		result, err := turn.EvaluatePolicy(ctx, input.Input)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(result)
 	case "read":
 		if err := decodeServiceParams(params.Params, &scope); err != nil {
 			return nil, err

@@ -18,6 +18,8 @@ import type { ModelAdapterDescriptor } from "./model.js";
 export * from "./process.js";
 export * from "./driver.js";
 export * from "./composition.js";
+export * from "./engine-admin.js";
+export * from "./engine.js";
 export * from "./persistence.js";
 
 import type {
@@ -484,6 +486,8 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   readVisibleHistory(request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult>;
   /** List registered project workspaces that a trusted extension may target. */
   listWorkspaces(): Promise<PluginWorkspaceSnapshot>;
+  /** Live, nonarchived workspace conversations; no private controller state. */
+  listThreads(workspaceRoot: string): Promise<readonly PluginThreadSummary[]>;
   /** Observe host lifecycle events; disposal is bound to this generation. */
   onHostEvent(handler: (event: unknown) => void): Disposable;
   registerCommand(command: CommandRegistration): Disposable;
@@ -545,6 +549,14 @@ export interface PluginWorkspace {
   readonly name: string;
   readonly root: string;
   readonly available: boolean;
+}
+
+export interface PluginThreadSummary {
+  readonly id: string;
+  readonly title: string;
+  readonly updatedAt?: string;
+  readonly pinned?: boolean;
+  readonly latestCompletedTurnId?: string;
 }
 
 export interface PluginWorkspaceSnapshot {
@@ -684,7 +696,7 @@ export type ProductComposition = {
   version: 1;
   profiles?: Record<string, { modules: string[]; services?: ServiceBinding[] }>;
 } | {
-  version: 2;
+  version: 2 | 3;
   profiles?: Record<string, CompositionProfile>;
   bundles?: Record<string, CompositionBundle>;
   /** Applied last. Without a profile/modules, patches start from an empty set. */
@@ -719,11 +731,18 @@ export type CompositionSource = "composition" | `profile:${string}` | `bundle:${
 /** Public registry diagnostics; no provider configuration or private data. */
 export interface ServiceRegistrySnapshot {
   generation: number;
+  /** Immutable identity of this running graph; catalog epoch may advance independently. */
+  graph_generation?: string;
+  /** Resolved edges used by host lifecycle ordering, not reconstructed selectors. */
+  dependencies?: Record<string, { provider: string; required: boolean; service?: string; major?: number }[]>;
+  /** Includes requirements that could not be resolved. */
+  requirements?: Record<string, ServiceRequirement[]>;
   services: {
     service: string;
     version: string;
     provider: string;
     methods: string[];
+    descriptor?: ServiceDescriptor;
     binding_source: CompositionSource | "unique-provider";
   }[];
   composition?: {
@@ -1394,7 +1413,7 @@ export interface HostServiceContracts {
     result: { session_id: string; discarded: boolean };
   };
   "host.service.call": {
-    params: { service: string; method: string; execution_id?: string; params?: unknown };
+    params: { service: string; method: string; execution_id?: string; cleanup?: boolean; params?: unknown };
     result: unknown;
   };
 }
@@ -1426,6 +1445,8 @@ export class RuntimeHostServiceError extends Error {
 }
 
 export interface RuntimeHostCallOptions {
+  /** Settle an already owned resource without borrowing a cancelled execution. The selected service still enforces its cleanup/owner contract. */
+  cleanup?: boolean;
   /** Stop waiting for this call. This does not undo effects already accepted by the host. */
   signal?: AbortSignal;
 }
@@ -1813,7 +1834,7 @@ function scopedRuntimeHost(host: RuntimeHost, execution: RuntimeExecutionContext
   return {
     supports: (method) => host.supports(method),
     call: (method, params, options) => {
-      const signal = options?.signal
+      const signal = options?.cleanup ? options.signal : options?.signal
         ? AbortSignal.any([execution.signal, options.signal])
         : execution.signal;
       const serviceParams = method === "host.service.call"
@@ -1821,7 +1842,7 @@ function scopedRuntimeHost(host: RuntimeHost, execution: RuntimeExecutionContext
         : { service: KERNEL_SERVICE_NAMES[method as KernelHostServiceMethod], method: KERNEL_SERVICE_METHOD, params };
       return host.call("host.service.call", {
         ...serviceParams,
-        ...(execution.executionId ? { execution_id: execution.executionId } : {}),
+        ...(options?.cleanup ? { execution_id: undefined, cleanup: true } : execution.executionId ? { execution_id: execution.executionId } : {}),
       }, { signal });
     },
   } as RuntimeHost;
@@ -1891,9 +1912,12 @@ class JSONLRuntimeHost implements RuntimeHost {
         reject: fail,
       });
       signal?.addEventListener("abort", abort, { once: true });
-      const frame = method === "host.service.call"
-        ? { id, method, params }
+      const frame: { id: string; method: "host.service.call"; params: HostServiceContracts["host.service.call"]["params"] } = method === "host.service.call"
+        ? { id, method: "host.service.call", params: params as HostServiceContracts["host.service.call"]["params"] }
         : kernelServiceCall(id, method, params as HostServiceContracts[KernelHostServiceMethod]["params"]);
+      if (options?.cleanup) {
+        frame.params = { ...frame.params, execution_id: undefined, cleanup: true };
+      }
       void this.send(frame).catch(fail);
     });
   }
@@ -2694,3 +2718,11 @@ export * from "./ui-web-workspace.js";
 export * from "./ui-artifacts.js";
 
 export * from "./ui-composer-presentation.js";
+
+export * from "./experiment.js";
+
+export * from "./agent-policy.js";
+
+export { scopeApplicationWorkbench } from "./ui-contributions.js";
+
+export * from "./model-capacity.js";

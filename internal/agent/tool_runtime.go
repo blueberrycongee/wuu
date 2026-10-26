@@ -49,6 +49,7 @@ type toolRun struct {
 // enqueue read-only tools early, and the loop later waits for those same runs
 // while executing any remaining final tool calls.
 type TurnToolRuntime struct {
+	serial      bool
 	executor    ToolExecutor
 	ledger      *toolledger.Ledger
 	operationID string
@@ -71,6 +72,7 @@ type TurnToolRuntime struct {
 }
 
 type ToolRuntimeConfig struct {
+	Serial bool
 	// Gate must be shared when multiple runtimes can have live nested work.
 	Gate        *ToolExecutionGate
 	Executor    ToolExecutor
@@ -97,6 +99,7 @@ func (r *TurnToolRuntime) SetResultCallback(callback func(providers.ToolCall, to
 
 func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 	runtime := &TurnToolRuntime{
+		serial:      config.Serial,
 		executor:    config.Executor,
 		ledger:      config.Ledger,
 		operationID: strings.TrimSpace(config.OperationID),
@@ -106,7 +109,11 @@ func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 		running:     map[*toolRun]context.CancelFunc{},
 	}
 	if runtime.gate == nil {
-		runtime.gate = NewToolExecutionGate(maxToolConcurrency)
+		capacity := maxToolConcurrency
+		if config.Serial {
+			capacity = 1
+		}
+		runtime.gate = NewToolExecutionGate(capacity)
 	}
 	runtime.SetStepIndex(config.StepIndex)
 	return runtime
@@ -707,7 +714,7 @@ func (r *TurnToolRuntime) executeBatch(
 	callCtxProvider, hasCallCtxProvider := r.executor.(ToolCallContextProvider)
 	discoveryProvider, hasDiscoveryProvider := r.executor.(ToolDiscoveryProvider)
 
-	if !batch.concurrent || len(batch.calls) == 1 {
+	if r.serial || !batch.concurrent || len(batch.calls) == 1 {
 		msgs := make([]providers.ChatMessage, 0, len(batch.calls))
 		requestContext := make([]ContextSegment, 0, len(batch.calls))
 		for _, call := range batch.calls {

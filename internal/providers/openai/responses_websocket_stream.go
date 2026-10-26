@@ -42,6 +42,7 @@ type ResponsesWebSocketCache struct {
 	mu       sync.Mutex
 	sessions map[string]*responsesWebSocketSession
 	idleTTL  time.Duration
+	closed   bool
 }
 
 func NewResponsesWebSocketCache() *ResponsesWebSocketCache {
@@ -171,6 +172,9 @@ func (c *Client) PrewarmResponsesWebSocket(ctx context.Context, sessionID string
 		return err
 	}
 	session := c.responsesWSCache.session(sessionID)
+	if session == nil {
+		return errors.New("responses websocket cache is closed")
+	}
 	session.mu.Lock()
 	if session.fallbackActiveLocked(time.Now()) || session.busy || session.prewarmDone != nil {
 		session.mu.Unlock()
@@ -241,6 +245,9 @@ func (c *Client) responsesStreamChatWebSocketAttempt(ctx context.Context, payloa
 		return nil, err
 	}
 	session := c.responsesWSCache.session(sessionID)
+	if session == nil {
+		return nil, errors.New("responses websocket cache is closed")
+	}
 	session.mu.Lock()
 	prewarmDone := session.prewarmDone
 	session.mu.Unlock()
@@ -1193,6 +1200,9 @@ func (c *ResponsesWebSocketCache) expireIdleSession(sessionID string, session *r
 func (c *ResponsesWebSocketCache) session(sessionID string) *responsesWebSocketSession {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
 	if c.sessions == nil {
 		c.sessions = make(map[string]*responsesWebSocketSession)
 	}
@@ -1477,4 +1487,25 @@ func responsesOutputItemReplayInput(item responsesOutputItem) (responsesInputIte
 	default:
 		return responsesInputItem{}, false
 	}
+}
+
+// Close seals the cache and drops idle connections/timers. The owning graph
+// drains active inference before calling this; borrowed caches are not closed
+// by transient OpenAI protocol wrappers.
+func (c *ResponsesWebSocketCache) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	c.closed = true
+	sessions := c.sessions
+	c.sessions = nil
+	c.mu.Unlock()
+	for _, session := range sessions {
+		session.mu.Lock()
+		(&Client{}).responsesWebSocketAbortConnectionLocked(session)
+		session.fallback = responsesWebSocketFallbackState{}
+		session.mu.Unlock()
+	}
+	return nil
 }

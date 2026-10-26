@@ -8,6 +8,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -29,6 +30,8 @@ type streamTurnGateway struct {
 	onEvent                 StreamCallback
 	client                  providers.StreamClient
 	policy                  *compactionservice.Policy
+	toolGate                *ToolExecutionGate
+	serialTools             bool
 	ready                   bool
 	closed                  bool
 	complete                bool
@@ -96,6 +99,18 @@ func (g *streamTurnGateway) acquire(ctx context.Context) (context.Context, func(
 func (g *streamTurnGateway) prepare(ctx context.Context) error {
 	if g.ready {
 		return nil
+	}
+	if g.runner.SelectedPolicy != nil {
+		policy, err := g.runner.SelectedPolicy.Evaluate(ctx, pluginprotocol.AgentPolicyInput{Phase: "schedule", ExecutionID: loopdriver.ExecutionContextFromContext(ctx).ExecutionID})
+		if err != nil {
+			return err
+		}
+		g.serialTools = policy.Action == "serial"
+		capacity := policy.MaxParallel
+		if g.serialTools {
+			capacity = 1
+		}
+		g.toolGate = NewToolExecutionGate(capacity)
 	}
 	if g.runner.SelectedCompaction != nil {
 		policy, err := g.runner.SelectedCompaction.Describe(ctx, g.runner.compactionDescription())
@@ -178,6 +193,9 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.ModelRound{}, err
 	}
+	if g.serialTools {
+		batchID = ""
+	}
 	if len(g.streamedBatches) != 0 {
 		return loopdriver.ModelRound{}, errors.New("join the pending streaming tool batch before calling another model")
 	}
@@ -235,7 +253,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	// Provider call IDs belong to one assistant declaration. A later model
 	// operation may reuse a provider's ID; batch IDs still fence every effect.
 	g.toolCalls = make(map[string]bool)
-	step := &streamStep{client: g.client, onEvent: g.onEvent, tools: g.runner.Tools}
+	step := &streamStep{toolGate: g.toolGate, policy: g.runner.SelectedPolicy, client: g.client, onEvent: g.onEvent, tools: g.runner.Tools}
 	observed := make(map[string]providers.ToolCall)
 	var runtimes []*TurnToolRuntime
 	if batchID != "" {
@@ -438,7 +456,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	execution := loopdriver.ExecutionContextFromContext(g.ctx)
 	runtime := streamed.runtime
 	if runtime == nil {
-		runtime = NewTurnToolRuntime(ToolRuntimeConfig{Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx})
+		runtime = NewTurnToolRuntime(ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx})
 	}
 	defer g.releaseToolRuntimes([]*TurnToolRuntime{runtime})
 	runtime.SetResultCallback(func(call providers.ToolCall, result toolresult.Result) {

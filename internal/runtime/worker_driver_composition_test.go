@@ -182,16 +182,20 @@ func TestWorkerDriverRecoversBeforeFirstTerminalSnapshot(t *testing.T) {
 	}
 }
 
-func workerCompositionSession(t *testing.T, removed bool) (*Session, *PluginGeneration) {
+func workerCompositionSession(t *testing.T, removed bool, factories ...NativeProviderFactory) (*Session, *PluginGeneration) {
 	t.Helper()
 	var selection *composition.Config
+	if len(factories) > 0 {
+		selection = &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{nativeModelModule: false, factories[0].ID: true}}}, Services: []composition.Binding{{Service: selectedModelService, Major: 1, Provider: factories[0].ID}}}
+	}
 	if removed {
 		modules := append(testStateModules(), kernelHostModule)
 		selection = &composition.Config{Version: composition.Version, Modules: &modules}
 	}
 	root := t.TempDir()
+	factories = withCapacityProviders(factories, NewCapacityResources(0))
 	home, state := testWorkspaceState(t, root)
-	host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, selection, "")
+	host, kernel, err := buildPluginHost(nil, root, "workspace", home, state, nil, startPluginClient, nil, nil, selection, "", factories...)
 	if err != nil {
 		t.Fatal(err)
 	}

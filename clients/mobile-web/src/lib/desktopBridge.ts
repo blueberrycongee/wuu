@@ -663,6 +663,8 @@ export class RemoteDesktopBridge {
    return this.applyProjectState(await this.call(id?'desktop/projects/relocate':'desktop/projects/add',{path,id}));
   }
   private createApi(): WuuDesktopApi {
+    let initializationRequest = 0;
+    const initializationListeners = new Set<Parameters<NonNullable<WuuDesktopApi["onRuntimeInitialization"]>>[0]>();
     const pluginRequests = new Map<string, { id: string; fingerprint: string; workdir: string; revision: number }>();
     const target: WuuDesktopApi = {
       ...unavailableWebActions,
@@ -740,7 +742,10 @@ export class RemoteDesktopBridge {
         return this.projectState();
       },
 
+      onRuntimeInitialization: listener => { initializationListeners.add(listener); return () => initializationListeners.delete(listener); },
       initialize: async () => {
+        const requestId = ++initializationRequest;
+        for (const listener of initializationListeners) listener({ phase: "started", requestId });
         this.assertAvailable(true);
         const rpc = this.client.rpc();
         if (!rpc) throw new Error("Remote host is disconnected");
@@ -750,10 +755,9 @@ export class RemoteDesktopBridge {
           client: { name: "wuu-web", version: "0.1" },
         }, route.workdir);
         this.bindDesktopGraphs(route, result.extension_inventory ?? []);
-        return {
-          ...result,
-          features: { ...result.features, browser: false },
-        };
+        const initialized = { ...result, features: { ...result.features, browser: false } };
+        if (requestId === initializationRequest) for (const listener of initializationListeners) listener({ phase: "completed", requestId, initialized });
+        return initialized;
       },
       listThreads: (cwd?: string) => this.call("thread/list", { cwd: cwd || this.workdir(), summary_only: true }),
       listAllThreads: () => this.call("thread/listAll", { summary_only: true }),

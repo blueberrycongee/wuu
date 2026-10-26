@@ -69,6 +69,18 @@ func FailureToWire(err error) *pluginprotocol.DriverFailure {
 	if err == nil {
 		return nil
 	}
+	// A service can forward another service's receipt. Preserve its explicit
+	// terminal code and recovery budget rather than classifying it a second time.
+	var forwarded *FailureError
+	if errors.As(err, &forwarded) {
+		result := forwarded.Failure
+		result.Message = err.Error()
+		if result.Recovery != nil {
+			recovery := *result.Recovery
+			result.Recovery = &recovery
+		}
+		return &result
+	}
 	failure := providers.NormalizeFailure(err)
 	result := &pluginprotocol.DriverFailure{
 		Message: err.Error(), Origin: string(failure.Origin), Category: string(failure.Category),

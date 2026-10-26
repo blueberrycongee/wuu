@@ -1,3 +1,5 @@
+import { getDesktopApplication } from "./plugins/ApplicationController.test-support";
+import type { PluginHost } from "./plugins/PluginHost";
 import { WEB_WORKSPACE_RIBBON_ID, type WebWorkspaceApi, type WebWorkspaceState } from "../shared/webWorkspace";
 import { readComposerDraftRecovery } from "./ComposerDraftRecovery";
 import { openComposerAttachmentPicker } from "./test/attachmentPicker";
@@ -466,7 +468,9 @@ describe("session tab switch latency", () => {
   it("app history reactivates the existing plugin instance and skips it after unloading", async () => {
     installWuuApi();
     await renderPageHistoryApp();
-    const { desktopPluginHost, desktopWorkbenchController } = await import("./plugins/DesktopPluginRuntime");
+    const application = getDesktopApplication();
+    const desktopPluginHost = application.contributions as PluginHost;
+    const desktopWorkbenchController = application.workbench;
     const pluginId = "test:page-history";
     try {
       await act(async () => {

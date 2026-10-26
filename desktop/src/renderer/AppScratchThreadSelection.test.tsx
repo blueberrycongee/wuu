@@ -51,7 +51,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { initialState } from "./AppState";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
-import { getDesktopApplication } from "./plugins/ApplicationController";
+import { getDesktopApplication } from "./plugins/ApplicationController.test-support";
 
 let container: HTMLDivElement;
 let root: Root | null = null;

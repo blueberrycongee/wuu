@@ -193,7 +193,7 @@ func (c *compositionService) view(scope *compositionScope) pluginhost.Compositio
 		}
 	}
 	sort.Strings(agents)
-	return pluginhost.CompositionView{ID: scope.id, Root: scope.runtime.RootDir, State: "active", Running: scope.running,
+	return pluginhost.CompositionView{Services: scope.runtime.PluginHost.ServiceRegistry().Snapshot(0), ID: scope.id, Root: scope.runtime.RootDir, State: "active", Running: scope.running,
 		Agents: agents, StateSource: scope.stateSource, Selection: scope.selection, Modules: scope.runtime.PluginHost.Statuses(), Plugins: scope.plugins,
 		ParentGeneration: scope.parentGeneration, Model: pluginhost.CompositionModel{Provider: scope.runtime.ProviderName,
 			Model: scope.runtime.Model, Variant: scope.runtime.StreamRunner.Variant, Effort: scope.runtime.StreamRunner.Effort}}

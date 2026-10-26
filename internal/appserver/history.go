@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	sessionstore "github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -234,19 +235,12 @@ func withoutArchivedContextRecovery(history []providers.ChatMessage) []providers
 	return out
 }
 
-func loadAgentHistory(path string) (persistedAgentHistory, error) {
-	if strings.TrimSpace(path) == "" {
-		return persistedAgentHistory{}, nil
-	}
-	data, err := os.ReadFile(path)
+func loadAgentHistory(documents persistence.Documents, rootID, workerID string, paths ...string) (persistedAgentHistory, error) {
+	run, err := subagent.LoadPersistedRunFromDocuments(documents, rootID, workerID, paths...)
 	if err != nil {
 		return persistedAgentHistory{}, fmt.Errorf("read worker history: %w", err)
 	}
-	var rec persistedAgentHistory
-	if err := json.Unmarshal(data, &rec); err != nil {
-		return persistedAgentHistory{}, fmt.Errorf("decode worker history: %w", err)
-	}
-	return rec, nil
+	return persistedAgentHistory{ID: run.ID, Type: run.Type, TaskName: run.TaskName, AgentProfile: run.AgentProfile, AgentPath: run.AgentPath, ParentID: run.ParentID, Description: run.Description, Status: string(run.Status), StartedAt: run.StartedAt, CompletedAt: run.CompletedAt, Model: run.Model, Prompt: run.Prompt, Result: run.Result, Error: run.Error, Messages: run.Messages}, nil
 }
 
 // appendChatMessage persists a chat message and returns the seq assigned to

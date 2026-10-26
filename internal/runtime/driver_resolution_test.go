@@ -78,7 +78,13 @@ func TestResolveLoopDriverRemoteRoutesThroughRegistry(t *testing.T) {
 		descriptor: pluginhost.ServiceDescriptor{
 			Name:    "driver.demo",
 			Version: loopdriver.DriverServiceVersion,
-			Methods: []pluginhost.ServiceMethodDescriptor{{Name: "descriptor"}, {Name: "create"}, {Name: "resume"}, {Name: "run"}, {Name: "shutdown"}},
+			Methods: []pluginhost.ServiceMethodDescriptor{
+				{Name: "descriptor", InputSchema: "driver.descriptor.input.v1", OutputSchema: "driver.descriptor.output.v1", Preparation: true},
+				{Name: "create", InputSchema: "driver.create.input.v1", OutputSchema: "driver.create.output.v1"},
+				{Name: "resume", InputSchema: "driver.resume.input.v1", OutputSchema: "driver.resume.output.v1"},
+				{Name: "run", InputSchema: "driver.run.input.v1", OutputSchema: "driver.run.output.v2"},
+				{Name: "shutdown", InputSchema: "driver.shutdown.input.v1", OutputSchema: "driver.shutdown.output.v1", Cleanup: true},
+			},
 		},
 		invoke: func(_ context.Context, params pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
 			gotService, gotMethod, gotExecutionID = params.Service, params.Method, params.ExecutionID

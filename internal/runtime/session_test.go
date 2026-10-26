@@ -31,9 +31,11 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/process"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/skills"
@@ -124,7 +126,7 @@ func TestFileChangedPromptReceiptsUseCapturedTurn(t *testing.T) {
 				close(provider.release)
 				modules := testStateModules()
 				modules[1] = provider.ID()
-				modules = append(modules, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, loopdriver.DefaultDriverID, "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default")
+				modules = append(modules, kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, loopdriver.DefaultDriverID, "wuu.tools.default", "wuu.prompt.default", "wuu.compaction.default", "wuu.agent.policy.default", "wuu.model.native")
 				cfg := config.Config{
 					Composition:     &composition.Config{Version: composition.Version, Modules: &modules},
 					DefaultProvider: "fixture", Providers: map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", APIKey: "fixture", Model: "portable-coder"}},
@@ -1867,27 +1869,33 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 			t.Setenv("TEST_WUU_KEY", "abc")
 			t.Setenv("TEST_ANTHROPIC_KEY", "abc")
 
+			client := &sessionRecordingClient{}
 			rt, err := NewSession(Options{
 				RootDir: root,
 				HomeDir: home,
+				NativeProviders: []NativeProviderFactory{{ID: "fixture.worker-model", DefaultEnabled: true, Build: func(c NativeProviderContext) (pluginhost.Client, error) {
+					return &workerRecordingAdapter{client: client, retain: c.RetainState}, nil
+				}}},
 				Config: config.Config{
 					DefaultProvider: "openai",
+					Composition:     &composition.Config{Version: composition.Version, Services: []composition.Binding{{Service: "model.adapter", Major: 1, Provider: "fixture.worker-model"}}},
 					Providers: map[string]config.ProviderConfig{
 						"openai": {
 							Type:      "openai-compatible",
-							BaseURL:   "https://example.test/v1",
+							BaseURL:   "http://127.0.0.1:1/v1",
 							APIKeyEnv: "TEST_WUU_KEY",
 							Model:     "gpt-5-codex",
 						},
 						"worker": {
 							Type:      tc.api,
-							BaseURL:   "https://example.test/v1",
+							BaseURL:   "http://127.0.0.1:1/v1",
 							APIKeyEnv: "TEST_ANTHROPIC_KEY",
 							Model:     tc.model,
 						},
 					},
 					Agent: config.AgentConfig{
-						Temperature: temperature,
+						Temperature:    temperature,
+						PermissionMode: config.PermissionModeUnconfined,
 						ModelRoles: config.ModelRolesConfig{
 							Worker: config.ModelRoleConfig{Provider: "worker", Model: tc.model},
 						},
@@ -1898,12 +1906,10 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 				t.Fatalf("NewSession: %v", err)
 			}
 			t.Cleanup(func() { _, _ = rt.Cleanup() })
-			ConfigureToolkitPermissions(rt.Toolkit, config.ResolvedPermissions{Mode: config.PermissionModeUnconfined})
 			if err := os.WriteFile(filepath.Join(root, "value.txt"), []byte("before\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
 
-			client := &sessionRecordingClient{}
 			for i, call := range []providers.ToolCall{
 				{Name: "read_file", Arguments: `{"path":"value.txt"}`},
 				{Name: "edit_file", Arguments: `{"path":"value.txt","old_text":"before","new_text":"after"}`},
@@ -1918,7 +1924,6 @@ func TestNewThreadRuntimeWorkerUsesWorkerProfileToolSurface(t *testing.T) {
 					{Type: providers.EventDone},
 				})
 			}
-			rt.WorkerClient = client
 			threadRT, err := rt.NewThreadRuntime("thread-worker-surface")
 			if err != nil {
 				t.Fatalf("NewThreadRuntime: %v", err)
@@ -3527,4 +3532,48 @@ func TestUnsupportedNativeToolModelsUseClientRuntime(t *testing.T) {
 			})
 		}
 	}
+}
+
+// The worker request fixture is selected through the public model adapter
+// contract, so role selection never depends on replacing captured private clients.
+type workerRecordingAdapter struct {
+	sessionModelAdapterFixture
+	client *sessionRecordingClient
+	retain func() (*State, error)
+}
+
+func (*workerRecordingAdapter) ID() string { return "fixture.worker-model" }
+func (f *workerRecordingAdapter) Status() pluginhost.Status {
+	return pluginhost.Status{ID: f.ID(), State: pluginhost.StateActive}
+}
+func (*workerRecordingAdapter) ModelAdapters() []pluginhost.ModelAdapterDescriptor {
+	return []pluginhost.ModelAdapterDescriptor{{ID: "fixture.worker-model", Version: 1, Mode: "direct"}}
+}
+func (f *workerRecordingAdapter) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	return json.Marshal(f.ModelAdapters()[0])
+}
+func (f *workerRecordingAdapter) InvokeCapability(ctx context.Context, p pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+	var input pluginprotocol.ModelAdapterInput
+	if err := json.Unmarshal(p.Input, &input); err != nil {
+		return pluginhost.CapabilityInvokeResult{}, err
+	}
+	request, err := modelwire.ApplyRequest(providers.ChatRequest{}, input.Request)
+	if err != nil {
+		return pluginhost.CapabilityInvokeResult{}, err
+	}
+	state, err := f.retain()
+	if err != nil {
+		return pluginhost.CapabilityInvokeResult{}, err
+	}
+	defer state.Close()
+	stream, err := f.client.StreamChat(ctx, request)
+	if err != nil {
+		return pluginhost.CapabilityInvokeResult{}, err
+	}
+	for event := range stream {
+		if err := state.Host.EmitModelEvent(ctx, f.ID(), p.ExecutionID, logicalModelStreamEvent(event)); err != nil {
+			return pluginhost.CapabilityInvokeResult{}, err
+		}
+	}
+	return pluginhost.CapabilityInvokeResult{Output: json.RawMessage(`{}`)}, nil
 }

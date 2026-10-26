@@ -1,8 +1,7 @@
 import * as React from "react";
 import { vi } from "vitest";
-import * as applicationState from "../plugins/ApplicationController";
+import * as applicationState from "../plugins/ApplicationController.test-support";
 import { PluginHost } from "../plugins/PluginHost";
-import { desktopPluginHost } from "../plugins/DesktopPluginRuntime";
 import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate as activateShell } from "../plugins/DefaultApplicationShell";
 import { activate as activateNavigation } from "../modules/DefaultNavigationSurface";
@@ -12,9 +11,7 @@ import { activate as activatePreview } from "../modules/DefaultPreviewSurface";
 import { activate as activateSettings } from "../modules/DefaultSettingsSurface";
 
 export function createDefaultTestHost(application: applicationState.ApplicationController): PluginHost {
-  return new PluginHost({ react: React, application,
-    renderLegacyWorkbench: input => desktopPluginHost.renderLegacyWorkbench(input),
-  });
+  return application.contributions as PluginHost;
 }
 
 export const defaultSurfaceBindings = {

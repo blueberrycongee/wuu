@@ -111,7 +111,11 @@ func (s *Session) NewThreadCapabilityRuntime(sessionID, rootDir string, selected
 	kit.SetSessionDir(artifactDir)
 	kit.SetSessionStore(sessions)
 	kit.SetWorkingNotesHome(wuuHome)
-	kit.SetBrowserTabs(tools.NewBrowserTabStore(statepath.ThreadBrowserTabsPath(stateDir, id)))
+	browserTabs, err := selectedBrowserTabStore(documents, wuuHome, s.SessionDir, stateDir, id)
+	if err != nil {
+		return nil, err
+	}
+	kit.SetBrowserTabs(browserTabs)
 	kit.SetImageInputSupported(true)
 	kit.SetAgentIdentity(id, agentthread.RootPath)
 	kit.SetFileScopeRoots(workspaces.BoundaryRoots(kit.RootDir(), wuuHome, artifactDir))

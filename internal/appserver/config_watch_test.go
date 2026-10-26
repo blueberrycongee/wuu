@@ -238,3 +238,60 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 		t.Fatalf("inventory did not recover: %+v", got)
 	}
 }
+
+// Model publication and catalog reload share one lock order. Read-only config
+// checks do not fence admission; failed mutation admission releases both locks.
+func TestModelConfigurationPublicationAdmission(t *testing.T) {
+	srv := &Server{}
+	admit, release := srv.lockModelConfiguration()
+	if srv.pluginGenerationMutation.Load() {
+		t.Fatal("read-only config inspection fenced admission")
+	}
+	if err := admit(); err != nil {
+		t.Fatal(err)
+	}
+	if !srv.pluginGenerationMutation.Load() {
+		t.Fatal("publication did not fence admission")
+	}
+	started, acquired := make(chan struct{}), make(chan struct{})
+	go func() {
+		close(started)
+		nextAdmit, nextRelease := srv.lockModelConfiguration()
+		defer nextRelease()
+		if err := nextAdmit(); err != nil {
+			t.Error(err)
+		}
+		close(acquired)
+	}()
+	<-started
+	select {
+	case <-acquired:
+		t.Fatal("concurrent publication crossed held generation lock")
+	default:
+	}
+	release()
+	select {
+	case <-acquired:
+	case <-time.After(5 * time.Second):
+		t.Fatal("model publication locks did not release")
+	}
+	// Wait for the second transaction's release by reacquiring the same locks.
+	admit, release = srv.lockModelConfiguration()
+	srv.pluginGenerationMutation.Store(true) // Another publisher already reserved admission.
+	if err := admit(); err == nil {
+		t.Fatal("overlapping publication reservation was accepted")
+	}
+	release()
+	if !srv.pluginGenerationMutation.Load() {
+		t.Fatal("failed admission cleared another publisher's fence")
+	}
+	srv.pluginGenerationMutation.Store(false)
+	admit, release = srv.lockModelConfiguration()
+	if err := admit(); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if srv.pluginGenerationMutation.Load() {
+		t.Fatal("publication leaked admission fence")
+	}
+}

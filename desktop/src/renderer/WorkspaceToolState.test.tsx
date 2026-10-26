@@ -2,7 +2,7 @@ import { createScopedTestApplication } from "./test-support/ScopedApplication";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { useWorkspaceToolState } from "./WorkspaceToolState";
 
 const cleanups: Array<() => void> = [];

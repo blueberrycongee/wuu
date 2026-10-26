@@ -20,10 +20,10 @@ func TestRendererShellUsesAuthoritativeComposition(t *testing.T) {
 		want     string
 		invalid  bool
 	}{
-		{name: "default", modules: []string{defaultShellModule}, want: defaultShellModule},
-		{name: "external", modules: []string{defaultShellModule, "research"}, provider: "research", want: plugin.SubjectID},
+		{name: "default", modules: []string{defaultApplicationModule, defaultShellModule}, want: defaultShellModule},
+		{name: "external", modules: []string{defaultApplicationModule, defaultShellModule, "research"}, provider: "research", want: plugin.SubjectID},
 		{name: "disabled", modules: []string{}},
-		{name: "ambiguous", modules: []string{defaultShellModule, "research"}, invalid: true},
+		{name: "ambiguous", modules: []string{defaultApplicationModule, defaultShellModule, "research"}, invalid: true},
 		{name: "missing", modules: []string{}, provider: "research", invalid: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,7 +66,7 @@ func TestRendererConsumerWithoutProvidedServicesJoinsGraph(t *testing.T) {
 			if mixed {
 				item.Runtime = &pluginpkg.RuntimeSpec{Command: "fixture"}
 			}
-			modules := []string{defaultShellModule, "consumer"}
+			modules := []string{defaultApplicationModule, defaultShellModule, "consumer"}
 			start := func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 				return newRendererService(RendererModule{ID: cfg.ID}, nil, nil), nil
 			}
@@ -95,7 +95,7 @@ func TestRendererSurfacesUseSelectedGraph(t *testing.T) {
 	for _, id := range []string{"first", "selected"} {
 		plugins = append(plugins, pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: id, Desktop: &pluginpkg.DesktopSpec{Entry: "desktop.mjs", Services: []pluginhost.ServiceDescriptor{descriptor}}}, SubjectID: "plugin:user:" + id, Fingerprint: id + "-generation"})
 	}
-	modules := []string{defaultShellModule, "first", "selected"}
+	modules := []string{defaultApplicationModule, defaultShellModule, "first", "selected"}
 	selection := &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: descriptor.Name, Major: 1, Provider: "selected"}}}
 	host, _, err := buildPluginHost(plugins, t.TempDir(), "test", t.TempDir(), t.TempDir(), nil, startPluginClient, nil, nil, selection, "")
 	if err != nil {
@@ -111,7 +111,7 @@ func TestRendererSurfacesUseSelectedGraph(t *testing.T) {
 		t.Fatalf("shell: %+v", shell)
 	}
 	binding, found := surfaces[descriptor.Name]
-	if !found || len(surfaces) != 1 || binding.PluginID != "plugin:user:selected" || binding.Generation != "selected-generation" || binding.ProviderID != descriptor.Name {
+	if !found || len(surfaces) != 2 || binding.PluginID != "plugin:user:selected" || binding.Generation != "selected-generation" || binding.ProviderID != descriptor.Name {
 		t.Fatalf("surface bindings: %+v", surfaces)
 	}
 	if err := host.Close(ctx); err != nil {
@@ -120,5 +120,21 @@ func TestRendererSurfacesUseSelectedGraph(t *testing.T) {
 	shell, surfaces = s.ApplicationBindings()
 	if shell != nil || len(surfaces) != 0 {
 		t.Fatalf("stopped composition remained selectable: %+v %+v", shell, surfaces)
+	}
+}
+
+func TestMixedRendererRequirementsUseOneValidatedUnion(t *testing.T) {
+	process := newRendererService(RendererModule{ID: "mixed"}, []pluginhost.ServiceRequirement{{Name: "automation.scheduler", MajorVersion: 1}}, nil)
+	wrapper := newRendererService(RendererModule{ID: "mixed"}, []pluginhost.ServiceRequirement{{Name: "automation.scheduler", MajorVersion: 1, Required: true}}, process)
+	got := wrapper.RequiredServices()
+	if len(got) != 1 || !got[0].Required {
+		t.Fatalf("runtime and renderer dependency not merged: %+v", got)
+	}
+	if process.RequiredServices()[0].Required {
+		t.Fatal("wrapper mutated its process declaration")
+	}
+	conflicting := newRendererService(RendererModule{ID: "mixed"}, []pluginhost.ServiceRequirement{{Name: "automation.scheduler", MajorVersion: 2, Required: true}}, process)
+	if len(conflicting.RequiredServices()) != 2 {
+		t.Fatal("incompatible majors were silently merged")
 	}
 }

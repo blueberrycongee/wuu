@@ -410,6 +410,7 @@ type kernelHostServices struct {
 	generation        func() uint64
 	executions        executionUpdateRecorder
 	userQuestions     *pluginhost.UserQuestionBroker
+	engineGateways    *engineGatewayTable
 	driverGateways    *driverGatewayTable
 	workspaceStateDir string
 	wuuHome           string
@@ -427,7 +428,7 @@ type nativeServiceRegistration struct {
 }
 
 func newKernelHostServices(generation func() uint64, executions executionUpdateRecorder) *kernelHostServices {
-	k := &kernelHostServices{services: make(map[string]*pluginHostServices), generation: generation, executions: executions, driverGateways: newDriverGatewayTable(), providers: make(map[string]nativeServiceRegistration)}
+	k := &kernelHostServices{services: make(map[string]*pluginHostServices), generation: generation, executions: executions, engineGateways: newEngineGatewayTable(), driverGateways: newDriverGatewayTable(), providers: make(map[string]nativeServiceRegistration)}
 	k.compositions = newCompositionService(k)
 	for _, registration := range k.serviceRegistrations() {
 		k.providers[registration.Descriptor.Name] = registration
@@ -527,11 +528,13 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 	}
 	registrations := make([]nativeServiceRegistration, 0, len(descriptors)+8)
 	for index, descriptor := range descriptors {
-		registrations = append(registrations, nativeServiceRegistration{
-			Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: methods[index]},
-		})
+		registrations = append(registrations,
+			nativeServiceRegistration{Descriptor: engineGatewayDescriptor(), Invoker: &engineGatewayInvoker{parent: k}}, nativeServiceRegistration{
+				Descriptor: descriptor, Invoker: &kernelServiceInvoker{parent: k, method: methods[index]},
+			})
 	}
 	registrations = append(registrations,
+		nativeServiceRegistration{Descriptor: pluginhost.KernelModelReceiptDescriptor(), Invoker: &modelReceiptInvoker{parent: k}},
 		nativeServiceRegistration{Descriptor: pluginhost.CompositionDescriptor(), Invoker: k.compositions},
 		nativeServiceRegistration{
 			Descriptor: pluginhost.KernelModelInvokeDescriptor(),
@@ -624,6 +627,7 @@ func (k *kernelHostServices) Close(context.Context) error {
 		services = append(services, service)
 	}
 	k.mu.Unlock()
+	k.engineGateways.close()
 	err := k.compositions.close()
 	for _, service := range services {
 		service.close()

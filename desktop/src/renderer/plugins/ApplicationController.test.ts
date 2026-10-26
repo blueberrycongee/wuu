@@ -2,7 +2,7 @@ import { scopeApplicationOnboarding } from "../../../../packages/plugin-sdk/src/
 import { resetWorkspaceBrowserNavigationForTests } from "../WorkspaceBrowserNavigation";
 import { describe, expect, it, vi } from "vitest";
 import * as RuntimeLoader from "../RuntimeLoadState";
-import { ApplicationController } from "./ApplicationController";
+import { ApplicationController } from "./ApplicationController.test-support";
 import { streamTextKey, streamTextStore } from "../StreamText";
 import { initialState, createThreadSessionTab, type AppState } from "../AppState";
 import type { CodexPetCommand, Thread, WuuDesktopApi } from "../../shared/protocol";

@@ -63,17 +63,27 @@ func ExecuteChat(
 		}
 
 		cfg := NormalizeRetryConfig(RetryConfigForProfile(prepared.Operation.WorkloadProfile))
-		plan := PlanRecovery(failure)
-		canRetry := prepared.Attempt.Ordinal < prepared.Operation.AttemptLimit && unaryRecoverySupported(client, plan)
+		evidence := StreamRecoveryInput{Failure: failure, Attempt: prepared.Attempt.Ordinal, MaxAttempts: prepared.Operation.AttemptLimit, Submissions: len(prepared.Execution.Snapshot().Submissions), Config: cfg}
+		var plan RecoveryPlan
+		var delay time.Duration
+		var policyErr error
+		if planner := recoveryPlannerFromContext(ctx); planner != nil {
+			plan, delay, policyErr = planner(ctx, evidence)
+		} else {
+			plan, delay = DefaultStreamRecoveryPlan(evidence)
+		}
+		if delay < 0 {
+			policyErr = errors.Join(policyErr, errors.New("negative recovery delay"))
+		}
+		if policyErr != nil {
+			callErr = errors.Join(callErr, policyErr)
+		}
+		canRetry := policyErr == nil && prepared.Attempt.Ordinal < prepared.Operation.AttemptLimit && unaryRecoverySupported(client, plan)
 		if ctx.Err() != nil || !canRetry {
 			if journalErr := prepared.Execution.Complete(outcome, failure); journalErr != nil {
 				return resp, errors.Join(callErr, journalErr)
 			}
 			return resp, callErr
-		}
-		delay := time.Duration(0)
-		if plan.Action != RecoveryRefreshAuth {
-			delay = backoffDelay(prepared.Attempt.Ordinal-1, cfg.InitialDelay, cfg.MaxDelay, callErr)
 		}
 		nextAttempt, journalErr := prepared.Attempt.PrepareRecoveryAttempt(ctx, plan, time.Now().Add(delay))
 		if journalErr != nil {
@@ -89,8 +99,7 @@ func ExecuteChat(
 			return resp, errors.Join(cancelErr, attemptErr, journalErr)
 		}
 		if plan.Action == RecoveryRefreshAuth {
-			applier := client.(InferenceRecoveryApplier)
-			if applyErr := applier.ApplyInferenceRecovery(ctx, plan); applyErr != nil {
+			if applyErr := applyInferenceRequestRecovery(ctx, client, req, plan); applyErr != nil {
 				attemptErr := nextAttempt.Complete(InferenceOutcomeFailed, NormalizeFailure(applyErr))
 				journalErr := prepared.Execution.Complete(InferenceOutcomeFailed, NormalizeFailure(applyErr))
 				return resp, errors.Join(callErr, applyErr, attemptErr, journalErr)
@@ -114,11 +123,27 @@ type InferenceRecoveryApplier interface {
 	ApplyInferenceRecovery(context.Context, RecoveryPlan) error
 }
 
+// InferenceRequestRecoveryApplier preserves an explicit request adapter binding
+// during recovery. Composed transports must not refresh a different route.
+type InferenceRequestRecoveryApplier interface {
+	ApplyInferenceRequestRecovery(context.Context, ChatRequest, RecoveryPlan) error
+}
+
+func applyInferenceRequestRecovery(ctx context.Context, client Client, req ChatRequest, plan RecoveryPlan) error {
+	if applier, ok := client.(InferenceRequestRecoveryApplier); ok {
+		return applier.ApplyInferenceRequestRecovery(ctx, req, plan)
+	}
+	return client.(InferenceRecoveryApplier).ApplyInferenceRecovery(ctx, plan)
+}
+
 func unaryRecoverySupported(client Client, plan RecoveryPlan) bool {
 	switch plan.Action {
 	case RecoveryReplaySame, RecoveryWaitThenReplay:
 		return true
 	case RecoveryRefreshAuth:
+		if _, ok := client.(InferenceRequestRecoveryApplier); ok {
+			return true
+		}
 		_, ok := client.(InferenceRecoveryApplier)
 		return ok
 	default:

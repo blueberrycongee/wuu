@@ -14,7 +14,7 @@ import { ApplicationSearch } from "./plugins/ApplicationSearch";
 import type { ConversationSearchApplication } from "./ConversationSearchState";
 import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
 import { initialState } from "./AppState";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 
 function makeLongTurns(): Turn[] {
   return [

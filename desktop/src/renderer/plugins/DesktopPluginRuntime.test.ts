@@ -80,6 +80,34 @@ describe("DesktopPluginRuntime", () => {
     }
   });
 
+  it.each([false, true])("prepares business before draining consumers and reports a committed Go graph honestly (%s)", async committed => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    let broken = false;
+    const runtime = new DesktopPluginRuntime(host, async id => ({ activate(api: PluginGenerationApi) {
+      if (id === "user:business") api.registerApplicationProvider({ id: "ui.application", prepare: () => {
+        if (broken) throw new Error("candidate build failed");
+        return { activate() {}, deactivate: () => undefined, dispose() {}, createScope: () => { throw new Error("unused"); } };
+      } });
+      else api.registerApplicationShell({ id: "ui.shell", render: () => React.createElement("main", null, "Current shell") });
+    } }));
+    const business = { ...dependencyPlugin("business"), graph_generation: "graph-one" };
+    const shell = { ...dependencyPlugin("shell", ["business"]), resolved_required_dependencies: ["business"] };
+    await host.selectApplicationBinding({ pluginId: business.id, generation: business.fingerprint!, id: "ui.application" });
+    expect(await runtime.sync([business, shell])).toEqual([]);
+    const previousShell = host.getApplicationShells()[0];
+    const previousBusiness = host.applicationProviders.current;
+    broken = true;
+    const candidate = { ...business, fingerprint: "candidate", graph_generation: committed ? "graph-two" : "graph-one" };
+    await host.selectApplicationBinding({ pluginId: candidate.id, generation: candidate.fingerprint, id: "ui.application" });
+    const failures = await runtime.sync([candidate, shell]);
+    expect(failures).toHaveLength(1);
+    expect(host.getApplicationShells()[0]).toBe(previousShell);
+    expect(host.applicationProviders.current).toBe(committed ? undefined : previousBusiness);
+    if (committed) expect(host.applicationProviders.failure).toContain("Go graph graph-two is committed");
+    await runtime.shutdown();
+  });
+
   it.each(["runtime", "service"])("fences %s requests and cancellation across same-source graph replacement", async (kind) => {
     installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: "fixture" }));
     const request = vi.fn<WuuDesktopApi["requestPluginRuntime"]>();

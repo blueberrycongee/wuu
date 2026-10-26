@@ -21,9 +21,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/claudeengine"
 	"github.com/blueberrycongee/wuu/internal/codemode"
-	"github.com/blueberrycongee/wuu/internal/codexengine"
 	"github.com/blueberrycongee/wuu/internal/config"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
@@ -62,11 +60,13 @@ import (
 // The shape is intentionally UI-neutral so desktop and protocol clients can
 // attach without rebuilding the agent.
 type Options struct {
-	NativeProviders []NativeProviderFactory
-	productParent   *kernelHostServices
-	productRouter   *PluginSessionRouter
-	composition     productCompositionBinding
-	RootDir         string
+	// CapacityResources explicitly shares physical account limits across sessions.
+	CapacityResources *CapacityResources
+	NativeProviders   []NativeProviderFactory
+	productParent     *kernelHostServices
+	productRouter     *PluginSessionRouter
+	composition       productCompositionBinding
+	RootDir           string
 	// Host is immutable process metadata supplied by the shell or cloud
 	// control plane. Its zero value resolves to a local host.
 	Host Host
@@ -127,6 +127,7 @@ const (
 // stream runner. UI surfaces should depend on this instead of reassembling the
 // pieces themselves.
 type Session struct {
+	capacityRootRelease      func()
 	Documents                persistence.Documents
 	Sessions                 *session.Store
 	nativeProviders          []NativeProviderFactory
@@ -431,6 +432,17 @@ func NewSession(opts Options) (*Session, error) {
 	if configLoadMode == ConfigLoadNormal && strings.TrimSpace(opts.ConfigPath) != "" && !isUserConfigPath(opts.ConfigPath, opts.HomeDir) {
 		configLoadMode = ConfigLoadFile
 	}
+	opts.NativeProviders = withCapacityProviders(opts.NativeProviders, opts.CapacityResources)
+	capacityRootRelease, err := retainCapacityRoot(opts.NativeProviders)
+	if err != nil {
+		return nil, err
+	}
+	capacityTransferred := false
+	defer func() {
+		if !capacityTransferred {
+			capacityRootRelease()
+		}
+	}()
 	opts.NativeProviders, err = withCredentialProviders(opts.NativeProviders, opts.HomeDir)
 	if err != nil {
 		return nil, err
@@ -598,7 +610,7 @@ func NewSession(opts Options) (*Session, error) {
 	ruleProviderName, ruleProviderCfg := mainRole.RuleProvider, mainRole.RuleProviderConfig
 	toolModeModel := mainRole.APIModel
 
-	client, clientErr := providerfactory.BuildRuntimeStreamClient(ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
+	client, clientErr := selectedRouteClient(pluginHost, ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 	if client == nil {
 		return nil, clientErr
 	}
@@ -608,7 +620,7 @@ func NewSession(opts Options) (*Session, error) {
 	}
 	titleClient := providers.Client(client)
 	if !roleSelections.Title.Inherited {
-		roleClient, roleErr := providerfactory.BuildRuntimeStreamClient(roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
+		roleClient, roleErr := selectedRouteClient(pluginHost, roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 		if roleClient == nil {
 			return nil, fmt.Errorf("build title client: %w", roleErr)
 		}
@@ -739,7 +751,7 @@ func NewSession(opts Options) (*Session, error) {
 	)
 	if toolkit != nil {
 		var werr error
-		workerClient, werr = providerfactory.BuildStreamClient(roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
+		workerClient, werr = selectedRouteClient(pluginHost, roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider, providerfactory.Bindings{Credentials: credentials, ChatGPT: chatGPTManager})
 		if werr != nil {
 			if providerfactory.IsCredentialError(werr) {
 				workerClient = &providers.UnavailableClient{Reason: werr.Error()}
@@ -765,6 +777,7 @@ func NewSession(opts Options) (*Session, error) {
 		SystemPrompt:                baseSystemPrompt,
 		SystemPromptSections:        baseSystemPromptSections,
 		CompactionRegistry:          compactions,
+		SelectedPolicy:              newSelectedLoopPolicyClient(pluginHost),
 		SelectedCompaction:          newSelectedCompactionClient(pluginHost),
 		MaxSteps:                    cfg.Agent.MaxSteps,
 		Temperature:                 cfg.Agent.Temperature,
@@ -854,60 +867,11 @@ func NewSession(opts Options) (*Session, error) {
 		ReadinessIssues:             readinessIssues,
 		InferenceJournalRuntime:     journalRuntime,
 	}
-	// The built-in wuu engine is the native StreamRunner loop. Registering it
-	// here makes the seam explicit: thread runtimes are always created by an
-	// engine factory, starting with this one.
-	runtimeSession.engines = agentengine.NewRegistry()
-	if err := runtimeSession.engines.Register(NewWuuEngine(runtimeSession)); err != nil {
-		return nil, fmt.Errorf("register built-in agent engine: %w", err)
+	// Engine inventory is a projection of the selected provider graph.
+	runtimeSession.engines = newSelectedEngineRegistry(runtimeSession)
+	if cfg.Engines != nil {
+		runtimeSession.defaultEngine = agentengine.NormalizeEngineID(cfg.Engines.DefaultEngine)
 	}
-	// The codex engine hosts the codex CLI app-server as an external agent.
-	// Settings can disable it or override the binary path; auto mode
-	// (unset) enables it when the CLI is found, and a missing binary fails
-	// with a clear error at first use.
-	codexBinary, codexResolveErr := codexengine.ResolveBinary()
-	codexEnabled := codexResolveErr == nil
-	if engineCfg := cfg.Engines; engineCfg != nil {
-		if strings.TrimSpace(engineCfg.DefaultEngine) != "" {
-			runtimeSession.defaultEngine = agentengine.NormalizeEngineID(engineCfg.DefaultEngine)
-		}
-		if codexCfg := engineCfg.Codex; codexCfg != nil {
-			enabled, explicit := codexCfg.EngineEnabled()
-			if explicit {
-				codexEnabled = enabled
-			}
-			if path := strings.TrimSpace(codexCfg.BinaryPath); path != "" {
-				codexBinary = path
-				if !explicit {
-					codexEnabled = true
-				}
-			}
-		}
-	}
-	if codexEnabled {
-		codexHost := codexengine.NewHost(codexBinary, rootDir)
-		_ = runtimeSession.engines.Register(codexengine.NewEngine(codexHost))
-	}
-	// The claude engine follows the same settings shape: auto when the CLI
-	// is found, explicit disable or binary override from settings.
-	claudeBinary, claudeResolveErr := claudeengine.ResolveBinary()
-	claudeEnabled := claudeResolveErr == nil
-	if engineCfg := cfg.Engines; engineCfg != nil && engineCfg.Claude != nil {
-		enabled, explicit := engineCfg.Claude.EngineEnabled()
-		if explicit {
-			claudeEnabled = enabled
-		}
-		if path := strings.TrimSpace(engineCfg.Claude.BinaryPath); path != "" {
-			claudeBinary = path
-			if !explicit {
-				claudeEnabled = true
-			}
-		}
-	}
-	if claudeEnabled {
-		runtimeSession.engines.Register(claudeengine.NewEngine(claudeBinary, rootDir))
-	}
-	runtimeSession.RebuildProtocolEngines(cfg.Engines)
 	initialHooks := hooks.NewDispatcher(nil)
 	initialHooks.Replace(hookDispatcher)
 	initialGeneration.revokedMu.Lock()
@@ -929,6 +893,7 @@ func NewSession(opts Options) (*Session, error) {
 	if pluginKernel != nil {
 		pluginKernel.bindModelSession(runtimeSession, pluginHost)
 		pluginKernel.bindStateGeneration(runtimeSession.pluginGeneration, runtimeSession)
+		runtimeSession.pluginGeneration.engineGateways = pluginKernel.engineGateways
 		runtimeSession.pluginGeneration.driverGateways = pluginKernel.driverGateways
 	}
 	// The default and external drivers share the selected service binding.
@@ -945,6 +910,8 @@ func NewSession(opts Options) (*Session, error) {
 		runtimeSession.bindLocalSkillRefresh(toolkit, rootDir, runtimeSession.pluginGeneration)
 	}
 	graphOwned = false
+	runtimeSession.capacityRootRelease = capacityRootRelease
+	capacityTransferred = true
 	return runtimeSession, nil
 }
 
@@ -1217,7 +1184,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
 		return nil, err
 	}
-	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
+	client, err := selectedRouteClient(s.PluginHost, ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return nil, fmt.Errorf("build thread model client: %w", err)
 	}
@@ -1294,7 +1261,7 @@ func (s *Session) NewThreadRuntimeForRootModel(sessionID, rootDir string, select
 		return nil, surfaceErr
 	}
 	shadow.DeferredToolCatalogPrompt = selectedSurface.DeferredToolCatalog
-	workerClient, err := providerfactory.BuildStreamClient(roles.Worker.RuleProviderConfig, roles.Worker.Provider, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
+	workerClient, err := selectedRouteClient(s.PluginHost, roles.Worker.RuleProviderConfig, roles.Worker.Provider, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return nil, fmt.Errorf("build thread worker client: %w", err)
 	}
@@ -1375,12 +1342,15 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 		}
 	}
 	artifactDir := statepath.SessionArtifactDir(stateDir, id)
-	// The embedded-browser tab registry is durable per-thread state, created with
-	// the thread runtime and reclaimed with the thread's artifact
-	// directory on delete. Recovery after a core restart is driven by the desktop
+	// The embedded-browser registry is scoped to the selected document provider.
+	// Historical artifact files are migration sources, not fallback authority.
+	// Recovery after a core restart is driven by the desktop
 	// host's tab_not_found signal (the tool rebuilds by URL), and by the tabs-list
 	// reconciliation against the live host set.
-	browserTabs := tools.NewBrowserTabStore(statepath.ThreadBrowserTabsPath(stateDir, id))
+	browserTabs, err := selectedBrowserTabStore(s.Documents, s.WuuHome, s.SessionDir, stateDir, id)
+	if err != nil {
+		return nil, err
+	}
 	wuuHome := strings.TrimSpace(s.WuuHome)
 	if wuuHome == "" {
 		if home, err := statepath.Home(""); err == nil {
@@ -1497,7 +1467,17 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				return nil, promptErr
 			}
 			workerBaseSystemPrompt := workerPromptResult.Content
+			legacyStateDirs, err := statepath.SessionArtifactStateDirs(s.WuuHome, s.SessionDir, stateDir, id)
+			if err != nil {
+				return nil, err
+			}
+			legacyArtifactDirs := make([]string, 0, len(legacyStateDirs))
+			for _, legacyStateDir := range legacyStateDirs {
+				legacyArtifactDirs = append(legacyArtifactDirs, statepath.SessionArtifactDir(legacyStateDir, id))
+			}
 			control, controlErr := agentcontrol.New(agentcontrol.Config{
+				LegacyArtifactDirs:             legacyArtifactDirs,
+				Documents:                      s.Documents,
 				UseCurrentTemperatureOnRestore: s.DesktopExecutionDefaults,
 				Client:                         workerClient,
 				ProviderName:                   workerClientProvider,
@@ -1574,6 +1554,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 					if generation != nil {
 						host = generation.host
 					}
+					runner.SelectedPolicy = newSelectedLoopPolicyClient(host)
 					runner.BeforeModelStep = pluginPreStepInjector(host, runner.ProviderName, runner.Model, workerID, workerRoot)
 					runner.StepPolicy = pluginStepPolicy(host, runner.ProviderName, runner.Model, workerID, workerRoot)
 					runner.BeforeRequest = pluginRequestInterceptor(host, runner.ProviderName, workerID, workerRoot)
@@ -1916,6 +1897,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		ModelInputReceiptStore:      base.ModelInputReceiptStore,
 		RequestContextStore:         base.RequestContextStore,
 		CompactionRegistry:          base.CompactionRegistry,
+		SelectedPolicy:              base.SelectedPolicy,
 		SelectedCompaction:          base.SelectedCompaction,
 		CompactionNoteStore:         base.CompactionNoteStore,
 		ArchiveHistory:              base.ArchiveHistory,
@@ -2150,6 +2132,9 @@ func (s *Session) Cleanup() (process.CleanupResult, error) {
 	}
 	s.pluginTransitionMu.Lock()
 	defer s.pluginTransitionMu.Unlock()
+	if s.capacityRootRelease != nil {
+		defer s.capacityRootRelease()
+	}
 	var cleanupErr error
 	sessionID := ""
 	if s.Toolkit != nil {

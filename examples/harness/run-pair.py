@@ -104,8 +104,10 @@ def main():
         parser.error("candidate-host requires source-candidate")
     plan = json.loads(args.plan.read_text())
     tasks = plan["tasks"]
-    if plan["version"] != 1 or not tasks or len(set(tasks)) != len(tasks) or plan["concurrency"] != 1:
-        parser.error("expected a frozen version 1 plan with unique ordered tasks and concurrency 1")
+    if args.candidate_host and not plan.get("controller"):
+        parser.error("host comparisons require an independent frozen experiment controller")
+    if plan["version"] != 1 or not tasks or len(set(tasks)) != len(tasks) or not isinstance(plan["concurrency"], int) or not 1 <= plan["concurrency"] <= 256:
+        parser.error("expected a frozen version 1 plan with unique ordered tasks and bounded positive concurrency")
     output = args.output.resolve()
     output.mkdir(mode=0o700)
     record = {"status": "failed", "decision": "reject", "tasks": tasks, "denominator": len(tasks),
@@ -134,7 +136,9 @@ def main():
             attempt = output / name
             attempt.mkdir()
             evidence = attempt / "evaluation"
-            command = [binary, "eval", "--plan", plan_copy, "--artifacts", evidence]
+            command = [baseline if args.candidate_host else binary, "eval", "--plan", plan_copy, "--artifacts", evidence]
+            if args.candidate_host:
+                command += ["--candidate-host", binary]
             if name == "candidate" and candidate:
                 command += ["--candidate", candidate]
             report_path = evidence / "report.json"
@@ -189,7 +193,7 @@ def main():
             if checked.get("exit_code") != 0 or "failure" in checked:
                 raise RuntimeError("comparison failed; see comparison/process.json")
             decision = json.loads((comparison / "stdout.log").read_text())
-            if decision["decision"] not in {"accept", "reject"}:
+            if decision["decision"] not in {"accept", "reject", "revise"}:
                 raise ValueError("unrecognized comparison decision")
             record["decision"] = decision["decision"]
             record["comparison"] = decision

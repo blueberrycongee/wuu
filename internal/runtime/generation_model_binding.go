@@ -12,7 +12,10 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
+type generationModelSelection struct{ provider, model string }
+
 type generationModelBindings struct {
+	selection    *generationModelSelection
 	main, worker providers.StreamClient
 	title        providers.Client
 	roles        modelroles.Set
@@ -25,10 +28,10 @@ type generationModelBindings struct {
 // configuration. Build outside the publication lock; old runners keep their
 // captured clients until their retained generation finishes cleanup.
 func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
-	if s.StreamRunner == nil || s.configClient == nil || s.SafeMode {
-		return nil // Explicitly embedded runtimes own their injected clients.
+	if s.StreamRunner == nil || g.configClient == nil || s.SafeMode {
+		return nil // A graph without configuration cannot resolve model roles.
 	}
-	models := &generationModelBindings{}
+	models := &generationModelBindings{selection: g.modelSelection}
 	defer func() {
 		if err != nil {
 			unavailable := &providers.UnavailableClient{Reason: err.Error()}
@@ -47,16 +50,20 @@ func (s *Session) bindGenerationModels(g *PluginGeneration) (err error) {
 	if err != nil {
 		return err
 	}
-	provider, name, err := cfg.ResolveProvider(s.ProviderName)
+	providerName, model := s.ProviderName, s.Model
+	if g.modelSelection != nil {
+		providerName, model = g.modelSelection.provider, g.modelSelection.model
+	}
+	provider, name, err := cfg.ResolveProvider(providerName)
 	if err != nil {
 		return err
 	}
-	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{ProviderName: name, ProviderConfig: provider, Model: s.Model, Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant})
+	roles, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{ProviderName: name, ProviderConfig: provider, Model: model, Effort: cfg.Agent.Effort, Variant: cfg.Agent.Variant})
 	if err != nil {
 		return err
 	}
 	build := func(role modelroles.Selection) (providers.StreamClient, error) {
-		client, err := providerfactory.BuildRuntimeStreamClient(role.RuleProviderConfig, role.Provider, providerfactory.Bindings{Credentials: g.credentials, ChatGPT: g.chatGPTManager})
+		client, err := selectedRouteClient(g.host, role.RuleProviderConfig, role.Provider, providerfactory.Bindings{Credentials: g.credentials, ChatGPT: g.chatGPTManager})
 		if client != nil && err != nil {
 			models.issues = append(models.issues, ReadinessIssue{Code: "credential_missing", Provider: role.Provider, Message: err.Error()})
 			return client, nil
@@ -93,6 +100,12 @@ func (s *Session) applyGenerationModels(models *generationModelBindings) {
 		s.ReadinessIssues = []ReadinessIssue{{Code: "configuration_unavailable", Message: models.err.Error()}}
 		return
 	}
+	if models.selection != nil {
+		s.ProviderName, s.Model = models.roles.Main.Provider, models.roles.Main.Model
+		if s.StreamRunner != nil {
+			s.StreamRunner.ProviderName, s.StreamRunner.Model = s.ProviderName, s.Model
+		}
+	}
 	s.ModelRoles = models.roles
 	s.ModelBudget = ResolveModelBudget(s.Model, models.roles.Main.RuleProviderConfig, models.config.Agent.MaxContextTokens)
 	s.WorkerModelBudget = ResolveModelBudget(models.roles.Worker.Model, models.roles.Worker.RuleProviderConfig, models.config.Agent.MaxContextTokens)
@@ -109,4 +122,16 @@ func (s *Session) applyGenerationModels(models *generationModelBindings) {
 		runner.OutputReserveTokens = s.ModelBudget.OutputReserveTokens
 		runner.CompactThresholdTokens = s.ModelBudget.CompactThresholdTokens
 	}
+}
+
+// RefreshModelConfiguration prepares the saved provider configuration without
+// changing live selection. Selection and clients publish with the generation;
+// existing consumers continue using their captured configuration and clients.
+func (s *Session) RefreshModelConfiguration(cfg config.Config, provider, model string) error {
+	candidate, err := s.PreflightExtensions(cfg)
+	if err != nil {
+		return err
+	}
+	candidate.modelSelection = &generationModelSelection{provider: provider, model: model}
+	return s.ActivatePluginGeneration(candidate, nil)
 }

@@ -12,10 +12,10 @@ import (
 type modelRequestOriginKey struct{}
 
 type modelPipelineClient struct {
-	host   *pluginhost.Host
-	native providers.StreamClient
-	inner  providers.StreamClient
-	origin pluginhost.ModelInvocationOriginV1
+	host    *pluginhost.Host
+	adapter *modelAdapterClient
+	inner   providers.StreamClient
+	origin  pluginhost.ModelInvocationOriginV1
 }
 
 func pluginModelClientWrapper(host *pluginhost.Host, threadID string) func(providers.StreamClient) providers.StreamClient {
@@ -31,11 +31,12 @@ func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamCli
 	if host == nil {
 		return native
 	}
-	inner := pluginModelAdapterClient(host, native)
+	adapter := &modelAdapterClient{host: host, inner: native}
+	var inner providers.StreamClient = adapter
 	if origin.Kind != "plugin" {
 		inner = pluginModelMiddlewareClient(host, inner, origin)
 	}
-	return &modelPipelineClient{host: host, native: native, inner: inner, origin: origin}
+	return &modelPipelineClient{host: host, adapter: adapter, inner: inner, origin: origin}
 }
 
 // The adapter boundary records physical evidence before middleware and
@@ -43,7 +44,7 @@ func pluginModelPipelineClient(host *pluginhost.Host, native providers.StreamCli
 func (c *modelPipelineClient) OwnsStreamAccounting() bool { return true }
 
 func (c *modelPipelineClient) ResolveMediaInput(policy providers.MediaInputPolicy, options map[string]any) providers.MediaInputPolicy {
-	return providers.ResolveMediaInput(c.native, policy, options)
+	return c.adapter.ResolveMediaInput(policy, options)
 }
 func (c *modelPipelineClient) PrepareInferenceRequest(ctx context.Context, req providers.ChatRequest) (providers.ChatRequest, error) {
 	var err error
@@ -181,31 +182,20 @@ func (c *modelPipelineClient) StreamChat(ctx context.Context, req providers.Chat
 	}()
 	return out, nil
 }
+func (c *modelPipelineClient) ApplyInferenceRequestRecovery(ctx context.Context, req providers.ChatRequest, plan providers.RecoveryPlan) error {
+	return c.adapter.ApplyInferenceRequestRecovery(ctx, req, plan)
+}
 func (c *modelPipelineClient) ApplyInferenceRecovery(ctx context.Context, plan providers.RecoveryPlan) error {
-	if recovery, ok := c.native.(providers.InferenceRecoveryApplier); ok {
-		return recovery.ApplyInferenceRecovery(ctx, plan)
-	}
-	return errors.New("configured model does not support authentication recovery")
+	return c.adapter.ApplyInferenceRecovery(ctx, plan)
 }
 func (c *modelPipelineClient) NativeCompactionAvailable() bool {
-	native, ok := c.native.(providers.NativeCompactor)
-	return ok && native.NativeCompactionAvailable()
+	return c.adapter.NativeCompactionAvailable()
 }
 func (c *modelPipelineClient) NativeCompact(ctx context.Context, req providers.ChatRequest) (providers.NativeCompactionResult, error) {
-	selected, err := selectedModelAdapter(req)
-	if err != nil || (selected.Adapter != "" && selected.Adapter != "native") {
-		return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
-	}
-	if native, ok := c.native.(providers.NativeCompactor); ok {
-		return native.NativeCompact(ctx, req)
-	}
-	return providers.NativeCompactionResult{}, providers.ErrNativeCompactionUnavailable
+	return c.adapter.NativeCompact(ctx, req)
 }
 func (c *modelPipelineClient) PrewarmSession(ctx context.Context, id string) error {
-	if native, ok := c.native.(providers.SessionPrewarmer); ok {
-		return native.PrewarmSession(ctx, id)
-	}
-	return nil
+	return c.adapter.PrewarmSession(ctx, id)
 }
 
 // This accumulator is shared by observer summaries and isolated model streams.

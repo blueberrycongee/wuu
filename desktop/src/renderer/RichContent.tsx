@@ -33,7 +33,7 @@ import {
   workspaceBrowserClickModifiers,
 } from "./WorkspaceBrowserOpen";
 import { observeAppearance } from "./AppearancePreferences";
-import { desktopWorkbenchController } from "./plugins/DesktopPluginRuntime";
+import { useOptionalApplicationWorkbench } from "./plugins/ApplicationWorkbenchContext";
 import { WorkbenchContentRenderer } from "./plugins/Workbench";
 import { rehypeFileSelectionMapping, rehypePreserveMathSourcePositions, type SelectionASTNode } from "./FileSelectionMapping";
 import {
@@ -168,10 +168,7 @@ function LegacyRichContent({
   allowRawHtml = false,
   sourceMapping = false,
 }: RichContentProps): JSX.Element {
-  useSyncExternalStore(
-    desktopWorkbenchController.subscribe,
-    desktopWorkbenchController.getSnapshot,
-  );
+  const workbench = useOptionalApplicationWorkbench();
   const fallback = (
     <div className="rich-content">
       <MarkdownContent
@@ -185,16 +182,8 @@ function LegacyRichContent({
       />
     </div>
   );
-  return (
-    <WorkbenchContentRenderer
-      controller={desktopWorkbenchController}
-      category="message"
-      contentType="text/markdown"
-      content={text}
-      metadata={{ cwd, allowRawHtml }}
-      fallback={fallback}
-    />
-  );
+  return <>{workbench ? workbench.renderContent({ category: "message", contentType: "text/markdown", content: text,
+    metadata: { cwd, allowRawHtml }, fallback }) : fallback}</>;
 }
 
 function MarkdownContentView({

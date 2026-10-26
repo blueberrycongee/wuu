@@ -15,6 +15,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/compactionservice"
 	wuucontext "github.com/blueberrycongee/wuu/internal/context"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -468,17 +469,17 @@ func (m *Manager) Spawn(ctx context.Context, opts SpawnOptions) (*SubAgent, erro
 		runtime:            runtime,
 		workerRoot:         opts.WorkerRoot,
 		toolkit:            opts.Toolkit,
-		historyPath:        opts.HistoryPath,
-		initialHistory:     opts.InitialHistory,
-		history:            providers.CloneChatMessages(history),
-		maxSteps:           opts.MaxSteps,
-		maxLifetime:        lifetime,
-		runtimeDefaults:    runtimeDefaults,
-		client:             client,
-		providerName:       providerName,
-		toolLedger:         toolLedger,
-		cancelFunc:         cancel,
-		doneCh:             make(chan struct{}),
+		historyPath:        opts.HistoryPath, historyDocuments: opts.HistoryDocuments, historyScope: opts.HistoryScope,
+		initialHistory:  opts.InitialHistory,
+		history:         providers.CloneChatMessages(history),
+		maxSteps:        opts.MaxSteps,
+		maxLifetime:     lifetime,
+		runtimeDefaults: runtimeDefaults,
+		client:          client,
+		providerName:    providerName,
+		toolLedger:      toolLedger,
+		cancelFunc:      cancel,
+		doneCh:          make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -519,7 +520,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 			sa.CompletedAt = time.Now()
 			sa.mu.Unlock()
 			m.prepareTerminal(sa, StatusFailed)
-			if sa.historyPath != "" {
+			if sa.historyPath != "" || sa.historyDocuments != nil {
 				_ = persistHistory(sa)
 			}
 			m.notify(sa, StatusFailed)
@@ -784,7 +785,7 @@ func runWorkerLifecycleHook(ctx context.Context, id string, defaults managerDefa
 func (m *Manager) finishTerminal(ctx context.Context, sa *SubAgent, finalStatus Status, nextHistory []providers.ChatMessage) {
 	m.prepareTerminal(sa, finalStatus)
 
-	if sa.historyPath != "" {
+	if sa.historyPath != "" || sa.historyDocuments != nil {
 		if persistErr := persistHistory(sa); persistErr != nil {
 			sa.mu.Lock()
 			sa.Status = StatusFailed
@@ -1187,10 +1188,12 @@ type RestoreOptions struct {
 	// WorkerRuntime, when non-nil, is the complete runtime the resumed run
 	// was started with. It overrides the manager defaults and is paired
 	// with the rebuilt Client for the persisted provider.
-	WorkerRuntime *WorkerRuntime
-	HistoryPath   string
-	MaxSteps      int
-	MaxLifetime   time.Duration
+	WorkerRuntime    *WorkerRuntime
+	HistoryPath      string
+	HistoryDocuments persistence.Documents
+	HistoryScope     string
+	MaxSteps         int
+	MaxLifetime      time.Duration
 }
 
 // Restore re-registers a dormant sub-agent rebuilt from a snapshot. The
@@ -1337,16 +1340,16 @@ func (m *Manager) Restore(opts RestoreOptions) (*SubAgent, error) {
 		runtime:            runtime,
 		workerRoot:         run.CWD,
 		toolkit:            opts.Toolkit,
-		historyPath:        opts.HistoryPath,
-		history:            providers.CloneChatMessages(run.Messages),
-		maxSteps:           opts.MaxSteps,
-		maxLifetime:        opts.MaxLifetime,
-		runtimeDefaults:    runtimeDefaults,
-		client:             client,
-		providerName:       providerName,
-		toolLedger:         toolLedger,
-		cancelFunc:         func() {},
-		doneCh:             doneCh,
+		historyPath:        opts.HistoryPath, historyDocuments: opts.HistoryDocuments, historyScope: opts.HistoryScope,
+		history:         providers.CloneChatMessages(run.Messages),
+		maxSteps:        opts.MaxSteps,
+		maxLifetime:     opts.MaxLifetime,
+		runtimeDefaults: runtimeDefaults,
+		client:          client,
+		providerName:    providerName,
+		toolLedger:      toolLedger,
+		cancelFunc:      func() {},
+		doneCh:          doneCh,
 	}
 	if strings.TrimSpace(run.Error) != "" {
 		sa.Error = errors.New(run.Error)

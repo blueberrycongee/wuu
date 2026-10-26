@@ -17,6 +17,13 @@
           }
         ]
       }
+    ],
+    "required_services": [
+      {
+        "name": "ui.application",
+        "major_version": 1,
+        "required": true
+      }
     ]
   }
 }

@@ -2,7 +2,7 @@ import { act, useMemo } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../shared/protocol";
-import { ApplicationController } from "./plugins/ApplicationController";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
 import { initialState } from "./AppState";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import { ConfirmDialogHost } from "./ConfirmDialog";

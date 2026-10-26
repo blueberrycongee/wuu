@@ -1,3 +1,4 @@
+import { previewContributions } from "./contributions.js";
 import { scopeApplicationWebWorkspace } from '../dist/ui-web-workspace.js';
 import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicationOnboarding, scopeApplicationBrowser, scopeApplicationFileSelection, scopeApplicationProjects, scopeApplicationTerminals, scopeApplicationCatalog, scopeApplicationPreviewContent, scopeApplicationConversationText, scopeApplicationSettingsControls } from '../dist/ui.js';
 import * as React from 'react';
@@ -92,6 +93,7 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
       };
       const scoped: ApplicationServiceV1 = {
         contractVersion: 1,
+        workbench: application.workbench,
         get composerPresentation() { assertActive(); controller.signal.throwIfAborted(); return application.composerPresentation; },
         get desktop() { assertActive(); controller.signal.throwIfAborted(); return application.desktop; },
         webWorkspace: scopeApplicationWebWorkspace(() => application.webWorkspace, controller.signal, assertActive),
@@ -137,6 +139,9 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
         return { dispose() { style.remove(); const index = styles.indexOf(style); if (index !== -1) styles.splice(index, 1); } };
       };
       const implemented = {
+        contributions: previewContributions,
+        showNotice() { throw new Error("Central product notices require the desktop host; standalone preview does not simulate notification delivery."); },
+        registerApplicationProvider() { throw new Error("Application business providers require the production desktop host; preview does not simulate process or persistence effects."); },
         react: React, ui: createPreviewUIKit(), pluginId, manifestId: pluginId, generation: revision, signal: controller.signal, application: scoped,
         registerCleanup(callback: () => void) {
           cleanup.push(callback);

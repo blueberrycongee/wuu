@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/siwc"
 
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -117,4 +118,22 @@ func stateServicesForGeneration(generation *PluginGeneration) *StateServices {
 		}
 	}
 	return &StateServices{GenerationID: generation.id, ChatGPT: generation.chatGPTManager, Snapshot: snapshot, Credentials: credentialstore.NewClient(call(credentialstore.ServiceName)), Settings: pluginsettings.NewClient(call(pluginsettings.ServiceName)), Config: config.NewClient(call(config.ServiceName)), Artifacts: NewArtifactClient(call(ArtifactServiceName)), Index: NewIndexClient(call(pluginhost.KernelDataQueryService))}
+}
+
+// ModelClient routes through the captured generation. Its owning State or
+// RetainStateServices handle must outlive all invocations and receipt cleanup.
+func (s *StateServices) ModelClient(cfg config.ProviderConfig, provider string) (providers.StreamClient, error) {
+	if s == nil || s.Snapshot.PluginHost == nil {
+		return nil, serviceError("service_unavailable", "selected model provider graph is unavailable")
+	}
+	return (&State{Host: s.Snapshot.PluginHost}).ModelClient(cfg, provider)
+}
+
+// ValidateModelConfiguration checks an unsaved candidate using the captured
+// selected adapter without publishing configuration or submitting inference.
+func (s *StateServices) ValidateModelConfiguration(ctx context.Context, cfg config.ProviderConfig, provider string) error {
+	if s == nil || s.Snapshot.PluginHost == nil {
+		return serviceError("service_unavailable", "selected model provider graph is unavailable")
+	}
+	return ValidateSelectedModelConfiguration(ctx, s.Snapshot.PluginHost, cfg, provider)
 }

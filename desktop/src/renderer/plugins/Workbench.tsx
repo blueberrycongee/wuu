@@ -1,3 +1,5 @@
+import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationWorkbenchV1, WorkbenchSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import * as React from "react";
 import { createPortal } from "react-dom";
 
@@ -21,10 +23,10 @@ import {
   isPublicThemeTokenName,
 } from "../../shared/themeContract.generated";
 import type {
-  PluginHost,
-  RegisteredRenderer,
-  RegisteredViewType,
-} from "./PluginHost";
+  UIContributionRegistryV1 as PluginHost,
+  RegisteredRendererV1 as RegisteredRenderer,
+  RegisteredViewV1 as RegisteredViewType,
+} from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { useI18n } from "../i18n";
 import { X } from "../WuuIcons";
 import { createPluginTranslator } from "./pluginI18n";
@@ -70,6 +72,7 @@ const EMPTY_STATE: WorkbenchLayoutState = Object.freeze({
 });
 
 export class WorkbenchController {
+  get registry(): PluginHost { return this.host; }
   private readonly listeners = new Set<() => void>();
   private readonly storage: StorageLike;
   private readonly unsubscribeHost: () => void;
@@ -87,10 +90,11 @@ export class WorkbenchController {
     readonly host: PluginHost,
     services: WorkbenchServices = {},
     storage: StorageLike = window.localStorage,
+    checkpoint?: WorkbenchSnapshotV1,
   ) {
     this.services = services;
     this.storage = storage;
-    this.state = readLayoutState(storage);
+    this.state = checkpoint ? freezeLayoutState(checkpoint) : readLayoutState(storage);
     this.pendingRestoredViewIds = new Set(this.state.views.map((view) => view.id));
     this.nextInstance = nextViewInstanceSequence(this.state.views);
     this.snapshot = this.createSnapshot();
@@ -99,6 +103,12 @@ export class WorkbenchController {
     this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
     this.reconcileHost();
   }
+
+  renderLayers = (input: { readonly settingsOnly?: boolean }): React.ReactNode => <DesktopWorkbench host={this.host} controller={this} services={this.services} {...input} />;
+
+  renderContent = (input: Parameters<ApplicationWorkbenchV1["renderContent"]>[0]): React.ReactNode => <WorkbenchContentRenderer controller={this} {...input} />;
+
+  renderView = (input: Parameters<ApplicationWorkbenchV1["renderView"]>[0]): React.ReactNode => <PluginViewContent controller={this} {...input} />;
 
   updateServices(services: WorkbenchServices): void {
     this.services = services;
@@ -136,6 +146,8 @@ export class WorkbenchController {
   }
 
   setAvailablePluginIds(pluginIds: ReadonlySet<string>): void {
+    if (this.availablePluginIds?.size === pluginIds.size
+      && [...pluginIds].every(id => this.availablePluginIds!.has(id))) return;
     this.availablePluginIds = new Set(pluginIds);
     this.reconcileHost();
   }
@@ -650,6 +662,7 @@ function WorkbenchView({ controller, definition, view, siblingViews, active, has
   const commandContext = React.useMemo(() => viewCommandContext(view), [view]);
   const hasTitleActions = usePluginCommandActions(controller.host, commandContext).length > 0;
   const activation = controller.host.getGenerationActivation(view.pluginId, view.generation);
+  React.useEffect(() => controller.host.retainGeneration(view.pluginId, view.generation), [controller, view.pluginId, view.generation, activation]);
   // Inventory refreshes replace view snapshots without changing their lifetime.
   const host = React.useMemo(
     () => controller.createViewHostAPI(view),
@@ -762,6 +775,8 @@ export function PluginViewContent({
     () => createPluginTranslator(controller.host, locale),
     [controller.host, locale, snapshot],
   );
+  const activation = definition && controller.host.getGenerationActivation(definition.pluginId, definition.generation);
+  React.useEffect(() => definition ? controller.host.retainGeneration(definition.pluginId, definition.generation) : undefined, [controller, definition, activation]);
   if (!definition || !host || !view) {
     return <div className="plugin-workbench-error" role="status">{t("plugins.viewUnavailable")}</div>;
   }
@@ -809,6 +824,8 @@ export function WorkbenchContentRenderer(props: WorkbenchContentRendererProps): 
     props.controller.getSnapshot,
   );
   const renderer = props.controller.getRenderer(props.category, props.contentType);
+  const activation = renderer && props.controller.host.getGenerationActivation(renderer.pluginId, renderer.generation);
+  React.useEffect(() => renderer ? props.controller.host.retainGeneration(renderer.pluginId, renderer.generation) : undefined, [props.controller, renderer, activation]);
   if (!renderer) return <>{props.fallback}</>;
   const Renderer = renderer.render;
   return (
@@ -1015,4 +1032,31 @@ function isViewRegion(value: unknown): value is ViewPlacementRegion {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The selected provider owns this instance, its subscriptions, theme effects and durable
+ * layout. Preparing a different provider never allocates a competing global controller. */
+export function createDefaultWorkbench(
+  registry: PluginHost,
+  application: () => Pick<ApplicationServiceV1, "invoke" | "catalog" | "subscribe" | "getSnapshot">,
+  checkpoint?: WorkbenchSnapshotV1,
+): ApplicationWorkbenchV1 & { start(): void; dispose(): void } {
+  const controller = new WorkbenchController(registry, {
+    getSetting: async (pluginId, generation, key) => (await window.wuu.getPluginSetting({ id: pluginId, fingerprint: generation, key })).value,
+    getStorage: async (pluginId, generation, key, scope) => (await window.wuu.getPluginStorage({ id: pluginId, fingerprint: generation, key, scope })).value,
+    setStorage: async (pluginId, generation, key, value, scope) => { await window.wuu.setPluginStorage({ id: pluginId, fingerprint: generation, key, value, scope }); },
+    openSettings: () => { void application().invoke("settings.open", { pageId: "providers" }); },
+    disablePlugin: pluginId => application().catalog.update({ id: pluginId, action: "disable" }),
+    requestRegionVisible: region => { void application().invoke("navigation.reveal-region", { region }); },
+  }, window.localStorage, checkpoint);
+  const reconcile = () => {
+    // Initial loading is not an authoritative empty inventory: retain saved views
+    // until initialization publishes the selected graph and installed packages.
+    if (application().getSnapshot().phase === "starting") return;
+    controller.setAvailablePluginIds(new Set(application().catalog.getSnapshot().inventory.filter(isAvailablePlugin).map(plugin => plugin.id)));
+  };
+  let unsubscribe: (() => void) | undefined;
+  const dispose = controller.dispose.bind(controller);
+  controller.dispose = () => { unsubscribe?.(); unsubscribe = undefined; dispose(); };
+  return Object.assign(controller, { start() { unsubscribe ??= application().subscribe(reconcile); reconcile(); } });
 }

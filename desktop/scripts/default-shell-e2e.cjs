@@ -9,12 +9,15 @@ module.exports = function withDefaultShell(api) {
     graph_generation: "default-shell-e2e-graph",
     fingerprint: "default-shell-e2e", desktop: { entry: "desktop.js", services: [{ name: "ui.shell", version: "1.0.0" }] },
   };
-  const surfaces = ["navigation", "conversation", "composer", "settings", "preview"].map(name => ({
+  const surfaces = ["application", "navigation", "conversation", "composer", "settings", "preview"].map(name => ({
     ...shell, id: `builtin:wuu.default-${name}`, name: `Default ${name} fixture`,
     provenance: { ...shell.provenance, plugin_id: `wuu.default-${name}` },
     fingerprint: `default-${name}-e2e`,
     desktop: { entry: "desktop.js", services: [{ name: `ui.${name}`, version: "1.0.0" }] },
   }));
+  for (const module of [shell, ...surfaces]) if (!module.desktop.services.some(service => service.name === "ui.application")) {
+    module.requires = ["wuu.default-application"]; module.resolved_dependencies = ["wuu.default-application"]; module.resolved_required_dependencies = ["wuu.default-application"];
+  }
   return {
     ...api,
     reportPluginDesktopActivation: async report => { activationReports.push(report); },

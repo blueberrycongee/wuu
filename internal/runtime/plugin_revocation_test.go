@@ -175,13 +175,25 @@ type cleanupGenerationClient struct {
 	host     *pluginhost.Host
 }
 
-func (c *cleanupGenerationClient) ProvidedServices() []pluginhost.ServiceDescriptor {
+type cleanupStateProvider struct {
+	*generationClient
+	saves int
+}
+
+func (*cleanupGenerationClient) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
+func (*cleanupStateProvider) RequiredServices() []pluginhost.ServiceRequirement   { return nil }
+
+func (c *cleanupStateProvider) ProvidedServices() []pluginhost.ServiceDescriptor {
 	return []pluginhost.ServiceDescriptor{{Name: "cleanup.state", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "save", InputSchema: "cleanup.input.v1", OutputSchema: "cleanup.output.v1"}}}}
 }
 func (c *cleanupGenerationClient) RequiredServices() []pluginhost.ServiceRequirement {
 	return []pluginhost.ServiceRequirement{{Name: "cleanup.state", MajorVersion: 1, Required: true}}
 }
-func (c *cleanupGenerationClient) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+func (c *cleanupStateProvider) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	if c.closed {
+		return nil, errors.New("state provider closed before cleanup persisted")
+	}
+	c.saves++
 	return json.RawMessage(`{}`), nil
 }
 func (c *cleanupGenerationClient) Close(ctx context.Context) error {
@@ -196,8 +208,12 @@ func (c *cleanupGenerationClient) Close(ctx context.Context) error {
 }
 func TestGenerationShutdownCanPersistBeforeServicesClose(t *testing.T) {
 	client := &cleanupGenerationClient{generationClient: &generationClient{id: "workflow"}}
-	registry, conflicts := pluginhost.BuildServiceRegistry(client)
-	host := pluginhost.New(client)
+	provider := &cleanupStateProvider{generationClient: &generationClient{id: "state"}}
+	registry, conflicts := pluginhost.BuildServiceRegistry(client, provider)
+	if len(conflicts) != 0 {
+		t.Fatal(conflicts)
+	}
+	host := pluginhost.New(client, provider)
 	host.AttachServiceRegistry(registry, conflicts)
 	registry.Activate()
 	client.registry = registry
@@ -205,6 +221,9 @@ func TestGenerationShutdownCanPersistBeforeServicesClose(t *testing.T) {
 	generation := &PluginGeneration{id: "cleanup", host: host}
 	if err := generation.close(); err != nil {
 		t.Fatal(err)
+	}
+	if provider.saves != 1 || !provider.closed {
+		t.Fatalf("cleanup persistence saves=%d, state closed=%v", provider.saves, provider.closed)
 	}
 	if _, err := registry.Call(context.Background(), client.id, pluginhost.ServiceCallParams{Service: "cleanup.state", Method: "save"}); err == nil {
 		t.Fatal("services survived generation shutdown")

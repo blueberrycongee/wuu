@@ -35,14 +35,15 @@ func (h *Host) ownClients(clients []Client) error {
 		owner := cordis.Define[struct{}](client.ID(), func(scope *cordis.Context, _ struct{}) error {
 			scope.OnDispose(func() {
 				h.serviceRegistry.cancelCallerScopes(client.ID())
+				h.serviceRegistry.waitRetainedServiceScopes(client.ID())
 				finishCleanup := h.serviceRegistry.allowShutdownCleanup(client.ID())
 				defer finishCleanup()
 				defer func() {
 					if value := recover(); value != nil {
-						lifetime.closeErr = fmt.Errorf("close plugin %q panicked: %v", client.ID(), value)
+						lifetime.closeErr = h.ownerDiagnosticError(client.ID(), fmt.Errorf("close plugin %q panicked: %v", client.ID(), value))
 					}
 				}()
-				lifetime.closeErr = client.Close(lifetime.closeCtx)
+				lifetime.closeErr = h.ownerDiagnosticError(client.ID(), client.Close(lifetime.closeCtx))
 			})
 			return nil
 		})

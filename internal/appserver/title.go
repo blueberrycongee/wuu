@@ -11,7 +11,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/modelvariant"
 	"github.com/blueberrycongee/wuu/internal/modelwire"
-	"github.com/blueberrycongee/wuu/internal/providerfactory"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/titleservice"
@@ -442,7 +441,7 @@ func (s *Server) regenerateTitleWithOverride(binding *runtime.State, ctx context
 			role := roles.Title
 			return titleInferenceModel{name: role.APIModel, effort: role.LegacyEffort, options: role.ProviderOptions,
 				buildClient: func() (providers.StreamClient, error) {
-					client, err := providerfactory.BuildStreamClient(role.RuleProviderConfig, role.Provider, providerfactory.Bindings{Credentials: services.Credentials, ChatGPT: services.ChatGPT})
+					client, err := services.ModelClient(role.RuleProviderConfig, role.Provider)
 					if err != nil {
 						return nil, fmt.Errorf("build title override client: %w", err)
 					}

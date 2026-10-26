@@ -172,7 +172,7 @@ func (s *Session) newSideThreadBaseRunner(selected ThreadModelSelection) (*agent
 	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
 		return nil, fmt.Errorf("resolve side conversation speed: %w", err)
 	}
-	client, err := providerfactory.BuildStreamClient(ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
+	client, err := selectedRouteClient(s.PluginHost, ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
 	if err != nil {
 		return nil, fmt.Errorf("build side conversation client %q: %w", resolvedName, err)
 	}

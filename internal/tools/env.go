@@ -343,9 +343,9 @@ type BrowserTabRecord struct {
 }
 
 // BrowserTabStore is the minimal CRUD contract the browser tool needs over the
-// thread's tab records. The concrete atomic-file store lands in a later layer;
-// this interface freezes the shape the tool codes against. A nil store means
-// tab persistence is unavailable and the tool degrades to in-memory addressing.
+// thread's tab records. Runtime sessions bind the selected document provider;
+// an unavailable selected provider returns errors rather than falling back to
+// files or memory. A nil store is only for standalone ephemeral tool callers.
 type BrowserTabStore interface {
 	List() ([]BrowserTabRecord, error)
 	Get(tabID string) (BrowserTabRecord, bool, error)

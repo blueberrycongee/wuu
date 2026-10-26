@@ -3,6 +3,8 @@ package runtime
 import (
 	"encoding/json"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/modelwire"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -75,15 +77,21 @@ func logicalModelStreamEvent(in providers.StreamEvent) pluginhost.ModelStreamEve
 }
 func modelStreamEventFromLogical(in pluginhost.ModelStreamEventV1) (providers.StreamEvent, error) {
 	out := providers.StreamEvent{Type: providers.StreamEventType(in.Type), Content: in.Content, Phase: providers.MessagePhase(in.Phase), ProviderItemID: in.ProviderItemID, ProviderEventType: in.ProviderEventType, StopReason: in.StopReason, FinishReason: providers.FinishReason(in.FinishReason), Truncated: in.Truncated}
+	// Physical usage is independent of logical event metadata. Invalid usage
+	// is never exposed, including when another field is malformed too.
+	if err := validateLogicalModelUsage(in.Usage); err != nil {
+		return out, err
+	}
+	if in.Usage != nil {
+		value := modelwire.TokenUsageFromWire(*in.Usage)
+		out.Usage = &value
+	}
 	switch out.Type {
 	case providers.EventAssistantItemDone, providers.EventContentDelta, providers.EventContentReplace, providers.EventThinkingDelta, providers.EventThinkingReplace, providers.EventThinkingDone, providers.EventImage, providers.EventToolUseStart, providers.EventToolUseDelta, providers.EventToolUseEnd, providers.EventProviderItem, providers.EventUsage, providers.EventDone, providers.EventError, providers.EventLifecycle, providers.EventProviderState, providers.EventReconnect:
 	default:
 		return out, errors.New("unsupported model stream event")
 	}
 	if err := validateLogicalModelOutput(in.Phase, in.FinishReason); err != nil {
-		return out, err
-	}
-	if err := validateLogicalModelUsage(in.Usage); err != nil {
 		return out, err
 	}
 	if len(in.ProviderState) > 0 {
@@ -126,12 +134,8 @@ func modelStreamEventFromLogical(in pluginhost.ModelStreamEventV1) (providers.St
 		v := modelwire.ProviderItemFromWire(*in.ProviderItem)
 		out.ProviderItem = &v
 	}
-	if in.Usage != nil {
-		v := modelwire.TokenUsageFromWire(*in.Usage)
-		out.Usage = &v
-	}
 	if in.Error != nil {
-		out.Error = serviceError(in.Error.Code, in.Error.Message)
+		out.Error = modelErrorFromWire(in.Error)
 	}
 	switch out.Type {
 	case providers.EventAssistantItemDone:
@@ -161,19 +165,32 @@ func modelStreamEventFromLogical(in pluginhost.ModelStreamEventV1) (providers.St
 	}
 	return out, nil
 }
+
+type modelFailureError struct{ wire *pluginhost.ModelErrorV1 }
+
+func (e *modelFailureError) Error() string { return e.wire.Message }
+func (e *modelFailureError) FailureEvidence() providers.NormalizedFailure {
+	f := e.wire.Failure
+	return providers.NormalizedFailure{Origin: providers.FailureOrigin(f.Origin), Category: providers.FailureCategory(f.Category), ProviderFamily: f.ProviderFamily, ProviderCode: f.ProviderCode, HTTPStatus: f.HTTPStatus, RetryAfter: time.Duration(f.RetryAfterMS) * time.Millisecond, ContextOverflow: f.ContextOverflow, AuthRefreshable: f.AuthRefreshable, ClassificationConfidence: providers.ClassificationConfidence(f.Confidence), SuggestedRecovery: providers.RecoveryActionKind(f.SuggestedRecovery)}
+}
+func modelErrorFromWire(wire *pluginhost.ModelErrorV1) error {
+	if wire.Failure != nil {
+		return &modelFailureError{wire: wire}
+	}
+	return serviceError(wire.Code, wire.Message)
+}
 func modelErrorView(err error) *pluginhost.ModelErrorV1 {
 	if err == nil {
 		return nil
 	}
+	failure := providers.NormalizeFailure(err)
 	var hostErr *pluginhost.HostServiceError
-	if errors.As(err, &hostErr) {
-		return &pluginhost.ModelErrorV1{Code: hostErr.Code, Message: hostErr.Message}
+	output := &pluginhost.ModelErrorV1{Code: "inference_failed", Message: "model request failed"}
+	if errors.As(modelRequestError(err), &hostErr) {
+		output.Code, output.Message = hostErr.Code, hostErr.Message
 	}
-	safe := modelRequestError(err)
-	if errors.As(safe, &hostErr) {
-		return &pluginhost.ModelErrorV1{Code: hostErr.Code, Message: hostErr.Message}
-	}
-	return &pluginhost.ModelErrorV1{Code: "inference_failed", Message: "model request failed"}
+	output.Failure = &pluginprotocol.ModelFailureV1{Origin: string(failure.Origin), Category: string(failure.Category), ProviderFamily: failure.ProviderFamily, ProviderCode: failure.ProviderCode, HTTPStatus: failure.HTTPStatus, RetryAfterMS: failure.RetryAfter.Milliseconds(), ContextOverflow: failure.ContextOverflow, AuthRefreshable: failure.AuthRefreshable, Confidence: string(failure.ClassificationConfidence), SuggestedRecovery: string(failure.SuggestedRecovery)}
+	return output
 }
 
 func validateLogicalModelOutput(phase, finish string) error {

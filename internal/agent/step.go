@@ -177,6 +177,7 @@ type SystemPromptSectionInfo = providers.SystemPromptSectionSummary
 // LoopConfig bundles every knob the shared loop needs. All callbacks
 // are optional. Tools is required if the model is allowed to call any.
 type LoopConfig struct {
+	EvaluatePolicy loopdriver.PolicyEvaluator
 	ResumeSampling bool
 	// Tools is the executor used to run model-requested tool calls.
 	// May be nil if the caller knows the model has no tools available.

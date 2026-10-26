@@ -19,6 +19,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -535,7 +536,7 @@ func modelShutdownProcess(t *testing.T, root string) {
 	}
 	modules := testStateModules()
 	modules[1] = provider.ID()
-	modules = append(modules, kernelHostModule, caller.ID())
+	modules = append(modules, kernelHostModule, modelExecutionConsumer, nativeModelModule, capacityPolicyModule, capacityResourceModule, loopdriver.NativePolicyModule, caller.ID())
 	factories := []NativeProviderFactory{
 		{ID: provider.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return provider, nil }},
 		{ID: caller.ID(), Build: func(NativeProviderContext) (pluginhost.Client, error) { return caller, nil }},
@@ -556,6 +557,10 @@ func modelShutdownProcess(t *testing.T, root string) {
 	if err := os.WriteFile(configPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	factories = append(factories, NativeProviderFactory{ID: config.Module, Build: func(NativeProviderContext) (pluginhost.Client, error) {
+		return config.NewMemoryService(config.Module, cfg), nil
+	}})
+	factories = withCapacityProviders(factories, NewCapacityResources(0))
 	host, kernel, err := buildPluginHost(nil, root, "", home, workspace, nil, startPluginClient, nil, nil,
 		&composition.Config{Version: composition.Version, Modules: &modules}, "", factories...)
 	if err != nil {

@@ -1,3 +1,4 @@
+import * as Notices from "../Toast";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,7 +15,7 @@ import { WuuUIRoot } from "../ui/layers/UILayerHost";
 
 let root: Root;
 let container: HTMLDivElement;
-afterEach(() => { act(() => root?.unmount()); container?.remove(); });
+afterEach(() => { act(() => root?.unmount()); container?.remove(); vi.restoreAllMocks(); });
 function setup() {
   const base = createPreviewApplication();
   const source = "draft-one";
@@ -77,6 +78,7 @@ describe("selected public composer continuity", () => {
     expect(fixture.calls).toContainEqual(expect.objectContaining({ action: "composer.submit", input: expect.objectContaining({ ownerTabId: "secondary", text: "other query" }) }));
   });
   it("selects, replaces, and disables the side composer through the preview service slot", async () => {
+    const notice = vi.spyOn(Notices, "showErrorToast");
     const fixture = setup();
     await fixture.update(view => ({ ...view,
       tabs: { ...view.tabs, items: view.tabs.items.map(tab => ({ ...tab, kind: "thread", threadId: "parent" })) },
@@ -111,7 +113,8 @@ describe("selected public composer continuity", () => {
     expect(container.querySelector("[data-side-replacement]")?.textContent).toBe("parent");
     await act(async () => host.unload("alternative"));
     expect(container.querySelector("textarea")).toBeNull();
-    expect(container.querySelector("[role=alert]")?.textContent).toContain("Selected UI surface is unavailable");
+    expect(container.querySelector("[role=alert]")).toBeNull();
+    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:alternative:one");
     await act(async () => root.render(null));
     host.unload("side-extension"); host.unload("composer"); host.unload("wuu.default-preview");
   });

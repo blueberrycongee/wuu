@@ -60,7 +60,10 @@ func activatePluginHost(ctx context.Context, host *pluginhost.Host) error {
 }
 
 func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHome, workspaceStateDir string, required map[string]bool, start pluginClientStarter, turnRouter *PluginSessionRouter, userQuestions *pluginhost.UserQuestionBroker, selection *composition.Config, driverProfile string, factories ...NativeProviderFactory) (preparedHost *pluginhost.Host, preparedKernel *kernelHostServices, prepareErr error) {
-	factories = append(append([]NativeProviderFactory(nil), factories...), compactionProviderFactory())
+	// Bare host embedders create a root resource owner; session generations pass
+	// captured capacity factories and therefore never allocate another owner.
+	factories = withCapacityProviders(factories, nil)
+	factories = append(append([]NativeProviderFactory(nil), factories...), compactionProviderFactory(), loopPolicyProviderFactory(), nativeModelProviderFactory(), nativeEngineProviderFactory())
 	factoryIDs := make([]string, 0, len(factories))
 	for _, factory := range factories {
 		factoryIDs = append(factoryIDs, factory.ID)
@@ -208,7 +211,7 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	for _, item := range plugins {
 		packageRequirements[item.ID] = item.RequiredPluginIDs()
 	}
-	for _, id := range []string{kernelHostModule, toolExecutionConsumer, sessionExecutionConsumer, toolservice.DefaultModule} {
+	for _, id := range []string{kernelHostModule, toolExecutionConsumer, modelExecutionConsumer, sessionExecutionConsumer, toolservice.DefaultModule} {
 		if resolved.Includes(id) {
 			packageRequirements[id] = append(packageRequirements[id], sessionStateConsumer)
 			if resolved.Includes(StateServicesConsumer) {
@@ -347,6 +350,21 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 			return nil, nil, errors.Join(err, closeStarted())
 		}
 	}
+	for _, consumer := range nativeConsumers {
+		if consumer.ID() != engineExecutionConsumer || !resolved.Includes(engineExecutionConsumer) {
+			continue
+		}
+		requirements := []pluginhost.ServiceRequirement{}
+		seen := map[string]bool{}
+		for _, service := range registry.Snapshot(0).Services {
+			if strings.HasPrefix(service.Service, "engine.") && !seen[service.Service] {
+				seen[service.Service] = true
+				requirements = append(requirements, pluginhost.ServiceRequirement{Name: service.Service, MajorVersion: 1})
+			}
+		}
+		consumer.(*runtimeServiceConsumer).requirements = requirements
+		conflicts = append(conflicts, registry.RegisterClients(consumer)...)
+	}
 	host.AttachServiceRegistry(registry, conflicts)
 	if err := registry.ValidateBindings(); err != nil {
 		return nil, nil, errors.Join(err, closeStarted())
@@ -414,7 +432,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{titleservice.NativeModule, compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{modelExecutionConsumer, nativeEnginesModule, engineExecutionConsumer, nativeModelModule, loopdriver.NativePolicyModule, titleservice.NativeModule, compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	available = append(available, stateServiceModules()...)
 	for _, module := range nativeRendererModules() {
 		available = append(available, module.ID)

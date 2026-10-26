@@ -11,6 +11,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
+const defaultApplicationModule = "wuu.default-application"
 const defaultShellModule = "wuu.default-shell"
 const defaultSettingsModule = "wuu.default-settings"
 const defaultNavigationModule = "wuu.default-navigation"
@@ -30,6 +31,7 @@ type RendererModule struct {
 	ID, SubjectID, Fingerprint, Entry string
 	Name, Description                 string
 	Services                          []pluginhost.ServiceDescriptor
+	Requirements                      []pluginhost.ServiceRequirement
 }
 
 func applicationShellDescriptor() pluginhost.ServiceDescriptor {
@@ -39,7 +41,7 @@ func applicationShellDescriptor() pluginhost.ServiceDescriptor {
 }
 
 func nativeRendererModules() []RendererModule {
-	return []RendererModule{{ID: defaultShellModule, SubjectID: defaultShellModule,
+	modules := []RendererModule{{ID: defaultShellModule, SubjectID: defaultShellModule,
 		Name: "Wuu App Layout", Description: "Application frame and layout for selected interface modules.",
 		Fingerprint: "ui-shell-v1:" + version.Info().Version + ":" + version.Info().Commit,
 		Entry:       "wuu-builtin:default-shell", Services: []pluginhost.ServiceDescriptor{applicationShellDescriptor()}},
@@ -63,6 +65,14 @@ func nativeRendererModules() []RendererModule {
 			Name: "Wuu File Preview", Description: "Workspace files, documents, and previews.",
 			Fingerprint: "ui-preview-v1:" + version.Info().Version + ":" + version.Info().Commit,
 			Entry:       "wuu-builtin:default-preview", Services: []pluginhost.ServiceDescriptor{{Name: "ui.preview", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.preview.describe.input.v1", OutputSchema: "ui.preview.describe.output.v1"}}}}}}
+	for index := range modules {
+		modules[index].Requirements = []pluginhost.ServiceRequirement{{Name: "ui.application", MajorVersion: 1, Required: true}}
+	}
+	return append(modules, RendererModule{ID: defaultApplicationModule, SubjectID: defaultApplicationModule,
+		Name: "Wuu Application", Description: "Application state, actions and background work.",
+		Fingerprint: "ui-application-v1:" + version.Info().Version + ":" + version.Info().Commit,
+		Entry:       "wuu-builtin:default-application", Services: []pluginhost.ServiceDescriptor{{Name: "ui.application", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "describe", InputSchema: "ui.application.describe.input.v1", OutputSchema: "ui.application.describe.output.v1"}}}}})
+
 }
 
 // rendererServiceClient adds a renderer transport to a package's graph node.
@@ -77,10 +87,29 @@ type rendererServiceClient struct {
 }
 
 func newRendererService(module RendererModule, requirements []pluginhost.ServiceRequirement, owner pluginhost.Client) *rendererServiceClient {
+	requirements = append(append([]pluginhost.ServiceRequirement(nil), module.Requirements...), requirements...)
 	if services, ok := owner.(pluginhost.ServiceClient); ok {
 		requirements = append(append([]pluginhost.ServiceRequirement(nil), services.RequiredServices()...), requirements...)
 	}
-	return &rendererServiceClient{module: module, requirements: requirements, owner: owner, state: pluginhost.StatePrepared}
+	// A mixed package has one graph identity even when both transports require
+	// the same service. Preserve the strongest requirement; incompatible majors
+	// remain distinct so ordinary negotiation reports the conflict.
+	type requirementKey struct {
+		name  string
+		major int
+	}
+	indices := make(map[requirementKey]int)
+	merged := make([]pluginhost.ServiceRequirement, 0, len(requirements))
+	for _, requirement := range requirements {
+		key := requirementKey{requirement.Name, requirement.MajorVersion}
+		if index, exists := indices[key]; exists {
+			merged[index].Required = merged[index].Required || requirement.Required
+		} else {
+			indices[key] = len(merged)
+			merged = append(merged, requirement)
+		}
+	}
+	return &rendererServiceClient{module: module, requirements: merged, owner: owner, state: pluginhost.StatePrepared}
 }
 
 func (r *rendererServiceClient) ID() string { return r.module.ID }

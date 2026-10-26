@@ -14,6 +14,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
@@ -190,7 +191,9 @@ type SpawnOptions struct {
 
 	// HistoryPath, if set, is the absolute path where this sub-agent's
 	// JSONL history should be persisted.
-	HistoryPath string
+	HistoryPath      string
+	HistoryDocuments persistence.Documents
+	HistoryScope     string
 
 	// MaxLifetime caps how long a worker can run before being forcibly
 	// cancelled. Zero means no hard runtime lifetime; callers can still
@@ -261,6 +264,8 @@ type SubAgent struct {
 	workerRoot         string // working directory, persisted so a resume can validate + reroot
 	toolkit            agent.ToolExecutor
 	historyPath        string
+	historyDocuments   persistence.Documents
+	historyScope       string
 	initialHistory     []providers.ChatMessage
 	history            []providers.ChatMessage
 	maxSteps           int

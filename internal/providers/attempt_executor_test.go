@@ -323,3 +323,16 @@ func TestInferenceRequestHashChangesOnlyWithWirePayload(t *testing.T) {
 		t.Fatal("wire payload mutation did not change request hash")
 	}
 }
+
+func TestExecuteChatSelectedPolicyStopsRecovery(t *testing.T) {
+	client := &alwaysRetryableClient{}
+	calls := 0
+	ctx := WithRecoveryPlanner(context.Background(), func(context.Context, StreamRecoveryInput) (RecoveryPlan, time.Duration, error) {
+		calls++
+		return RecoveryPlan{Action: RecoveryStop}, 0, nil
+	})
+	_, err := ExecuteChat(ctx, client, ChatRequest{Model: "test"}, InferenceOperationAuxiliary, InferenceProfileInteractive)
+	if err == nil || client.calls != 1 || calls != 1 {
+		t.Fatalf("model=%d policy=%d err=%v", client.calls, calls, err)
+	}
+}

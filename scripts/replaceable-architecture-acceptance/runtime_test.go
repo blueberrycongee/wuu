@@ -55,7 +55,7 @@ func TestAcceptanceOpenStateLegacyMigration(t *testing.T) {
 				cfg.Extensions = &extensions.Settings{}
 				require.NoError(t, cfg.Extensions.RecordGrant(extensions.Grant{SubjectID: installed.SubjectID, Fingerprint: installed.Fingerprint, Scope: extensions.GrantScopeUser, Permissions: installed.EffectivePermissions, ApprovedAt: time.Now().UTC()}))
 			}
-			modules := []string{"wuu.session-state", selectedID}
+			modules := []string{"wuu.session-state", "wuu.session.default", selectedID}
 			cfg.Composition = &composition.Config{Version: composition.Version, Modules: &modules, Services: []composition.Binding{{Service: persistence.ServiceName, Major: 1, Provider: selectedID}}}
 			opts := wuuruntime.StateOptions{RootDir: root, HomeDir: home, Config: cfg}
 			dir := statepath.SessionsDir(home)

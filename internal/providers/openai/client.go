@@ -126,6 +126,8 @@ type Client struct {
 	responsesStore     *bool
 	responsesTransport providers.StreamTransportMode
 	responsesWSCache   *ResponsesWebSocketCache
+	ownsWSCache        bool
+	ownsStreamClient   bool
 }
 
 // New creates an OpenAI-compatible client.
@@ -150,7 +152,8 @@ func New(cfg ClientConfig) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.ResponsesWebSocketCache == nil && responsesTransportUsesWebSocket(responsesTransport) {
+	ownsWSCache := cfg.ResponsesWebSocketCache == nil && responsesTransportUsesWebSocket(responsesTransport)
+	if ownsWSCache {
 		cfg.ResponsesWebSocketCache = NewResponsesWebSocketCache()
 	}
 	providerScope := cfg.ProviderScope
@@ -180,6 +183,8 @@ func New(cfg ClientConfig) (*Client, error) {
 		responsesStore:     cfg.ResponsesStore,
 		responsesTransport: responsesTransport,
 		responsesWSCache:   cfg.ResponsesWebSocketCache,
+		ownsWSCache:        ownsWSCache,
+		ownsStreamClient:   cfg.StreamingHTTPClient == nil,
 	}, nil
 }
 
@@ -1394,4 +1399,15 @@ func temperatureSupported(options map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// Close is called after the owning provider has drained its admitted callbacks.
+func (c *Client) Close() error {
+	if c.ownsStreamClient {
+		providers.CloseOwnedStreamingHTTPClient(c.httpClient, c.streamHTTPClient)
+	}
+	if c.ownsWSCache {
+		return c.responsesWSCache.Close()
+	}
+	return nil
 }

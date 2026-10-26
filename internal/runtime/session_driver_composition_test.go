@@ -2,7 +2,10 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"strings"
 	"testing"
 
@@ -17,9 +20,14 @@ import (
 func TestSessionDriverComposition(t *testing.T) {
 	for _, name := range []string{"changed-default", "fork", "missing-session", "incompatible-checkpoint"} {
 		t.Run(name, func(t *testing.T) {
-			s, _ := workerCompositionSession(t, false)
-			s.RootDir, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir()
 			model := &defaultBindingModel{}
+			s, _ := workerCompositionSession(t, false, NativeProviderFactory{ID: "test.session-model", Build: func(NativeProviderContext) (pluginhost.Client, error) {
+				return &sessionModelAdapterFixture{nativeModelProvider: nativeModelProvider{state: pluginhost.StatePrepared}, model: model}, nil
+			}})
+			if (&modelAdapterClient{host: s.pluginGeneration.host, inner: model}).NativeCompactionAvailable() || model.calls != 0 {
+				t.Fatal("unsupported selected model advertised compaction or initialized inference")
+			}
+			s.RootDir, s.StateDir, s.SessionDir = t.TempDir(), t.TempDir(), t.TempDir()
 			s.StreamRunner = &agent.StreamRunner{Client: model, Model: "controlled"}
 			id := "conversation"
 			if name != "missing-session" {
@@ -71,4 +79,27 @@ func TestSessionDriverCheckpointRejectsMissingOwner(t *testing.T) {
 	if !errors.Is(err, session.ErrSessionNotFound) || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("checkpoint acknowledged a nonexistent owner: %v", err)
 	}
+}
+
+// The fixture replaces the declared model provider, never a private client below
+// the graph. This exercises the same session binding as an external adapter.
+type sessionModelAdapterFixture struct {
+	nativeModelProvider
+	model *defaultBindingModel
+}
+
+func (f *sessionModelAdapterFixture) ID() string                                        { return "test.session-model" }
+func (f *sessionModelAdapterFixture) Prepare(context.Context) error                     { return nil }
+func (f *sessionModelAdapterFixture) Close(context.Context) error                       { return nil }
+func (f *sessionModelAdapterFixture) RequiredServices() []pluginhost.ServiceRequirement { return nil }
+func (f *sessionModelAdapterFixture) ModelAdapters() []pluginhost.ModelAdapterDescriptor {
+	return []pluginhost.ModelAdapterDescriptor{{ID: nativeModelAdapter, Version: 1, Mode: "direct"}}
+}
+func (f *sessionModelAdapterFixture) InvokeService(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	return json.Marshal(f.ModelAdapters()[0])
+}
+func (f *sessionModelAdapterFixture) InvokeCapability(context.Context, pluginhost.CapabilityInvokeParams) (pluginhost.CapabilityInvokeResult, error) {
+	f.model.calls++
+	raw, err := json.Marshal(pluginprotocol.ModelAdapterOutput{Response: &pluginprotocol.ModelResponseV1{Content: "Hello", FinishReason: "stop"}})
+	return pluginhost.CapabilityInvokeResult{Output: raw}, err
 }

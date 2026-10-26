@@ -103,7 +103,8 @@ func promptGenerationClient(id, text string, priority int) *generationClient {
 func TestPluginSystemPromptSectionsEvaluateBeforeActivationInPriorityOrder(t *testing.T) {
 	high := promptGenerationClient("high", "high section", 20)
 	low := promptGenerationClient("low", "low section", 5)
-	session := &Session{WuuHome: t.TempDir(), ProviderName: "openai", Model: "model", RootDir: "/workspace"}
+	session := testGenerationSession(t, testPluginGeneration("initial", &generationClient{id: "initial"}))
+	session.ProviderName, session.Model = "openai", "model"
 	generation, err := session.buildPluginGeneration(config.Config{}, []pluginpkg.Plugin{
 		testRuntimePlugin("low"), testRuntimePlugin("high"),
 	}, nil, nil, func(_ context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
@@ -1002,8 +1003,15 @@ func testGenerationSession(t *testing.T, generation *PluginGeneration) *Session 
 	if generation != nil && generation.refs.Load() == 0 {
 		generation.retain()
 	}
+	factories := withCapacityProviders(nil, nil)
+	release, err := retainCapacityRoot(factories)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(release)
 	return &Session{
-		RootDir: root, StateDir: state, WuuHome: home, SessionDir: dir, Documents: documents, Sessions: session.NewStore(context.Background(), documents),
+		nativeProviders: factories,
+		RootDir:         root, StateDir: state, WuuHome: home, SessionDir: dir, Documents: documents, Sessions: session.NewStore(context.Background(), documents),
 		PluginHost:       generation.host,
 		HookDispatcher:   hooks.NewDispatcher(nil),
 		Plugins:          append([]pluginpkg.Plugin(nil), generation.plugins...),
@@ -1064,7 +1072,7 @@ func TestMutableGenerationOwnsLazyAssetsAndPreservesProvenance(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			s := &Session{WuuHome: t.TempDir()}
+			s := testGenerationSession(t, testPluginGeneration("initial", &generationClient{id: "initial"}))
 			generation, err := s.buildPluginGeneration(cfg, []pluginpkg.Plugin{item}, nil, nil, func(_ context.Context, pc pluginhost.ProcessConfig) (pluginhost.Client, error) {
 				if !strings.HasPrefix(pc.Command, pc.PluginRoot+string(filepath.Separator)) || pc.PluginRoot == root {
 					t.Fatalf("runtime not rebased: %+v", pc)

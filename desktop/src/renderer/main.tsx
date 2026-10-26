@@ -2,8 +2,7 @@ import ReactDOM from "react-dom/client";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { StandaloneAccountWindow } from "./StandaloneAccountWindow";
 import { DesktopApplicationRoot } from "./plugins/DesktopApplicationRoot";
-import { getDesktopApplication } from "./plugins/ApplicationController";
-import { desktopPluginRuntime, desktopWorkbenchController, desktopCompositionRoot } from "./plugins/DesktopPluginRuntime";
+import { desktopPluginRuntime, desktopCompositionRoot } from "./plugins/DesktopPluginRuntime";
 import { startAppearanceSync } from "./AppearancePreferences";
 import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
 import { ENABLE_ACCOUNT } from "./FeatureFlags";
@@ -104,8 +103,7 @@ root.render(
 
 window.wuu?.onPrepareToQuit?.(async () => {
   root.unmount();
-  const results = await Promise.allSettled([desktopPluginRuntime.shutdown(), getDesktopApplication().flushCleanup()]);
-  desktopWorkbenchController.dispose();
+  const results = await Promise.allSettled([desktopPluginRuntime.shutdown()]);
   await desktopCompositionRoot.fiber.dispose();
   const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
   if (failures.length) throw new AggregateError(failures, "Renderer cleanup failed");

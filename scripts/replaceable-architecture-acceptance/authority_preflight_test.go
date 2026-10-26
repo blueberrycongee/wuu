@@ -32,7 +32,7 @@ func TestAcceptanceAuthorityPreflightPreservesActiveGeneration(t *testing.T) {
 			for _, grant := range second.Config.Extensions.Grants {
 				require.NoError(t, first.Config.Extensions.RecordGrant(grant))
 			}
-			modules := []string{"wuu.session-state", "acceptance.authority-a", "acceptance.authority-b", "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", wuuruntime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, wuuruntime.ArtifactModule, wuuruntime.DataQueryModule}
+			modules := []string{"wuu.session-state", "wuu.session.default", "acceptance.authority-a", "acceptance.authority-b", "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", "wuu.tool-execution", wuuruntime.StateServicesConsumer, credentialstore.FileModule, pluginsettings.Module, config.Module, permissionpolicy.Module, wuuruntime.ArtifactModule, wuuruntime.DataQueryModule}
 			first.Config.Composition.Modules = &modules
 			first.Config.DefaultProvider = "fixture"
 			first.Config.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:1/v1", APIKey: "fixture", Model: "fixture"}}

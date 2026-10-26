@@ -17,15 +17,9 @@ import (
 // migrated instead of silently misread.
 const browserTabsSchemaVersion = "1"
 
-// BrowserTabFileStore is the durable, per-thread tab registry the embedded
-// browser tool persists between turns and across core restarts. It mirrors
-// goalruntime.Store: a single JSON file guarded by a mutex, rewritten
-// atomically (temp file + rename) on every mutation so a crash mid-write never
-// leaves a half-written registry. It implements BrowserTabStore.
-//
-// The file lives under the thread's artifact directory
-// (statepath.ThreadBrowserTabsPath), so deleting the thread reclaims it for free
-// via os.RemoveAll(SessionArtifactDir).
+// BrowserTabFileStore preserves the legacy atomic-file representation for
+// migration and standalone callers. Runtime browser sessions use the selected
+// document provider through BrowserTabDocumentStore instead.
 type BrowserTabFileStore struct {
 	path string
 	now  func() time.Time

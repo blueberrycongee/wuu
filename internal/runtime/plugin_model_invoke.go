@@ -132,7 +132,7 @@ func (k *modelInvokeInvoker) InvokeService(callCtx context.Context, params plugi
 		timeoutCtx, timeoutCancel := context.WithTimeout(ctx, time.Duration(input.TimeoutMS)*time.Millisecond)
 		originalCancel := cancel
 		cancel = func() { timeoutCancel(); originalCancel() }
-		ctx = timeoutCtx
+		ctx = providers.WithRecoveryPlanner(timeoutCtx, newSelectedLoopPolicyClient(host).StreamRecoveryPlanner())
 		client, request, err = k.prepareIndependent(ctx, session, host, scope, input)
 	}
 	if err != nil {
@@ -254,7 +254,7 @@ func (k *modelInvokeInvoker) prepareIndependent(ctx context.Context, session *Se
 	if err != nil {
 		return nil, request, err
 	}
-	client, err := providerfactory.BuildRuntimeStreamClient(selection.RuleProviderConfig, selection.Provider, providerfactory.Bindings{Credentials: session.credentials, ChatGPT: session.chatGPTManager})
+	client, err := selectedRouteClient(host, selection.RuleProviderConfig, selection.Provider, providerfactory.Bindings{Credentials: session.credentials, ChatGPT: session.chatGPTManager})
 	if err != nil && (client == nil || request.Adapter == "" || request.Adapter == "native") {
 		return nil, request, serviceError("service_unavailable", "configured model client is unavailable")
 	}

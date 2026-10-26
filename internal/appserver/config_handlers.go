@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/authstorage"
@@ -661,6 +660,40 @@ func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []Extens
 		})
 	}
 
+	// Renderer ordering and failure propagation consume the same committed graph
+	// as the runtime. Native non-renderer services already execute in the Go host.
+	if snapshot.PluginHost != nil {
+		visible := make(map[string]bool)
+		for _, record := range records {
+			if record.Kind == extensions.KindPlugin {
+				visible[record.Provenance.PluginID] = true
+			}
+		}
+		dependencies := snapshot.PluginHost.Dependencies()
+		for index := range records {
+			record := &records[index]
+			if record.Kind != extensions.KindPlugin {
+				continue
+			}
+			edges, admitted := dependencies[record.Provenance.PluginID]
+			if !admitted {
+				continue
+			}
+			var resolved, required []string
+			for _, edge := range edges {
+				if !visible[edge.Provider] {
+					continue
+				}
+				resolved = append(resolved, edge.Provider)
+				if edge.Required {
+					required = append(required, edge.Provider)
+				}
+			}
+			record.ResolvedDependencies = cloneSortedStrings(resolved)
+			record.ResolvedRequiredDependencies = cloneSortedStrings(required)
+		}
+	}
+
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].Kind != records[j].Kind {
 			return records[i].Kind < records[j].Kind
@@ -1045,7 +1078,7 @@ func (s *Server) handleExtensionPackageUpdate(req Request) error {
 	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
 		return s.writeResponse(req.ID, nil, activationErr)
 	}
-	activationErr = errors.Join(activationErr, configActivationError(committedView))
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
 	s.scheduleCurrentPluginTurnLifecycleReplay()
 	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
 }
@@ -1323,6 +1356,11 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 		params.Effort != nil || params.Variant != nil || params.PermissionMode != nil)
 	if model == "" && (params.CreateProvider || (threadID == "" && !keepSelection)) {
 		return s.writeResponse(req.ID, nil, errors.New("model is required"))
+	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
 	if providerName == "" {
 		providerName = s.rt.ProviderName
@@ -1614,9 +1652,8 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 		effortForConfig, variantForConfig = nil, nil
 	}
 
-	var client providers.StreamClient
 	if resolvedName != s.rt.ProviderName || connectionChanged || providerClientChanged {
-		client, err = s.buildStreamClientWithServices(services, ruleProviderCfg, resolvedName)
+		err = s.validateModelConfigurationWithServices(services, ruleProviderCfg, resolvedName)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -1643,11 +1680,6 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	// Serialize the persisted write with the config watcher. Otherwise the
-	// watcher can observe this interactive model/effort change and hot-apply it
-	// again while (or just after) this handler is applying it itself.
-	s.configRefreshMu.Lock()
-	defer s.configRefreshMu.Unlock()
 	change := config.ProviderChange{
 		Create:                creatingProvider,
 		Type:                  providerTypeValue,
@@ -1689,12 +1721,13 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 		if err := s.refreshRuntimeAfterProviderEdit(services, connectionChanged); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
-		if fingerprint, fingerprintErr := s.effectiveConfigFingerprint(); fingerprintErr == nil {
-			s.configFingerprint = fingerprint
-		}
 		return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
 	}
-	previousRuntimeProvider := s.rt.ProviderName
+	view, err = services.Config.Read(context.Background())
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg = view.Config
 	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
 		ProviderName:   resolvedName,
 		ProviderConfig: providerCfg,
@@ -1712,17 +1745,8 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 			runtime.ConfigureToolkitPermissions(s.rt.Toolkit, s.rt.Permissions)
 		}
 	}
-	if err := s.applyModelSelectionToRuntime(services, cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, providerClientChanged, previousRuntimeProvider, client, explicitSelection); err != nil {
+	if err := s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, explicitSelection); err != nil {
 		return s.writeResponse(req.ID, nil, err)
-	}
-	// The RPC response is the notification path for this in-process mutation.
-	// Mark the just-applied file revision as observed so the periodic watcher
-	// does not rebuild the runtime and notify the renderer again on its next
-	// 500 ms tick.
-	if fingerprint, fingerprintErr := s.effectiveConfigFingerprint(); fingerprintErr == nil {
-		s.configFingerprint = fingerprint
-	} else {
-		providers.DebugLogf("record model update config fingerprint: %v", fingerprintErr)
 	}
 
 	if keepSelection {
@@ -1772,7 +1796,7 @@ func (s *Server) refreshRuntimeAfterProviderEdit(services *runtime.StateServices
 	if err != nil {
 		return err
 	}
-	return s.applyModelSelectionToRuntime(services, cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false, s.rt.ProviderName, nil, false)
+	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false)
 }
 
 // applyModelSelectionToRuntime swaps the workspace runtime onto a resolved
@@ -1780,7 +1804,6 @@ func (s *Server) refreshRuntimeAfterProviderEdit(services *runtime.StateServices
 // config/model/update handler and the config-file watcher so an external edit
 // to the effective config can be hot-applied without restarting the app-server.
 func (s *Server) applyModelSelectionToRuntime(
-	services *runtime.StateServices,
 	cfg config.Config,
 	resolvedName string,
 	model string,
@@ -1789,40 +1812,22 @@ func (s *Server) applyModelSelectionToRuntime(
 	selection modelvariant.Selection,
 	roleSelections modelroles.Set,
 	connectionChanged bool,
-	providerClientChanged bool,
-	previousRuntimeProvider string,
-	client providers.StreamClient,
 	explicitSelection bool,
 ) error {
 	if s == nil || s.rt == nil {
 		return errors.New("runtime session is required")
 	}
+	if err := s.rt.RefreshModelConfiguration(cfg, resolvedName, model); err != nil {
+		return err
+	}
 	if explicitSelection {
 		s.rt.ProviderName = resolvedName
 		s.rt.Model = model
 	}
-	if client != nil || len(s.rt.ReadinessIssues) == 0 {
-		s.rt.ReadinessIssues = nil
-	}
+
 	s.rt.ModelRoles = roleSelections
 	s.rt.ProjectModels = cfg.Agent.ProjectModels
 	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
-	if roleSelections.Title.Inherited && client != nil {
-		s.rt.TitleClient = client
-	} else if !roleSelections.Title.Inherited || connectionChanged {
-		titleClient, err := s.buildStreamClientWithServices(services, roleSelections.Title.RuleProviderConfig, roleSelections.Title.Provider)
-		if err != nil {
-			return fmt.Errorf("build title client: %w", err)
-		}
-		s.rt.TitleClient = titleClient
-	}
-	if s.rt.Toolkit != nil && (!roleSelections.Worker.Inherited || connectionChanged || providerClientChanged || resolvedName != previousRuntimeProvider) {
-		workerClient, err := s.buildStreamClientWithServices(services, roleSelections.Worker.RuleProviderConfig, roleSelections.Worker.Provider)
-		if err != nil {
-			return fmt.Errorf("build worker client: %w", err)
-		}
-		s.rt.WorkerClient = workerClient
-	}
 	if explicitSelection && s.rt.Toolkit != nil {
 		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
 	}
@@ -1830,9 +1835,6 @@ func (s *Server) applyModelSelectionToRuntime(
 		if err := s.rt.ReconfigureToolLoading(cfg.Agent, ruleProviderCfg, apiModel, selection.ProviderOptions); err != nil {
 			return fmt.Errorf("reconfigure tool loading: %w", err)
 		}
-	}
-	if s.rt.StreamRunner != nil && client != nil {
-		s.rt.StreamRunner.UpdateProviderConnection(client, agent.BuildProviderObservationKey(resolvedName, ruleProviderCfg.BaseURL, ruleProviderCfg.Type, ruleProviderCfg.API, ruleProviderCfg.WireAPI, ruleProviderCfg.StreamTransport, agent.ProviderUsageNormalizationKey(ruleProviderCfg.CacheCreationInputTokensOmitted, ruleProviderCfg.InputTokensIncludeCacheRead)))
 	}
 	if explicitSelection {
 		if _, err := s.rt.RefreshSystemPrompt(resolvedName, apiModel); err != nil {
@@ -1868,7 +1870,7 @@ func (s *Server) applyModelSelectionToRuntime(
 		// their admitted snapshot until they settle.
 		s.resetThreadRuntimesForGeneralSettings("")
 	}
-	return nil
+	return s.recordPublishedConfig(cfg)
 }
 
 func providerClientConfigChanged(previous, next config.ProviderConfig) bool {
@@ -1919,6 +1921,11 @@ func (s *Server) handleConfigCodexCredentials(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	services, release, err := s.modelServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -1927,13 +1934,21 @@ func (s *Server) handleConfigCodexCredentials(req Request) error {
 	if _, err := codex.OAuthStatus(context.Background(), services.Credentials, true); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if _, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
-		return config.UseCodexCredentialsSource(source, strings.TrimSpace(params.Provider))
-	}); err != nil {
+	before, err := services.Config.Read(context.Background())
+	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.refreshConfigIfChanged(); err != nil {
+	committed, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
+		return config.UseCodexCredentialsSource(source, strings.TrimSpace(params.Provider))
+	})
+	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	// An explicit write must publish even before the watcher has a baseline.
+	if committed.Revision != before.Revision {
+		if err := s.refreshRuntimeAfterProviderEdit(services, true); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	// Explicitly discard idle snapshots even when reuse was already enabled.
 	// In-flight turns retain their admitted configuration until completion.
@@ -2014,6 +2029,11 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if providerName == "" {
 		return s.writeResponse(req.ID, nil, errors.New("provider is required"))
 	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
 	services, release, err := s.modelServices()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -2069,7 +2089,7 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		// Validate the replacement before touching the removed connection's
 		// credentials. An invalid or unauthenticated fallback must be a no-op.
 		_, ruleCfg := modelcatalog.EnrichProvider(fallbackName, fallback, fallbackModel)
-		if _, err := s.buildStreamClientWithServices(services, ruleCfg, fallbackName); err != nil {
+		if err := s.validateModelConfigurationWithServices(services, ruleCfg, fallbackName); err != nil {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("replacement provider is not ready: %w", err))
 		}
 		params.FallbackProvider, params.FallbackModel = fallbackName, fallbackModel
@@ -2126,28 +2146,15 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 			AdvancedSettings: s.currentAdvancedSettingsSummary(),
 		}, nil)
 	}
-	// Default provider changed — reload the config and rebuild the
-	// runtime for the validated replacement selection.
-	fallbackName := strings.TrimSpace(newDefault)
-	if fallbackName == "" {
+	// The committed removal already selected and saved its fallback. Rebuild
+	// under the same admission fence rather than reentering the update handler.
+	if strings.TrimSpace(newDefault) == "" {
 		return s.writeResponse(req.ID, nil, errors.New("provider removal left no default_provider configured"))
 	}
-	fallbackModel := strings.TrimSpace(params.FallbackModel)
-	if fallbackModel == "" {
-		if fb, ok := cfg.Providers[fallbackName]; ok {
-			fallbackModel = fb.Model
-		}
+	if err := s.applyExternalConfigChangeLocked(committedView.Config); err != nil {
+		return s.writeResponse(req.ID, nil, err)
 	}
-	synthetic := req
-	synthetic.Method = MethodConfigModelUpdate
-	synthetic.Params, err = json.Marshal(ConfigModelUpdateParams{
-		Provider: fallbackName,
-		Model:    fallbackModel,
-	})
-	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("marshal fallback params: %w", err))
-	}
-	return s.handleConfigModelUpdateWithServices(synthetic, services)
+	return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
 }
 
 func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {

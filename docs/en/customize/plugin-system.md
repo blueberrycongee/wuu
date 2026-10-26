@@ -119,7 +119,9 @@ Select a runtime service provider in the trusted user configuration:
 
 The selected package must already be enabled and trusted and must declare the requested service major. Bindings do not install or enable packages. Duplicate bindings, an unavailable selected provider, and an ambiguous service reject preparation and preserve the previous running generation. A selected provider that crashes or is removed causes calls to fail; another registered implementation is never used as a fallback. With no explicit binding, a service must have exactly one provider. Registry inspection reports the selection layer in `binding_source`, or `unique-provider` for an unambiguous discovered service, alongside its version and provider ID.
 
-Composition versions 1 and 2 are independent of product CalVer and service versions. Version 1 retains inline profiles and module/service choices. Bundles and patches require version 2, so older hosts reject the configuration instead of ignoring overrides. To downgrade, first replace the layered configuration with its complete resolved `modules` and `services` using version 1; merely changing the version number is unsafe. Existing configurations without this section retain unique-provider discovery. A configuration that previously depended on first-registration precedence must add explicit selections. Normal startup ignores project overrides of `composition`, including case variants, because bindings can select execution and credential policies. Apply a changed configuration at generation preparation; retained executions keep their existing registry. Restoring a previous selection creates a new generation and does not undo completed effects or migrate provider data.
+Composition versions 1–3 are independent of product CalVer and service versions. Version 1 supports inline profiles and module/service choices; bundles and patches require version 2 or later. New configurations use version 3. Normal startup ignores project overrides of `composition`, including case variants, because bindings select execution and credential policies. Configuration changes apply during generation preparation; admitted executions retain their registry. Restoring a selection creates a new generation and does not undo external effects or migrate provider data.
+
+Version 1/2 configurations receive a read-only compatibility projection for behavior extracted from the host: selecting `wuu.session-execution` adds `wuu.agent.policy.default`; selecting the session consumer or `kernel` adds `wuu.model-execution` and the native model provider `wuu.model.native`; selecting a shipped desktop surface adds `wuu.default-application`. Legacy product sessions also select `wuu.engines.native` and `wuu.engine-execution`; a kernel-only state scope does not acquire engines. An explicit replacement binding or an explicit removal is preserved, and empty products remain empty. Introspection marks these additions as `migration:v1-to-v3` or `migration:v2-to-v3`. The original configuration is not rewritten, so it remains available for recovery with the previous executable. Version 3 never fills missing dependencies: include the required providers or select replacements. Before converting an old source to version 3, explicitly include its projected providers. Do not downgrade by changing the version number alone; restore the previous compatible source and provider versions.
 
 Developers and running agents can use the public [`host.composition` service](plugin-compositions.md) to try an independent runtime, explicitly select it for a logical agent, and undo selection without publishing a global generation.
 
@@ -149,7 +151,7 @@ Bundles are reusable static configuration. For example, the same analysis capabi
 ```json
 {
   "composition": {
-    "version": 2,
+    "version": 3,
     "profile": "writing",
     "bundles": {
       "analysis": {

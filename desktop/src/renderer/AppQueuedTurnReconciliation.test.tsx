@@ -105,7 +105,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 }));
 
 import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
-import { getDesktopApplication } from "./plugins/ApplicationController";
+import { getDesktopApplication } from "./plugins/ApplicationController.test-support";
 
 const workspace = "/tmp/wuu-queued-turn-reconciliation-test";
 const threadID = "thread-queued-reconciliation";

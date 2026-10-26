@@ -50,9 +50,11 @@ type pluginPackageOutput struct {
 
 func runPlugin(args []string) error {
 	if len(args) == 0 {
-		return pluginCLIError(errors.New("plugin subcommand is required (available: inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev)"))
+		return pluginCLIError(errors.New("plugin subcommand is required (available: describe, inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev)"))
 	}
 	switch args[0] {
+	case "describe":
+		return runPluginDescribe(args[1:])
 	case "inspect":
 		return runPluginInspect(args[1:])
 	case "install":
@@ -68,7 +70,7 @@ func runPlugin(args []string) error {
 	case "create", "validate", "build", "test", "pack", "dev":
 		return runPluginDev(args)
 	default:
-		return pluginCLIError(fmt.Errorf("unknown plugin subcommand %q (available: inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev)", args[0]))
+		return pluginCLIError(fmt.Errorf("unknown plugin subcommand %q (available: describe, inspect, install, update, list, approve, reject, enable, disable, remove, create, validate, build, test, pack, dev)", args[0]))
 	}
 }
 

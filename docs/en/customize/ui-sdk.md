@@ -162,3 +162,76 @@ calls. An error with a nonempty string `code` follows the same transport contrac
 other fields and stacks are not serialized. Ordinary exceptions have no domain
 code. Consumers must classify the code rather than match message text. An
 uncertain effect result is not permission to replay the effect.
+
+## Replace application business behavior
+
+`ui.application@1` selects the owner of application state, actions and background
+work independently of `ui.shell` and the surface services. The shipped
+`wuu.default-application` registers through `registerApplicationProvider`, just
+like an external module. The renderer bootstrap reads initialization/inventory
+and connection recovery; it does not start a default application controller.
+Declare `APPLICATION_PROVIDER_SERVICE` in `desktop.services` and register a
+provider whose local ID is `ui.application`. Default desktop surfaces require
+this service. The Go graph publishes the selected identity in
+`application_surfaces["ui.application"]`; discovery order never selects it.
+
+`ApplicationProviderDefinition.prepare()` returns an
+`ApplicationProviderInstanceV1`. Preparation may validate and allocate reversible
+resources, but must not start writers or background subscriptions. The instance
+has these lifecycle operations:
+
+- `activate(checkpoint?)` starts the selected implementation. Validate the
+  checkpoint's `schema` before modifying durable state; incompatible state is an
+  explicit failure, not permission to discard it.
+- `createScope(signal)` returns `ApplicationServiceV1` for a consumer. Abort fences
+  callbacks, pending operations and native/UI resources owned by that scope.
+- `deactivate()` stops writers and background work, then returns a consistent
+  `{ schema, value }` checkpoint. The host waits before starting another writer.
+- `dispose()` releases the prepared instance, including resources created before
+  activation. Disposal can be asynchronous and participates in generation drain.
+
+The default provider checkpoints unsent drafts, application state, settings and
+workbench views. It retains existing disk formats; this change does not rewrite
+session databases or user preferences. Provider checkpoints are explicit
+versioned contracts, not universal migrations. Two providers using incompatible
+schemas must implement a migration or start in separate disposable profiles.
+A failed cleanup is an uncertain writer: another implementation is not started
+until disposal succeeds or the process is restarted. Already completed external
+side effects are never described as rolled back.
+
+There are two different failure boundaries. Before a local renderer generation
+switch, failed module loading/registration/preparation preserves the effective
+renderer registrations and business writer. If Go has **already committed a new
+graph**, a renderer failure is an activation failure after that commit. Keeping
+old JavaScript is not a rollback of Go: the old business writer and its scopes
+are stopped, and diagnostics name the committed graph and the actual effective
+provider (possibly none). Repair the plugin using the same `wuu plugin dev`
+directory or package update entry, then refresh the extension catalog; restoring
+a previous valid composition uses the same public configuration/reload flow.
+The next successful activation receives the retained checkpoint. No private
+registry edits or hidden built-in substitution are used for recovery.
+
+The public [`independent application` example](https://github.com/blueberrycongee/wuu/blob/main/examples/plugins/independent-providers/application.tsx)
+provides its own workspace/session navigation, bounded real history projection,
+subscriptions and reload checkpoint with only the packaged SDK. It deliberately
+ships a read-only explorer shell, not the default product's composer or settings;
+unsupported actions and facets fail explicitly. Its checkpoint is not compatible
+with the default application checkpoint. Public-package author checks and the
+production Electron/Go runner are separate validations; standalone preview does
+not simulate business-provider persistence or process effects.
+
+A consuming module must declare `desktop.required_services` with
+`{ "name": "ui.application", "major_version": 1, "required": true }` so the
+same authoritative dependency graph drains and restarts it with its business
+provider. `api.application` captures one provider lifetime on first use; captured
+facets and action callbacks never silently retarget a successor. A module that
+both provides and consumes its own business service shares its own generation
+lifetime and does not need a self-dependency.
+
+Use `api.showNotice({ message, tone: "error", key: "refresh" })` for actionable
+plugin feedback rather than placing exception text inside a composer, navigation
+row or message. The host uses the existing central notification surface; repeated
+semantic keys are deduplicated. The returned disposable dismisses the notice,
+and generation retirement dismisses its notices and rejects later calls. Keep
+messages concise and put technical detail in diagnostics. Standalone preview
+explicitly does not simulate central product notification delivery.

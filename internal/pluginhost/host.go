@@ -67,6 +67,9 @@ type RegisteredTool struct {
 
 // Host owns the active plugin clients and their negotiated contributions.
 type Host struct {
+	modelReceipts   sync.Map
+	sensitiveOwners sync.Map
+
 	lifecycleMu         sync.Mutex
 	lifecycleRoot       *cordis.Context
 	lifetimes           map[string]*clientLifetime
@@ -154,6 +157,7 @@ func (h *Host) AttachServiceRegistry(registry *ServiceRegistry, conflicts []Serv
 		registry.mu.Lock()
 		registry.scopeTracker = h.executions
 		registry.moduleStatuses = h.Statuses
+		registry.dependencies = h.Dependencies
 		registry.mu.Unlock()
 	}
 	for _, conflict := range conflicts {
@@ -298,7 +302,7 @@ func (h *Host) Capability(pluginID, id string) (RegisteredCapability, bool) {
 var ErrCapabilityRetired = errors.New("capability registration was retired")
 
 // InvokeCapability invokes one exact plugin registration.
-func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapability, input, output any) error {
+func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapability, input, output any) (returnErr error) {
 	if capability.client == nil {
 		return fmt.Errorf("plugin %q capability %q is not active", capability.PluginID, capability.Descriptor.ID)
 	}
@@ -306,6 +310,11 @@ func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapabi
 	if err != nil {
 		return fmt.Errorf("marshal capability %q input: %w", capability.Descriptor.ID, err)
 	}
+	defer clear(inputJSON)
+	if sensitiveModelValidation(capability.Descriptor.ID, inputJSON) {
+		h.markSensitiveOwner(capability.PluginID)
+	}
+	defer func() { returnErr = h.ownerDiagnosticError(capability.PluginID, returnErr) }()
 	outputJSON, err := json.Marshal(output)
 	if err != nil {
 		return fmt.Errorf("marshal capability %q output: %w", capability.Descriptor.ID, err)
@@ -329,28 +338,41 @@ func (h *Host) InvokeCapability(ctx context.Context, capability RegisteredCapabi
 	executionID, executionCtx := h.executions.begin(capability.PluginID, ctx, ToolExecuteInput{}, false)
 	h.mu.RUnlock()
 	defer h.executions.End(executionID)
+	// Native capabilities inherit the same authenticated callback identity that
+	// external capabilities carry in execution_id frames. Authority expires when
+	// this callback returns; cached clients cannot retain it for later calls.
+	if registry := h.ServiceRegistry(); registry != nil {
+		marker := &nativeInvocation{registry: registry, owner: capability.PluginID, executionID: executionID, live: true, root: true}
+		defer func() { registry.mu.Lock(); marker.live = false; registry.mu.Unlock() }()
+		executionCtx = context.WithValue(executionCtx, inheritedInvocationKey{}, (*nativeInvocation)(nil))
+		executionCtx = context.WithValue(executionCtx, nativeInvocationKey{}, marker)
+	}
 	result, err := capability.client.InvokeCapability(executionCtx, CapabilityInvokeParams{
 		Capability:  capability.Descriptor.ID,
 		ExecutionID: executionID,
 		Input:       inputJSON,
 		Output:      outputJSON,
 	})
+	var invokeErr error
 	if err != nil {
-		return fmt.Errorf("plugin %q capability %q: %w", capability.PluginID, capability.Descriptor.ID, err)
+		invokeErr = fmt.Errorf("plugin %q capability %q: %w", capability.PluginID, capability.Descriptor.ID, err)
+	}
+	if invokeErr != nil && (capability.Descriptor.ID != CapabilityModelAdapter || len(result.Output) == 0) {
+		return invokeErr
 	}
 	decoder := json.NewDecoder(bytes.NewReader(result.Output))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(output); err != nil {
-		return fmt.Errorf("plugin %q capability %q returned invalid output: %w", capability.PluginID, capability.Descriptor.ID, err)
+		return errors.Join(invokeErr, fmt.Errorf("plugin %q capability %q returned invalid output: %w", capability.PluginID, capability.Descriptor.ID, err))
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		if err == nil {
 			err = errors.New("multiple JSON values")
 		}
-		return fmt.Errorf("plugin %q capability %q returned invalid output: %w", capability.PluginID, capability.Descriptor.ID, err)
+		return errors.Join(invokeErr, fmt.Errorf("plugin %q capability %q returned invalid output: %w", capability.PluginID, capability.Descriptor.ID, err))
 	}
-	return nil
+	return invokeErr
 }
 
 // HandleCapabilityError applies the negotiated descriptor policy to one
@@ -360,6 +382,7 @@ func (h *Host) HandleCapabilityError(capability RegisteredCapability, err error)
 	if err == nil {
 		return nil
 	}
+	err = h.ownerDiagnosticError(capability.PluginID, err)
 	switch EffectiveErrorPolicy(capability.Descriptor) {
 	case ErrorPolicyIsolate:
 		h.recordDiagnostic(capability.PluginID, capability.Descriptor.ID, err.Error())
@@ -380,6 +403,9 @@ func (h *Host) recordDiagnostic(pluginID, contribution, message string) {
 		byContribution = make(map[string]string)
 		h.diagnostics[pluginID] = byContribution
 	}
+	if _, sensitive := h.sensitiveOwners.Load(pluginID); sensitive {
+		message = sensitiveDiagnostic
+	}
 	byContribution[contribution] = message
 }
 
@@ -397,7 +423,11 @@ func (h *Host) ContributionDiagnostics(pluginID string) []ContributionDiagnostic
 	sort.Strings(contributions)
 	out := make([]ContributionDiagnostic, 0, len(contributions))
 	for _, contribution := range contributions {
-		out = append(out, ContributionDiagnostic{Contribution: contribution, Message: byContribution[contribution]})
+		message := byContribution[contribution]
+		if _, sensitive := h.sensitiveOwners.Load(strings.TrimSpace(pluginID)); sensitive {
+			message = sensitiveDiagnostic
+		}
+		out = append(out, ContributionDiagnostic{Contribution: contribution, Message: message})
 	}
 	return out
 }
@@ -537,9 +567,25 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	if h == nil {
 		return ClientShutdownOutcome{}, false
 	}
-	h.lifecycleMu.Lock()
-	defer h.lifecycleMu.Unlock()
-	return h.retirePluginAndConsumers(ctx, pluginID, cause)
+	type retirementResult struct {
+		outcome ClientShutdownOutcome
+		found   bool
+	}
+	done := make(chan retirementResult, 1)
+	// The waiter does not own physical cleanup. Retained scopes keep the same
+	// graph alive after a deadline until transports actually finish.
+	go func() {
+		h.lifecycleMu.Lock()
+		defer h.lifecycleMu.Unlock()
+		outcome, found := h.retirePluginAndConsumers(context.WithoutCancel(ctx), pluginID, cause)
+		done <- retirementResult{outcome, found}
+	}()
+	select {
+	case result := <-done:
+		return result.outcome, result.found
+	case <-ctx.Done():
+		return ClientShutdownOutcome{PluginID: pluginID, Err: fmt.Errorf("retirement cleanup pending: %w", ctx.Err())}, true
+	}
 }
 
 func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
@@ -806,7 +852,11 @@ func (h *Host) Statuses() []Status {
 	h.mu.RUnlock()
 	out := make([]Status, 0, len(clients))
 	for _, client := range clients {
-		out = append(out, client.Status())
+		status := client.Status()
+		if _, sensitive := h.sensitiveOwners.Load(client.ID()); sensitive && status.Error != "" {
+			status.Error = sensitiveDiagnostic
+		}
+		out = append(out, status)
 	}
 	return out
 }
@@ -924,7 +974,7 @@ func (h *Host) finishShutdown(ctx context.Context, shutdown *hostShutdown, done 
 	}
 	for i := len(shutdown.clients) - 1; i >= 0; i-- {
 		client := shutdown.clients[i]
-		outcome := ClientShutdownOutcome{PluginID: client.ID(), Err: h.closeClient(ctx, client)}
+		outcome := ClientShutdownOutcome{PluginID: client.ID(), Err: h.ownerDiagnosticError(client.ID(), h.closeClient(ctx, client))}
 		h.mu.Lock()
 		shutdown.outcomes = append(shutdown.outcomes, outcome)
 		h.mu.Unlock()

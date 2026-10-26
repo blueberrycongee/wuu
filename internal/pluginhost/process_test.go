@@ -542,8 +542,9 @@ func TestProcessOversizeResponse(t *testing.T) {
 		PluginRoot:  root,
 		ProjectRoot: filepath.Dir(root),
 		WuuHome:     t.TempDir(),
-		Timeout:     5 * time.Second,
-		OnClose:     func() { closed.Add(1) },
+		// Race instrumentation scans the same 64 MiB bound in about 8s.
+		Timeout: 15 * time.Second,
+		OnClose: func() { closed.Add(1) },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -822,7 +823,11 @@ func runReceiptCompletionHelper() {
 	enc := json.NewEncoder(os.Stdout)
 	waitingID, executionID := "", ""
 	respond := func(id string) {
-		_ = enc.Encode(map[string]any{"id": id, "result": CapabilityInvokeResult{Output: json.RawMessage(`{}`)}})
+		output := json.RawMessage(`{}`)
+		if os.Getenv("WUU_PLUGINHOST_RECEIPT_USAGE") == "1" {
+			output = json.RawMessage(`{"response":{"content":"late","usage":{"input_tokens":7,"output_tokens":4}}}`)
+		}
+		_ = enc.Encode(map[string]any{"id": id, "result": CapabilityInvokeResult{Output: output}})
 	}
 	for {
 		select {

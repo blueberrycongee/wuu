@@ -346,7 +346,7 @@ func (s *Server) activateInstalledPackage(installed pluginpkg.InstallResult, ide
 	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
 		return preservePackage, false, activationErr
 	}
-	activationErr = errors.Join(activationErr, configActivationError(committedView))
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
 	s.scheduleCurrentPluginTurnLifecycleReplay()
 	s.resetThreadRuntimesForGeneralSettings("")
 
@@ -457,7 +457,7 @@ func (s *Server) handlePluginPackageRemove(req Request) error {
 	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
 		return s.writeResponse(req.ID, nil, activationErr)
 	}
-	activationErr = errors.Join(activationErr, configActivationError(committedView))
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
 	if pendingRemoval != nil {
 		if err := pendingRemoval.Commit(); err != nil {
 			providers.DebugLogf("finalize pending plugin removal: %v", err)
@@ -561,7 +561,7 @@ func (s *Server) applyPendingPluginUpdate(selected pluginpkg.Plugin, pending plu
 	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
 		return false, activationErr
 	}
-	activationErr = errors.Join(activationErr, configActivationError(committedView))
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
 	s.scheduleCurrentPluginTurnLifecycleReplay()
 	s.resetThreadRuntimesForGeneralSettings("")
 	return true, activationErr

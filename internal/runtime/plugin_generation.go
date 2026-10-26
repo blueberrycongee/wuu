@@ -48,6 +48,7 @@ type PluginGeneration struct {
 	tools             agent.ToolExecutor
 	toolkit           *tools.Toolkit
 	codeMode          *codemode.Service
+	modelSelection    *generationModelSelection
 	models            *generationModelBindings
 	id                string
 	state             *runtimeState
@@ -76,6 +77,7 @@ type PluginGeneration struct {
 	// driverGateways is this generation's remote-driver gateway routing
 	// table; executions registered here route only to this generation's
 	// kernel services.
+	engineGateways *engineGatewayTable
 	driverGateways *driverGatewayTable
 	// The callback retains this generation's kernel authority for each turn.
 	beginModelReceipts agent.BeginModelReceiptsFunc
@@ -508,6 +510,7 @@ func (s *Session) buildPluginGeneration(cfg config.Config, discovered []pluginpk
 		systemPrompts:     systemPrompts,
 		compactions:       compactions,
 		ownedRoots:        append([]string(nil), ownedRoots...),
+		engineGateways:    kernel.engineGateways,
 		driverGateways:    kernel.driverGateways,
 	}
 	kernel.bindStateGeneration(generation, s)
@@ -1035,6 +1038,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.WrapModelClient = pluginModelClientWrapper(generation.host, "")
 		s.StreamRunner.CompactionRegistry = generation.compactions
 		if generation.driverGateways != nil {
+			s.StreamRunner.SelectedPolicy = newSelectedLoopPolicyClient(generation.host)
 			s.StreamRunner.SelectedCompaction = newSelectedCompactionClient(generation.host)
 		}
 		s.StreamRunner.InferenceJournal = s.InferenceJournalForOwner("workspace-runtime")

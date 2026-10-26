@@ -75,6 +75,7 @@ type callerScopeResource struct {
 }
 
 type serviceExecution struct {
+	retained     bool // Opaque resources retain this execution until physical cleanup.
 	ctx          context.Context
 	cancel       context.CancelFunc
 	refs         int
@@ -161,6 +162,7 @@ type ServiceRegistry struct {
 	bindings             map[serviceKey]string
 	bindingSources       map[serviceKey]string
 	ambiguous            map[serviceKey]string
+	invalidDeclarations  map[string]string
 	consumers            map[string]map[serviceKey]struct{}
 	requirements         map[string][]ServiceRequirement
 	notifiers            map[string]ServiceChangedNotifier
@@ -174,8 +176,10 @@ type ServiceRegistry struct {
 	preparing            map[string]bool
 	retiringProviders    map[string]bool
 	rootExecutionContext func(string, string) (context.Context, bool, *HostServiceError)
+	graphGeneration      string
 	composition          *CompositionSnapshot
 	moduleStatuses       func() []Status
+	dependencies         func() map[string][]Dependency
 }
 
 func NewServiceRegistry() *ServiceRegistry {
@@ -214,6 +218,9 @@ func (r *ServiceRegistry) ValidateBindings() error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	var failures []string
+	for _, message := range r.invalidDeclarations {
+		failures = append(failures, message)
+	}
 	for key, selected := range r.bindings {
 		provider, ok := r.providers[key]
 		if !ok || provider.pluginID != selected {
@@ -249,12 +256,32 @@ func BuildServiceRegistry(clients ...Client) (*ServiceRegistry, []ServiceConflic
 
 // RegisterClients adds prepared providers and consumers before activation.
 func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceConflict {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
 	var conflicts []ServiceConflict
 	for _, client := range clients {
 		declared, ok := client.(ServiceClient)
 		if !ok {
 			continue
 		}
+		if err := ValidateServiceNegotiation(CapabilityInitializeResult{ProtocolVersion: 3, ProvidedServices: declared.ProvidedServices(), RequiredServices: declared.RequiredServices()}); err != nil {
+			message := fmt.Sprintf("provider %q has invalid service declarations: %v", declared.ID(), err)
+			if registry.invalidDeclarations == nil {
+				registry.invalidDeclarations = map[string]string{}
+			}
+			registry.invalidDeclarations[declared.ID()] = message
+			for key, provider := range registry.providers {
+				if provider.pluginID == declared.ID() {
+					delete(registry.providers, key)
+				}
+			}
+			delete(registry.consumers, declared.ID())
+			delete(registry.requirements, declared.ID())
+			delete(registry.notifiers, declared.ID())
+			conflicts = append(conflicts, ServiceConflict{PluginID: declared.ID(), Message: message})
+			continue
+		}
+		delete(registry.invalidDeclarations, declared.ID())
 		if notifier, ok := client.(ServiceChangedNotifier); ok {
 			registry.notifiers[declared.ID()] = notifier
 		}
@@ -287,6 +314,7 @@ func (registry *ServiceRegistry) RegisterClients(clients ...Client) []ServiceCon
 				})
 				continue
 			}
+			descriptor.Methods = append([]ServiceMethodDescriptor(nil), descriptor.Methods...)
 			registry.providers[key] = serviceProvider{descriptor: descriptor, pluginID: declared.ID(), invoker: invoker}
 		}
 		registry.consumers[declared.ID()] = make(map[serviceKey]struct{})
@@ -386,6 +414,7 @@ func (r *ServiceRegistry) RevokePlugin(ctx context.Context, pluginID string) {
 			revoked = append(revoked, key)
 		}
 	}
+	delete(r.invalidDeclarations, pluginID)
 	delete(r.consumers, pluginID)
 	delete(r.notifiers, pluginID)
 	for _, execution := range r.executions {
@@ -486,7 +515,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	id := strings.TrimSpace(requestedID)
 	execution := r.executions[id]
 	if marker, ok := ctx.Value(inheritedInvocationKey{}).(*nativeInvocation); ok && marker != nil {
-		if marker.registry != r || marker.owner != caller || marker.executionID != id || !marker.live || execution == nil {
+		if marker.registry != r || marker.owner != caller || marker.executionID != id || !marker.live || (execution == nil && !marker.root) {
 			r.mu.Unlock()
 			return nil, "", nil, &HostServiceError{Code: "execution_not_found", Message: "native callback execution is no longer live"}
 		}
@@ -563,7 +592,7 @@ func (r *ServiceRegistry) acquireExecution(ctx context.Context, requestedID, cal
 	stopCaller := context.AfterFunc(callerContext, cancelRoot)
 	cancel := func() { stopCaller(); cancelRoot() }
 	r.executions[id] = &serviceExecution{
-		ctx: execCtx, cancel: cancel, refs: 1,
+		retained: ctx.Value(retainedServiceScopeAdmissionKey{}) == true, ctx: execCtx, cancel: cancel, refs: 1,
 		participants: map[string]struct{}{caller: {}, provider: {}},
 		autonomous:   !scoped && !cleanup,
 	}
@@ -609,6 +638,7 @@ type nativeInvocation struct {
 	registry           *ServiceRegistry
 	owner, executionID string
 	live               bool
+	root               bool // Host-authenticated capability root, resolved by scopeTracker.
 }
 
 func (r *ServiceRegistry) invokeNativeContext(ctx context.Context, provider serviceProvider, params ServiceInvokeParams) (json.RawMessage, error) {
@@ -846,6 +876,9 @@ func (r *ServiceRegistry) call(ctx context.Context, consumerPluginID string, par
 	if !methodDeclared {
 		return nil, &HostServiceError{Code: "method_not_found", Message: fmt.Sprintf("service %s does not declare method %q", service, method)}
 	}
+	if params.Cleanup && (!cleanupMethod || params.ExecutionID != "") {
+		return nil, &HostServiceError{Code: "invalid_cleanup", Message: "cleanup requires a declared resource-release method and no borrowed execution identity"}
+	}
 	if preparing && !preparationMethod || !active && !preparing && !continuation {
 		return nil, &HostServiceError{Code: "service_unavailable", Message: fmt.Sprintf("service %s method %q is unavailable during generation prepare", service, method)}
 	}
@@ -893,11 +926,12 @@ func (r *ServiceRegistry) RouteServiceCall(ctx context.Context, pluginID string,
 
 // ServiceRegistryEntry describes one provided service in a registry snapshot.
 type ServiceRegistryEntry struct {
-	Service       string   `json:"service"`
-	Version       string   `json:"version"`
-	Provider      string   `json:"provider"`
-	Methods       []string `json:"methods"`
-	BindingSource string   `json:"binding_source"`
+	Descriptor    ServiceDescriptor `json:"descriptor"`
+	Service       string            `json:"service"`
+	Version       string            `json:"version"`
+	Provider      string            `json:"provider"`
+	Methods       []string          `json:"methods"`
+	BindingSource string            `json:"binding_source"`
 }
 
 // ServiceRegistrySnapshot is the machine-readable answer to "which services
@@ -905,9 +939,16 @@ type ServiceRegistryEntry struct {
 // registration metadata only — never configuration values, credentials, or
 // another plugin's private data.
 type ServiceRegistrySnapshot struct {
-	Generation  uint64                 `json:"generation"`
-	Services    []ServiceRegistryEntry `json:"services"`
-	Composition *CompositionSnapshot   `json:"composition,omitempty"`
+	// GraphGeneration identifies this immutable runtime, independently of the
+	// mutable catalog epoch shared by concurrent and retained compositions.
+	GraphGeneration string `json:"graph_generation,omitempty"`
+	// Dependencies retain the lifecycle graph after provider retirement.
+	Dependencies map[string][]Dependency `json:"dependencies"`
+	// Requirements include unresolved optional and required declarations.
+	Requirements map[string][]ServiceRequirement `json:"requirements"`
+	Generation   uint64                          `json:"generation"`
+	Services     []ServiceRegistryEntry          `json:"services"`
+	Composition  *CompositionSnapshot            `json:"composition,omitempty"`
 }
 
 // CompositionSnapshot records selected modules without exposing configuration
@@ -927,6 +968,14 @@ type CompositionModuleSnapshot struct {
 	Version  string                      `json:"version,omitempty"`
 	State    State                       `json:"state,omitempty"`
 	Error    string                      `json:"error,omitempty"`
+}
+
+// SetGraphGeneration binds the runtime identity before effectful activation.
+// A retained registry keeps this identity even after the catalog epoch changes.
+func (r *ServiceRegistry) SetGraphGeneration(identity string) {
+	r.mu.Lock()
+	r.graphGeneration = identity
+	r.mu.Unlock()
 }
 
 // SetComposition binds diagnostic metadata before candidate preparation.
@@ -955,7 +1004,13 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 			composition.Modules[i].Renderer = r.rendererSnapshot(composition.Modules[i].ID)
 		}
 	}
+	graphGeneration := r.graphGeneration
 	moduleStatuses := r.moduleStatuses
+	dependencies := r.dependencies
+	requirements := make(map[string][]ServiceRequirement, len(r.requirements))
+	for id, declared := range r.requirements {
+		requirements[id] = append([]ServiceRequirement{}, declared...)
+	}
 	entries := make([]ServiceRegistryEntry, 0, len(r.providers))
 	for _, provider := range r.providers {
 		methods := make([]string, 0, len(provider.descriptor.Methods))
@@ -968,7 +1023,11 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 		if selectedSource := r.bindingSources[serviceKey{name: provider.descriptor.Name, major: major}]; selectedSource != "" {
 			source = selectedSource
 		}
+		descriptor := provider.descriptor
+		descriptor.Methods = append([]ServiceMethodDescriptor{}, descriptor.Methods...)
+		sort.Slice(descriptor.Methods, func(i, j int) bool { return descriptor.Methods[i].Name < descriptor.Methods[j].Name })
 		entries = append(entries, ServiceRegistryEntry{
+			Descriptor:    descriptor,
 			Service:       provider.descriptor.Name,
 			Version:       provider.descriptor.Version,
 			Provider:      provider.pluginID,
@@ -994,7 +1053,11 @@ func (r *ServiceRegistry) Snapshot(generation uint64) ServiceRegistrySnapshot {
 		}
 		return entries[i].Version < entries[j].Version
 	})
-	return ServiceRegistrySnapshot{Generation: generation, Services: entries, Composition: composition}
+	graph := make(map[string][]Dependency)
+	if dependencies != nil {
+		graph = dependencies()
+	}
+	return ServiceRegistrySnapshot{GraphGeneration: graphGeneration, Generation: generation, Services: entries, Composition: composition, Dependencies: graph, Requirements: requirements}
 }
 
 // notifyConsumers delivers service.changed to every consumer of (name,

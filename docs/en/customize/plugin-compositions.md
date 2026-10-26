@@ -109,3 +109,18 @@ Run `WUU_E2E_CORE=/path/to/wuu node scripts/composition-e2e.mjs` against a produ
 With the default `state: "isolated"`, a scope gets an independent state directory, in-memory configuration provider, service graph, plugin processes, and default empty workspace. Creation copies the owning generation's model and runtime configuration. Process-wide model metadata is initialized once by the host; creating a scope does not replace it or start another refresh. It never installs into the global plugin catalog or changes another session's configuration. Supply `root` only when file sharing is intended; relative sources and explicit roots resolve against the owner runtime's workspace.
 
 Extensions remain trusted code. This is lifecycle and state isolation, not an OS security sandbox. Explicitly shared directories, OS credentials, configured external services, and effects performed by plugins can still be shared. Persistent provider replacement and checkpoint migration require their own compatible protocol or stopped-writer migration. These temporary scopes do not perform such a migration.
+
+## Discover the admitted service graph
+
+`registry.introspect` returns `graph_generation`, the immutable runtime identity,
+alongside the existing durable catalog `generation` epoch. Retained executions
+and concurrent candidates can share a catalog epoch without sharing a graph.
+Each service entry includes its full `descriptor`: method schemas and preparation
+and cleanup admission flags. `requirements` includes unresolved declarations;
+`dependencies` is the same provider-before-consumer graph used for activation
+and reverse-order cleanup, including service major versions. Retirement removes
+callable providers but retains dependency edges for diagnosis.
+
+Composition `create` and `inspect` return this snapshot in `services`. Use it to
+record the implementation actually loaded, rather than reconstructing provider
+choices from a newer catalog or treating a profile name as execution identity.

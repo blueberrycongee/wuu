@@ -35,6 +35,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/harness"
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/participant"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/securefs"
@@ -61,6 +62,8 @@ type ParticipantStore interface {
 
 // AgentControl owns the orchestration runtime for one wuu session.
 type AgentControl struct {
+	legacyArtifactDirs             []string
+	documents                      persistence.Documents
 	useCurrentTemperatureOnRestore bool
 
 	manager       *subagent.Manager
@@ -230,6 +233,9 @@ type ProviderClientResolver func(providerName string) (providers.StreamClient, e
 
 // Config holds the dependencies needed to build an AgentControl.
 type Config struct {
+	// Documents pins child state to the parent execution's selected provider.
+	Documents          persistence.Documents
+	LegacyArtifactDirs []string
 	// Client is the streaming LLM client every worker spawned by this
 	// agent control runtime will share. It must be a StreamClient (not just a
 	// Client) so workers run through the same streaming transport as
@@ -341,6 +347,8 @@ func New(cfg Config) (*AgentControl, error) {
 		harnessDir = filepath.Join(filepath.Dir(cfg.ThreadDir), "harness")
 	}
 	c := &AgentControl{
+		legacyArtifactDirs:             append([]string(nil), cfg.LegacyArtifactDirs...),
+		documents:                      cfg.Documents,
 		useCurrentTemperatureOnRestore: cfg.UseCurrentTemperatureOnRestore,
 
 		manager:                  mgr,
@@ -352,9 +360,9 @@ func New(cfg Config) (*AgentControl, error) {
 		historyDir:               cfg.HistoryDir,
 		threadDir:                cfg.ThreadDir,
 		threads:                  threadRegistry,
-		threadStore:              agentthread.NewStore(cfg.ThreadDir),
+		threadStore:              agentThreadStore(cfg.Documents, cfg.SessionID, cfg.ThreadDir, cfg.LegacyArtifactDirs...),
 		harnessDir:               harnessDir,
-		harnessStore:             harness.NewStore(harnessDir),
+		harnessStore:             harnessStateStore(cfg.Documents, cfg.SessionID, harnessDir, cfg.LegacyArtifactDirs...),
 		failureSink:              cfg.FailureSink,
 		reportSink:               cfg.ReportSink,
 		workerFact:               cfg.WorkerFactory,
@@ -651,10 +659,10 @@ func (c *AgentControl) SetSessionInfo(sessionID, historyDir string, threadDir ..
 	c.historyDir = historyDir
 	if len(threadDir) > 0 && strings.TrimSpace(threadDir[0]) != "" {
 		c.threadDir = strings.TrimSpace(threadDir[0])
-		c.threadStore = agentthread.NewStore(c.threadDir)
+		c.threadStore = agentThreadStore(c.documents, c.sessionID, c.threadDir, c.legacyArtifactDirs...)
 	} else if strings.TrimSpace(historyDir) != "" {
 		c.threadDir = filepath.Join(filepath.Dir(historyDir), "threads")
-		c.threadStore = agentthread.NewStore(c.threadDir)
+		c.threadStore = agentThreadStore(c.documents, c.sessionID, c.threadDir, c.legacyArtifactDirs...)
 	}
 	c.restoreAgentResultDeliveries()
 	if c.threadDir != "" {
@@ -677,7 +685,7 @@ func (c *AgentControl) SetSessionInfo(sessionID, historyDir string, threadDir ..
 
 func (c *AgentControl) setHarnessDir(dir string) {
 	c.harnessDir = strings.TrimSpace(dir)
-	c.harnessStore = harness.NewStore(c.harnessDir)
+	c.harnessStore = harnessStateStore(c.documents, c.sessionID, c.harnessDir, c.legacyArtifactDirs...)
 }
 
 // SessionID returns the bound session ID, or "session-pending" if
@@ -1314,6 +1322,7 @@ func (c *AgentControl) Spawn(ctx context.Context, req SpawnRequest) (spawnResult
 		spawnProviderName = pinProviderName(req.ModelPin)
 	}
 	sa, err := c.manager.Spawn(workerCtx, subagent.SpawnOptions{
+		HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 		ID:                 workerID,
 		ParticipantID:      participantID,
 		Type:               wtype,
@@ -1783,6 +1792,7 @@ func (c *AgentControl) Fork(ctx context.Context, req ForkRequest, parentHistory 
 	}
 
 	sa, err := c.manager.Spawn(workerCtx, subagent.SpawnOptions{
+		HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 		ID:                 workerID,
 		ParticipantID:      prt.ID,
 		Type:               wt.Name,
@@ -3382,6 +3392,7 @@ func (c *AgentControl) startQueuedSpawn(ctx context.Context, prepared preparedSp
 			return
 		}
 		_, err = c.manager.Spawn(context.WithoutCancel(ctx), subagent.SpawnOptions{
+			HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 			ID:                 prepared.WorkerID,
 			ParticipantID:      participantID,
 			Type:               prepared.WorkerType.Name,
@@ -4719,7 +4730,7 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 		return nil, nil
 	}
 	path := filepath.Join(c.historyDir, id+".json")
-	run, err := subagent.LoadPersistedRun(path)
+	run, err := c.loadWorkerSnapshot(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -4795,6 +4806,7 @@ func (c *AgentControl) rehydrateAgent(id string) (*subagent.SubAgent, error) {
 	}
 
 	sa, err := c.manager.Restore(subagent.RestoreOptions{
+		HistoryDocuments: c.documents, HistoryScope: c.sessionID,
 		Run:           run,
 		Toolkit:       workerKit,
 		Model:         modelOverride,
@@ -4883,7 +4895,7 @@ func (c *AgentControl) reconcileOrphanedHarnessTasks() {
 				}
 			}
 			if !found && strings.TrimSpace(c.historyDir) != "" {
-				if run, loadErr := subagent.LoadPersistedRun(filepath.Join(c.historyDir, task.ID+".json")); loadErr == nil && isFinalSubAgentStatus(run.Status) {
+				if run, loadErr := c.loadWorkerSnapshot(filepath.Join(c.historyDir, task.ID+".json")); loadErr == nil && isFinalSubAgentStatus(run.Status) {
 					snap = snapshotFromPersistedRun(run)
 					found = true
 				}
@@ -4932,9 +4944,15 @@ func (c *AgentControl) reconcileUnownedHarnessTask(task harness.Task, now time.T
 	if newLease {
 		defer c.releaseWorkerExecution(task.ID)
 	}
-	if strings.TrimSpace(c.historyDir) != "" {
+	if c.documents != nil || strings.TrimSpace(c.historyDir) != "" {
 		path := filepath.Join(c.historyDir, task.ID+".json")
-		if run, loadErr := subagent.LoadPersistedRun(path); loadErr == nil && isFinalSubAgentStatus(run.Status) {
+		run, loadErr := c.loadWorkerSnapshot(path)
+		if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+			// Provider failure is not evidence that the worker has no terminal
+			// record. Preserve every projection until authority is readable.
+			return fmt.Errorf("load worker %s for reconciliation: %w", task.ID, loadErr)
+		}
+		if loadErr == nil && isFinalSubAgentStatus(run.Status) {
 			// The worker finished and only terminal recording was lost.
 			snap := snapshotFromPersistedRun(run)
 			c.recordHarnessStatus(subagent.Notification{AgentID: task.ID, Status: run.Status, Snapshot: snap})
@@ -5034,7 +5052,7 @@ func (c *AgentControl) markHarnessTaskInterrupted(task harness.Task, now time.Ti
 		CreatedAt: now,
 	})
 	if strings.TrimSpace(c.historyDir) != "" {
-		_, _ = subagent.MarkPersistedRunInterrupted(filepath.Join(c.historyDir, task.ID+".json"), reason, now)
+		_, _ = c.markWorkerSnapshotInterrupted(task.ID, reason, now)
 	}
 	c.markAgentThreadInterrupted(task.ID, now)
 }
@@ -5315,4 +5333,49 @@ func newAgentControlWorkerID(typ string) string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s-%s", typ, hex.EncodeToString(b))
+}
+
+// Standalone embedders without a selected graph retain their explicit local
+// store. Product callers always provide Documents, including replacement peers.
+func agentThreadStore(documents persistence.Documents, sessionID, dir string, artifactDirs ...string) *agentthread.Store {
+	if documents != nil {
+		dirs := []string{dir}
+		for _, artifactDir := range artifactDirs {
+			dirs = append(dirs, filepath.Join(artifactDir, "threads"))
+		}
+		return agentthread.NewDocumentStore(documents, sessionID, dirs...)
+	}
+	return agentthread.NewStore(dir)
+}
+func harnessStateStore(documents persistence.Documents, sessionID, dir string, artifactDirs ...string) *harness.Store {
+	if documents != nil {
+		dirs := []string{dir}
+		for _, artifactDir := range artifactDirs {
+			dirs = append(dirs, filepath.Join(artifactDir, "harness"))
+		}
+		return harness.NewDocumentStore(documents, sessionID, dirs...)
+	}
+	return harness.NewStore(dir)
+}
+
+func (c *AgentControl) workerLegacyPaths(path string) []string {
+	paths := []string{path}
+	for _, dir := range c.legacyArtifactDirs {
+		paths = append(paths, filepath.Join(dir, "workers", filepath.Base(path)))
+	}
+	return paths
+}
+func (c *AgentControl) loadWorkerSnapshot(path string) (subagent.PersistedRun, error) {
+	if c.documents == nil {
+		return subagent.LoadPersistedRun(path)
+	}
+	id := strings.TrimSuffix(filepath.Base(path), ".json")
+	return subagent.LoadPersistedRunFromDocuments(c.documents, c.sessionID, id, c.workerLegacyPaths(path)...)
+}
+func (c *AgentControl) markWorkerSnapshotInterrupted(id, reason string, now time.Time) (bool, error) {
+	path := filepath.Join(c.historyDir, id+".json")
+	if c.documents == nil {
+		return subagent.MarkPersistedRunInterrupted(path, reason, now)
+	}
+	return subagent.MarkDocumentRunInterrupted(c.documents, c.sessionID, id, reason, now, c.workerLegacyPaths(path)...)
 }

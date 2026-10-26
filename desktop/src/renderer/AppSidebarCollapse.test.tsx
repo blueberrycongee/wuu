@@ -1,3 +1,4 @@
+import * as Notices from "./Toast";
 /**
  * Sidebar collapse-state independence regression test.
  *
@@ -43,7 +44,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 
 import { createDefaultTestHost, createDefaultApplicationTestView, registerDefaultTestSurfaces, defaultSurfaceBindings } from "./test-support/DefaultApplication";
 import { translateCurrent } from "./i18n";
-import * as applicationState from "./plugins/ApplicationController";
+import * as applicationState from "./plugins/ApplicationController.test-support";
 import { TestApplicationShellOutlet as ApplicationShellOutlet } from "./test-support/DefaultApplication";
 import { activate as activateDefaultShell } from "./plugins/DefaultApplicationShell";
 import { PluginHost } from "./plugins/PluginHost";
@@ -205,6 +206,7 @@ describe("sidebar collapse-state independence", () => {
   });
 
   it("uses the selected settings surface and never restores a default after its provider unloads", async () => {
+    const notice = vi.spyOn(Notices, "showErrorToast");
     installWuuApi();
     const controller = new applicationState.ApplicationController();
     vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
@@ -225,7 +227,8 @@ describe("sidebar collapse-state independence", () => {
     expect(container.querySelector('[data-testid="selected-settings"]')).not.toBeNull();
     expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
     act(() => host.unload("alternate-settings"));
-    expect(container.textContent).toContain("Selected UI surface is unavailable: ui.settings");
+    expect(container.textContent).not.toContain("Selected UI surface is unavailable");
+    expect(notice).toHaveBeenCalledWith(expect.any(String), "", "plugin-surface:alternate-settings:fixture");
     expect(container.querySelector('[data-testid="settings-theme-light"]')).toBeNull();
   });
 

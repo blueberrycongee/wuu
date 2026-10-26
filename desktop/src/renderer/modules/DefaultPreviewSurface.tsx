@@ -1,3 +1,4 @@
+import { registerPreviewContributions } from "../plugins/DefaultUIContributions";
 import { useEffect } from "react";
 import { registerConversationSlots } from "../ConversationSlots";
 import { showErrorToast } from "../Toast";
@@ -28,6 +29,7 @@ export function activate(api: ApplicationGenerationAPI & { readonly signal: Abor
   api.registerUISlot({ id: "workspace.tools", cardinality: "many" });
   api.registerUISlot({ id: "workspace.view", cardinality: "one" });
   api.registerUISlot({ id: "content.preview", cardinality: "one" });
+  registerPreviewContributions(api);
   api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
   api.registerUIContribution({ id: "ui.preview", target: "wuu.default-shell/application.preview", render: props => <DefaultPreviewSurface {...props} signal={api.signal} /> });
 }

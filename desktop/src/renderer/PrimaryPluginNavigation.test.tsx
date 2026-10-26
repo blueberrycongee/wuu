@@ -1,3 +1,5 @@
+import { WorkbenchController } from "./plugins/Workbench";
+import { registerShellContributions } from "./plugins/DefaultUIContributions";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -22,10 +24,12 @@ async function fixture() {
   const invoke = vi.fn().mockImplementation(async action => { if (action === "workspace.start-draft") return { activated: true, tabId: "created-draft" }; if (action === "navigation.show-native" || action === "navigation.close-plugin") publish({ ...snapshot, navigationWorkspace: { ...snapshot.navigationWorkspace, activePluginView: undefined } }); });
   const application = { ...base, getSnapshot: () => snapshot, subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; }, invoke,
     createDesktopScope: () => base.desktop, setPreviewVisibility: () => {}, createComposerPresentationScope: () => base.composerPresentation };
-  host = new PluginHost({ react: React, application, createLegacyViewHost: () => ({ getStorage: async () => null, setStorage: async () => {}, getSetting: async () => undefined, executeCommand: async () => undefined, openView: async () => {}, closeView: async () => {} }) });
+  host = new PluginHost({ react: React, application });
+  Object.defineProperty(application, "workbench", { value: new WorkbenchController(host) });
   await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => {
     for (const id of ["conversation.header", "workspace.header"] as const) api.registerUISlot({ id, cardinality: "many" });
     for (const id of ["header.conversation", "header.workspace"] as const) api.registerUISlot({ id, cardinality: "one" });
+    registerShellContributions(api);
     api.registerApplicationShell({ id: "shell", render: ({ application, slots }) => <ConversationTitleContent application={application} slots={slots} slotOwner="shell" /> });
   } });
   container = document.createElement("div"); document.body.append(container); root = createRoot(container);

@@ -1,3 +1,4 @@
+import type { AgentPolicyInput, AgentPolicyDecision } from "./agent-policy.js";
 import type { RuntimeHost, ServiceDescriptor, ServiceRequirement } from "./index.js";
 import type { LogicalModelRequestV1, ModelMessageV1, ModelToolCallV1 } from "./model.js";
 
@@ -22,6 +23,14 @@ export interface DriverResumeParams<State = unknown> extends DriverCreateParams 
 export interface DriverTurnReceipt { readonly receipt_id: string }
 /** Durable addresses are correlation metadata, never execution authority. */
 export interface DriverMessage extends ModelMessageV1 {
+  /** Positional host-owned UI/fork references; never model input or file authority. */
+  readonly working_copies?: { readonly images?: readonly string[]; readonly files?: readonly string[] };
+  readonly display_content?: string;
+  readonly presentation_kind?: string;
+  readonly related_session_id?: string;
+  readonly engine_turn_id?: string;
+  readonly engine_turn_pending?: boolean;
+  readonly content_parts?: readonly DriverMessageContentPartV1[];
   readonly tool_invocation_id?: string;
   readonly client_id?: string;
   readonly seq?: number;
@@ -143,6 +152,7 @@ export interface DriverSystemSection {
   readonly hash?: string;
 }
 export interface DriverTurnSettings {
+  readonly has_policy?: boolean;
   /** Explicit continuation from saved history without a new user message. */
   readonly resume_sampling?: boolean;
   readonly max_steps: number;
@@ -298,6 +308,7 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
     read: () => call<DriverTurnInput>("read", {}),
     /** Selected settings and capabilities. Reading performs no effects. */
     settings: () => call<DriverTurnSettings>("settings", {}),
+    evaluatePolicy: (input: AgentPolicyInput) => call<AgentPolicyDecision>("evaluate_policy", {input}),
     /** Identity-bound request insertions and context estimates. */
     contextState: () => call<DriverContextState>("context_state", {}),
     /** Persist insertions before dispatch. An absent retained field clears
@@ -380,4 +391,53 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
       });
     },
   };
+}
+
+export interface DriverMessageContentPartV1 {
+ /** Host-only working-copy reference; not part of model projection. */
+ readonly local_path?: string;
+ readonly type: string;
+ readonly text?: string;
+ readonly title?: string;
+ readonly source?: DriverFileSelectionSourceV1;
+ readonly intent?: string;
+ readonly comment?: string;
+ readonly id?: string;
+ readonly selection?: DriverResponseSelectionV1;
+}
+
+export interface DriverFileSelectionSourceV1 {
+ readonly workspace: string;
+ readonly path: string;
+ readonly start_line: number;
+ readonly start_column: number;
+ readonly end_line: number;
+ readonly end_column: number;
+ readonly quote: string;
+ readonly revision: string;
+ readonly pdf?: DriverPDFSelectionReferenceV1;
+}
+
+export interface DriverPDFSelectionReferenceV1 {
+ readonly start_page: number;
+ readonly end_page: number;
+ readonly artifact_uri?: string;
+ readonly artifact_sha256?: string;
+ readonly artifact_thread_id?: string;
+}
+
+export interface DriverResponseSelectionV1 {
+ readonly id: string;
+ readonly text: string;
+ readonly comment?: string;
+ readonly source: DriverResponseSelectionSourceV1;
+}
+
+export interface DriverResponseSelectionSourceV1 {
+ readonly thread_id: string;
+ readonly turn_id: string;
+ readonly item_id: string;
+ readonly start_offset: number;
+ readonly end_offset: number;
+ readonly range_text?: string;
 }
