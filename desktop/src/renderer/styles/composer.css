@@ -437,6 +437,13 @@
   pointer-events: none;
 }
 
+/* The main dock reaches the canvas edge. Round its own paint so promotion
+   to a composited layer cannot briefly cover the pane's rounded corners.
+   Split and document composers have their own surrounding surfaces. */
+.dock-composer-wrap[data-main-conversation-composer="dock"]::before {
+  border-radius: 0 0 var(--conversation-pane-right-radius) var(--conversation-pane-left-radius);
+}
+
 /* The dock composer uses the reading column's cap and fluid gutters,
    centered in its available pane. */
 .dock-composer-wrap .composer-stack {

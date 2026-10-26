@@ -181,6 +181,9 @@
 }
 
 .conversation-pane {
+  --conversation-pane-left-radius: var(--conversation-canvas-radius);
+  --conversation-pane-right-radius: var(--conversation-canvas-radius);
+  --conversation-pane-corners: var(--conversation-pane-left-radius) var(--conversation-pane-right-radius) var(--conversation-pane-right-radius) var(--conversation-pane-left-radius);
   /* The info card is UI text, so it widens with the text size: 280px at the
    * 14.5px default (App.tsx's room check uses the same ratio), with a 44px
    * gap between the card and the conversation it reserves room beside. */
@@ -221,15 +224,14 @@
   overflow: hidden;
   background: transparent;
   margin: 0 0 var(--conversation-pane-inset) var(--conversation-pane-inset);
-  border-radius: var(--conversation-canvas-radius);
-  transition:
-    grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing),
-    border-radius var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+  border-radius: var(--conversation-pane-corners);
+  /* Restore exposed corners immediately; the dock backing shares these
+     radii so its composited layer does not depend on the ancestor's clip. */
+  transition: grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing);
 }
 
 .app-shell.right-panel-open:not(.workspace-conversation-active) .conversation-pane {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
+  --conversation-pane-right-radius: 0px;
 }
 
 /* Paint the top inset independently of the titlebar so native chrome keeps

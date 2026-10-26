@@ -179,6 +179,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Round the main conversation dock's own background and restore exposed canvas corners immediately when closing the workspace panel, preventing transient square corners during compositing.
+
 - Keep maximized workspace conversations and tools in one tab switching flow: restore the last visited conversation when closing a resource, retain the expanded strip when switching conversations or closing the final tool, and prevent double-clicks from closing tool tabs.
 
 - Automatically continue interrupted model streams from completed reply or reasoning items when the round has no tool declarations or accepted tool work. Preserve displayed fragments, avoid transient failure cards, and bound consecutive continuations while retaining manual recovery for ambiguous effects.
