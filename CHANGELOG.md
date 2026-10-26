@@ -111,7 +111,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
-- Use a compact capsule composer with attachments at the leading edge and permission, model, and send controls beside the draft. Keep single-line text vertically centered at saved font sizes and grow longer drafts upward in main and split conversations.
+- Use a compact capsule composer with a 44px single-line height at the default text size, attachments at the leading edge and permission, model, and send controls beside the draft. Keep single-line text vertically centered at saved font sizes and grow longer drafts upward in main and split conversations.
 
 - Simplify General settings by removing new-conversation defaults and the automatic activity-preview toggle. Choose the agent, model, and reasoning effort in the composer; manage the default environment beside its profiles under Built-in agent. Activity previews appear automatically and remain individually dismissible; the retired auto-show preference no longer suppresses them. Remove the corresponding desktop bridge and SDK settings controls.
 

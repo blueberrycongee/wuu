@@ -459,8 +459,8 @@
 }
 
 .composer-stack {
-  --composer-collapsed-min-height: 48px;
-  --session-composer-radius: max(24px, calc((var(--conversation-reading-line-height) + 24px) / 2));
+  --composer-collapsed-min-height: 44px;
+  --session-composer-radius: max(22px, calc((var(--conversation-reading-line-height) + 20px) / 2));
   --composer-expanded-min-height: min(clamp(240px, 44vh, 420px), 60dvh);
   --composer-expanded-offset: var(--composer-input-growth, 0px);
   display: flex;
@@ -691,7 +691,7 @@ html[data-focus-modality="keyboard"] .composer > .composer-bar > textarea:focus-
 }
 
 .composer {
-  --composer-input-min-height: max(40px, calc(var(--conversation-reading-line-height) + 2 * var(--space-2)));
+  --composer-input-min-height: max(36px, calc(var(--conversation-reading-line-height) + 3 * var(--space-1)));
   /* Split the minimum height's spare space equally, including small saved fonts. */
   --composer-text-padding-block: calc((var(--composer-input-min-height) - var(--conversation-reading-line-height)) / 2);
   position: relative;
