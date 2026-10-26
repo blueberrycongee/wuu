@@ -22,11 +22,28 @@ export class ApplicationProviders {
   private listeners = new Set<() => void>();
   private revision = 0;
   private bindingRevision = 0;
+  private retirement?: { readonly phase: { readonly binding: number }; readonly signal: AbortSignal };
   current?: ApplicationProviderRecord;
   failure?: string;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
   getRevision = (): number => this.revision;
   getBindingRevision = (): number => this.bindingRevision;
+  getRetirement = (): { readonly binding: number } | undefined => this.retirement?.signal.aborted ? undefined : this.retirement?.phase;
+  /** Prepared replacement is about to drain consumers; this does not stop or retain a writer. */
+  beginRetirement(signal: AbortSignal): () => void {
+    if (!this.current || signal.aborted) return () => {};
+    const retirement = { phase: { binding: this.bindingRevision }, signal };
+    const finish = () => {
+      signal.removeEventListener("abort", finish);
+      if (this.retirement !== retirement) return;
+      this.retirement = undefined;
+      this.changed();
+    };
+    this.retirement = retirement;
+    signal.addEventListener("abort", finish, { once: true });
+    this.changed();
+    return finish;
+  }
   private changed(bindingChanged = false): void { this.revision++; if (bindingChanged) this.bindingRevision++; for (const listener of this.listeners) listener(); }
   reportFailure(message: string): void {
     const effective = this.current ? `${this.current.pluginId}/${this.current.id}@${this.current.generation} (graph ${this.current.graphGeneration ?? "local"})` : "none";

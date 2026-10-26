@@ -37,7 +37,7 @@ import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV
 import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -74,6 +74,9 @@ export interface ApplicationShellSelection {
 export type ShellInitializeResult = InitializeResult & { application_shell?: ApplicationShellSelection | null; application_surfaces?: Readonly<Record<string, ApplicationShellSelection>> };
 
 /** Shared domain state survives shell replacement; UI providers own only presentation. */
+/** Only a committed selected-graph change carries presentation across preparation. */
+class ApplicationGraphHandoff extends PluginLifecycleCancellationError {}
+
 export class ApplicationController implements HostApplicationService {
   readonly contractVersion = 1 as const;
   readonly catalog = new ApplicationCatalog({
@@ -335,7 +338,8 @@ export class ApplicationController implements HostApplicationService {
   private navigationRequest = 0;
   private navigationIntent?: { id: string; threadId: string; context: NonNullable<AppState["activeContext"]> };
   private restoringNavigationIntentId?: string;
-  private presentationIntent?: { id: string; kind: "workspace" | "tab"; targetId: string; context: NonNullable<AppState["activeContext"]> };
+  private presentationIntent?: { readonly id: string; readonly kind: "workspace" | "runtime" | "tab"; readonly targetId: string; readonly context: NonNullable<AppState["activeContext"]>;
+    readonly draftCarry?: { readonly sourceTabId: string; readonly sourceContext: NonNullable<AppState["activeContext"]>; readonly draft: ComposerDraftState } };
   private splitRequest = 0;
   private readonly invocationAborts = new WeakMap<AbortSignal, AbortController>();
   private cancelNavigation?: () => void;
@@ -480,7 +484,7 @@ export class ApplicationController implements HostApplicationService {
     this.applicationNavigation = new ApplicationNavigation({ getState: () => this.state, updateState: this.updateState,
       getWebWorkspace: () => this.webWorkspace, subscribeState: this.subscribeState,
       getContributions: () => this.contributions, getWorkbench: () => this.workbench,
-      changed: () => this.publish(), sidebarCache: this.sidebarCache, mutationActions: () => this.mutationActions(),
+      changed: () => this.publish(), sidebarCache: this.sidebarCache, mutationActions: signal => this.mutationActions(signal),
       getPendingDraftTabIds: () => this.submissionOwner?.getPendingDraftTabIds() ?? [],
     });
     this.applicationPreview = new ApplicationPreview({ getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
@@ -502,7 +506,15 @@ export class ApplicationController implements HostApplicationService {
     const drafts = captureComposerDrafts(this.state, this.state.secondaryThread
       ? { primary: this.composerDraftForPane("primary"), secondary: this.composerDraftForPane("secondary") }
       : this.composerDraftForPane("primary"));
-    return { state: persistComposerDrafts(this.state, drafts), settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent: this.presentationIntent };
+    const state = persistComposerDrafts(this.state, drafts);
+    const intent = this.presentationIntent, carry = intent?.draftCarry;
+    const source = carry && state.sessionTabs.find(tab => tab.id === carry.sourceTabId && tab.kind === "draft"
+      && sameRuntimeContext(tab.context, carry.sourceContext));
+    // A slow catalog must not strand edits made after the retarget gesture.
+    // Refresh only its captured source, never whichever tab became active later.
+    const presentationIntent = intent && carry ? { ...intent, draftCarry: source
+      ? { ...carry, draft: cloneSessionTabDraft(source) } : undefined } : intent;
+    return { state, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent };
   }
   /** Fulfill only a read-only destination on the new writer; never replay submissions. */
   async restoreNavigationIntent(intent: NonNullable<ReturnType<ApplicationController["exportCheckpoint"]>["navigationIntent"]>, signal?: AbortSignal): Promise<void> {
@@ -515,11 +527,16 @@ export class ApplicationController implements HostApplicationService {
     finally { this.restoringNavigationIntentId = undefined; }
   }
 
-  /** A workspace marker acknowledges already-loaded presentation; it never replays a mutation. */
+  /** Restore only local presentation/draft data after the selected target loads; never replay selection. */
   restorePresentationIntent(intent: NonNullable<ReturnType<ApplicationController["exportCheckpoint"]>["presentationIntent"]>): void {
     if (!sameRuntimeContext(this.state.activeContext, intent.context)
       || intent.kind === "tab" && this.state.activeSessionTabID !== intent.targetId) return;
-    this.presentationIntent = intent;
+    const { draftCarry, ...presentationIntent } = intent;
+    this.presentationIntent = presentationIntent;
+    const target = activeSessionTab(this.state);
+    if (draftCarry && composerDraftHasContent(draftCarry.draft) && target?.kind === "draft" && target.id !== draftCarry.sourceTabId) {
+      this.setComposerDraft(target.id, draftCarry.draft);
+    }
     this.pendingNavigation = Object.freeze({ kind: intent.kind, targetId: intent.targetId, intentId: intent.id,
       requestId: ++this.navigationRequest, contextSwitching: false, contentReady: true });
     this.publish();
@@ -826,7 +843,10 @@ export class ApplicationController implements HostApplicationService {
       this.navigationAbortCleanup?.();
       this.navigationAbortCleanup = undefined;
       this.cancelNavigation = undefined;
-      this.pendingNavigation = undefined;
+      // A committed graph can fence this invocation before its replacement
+      // finishes preparing. Keep only the presentation marker; the incremented
+      // revision below still rejects every old writer and reveal callback.
+      if (!(signal?.reason instanceof ApplicationGraphHandoff)) this.pendingNavigation = undefined;
       if (!isPluginLifecycleCancellation(signal?.reason)) { this.navigationIntent = undefined; this.presentationIntent = undefined; }
       this.navigationRequest++;
       if (signal && contextSwitching && sourceContext) this.abortedNavigation = { request: this.navigationRequest, signal, context: sourceContext };
@@ -861,8 +881,11 @@ export class ApplicationController implements HostApplicationService {
     return JSON.stringify([selected.plugin_id, selected.provider_id, selected.generation, plugin.graph_generation]);
   }
 
-  private navigationActions(signal?: AbortSignal) {
+  private navigationActions(signal?: AbortSignal, retargetDraft = false) {
     let restoredDraft: ComposerDraftState | undefined;
+    let viewSwitchRequest: number | undefined;
+    const sourceTab = retargetDraft ? activeSessionTab(this.state) : undefined;
+    const draftSource = sourceTab?.kind === "draft" ? { id: sourceTab.id, context: { ...sourceTab.context } } : undefined;
     const lifetime = this.lifetime?.signal;
     const isCurrent = (request: number) => !signal?.aborted && !lifetime?.aborted && request === this.navigationRequest;
     const common = {
@@ -885,6 +908,12 @@ export class ApplicationController implements HostApplicationService {
             next = { ...next, sessionTabs: next.sessionTabs.map(tab => tab.id === next.activeSessionTabID && tab.kind !== "skills"
               ? { ...tab, ...draft } : tab) };
           }
+          const intent = this.presentationIntent;
+          if (intent?.draftCarry && next.activeSessionTabID !== intent.draftCarry.sourceTabId
+            && sameRuntimeContext(next.activeContext, intent.context)) {
+            const { draftCarry: _consumed, ...presentationIntent } = intent;
+            this.presentationIntent = presentationIntent;
+          }
           return next;
         });
       },
@@ -896,15 +925,19 @@ export class ApplicationController implements HostApplicationService {
       nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => createDraftSessionTab(`draft:${crypto.randomUUID()}`, context),
       isDraftPending: (tabId: string) => Boolean(this.submissionOwner?.getPendingDraftTabIds().includes(tabId)),
       beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetId: string, contextSwitching = false, targetContext?: NonNullable<AppState["activeContext"]>) => {
-        return this.beginNavigation(kind, targetId, contextSwitching || kind !== "thread", signal, targetContext);
+        return viewSwitchRequest = this.beginNavigation(kind, targetId, contextSwitching || kind !== "thread", signal, targetContext);
       },
       prepareThreadReveal: (request: number) => {
         if (!isCurrent(request)) return false;
         this.pendingNavigation = this.pendingNavigation && Object.freeze({ ...this.pendingNavigation, contentReady: true });
         return true;
       },
-      finishViewSwitch: (request: number) => {
+      finishViewSwitch: (request: number, loaded?: Partial<AppState>) => {
         if (!isCurrent(request)) return false;
+        // Apply the already-loaded draft/carry exactly once, but let the selected
+        // successor acknowledge its presentation after a committed graph change.
+        if (loaded && this.applicationRuntimeIdentity
+          && this.selectedApplicationIdentity(loaded.initialized) !== this.applicationRuntimeIdentity) return true;
         return this.finishNavigation(request);
       },
       cancelViewSwitch: () => { this.finishNavigation(this.navigationRequest); this.navigationRequest++; this.publish(); },
@@ -918,7 +951,7 @@ export class ApplicationController implements HostApplicationService {
         if (this.selectedApplicationIdentity(loaded.initialized) === this.applicationRuntimeIdentity) return true;
         // Initialization already published the new selected graph. Its provider
         // will restore this read-only intent; the retired writer must not resume it.
-        if (signal) this.invocationAborts.get(signal)?.abort(new PluginLifecycleCancellationError(new Error("Selected application graph changed")));
+        if (signal) this.invocationAborts.get(signal)?.abort(new ApplicationGraphHandoff(new Error("Selected application graph changed")));
         return false;
       } } : {}),
       getActiveThreadID: () => activeThreadIDForState(this.state),
@@ -929,6 +962,24 @@ export class ApplicationController implements HostApplicationService {
     });
     const tabs = createSessionTabActions({ ...common, selectThread: threads.selectThread, selectContextThread: threads.selectContextThread });
     const workspaces = createWorkspaceRuntimeActions({ ...common,
+      loadRuntime: (workspace, options) => {
+        const pending = this.pendingNavigation;
+        if (retargetDraft && workspace.active_context && pending?.intentId && viewSwitchRequest !== undefined
+          && pending.requestId === viewSwitchRequest && isCurrent(viewSwitchRequest)
+          && (pending.kind === "workspace" || pending.kind === "runtime")) {
+          const draft = draftSource && this.getComposerDraft(draftSource.id);
+          // Selection has already committed. Capture this request's source before
+          // catalog loading can replace the graph. Keep even an empty source's
+          // identity so checkpointing can collect edits made while loading.
+          this.presentationIntent = Object.freeze({ id: pending.intentId, kind: pending.kind, targetId: pending.targetId,
+            context: Object.freeze({ ...workspace.active_context }),
+            ...(draftSource && draft ? { draftCarry: Object.freeze({
+              sourceTabId: draftSource.id, sourceContext: Object.freeze({ ...draftSource.context }), draft,
+            }) } : {}),
+          });
+        }
+        return loadRuntime(workspace, options);
+      },
       closeWorkspaceMenus: () => {},
       confirmRemoval: async () => true,
       restoreLoadedRuntimeComposerDraft: (loaded: Partial<AppState>, carry?: ComposerDraftState) => {
@@ -958,9 +1009,12 @@ export class ApplicationController implements HostApplicationService {
     return message;
   }
 
-  private mutationActions() {
+  private mutationActions(signal?: AbortSignal) {
     let restoredDraft: ComposerDraftState | undefined;
-    return createThreadMutationActions({ getAppState: () => this.state,
+    const lifetime = this.lifetime?.signal;
+    return createThreadMutationActions({ signal: signal && lifetime ? AbortSignal.any([signal, lifetime]) : signal ?? lifetime,
+      getAppState: () => this.state,
+      getKnownThread: id => this.knownThread(id),
       setAppState: update => this.updateState(state => {
         const next = typeof update === "function" ? update(state) : update;
         if (!restoredDraft) return next;
@@ -1192,12 +1246,12 @@ export class ApplicationController implements HostApplicationService {
       }
       case "workspace.open-worktree": {
         const { path } = input as ApplicationActionMapV1["workspace.open-worktree"]["input"];
-        await this.navigationActions(signal).workspaces.openWorktreeForNewThread(path);
+        await this.navigationActions(signal, true).workspaces.openWorktreeForNewThread(path);
         return;
       }
       case "workspace.retarget-draft": {
         const { workspaceId } = input as ApplicationActionMapV1["workspace.retarget-draft"]["input"];
-        const { workspaces } = this.navigationActions(signal);
+        const { workspaces } = this.navigationActions(signal, true);
         if (workspaceId) await workspaces.selectWorkspaceForNewThread(workspaceId);
         else await workspaces.useNoProject(false);
         return;
@@ -1476,7 +1530,7 @@ export class ApplicationController implements HostApplicationService {
         if (!archived) { await this.mutationActions().unarchiveThread({ id: threadId }); return; }
         const thread = this.knownThread(threadId);
         if (!thread) throw new Error("Thread is unavailable");
-        const result = await this.mutationActions().archiveThread(summarizeThreadsForSidebar([thread])[0], { force });
+        const result = await this.mutationActions(signal).archiveThread(summarizeThreadsForSidebar([thread])[0], { force });
         if (!result.ok) throw new Error(result.error);
         return;
       }

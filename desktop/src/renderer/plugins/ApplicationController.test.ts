@@ -1,3 +1,4 @@
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { scopeApplicationOnboarding } from "../../../../packages/plugin-sdk/src/ui";
 import { resetWorkspaceBrowserNavigationForTests } from "../WorkspaceBrowserNavigation";
 import { describe, expect, it, vi } from "vitest";
@@ -765,16 +766,16 @@ describe("shared application state", () => {
 
   it("closes the archived conversation only after confirmation and keeps the populated fallback", async () => {
     const context = { kind: "no_project" as const, cwd: "/workspace" };
-    const thread = { id: "a", cwd: context.cwd, preview: "", status: "idle", model_provider: "", turns: [] } as never;
-    let confirm!: (value: unknown) => void;
-    window.wuu = { archiveThread: vi.fn(() => new Promise(resolve => { confirm = resolve; })) } as unknown as WuuDesktopApi;
+    const thread: Thread = { id: "a", cwd: context.cwd, preview: "", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [] };
+    let confirm!: (value: { thread: Thread }) => void;
+    window.wuu = { archiveThread: vi.fn(() => new Promise<{ thread: Thread }>(resolve => { confirm = resolve; })) } as unknown as WuuDesktopApi;
     const controller = new ApplicationController({ ...initialState, activeContext: context, thread, threads: [thread], activeSessionTabID: "thread:a", sessionTabs: [
       { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "", images: [], files: [] },
       { id: "draft:b", kind: "draft", context, title: "B", createdAt: 1, prompt: "keep this", images: [], files: [] },
     ] });
     const archiving = controller.invoke("thread.archive", { threadId: "a", archived: true });
     expect(controller.getSnapshot().drafts.activeTabId).toBe("thread:a");
-    confirm({ thread: { id: "a" } });
+    confirm({ thread: { ...thread, archived: true } });
     await archiving;
     expect(controller.getSnapshot().drafts).toMatchObject({ activeTabId: "draft:b", primary: { text: "keep this" } });
     expect(controller.getSnapshot().settings.archivedThreads.map(thread => thread.id)).toEqual(["a"]);
@@ -969,7 +970,7 @@ describe("shared application state", () => {
     } finally { select.mockRestore(); configure.mockRestore(); }
   });
 
-  it("fences a checkpoint navigation when its replacement generation retires", async () => {
+  it.each([false, true])("fences a checkpoint navigation when its generation retires (lifecycle=%s)", async lifecycle => {
     const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
     const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
     let finish!: (value: unknown) => void;
@@ -983,9 +984,10 @@ describe("shared application state", () => {
     try {
       const navigation = controller.restoreNavigationIntent({ id: "handoff", threadId: "target", context: target }, generation.signal);
       await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
-      generation.abort();
+      generation.abort(lifecycle ? new PluginLifecycleCancellationError() : undefined);
       finish({ thread: { id: "target", cwd: "/b", turns: [] } });
       await expect(navigation).rejects.toThrow();
+      expect(controller.getSnapshot().tabs.pending).toBeUndefined();
       expect(controller.getState().activeContext).toEqual(source);
       expect(controller.getState().thread).toBeUndefined();
       expect(select).toHaveBeenCalledOnce();

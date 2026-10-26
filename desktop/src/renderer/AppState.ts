@@ -804,6 +804,10 @@ function reduceNotification(
           const turns = mergeThreadUpdatedTurns(thread.turns, current.turns);
           return {
             ...reconcileThreadTitle(current, thread),
+            // Lifecycle snapshots can predate a confirmed archive. They may
+            // refresh history, but only an explicit unarchive or list refresh
+            // can bring that conversation back to the active catalog.
+            archived: current.archived === true ? true : thread.archived,
             status: reconciledThreadStatus(thread, current, turns),
             turns,
             child_agents: thread.child_agents ?? current.child_agents,

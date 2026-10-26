@@ -43,7 +43,7 @@ export type WorkspaceRuntimeActionsDeps = {
   closeWorkspaceMenus: () => void;
   
   beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetID: string) => number;
-  finishViewSwitch: (requestID: number) => boolean;
+  finishViewSwitch: (requestID: number, loadedState?: Partial<AppState>) => boolean;
   cancelViewSwitch: () => void;
   loadRuntime?: typeof defaultLoadRuntime;
 };
@@ -172,7 +172,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return false;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -255,7 +255,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return false;
       }
       if (!loadedState.activeContext) {
@@ -331,7 +331,7 @@ export function createWorkspaceRuntimeActions(
         return;
       }
       const loadedState = await loadRuntime(workspaceState);
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -370,7 +370,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -429,7 +429,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -471,7 +471,7 @@ export function createWorkspaceRuntimeActions(
         return;
       }
       const loadedState = await loadRuntime(workspaceState);
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return;
       }
       outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
@@ -519,7 +519,7 @@ export function createWorkspaceRuntimeActions(
       const loadedState = await loadRuntime(workspaceState, {
         resumeLatestThread: false,
       });
-      if (!deps.finishViewSwitch(requestID)) {
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
         return false;
       }
       if (!loadedState.activeContext) {

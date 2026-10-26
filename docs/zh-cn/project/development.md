@@ -230,6 +230,53 @@ session CI 使用已有渲染器/核心构建运行两种字号，并上传合�
 一致性；自动检查不固定 CSS 声明，也不能替代视觉验收。Linux 结果不等同于实体
 macOS 验收。
 
+### 确认归档验收
+
+构建桌面与核心后，逐一运行独立场景：
+
+```sh
+for mode in running stale-completed workspace-switched provider-replaced; do
+  WUU_ARCHIVE_MODE="$mode" npm --prefix desktop run test:e2e:confirmed-archive
+done
+```
+
+`WUU_DESKTOP_CORE` 指定核心。测试使用原生侧栏与提示按钮点击、loopback 流式模型
+服务和公开本地插件，不使用真实账户或对话。检查重复点击只提交一次明确确认的强制
+归档、过期运行状态、工作区切换、插件提供者替换、用户与助手历史持久化以及归档列表。
+运行中场景还会排队一条输入，并在独立进程中打开当前选定的存储，证明原始输入仍被
+保留且没有自动启动下一轮模型请求。默认构建 `scripts/session-fixture`；可用
+`WUU_SESSION_FIXTURE` 指定已有辅助程序。持久化检查不会恢复或激活对话。
+
+session CI 运行全部四个场景，包含深色、窄窗口和 20px 确认按钮。
+`WUU_ARCHIVE_THEME`、`WUU_ARCHIVE_FONT`、`WUU_ARCHIVE_WIDTH` 控制视觉变体。
+报告记录原生输入、请求结果、持久化历史、合成截图和构建哈希，默认目录为
+`desktop/out/e2e/confirmed-archive/<mode>/`；`WUU_ARCHIVE_OUTPUT` 更改目录，
+`WUU_ARCHIVE_DESKTOP` 选择已构建的对照桌面。应同时目视检查截图，不能只看断言。
+Linux Electron 结果不等同于实体 macOS 验收。
+
+### 输入框底栏验收
+
+构建桌面与核心后，运行字号和名称长度矩阵：
+
+```sh
+for font in 15 20; do
+  for long_names in 0 1; do
+    WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names" \
+      npm --prefix desktop run test:e2e:composer-footer
+  done
+done
+```
+
+每个临时 Git 项目通过生产 main/preload/core 验证浅色与深色、宽窄窗格，以及工具栏
+展开和收起。原生拖动面板分隔条复现 240–320px 输入框。检查底栏几何、控件字号不变、
+无裁切、可信点击、焦点和草稿可编辑性；测试禁止发送消息或发起模型推理。
+
+session CI 复用已有 renderer/core 构建，运行全部四种组合。`WUU_DESKTOP_CORE`
+指定核心，`WUU_FOOTER_DESKTOP` 指定已构建的桌面。报告、几何、截图和构建哈希默认
+位于 `desktop/out/e2e/composer-footer-<font>/`（长名称增加 `-long` 后缀）；
+`WUU_FOOTER_OUTPUT` 更改证据目录。应同时目视检查合成截图，不能只看断言。
+Linux Electron 结果不等同于实体 macOS 验收。
+
 ### MCP 连接生命周期
 
 构建核心后，运行 loopback 生命周期验收：
@@ -468,6 +515,25 @@ CI 检查大历史样本的重复切换，恢复调用、布局及样式重算�
 预热样本应单独保留，不并入测量结果。
 无图形 Linux 可用 `--no-sandbox --ozone-platform=headless`；两帧仅表示绘制
 机会，不证明物理显示或 120 Hz。墙钟耗时仅供诊断，不作为 CI 阈值。
+
+### 仅消息流的导航切换展示
+
+在 session-switch 测试中设置 `WUU_SWITCH_PRESENTATION=1`、
+`WUU_SWITCH_TURNS=12` 和 `WUU_SWITCH_ROUNDS=1`，运行独立的产品回归流程。
+它通过真实侧栏和输入框的原生输入，检查普通会话、分屏、新草稿，以及从浏览器新页面
+经可见的「会话」导航入口切换工作区，并覆盖普通动效和减少动态效果设置。
+工作区选择器流程还验证多行未发送草稿及较高输入区的保留，返回原工作区时其原草稿也仍在。
+窗口保持 1380×860，
+不会为通过截图预算而缩小；CI 分别以 1× 和 2× 设备缩放运行，之后独立检查
+820px 深色窄窗口与保存的 20px 界面字号。
+
+门禁逐帧检查外壳动画、输入区和状态区被覆盖、旧画面侵入新界面的可交互区域，
+以及普通切换意外进入全窗口恢复视图。每次切换后验证输入框接收原生输入，
+并注入截图停滞，检查有界动作调度、恢复及迟到结果不会重复执行导航。
+证据包括 `presentation-results.json`、合成器逐帧 PNG、最终截图和日志。
+这些是隔离测试中的 Chromium 合成器观测，不代表物理屏幕呈现证明。
+展示保留的只有像素，不保留已退出的提供方 DOM 或服务；不支持或失败的截图
+只是可选增强，真实恢复路径仍然保留。
 
 ### 新进程启动诊断
 

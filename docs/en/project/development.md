@@ -271,6 +271,61 @@ already-built comparison desktop. Review the rendered frames for bubble-family
 consistency; automated checks do not pin CSS declarations or replace visual
 acceptance. Linux results are not physical macOS acceptance.
 
+### Confirmed archive acceptance
+
+After building the desktop and core, run each disposable scenario:
+
+```sh
+for mode in running stale-completed workspace-switched provider-replaced; do
+  WUU_ARCHIVE_MODE="$mode" npm --prefix desktop run test:e2e:confirmed-archive
+done
+```
+
+`WUU_DESKTOP_CORE` selects the core. The fixture uses native sidebar and notice
+clicks, a loopback streaming provider and a public local plugin; no real accounts
+or conversations are used. It checks one explicitly confirmed force request
+under repeated clicks, stale running presentation, workspace switching, provider
+replacement, durable user/assistant history and the archive catalog. The running
+case also queues input and opens the selected storage in an independent process
+to prove that the exact input remains held without starting another model turn.
+It builds `scripts/session-fixture` unless `WUU_SESSION_FIXTURE` selects an existing
+helper. Durable previews are inspected without resuming or activating a session.
+
+Session CI runs all four scenarios, including dark/narrow/20px confirmation.
+`WUU_ARCHIVE_THEME`, `WUU_ARCHIVE_FONT`, and `WUU_ARCHIVE_WIDTH` select visual
+variants. Reports include native-input observations, request dispositions, durable
+history, synthetic screenshots and build hashes under
+`desktop/out/e2e/confirmed-archive/<mode>/`; `WUU_ARCHIVE_OUTPUT` overrides that
+path and `WUU_ARCHIVE_DESKTOP` selects an already-built comparison desktop.
+Review the screenshots as well as assertions. Linux Electron is not physical
+macOS acceptance.
+
+### Composer footer acceptance
+
+After building the desktop and core, run the font-size and name-length matrix:
+
+```sh
+for font in 15 20; do
+  for long_names in 0 1; do
+    WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names" \
+      npm --prefix desktop run test:e2e:composer-footer
+  done
+done
+```
+
+Each disposable Git project exercises light/dark themes, wide and narrow panes,
+and expanded/collapsed tool rails through production main/preload/core. Native
+panel dragging reproduces a 240–320px composer. Checks cover footer geometry,
+unchanged control font sizes, clipping, trusted clicks, focus and editable draft
+input. Message submission and inference are forbidden by the fixture.
+
+Session CI runs all four combinations using its existing renderer/core builds.
+`WUU_DESKTOP_CORE` selects the core; `WUU_FOOTER_DESKTOP` selects an already-built
+desktop. Reports, geometry, screenshots and build hashes default to
+`desktop/out/e2e/composer-footer-<font>/` (with `-long` for long names);
+`WUU_FOOTER_OUTPUT` overrides the evidence directory. Review the synthetic
+screenshots as well as assertions. Linux Electron is not physical macOS acceptance.
+
 ### Next-message suggestion acceptance
 
 `make test-plugins` includes the shipped next-message JSONL runtime and desktop
@@ -660,6 +715,28 @@ Do not pool initial opens with repeats or traced runs with untraced runs.
 Headless Linux can use `--no-sandbox --ozone-platform=headless`; its frame cadence
 is a property of that rig. Two frames are paint opportunities, not physical
 presentation or a claim of 120 Hz. Wall-clock timings remain informational.
+
+### Message-only navigation presentation
+
+Set `WUU_SWITCH_PRESENTATION=1`, `WUU_SWITCH_TURNS=12` and
+`WUU_SWITCH_ROUNDS=1` on the session-switch fixture for a separate product
+regression journey. It drives the shipped sidebar and composer with native
+input through ordinary sessions, split panes, new drafts and browser-to-workspace
+navigation via the visible Conversations ribbon, under normal and reduced motion.
+Workspace-picker navigation also preserves a multiline unsent draft and its taller
+composer; returning to the source workspace preserves its original draft too.
+The 1380×860 window is not reduced
+to make capture pass; CI repeats at 1× and 2× device scale, then separately
+checks an 820px dark window with the saved 20px UI preference.
+
+The gate checks each observed frame for shell animation, input/status overlap,
+retired-frame leakage into live chrome, and unexpected full-window recovery.
+It verifies native composer input after every transition and injects a stalled
+capture to verify bounded dispatch, recovery and no late replay. Evidence includes
+`presentation-results.json`, compositor PNG frames, final screenshots and logs.
+These are synthetic Chromium compositor observations, not physical-display proof.
+Presentation capture retains pixels only, never retired provider DOM or services;
+unsupported or failed capture remains optional and preserves genuine recovery.
 
 ### Fresh-process startup diagnostics
 

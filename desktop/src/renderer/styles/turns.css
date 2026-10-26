@@ -4902,12 +4902,9 @@ pre {
   pointer-events: auto;
 }
 
-/* Sidebar, titlebar and environment panel stay usable while a conversation
- * loads: cover only the conversation cell, above its composer and status row
- * and below the environment panel. The fade cross-dissolves the outgoing
- * session instead of cutting to a blank pane. */
+/* The shell measures the message viewport(s), excluding input and status
+ * docks. Fade only those rectangles; sidebar and titlebar remain live. */
 .view-switch-loading-conversation {
-  grid-row: 2;
   z-index: 30;
   background: var(--paper);
   pointer-events: auto;

@@ -69,7 +69,7 @@ import {
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { useConversationSwitchReady } from "./ConversationSwitchReady";
-import { useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
+import { ConversationPresentationLoading, type ConversationPresentationRegion, useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
 import { createEnvironmentPanelActions } from "./EnvironmentActions";
 import {
   type EnvironmentPanelMenu,
@@ -1131,9 +1131,23 @@ export function App({ application, slots, shellPluginId }: {
       requestSubmittedQueryScroll(item.id, operation.messageID);
     }
   }, [submissionView, conversationWorkspace, tabs.activeTabId, activeThreadID, requestSubmittedQueryScroll, discardSubmittedMessage]);
+  const getMessagePresentationRegions = useCallback((): ConversationPresentationRegion[] => {
+    if (!conversationVisible) return [];
+    if (splitConversation) return Object.values(splitPaneRefs.current).filter((element): element is HTMLElement => Boolean(element))
+      .map(element => ({ element }));
+    const element = conversationScrollRef.current;
+    if (!element) return [];
+    // Empty pages extend underneath the floating dock; populated histories may
+    // also share its status row. Neither belongs to the message transition.
+    const excludeBelow = [dockComposerNode, conversationPaneRef.current?.querySelector<HTMLElement>(".conversation-status-cluster")]
+      .filter((node): node is HTMLElement => Boolean(node));
+    return [{ element, excludeBelow }];
+  }, [conversationVisible, splitConversation, splitPaneRefs, conversationScrollRef, dockComposerNode, conversationPaneRef]);
   useConversationPresentationTransition({
-    scopeRef: conversationPaneRef, pending: tabs.pending,
-    enabled: conversationVisible && initialized && application.getSnapshot().phase !== "error",
+    scopeRef: appShellRef, pending: tabs.pending, getRegions: getMessagePresentationRegions,
+    // A browser/settings route can still initiate a workspace handoff. Capture
+    // its static chrome without displaying a message overlay on that route.
+    enabled: initialized && application.getSnapshot().phase !== "error",
   });
   useConversationSwitchReady({
     visible: conversationVisible,
@@ -1819,8 +1833,9 @@ export function App({ application, slots, shellPluginId }: {
           onOpenPullRequest={() => openEnvironmentDialog("pull-request")}
           rightPanelFilePath={rightPanelFilePath}
           onCloseFilePreview={handleCloseFilePreview}
-          switchLoadingVisible={pendingViewSwitch?.visible === true}
         />
+        <ConversationPresentationLoading scopeRef={conversationPaneRef} getRegions={getMessagePresentationRegions}
+          visible={pendingViewSwitch?.visible === true} />
 
         {initialized && (catalogVisited || showingSkillsCatalog) ? (
           <div

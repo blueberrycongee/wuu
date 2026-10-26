@@ -16,6 +16,7 @@ import type { ComposerFile, ComposerImage, QueuedComposerMessage } from "../Comp
 import { UserQuestionCard } from "../UserQuestionCard";
 import { createApplicationComposerAttachments } from "./ApplicationComposerAttachments";
 import { showApplicationActionError } from "../ApplicationActionError";
+import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { useI18n } from "../i18n";
 import { threadContinuationTarget } from "../TurnContinuation";
 
@@ -60,6 +61,7 @@ function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, var
 
 function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, runtimeControlsTarget, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
   const { t } = useI18n();
+  const presentNavigation = usePresentedNavigation();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
   const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
@@ -82,7 +84,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const [filter, setFilter] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
-  const run = useCallback((result: Promise<unknown>) => { void result.catch(showApplicationActionError); }, []);
+  const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
   useEffect(() => { run(controls.refreshEngines()); }, [controls, run]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
   const runtime = view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId);
@@ -167,11 +169,11 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectPermissionMode={(mode, approveForMe) => { run(controls.choosePermission(mode, approveForMe)); setMenu(null); }}
       onOpenSettings={() => run(application.invoke("settings.open", { pageId: "providers" }))}
       onOpenSkillsCatalog={() => run(application.invoke("catalog.select-section", { section: "skills" }).then(() => application.invoke("navigation.show-section", { section: "catalog" })))}
-      onSelectWorkspace={workspaceId => run(application.invoke("workspace.retarget-draft", { workspaceId }))} onSelectNoProject={() => run(application.invoke("workspace.retarget-draft", {}))}
+      onSelectWorkspace={workspaceId => run(presentNavigation(() => application.invoke("workspace.retarget-draft", { workspaceId })))} onSelectNoProject={() => run(presentNavigation(() => application.invoke("workspace.retarget-draft", {})))}
       onCreateWorkspace={() => run(application.invoke("workspace.create", { kind: "blank" }))} onOpenWorkspace={() => run(application.invoke("workspace.create", { kind: "folder" }))}
       onOpenGitWorktree={async path => { await application.invoke("workspace.open-worktree", { path }); setMenu(null); }}
       onSelectGitBranch={async branch => { await application.environment.checkoutBranch(branch); setMenu(null); }} onCreateGitBranch={async branch => { await application.environment.createAndCheckoutBranch(branch); setMenu(null); }}
-      onStartNewThread={() => run(application.invoke("draft.start", {}).then(({ tabId }) => application.invoke("navigation.focus-composer", { tabId })))}
+      onStartNewThread={() => run(presentNavigation(() => application.invoke("draft.start", {})).then(({ tabId }) => application.invoke("navigation.focus-composer", { tabId })))}
       onHandoffSession={presentation.threadId ? input => run(application.invoke("conversation.handoff", { threadId: presentation.threadId!, ...input })) : undefined}
       onOpenSideThread={presentation.threadId ? (prompt, commandId) => run(application.invoke("side.open", { parentThreadId: presentation.threadId!, prompt, commandId })) : undefined}
       onOpenWorkspaceTool={toolId => run(application.invoke("preview.open-tool", { toolId }))}

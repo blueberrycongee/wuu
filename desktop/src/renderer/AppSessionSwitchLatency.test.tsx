@@ -43,6 +43,7 @@ vi.mock("./ConversationTurnList", () => ({
       data-thread-id={threadID}
       data-turn-count={turns.length}
       data-latest-turn-status={turns.at(-1)?.status}
+      data-latest-turn-error={turns.at(-1)?.error?.message}
       data-latest-user-text={turns.at(-1)?.items?.find(item => item.type === "user_message")?.text}
       data-latest-agent-text={turns.at(-1)?.items?.find(item => item.type === "agent_message")?.text}
     >
@@ -76,8 +77,8 @@ import { createConversationTestView, createDefaultApplicationTestView } from "./
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
 import * as ComposerMessages from "./ComposerMessages";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
-import { translateCurrent } from "./i18n";
 import { ConfirmDialogHost } from "./ConfirmDialog";
+import { ConversationPresentationBoundary } from "./ConversationPresentationTransition";
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -326,11 +327,11 @@ function activeThreadProbe(): HTMLElement | null {
   return container.querySelector('[data-testid="turn-list-probe"]');
 }
 
-function visibleRuntimeModel(): string {
-  return (
-    container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")
-      ?.textContent ?? ""
-  );
+function accessibleRuntimeModel(): string {
+  // The tool rail renders an icon-only trigger; its accessible name still
+  // exposes the selected engine, model, and effort.
+  return container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")
+    ?.getAttribute("aria-label") ?? "";
 }
 
 function mainComposerTextarea(): HTMLTextAreaElement {
@@ -446,6 +447,39 @@ describe("session tab switch latency", () => {
     container.remove();
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  });
+
+  it.each(["composer", "sidebar"])("captures live chrome before a new-page workspace switch from %s", async entry => {
+    installWuuApi();
+    const projects = ["alpha", "beta"].map(id => ({ id, name: id, path: "/tmp/" + id,
+      created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" }));
+    let context: RuntimeContext = { kind: "project", project_id: "alpha", cwd: projects[0].path };
+    window.wuu.listProjects = vi.fn(async () => ({ projects, active_context: context }));
+    window.wuu.selectProject = vi.fn(async id => {
+      context = { kind: "project", project_id: id, cwd: projects.find(project => project.id === id)!.path };
+      return { projects, active_context: context };
+    });
+    window.wuu.initialize = vi.fn(async () => ({ ...initialized(), workspace_root: context.cwd }));
+    const capture = deferred<never>();
+    window.wuu.capturePresentationFrame = vi.fn(() => capture.promise);
+    await act(async () => { root = createRoot(container); root.render(
+      <ConversationPresentationBoundary binding={1} retiring={false} failed={false}>
+        {await createDefaultApplicationTestView()}
+      </ConversationPresentationBoundary>); });
+    await flushAsync();
+    if (entry === "composer") {
+      await clickTarget(container.querySelector<HTMLButtonElement>('.composer-project-control button[aria-haspopup="menu"]'));
+      await clickTarget(document.querySelector<HTMLButtonElement>('.composer-project-menu button[title="beta"]'));
+    } else {
+      const group = Array.from(container.querySelectorAll(".project-row-name")).find(label => label.textContent === "beta")!.closest(".project-group")!;
+      await clickTarget(group.querySelector<HTMLButtonElement>(".project-row-new-thread"));
+    }
+    expect(window.wuu.capturePresentationFrame).toHaveBeenCalledOnce();
+    expect(window.wuu.selectProject).not.toHaveBeenCalled();
+    await act(async () => capture.reject(new Error("Synthetic optional capture failure")));
+    await flushAsync();
+    expect(window.wuu.selectProject).toHaveBeenCalledExactlyOnceWith("beta");
+    expect(mainComposerTextarea().disabled).toBe(false);
   });
 
   it("defers automatic model refresh until navigation is ready and suppresses focus errors during switching", async () => {
@@ -979,10 +1013,15 @@ describe("session tab switch latency", () => {
     expect(threadRowButton("未命名对话")).toBeUndefined();
   });
 
-  it.each(["top", "workspace"])("keeps pending drafts separate when starting another conversation from %s", async (entry) => {
+  it.each([
+    { entry: "top", newerDraft: false },
+    { entry: "workspace", newerDraft: false },
+    { entry: "workspace", newerDraft: true },
+  ])("keeps pending drafts separate when starting another conversation from $entry (newer draft=$newerDraft)", async ({ entry, newerDraft }) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { threadsByID, startTurn } = installWuuApi();
     threadsByID.clear();
+    window.wuu.deleteThread = vi.fn().mockResolvedValue(undefined);
     startTurn.mockImplementation(async (threadID: string, text: string, _images, _files, _document, _contexts, _parts, _settings, clientID: string) => ({
       turn: { id: `turn-${threadID}`, items_view: "full", status: "in_progress", items: [
         { id: `user-${threadID}`, source_id: clientID, type: "user_message", text, status: "completed" },
@@ -1033,12 +1072,16 @@ describe("session tab switch latency", () => {
     }
     expect(threadRowButton("Named conversation A")).toBeDefined();
     expect(activeSessionTabLabel()).toBe("Named conversation A");
-    expect(activeThreadProbe()?.dataset.latestUserText).toBeUndefined();
+    // The submitted bubble stays visible through identity binding and naming;
+    // the other pending conversation must not replace or duplicate it.
+    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+    expect(activeThreadProbe()?.dataset.turnCount).toBe("1");
     expect(mainComposerTextarea().value).toBe("pending A");
     expect(startTurn).toHaveBeenCalledTimes(1);
     if (entry === "workspace") {
+      if (newerDraft) await act(async () => { setMainComposerPrompt("newer A draft"); });
       await act(async () => { mainComposerTextarea().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
-      expect(mainComposerTextarea().value).toBe("pending A");
+      expect(mainComposerTextarea().value).toBe(newerDraft ? "newer A draft" : "pending A");
     } else {
       await act(async () => { emitNotification("thread/updated", {
         thread: { ...created, title: "Newer conversation name" },
@@ -1061,16 +1104,24 @@ describe("session tab switch latency", () => {
       expect(new Set(Array.from(rows, row => row.getAttribute("aria-label"))).size).toBe(2);
     }
     if (entry === "workspace") {
-      expect(activeThreadProbe()).toBeNull();
-      expect(mainComposerTextarea().value).toBe("pending A");
-      expect(activeSessionTabLabel()).toBe(translateCurrent("tabs.newConversation"));
-      expect(threadRowButton("pending A")).toBeUndefined();
+      // Identity is already real when Stop arrives. Retain one interrupted
+      // placeholder and recover input without admitting or replaying the send.
+      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+      expect(activeThreadProbe()?.dataset.turnCount).toBe("1");
+      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("interrupted");
+      expect(activeThreadProbe()?.dataset.latestTurnError).toBeUndefined();
+      expect(mainComposerTextarea().value).toBe(newerDraft ? "newer A draft" : "pending A");
       expect(mainComposerSendButton().getAttribute("data-wuu-state")).not.toBe("submitting");
+      expect(startTurn.mock.calls.map(call => call[0])).toEqual([threadBID]);
+      expect(window.wuu.deleteThread).not.toHaveBeenCalledWith(threadAID);
+      const saved = readComposerDraftRecovery().tabs.find(tab => tab.kind === "thread" && tab.threadID === threadAID);
+      expect(saved?.kind === "thread" ? saved.prompt : undefined).toBe(newerDraft ? "newer A draft" : "pending A");
+      if (newerDraft) expect(readComposerDraftRecovery().tabs.some(tab => tab.kind === "draft" && tab.prompt === "pending A")).toBe(true);
     } else {
       expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
       expect(threadRowButton("Newer conversation name")).toBeDefined();
     }
-    expect(activeThreadProbe()?.dataset.latestUserText).toBe(entry === "workspace" ? undefined : "pending A");
+    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
   });
 
   it("keeps sidebar row titles and click targets after A-B-A switching and a delayed project list", async () => {
@@ -1214,7 +1265,7 @@ describe("session tab switch latency", () => {
     expect(resumeThread).toHaveBeenCalledWith(threadAID);
     expect(activeSessionTabLabel()).toContain("session switch A");
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
 
     const rowB = threadRowButton("session switch B");
     expect(rowB).toBeDefined();
@@ -1225,7 +1276,7 @@ describe("session tab switch latency", () => {
 
     expect(activeSessionTabLabel()).toContain("session switch B");
     expect(activeThreadProbe()?.dataset.threadId).toBe(threadBID);
-    expect(visibleRuntimeModel()).toContain("model-b");
+    expect(accessibleRuntimeModel()).toContain("model-b");
 
     const delayedResumeA = deferred<{ thread: Thread }>();
     resumeThread.mockClear();
@@ -1455,7 +1506,7 @@ describe("session tab switch latency", () => {
     });
     await flushAsync();
 
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
 
     const runningTurn = {
       id: "thread-switch-a-running-turn",
@@ -1472,7 +1523,7 @@ describe("session tab switch latency", () => {
       });
     });
 
-    expect(visibleRuntimeModel()).toContain("turn-model");
+    expect(accessibleRuntimeModel()).toContain("turn-model");
 
     await act(async () => {
       emitNotification("turn/completed", {
@@ -1481,7 +1532,7 @@ describe("session tab switch latency", () => {
       });
     });
 
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
   });
 
   it.each(["focus", "running snapshot", "active reconciliation"])("repairs a missed completion via %s with summary-only lists", async trigger => {
@@ -1551,7 +1602,7 @@ describe("session tab switch latency", () => {
     });
     expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("completed");
     expect(container.querySelector(".composer-stop-button")).toBeNull();
-    expect(visibleRuntimeModel()).toContain("model-a");
+    expect(accessibleRuntimeModel()).toContain("model-a");
   });
 
   it("recovers a missed managed start from the aggregate running snapshot", async () => {

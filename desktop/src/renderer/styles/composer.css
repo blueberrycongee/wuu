@@ -2316,28 +2316,26 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 /* A document can remain beside an open sidebar at very narrow widths. Keep
  * the draft readable instead of shrinking it between four native hit targets. */
 @container document-composer (max-width: 320px) {
-  .composer-bar {
+  .composer-editor {
     grid-template-columns: auto minmax(0, 1fr);
   }
 
-  .composer-bar > textarea {
+  .composer-editor > textarea {
     grid-column: 1 / -1;
     grid-row: 1;
   }
 
-  .composer-bar-left {
+  .composer-editor > .composer-bar-left {
     grid-column: 1;
     grid-row: 2;
   }
 
-  .composer-bar-right {
+  .composer-editor > .composer-input-actions {
     grid-column: 2;
     grid-row: 2;
     justify-content: flex-end;
-  }
-
-  .composer-bar-right:has(.composer-plugin-toolbar) {
-    grid-row: 3;
+    flex-wrap: wrap;
+    max-width: none;
   }
 }
 

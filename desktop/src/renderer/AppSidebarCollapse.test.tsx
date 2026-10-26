@@ -280,20 +280,20 @@ describe("sidebar collapse-state independence", () => {
       await ready;
       const ownerTabId = controller.getSnapshot().drafts.primary.ownerTabId!;
       await act(async () => { await controller.invoke("composer.choose-worktree", { ownerTabId, enabled: true }); });
-      const oldBranch = container.querySelector(".composer-git-controls .hero-project-pill")!;
-      await click(".composer-git-controls .hero-project-pill");
+      const oldBranch = container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')!;
+      await click('.composer-branch-control button[aria-haspopup="menu"]');
       await click('.composer-branch-menu button[title="feature"]');
-      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
+      expect(container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')?.getAttribute("aria-label")).toBe(translateCurrent("composer.worktreeStartBranchLabel", { branch: "feature" }));
       await act(async () => { release(); await pending; });
       await flushAsync();
       expect(oldBranch.isConnected).toBe(false);
       expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === ownerTabId)?.worktree.enabled).toBe(true);
-      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
-      await click(".composer-project-control .hero-project-pill");
+      expect(container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')?.getAttribute("aria-label")).toBe(translateCurrent("composer.worktreeStartBranchLabel", { branch: "feature" }));
+      await click('.composer-project-control button[aria-haspopup="menu"]');
       await click('.composer-project-menu button[title="second"]');
       expect(controller.getState().activeContext?.cwd).toBe(projects[1].path);
       expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === controller.getSnapshot().drafts.primary.ownerTabId)?.worktree.enabled).toBe(false);
-      expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("main");
+      expect(container.querySelector('.composer-branch-control button[aria-haspopup="menu"]')?.getAttribute("aria-label")).toBe(translateCurrent("composer.switchBranch", { branch: "main" }));
     } finally {
       release();
       await pending;

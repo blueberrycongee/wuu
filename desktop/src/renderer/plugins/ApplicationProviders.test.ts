@@ -12,6 +12,35 @@ function candidate(label: string, events: string[], fail = false): ApplicationPr
 }
 
 describe("selected application business provider lifecycle", () => {
+  it("annotates only an active source binding and isolates superseded retirement cleanup", async () => {
+    const providers = new ApplicationProviders();
+    const firstSignal = new AbortController();
+    const empty = providers.beginRetirement(firstSignal.signal);
+    expect(providers.getRetirement()).toBeUndefined();
+    empty();
+    const first = providers.register({ pluginId: "external", generation: "one", id: "ui.application" }, { id: "ui.application", prepare: () => candidate("one", []) });
+    await providers.select(first);
+    const sourceBinding = providers.getBindingRevision();
+    const finishFirst = providers.beginRetirement(firstSignal.signal);
+    expect(providers.getRetirement()).toEqual({ binding: sourceBinding });
+    expect(providers.current).toBe(first);
+    expect(providers.getBindingRevision()).toBe(sourceBinding);
+    const newerSignal = new AbortController();
+    let observedOnAbort: ReturnType<ApplicationProviders["getRetirement"]>;
+    newerSignal.signal.addEventListener("abort", () => { observedOnAbort = providers.getRetirement(); });
+    const finishNewer = providers.beginRetirement(newerSignal.signal);
+    const newer = providers.getRetirement();
+    finishFirst(); firstSignal.abort();
+    expect(providers.getRetirement()).toBe(newer);
+    newerSignal.abort();
+    expect(observedOnAbort).toBeUndefined();
+    expect(providers.getRetirement()).toBeUndefined();
+    finishNewer();
+    providers.beginRetirement(newerSignal.signal);
+    expect(providers.getRetirement()).toBeUndefined();
+    await providers.remove(first);
+  });
+
   it("starts only the selected provider, stops before transfer, and retires captured scopes", async () => {
     const events: string[] = []; const providers = new ApplicationProviders();
     const first = providers.register({ pluginId: "external", generation: "one", id: "ui.application" }, { id: "ui.application", prepare: () => candidate("one", events) });

@@ -278,7 +278,8 @@ app.whenReady().then(async () => {
           await new Promise(requestAnimationFrame);
           await new Promise(requestAnimationFrame);
           await Promise.all(document.getAnimations()
-            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.playState === "running"
+              && animation.effect?.getComputedTiming().iterations !== Infinity)
             .map(animation => animation.finished.catch(() => {})));
           const row = document.querySelector(".thread-row.active");
           return { row: row.getBoundingClientRect().toJSON(), title: row.querySelector(".thread-row-title").getBoundingClientRect().toJSON() };
@@ -357,8 +358,8 @@ app.whenReady().then(async () => {
         await win.loadFile(path.join(desktop, "out/renderer/index.html"));
         await waitFor(() => Boolean(document.querySelector('[data-functional-group-id="workspace"] .thread-list-more'))
           && Boolean(document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle')));
-        // Recent presents the same 48 sessions independently of the paged
-        // workspace. Fold it through its control to establish a fitting list.
+        // Recent includes the workspace sessions and the current unsent draft.
+        // Fold it through its control to establish a fitting list.
         await evaluate(() => {
           const toggle = document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle');
           if (toggle.getAttribute("aria-expanded") === "true") toggle.click();
@@ -373,8 +374,22 @@ app.whenReady().then(async () => {
           }
         });
         await evaluate(() => document.querySelector('[data-sidebar-recents] .sidebar-functional-heading-toggle').click());
-        await waitFor(() => document.querySelectorAll(".project-thread-list .thread-row").length === 48
-          && document.querySelectorAll("[data-sidebar-recents] .thread-row").length === 48);
+        await waitFor(() => document.querySelectorAll('[data-functional-group-id="workspace"] .project-thread-list .thread-row').length === 48
+          && document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id])').length === 48);
+        const membership = await evaluate(() => ({
+          workspace: [...document.querySelectorAll('[data-functional-group-id="workspace"] .project-thread-list .thread-row-title')].map(node => node.textContent),
+          recent: [...document.querySelectorAll('[data-sidebar-recents] .thread-row:not([data-draft-id]) .thread-row-title')].map(node => node.textContent),
+          drafts: [...document.querySelectorAll('[data-sidebar-recents] [data-draft-id]')].map(node => ({
+            id: node.dataset.draftId, active: node.querySelector('.thread-row-main')?.getAttribute('aria-current') === 'page',
+          })),
+        }));
+        const seededTitles = Array.from({ length: 48 }, (_, index) =>
+          `Conversation ${String(index + 1).padStart(2, "0")}: scroll boundary regression`);
+        assert.deepEqual(membership.workspace, seededTitles, 'paging exposes each seeded workspace session exactly once');
+        assert.deepEqual(membership.recent, seededTitles, 'Recent independently exposes the same session membership');
+        assert.equal(membership.drafts.length, 1, 'Recent also keeps the unsent startup draft');
+        assert.ok(membership.drafts[0].id && membership.drafts[0].active, 'the startup draft remains selected before opening a session');
+        results.push({ label: `${label}-sidebar-membership`, ...membership });
         await evaluate(() => document.querySelector(".project-thread-list .thread-row-main").click());
         // Active content appears before the reveal finishes. Wait for the
         // pending row to clear before choosing an independent reading position.
@@ -391,9 +406,11 @@ app.whenReady().then(async () => {
           await new Promise(requestAnimationFrame);
           await new Promise(requestAnimationFrame);
           // Font-relative row spacing must settle before focus is the only
-          // change under measurement. Scroll-timeline fades remain active.
+          // change under measurement. Scroll-timeline fades remain active;
+          // paused mascot poses have no time-based completion to await.
           await Promise.all(document.getAnimations()
-            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.effect?.getComputedTiming().iterations !== Infinity)
+            .filter(animation => animation.timeline instanceof DocumentTimeline && animation.playState === "running"
+              && animation.effect?.getComputedTiming().iterations !== Infinity)
             .map(animation => animation.finished.catch(() => {})));
         }, { theme, size });
         assert.ok(await evaluate(() => document.querySelector(".sidebar").getBoundingClientRect().right > 200), "sidebar remains visible at the tested width");

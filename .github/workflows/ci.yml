@@ -904,6 +904,66 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard confirmed archive through selected providers
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 12
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for mode in running stale-completed workspace-switched provider-replaced; do
+            export WUU_ARCHIVE_MODE="$mode"
+            export WUU_ARCHIVE_THEME=light WUU_ARCHIVE_FONT=15 WUU_ARCHIVE_WIDTH=1280
+            if [[ "$mode" == stale-completed ]]; then
+              export WUU_ARCHIVE_THEME=dark WUU_ARCHIVE_FONT=20 WUU_ARCHIVE_WIDTH=760
+            fi
+            export WUU_ARCHIVE_OUTPUT="${{ runner.temp }}/wuu-confirmed-archive-evidence/$mode"
+            mkdir -p "$WUU_ARCHIVE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/confirmed-archive-e2e.cjs 2>&1 | tee "$WUU_ARCHIVE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload confirmed archive evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: confirmed-archive-evidence
+          path: ${{ runner.temp }}/wuu-confirmed-archive-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard responsive composer footer
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 14
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            for long_names in 0 1; do
+              export WUU_FOOTER_FONT="$font" WUU_FOOTER_LONG_NAMES="$long_names"
+              export WUU_FOOTER_OUTPUT="${{ runner.temp }}/wuu-composer-footer-evidence/font-$font-long-$long_names"
+              mkdir -p "$WUU_FOOTER_OUTPUT"
+              xvfb-run --auto-servernum --server-args="-screen 0 1440x1100x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/composer-footer-e2e.cjs 2>&1 | tee "$WUU_FOOTER_OUTPUT/run.log" || failed=1
+            done
+          done
+          exit "$failed"
+
+      - name: Upload composer footer evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: composer-footer-evidence
+          path: ${{ runner.temp }}/wuu-composer-footer-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard request lifecycle
         if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5
@@ -963,6 +1023,32 @@ jobs:
             ${{ runner.temp }}/wuu-image-layout-evidence/*.png
             ${{ runner.temp }}/wuu-image-layout-evidence/*.log
             ${{ runner.temp }}/wuu-image-layout-evidence/*.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard message-only navigation presentation
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        shell: bash
+        env:
+          WUU_SWITCH_PRESENTATION: "1"
+          WUU_SWITCH_TURNS: "12"
+          WUU_SWITCH_ROUNDS: "1"
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+        run: |
+          for rig in wide:1 wide:2 narrow:1; do
+            export WUU_SWITCH_VARIANT="${rig%:*}"
+            scale="${rig#*:}"
+            export WUU_SWITCH_OUTPUT="${{ runner.temp }}/wuu-presentation-evidence/${WUU_SWITCH_VARIANT}-${scale}"
+            mkdir -p "$WUU_SWITCH_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 2880x2000x24" desktop/node_modules/.bin/electron --no-sandbox --force-device-scale-factor="$scale" desktop/scripts/session-switch-e2e.cjs 2>&1 | tee "$WUU_SWITCH_OUTPUT/run.log"
+          done
+
+      - name: Upload navigation presentation evidence
+        if: ${{ matrix.suite == 'session' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigation-presentation-evidence
+          path: ${{ runner.temp }}/wuu-presentation-evidence/
           if-no-files-found: ignore
           retention-days: 14
 

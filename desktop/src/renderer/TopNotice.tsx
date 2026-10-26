@@ -8,6 +8,7 @@ const TOP_NOTICE_AUTO_DISMISS_MS = 6000;
 export type TopNoticeAction = {
   label: string;
   onClick: () => void;
+  disabled?: boolean;
 };
 
 export type TopNoticeProps = {
@@ -67,6 +68,7 @@ export function TopNotice({
           type="button"
           className="archive-tip-action"
           onClick={action.onClick}
+          disabled={action.disabled}
         >
           {action.label}
         </button>

@@ -52,7 +52,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   const focusAfterNavigation = async (navigate: () => Promise<string | undefined>) => {
     const origin = document.activeElement;
     const version = interactionVersion.current;
-    const tabId = await navigate();
+    const tabId = await presentNavigation(navigate);
     // Keep the initiating gesture's intent across the async workspace switch.
     if (tabId && version === interactionVersion.current
       && (document.activeElement === origin || document.activeElement === document.body)) {
@@ -60,7 +60,14 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     }
   };
   const archiveTipID = useRef(0);
-  const [archiveTip, setArchiveTip] = useState<{ id: number; thread: ThreadSummary; error?: string; forceRetryable?: boolean }>();
+  const [archiveTip, setArchiveTip] = useState<{ id: number; thread: ThreadSummary; error?: string; forceRetryable?: boolean; pending?: boolean }>();
+  const archiveRequest = useRef(0);
+  const pendingArchiveThreads = useRef(new Map<string, number>());
+  useEffect(() => {
+    setArchiveTip(undefined);
+    pendingArchiveThreads.current.clear();
+    return () => { archiveRequest.current++; };
+  }, [application]);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
@@ -100,12 +107,22 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     }
   };
   const archiveThread = async (thread: ThreadSummary, force = false) => {
+    // The explicit confirmation admits one mutation, even before React has
+    // painted the disabled button. A new provider never inherits this consent.
+    if (pendingArchiveThreads.current.has(thread.id)) return;
+    const request = ++archiveRequest.current;
+    pendingArchiveThreads.current.set(thread.id, request);
+    if (force) setArchiveTip(current => current?.thread.id === thread.id ? { ...current, pending: true } : current);
     try {
       const result = await invoke("navigation.archive-thread", { threadId: thread.id, force });
-      setArchiveTip({ id: ++archiveTipID.current, thread, ...(!result.ok ? { error: result.error, forceRetryable: result.forceRetryable } : {}) });
-    } catch (error) { setArchiveTip({ id: ++archiveTipID.current, thread, error: error instanceof Error ? error.message : String(error), forceRetryable: thread.status === "in_progress" }); }
+      if (request === archiveRequest.current) setArchiveTip({ id: ++archiveTipID.current, thread, ...(!result.ok ? { error: result.error, forceRetryable: !force && result.forceRetryable } : {}) });
+    } catch (error) {
+      // Only the provider's typed rejection can offer destructive confirmation.
+      // A stale status must not turn retired scopes/storage errors into retries.
+      if (request === archiveRequest.current) setArchiveTip({ id: ++archiveTipID.current, thread, error: error instanceof Error ? error.message : String(error) });
+    } finally { if (pendingArchiveThreads.current.get(thread.id) === request) pendingArchiveThreads.current.delete(thread.id); }
   };
-  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={archiveTip.thread.title?.trim() || t("app.thisConversation")} errorMessage={archiveTip.error}
+  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={archiveTip.thread.title?.trim() || t("app.thisConversation")} errorMessage={archiveTip.error} pending={archiveTip.pending}
     onDismiss={() => setArchiveTip(undefined)} onViewArchive={() => { setArchiveTip(undefined); run(application.invoke("settings.open", { pageId: "archive" })); }}
     onForceArchive={archiveTip.forceRetryable ? () => run(archiveThread(archiveTip.thread, true)) : undefined} /></UILayerPortal>}<AppSidebar {...layout} navigation={navigation} initialized={view.initialized}
     activeContextKind={view.activeContextKind} activeSessionTabID={snapshot.tabs.activeTabId} selectedWorkspaceID={view.selectedWorkspaceId}

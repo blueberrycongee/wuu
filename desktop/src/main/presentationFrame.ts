@@ -1,9 +1,8 @@
 import { BrowserWindow, type IpcMainInvokeEvent, type WebContents } from "electron";
 import type { PresentationFrame } from "../shared/protocol";
+import { MAX_PRESENTATION_FRAME_EDGE as MAX_EDGE, MAX_PRESENTATION_FRAME_PIXELS as MAX_PIXELS } from "../shared/PresentationFrameLimits";
 
 const MAX_CAPTURE_AGE_MS = 120;
-const MAX_PIXELS = 16_777_216;
-const MAX_EDGE = 8192;
 const MAX_PNG_BYTES = 16 * 1024 * 1024;
 
 /** Own-window, in-memory capture only. No caller-supplied target or capture options. */

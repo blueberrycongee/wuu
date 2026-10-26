@@ -188,6 +188,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Make explicitly confirmed archival settle the retained execution after provider replacement before archiving through the selected storage. Preserve partial history and held input, reject uncertain settlement and other-process ownership truthfully, and admit one confirmation under repeated clicks without reusing retired consent.
+
+- Keep session and workspace switch presentation inside message regions. Preserve static pixels during provider handoff without animating or blocking live sidebar, titlebar, or composer controls; add native product regression coverage for normal/reduced motion and 1×/2× displays.
+
 - Give the conversation composer more bottom spacing so the input and its shadow sit comfortably above the window edge, scaling with the UI font size.
 
 - Give the conversation composer at least the message flow's width, with up to 12px of extra space on each side in roomy panes. Keep its center aligned with the messages and respect narrow windows and display safe areas.

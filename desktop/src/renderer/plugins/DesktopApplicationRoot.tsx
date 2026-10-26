@@ -51,7 +51,7 @@ export function DesktopApplicationRoot(): JSX.Element {
     desktopBootstrap.settleRestoration(state.connectionGeneration,
       failure ?? (!active ? "Selected application provider is unavailable" : undefined));
   }, [pending, state.initialized, state.connectionGeneration, active, failure]);
-  const wrap = (content: React.ReactNode) => <ConversationPresentationBoundary binding={desktopPluginHost.applicationProviders.getBindingRevision()} retiring={!active && pending} failed={Boolean(failure && !pending)}>{content}</ConversationPresentationBoundary>;
+  const wrap = (content: React.ReactNode) => <ConversationPresentationBoundary binding={desktopPluginHost.applicationProviders.getBindingRevision()} retiring={!active && pending} failed={Boolean(failure && !pending)} getRetirement={desktopPluginHost.applicationProviders.getRetirement}>{content}</ConversationPresentationBoundary>;
   if (!state.initialized || !active) {
     // A stopped writer must not remain interactive. Reuse the existing text-free
     // transition surface rather than flashing launch/error copy on normal reloads.

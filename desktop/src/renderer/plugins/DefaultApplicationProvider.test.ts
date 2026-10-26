@@ -236,6 +236,8 @@ it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected"
   await app.invoke("composer.set-draft", { text: "keep source draft" });
   const navigation = app.invoke("thread.activate", { threadId: thread.id, workspaceId: "b" }).catch(error => error);
   await vi.waitFor(() => expect(configure).toBeDefined());
+  const presentationIntent = app.getSnapshot().tabs.pending?.intentId;
+  expect(presentationIntent).toBeTruthy();
   expect(resume).not.toHaveBeenCalled();
   configure();
   const outcome = await navigation;
@@ -246,9 +248,13 @@ it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected"
     expect(resume).not.toHaveBeenCalled();
     if (mode === "rejected") {
       expect(String(outcome)).toContain("configuration unavailable");
+      expect(app.getSnapshot().tabs.pending).toBeUndefined();
       expect(selected).toEqual(source);
     } else {
       expect(String(outcome)).toContain("retired");
+      // The old writer is fenced, but its read-only presentation marker must
+      // survive while the already-committed replacement is still preparing.
+      expect(app.getSnapshot().tabs.pending?.intentId).toBe(presentationIntent);
       if (mode === "returned") {
         // A user can return before asynchronous graph activation retires this
         // owner. Restore transport selection, not just the still-visible source.
@@ -342,8 +348,9 @@ it.each([false, true])("restores an exact pending destination before an unrelate
   }
 });
 
-it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph-newer"] as const)("transfers only the selected search address across application replacement (%s)", async phase => {
+it.each(["activation", "graph", "paging", "hydration", "settled-paging", "settled-hydration", "graph-cancelled", "graph-newer"] as const)("transfers only the selected search address across application replacement (%s)", async phase => {
   const handoff = phase.startsWith("graph");
+  const hydrating = phase.endsWith("hydration");
   const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
   const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
   const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
@@ -354,7 +361,7 @@ it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph
   });
   const answer = { id: "addressed-answer", seq: 10, type: "agent_message" as const, text: "exact historical needle" };
   const history = { id: "historical-turn", status: "completed" as const, items_view: "full" as const, items: [answer] };
-  const thread = { id: "search-destination", cwd: target.cwd, project_id: "b", title: "Destination", preview: "", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", history_cursor: "older-page", turns: phase === "hydration"
+  const thread = { id: "search-destination", cwd: target.cwd, project_id: "b", title: "Destination", preview: "", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", history_cursor: "older-page", turns: hydrating
     ? [{ ...history, items: [{ ...answer, text: "Preview", remote_content_ref: "content:addressed-answer" }] }]
     : [{ id: "tail", status: "completed", items: [{ id: "latest", seq: 100, type: "agent_message", text: "Latest answer" }] }] };
   let releaseResume!: (value: unknown) => void;
@@ -364,7 +371,7 @@ it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph
   let releaseOldContent!: (value: unknown) => void;
   const oldContent = new Promise(resolve => { releaseOldContent = resolve; });
   const content = vi.fn().mockResolvedValue(answer);
-  if (phase === "hydration") content.mockReturnValueOnce(oldContent);
+  if (hydrating) content.mockReturnValueOnce(oldContent);
   const listeners = new Set<(event: unknown) => void>();
   window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })), resumeThread: resume,
     searchThreads: vi.fn().mockResolvedValue({ results: [{ thread, message_seq: 10, snippet: answer.text }] }),
@@ -376,7 +383,7 @@ it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph
   vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockImplementation(async workspace => ({ activeContext: workspace.active_context, projects, initialized: initialization() as never }));
   vi.spyOn(RuntimeLoader, "loadRuntimeThreadList").mockResolvedValue([thread as never]);
   vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async (_workspace, options) => ({ activeContext: selected, projects,
-    thread: options?.resumeLatestThread !== false && options?.resumeThreadID === thread.id ? (await resume()).thread : undefined,
+    thread: options?.resumeLatestThread !== false && options?.resumeThreadID === thread.id ? (await resume(thread.id)).thread : undefined,
     threads: [thread as never], initialized: initialization() as never }));
   const host = new PluginHost({ react: React }); hosts.push(host);
   const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
@@ -391,7 +398,8 @@ it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph
   else await locating;
   if (handoff) expect(resume).not.toHaveBeenCalled();
   if (phase === "paging") expect(window.wuu.loadEarlierThreadHistory).toHaveBeenCalledExactlyOnceWith(thread.id, "older-page");
-  if (phase === "hydration") expect(content).toHaveBeenCalledExactlyOnceWith("content:addressed-answer");
+  if (hydrating) expect(content).toHaveBeenCalledExactlyOnceWith("content:addressed-answer");
+  if (phase.startsWith("settled")) await app.invoke("navigation.reveal-complete", { requestId: app.getSnapshot().tabs.pending!.requestId! });
   let expectedThread = thread;
   if (phase === "graph-cancelled") await app.invoke("search.cancel", { targetId });
   if (phase === "graph-newer") {
@@ -416,7 +424,7 @@ it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph
   }
   expect(app.getSnapshot().search.target).toMatchObject({ id: targetId, threadId: thread.id, messageSeq: 10, query: "historical needle" });
   expect(resume).toHaveBeenCalledTimes(handoff ? 1 : 2);
-  if (phase !== "hydration") {
+  if (!hydrating) {
     expect(window.wuu.loadEarlierThreadHistory).toHaveBeenLastCalledWith(thread.id, "older-page");
     for (const listener of [...listeners]) listener({ kind: "notification", workdir: target.cwd, message: { method: "thread/historyLoaded", params: {
       thread_id: thread.id, cursor: "older-page", turns: [history],
@@ -430,5 +438,171 @@ it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph
   expect(() => oldApp.getSnapshot()).toThrow();
   await app.invoke("search.complete-target", { targetId });
   expect(app.getSnapshot().search.target).toBeUndefined();
+  expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
+});
+
+it("keeps an already-retargeted draft presentation through graph preparation without replaying the move", async () => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  let selected = source;
+  const loaded = () => ({ activeContext: selected, activeProjectId: selected.project_id, projects, threads: [], status: "ready",
+    initialized: { provider: "fixture", model: "fixture", providers: [],
+      application_surfaces: { "ui.application": { plugin_id: "business", generation: "one", provider_id: "ui.application" } },
+      extension_inventory: [{ id: "business", fingerprint: "one", graph_generation: selected === source ? "source" : "target" }],
+    } as never });
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })),
+    selectProject: vi.fn(async () => { selected = target; return { projects, active_context: selected }; }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), startThread: vi.fn(), startTurn: vi.fn(),
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async () => loaded());
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "source", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  await app.invoke("composer.set-draft", { text: "carry this unsent draft once" });
+  const moving = app.invoke("workspace.retarget-draft", { workspaceId: "b" });
+  const intentId = app.getSnapshot().tabs.pending?.intentId;
+  expect(intentId).toBeTruthy();
+  await moving;
+  expect(app.getSnapshot().tabs.pending?.intentId).toBe(intentId);
+  expect(app.getSnapshot().drafts.primary.text).toBe("carry this unsent draft once");
+  const targetTab = app.getSnapshot().tabs.activeTabId;
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  expect(app.getSnapshot().tabs.pending).toMatchObject({ intentId, contentReady: true });
+  expect(app.getSnapshot().tabs.activeTabId).toBe(targetTab);
+  expect(app.getSnapshot().drafts.primary.text).toBe("carry this unsent draft once");
+  expect(window.wuu.selectProject).toHaveBeenCalledOnce();
+  expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
+});
+
+it.each(["late-success", "late-failure", "superseded", "current-failure", "initially-empty", "cleared-source", "still-empty"])("checkpoints retarget carry before a slow catalog settles (%s)", async outcome => {
+  window.localStorage.clear(); window.sessionStorage.clear();
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  let selected = source, graph = "source", holdCatalog = false, catalogHeld = false;
+  const loaded = () => ({ activeContext: selected, activeProjectId: selected.project_id, projects, threads: [], status: "ready",
+    initialized: { provider: "fixture", model: "fixture", providers: [],
+      application_surfaces: { "ui.application": { plugin_id: "business", generation: "one", provider_id: "ui.application" } },
+      extension_inventory: [{ id: "business", fingerprint: "one", graph_generation: graph }],
+    } as never });
+  let release!: (value: ReturnType<typeof loaded>) => void, reject!: (error: Error) => void, entered!: () => void;
+  const slowCatalog = new Promise<ReturnType<typeof loaded>>((resolve, fail) => { release = resolve; reject = fail; });
+  const loading = new Promise<void>(resolve => { entered = resolve; });
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })),
+    selectProject: vi.fn(async id => { selected = id === "b" ? target : source; if (holdCatalog) graph = "target"; return { projects, active_context: selected }; }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), startThread: vi.fn(), startTurn: vi.fn(),
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(() => {
+    if (holdCatalog && !catalogHeld) { catalogHeld = true; entered(); return slowCatalog; }
+    return Promise.resolve(loaded());
+  });
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: graph, register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  // An empty carry must leave a pre-existing destination draft intact.
+  await app.invoke("workspace.start-draft", { workspaceId: "b" });
+  await app.invoke("composer.set-draft", { text: "previous target draft" });
+  await app.invoke("workspace.start-draft", { workspaceId: "a" });
+  await app.invoke("composer.set-draft", { text: outcome === "initially-empty" || outcome === "still-empty" ? "" : "source before catalog" });
+  holdCatalog = true;
+  const sourceTab = app.getSnapshot().tabs.activeTabId;
+  const moving = app.invoke("workspace.retarget-draft", { workspaceId: "b" }).catch(error => error);
+  await loading;
+  const intentId = app.getSnapshot().tabs.pending?.intentId;
+  const latestText = outcome === "cleared-source" || outcome === "still-empty" ? "" : "latest source edit while catalog waits";
+  await app.invoke("composer.set-draft", { text: latestText });
+  if (outcome === "current-failure") { reject(new Error("catalog unavailable")); await moving; }
+  if (outcome === "superseded") await app.invoke("workspace.start-draft", { workspaceId: "b" });
+  const selections = vi.mocked(window.wuu.selectProject).mock.calls.length;
+  const oldApp = app;
+  // The old consumer aborts and writer checkpoints while its catalog is unresolved.
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  expect(() => oldApp.getSnapshot()).toThrow();
+  expect(app.getSnapshot().workspaces.activeRoot).toBe("/b");
+  const carry = outcome !== "superseded" && outcome !== "current-failure";
+  expect(app.getSnapshot().drafts.primary.text).toBe(carry && latestText ? latestText : "previous target draft");
+  expect(app.getSnapshot().tabs.items.find(tab => tab.id === sourceTab)?.draftText).toBe(latestText);
+  if (carry) expect(app.getSnapshot().tabs.pending).toMatchObject({ intentId, contentReady: true });
+  else expect(app.getSnapshot().tabs.pending?.intentId).not.toBe(intentId);
+  const targetTab = app.getSnapshot().tabs.activeTabId;
+  await app.invoke("composer.set-draft", { text: "new target edit must win" });
+  if (outcome === "late-failure") reject(new Error("retired catalog failed"));
+  else if (outcome !== "current-failure") release(loaded());
+  await moving;
+  expect(app.getSnapshot().drafts.primary.text).toBe("new target edit must win");
+  graph = "target-next";
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: graph, register });
+  await host.activateGeneration({ pluginId: "shell", generation: "three", register: api => { app = api.application; } });
+  expect(app.getSnapshot().tabs.activeTabId).toBe(targetTab);
+  expect(app.getSnapshot().drafts.primary.text).toBe("new target edit must win");
+  expect(window.wuu.selectProject).toHaveBeenCalledTimes(selections);
+  expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
+});
+
+it("does not attach an obsolete retarget response to a newer request intent", async () => {
+  window.localStorage.clear(); window.sessionStorage.clear();
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const staleTarget = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const target = { kind: "project" as const, project_id: "c", cwd: "/c" };
+  const projects = [source, staleTarget, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  let selected = source, graph = "source";
+  const loaded = () => ({ activeContext: selected, activeProjectId: selected.project_id, projects, threads: [], status: "ready",
+    initialized: { provider: "fixture", model: "fixture", providers: [],
+      application_surfaces: { "ui.application": { plugin_id: "business", generation: "one", provider_id: "ui.application" } },
+      extension_inventory: [{ id: "business", fingerprint: "one", graph_generation: graph }],
+    } as never });
+  let releaseSelection!: () => void, enteredLatest!: () => void, enteredStale!: () => void;
+  const latestLoading = new Promise<void>(resolve => { enteredLatest = resolve; });
+  const staleLoading = new Promise<void>(resolve => { enteredStale = resolve; });
+  const oldSelection = new Promise<void>(resolve => { releaseSelection = resolve; });
+  let releaseCatalog!: (value: ReturnType<typeof loaded>) => void;
+  const slowCatalog = new Promise<ReturnType<typeof loaded>>(resolve => { releaseCatalog = resolve; });
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })),
+    selectProject: vi.fn(async id => {
+      const context = id === "b" ? staleTarget : target;
+      selected = context; graph = "target";
+      // Selection B committed before C, but B's response arrives after C's.
+      if (id === "b") await oldSelection;
+      return { projects, active_context: context };
+    }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), startThread: vi.fn(), startTurn: vi.fn(),
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementationOnce(async () => loaded())
+    .mockImplementationOnce(() => { enteredLatest(); return slowCatalog; })
+    .mockImplementationOnce(() => { enteredStale(); return slowCatalog; })
+    .mockImplementation(async () => loaded());
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: graph, register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  await app.invoke("composer.set-draft", { text: "carry latest draft to C" });
+  const sourceTab = app.getSnapshot().tabs.activeTabId;
+  const oldMove = app.invoke("workspace.retarget-draft", { workspaceId: "b" }).catch(error => error);
+  const latestMove = app.invoke("workspace.retarget-draft", { workspaceId: "c" }).catch(error => error);
+  await latestLoading;
+  const intent = app.getSnapshot().tabs.pending?.intentId;
+  releaseSelection();
+  await staleLoading;
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  expect(app.getSnapshot().workspaces.activeRoot).toBe("/c");
+  expect(app.getSnapshot().tabs.pending?.intentId).toBe(intent);
+  expect(app.getSnapshot().drafts.primary.text).toBe("carry latest draft to C");
+  expect(app.getSnapshot().tabs.items.find(tab => tab.id === sourceTab)?.draftText).toBe("carry latest draft to C");
+  await app.invoke("composer.set-draft", { text: "new C edit" });
+  releaseCatalog(loaded()); await Promise.all([oldMove, latestMove]);
+  expect(app.getSnapshot().drafts.primary.text).toBe("new C edit");
+  expect(window.wuu.selectProject).toHaveBeenCalledTimes(2);
   expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
 });

@@ -23,8 +23,11 @@ export function useConversationSwitchReady({
   settleLayoutRef.current = settleLayout;
   const requestID = pendingViewSwitch?.restoreRequestID;
   const targetID = pendingViewSwitch?.targetID;
+  const kind = pendingViewSwitch?.kind;
   useLayoutEffect(() => {
-    if (requestID === undefined || targetID !== activeThreadID) return;
+    // Only thread addresses name a history. Verified workspace/runtime/tab
+    // destinations can present a blank draft, and their IDs are not thread IDs.
+    if (requestID === undefined || kind === "thread" && targetID !== activeThreadID) return;
     // Covered routes cannot provide visible conversation geometry. Finish
     // runtime recovery without waiting for the hidden or unmounted viewport.
     if (!visible) {
@@ -62,5 +65,5 @@ export function useConversationSwitchReady({
     };
     frame = window.requestAnimationFrame(check);
     return () => window.cancelAnimationFrame(frame);
-  }, [activeThreadID, finishViewSwitch, requestID, targetID, viewportRef, visible]);
+  }, [activeThreadID, finishViewSwitch, kind, requestID, targetID, viewportRef, visible]);
 }

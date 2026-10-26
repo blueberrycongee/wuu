@@ -16,7 +16,7 @@ export function useApplicationNavigationState(application: ApplicationServiceV1)
     return () => window.clearTimeout(timer);
   }, [pending?.requestId, pending?.kind]);
   const pendingViewSwitch: PendingViewSwitch | undefined = pending && {
-    kind: pending.kind === "tab" ? "thread" : pending.kind,
+    kind: pending.kind,
     targetID: pending.targetId,
     visible: pending.kind === "thread" || visibleRequest === pending.requestId,
     contextSwitching: pending.contextSwitching,

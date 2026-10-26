@@ -268,99 +268,109 @@ export class DesktopPluginRuntime {
       }
     }
 
-    const previousDesired = this.desiredPlugins;
-    this.desiredPlugins = desired;
-    // Dependents release resources before a provider can replace or dispose them.
-    // Keep a plugin's own last good generation live while its replacement stages.
-    const previousOrder = dependencyOrder(previousDesired);
-    const knownPluginIds = new Set([...previousOrder.reverse(), ...this.activeGenerations.keys()]);
-    for (const pluginId of knownPluginIds) {
-      const plugin = desired.get(pluginId);
-      if (!plugin?.desktop || dependenciesChanged(pluginId)) {
-        const cleanup = unload(pluginId);
-        if (cleanup) await cleanup;
-        if (epoch !== this.syncEpoch) return [];
-      }
-    }
-
-    // Disabling a plugin must take effect even while unrelated preferences are loading.
+    // Consumers can observe their aborted scope before the selected registry
+    // transitions. Publish the prepared replacement's exact source binding first.
+    const finishRetirement = preparedApplication && this.host.applicationProviders.beginRetirement(controller.signal);
     try {
-      const preferences = await settleOnAbort(() => window.wuu?.getPluginConflictPreferences?.(), controller.signal);
       if (epoch !== this.syncEpoch) return [];
-      if (preferences) this.host.setConflictPreferences(preferences);
-    } catch (error: unknown) {
-      if (controller.signal.aborted) return [];
-      throw error;
-    }
+      const previousDesired = this.desiredPlugins;
+      this.desiredPlugins = desired;
+      // Dependents release resources before a provider can replace or dispose them.
+      // Keep a plugin's own last good generation live while its replacement stages.
+      const previousOrder = dependencyOrder(previousDesired);
+      const knownPluginIds = new Set([...previousOrder.reverse(), ...this.activeGenerations.keys()]);
+      for (const pluginId of knownPluginIds) {
+        const plugin = desired.get(pluginId);
+        if (!plugin?.desktop || dependenciesChanged(pluginId)) {
+          const cleanup = unload(pluginId);
+          if (cleanup) await cleanup;
+          if (epoch !== this.syncEpoch) return [];
+        }
+      }
 
-    // Each branch waits only for its providers, never for unrelated startup work.
-    const activations = new Map<string, Promise<boolean>>();
-    const failures: DesktopPluginFailure[] = [];
-    const activate = (id: string): Promise<boolean> => {
-      const existing = activations.get(id);
-      if (existing) return existing;
-      const plugin = desired.get(id)!;
-      const pending = (async (): Promise<boolean> => {
-        const providerIds = dependencies.get(id) ?? [];
-        const ready = await Promise.all(providerIds.map(activate));
-        if (epoch !== this.syncEpoch) return false;
-        if (providerIds.some((provider, index) => !ready[index] && requiredDependencies.get(id)?.includes(provider))) {
-          if (plugin.desktop) {
-            const error = new Error("Required desktop dependency failed to activate");
-            try {
-              await this.host.activateGeneration({ pluginId: id, generation: plugin.fingerprint!, graphGeneration: plugin.graph_generation, register: () => { throw error; } });
-            } catch (failure: unknown) {
-              failures.push({ pluginId: id, fingerprint: plugin.fingerprint!, error: failure });
-            }
-          }
-          return false;
-        }
-        if (!plugin.desktop) return true;
-        const fingerprint = plugin.fingerprint;
-        if (!fingerprint || this.activeGenerations.get(plugin.id) === desktopGeneration(plugin)) {
-          return true;
-        }
-        // Staging callbacks can already own provider resources before activation commits.
-        const pending = { signature: dependencySignature(plugin.id, true) };
-        this.pendingDependencies.set(plugin.id, pending);
-        try {
+      // Disabling a plugin must take effect even while unrelated preferences are loading.
+      try {
+        const preferences = await settleOnAbort(() => window.wuu?.getPluginConflictPreferences?.(), controller.signal);
+        if (epoch !== this.syncEpoch) return [];
+        if (preferences) this.host.setConflictPreferences(preferences);
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return [];
+        throw error;
+      }
+
+      // Each branch waits only for its providers, never for unrelated startup work.
+      const activations = new Map<string, Promise<boolean>>();
+      const failures: DesktopPluginFailure[] = [];
+      const activate = (id: string): Promise<boolean> => {
+        const existing = activations.get(id);
+        if (existing) return existing;
+        const plugin = desired.get(id)!;
+        const pending = (async (): Promise<boolean> => {
+          const providerIds = dependencies.get(id) ?? [];
+          const ready = await Promise.all(providerIds.map(activate));
           if (epoch !== this.syncEpoch) return false;
-          if (preparedApplication?.id === plugin.id) await preparedApplication.stage.activate();
-          else await this.host.activateGeneration(activationOptions(plugin));
-          if (epoch === this.syncEpoch) {
-            this.activeGenerations.set(plugin.id, desktopGeneration(plugin));
-            this.activeDependencies.set(plugin.id, dependencySignature(plugin.id, true));
-            // Recovery changes availability without changing inventory. Fence
-            // every affected consumer in reverse order before any can restart.
-            for (const dependent of dependencyOrder(desired).reverse()) {
-              if (dependenciesChanged(dependent, true)) {
-                const cleanup = unload(dependent);
-                if (cleanup) await cleanup;
-                if (epoch !== this.syncEpoch) return false;
+          if (providerIds.some((provider, index) => !ready[index] && requiredDependencies.get(id)?.includes(provider))) {
+            if (plugin.desktop) {
+              const error = new Error("Required desktop dependency failed to activate");
+              try {
+                await this.host.activateGeneration({ pluginId: id, generation: plugin.fingerprint!, graphGeneration: plugin.graph_generation, register: () => { throw error; } });
+              } catch (failure: unknown) {
+                if (selectedApplication?.pluginId === id) finishRetirement?.();
+                failures.push({ pluginId: id, fingerprint: plugin.fingerprint!, error: failure });
               }
             }
-          }
-        } catch (error: unknown) {
-          if (epoch !== this.syncEpoch || error instanceof PluginGenerationSupersededError) {
             return false;
           }
-          if (selectedApplication?.pluginId === plugin.id) this.host.reportApplicationActivationFailure(plugin.id, fingerprint!, plugin.graph_generation, error);
-          // Module registration can survive a failed candidate; business writers obey
-          // the stronger committed-graph suspension boundary reported above.
-          failures.push({ pluginId: plugin.id, fingerprint, error });
-          return false;
-        } finally {
-          if (this.pendingDependencies.get(plugin.id) === pending) {
-            this.pendingDependencies.delete(plugin.id);
+          if (!plugin.desktop) return true;
+          const fingerprint = plugin.fingerprint;
+          if (!fingerprint || this.activeGenerations.get(plugin.id) === desktopGeneration(plugin)) {
+            return true;
           }
-        }
-        return true;
-      })();
-      activations.set(id, pending);
-      return pending;
-    };
-    await Promise.all([...desired.keys()].sort().map(activate));
-    return failures.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+          // Staging callbacks can already own provider resources before activation commits.
+          const pending = { signature: dependencySignature(plugin.id, true) };
+          this.pendingDependencies.set(plugin.id, pending);
+          try {
+            if (epoch !== this.syncEpoch) return false;
+            if (preparedApplication?.id === plugin.id) await preparedApplication.stage.activate();
+            else await this.host.activateGeneration(activationOptions(plugin));
+            if (epoch === this.syncEpoch) {
+              this.activeGenerations.set(plugin.id, desktopGeneration(plugin));
+              this.activeDependencies.set(plugin.id, dependencySignature(plugin.id, true));
+              // Recovery changes availability without changing inventory. Fence
+              // every affected consumer in reverse order before any can restart.
+              for (const dependent of dependencyOrder(desired).reverse()) {
+                if (dependenciesChanged(dependent, true)) {
+                  const cleanup = unload(dependent);
+                  if (cleanup) await cleanup;
+                  if (epoch !== this.syncEpoch) return false;
+                }
+              }
+            }
+          } catch (error: unknown) {
+            if (selectedApplication?.pluginId === plugin.id) finishRetirement?.();
+            if (epoch !== this.syncEpoch || error instanceof PluginGenerationSupersededError) {
+              return false;
+            }
+            if (selectedApplication?.pluginId === plugin.id) {
+              this.host.reportApplicationActivationFailure(plugin.id, fingerprint!, plugin.graph_generation, error);
+            }
+            // Module registration can survive a failed candidate; business writers obey
+            // the stronger committed-graph suspension boundary reported above.
+            failures.push({ pluginId: plugin.id, fingerprint, error });
+            return false;
+          } finally {
+            if (this.pendingDependencies.get(plugin.id) === pending) {
+              this.pendingDependencies.delete(plugin.id);
+            }
+          }
+          return true;
+        })();
+        activations.set(id, pending);
+        return pending;
+      };
+      await Promise.all([...desired.keys()].sort().map(activate));
+      return failures.sort((left, right) => left.pluginId.localeCompare(right.pluginId));
+    } finally { finishRetirement?.(); }
   }
 }
 

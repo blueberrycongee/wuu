@@ -493,7 +493,6 @@ export type ConversationSidePanelsProps = {
   onOpenPullRequest: () => void;
   rightPanelFilePath?: string;
   onCloseFilePreview: () => void;
-  switchLoadingVisible: boolean;
 };
 
 export function ConversationSidePanels({
@@ -517,7 +516,6 @@ export function ConversationSidePanels({
   onOpenPullRequest,
   rightPanelFilePath,
   onCloseFilePreview,
-  switchLoadingVisible,
 }: ConversationSidePanelsProps): JSX.Element {
   return (
     <>
@@ -544,7 +542,6 @@ export function ConversationSidePanels({
         onCloseFilePreview={onCloseFilePreview}
       />
 
-      {switchLoadingVisible ? <ViewSwitchLoading placement="conversation" /> : null}
     </>
   );
 }

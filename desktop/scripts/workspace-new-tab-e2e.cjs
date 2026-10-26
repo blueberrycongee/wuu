@@ -414,7 +414,7 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
   });
-  // Measure the shipping capsule and its narrow-document fallback: drafts and
+  // Measure the shipping editor and its narrow-document layout: drafts and
   // controls stay readable without overlap, and attachments retain their space.
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap textarea')));
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-context-meter'))
@@ -434,21 +434,21 @@ app.whenReady().then(async () => {
       const input = root.querySelector('textarea');
       const frame = root.querySelector('.composer-frame');
       const send = root.querySelector('.composer-action-button');
-      const toolbar = [...root.querySelectorAll('.composer, .composer-bar')].find((node) => {
-        const style = getComputedStyle(node);
-        return style.display !== 'contents' && style.containerName.split(' ').includes('composer-toolbar');
-      });
-      if (!toolbar) throw new Error('Missing the active composer-toolbar query container');
-      if (!getComputedStyle(root).containerName.split(' ').includes('document-composer'))
-        throw new Error('Missing the document-composer query container');
+      const editor = root.querySelector('.composer-editor');
+      const shell = root.querySelector('.composer-shell');
       const box = (node) => node.getBoundingClientRect().toJSON();
       const contentWidth = (node) => {
         const style = getComputedStyle(node);
         return box(node).width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
           - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth);
       };
-      return { frame: box(frame), input: box(input), send: box(send), toolbar: box(toolbar),
-        toolbarControls: [...toolbar.querySelectorAll('button')].map(box)
+      return { frame: box(frame), input: box(input), send: box(send), editor: box(editor),
+        editorControls: [...editor.querySelectorAll('button, .composer-context-meter')].map(node => {
+          const bounds = box(node);
+          const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+          return { ...bounds, label: node.getAttribute('aria-label') || node.className,
+            hit: hit === node || node.contains(hit) };
+        })
           .filter(control => control.width > 0 && control.height > 0),
         frameRadius: parseFloat(getComputedStyle(frame).borderTopLeftRadius),
         fontSize: parseFloat(getComputedStyle(input).fontSize), lineHeight: parseFloat(getComputedStyle(input).lineHeight),
@@ -459,49 +459,52 @@ app.whenReady().then(async () => {
         context: box(root.querySelector('.composer-context-meter')),
         contextLabel: box(root.querySelector('.composer-context-meter-label')),
         effort: box(root.querySelector('.codex-runtime-effort')),
-        composerWidth: contentWidth(root), toolbarWidth: contentWidth(toolbar),
+        composerWidth: contentWidth(root), shellWidth: contentWidth(shell),
         tray: root.querySelector('.composer-attachment-tray') ? box(root.querySelector('.composer-attachment-tray')) : null,
         attachment: root.querySelector('.composer-file-card') ? box(root.querySelector('.composer-file-card')) : null };
     });
+    fs.writeFileSync(path.join(output, name + '.json'), JSON.stringify(geometry, null, 2));
     assert.ok(Number.isFinite(geometry.composerWidth) && geometry.composerWidth > 0
-      && Number.isFinite(geometry.toolbarWidth) && geometry.toolbarWidth > 0,
-      name + ': both responsive containers have measurable content widths');
+      && Number.isFinite(geometry.shellWidth) && geometry.shellWidth > 0,
+      name + ': the visible document and composer shell have measurable content widths');
     assert.ok(geometry.frame.left >= -1 && geometry.frame.right <= geometry.viewportWidth + 1,
       name + ': editor remains within the viewport');
     assert.ok(geometry.frame.top >= 0 && geometry.frame.bottom <= geometry.viewportHeight + 1,
       name + ': editor remains vertically reachable');
     assert.ok(geometry.input.width >= 32 && geometry.send.width >= 24 && geometry.send.height >= 24,
       name + ': text and send retain usable hit targets');
-    fs.writeFileSync(path.join(output, name + '.json'), JSON.stringify(geometry, null, 2));
     results.push({ scenario: name, geometry });
     return geometry;
   };
   const assertReadableEditor = (geometry, name) => {
     assert.ok(geometry.input.width >= geometry.fontSize * 8,
       name + ': input retains room to read and edit a short phrase');
-    assert.ok(geometry.toolbar.height > 0 && geometry.input.top >= geometry.toolbar.top - 1
-      && geometry.input.bottom <= geometry.toolbar.bottom + 1,
+    assert.ok(geometry.editor.height > 0 && geometry.input.top >= geometry.editor.top - 1
+      && geometry.input.bottom <= geometry.editor.bottom + 1,
       name + ": input remains inside the capsule");
-    assert.ok(geometry.toolbarControls.every(control =>
+    assert.ok(geometry.editorControls.every(control =>
       control.right <= geometry.input.left + 1 || control.left >= geometry.input.right - 1
       || control.bottom <= geometry.input.top + 1 || control.top >= geometry.input.bottom - 1),
       name + ": input and native control targets never overlap");
-    assert.ok(geometry.toolbarControls.length > 0 && geometry.toolbarControls.every(control =>
-      control.top >= geometry.toolbar.top - 1 && control.bottom <= geometry.frame.bottom + 1
+    assert.ok(geometry.editorControls.length > 0 && geometry.editorControls.every(control =>
+      control.top >= geometry.editor.top - 1 && control.bottom <= geometry.frame.bottom + 1
       && control.left >= geometry.frame.left - 1 && control.right <= geometry.frame.right + 1),
-      name + ': toolbar controls stay inside the capsule');
-    assert.ok(geometry.runtime.width > 0 && geometry.runtime.right <= geometry.send.left + 1,
-      name + ': model menu and send remain available without overlap');
-    if (geometry.toolbarWidth <= 560) {
-      assert.equal(geometry.context.width, 0, name + ': narrow toolbar folds the context meter');
-    } else {
-      assert.ok(geometry.context.width > 0 && geometry.runtime.left >= geometry.context.right - 1,
-        name + ': wider toolbar retains the context ring beside runtime controls');
-      if (geometry.toolbarWidth <= 680) assert.equal(geometry.contextLabel.width, 0,
-        name + ': medium toolbar keeps the context ring without its verbose label');
+      name + ': editor controls stay inside the capsule');
+    assert.ok(geometry.editorControls.every(control => control.hit),
+      name + ': every editor control owns its native pointer target');
+    const separated = (left, right) => left.right <= right.left + 1 || left.left >= right.right - 1
+      || left.bottom <= right.top + 1 || left.top >= right.bottom - 1;
+    assert.ok(geometry.editorControls.every((control, index) =>
+      geometry.editorControls.slice(index + 1).every(peer => separated(control, peer))),
+      name + ': wrapped editor controls never overlap one another');
+    assert.ok(geometry.runtime.width > 0 && geometry.context.width > 0,
+      name + ': the context ring and model menu remain available');
+    // Runtime controls now belong to the editor, not the optional extension
+    // toolbar. Constrained editors fold their labels, not the context action.
+    if (geometry.shellWidth <= 480) {
+      assert.equal(geometry.contextLabel.width, 0, name + ': narrow editors fold the context label');
+      assert.equal(geometry.effort.width, 0, name + ': narrow editors fold effort without stealing the input lane');
     }
-    if (geometry.toolbarWidth <= 420) assert.equal(geometry.effort.width, 0,
-      name + ': constrained toolbar folds effort without stealing the input lane');
     assert.ok(geometry.scrollHeight <= geometry.clientHeight + 1, name + ': short draft and placeholder are not clipped');
   };
   // A docked preview leaves only the conversation input; the draft follows
@@ -569,6 +572,14 @@ app.whenReady().then(async () => {
       assert.ok(focused.focused && focused.selectionStart === 1 && focused.selectionEnd === 3,
         name + ': focusing preserves the live editor selection');
       assert.ok(Math.abs(focused.frame.height - empty.frame.height) <= 2, name + ': focus does not expand the editor');
+      await pointerClick('.document-composer-wrap .codex-runtime-trigger');
+      await waitFor(() => Boolean(document.querySelector('.codex-runtime-menu')));
+      await capture(name + '-runtime-menu');
+      win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
+      await waitFor(() => !document.querySelector('.codex-runtime-menu'));
+      assert.equal(await evaluate(() => document.querySelector('.document-composer-wrap textarea').value), 'Edit',
+        name + ': opening and dismissing the real model menu preserves the draft');
       await setDocumentDraft('Continuous words wrap naturally while editing the selected document. '.repeat(12));
       await waitFor(() => {
         const root = document.querySelector('.document-composer-wrap');

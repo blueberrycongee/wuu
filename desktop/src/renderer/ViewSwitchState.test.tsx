@@ -3,6 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useConversationSwitchReady } from "./ConversationSwitchReady";
 import { ViewSwitchLoading } from "./LoadingViews";
+import { useApplicationNavigationState } from "./modules/ApplicationNavigationState";
+import { UICompositionPendingContext } from "./plugins/ApplicationShell";
+import type { ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../packages/plugin-sdk/src/ui";
 import {
   useViewSwitchState,
   type ViewSwitchStateController,
@@ -167,4 +170,95 @@ it.each([true, false])("releases navigation when the conversation viewport is te
   for (let index = 0; index < 8; index++) paint();
   expect(finishViewSwitch).toHaveBeenCalledExactlyOnceWith(7);
   expect(settleLayout.mock.calls.length > 0).toBe(mounts);
+});
+
+
+it.each(["workspace", "runtime", "tab"] as const)("reveals a verified %s destination with or without a thread and fences an old completion", async kind => {
+  const frames = new Map<number, FrameRequestCallback>();
+  let nextFrame = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
+    frames.set(++nextFrame, callback); return nextFrame;
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+  const paint = () => act(() => {
+    const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0));
+  });
+  let tabs = { navigationRevision: 1, pending: { kind, targetId: "destination-address", requestId: 1, contentReady: false } } as ApplicationSnapshotV1["tabs"];
+  const listeners = new Set<() => void>();
+  const publish = () => { for (const listener of listeners) listener(); };
+  const invoke = vi.fn(async (_action: string, input: { requestId: number }) => {
+    if (input.requestId === tabs.pending?.requestId) { tabs = { ...tabs, pending: undefined }; publish(); }
+  });
+  const application = { getSnapshot: () => ({ tabs }), subscribe: (listener: () => void) => {
+    listeners.add(listener); return () => listeners.delete(listener);
+  }, invoke } as unknown as ApplicationServiceV1;
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  let surfacesPending = false;
+  function Probe() {
+    const navigation = useApplicationNavigationState(application);
+    const viewportRef = useRef<HTMLDivElement>(null);
+    useConversationSwitchReady({ pendingViewSwitch: navigation.pendingViewSwitch, activeThreadID: tabs.primaryThreadId,
+      viewportRef, settleLayout: () => {}, finishViewSwitch: navigation.finishViewSwitch });
+    return createElement("div", { ref: viewportRef }, createElement("textarea", { disabled: navigation.submissionTargetPending }));
+  }
+  const render = () => act(async () => { root.render(createElement(UICompositionPendingContext.Provider,
+    { value: surfacesPending }, createElement(Probe))); });
+  await render();
+  for (let index = 0; index < 8; index++) paint();
+  expect(invoke).not.toHaveBeenCalled();
+  expect(container.querySelector("textarea")!.disabled).toBe(true);
+  // Destination state is authoritative, but its selected surfaces still need to mount.
+  surfacesPending = true;
+  tabs = { ...tabs, pending: { ...tabs.pending!, contentReady: true } };
+  await render();
+  for (let index = 0; index < 8; index++) paint();
+  expect(invoke).not.toHaveBeenCalled();
+  surfacesPending = false; await render();
+  paint(); paint(); paint();
+  expect(invoke).toHaveBeenLastCalledWith("navigation.reveal-complete", { requestId: 1 });
+  expect(container.querySelector("textarea")!.disabled).toBe(false);
+  act(() => { tabs = { ...tabs, navigationRevision: 2,
+    pending: { kind, targetId: "destination-address", requestId: 2, contentReady: true } }; publish(); });
+  paint(); paint();
+  const staleFrame = [...frames.values()][0];
+  expect(staleFrame).toBeDefined();
+  // A new intent can use the same destination address. Its request owns reveal.
+  act(() => { tabs = { ...tabs, navigationRevision: 3, pending: { ...tabs.pending!, requestId: 3, contentReady: false } }; publish(); });
+  act(() => { staleFrame(0); });
+  for (let index = 0; index < 8; index++) paint();
+  expect(invoke).toHaveBeenCalledTimes(1);
+  expect(container.querySelector("textarea")!.disabled).toBe(true);
+  act(() => { tabs = { ...tabs, pending: { ...tabs.pending!, contentReady: true } }; publish(); });
+  paint(); paint(); paint();
+  expect(invoke).toHaveBeenLastCalledWith("navigation.reveal-complete", { requestId: 3 });
+  expect(container.querySelector("textarea")!.disabled).toBe(false);
+  // Workspace/tab addresses also differ from the thread shown at that destination.
+  act(() => { tabs = { ...tabs, primaryThreadId: "loaded-thread", navigationRevision: 4,
+    pending: { kind, targetId: "destination-address", requestId: 4, contentReady: true } }; publish(); });
+  paint(); paint(); paint();
+  expect(invoke).toHaveBeenLastCalledWith("navigation.reveal-complete", { requestId: 4 });
+  expect(invoke).toHaveBeenCalledTimes(3);
+  expect(container.querySelector("textarea")!.disabled).toBe(false);
+});
+
+it("does not reveal a ready thread intent while a different thread is active", async () => {
+  const frames = new Map<number, FrameRequestCallback>(); let nextFrame = 0;
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.set(++nextFrame, callback); return nextFrame; });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
+  const finishViewSwitch = vi.fn(() => true), viewportRef = { current: document.createElement("div") };
+  function Probe({ activeThreadID }: { activeThreadID: string }) {
+    useConversationSwitchReady({ pendingViewSwitch: { kind: "thread", targetID: "expected-thread", visible: true, restoreRequestID: 4 },
+      activeThreadID, viewportRef, settleLayout: () => {}, finishViewSwitch });
+    return null;
+  }
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container); mountedRoots.push(root);
+  await act(async () => { root.render(createElement(Probe, { activeThreadID: "different-thread" })); });
+  expect(frames.size).toBe(0); expect(finishViewSwitch).not.toHaveBeenCalled();
+  await act(async () => { root.render(createElement(Probe, { activeThreadID: "expected-thread" })); });
+  for (let index = 0; index < 3; index++) act(() => {
+    const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0));
+  });
+  expect(finishViewSwitch).toHaveBeenCalledExactlyOnceWith(4);
 });

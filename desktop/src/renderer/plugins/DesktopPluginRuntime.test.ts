@@ -16,6 +16,54 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
+  it.each([false, true])("marks a prepared source retirement before dependent scope abort and clears it after activation (%s)", async failActivation => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    const events: string[] = [];
+    let replacement = false, cleanupEntered!: () => void, releaseCleanup!: () => void;
+    const cleanupStarted = new Promise<void>(resolve => { cleanupEntered = resolve; });
+    const cleanupGate = new Promise<void>(resolve => { releaseCleanup = resolve; });
+    let abortedSource: { retirement: ReturnType<typeof host.applicationProviders.getRetirement>; current: unknown; binding: number } | undefined;
+    const runtime = new DesktopPluginRuntime(host, async id => ({ activate(api: PluginGenerationApi) {
+      if (id === "user:business") {
+        const next = replacement;
+        api.registerApplicationProvider({ id: "ui.application", prepare: () => ({
+          activate() { if (next && failActivation) throw new Error("replacement activation failed"); },
+          deactivate() { events.push("business:stop"); return undefined; }, dispose() {}, createScope() { throw new Error("unused"); },
+        }) });
+      } else {
+        api.registerApplicationShell({ id: "ui.shell", render: () => null });
+        if (!replacement) {
+          api.signal.addEventListener("abort", () => {
+            abortedSource = { retirement: host.applicationProviders.getRetirement(), current: host.applicationProviders.current, binding: host.applicationProviders.getBindingRevision() };
+          }, { once: true });
+          api.registerCleanup(async () => { cleanupEntered(); await cleanupGate; events.push("shell:cleaned"); });
+        }
+      }
+    } }));
+    const business = { ...dependencyPlugin("business"), graph_generation: "graph-one" };
+    const shell = { ...dependencyPlugin("shell", ["business"]), resolved_required_dependencies: ["business"] };
+    await host.selectApplicationBinding({ pluginId: business.id, generation: business.fingerprint!, id: "ui.application" });
+    await runtime.sync([business, shell]);
+    const source = host.applicationProviders.current, binding = host.applicationProviders.getBindingRevision();
+    replacement = true;
+    const next = { ...business, fingerprint: "candidate", graph_generation: "graph-two" };
+    await host.selectApplicationBinding({ pluginId: next.id, generation: next.fingerprint, id: "ui.application" });
+    const pending = runtime.sync([next, shell]);
+    try {
+      await cleanupStarted;
+      expect(abortedSource).toEqual({ retirement: { binding }, current: source, binding });
+      expect(host.applicationProviders.getRetirement()).toEqual({ binding });
+      expect(events).not.toContain("business:stop");
+    } finally { releaseCleanup(); }
+    const failures = await pending;
+    expect(failures.some(failure => failure.pluginId === business.id)).toBe(failActivation);
+    if (!failActivation) expect(failures).toEqual([]);
+    expect(host.applicationProviders.getRetirement()).toBeUndefined();
+    expect(events.indexOf("shell:cleaned")).toBeLessThan(events.indexOf("business:stop"));
+    await runtime.shutdown();
+  });
+
   // Failure cases: graph-only replacement removes the selected root while loading,
   // failed staging loses last-good UI, or keeping it delays a real disable.
   it.each(["bridge", "register"])("keeps the selected shell mounted during held %s after disabling an unrelated plugin", async (stage) => {
@@ -102,6 +150,7 @@ describe("DesktopPluginRuntime", () => {
     await host.selectApplicationBinding({ pluginId: candidate.id, generation: candidate.fingerprint, id: "ui.application" });
     const failures = await runtime.sync([candidate, shell]);
     expect(failures).toHaveLength(1);
+    expect(host.applicationProviders.getRetirement()).toBeUndefined();
     expect(host.getApplicationShells()[0]).toBe(previousShell);
     expect(host.applicationProviders.current).toBe(committed ? undefined : previousBusiness);
     if (committed) expect(host.applicationProviders.failure).toContain("Go graph graph-two is committed");

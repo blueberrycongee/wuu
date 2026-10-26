@@ -64,7 +64,7 @@ export class ApplicationNavigation {
       removeCachedSidebarThread: (id: string) => void;
     };
     getPendingDraftTabIds: () => readonly string[];
-    mutationActions: () => Pick<ThreadMutationActions, "toggleThreadPinned" | "archiveThread" | "deleteThread">;
+    mutationActions: (signal?: AbortSignal) => Pick<ThreadMutationActions, "toggleThreadPinned" | "archiveThread" | "deleteThread">;
   }) { this.browser = createRibbonBrowserState(host.getWebWorkspace); }
 
   private threads(): Thread[] {
@@ -267,7 +267,7 @@ export class ApplicationNavigation {
       }
       case "navigation.archive-thread": {
         const { threadId, force } = input as Actions["navigation.archive-thread"]["input"];
-        result = await this.host.mutationActions().archiveThread(this.thread(threadId), { force }); break;
+        result = await this.host.mutationActions(signal).archiveThread(this.thread(threadId), { force }); break;
       }
       case "navigation.delete-thread": await this.host.mutationActions().deleteThread(this.thread((input as Actions["navigation.delete-thread"]["input"]).threadId)); break;
       case "navigation.adopt-thread": {

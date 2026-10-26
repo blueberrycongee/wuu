@@ -68,6 +68,8 @@ const sidebarThreads = Number(process.env.WUU_SWITCH_SIDEBAR_THREADS || 0);
 const pacedStream = process.env.WUU_SWITCH_PACED_STREAM === '1';
 const streamOnly = process.env.WUU_SWITCH_STREAM_ONLY === '1';
 const sameWorkspace = process.env.WUU_SWITCH_SAME_WORKSPACE === '1';
+const presentationMode = process.env.WUU_SWITCH_PRESENTATION === '1';
+if (presentationMode) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sameWorkspace, false, 'Presentation acceptance is a separate product workload');
 if (sameWorkspace) assert.equal(startupOnly || pacedStream || streamOnly || subscriptionTurns > 0 || sidebarThreads > 0, false, 'Same-workspace switching is a separate diagnostic workload');
 if (streamOnly) {
   assert.ok(pacedStream, 'Stream-only mode requires paced streaming');
@@ -125,7 +127,7 @@ process.env.WUU_HOME = home;
   process.env.GROK_HOME = path.join(process.env.HOME, '.grok');
 }
 process.env.WUU_DESKTOP_CORE ||= path.join(desktop, 'build/bin/wuu-core');
-process.env.WUU_ENABLE_BROWSER = startupOnly ? '1' : '0';
+process.env.WUU_ENABLE_BROWSER = startupOnly || presentationMode ? '1' : '0';
 process.env.WUU_SAFE_MODE = safeMode;
 process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = startupOnly ? '0' : '1';
 // A shell inherited from make dev must still exercise this checkout's build.
@@ -157,7 +159,7 @@ fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provid
   fs.writeFileSync(configPath, JSON.stringify(config));
 }
 fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify({ projects: [...projects, ...sidebarProjects], active_context: { kind: 'project', project_id: projects[selectedIndex].id, cwd: projects[selectedIndex].path } }));
-fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: process.env.WUU_SWITCH_VARIANT === 'narrow' ? 'dark' : 'light' }));
+fs.writeFileSync(path.join(home, 'desktop-settings.json'), JSON.stringify({ onboarding_version: 100, language: 'en', theme: process.env.WUU_SWITCH_VARIANT === 'narrow' ? 'dark' : 'light', ...(presentationMode && variant === 'narrow' ? { message_flow_font_size: 20 } : {}) }));
 const fixtureHelper = process.env.WUU_SESSION_FIXTURE || path.join(fixture, 'session-fixture');
 if (!process.env.WUU_SESSION_FIXTURE) {
   const built = spawnSync('go', ['build', '-o', fixtureHelper, './scripts/session-fixture'], {
@@ -203,6 +205,11 @@ for (let index = 0; index < sidebarThreads; index++) {
     ...(index % 40 === 0 ? { pinned_at: created } : {}), ...(index % 31 === 0 ? { archived_at: created } : {}),
     ...(startupOnly ? { permission_mode: 'standard' } : {}),
   }, history: [] });
+}
+if (presentationMode) {
+  Object.assign(seeds[0].history.at(-2), { origin: 'host', presentation_kind: 'session_message', related_session_id: 'switch-related', name: 'Related conversation' });
+  seeds.push({ session: { ...seeds[0].session, id: 'switch-related', title: 'Related conversation' },
+    history: [{ role: 'user', content: 'Related split question', at: stamp }, { role: 'assistant', content: 'Related split answer', at: stamp }] });
 }
 assert.deepEqual(callFixture({ op: 'seed', sessions: seeds }).ids, seeds.map(seed => seed.session.id));
 if (subscriptionTurns) {
@@ -894,7 +901,10 @@ async function switchTo(win, index, scenario) {
   await clearDraft(win, draft);
 }
 let main;
-app.on('browser-window-created', (_event, win) => { main ||= win; if (win === main) startupProbe?.observeWindow(win); });
+app.on('browser-window-created', (_event, win) => {
+  main ||= win; if (win === main) startupProbe?.observeWindow(win);
+
+});
 const timeout = setTimeout(() => { console.error('E2E timeout', fixture); app.exit(1); }, startupOnly ? 30000 : 120000 + rounds * 15000 + (process.env.WUU_SWITCH_STREAM === '1' || pacedStream ? 60000 : 0));
 const launchStart = performance.now();
 startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); return import(pathToFileURL(mainBundle).href); }).then(async () => {
@@ -911,7 +921,7 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   if (!main.webContents.debugger.isAttached()) main.webContents.debugger.attach('1.3');
   await main.webContents.debugger.sendCommand('Performance.enable');
   if (!startupOnly) main.setSize(process.env.WUU_SWITCH_VARIANT === 'narrow' ? 820 : 1380, 860);
-  if (!startupOnly && process.env.WUU_SWITCH_VARIANT === 'narrow') await evaluate(main, () => {
+  if (!startupOnly && !presentationMode && process.env.WUU_SWITCH_VARIANT === 'narrow') await evaluate(main, () => {
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
@@ -933,6 +943,20 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
   while (timings.some(t => t.ms === null)) {
     assert.ok(Date.now() < startupDeadline, 'Startup IPC did not settle');
     await delay(25);
+  }
+  if (presentationMode) {
+    const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+    const renderer = path.resolve(path.dirname(mainBundle), '../renderer');
+    fs.writeFileSync(path.join(output, 'presentation-build.json'), JSON.stringify({
+      coreSha256: hash(process.env.WUU_DESKTOP_CORE), coreBuildCommit: process.env.WUU_SWITCH_CORE_BUILD_COMMIT,
+      mainSha256: hash(mainBundle), preloadSha256: hash(path.resolve(path.dirname(mainBundle), '../preload/index.cjs')),
+      rendererIndexSha256: hash(path.join(renderer, 'index.html')),
+      rendererAssets: Object.fromEntries(fs.readdirSync(path.join(renderer, 'assets')).sort().map(name => [name, hash(path.join(renderer, 'assets', name))])),
+      harnessSha256: hash(__filename), presentationHarnessSha256: hash(path.join(__dirname, 'session-switch-presentation.cjs')),
+      fixtureSeed, versions: process.versions,
+    }, null, 2));
+    await require('./session-switch-presentation.cjs')({ win: main, evaluate, waitFor, output });
+    clearTimeout(timeout); app.quit(); return;
   }
   if (traceEnabled) await contentTracing.startRecording({
     included_categories: ['devtools.timeline', 'blink.user_timing', 'v8', 'disabled-by-default-devtools.timeline.stack'],

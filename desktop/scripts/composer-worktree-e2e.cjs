@@ -1,8 +1,9 @@
 // Real Electron/main/preload/Go coverage for starting a conversation in its own
 // Git worktree through the public desktop API, with composer branch controls.
 // Build core and desktop first;
-// WUU_WORKTREE_CORE can override the binary. A local HTTP provider answers the
-// turn, so no account or paid inference is used. Screenshots and the evidence
+// WUU_WORKTREE_CORE and WUU_WORKTREE_DESKTOP can select frozen build inputs.
+// A local HTTP provider answers the turn, so no account or paid inference is used.
+// Screenshots and the evidence
 // record are written to artifacts/composer-worktree/ for visual review.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -13,20 +14,25 @@ const { spawnSync } = require('node:child_process');
 const { pathToFileURL } = require('node:url');
 const { app } = require('electron');
 
-const desktop = path.resolve(__dirname, '..');
+const desktop = path.resolve(process.env.WUU_WORKTREE_DESKTOP || path.join(__dirname, '..'));
 const output = process.env.WUU_WORKTREE_OUTPUT || path.resolve(desktop, '../artifacts/composer-worktree');
 const narrowWidth = Number(process.env.WUU_WORKTREE_NARROW_WIDTH || 760);
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'wuu-composer-worktree-'));
 const home = path.join(fixture, 'home');
+const userHome = path.join(fixture, 'user-home');
 const project = path.join(fixture, 'project');
 const plain = path.join(fixture, 'plain');
 const longProjectName = 'an-unusually-long-project-name-for-the-narrow-composer';
 const longProject = path.join(fixture, longProjectName);
-for (const dir of [home, project, plain]) fs.mkdirSync(dir);
+for (const dir of [home, userHome, project, plain]) fs.mkdirSync(dir);
 fs.rmSync(output, { recursive: true, force: true });
 fs.mkdirSync(output, { recursive: true });
 app.setPath('userData', path.join(fixture, 'profile'));
-process.env.WUU_HOME = home;
+Object.assign(process.env, {
+  WUU_HOME: home, HOME: userHome, XDG_CACHE_HOME: path.join(userHome, '.cache'),
+  CODEX_HOME: path.join(userHome, '.codex'), GROK_HOME: path.join(userHome, '.grok'),
+  WUU_ENABLE_CUA_MAC: '0', WUU_ENABLE_CUA_LINUX: '0',
+});
 process.env.WUU_DESKTOP_CORE = process.env.WUU_WORKTREE_CORE || path.join(desktop, 'build/bin/wuu-core');
 delete process.env.ELECTRON_RENDERER_URL;
 process.env.WUU_ENABLE_BROWSER = '0';
@@ -91,10 +97,16 @@ const server = http.createServer((req, res) => {
       res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14 } })}\n\ndata: [DONE]\n\n`);
       return;
     }
-    if (typeof latestUser?.content === 'string' && latestUser.content.includes('Rebind workspace fixture') && rebindStage === 0) {
-      rebindStage++;
-      res.write(chunk({ role: 'assistant', content: 'Moving this session back to the project.' }));
-      res.write(chunk({ tool_calls: [{ index: 0, id: 'workspace-fixture', type: 'function', function: { name: 'set_session_workspace', arguments: JSON.stringify({ root: fs.realpathSync(project) }) } }] }));
+    if (typeof latestUser?.content === 'string' && latestUser.content.includes('Rebind workspace fixture') && rebindStage < 2) {
+      const discovering = rebindStage++ === 0;
+      // Workspace rebinding is deferred: load its public schema before calling it.
+      if (!discovering) assert(requests.at(-1).body.tools?.some(tool => tool.function?.name === 'set_session_workspace'),
+        'Tool discovery must expose the workspace operation before invocation.');
+      res.write(chunk({ role: 'assistant', content: discovering ? 'Finding the workspace operation.' : 'Moving this session back to the project.' }));
+      res.write(chunk({ tool_calls: [{ index: 0, id: `workspace-fixture-${rebindStage}`, type: 'function', function: {
+        name: discovering ? 'tool_search' : 'set_session_workspace',
+        arguments: JSON.stringify(discovering ? { query: 'select:set_session_workspace' } : { root: fs.realpathSync(project) }),
+      } }] }));
       res.end(`data: ${JSON.stringify({ id: 'fixture', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
       return;
     }
@@ -108,7 +120,8 @@ const evaluate = (win, fn, arg) => win.webContents.executeJavaScript(`(${fn})(${
 async function waitFor(win, fn, arg, timeout = 30000) {
   const until = Date.now() + timeout;
   while (Date.now() < until) {
-    if (await evaluate(win, fn, arg)) return;
+    const value = await evaluate(win, fn, arg);
+    if (value) return value;
     await delay(50);
   }
   throw new Error(`Timed out: ${fn}`);
@@ -141,11 +154,48 @@ async function captureCrop(win, rect) {
   const crop = Object.fromEntries(Object.entries(rect).map(([key, value]) => [key, Math.round(value * zoom)]));
   return (await win.webContents.capturePage(crop)).toPNG();
 }
-const click = (win, selector) => evaluate(win, target => {
-  const element = document.querySelector(target);
-  if (!element) throw new Error(`missing ${target}`);
-  element.click();
-}, selector);
+const nativeClicks = [];
+async function click(win, selector) {
+  win.focus(); win.webContents.focus();
+  const focusDeadline = Date.now() + 30000;
+  while (!(win.isFocused() && win.webContents.isFocused()) && Date.now() < focusDeadline) await delay(50);
+  assert(win.isFocused() && win.webContents.isFocused(), 'Native window focus is required for the click.');
+  await evaluate(win, () => document.fonts.ready.then(() => undefined));
+  const point = await waitFor(win, async selector => {
+    let previous, target;
+    for (let frame = 0; frame < 4; frame++) {
+      await new Promise(requestAnimationFrame);
+      const element = [...document.querySelectorAll(selector)].find(node => {
+        const rect = node.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && !node.disabled
+          && !node.closest('[inert], [aria-hidden="true"]');
+      });
+      if (!element) return;
+      const rect = element.getBoundingClientRect();
+      const current = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      const bounds = [rect.x, rect.y, rect.width, rect.height].join();
+      if (rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight
+        || !element.contains(document.elementFromPoint(current.x, current.y))
+        || (previous && (bounds !== previous || target !== element))) return;
+      previous = bounds; target = element;
+      if (frame === 3) return current;
+    }
+  }, selector);
+  nativeClicks.push({ selector, ...point });
+  const zoom = win.webContents.getZoomFactor();
+  const dip = { x: Math.round(point.x * zoom), y: Math.round(point.y * zoom) };
+  for (const type of ['mouseMove', 'mouseDown', 'mouseUp']) {
+    win.webContents.sendInputEvent({ type, button: 'left', clickCount: 1, ...dip });
+  }
+}
+const branchControl = '.composer-branch-control button[aria-haspopup="menu"]';
+const projectControl = '.composer-project-control button[aria-haspopup="menu"]';
+async function waitForBranch(win, branch) {
+  await waitFor(win, ({ selector, label }) => {
+    const control = document.querySelector(selector);
+    return control && !control.disabled && control.getAttribute('aria-label') === label;
+  }, { selector: branchControl, label: `Switch branch: ${branch}` });
+}
 async function sendDraft(win) {
   // The controlled draft can lag behind the input event; clicking its disabled
   // send button is a no-op. Wait for rendering and confirm submission consumed it.
@@ -168,12 +218,6 @@ async function waitForSkillRow(win) {
     return row.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2));
   });
 }
-const gitControls = win => evaluate(win, () => {
-  const group = document.querySelector('.composer-git-controls');
-  return group ? {
-    branch: group.querySelector('.hero-project-pill-text')?.textContent,
-  } : null;
-});
 const workspaceRow = win => evaluate(win, () => {
   const barNode = document.querySelector('.composer-workspace-bar');
   const bar = barNode.getBoundingClientRect();
@@ -222,10 +266,11 @@ async function run() {
   while (!main) await delay(25);
   main.webContents.setBackgroundThrottling(false);
   main.setSize(1280, 820);
-  await waitFor(main, () => document.querySelector('.composer textarea') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main');
+  await waitFor(main, () => document.querySelector('.composer textarea:not(:disabled)'));
+  await waitForBranch(main, 'main');
 
   // Branch choice keeps its checkout meaning; isolation is requested through the API.
-  assert.deepEqual(await gitControls(main), { branch: 'main' });
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
   await capture(main, '01-draft-light-default.png');
 
   // Select before the new checkout exists; browsing must not create a worktree.
@@ -468,12 +513,12 @@ async function run() {
   // The next draft starts shared again; branch choice checks out the project.
   await click(main, '.session-tab-new');
   // Git status refreshes for the draft's project after leaving the worktree.
-  await waitFor(main, () => document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main');
-  assert.deepEqual(await gitControls(main), { branch: 'main' });
-  await click(main, '.composer-git-controls .hero-project-pill');
+  await waitForBranch(main, 'main');
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
+  await click(main, branchControl);
   await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][title="feature"]:not(:disabled)'));
   await click(main, '.composer-branch-menu [role="menuitemradio"][title="feature"]');
-  await waitFor(main, () => document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'feature');
+  await waitForBranch(main, 'feature');
   assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature', 'Choosing a branch checks it out.');
 
   // Dark, large text, narrow window with a long branch name.
@@ -483,10 +528,32 @@ async function run() {
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
-  await click(main, '.composer-git-controls .hero-project-pill');
+  await click(main, branchControl);
   await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
-  await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
-  await waitFor(main, branch => !document.querySelector('.composer-branch-menu') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
+  await click(main, `.composer-branch-menu [role="menuitemradio"][title="${longBranch}"]`);
+  await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
+  await waitForBranch(main, longBranch);
+  await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
+  // The expanded rail uses icons: their accessible names retain the full identity.
+  // Exercise that native entry point before checking the text-label fallback.
+  await click(main, branchControl);
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [title="${branch}"][aria-checked="true"]`), longBranch);
+  const railSelection = await evaluate(main, ({ branchSelector, projectSelector }) => ({
+    branch: document.querySelector(branchSelector).getAttribute('aria-label'),
+    project: document.querySelector(projectSelector).getAttribute('aria-label'),
+    menuSelectedBranch: document.querySelector('.composer-branch-menu [aria-checked="true"]').title,
+  }), { branchSelector: branchControl, projectSelector: projectControl });
+  assert.equal(railSelection.menuSelectedBranch, longBranch);
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), longBranch);
+  await capture(main, '05c-tool-rail-long-branch-dark-large-narrow.png');
+  for (const type of ['keyDown', 'keyUp']) main.webContents.sendInputEvent({ type, keyCode: 'Escape' });
+  await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
+  assert(await evaluate(main, selector => document.activeElement === document.querySelector(selector), branchControl),
+    'Dismissing the branch menu returns focus to its trigger.');
+  if (await evaluate(main, () => Boolean(document.querySelector('.composer-workspace-rail')))) {
+    await click(main, '[data-wuu-component="workspace-tool-rail-toggle"]');
+  }
+  await waitFor(main, () => document.querySelector('.composer-workspace-bar'));
   await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
   await capture(main, '05-draft-dark-large-narrow.png');
   const narrow = await workspaceRow(main);
@@ -510,16 +577,17 @@ async function run() {
   await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
 
   // A long project name must still leave the branch identifiable.
-  await click(main, '.composer-project-control .hero-project-pill');
+  await click(main, projectControl);
   await waitFor(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`), longProjectName);
-  await evaluate(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`).click(), longProjectName);
-  await waitFor(main, name => document.querySelector('.composer-project-control .hero-project-pill-text')?.textContent === name
-    && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main', longProjectName);
-  await click(main, '.composer-git-controls .hero-project-pill');
+  await click(main, `.composer-project-menu button[title="${longProjectName}"]`);
+  await waitFor(main, ({ selector, name }) => document.querySelector(selector)?.getAttribute('aria-label') === `Switch workspace: ${name}`,
+    { selector: projectControl, name: longProjectName });
+  await waitForBranch(main, 'main');
+  await click(main, branchControl);
   await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
-  await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
-  await waitFor(main, branch => !document.querySelector('.composer-branch-menu')
-    && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === branch, longBranch);
+  await click(main, `.composer-branch-menu [role="menuitemradio"][title="${longBranch}"]`);
+  await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
+  await waitForBranch(main, longBranch);
   await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
   await capture(main, '05a-draft-long-project-dark-large-narrow.png');
   const longProjectNarrow = await workspaceRow(main);
@@ -545,10 +613,11 @@ async function run() {
     document.documentElement.style.removeProperty('--conversation-message-font-size');
     document.documentElement.style.removeProperty('--appearance-scale');
   });
-  await click(main, '.composer-project-control .hero-project-pill');
+  await click(main, projectControl);
   await waitFor(main, () => document.querySelector('.composer-project-menu button[title="plain-folder"]'));
   await click(main, '.composer-project-menu button[title="plain-folder"]');
-  await waitFor(main, () => document.querySelector('.composer-project-control .hero-project-pill-text')?.textContent === 'plain-folder' && !document.querySelector('.composer-git-controls'));
+  await waitFor(main, selector => document.querySelector(selector)?.getAttribute('aria-label') === 'Switch workspace: plain-folder'
+    && !document.querySelector('.composer-branch-control'), projectControl);
   await capture(main, '06-draft-non-git.png');
 
   const crossProject = await evaluate(main, async draft => {
@@ -566,6 +635,8 @@ async function run() {
     fixture,
     featureHead,
     thread: { id: thread.id, cwd: thread.cwd, worktree: thread.worktree },
+    railSelection,
+    nativeClicks,
     narrow,
     defaultNarrow,
     longProjectNarrow,

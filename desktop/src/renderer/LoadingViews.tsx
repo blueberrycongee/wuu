@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { WuuIconMascot } from "./WuuIconMascot";
 import { useI18n } from "./i18n";
@@ -62,13 +62,13 @@ const VIEW_SWITCH_LOADING_CLASS = {
 } as const;
 
 export function ViewSwitchLoading({
-  placement = "window",
+  placement = "window", style,
 }: {
-  placement?: keyof typeof VIEW_SWITCH_LOADING_CLASS;
+  placement?: keyof typeof VIEW_SWITCH_LOADING_CLASS; style?: CSSProperties;
 }): JSX.Element {
   const { t } = useI18n();
   const indicator = (
-    <div className={VIEW_SWITCH_LOADING_CLASS[placement]} role="status" aria-label={t("loading.switching")}>
+    <div className={VIEW_SWITCH_LOADING_CLASS[placement]} style={style} role="status" aria-label={t("loading.switching")}>
       <div className="loading-rail" aria-hidden="true" />
     </div>
   );
