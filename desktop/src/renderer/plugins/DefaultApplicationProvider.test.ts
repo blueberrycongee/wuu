@@ -74,3 +74,110 @@ it.each([false, true])("transfers pending input before replacing the writer and 
   expect(app.getSnapshot().tabs).toEqual(before);
   expect({ local: { ...window.localStorage }, session: { ...window.sessionStorage } }).toEqual(persisted);
 });
+
+it.each([{ failed: false, repeated: false, cancelled: false, settled: false }, { failed: true, repeated: false, cancelled: false, settled: false }, { failed: false, repeated: true, cancelled: false, settled: false }, { failed: true, repeated: true, cancelled: false, settled: false }, { failed: false, repeated: false, cancelled: true, settled: false }, { failed: false, repeated: false, cancelled: false, settled: true }])("preserves latest navigation across replacement ($failed, ABA=$repeated, cancelled=$cancelled, settled=$settled)", async ({ failed, repeated, cancelled, settled }) => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [{ id: "a", name: "A", path: "/a", created_at: "", updated_at: "" }, { id: "b", name: "B", path: "/b", created_at: "", updated_at: "" }];
+  const thread = { id: "target", cwd: "/b", project_id: "b", title: "Target history", preview: "", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [{ id: "turn", status: "completed", items: [] }] };
+  const initialized = { provider: "fixture", model: "fixture", providers: [], extension_inventory: [] };
+  let selected = source as typeof source | typeof target;
+  let finish!: (value: unknown) => void; let reject!: (error: Error) => void;
+  const oldResume = new Promise((resolve, fail) => { finish = resolve; reject = fail; });
+  const resume = vi.fn().mockReturnValueOnce(oldResume);
+  if (repeated) resume.mockReturnValueOnce(oldResume).mockReturnValueOnce(oldResume);
+  resume.mockResolvedValue({ thread });
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })), resumeThread: resume,
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
+    startThread: vi.fn(), startTurn: vi.fn(), queueTurn: vi.fn(),
+  } as unknown as WuuDesktopApi;
+  const select = vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => {
+    selected = context as typeof selected; return { projects, active_context: selected };
+  });
+  vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockImplementation(async workspace => ({ projects, activeContext: workspace.active_context, initialized: initialized as never }));
+  vi.spyOn(RuntimeLoader, "loadRuntimeThreadList").mockResolvedValue([thread as never]);
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async (_workspace, options) => ({ activeContext: selected, activeProjectId: selected.project_id, projects, thread: options?.resumeThreadID === thread.id ? thread as never : undefined, threads: [thread as never, { ...thread, id: "source", cwd: "/a", project_id: "a" } as never], initialized: initialized as never, status: "ready" }));
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  await app.invoke("composer.set-draft", { text: "retained source draft" });
+  const oldApp = app;
+  const navigating = [app.invoke("thread.activate", { threadId: thread.id, workspaceId: "b" }).catch(error => error)];
+  await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+  const firstIntent = app.getSnapshot().tabs.pending?.intentId;
+  expect(firstIntent).toBeTruthy();
+  if (repeated) {
+    navigating.push(app.invoke("thread.activate", { threadId: "source", workspaceId: "a" }).catch(error => error));
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledTimes(2));
+    navigating.push(app.invoke("thread.activate", { threadId: thread.id, workspaceId: "b" }).catch(error => error));
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledTimes(3));
+    expect(app.getSnapshot().tabs.pending?.intentId).not.toBe(firstIntent);
+  }
+  if (settled) {
+    finish({ thread }); await Promise.all(navigating);
+    await app.invoke("navigation.reveal-complete", { requestId: app.getSnapshot().tabs.pending!.requestId! });
+    expect(app.getSnapshot().tabs.pending).toBeUndefined();
+  }
+  if (cancelled) {
+    await app.invoke("navigation.cancel", {});
+    finish({ thread }); await Promise.all(navigating);
+    expect(app.getSnapshot().tabs.pending).toBeUndefined();
+  }
+  const latestIntent = app.getSnapshot().tabs.pending?.intentId;
+  const priorSelections = select.mock.calls.length;
+  await host.selectApplicationBinding({ pluginId: "business", generation: "two", id: "ui.application" });
+  await host.activateGeneration({ pluginId: "business", generation: "two", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  expect(app.getSnapshot().tabs.pending?.intentId).toBe(latestIntent);
+  expect(app.getSnapshot().conversation.threadId).toBe(cancelled ? undefined : thread.id);
+  expect(app.getSnapshot().conversation.turns).toHaveLength(cancelled ? 0 : 1);
+  expect(app.getSnapshot().tabs.items.some(tab => tab.draftText === "retained source draft")).toBe(true);
+  expect(() => oldApp.getSnapshot()).toThrow();
+  const settledTabs = app.getSnapshot().tabs;
+  if (failed) reject(new Error("retired resume failed")); else finish({ thread });
+  await Promise.all(navigating);
+  expect(app.getSnapshot().tabs).toEqual(settledTabs);
+  expect(selected).toEqual(cancelled ? source : target);
+  expect(select.mock.calls.slice(priorSelections).every(([context]) => context.cwd === target.cwd)).toBe(true);
+  expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled(); expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+});
+
+it("carries workspace presentation identity without replaying workspace or draft actions", async () => {
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  const initialized = { provider: "fixture", model: "fixture", providers: [], extension_inventory: [] };
+  let selected = source;
+  let finish!: (value: never) => void;
+  const oldLoad = new Promise<never>(resolve => { finish = resolve; });
+  const loaded = () => ({ activeContext: selected, activeProjectId: selected.project_id, projects, threads: [], initialized: initialized as never, status: "ready" });
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })),
+    selectProject: vi.fn(async () => { selected = target; return { projects, active_context: selected }; }),
+    onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), startThread: vi.fn(), startTurn: vi.fn(),
+  } as unknown as WuuDesktopApi;
+  const load = vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementationOnce(async () => loaded()).mockReturnValueOnce(oldLoad).mockImplementation(async () => loaded());
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  await app.invoke("composer.set-draft", { text: "source stays saved" });
+  const switching = app.invoke("workspace.select", { workspaceId: "b", resumeLatestThread: false }).catch(error => error);
+  await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  const intentId = app.getSnapshot().tabs.pending?.intentId;
+  expect(intentId).toBeTruthy();
+  await host.selectApplicationBinding({ pluginId: "business", generation: "two", id: "ui.application" });
+  await host.activateGeneration({ pluginId: "business", generation: "two", register });
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  expect(app.getSnapshot().tabs.pending).toMatchObject({ kind: "workspace", targetId: "b", intentId, contentReady: true });
+  expect(app.getSnapshot().workspaces.activeRoot).toBe("/b");
+  expect(app.getSnapshot().tabs.items.some(tab => tab.draftText === "source stays saved")).toBe(true);
+  expect(window.wuu.selectProject).toHaveBeenCalledOnce();
+  expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  finish(loaded() as never); await switching;
+  expect(app.getSnapshot().workspaces.activeRoot).toBe("/b");
+});

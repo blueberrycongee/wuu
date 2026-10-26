@@ -204,7 +204,7 @@ describe("createThreadActivationActions", () => {
 
       expect(harness.getAppState().thread).toBeUndefined();
       expect(harness.getAppState().activeContext).toEqual(projectContext(crossWorkspace ? "project-1" : "project-2"));
-      expect(harness.beginViewSwitch).toHaveBeenCalledWith("thread", cached.id, ...(crossWorkspace ? [true] : []));
+      expect(harness.beginViewSwitch).toHaveBeenCalledWith("thread", cached.id, ...(crossWorkspace ? [true, projectContext("project-2")] : []));
       expect(harness.finishViewSwitch).not.toHaveBeenCalled();
       resume.resolve({ thread: cached });
       await activation;
@@ -325,7 +325,7 @@ describe("createThreadActivationActions", () => {
 
     const activation = harness.actions.activateThread(targetThread.id);
 
-    expect(harness.beginViewSwitch).toHaveBeenCalledWith("thread", targetThread.id, true);
+    expect(harness.beginViewSwitch).toHaveBeenCalledWith("thread", targetThread.id, true, projectContext("project-2"));
     expect(harness.getAppState().activeContext).toEqual(projectContext("project-1"));
     expect(harness.getAppState().thread).toBeUndefined();
     runtimeSelection.resolve({});

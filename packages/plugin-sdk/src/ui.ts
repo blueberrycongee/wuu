@@ -92,7 +92,8 @@ export interface ApplicationSnapshotV1 {
     readonly secondaryThreadId?: string;
     readonly canSubmit: boolean;
     readonly items: readonly ApplicationTabV1[];
-    readonly pending?: { readonly kind: "tab" | "workspace" | "thread" | "runtime"; readonly targetId: string; readonly requestId?: number; readonly contextSwitching?: boolean; readonly contentReady?: boolean };
+    /** intentId identifies one navigation across provider handoff; requestId remains local to its owner. */
+    readonly pending?: { readonly kind: "tab" | "workspace" | "thread" | "runtime"; readonly targetId: string; readonly requestId?: number; readonly intentId?: string; readonly contextSwitching?: boolean; readonly contentReady?: boolean };
   };
   readonly conversationDetails: readonly ApplicationConversationDetailV1[];
   readonly conversationWorkspace: ApplicationConversationWorkspaceV1;
