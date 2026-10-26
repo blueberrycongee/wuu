@@ -390,19 +390,23 @@ func TestInputImagePathsStayOutOfInputText(t *testing.T) {
 			client.mu.Lock()
 			sent := client.requests[0].Messages[1]
 			client.mu.Unlock()
-			if len(sent.Images) != 1 || sent.Images[0].LocalPath == "" || !strings.Contains(sent.Content, sent.Images[0].LocalPath) {
-				t.Fatalf("model prompt lost image path: %+v", sent)
-			}
-			if strings.Contains(item.InputText, sent.Images[0].LocalPath) {
-				t.Fatalf("public input_text exposed the server-added image path: %q", item.InputText)
-			}
-
 			loaded, err := loadChatMessages(rt.Sessions, threadID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			visible := visibleMessagesForTest(loaded)
-			if len(visible) == 0 || strings.Contains(chatMessageItem("reloaded", visible[0]).InputText, sent.Images[0].LocalPath) {
+			if len(visible) == 0 || len(visible[0].Images) != 1 {
+				t.Fatalf("persisted image missing: %+v", visible)
+			}
+			path := visible[0].Images[0].LocalPath
+			if path == "" || len(sent.Images) != 1 || sent.Images[0].Data != base64.StdEncoding.EncodeToString(image) || !strings.Contains(sent.Content, path) {
+				t.Fatalf("model prompt lost image data or working-copy path: %+v", sent)
+			}
+			if strings.Contains(item.InputText, path) {
+				t.Fatalf("public input_text exposed the server-added image path: %q", item.InputText)
+			}
+
+			if strings.Contains(chatMessageItem("reloaded", visible[0]).InputText, path) {
 				t.Fatalf("reloaded item exposed the server-added image path: %+v", visible)
 			}
 		})

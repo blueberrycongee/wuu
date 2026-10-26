@@ -139,7 +139,7 @@ func TestSelectedConfigurationCommitOutcomesAreNotReplayed(t *testing.T) {
 // production runtime composition does before admitting appserver requests.
 func bindConfigSourceForTest(t *testing.T, rt *runtime.Session) {
 	t.Helper()
-	if rt.PluginHost != nil {
+	if rt.PluginHost != nil && rt.PluginHost.ServiceRegistry() != nil && rt.PluginHost.ServiceRegistry().HasProvider(config.ServiceName, 1) {
 		return
 	}
 	provider := config.NewService(config.Module, rt.ConfigPath, "")

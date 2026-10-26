@@ -71,6 +71,7 @@ import {
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { useConversationSwitchReady } from "./ConversationSwitchReady";
+import { useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
 import { createEnvironmentPanelActions } from "./EnvironmentActions";
 import {
   type EnvironmentPanelMenu,
@@ -180,6 +181,7 @@ export function App({ application, slots, shellPluginId }: {
   shellPluginId: string;
 }): JSX.Element {
   const { t } = useI18n();
+  const presentNavigation = usePresentedNavigation();
   const popOutInit = application.desktop.popOut.kind && application.desktop.popOut.context ? application.desktop.popOut : null;
   const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
   const recoveryNotices = useSyncExternalStore(application.subscribe, () => application.getSnapshot().drafts.recoveryNotices);
@@ -1122,6 +1124,10 @@ export function App({ application, slots, shellPluginId }: {
       requestSubmittedQueryScroll(item.id, operation.messageID);
     }
   }, [submissionView, conversationWorkspace, tabs.activeTabId, activeThreadID, requestSubmittedQueryScroll, discardSubmittedMessage]);
+  useConversationPresentationTransition({
+    scopeRef: conversationPaneRef, pending: tabs.pending,
+    enabled: conversationVisible && initialized && application.getSnapshot().phase !== "error",
+  });
   useConversationSwitchReady({
     visible: conversationVisible,
     pendingViewSwitch,
@@ -1440,7 +1446,7 @@ export function App({ application, slots, shellPluginId }: {
     focusEnvironmentToggle: () =>
       environmentToggleRef.current?.focus({ preventScroll: true }),
   });
-  const activateThread = useCallback((threadId: string): Promise<void> => application.invoke("thread.activate", { threadId }).catch(error => { showErrorToast(error); }), [application]);
+  const activateThread = useCallback((threadId: string): Promise<void> => presentNavigation(() => application.invoke("thread.activate", { threadId })).catch(reportPresentedNavigationError), [application, presentNavigation]);
 
   useConversationSearchNavigation({
     application,
@@ -1491,7 +1497,7 @@ export function App({ application, slots, shellPluginId }: {
     });
   }, [application, revealWebsite]);
 
-  const selectSessionTab = (tabId: string): Promise<void> => application.invoke("tab.select", { tabId }).catch(error => { showErrorToast(error); });
+  const selectSessionTab = (tabId: string): Promise<void> => presentNavigation(() => application.invoke("tab.select", { tabId })).catch(reportPresentedNavigationError);
 
   function closePrimaryPluginView(): void {
     setActiveWebsiteID(undefined);

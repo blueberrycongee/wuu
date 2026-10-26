@@ -205,6 +205,7 @@ func TestTurnContinueOnlyExplicitlyAfterStop(t *testing.T) {
 	client := &stopContinueClient{started: make(chan struct{})}
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	sess, err := rt.Sessions.CreateWithMetadata(session.NewID(), rt.RootDir)
 	if err != nil {
 		t.Fatal(err)

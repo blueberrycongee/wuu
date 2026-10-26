@@ -6,6 +6,7 @@ import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sd
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
 import { SCRATCH_PSEUDO_PROJECT_ID, isScratchThread, threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
 import type { DesktopProject } from "../../shared/protocol";
+import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { showErrorToast } from "../Toast";
 import { confirmAction } from "../ConfirmDialog";
 import { useI18n } from "../i18n";
@@ -30,12 +31,13 @@ function useStoredIDs(key: string, fallback: string[] = []) {
 }
 
 export function DefaultNavigationSurface({ application, slots, workspaceSelectionEnabled = false, ...layout }: DefaultNavigationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
+  const presentNavigation = usePresentedNavigation();
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   // The controller owns this SDK extension; no private state or reducer is accepted.
   const view = (snapshot as ApplicationSnapshotV1 & { navigationWorkspace: ApplicationNavigationViewV1 }).navigationWorkspace;
   const invoke = useMemo(() => application.invoke.bind(application) as SidebarNavigationService["invoke"], [application]);
   const { t } = useI18n();
-  const run = useCallback((operation: Promise<unknown>) => { void operation.catch(showErrorToast); }, []);
+  const run = useCallback((operation: Promise<unknown>) => { void operation.catch(reportPresentedNavigationError); }, []);
   const interactionVersion = useRef(0);
   useEffect(() => {
     const changed = () => { interactionVersion.current++; };
@@ -109,7 +111,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     lastViewedTurnByThreadID={view.lastViewedTurnByThreadId}
     sidebarWorkspaces={workspaces} activeWorkspaceID={workspaceSelectionEnabled ? view.focusedWorkspaceId ?? view.selectedWorkspaceId : undefined}
     pendingConversations={view.pendingConversations.map(row => ({ ...row, context: { ...row.context }, title: row.title || t("tabs.newConversation") }))}
-    onSelectPendingConversation={tabId => run(application.invoke("tab.select", { tabId }))}
+    onSelectPendingConversation={tabId => run(presentNavigation(() => application.invoke("tab.select", { tabId })))}
     pinnedThreads={rows.filter(row => row.pinned && !row.archived)} activeThreadID={snapshot.conversation.threadId}
     pendingThreadID={snapshot.tabs.pending?.kind === "thread" ? snapshot.tabs.pending.targetId : undefined}
     pendingWorkspaceID={snapshot.tabs.pending?.kind === "workspace" ? snapshot.tabs.pending.targetId : undefined}
@@ -119,8 +121,8 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onStartNewThread={() => run(focusAfterNavigation(async () => (await application.invoke("draft.start", {})).tabId))}
     onOpenSkillsTab={() => run(application.invoke("navigation.show-section", { section: "catalog" }))}
     onToggleConversationSearch={() => run(invoke("navigation.show-search", { open: !view.searchOpen }))}
-    onSelectThread={threadId => run(application.invoke("thread.activate", { threadId }))}
-    onSelectWorkspaceThread={(workspaceId, threadId) => run(application.invoke("thread.activate", { threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId }))}
+    onSelectThread={threadId => run(presentNavigation(() => application.invoke("thread.activate", { threadId })))}
+    onSelectWorkspaceThread={(workspaceId, threadId) => run(presentNavigation(() => application.invoke("thread.activate", { threadId, workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId })))}
     onTogglePinned={thread => run(invoke("navigation.pin-thread", { threadId: thread.id, pinned: !thread.pinned }))}
     onArchiveThread={thread => run(archiveThread(thread))}
     onDeleteThread={thread => run(invoke("navigation.delete-thread", { threadId: thread.id }))}
@@ -129,7 +131,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onCreateWorkspace={() => { setWorkspaceMenuOpen(false); run(application.invoke("workspace.create", { kind: "blank" })); }}
     onOpenWorkspaceFolder={() => { setWorkspaceMenuOpen(false); run(application.invoke("workspace.create", { kind: "folder" })); }}
     onToggleSidebarSectionCollapsed={toggleSection} onLoadWorkspaceThreads={workspace => invoke("navigation.load-workspace", { workspaceId: workspace.id })}
-    onFocusWorkspace={workspaceSelectionEnabled ? workspaceId => run(invoke("navigation.focus-workspace", { workspaceId })) : undefined}
+    onFocusWorkspace={workspaceSelectionEnabled ? workspaceId => run(presentNavigation(() => invoke("navigation.focus-workspace", { workspaceId }))) : undefined}
     onStartNewThreadInWorkspace={workspaceId => run(focusAfterNavigation(async () => {
       const result = await application.invoke("workspace.start-draft", { workspaceId: workspaceId === SCRATCH_PSEUDO_PROJECT_ID ? undefined : workspaceId });
       return result.activated ? result.tabId : undefined;

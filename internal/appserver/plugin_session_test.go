@@ -663,7 +663,7 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 	}
 	consumed := 0
 	for _, message := range requests[1].Messages {
-		if message.ClientID == pluginSessionRequestClientID(owner.id, "steer") && message.Content == params.Input.Prompt && message.Steered {
+		if message.Role == "user" && message.Content == params.Input.Prompt {
 			consumed++
 		}
 	}
@@ -684,6 +684,20 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 	if turns != 1 {
 		t.Fatalf("steer created %d turns, want 1", turns)
 	}
+	history, err := loadChatMessages(rt.Sessions, created.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistedSteers := 0
+	for _, message := range history {
+		if message.ClientID == pluginSessionRequestClientID(owner.id, "steer") && message.Content == params.Input.Prompt && message.Steered {
+			persistedSteers++
+		}
+	}
+	if persistedSteers != 1 {
+		t.Fatalf("persisted steer identity count=%d, want 1", persistedSteers)
+	}
+
 }
 
 func TestQueuedUserWorkHasPriorityOverPluginWakeups(t *testing.T) {

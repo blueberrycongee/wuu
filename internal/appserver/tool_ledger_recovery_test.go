@@ -115,6 +115,7 @@ func TestForceReleasedTurnCannotPersistLateCompletion(t *testing.T) {
 	client := &lateTurnClient{started: make(chan struct{}), release: make(chan struct{})}
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	sess, err := rt.Sessions.CreateWithMetadata("late-turn", rt.RootDir)
 	if err != nil {
 		t.Fatal(err)

@@ -2693,6 +2693,14 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if capabilityErr == nil {
 		capabilityErr = s.retainEngineScope(ctx, binding, agentengine.NormalizeEngineID(th.EngineID))
 	}
+	// Optional proxy methods do not establish ownership. Resolve capabilities
+	// from this turn's captured graph once, so only one path can consume input.
+	var engineDescriptor agentengine.Descriptor
+	if capabilityErr == nil {
+		engineDescriptor, capabilityErr = s.engineDescriptorForState(ctx, binding, agentengine.NormalizeEngineID(th.EngineID))
+	}
+	hostSteering := slices.Contains(engineDescriptor.Capabilities, "host-managed-steering")
+	nativeSteering := !hostSteering && slices.Contains(engineDescriptor.Capabilities, "active-turn-steering")
 	var engine agentengine.Session
 	if capabilityErr != nil {
 		engine = agentengine.FailedSession(capabilityErr)
@@ -3121,7 +3129,20 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 				}
 				return true
 			})
+			var nativePending []providers.ChatMessage
+			if !hostSteering {
+				var generated []providers.ChatMessage
+				for _, pending := range th.pendingSteers {
+					if isHumanUserMessage(pending) {
+						nativePending = append(nativePending, pending)
+					} else {
+						generated = append(generated, pending)
+					}
+				}
+				th.pendingSteers = generated
+			}
 			steers, batch := th.takePendingSteersLocked(turnID, time.Now().UTC())
+			th.pendingSteers = append(th.pendingSteers, nativePending...)
 			th.resetSteerWakeLocked()
 			for _, msg := range steers {
 				delete(th.pendingSteerControls, msg.ClientID)
@@ -3228,7 +3249,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	driverCtx := ctx
 	joinNativeSteering := func() {}
-	if native, ok := engine.(agentengine.SteeringSession); ok && th.PersistHistory {
+	if native, ok := engine.(agentengine.SteeringSession); ok && nativeSteering && th.PersistHistory {
 		th.mu.Lock()
 		th.nativeSteerUnsupported = false
 		th.mu.Unlock()
@@ -3460,7 +3481,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	th.interrupting = false
 	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
-	if _, native := engine.(agentengine.SteeringSession); native && th.PersistHistory && !th.nativeSteerUnsupported {
+	if nativeSteering && th.PersistHistory && !th.nativeSteerUnsupported {
 		var human, generated []providers.ChatMessage
 		for _, message := range unconsumedSteers {
 			if isHumanUserMessage(message) {

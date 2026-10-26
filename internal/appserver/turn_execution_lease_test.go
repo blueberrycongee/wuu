@@ -207,6 +207,7 @@ func TestServerAppliesCrossProcessThreadExecutionReset(t *testing.T) {
 	client := newBlockingStreamClient("must not complete")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)

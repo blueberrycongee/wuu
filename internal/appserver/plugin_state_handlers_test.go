@@ -77,6 +77,7 @@ func TestPluginDiagnosticsAdmitInventoryRenderersAndKeepFailures(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = t.TempDir()
 	preparePluginRuntimePathsForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -312,6 +313,7 @@ func TestPluginRegistryIntrospectReturnsKernelServices(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -348,6 +350,7 @@ func TestPluginExecutionsListReturnsLiveTable(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()

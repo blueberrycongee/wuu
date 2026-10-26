@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ExtensionInventoryRecord, InitializeResult, PluginDesktopActivationParams } from "../shared/protocol";
-import { PluginDesktopActivations } from "./pluginDesktopActivations";
+import { EventEmitter } from "node:events";
+import { observeDesktopActivationDocument, PluginDesktopActivations } from "./pluginDesktopActivations";
 
 const inventory = (graph: string) => [{ id: "shell", fingerprint: "source", graph_generation: graph, desktop: {} }] as ExtensionInventoryRecord[];
 const report = (graph: string): PluginDesktopActivationParams => ({ id: "shell", fingerprint: "source", graph_generation: graph, activation: 1, phase: "registration", status: "active" });
@@ -110,4 +111,113 @@ it("pins runtime calls to the initialized graph owner across A→B→A and rejec
   expect(b.calls).toHaveBeenCalledTimes(2);
   await owner.disconnect();
   expect(() => owner.runtimeRequest("graph-a")).toThrow(/disconnected/i);
+});
+
+it("accepts equivalent workdir inventory publication before the next initialize", async () => {
+  const backend = server("before"), owner = new PluginDesktopActivations(23);
+  await owner.initialize("/a/./workspace/", backend.request, {});
+  owner.observeInventory("/a/workspace", inventory("after"));
+  await expect(owner.report(report("after"))).resolves.toBeUndefined();
+});
+
+it("rebuilds a lost owner only through one authoritative matching handshake", async () => {
+  const backend = server("graph"), owner = new PluginDesktopActivations(24);
+  const handshake = vi.fn(async () => { await owner.initialize("/workspace", backend.request, {}); });
+  await Promise.all([owner.recoverGraph("graph", handshake), owner.recoverGraph("graph", handshake)]);
+  expect(handshake).toHaveBeenCalledTimes(1);
+  await expect(owner.report(report("graph"))).resolves.toBeUndefined();
+  await expect(owner.recoverGraph("forged", handshake)).rejects.toMatchObject({ code: "WUU_DESKTOP_GRAPH_OWNER_MISSING", recovery: "reinitialize-required" });
+  expect(handshake).toHaveBeenCalledTimes(1);
+  expect(() => owner.runtimeRequest("forged")).toThrow(/graph/i);
+});
+
+it("does not admit a graph merely because a fresh workspace initialized successfully", async () => {
+  const backend = server("new-graph"), owner = new PluginDesktopActivations(25);
+  await expect(owner.recoverGraph("old-graph", async () => { await owner.initialize("/workspace", backend.request, {}); }))
+    .rejects.toMatchObject({ code: "WUU_DESKTOP_GRAPH_OWNER_MISSING", recovery: "reinitialize-required" });
+  expect(backend.calls.mock.calls.map(call => call[0])).toEqual(["initialize"]);
+  await expect(owner.report(report("old-graph"))).rejects.toThrow(/owning process/);
+});
+
+it("keeps graph ownership on canceled navigation and retires only on committed navigation", async () => {
+  const backend = server("graph"), owner = new PluginDesktopActivations(26);
+  await owner.initialize("/workspace", backend.request, {});
+  const events = new EventEmitter();
+  const disconnected = vi.fn(() => { void owner.disconnect(); });
+  observeDesktopActivationDocument(events as unknown as Parameters<typeof observeDesktopActivationDocument>[0], disconnected);
+  events.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+  events.emit("did-fail-load", {}, -3, "ERR_ABORTED");
+  await expect(owner.report(report("graph"))).resolves.toBeUndefined();
+  expect(disconnected).not.toHaveBeenCalled();
+  events.emit("did-navigate-in-page", {}, "/workspace#section", true);
+  expect(disconnected).not.toHaveBeenCalled();
+  events.emit("did-navigate", {}, "file:///new-document", 200, "OK");
+  expect(disconnected).toHaveBeenCalledTimes(1);
+  await expect(owner.report(report("graph"))).rejects.toThrow(/disconnected/i);
+});
+
+it("does not revive ownership when a recovery handshake finishes after document loss", async () => {
+  const owner = new PluginDesktopActivations(27);
+  let finish!: (result: InitializeResult) => void;
+  const request = vi.fn(() => new Promise<InitializeResult>(resolve => { finish = resolve; })) as <T>(method: string, params?: unknown) => Promise<T>;
+  const recovery = owner.recoverGraph("graph", async () => { await owner.initialize("/workspace", request, {}); });
+  const rejected = expect(recovery).rejects.toThrow(/disconnected/i);
+  await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+  await owner.disconnect();
+  finish({ extension_inventory: inventory("graph") } as InitializeResult);
+  await rejected;
+  expect(() => owner.runtimeRequest("graph")).toThrow(/disconnected/i);
+});
+
+it("preserves handshake transport failure and never retries it in a loop", async () => {
+  const owner = new PluginDesktopActivations(28), failure = new Error("process initialize failed");
+  const handshake = vi.fn(async () => { throw failure; });
+  await expect(owner.recoverGraph("graph", handshake)).rejects.toBe(failure);
+  await expect(owner.recoverGraph("graph", handshake)).rejects.toBe(failure);
+  expect(handshake).toHaveBeenCalledTimes(1);
+});
+
+it("does not attribute restarted-process inventory to the exited workspace process", async () => {
+  const first = server("old-process"), second = server("new-process"), owner = new PluginDesktopActivations(29);
+  await owner.initialize("/workspace", first.request, {});
+  owner.invalidateWorkspace("/workspace/.");
+  owner.observeInventory("/workspace", inventory("new-process"));
+  expect(() => owner.runtimeRequest("new-process")).toThrow(/graph/i);
+  await owner.initialize("/workspace", second.request, {});
+  await owner.report(report("new-process"));
+  expect(second.calls.mock.calls.at(-1)?.[0]).toBe("plugin/desktop-activation");
+  expect(first.calls).toHaveBeenCalledTimes(1);
+});
+
+it("recovers runtime admission before ACK and shares the one handshake with ACK", async () => {
+  const backend = server("graph"), owner = new PluginDesktopActivations(30);
+  const handshake = vi.fn(async () => { await owner.initialize("/workspace", backend.request, {}); });
+  const [route] = await Promise.all([
+    owner.recoverRuntimeRequest("graph", "/workspace", handshake),
+    owner.recoverGraph("graph", handshake).then(() => owner.report(report("graph"))),
+  ]);
+  await route("plugin/client/request", {});
+  expect(handshake).toHaveBeenCalledTimes(1);
+  expect(backend.calls.mock.calls.map(call => call[0]).filter(method => method === "plugin/client/request")).toHaveLength(1);
+});
+
+it("never retries a dispatched runtime failure or recovers a known workspace mismatch", async () => {
+  const backend = server("graph"), owner = new PluginDesktopActivations(31);
+  await owner.initialize("/workspace", backend.request, {});
+  const handshake = vi.fn(async () => {}), failure = new Error("delivery outcome unknown");
+  const route = await owner.recoverRuntimeRequest("graph", "/workspace", handshake);
+  backend.calls.mockRejectedValueOnce(failure);
+  await expect(route("plugin/client/request", {})).rejects.toBe(failure);
+  expect(handshake).not.toHaveBeenCalled();
+  expect(backend.calls).toHaveBeenCalledTimes(2);
+  await expect(owner.recoverRuntimeRequest("graph", "/other", handshake)).rejects.toThrow(/workspace/i);
+  expect(handshake).not.toHaveBeenCalled();
+});
+
+it("rejects unknown graphs and workspace mismatch after pre-dispatch recovery without dispatch", async () => {
+  const backend = server("graph"), owner = new PluginDesktopActivations(32);
+  const handshake = vi.fn(async () => { await owner.initialize("/workspace", backend.request, {}); });
+  await expect(owner.recoverRuntimeRequest("forged", undefined, handshake)).rejects.toMatchObject({ code: "WUU_DESKTOP_GRAPH_OWNER_MISSING" });
+  await expect(owner.recoverRuntimeRequest("graph", "/other", handshake)).rejects.toThrow(/workspace/i);
+  expect(backend.calls.mock.calls.map(call => call[0])).toEqual(["initialize"]);
 });

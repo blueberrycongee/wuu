@@ -238,11 +238,26 @@ func (s *selectedEngineSession) Interrupt(ctx context.Context, reason string) er
 }
 func (s *selectedEngineSession) Steer(ctx context.Context, message providers.ChatMessage) (string, error) {
 	messages := modelwire.DriverMessagesToWire([]providers.ChatMessage{message})
-	var result struct {
-		TurnID string `json:"turn_id"`
+	var result pluginprotocol.EngineSteerResult
+	if err := callSelectedEngine(ctx, s.generation.host, s.id, "steer", pluginprotocol.EngineSteerParams{EngineSessionParams: s.handle, Message: messages[0]}, &result); err != nil {
+		// A failed RPC may have submitted input. Never infer non-delivery from
+		// diagnostic text or turn it into an automatic next-turn replay.
+		return "", err
 	}
-	err := callSelectedEngine(ctx, s.generation.host, s.id, "steer", pluginprotocol.EngineSteerParams{EngineSessionParams: s.handle, Message: messages[0]}, &result)
-	return result.TurnID, err
+	switch result.Disposition {
+	case "", "accepted":
+		return result.TurnID, nil
+	case "unsupported", "rejected":
+		if result.TurnID != "" {
+			return "", errors.New("conflicting engine steering receipt; delivery is unconfirmed")
+		}
+		if result.Disposition == "unsupported" {
+			return "", agentengine.ErrSteerUnsupported
+		}
+		return "", agentengine.ErrSteerRejected
+	default:
+		return "", fmt.Errorf("unknown engine steering disposition %q; delivery is unconfirmed", result.Disposition)
+	}
 }
 func (s *selectedEngineSession) Close(ctx context.Context) error {
 	s.mu.Lock()

@@ -129,7 +129,9 @@ func TestSubscribeThreadRuntimeKeepsForeignPinWorkerProvider(t *testing.T) {
 func TestAdvancedUpdateReDerivesPinnedThreadBudgetAndWorker(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	writeTwoProviderSelectionConfig(t, rt.ConfigPath)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
 
 	th := cachedForeignPinnedThread(t, srv, rt, "foreign-thread")
 	built, err := srv.ensureThreadRuntime(th)
@@ -179,7 +181,9 @@ const s400k = 400000
 func TestEnsureThreadRuntimeRestoresPinnedVariantEffortPermission(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	writeSelectionTestConfig(t, rt.ConfigPath)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
 
 	if _, err := rt.Sessions.CreateWithMetadata("resume-thread", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -370,7 +374,7 @@ func TestServerThreadStartDoesNotInheritWuuRuntimeForProtocolEngines(t *testing.
 type stubProtocolEngine struct{ id agentengine.EngineID }
 
 func (e stubProtocolEngine) Descriptor(context.Context) (agentengine.Descriptor, error) {
-	return agentengine.Descriptor{ID: e.id, Version: "1"}, nil
+	return agentengine.Descriptor{ID: e.id, Version: "1", Capabilities: []string{"model-options"}}, nil
 }
 func (stubProtocolEngine) Open(context.Context, agentengine.OpenRequest) (agentengine.Session, error) {
 	return nil, errors.New("unused")

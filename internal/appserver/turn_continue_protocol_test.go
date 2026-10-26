@@ -71,6 +71,7 @@ func TestTurnContinueProtocolEndToEnd(t *testing.T) {
 					t.Fatal(err)
 				}
 				rt.StreamRunner.Client = client
+				attachTestModelGeneration(t, rt)
 				rt.StreamRunner.ProviderOptions = map[string]any{"thinking": map[string]any{"type": "enabled", "budget_tokens": 1024}}
 			} else {
 				wire := ""
@@ -82,6 +83,7 @@ func TestTurnContinueProtocolEndToEnd(t *testing.T) {
 					t.Fatal(err)
 				}
 				rt.StreamRunner.Client = client
+				attachTestModelGeneration(t, rt)
 			}
 			sess, err := rt.Sessions.CreateWithMetadata(session.NewID(), rt.RootDir)
 			if err != nil {

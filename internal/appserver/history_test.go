@@ -158,6 +158,7 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 	for _, scenario := range []string{"plain", "checkpoint", "tail_checkpoint", "empty_checkpoint", "edited_branch", "execution_owned"} {
 		t.Run(scenario, func(t *testing.T) {
 			rt := newTestRuntime(t, &fakeClient{})
+			binding := testRuntimeState(t, rt)
 			const id = "resume-fork"
 			if _, err := rt.Sessions.CreateForkWithMetadata(id, rt.RootDir, sessionstore.ForkMetadata{
 				ForkedFromID: "source-thread", ForkedFromTurnID: "source-turn", ForkedFromItemID: "source-item",
@@ -230,7 +231,7 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			}
 			srv := New(rt, &lockedBuffer{})
 			t.Cleanup(srv.Close)
-			loaded, err := srv.loadPersistedThreadSnapshot(testRuntimeState(t, srv.rt), id)
+			loaded, err := srv.loadPersistedThreadSnapshot(binding, id)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -244,18 +245,18 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			// Reconstruct the prior load path independently of its optimized
 			// constructor and meta selection, then compare the complete state.
 			want := newThreadState(id, loaded.history, rt.ProviderName, rt.Model, firstNonEmpty(loaded.metadata.CWD, rt.RootDir), true, at)
-			want.state = testRuntimeState(t, rt)
+			want.state = binding
 			want.historyHeadSeq = loaded.baselineSeq
-			want.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, at, srv.participantResolver(testRuntimeState(t, srv.rt)))
+			want.Turns = turnsFromPersistedHistory(id, loaded.displayHistory, at, srv.participantResolver(binding))
 			restorePluginToolLabels(want.state.Host, want.Turns)
 			want.Turns = applyTokenUsageMetasToTurns(want.Turns, metas)
 			want.WorkspaceKind = workspaceKindForCWD(rt.WuuHome, want.CWD)
 			applySessionMetadata(want, loaded.metadata)
-			want.SessionControl, err = srv.readThreadSessionControl(testRuntimeState(t, srv.rt), id)
+			want.SessionControl, err = srv.readThreadSessionControl(binding, id)
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := srv.loadPersistedThreadState(testRuntimeState(t, srv.rt), id, at)
+			got, err := srv.loadPersistedThreadState(binding, id, at)
 			if err != nil {
 				t.Fatal(err)
 			}

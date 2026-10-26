@@ -3082,6 +3082,10 @@ export type WuuDesktopApi = {
    * restoring until all subscribers finish; failure is retryable. */
   onRuntimeRestore?: (handler: () => Promise<void>) => () => void;
   /** Observe foreground initialize requests, including workspace switches; newest request wins. */
+  /** Open the desktop bootstrap recovery window without application plugins. */
+  /** Ephemeral own-window presentation pixels; unavailable in remote bridges. */
+  capturePresentationFrame?: () => Promise<PresentationFrame | undefined>;
+  openRecovery?: () => Promise<void>;
   onRuntimeInitialization?: (handler: (event: { phase: "started"; requestId: number } | { phase: "completed"; requestId: number; initialized: InitializeResult }) => void) => () => void;
   // Pre-paint first-run gate. Optional so browser fixtures and older preload
   // mocks continue to enter the normal shell unless they explicitly exercise
@@ -3609,3 +3613,6 @@ declare global {
     wuuRenderableFileURL?: (encodedPath: string) => string;
   }
 }
+
+/** Local PNG pixels; width/height are physical pixels, divided by scaleFactor for logical size. */
+export type PresentationFrame = { data: Uint8Array; width: number; height: number; scaleFactor: number };

@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,24 +30,15 @@ func TestThreadCompactHooksPreserveRejectedCheckpoint(t *testing.T) {
 				if strategy == "fresh-window" {
 					rt.StreamRunner.CompactionRegistry = &agent.CompactionRegistry{Default: agent.DefaultContextWindowProvider{}}
 				}
-				dispatcher := hooks.NewDispatcher(hooks.NewRegistry(map[hooks.Event][]hooks.HookConfig{
-					blockedEvent: {{Type: "command", Command: `echo '{"continue":false,"reason":"checkpoint must remain active"}'`, Timeout: 3}},
-				}))
-				var before, after atomic.Int32
-				rt.StreamRunner.BeforeCompact = func(ctx context.Context, reason agent.CompactReason) error {
-					before.Add(1)
-					_, err := dispatcher.Dispatch(ctx, hooks.PreCompact, &hooks.Input{CWD: rt.RootDir, CompactReason: string(reason)})
-					return err
+				callsPath := filepath.Join(t.TempDir(), "compact-hooks")
+				entries := map[hooks.Event][]hooks.HookConfig{}
+				for _, event := range []hooks.Event{hooks.PreCompact, hooks.PostCompact} {
+					result := fmt.Sprintf(`{"continue":%t,"reason":"checkpoint must remain active"}`, event != blockedEvent)
+					entries[event] = []hooks.HookConfig{{Type: "command", Command: fmt.Sprintf("echo %s >> %q; echo '%s'", event, callsPath, result), Timeout: 3}}
 				}
-				rt.StreamRunner.AfterCompact = func(ctx context.Context, reason agent.CompactReason, compactErr error) error {
-					after.Add(1)
-					input := &hooks.Input{CWD: rt.RootDir, CompactReason: string(reason)}
-					if compactErr != nil {
-						input.Error = compactErr.Error()
-					}
-					_, err := dispatcher.Dispatch(ctx, hooks.PostCompact, input)
-					return err
-				}
+				// Thread runners bind the captured hook dispatcher, not callbacks
+				// assigned directly to the parent runner.
+				rt.HookDispatcher = hooks.NewDispatcher(hooks.NewRegistry(entries))
 				out := &lockedBuffer{}
 				srv := New(rt, out)
 				if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"thread/start"}`)); err != nil {
@@ -88,12 +80,18 @@ func TestThreadCompactHooksPreserveRejectedCheckpoint(t *testing.T) {
 				if !reflect.DeepEqual(persisted, original) {
 					t.Errorf("blocking %s changed the durable active checkpoint: messages=%d, want %d", blockedEvent, len(persisted), len(original))
 				}
-				wantAfter := int32(0)
+				calls, err := os.ReadFile(callsPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before := strings.Count(string(calls), string(hooks.PreCompact))
+				after := strings.Count(string(calls), string(hooks.PostCompact))
+				wantAfter := 0
 				if blockedEvent == hooks.PostCompact {
 					wantAfter = 1
 				}
-				if before.Load() != 1 || after.Load() != wantAfter {
-					t.Errorf("compact callbacks: pre=%d post=%d, want 1/%d", before.Load(), after.Load(), wantAfter)
+				if before != 1 || after != wantAfter {
+					t.Errorf("compact callbacks: pre=%d post=%d, want 1/%d", before, after, wantAfter)
 				}
 				if blockedEvent == hooks.PreCompact || strategy == "fresh-window" {
 					assertFakeClientRequestCount(t, client, 0)
@@ -134,6 +132,7 @@ func TestFreshContextRecoverySurvivesTurnAndReload(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	rt.StreamRunner.CompactionRegistry = &agent.CompactionRegistry{Default: agent.DefaultContextWindowProvider{}}
 	srv := New(rt, &lockedBuffer{})
 	threadRuntime := &runtime.ThreadRuntime{StreamRunner: rt.StreamRunner}

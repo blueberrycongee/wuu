@@ -693,9 +693,9 @@ export function ComposerQueueStrip({
       icon={<ListTodo className="icon-sm" />}
       summary={
         <Tooltip
-          content={hasUnconfirmedMessages ? t("composer.nativeDeliveryUnconfirmed") : latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
+          content={hasUnconfirmedMessages ? t("composer.deliveryUnconfirmedDetails") : hasHeldMessages ? t("composer.heldDetails") : latestMessage ? queuedMessageFullPreview(latestMessage) : undefined}
           disabled={
-            !hasUnconfirmedMessages && (expanded ||
+            !hasUnconfirmedMessages && !hasHeldMessages && (expanded ||
             !latestMessage ||
             queuedMessageFullPreview(latestMessage) === queuedMessagePreview(latestMessage))
           }
@@ -704,9 +704,10 @@ export function ComposerQueueStrip({
             className="composer-pending-preview"
             role="status"
             aria-live="polite"
+            aria-description={hasUnconfirmedMessages ? t("composer.deliveryUnconfirmedDetails") : hasHeldMessages ? t("composer.heldDetails") : undefined}
           >
             {hasUnconfirmedMessages
-              ? t("composer.nativeDeliveryUnconfirmed")
+              ? t("composer.deliveryUnconfirmed")
               : expanded
               ? hasHeldMessages
                 ? t("composer.heldNotice")
@@ -779,7 +780,7 @@ function ComposerQueueItem({
       className={`composer-queue-row ${kind}`}
       data-position={position}
       aria-busy={Boolean(message.operationState)}
-      aria-description={message.deliveryUnconfirmed ? t("composer.nativeDeliveryUnconfirmed") : undefined}
+      aria-description={message.deliveryUnconfirmed ? t("composer.deliveryUnconfirmedDetails") : undefined}
     >
       <span className="composer-queue-index" aria-hidden="true">
         {position}

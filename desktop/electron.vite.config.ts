@@ -25,8 +25,10 @@ export default defineConfig({
     build: {
       rollupOptions: {
         external: ["node-pty"],
+        // Dynamic product/recovery entries retain main-relative resource paths.
+        output: { chunkFileNames: "[name]-[hash].js" },
         input: {
-          index: resolve(__dirname, "src/main/index.ts"),
+          index: resolve(__dirname, "src/main/desktopEntry.ts"),
         },
       },
     },
@@ -37,6 +39,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, "src/main/preload.ts"),
+          recovery: resolve(__dirname, "src/main/recoveryPreload.ts"),
           browserPage: resolve(__dirname, "src/main/browserPagePreload.ts"),
           nativePreview: resolve(__dirname, "src/main/nativePreviewPreload.ts"),
           chromeOverlay: resolve(__dirname, "src/main/chromeOverlayPreload.ts"),

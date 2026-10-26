@@ -5,11 +5,12 @@ import { useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 
 export function RuntimeLoading({
-  status, fullscreen = false, onRetry,
+  status, fullscreen = false, onRetry, onRecovery,
 }: {
   status: string;
   fullscreen?: boolean;
   onRetry?: () => void;
+  onRecovery?: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const isStarting = status === "connecting" || status === "opening";
@@ -36,6 +37,7 @@ export function RuntimeLoading({
             <p id={descriptionId} className="wuu-launch-description" aria-hidden={!slow}>{slow ? t("loading.slow") : "\u00a0"}</p>
           </> : <>
             <pre id={descriptionId} className="wuu-launch-error">{status}</pre>
+            {onRecovery && <button type="button" className="settings-button" onClick={onRecovery}>{t("loading.openRecovery")}</button>}
             {onRetry && <button type="button" className="settings-button" onClick={onRetry}>{t("loading.reconnect")}</button>}
           </>}
         </div>

@@ -173,7 +173,7 @@ func TestPluginPackageInstallDirectoryTrustsAndEnables(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	source := writeManagedPluginPackage(t, "installed-demo", "1.0.0", "trusted installed skill")
 	out := &lockedBuffer{}
 	srv := New(rt, out)
@@ -194,7 +194,7 @@ func TestPluginPackageFailedPreparationCanRetryInstallation(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	source := t.TempDir()
 	manifest := filepath.Join(source, "plugin.json")
 	writePluginPackageFile(t, manifest, `{"id":"retry-install","runtime":{"protocol":"wuu-plugin-v1","command":"missing-binary"}}`)
@@ -234,7 +234,7 @@ func TestPluginPackageUpdateWaitsForExactApprovalBeforePromotion(t *testing.T) {
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "fake-model"}}
 }`)
 	rt.ConfigPath = configPath
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 
 	versionOne := writeManagedPluginPackage(t, "update-demo", "1.0.0", "first generation")
 	out := &lockedBuffer{}
@@ -337,7 +337,7 @@ func TestPluginPackageUpdateActivationFailureKeepsInstalledAndPendingGenerations
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "fake-model"}}
 }`)
 	rt.ConfigPath = configPath
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 
 	versionOne := writeManagedPluginPackage(t, "activation-failure", "1.0.0", "working generation")
 	out := &lockedBuffer{}
@@ -517,7 +517,11 @@ func TestPluginGenerationResponsePublishesCommittedStateBeforeReply(t *testing.T
 			rt.Plugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "committed", Desktop: &pluginpkg.DesktopSpec{Entry: "desktop.js"}}, SubjectID: "plugin:user:committed", Fingerprint: "committed-source", Source: "user"}}
 			out := &lockedBuffer{}
 			srv := &Server{rt: rt, out: out}
+			testRuntimeState(t, rt)
 			inventory, _ := srv.currentExtensionState()
+			if len(inventory) != 1 || inventory[0].GraphGeneration == "" {
+				t.Fatalf("committed snapshot lacks its admitted graph: %+v", inventory)
+			}
 			var activationErr error
 			if failed {
 				activationErr = errors.New("committed activation failed")
@@ -609,7 +613,7 @@ func TestConcurrentPluginGenerationAdmissionsRefreshOnce(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.WuuHome = retryingTempDir(t)
 	writeTargetedUpdateConfig(t, rt)
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	mutation, acquired, err := session.TryAcquirePluginGenerationMutationLease(rt.WuuHome)
 	if err != nil || !acquired {
 		t.Fatalf("acquire mutation generation: acquired=%v err=%v", acquired, err)
@@ -680,7 +684,7 @@ func TestServerStartupRefreshesGenerationAdvancedAfterRuntimeConstruction(t *tes
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
 	writeTargetedUpdateConfig(t, rt)
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	oldHost := rt.PluginHost
 	mutation, acquired, err := session.TryAcquirePluginGenerationMutationLease(rt.WuuHome)
 	if err != nil || !acquired {
@@ -720,7 +724,7 @@ func TestPluginPackageRemoveRefreshesInventory(t *testing.T) {
   "providers": {"fake-provider": {"type": "openai-compatible", "base_url": "https://example.test/v1", "model": "fake-model"}}
 }`)
 	rt.ConfigPath = configPath
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	source := t.TempDir()
 	writePluginPackageFile(t, filepath.Join(source, "plugin.json"), `{"id":"remove-demo","skills":["skills"]}`)
 	writePluginPackageFile(t, filepath.Join(source, "skills", "remove-skill", "SKILL.md"), `---
@@ -835,7 +839,7 @@ func TestPluginPackageMutationsPreserveUnrelatedRunningTurn(t *testing.T) {
 	}
 	writePluginPackageFile(t, configPath, `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"}}}`)
 	rt.ConfigPath = configPath
-	bindConfigSourceForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 
 	source := t.TempDir()
 	writePluginPackageFile(t, filepath.Join(source, "plugin.json"), `{"id":"busy-demo"}`)

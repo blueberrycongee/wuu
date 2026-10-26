@@ -33,6 +33,12 @@ func TestAgentFileEditsPersistAndRefreshUserConfig(t *testing.T) {
 			if err := os.WriteFile(rt.ConfigPath, []byte(initial), 0o600); err != nil {
 				t.Fatal(err)
 			}
+			rt = newConfigRefreshRuntime(t, rt)
+			configured, err := os.ReadFile(rt.ConfigPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			initial = string(configured)
 			kit, err := tools.New(rt.RootDir)
 			if err != nil {
 				t.Fatal(err)
@@ -181,6 +187,12 @@ func TestConfigRefreshPreservesInventoryUntilInvalidDocumentIsRepaired(t *testin
 		}
 	}
 	write(valid)
+	rt = newConfigRefreshRuntime(t, rt)
+	configured, err := os.ReadFile(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid = string(configured)
 	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)

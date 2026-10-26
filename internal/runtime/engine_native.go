@@ -360,14 +360,20 @@ func (p *nativeEngineProvider) InvokeService(ctx context.Context, in pluginhost.
 			}
 			steering, ok := s.session.(agentengine.SteeringSession)
 			if !ok {
-				return nil, agentengine.ErrSteerUnsupported
+				return json.Marshal(pluginprotocol.EngineSteerResult{Disposition: "unsupported"})
 			}
 			messages := modelwire.DriverMessagesFromWire([]pluginprotocol.DriverMessageV1{input.Message})
 			ref, err := steering.Steer(ctx, messages[0])
+			if errors.Is(err, agentengine.ErrSteerUnsupported) {
+				return json.Marshal(pluginprotocol.EngineSteerResult{Disposition: "unsupported"})
+			}
+			if errors.Is(err, agentengine.ErrSteerRejected) {
+				return json.Marshal(pluginprotocol.EngineSteerResult{Disposition: "rejected"})
+			}
 			if err != nil {
 				return nil, err
 			}
-			return json.Marshal(map[string]string{"turn_id": ref})
+			return json.Marshal(pluginprotocol.EngineSteerResult{TurnID: ref, Disposition: "accepted"})
 		case "close":
 			err := s.session.Close(ctx)
 			p.releaseEntry(s.entry)

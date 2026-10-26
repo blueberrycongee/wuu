@@ -29,8 +29,18 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 	t.Helper()
 	// Capture the synthetic transport before publishing the declared graph; all
 	// inference participates in selected model, capacity and context services.
-	model := &embeddedModelStreamFixture{client: rt.StreamRunner.Client}
-	clients := []pluginhost.Client{promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolservice.NewService(), &embeddedToolsConsumer{}, &embeddedEngineConsumer{}, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
+	model := &embeddedModelStreamFixture{}
+	if rt.StreamRunner != nil {
+		model.client = rt.StreamRunner.Client
+	}
+	var toolProvider pluginhost.Client = toolservice.NewService()
+	if rt.Toolkit == nil && rt.StreamRunner != nil && rt.StreamRunner.Tools != nil {
+		executor := rt.StreamRunner.Tools
+		toolProvider = &embeddedToolFixture{Service: toolservice.NewService(), scope: toolservice.NewScope(func(context.Context) (toolservice.Backend, error) {
+			return toolservice.Backend{Executor: executor}, nil
+		})}
+	}
+	clients := []pluginhost.Client{promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, &embeddedEngineConsumer{}, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
 	clients = append(clients, additional...)
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	if len(conflicts) != 0 {
@@ -42,8 +52,12 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 	if err := rt.PluginHost.Activate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	host := rt.PluginHost
 	t.Cleanup(func() {
 		if _, err := rt.Cleanup(); err != nil {
+			t.Error(err)
+		}
+		if err := host.Close(context.Background()); err != nil {
 			t.Error(err)
 		}
 	})
@@ -111,6 +125,15 @@ func (*embeddedModelConsumer) RequiredServices() []pluginhost.ServiceRequirement
 }
 func (c *embeddedModelConsumer) Activate(context.Context) error { c.active.Store(true); return nil }
 func (c *embeddedModelConsumer) Close(context.Context) error    { c.active.Store(false); return nil }
+
+type embeddedToolFixture struct {
+	*toolservice.Service
+	scope *toolservice.Scope
+}
+
+func (c *embeddedToolFixture) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	return c.Service.InvokeService(toolservice.WithScope(ctx, c.scope), p)
+}
 
 // These fixtures provide their own toolkit and permission authority.
 type embeddedToolsConsumer struct{ embeddedModelConsumer }

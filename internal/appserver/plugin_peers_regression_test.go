@@ -7,13 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/tools"
 )
 
 // stuckPeersLifecycleClient simulates a peers helper whose single ordered
@@ -56,21 +54,11 @@ func (c *stuckPeersLifecycleClient) InvokeCapability(ctx context.Context, _ plug
 func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	client := &fakeClient{responses: []providers.ChatResponse{providersResponse("peer-done"), providersResponse("user-done")}}
 	rt := newTestRuntime(t, client)
-	preparePluginRuntimePathsForTest(t, rt)
-	kit, err := tools.New(rt.RootDir)
-	if err != nil {
-		t.Fatalf("tools.New: %v", err)
-	}
-	rt.Toolkit = kit
-	cfg, _, err := config.LoadPath(rt.ConfigPath)
+	rt = newReloadBehaviorRuntime(t, rt, client)
+	cfg, _, err := rt.LoadEffectiveConfig()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.RefreshExtensions(cfg); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _, _ = rt.Cleanup() })
-	modelClient, titleClient, workerClient := rt.StreamRunner.Client, rt.TitleClient, rt.WorkerClient
 	peers := &stuckPeersLifecycleClient{entered: make(chan struct{}), release: make(chan struct{})}
 	// Replace the bundled observer so the queued turn reaches this blocked fixture.
 	if outcome, _ := rt.PluginHost.RetirePlugin(context.Background(), peers.ID(), nil); outcome.Err != nil {
@@ -127,15 +115,14 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	// active. Retained callback leases must not delay explicit revocation.
 	settings := &extensions.Settings{}
 	settings.SetEnabled("plugin:peers", false)
-	candidate, err := rt.PreflightExtensionPolicy(config.Config{Extensions: settings})
+	cfg.Extensions = settings
+	candidate, err := rt.PreflightExtensionPolicy(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
-	// The provider fixture stays explicit after the graph rebuilds clients.
-	rt.StreamRunner.Client, rt.TitleClient, rt.WorkerClient = modelClient, titleClient, workerClient
 
 	// The peers-owned turn itself still completes; its terminal lifecycle
 	// event is undeliverable and must be dropped instead of replayed forever.

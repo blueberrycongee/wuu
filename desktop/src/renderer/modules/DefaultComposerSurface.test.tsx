@@ -203,3 +203,32 @@ it.each([false, true])("locks navigation without changing the session's readonly
   expect(editor.disabled).toBe(true);
   expect(editor.placeholder).not.toBe(placeholder);
 });
+
+it("scopes unconfirmed delivery to its conversation and clears the drawer when its authoritative rows resolve", async () => {
+  const fixture = setup();
+  const first = fixture.application.composerPresentation.getSnapshot("draft-one");
+  const second = Object.freeze({ ...first, ownerTabId: "thread-b", threadId: "thread-b", running: true, turnRunning: true });
+  vi.spyOn(fixture.application.composerPresentation, "getSnapshot").mockImplementation(owner => owner === "thread-b" ? second : first);
+  const row = { id: "unknown-a", text: "Only conversation A", preview: "Only conversation A", fullPreview: "Only conversation A", imageIds: [], fileIds: [], held: true, deliveryUnconfirmed: true };
+  await fixture.update(view => ({ ...view, composerPending: [{ threadId: "draft-one", queued: [row], guides: [] }],
+    tabs: { ...view.tabs, items: [...view.tabs.items, { ...view.tabs.items[0], id: "thread-b", kind: "thread", threadId: "thread-b" }] },
+    composerRuntime: { owners: [...view.composerRuntime.owners, { ...view.composerRuntime.owners[0], ownerTabId: "thread-b", threadId: "thread-b" }] },
+  }));
+  await fixture.render();
+  expect(container.querySelector('[data-wuu-component="composer-pending"]')).not.toBeNull();
+  expect(container.textContent).toContain(row.text);
+  const select = async (id: string) => fixture.update(view => ({ ...view,
+    tabs: { ...view.tabs, activeTabId: id }, drafts: { ...view.drafts, activeTabId: id, primary: { ...view.drafts.primary, ownerTabId: id } },
+  }));
+  await select("thread-b");
+  expect(container.querySelector('[data-wuu-component="composer-pending"]')).toBeNull();
+  expect(container.textContent).not.toContain(row.text);
+  await select("draft-one");
+  const pending = container.querySelector('[data-wuu-component="composer-pending"]');
+  expect(pending).not.toBeNull();
+  // Returning to an unresolved owner preserves the data; disclosure remains usable.
+  if (!container.querySelector(".composer-queue-row")) await act(async () => pending!.querySelector<HTMLButtonElement>("button")!.click());
+  expect(container.textContent).toContain(row.text);
+  await fixture.update(view => ({ ...view, composerPending: [{ threadId: "draft-one", queued: [], guides: [] }] }));
+  expect(container.querySelector('[data-wuu-component="composer-pending"]')).toBeNull();
+});

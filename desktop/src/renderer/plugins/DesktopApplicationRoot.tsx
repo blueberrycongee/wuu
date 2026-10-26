@@ -5,6 +5,7 @@ import { ApplicationShellOutlet } from "./ApplicationShell";
 import { dismissToast, showErrorToast } from "../Toast";
 import { useI18n } from "../i18n";
 import { RuntimeLoading, ViewSwitchLoading } from "../LoadingViews";
+import { ConversationPresentationBoundary } from "../ConversationPresentationTransition";
 
 export function DesktopApplicationRoot(): JSX.Element {
   const reportFailure = useSyncExternalStore(listener => desktopPluginHost.subscribe(listener), desktopPluginHost.getActivationReportFailure);
@@ -44,14 +45,17 @@ export function DesktopApplicationRoot(): JSX.Element {
   useEffect(() => { if (active) hasShownApplication.current = true; }, [active]);
   const shell = state.initialized?.application_shell;
   const binding = shell ? { pluginId: shell.plugin_id, generation: shell.generation, id: shell.provider_id } : null;
+  const pending = pluginsPending || !state.initialized && !state.error || selectionReady?.key !== selectionKey;
+  const wrap = (content: React.ReactNode) => <ConversationPresentationBoundary binding={desktopPluginHost.applicationProviders.getBindingRevision()} retiring={!active && pending} failed={Boolean(failure && !pending)}>{content}</ConversationPresentationBoundary>;
   if (!state.initialized || !active) {
-    const pending = pluginsPending || !state.initialized && !state.error || selectionReady?.key !== selectionKey;
     // A stopped writer must not remain interactive. Reuse the existing text-free
     // transition surface rather than flashing launch/error copy on normal reloads.
-    if (pending && hasShownApplication.current) return <ViewSwitchLoading />;
-    return <RuntimeLoading fullscreen status={pending ? "connecting" : failureMessage} onRetry={() => window.location.reload()} />;
+    if (pending && hasShownApplication.current) return wrap(<ViewSwitchLoading />);
+    return wrap(<RuntimeLoading fullscreen status={pending ? "connecting" : failureMessage} onRetry={window.wuu?.openRecovery ? undefined : () => window.location.reload()} onRecovery={pending || !window.wuu?.openRecovery ? undefined : () => {
+      void window.wuu.openRecovery!().catch(() => showErrorToast(t("loading.recoveryUnavailable"), "", "application-recovery"));
+    }} />);
   }
   const surfaceBindings = Object.fromEntries(Object.entries(state.initialized.application_surfaces ?? {})
     .map(([service, selected]) => [service, { pluginId: selected.plugin_id, generation: selected.generation, id: selected.provider_id }]));
-  return <ApplicationShellOutlet key={desktopPluginHost.applicationProviders.getBindingRevision()} host={desktopPluginHost} binding={binding} surfaceBindings={surfaceBindings} pending={pluginsPending} />;
+  return wrap(<ApplicationShellOutlet key={desktopPluginHost.applicationProviders.getBindingRevision()} host={desktopPluginHost} binding={binding} surfaceBindings={surfaceBindings} pending={pluginsPending} />);
 }

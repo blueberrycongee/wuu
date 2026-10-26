@@ -96,6 +96,7 @@ func TestServerActivityInputPausesUntilUserContinuation(t *testing.T) {
 					client := newBlockingStreamClient("done")
 					rt := newTestRuntime(t, &fakeClient{})
 					rt.StreamRunner.Client = client
+					attachTestModelGeneration(t, rt)
 					rt.ActivityRegistry = activity.NewRegistry()
 					out := &lockedBuffer{}
 					srv := New(rt, out)

@@ -1,4 +1,7 @@
+import { PresentationFrameCapture } from "./presentationFrame";
+import { createDesktopRecovery } from "./desktopRecovery";
 import { randomUUID } from "node:crypto";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 import { AppContextCapture } from "./appContextCapture";
 import { SystemPermissions } from "./systemPermissions";
 import { createBrowserView } from "./browserView";
@@ -205,7 +208,7 @@ import {
 } from "./desktopSettings";
 import { GitService } from "./gitService";
 import { requestRemoteWorkspace } from "./remoteWorkspace";
-import { PluginDesktopActivations } from "./pluginDesktopActivations";
+import { DesktopGraphOwnershipError, observeDesktopActivationDocument, PluginDesktopActivations } from "./pluginDesktopActivations";
 import { PluginRuntimeRequests } from "./pluginRuntimeRequests";
 import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
 import { ProjectManager, wuuHomePath } from "./projects";
@@ -608,11 +611,7 @@ function desktopActivationOwner(event: IpcMainInvokeEvent): PluginDesktopActivat
           .finally(() => desktopActivationDisconnects.delete(pending));
       }
     };
-    contents.on("did-start-navigation", (details) => {
-      if (details.isMainFrame && !details.isSameDocument) disconnect();
-    });
-    contents.on("render-process-gone", disconnect);
-    contents.once("destroyed", disconnect);
+    observeDesktopActivationDocument(contents, disconnect);
   }
   let owner = desktopActivationOwners.get(contents.id);
   if (!owner) {
@@ -620,6 +619,34 @@ function desktopActivationOwner(event: IpcMainInvokeEvent): PluginDesktopActivat
     desktopActivationOwners.set(contents.id, owner);
   }
   return owner;
+}
+
+async function initializeDesktopGraph(event: IpcMainInvokeEvent, owner: PluginDesktopActivations): Promise<void> {
+  // This is a fresh authoritative handshake, not a route inferred from the
+  // selected workspace. Only the exact returned graph may admit this ACK.
+  const context = runtimeContextForEvent(event);
+  const request = appServerClientPool.bindContextRequest(context);
+  const currentDocument = () => {
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame
+      || desktopActivationOwners.get(event.sender.id) !== owner) {
+      throw new PluginLifecycleCancellationError(new Error("Desktop activation recovery document was replaced"));
+    }
+  };
+  currentDocument();
+  const recoveryId = randomUUID();
+  const revision = owner.initializationRevision + 1;
+  event.sender.send("wuu:runtime-initialization-recovery", { phase: "started", recoveryId, afterRequestId: owner.rendererRequestId });
+  const initialized = await owner.initialize(context.cwd, async <T>(method: string, input?: unknown): Promise<T> => {
+    const result = await request<T>(method, input);
+    currentDocument();
+    return result;
+  }, desktopInitializeParams());
+  currentDocument();
+  // A newer workspace/process initialize wins, even at the same path.
+  if (owner.initializationRevision !== revision || JSON.stringify(runtimeContextForEvent(event)) !== JSON.stringify(context)) {
+    throw new PluginLifecycleCancellationError(new Error("Desktop activation recovery was superseded"));
+  }
+  event.sender.send("wuu:runtime-initialization-recovery", { phase: "completed", recoveryId, initialized });
 }
 
 function runtimeContextForEvent(event: IpcMainInvokeEvent): RuntimeContext {
@@ -778,6 +805,7 @@ function emitServerEvent(event: ServerEvent): void {
   // down so respondSafe drops late replies, and broadcasts invalidation.
   // Idempotent with a later disposeClient.
   if (event.kind === "server-exit") {
+    for (const owner of desktopActivationOwners.values()) owner.invalidateWorkspace(event.workdir);
     browserHostCoordinator.onClientTorndown(event.workdir);
     observationCoordinator.dropWorkdir(event.workdir);
   }
@@ -1003,18 +1031,19 @@ function loadRenderer(window: BrowserWindow): void {
     app,
     load: () => devRendererURL ? window.loadURL(devRendererURL) : window.loadFile(rendererPath),
     stopTerminals: (ownerID) => terminalSessionManager.stopForOwner(ownerID),
+    recover: () => desktopRecovery.open(),
     prompt: async () => {
       const { response } = await dialog.showMessageBox(window, {
         type: "error",
         title: "Wuu",
         message: mainTranslate("rendererRecoveryFailed"),
         detail: mainTranslate("rendererRecoveryDetail"),
-        buttons: [mainTranslate("reloadWindow"), mainTranslate("closeWindow")],
+        buttons: [mainTranslate("reloadWindow"), desktopRecovery.menuItem().label!, mainTranslate("closeWindow")],
         defaultId: 0,
-        cancelId: 1,
+        cancelId: 2,
         noLink: true,
       });
-      return response === 0 ? "reload" : "close";
+      return response === 0 ? "reload" : response === 1 ? "recover" : "close";
     },
   });
   const popover = new NativeBrowserPopover(window);
@@ -1512,8 +1541,30 @@ async function directorySize(path: string): Promise<number> {
   return total;
 }
 
+let desktopRecovery: ReturnType<typeof createDesktopRecovery>;
 let desktopUpdates: ReturnType<typeof installDesktopUpdates>;
 app.whenReady().then(async () => {
+  desktopRecovery = createDesktopRecovery({
+    preloadPath: join(__dirname, "../preload/recovery.cjs"),
+    mode: "normal",
+    shutdown: prepareToQuit,
+    reload: async () => {
+      const target = mainWindow;
+      if (!target || target.isDestroyed()) throw new Error("Application window unavailable");
+      const url = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined;
+      if (url) await target.loadURL(url);
+      else await target.loadFile(join(__dirname, "../renderer/index.html"));
+    },
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(productionApplicationMenuTemplate(process.platform, undefined, desktopRecovery.menuItem())));
+  const presentationFrames = new PresentationFrameCapture(contents => windowRegistry.allWindows().some(window => window.webContents === contents));
+  ipcMain.handle("wuu:presentation-frame", event => presentationFrames.capture(event));
+  ipcMain.handle("wuu:recovery-open", event => {
+    if (event.senderFrame !== event.sender.mainFrame || !windowRegistry.allWindows().some(window => window.webContents === event.sender)) {
+      throw new Error("Application window required");
+    }
+    return desktopRecovery.open();
+  });
   await inheritSystemProxy();
   if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
   setMainLocale(resolveMainLocale(getLanguagePreference(), app.getLocale()));
@@ -1521,7 +1572,7 @@ app.whenReady().then(async () => {
     isPackaged: app.isPackaged,
     setApplicationMenu: () => {
       Menu.setApplicationMenu(
-        Menu.buildFromTemplate(productionApplicationMenuTemplate(process.platform)),
+        Menu.buildFromTemplate(productionApplicationMenuTemplate(process.platform, undefined, desktopRecovery.menuItem())),
       );
     },
     onWebContentsCreated: (listener) => {
@@ -1864,8 +1915,9 @@ app.whenReady().then(async () => {
       return projectManager.relocate(projectIDToRelocate, projectPath);
     },
   );
-  ipcMain.handle("wuu:initialize", async (event) => {
+  ipcMain.handle("wuu:initialize", async (event, rendererRequestId?: number) => {
     const owner = desktopActivationOwner(event);
+    if (Number.isSafeInteger(rendererRequestId) && rendererRequestId! > 0) owner.rendererRequestId = Math.max(owner.rendererRequestId, rendererRequestId!);
     const context = runtimeContextForEvent(event);
     const result = await owner.initialize(context.cwd, appServerClientPool.bindContextRequest(context), desktopInitializeParams());
     if (result.core) {
@@ -2176,8 +2228,13 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:plugin-package-remove", (event, id: string) =>
     appServerRequest<PluginPackageRemoveResult>(event, "plugin/package/remove", { id }),
   );
-  ipcMain.handle("wuu:plugin-desktop-activation", (event, params: PluginDesktopActivationParams) =>
-    desktopActivationOwner(event).report(params));
+  ipcMain.handle("wuu:plugin-desktop-activation", async (event, params: PluginDesktopActivationParams) => {
+    const owner = desktopActivationOwner(event);
+    try { return await owner.report(params); }
+    catch (error) { if (!(error instanceof DesktopGraphOwnershipError)) throw error; }
+    await owner.recoverGraph(params.graph_generation, () => initializeDesktopGraph(event, owner));
+    return owner.report(params);
+  });
   ipcMain.handle(
     "wuu:plugin-desktop-module-load",
     async (event, params: PluginDesktopModuleReadParams): Promise<PluginDesktopModuleLoadResult> => {
@@ -2223,7 +2280,7 @@ app.whenReady().then(async () => {
     appServerRequest<PluginStorageResult>(event, "plugin/storage/get", params));
   ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
     appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
-  ipcMain.handle("wuu:plugin-runtime-request", (event, params: PluginClientRequestParams) => {
+  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => {
     // Only explicit workspace requests need resolution. Implicit requests follow
     // the graph's captured process, not the project's mutable current selection.
     const context = params.workspace_id || params.workspace_root
@@ -2231,7 +2288,24 @@ app.whenReady().then(async () => {
     if (params.workspace_root && context && resolve(params.workspace_root) !== resolve(context.cwd)) {
       throw new Error("Plugin runtime workspace changed");
     }
-    const request = desktopActivationOwner(event).runtimeRequest(params.graph_generation, context?.cwd);
+    const activationOwner = desktopActivationOwner(event);
+    const admissionContext = runtimeContextForEvent(event);
+    let request: ReturnType<PluginDesktopActivations["runtimeRequest"]>;
+    try { request = activationOwner.runtimeRequest(params.graph_generation, context?.cwd); }
+    catch (error) {
+      if (!(error instanceof DesktopGraphOwnershipError)) throw error;
+      request = await activationOwner.recoverRuntimeRequest(params.graph_generation, context?.cwd,
+        () => initializeDesktopGraph(event, activationOwner));
+    }
+    // Revalidate this caller after an awaited admission, even when another ACK
+    // owns the singleflight handshake. Never dispatch into a replacement document.
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame
+      || desktopActivationOwners.get(event.sender.id) !== activationOwner) {
+      throw new PluginLifecycleCancellationError(new Error("Plugin runtime admission document was replaced"));
+    }
+    if (JSON.stringify(runtimeContextForEvent(event)) !== JSON.stringify(admissionContext)) {
+      throw new PluginLifecycleCancellationError(new Error("Plugin runtime admission workspace was superseded"));
+    }
     const owner = `window:${event.sender.id}`;
     return pluginRuntimeRequests.request(owner, request, params, undefined, () => {
       event.sender.once("destroyed", () => pluginRuntimeRequests.closeOwner(owner));
@@ -3252,7 +3326,7 @@ app.whenReady().then(async () => {
   appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
-  desktopUpdates = installDesktopUpdates(prepareToQuit, state => broadcastToAll("wuu:desktop-update-changed", state));
+  desktopUpdates = installDesktopUpdates(prepareToQuit, state => broadcastToAll("wuu:desktop-update-changed", state), desktopRecovery.menuItem());
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {

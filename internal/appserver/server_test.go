@@ -581,6 +581,7 @@ func TestServerInitializeExposesExtensionInventoryWithoutSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
@@ -646,6 +647,7 @@ func TestServerInitializeHidesInactivePluginMCPOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"initialize"}`)); err != nil {
@@ -1059,8 +1061,9 @@ func TestSelectingAutoDiscoveredGrokBuildPersistsProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	request := `{"id":"grok","method":"config/model/update","params":{"provider":"grok-build","model":"grok-4.6","variant":"xhigh"}}`
 	if err := srv.handleLine(context.Background(), []byte(request)); err != nil {
 		t.Fatalf("select auto-discovered Grok provider: %v", err)
@@ -1404,8 +1407,9 @@ func TestServerConfigModelUpdate(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"model":"new-model"}}`)); err != nil {
 		t.Fatalf("config/model/update: %v", err)
@@ -1468,6 +1472,7 @@ func TestCachedThreadRestoresPersistedModelSelection(t *testing.T) {
 }`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	rt = newSettingsRefreshRuntime(t, rt)
 	if _, err := rt.Sessions.CreateWithMetadata("persisted-model-thread", rt.RootDir); err != nil {
 		t.Fatal(err)
 	}
@@ -1511,6 +1516,7 @@ func TestServerConfigModelUpdateRejectsRunningTargetThread(t *testing.T) {
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	now := time.Now().UTC()
 
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
@@ -1567,8 +1573,9 @@ func TestServerConfigModelUpdateWorkspaceDefaultsPreserveRunningSession(t *testi
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	now := time.Now().UTC()
 
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
@@ -1642,6 +1649,7 @@ func TestServerConfigModelUpdateRejectsTargetOwnedByAnotherServer(t *testing.T) 
 
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"thread_id":"leased-thread","model":"new-model"}}`)); err != nil {
 		t.Fatalf("config/model/update: %v", err)
 	}
@@ -1672,8 +1680,9 @@ func TestServerConfigModelUpdateScopesSelectionToTargetOnly(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	now := time.Now().UTC()
 	target := newThreadState("target-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	target.state = testRuntimeState(t, rt)
@@ -1775,8 +1784,9 @@ func TestServerConfigModelUpdatePermissionOnlyTargetKeepsModelSelection(t *testi
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"thread_id":"target-thread","permission_mode":"unconfined"}}`)); err != nil {
@@ -1825,8 +1835,9 @@ func TestServerConfigModelUpdateModelOnlyTargetResetsUnsupportedEffortAndKeepsPe
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"thread_id":"target-thread","model":"new-model"}}`)); err != nil {
@@ -1873,8 +1884,9 @@ func TestServerConfigModelUpdateExplicitEmptyVariantClearsSelection(t *testing.T
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	target := newTargetedUpdateFixture(t, rt, srv)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"thread_id":"target-thread","variant":""}}`)); err != nil {
@@ -1966,8 +1978,9 @@ func TestServerConfigModelUpdateTargetedModelOnlyForeignProviderStaysThreadScope
 	rt.StreamRunner.Effort = "high"
 	writeForeignProviderUpdateConfig(t, rt)
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	target := newForeignProviderTargetFixture(t, rt, srv)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"thread_id":"foreign-thread","model":"mimo-v2.5"}}`)); err != nil {
@@ -2017,8 +2030,9 @@ func TestServerConfigModelUpdateTargetedVariantOnlyValidatesAgainstThreadModel(t
 	rt.StreamRunner.Effort = "high"
 	writeForeignProviderUpdateConfig(t, rt)
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	target := newForeignProviderTargetFixture(t, rt, srv)
 
 	// "high" is a mimo-v2.5-pro variant; the workspace fake-model has no
@@ -2062,10 +2076,11 @@ func TestServerConfigModelUpdateConnectionOnlyTargetAllowedWhileRunning(t *testi
 	rt.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}
 	rt.StreamRunner.Effort = "high"
 	writeTargetedUpdateConfig(t, rt)
-	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
+	oldClient := rt.StreamRunner.Client
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	target := newTargetedUpdateFixture(t, rt, srv)
 	target.mu.Lock()
 	target.startTurnLocked("running-turn", providers.ChatMessage{Role: "user", Content: "keep running"}, time.Now().UTC())
@@ -2117,10 +2132,12 @@ func TestRunningTurnUsesModelSnapshotAfterConfigUpdate(t *testing.T) {
 		{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: 7, OutputTokens: 3}},
 	}}
 	rt.StreamRunner.Client = streamClient
+	attachTestModelGeneration(t, rt)
 	rt.StreamRunner.Model = "fake-model"
 	rt.StreamRunner.APIModel = "fake-model"
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	if _, err := rt.Sessions.CreateWithMetadata("running-thread", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -2191,8 +2208,9 @@ func TestServerConfigAdvancedUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/advanced/update","params":{"max_steps":12,"max_context_tokens":256000,"temperature":0.4,"compact_threshold_pct":0.5,"compact_keep_recent_tokens":20000,"disable_auto_compact":true,"provider_context_window":512000,"model_aliases":{"cheap":{"provider":"fake-provider","model":"cheap-model:latest","effort":"low"}},"project_models":{"side":{"provider":"fake-provider","model":"side-model"},"worker":{"provider":"fake-provider","model":"worker-model"}},"verification_model":{"provider":"fake-provider","model":"verification-model"}}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -2276,11 +2294,12 @@ func TestServerConfigGeneralUpdatePersistsAndRefreshesRuntime(t *testing.T) {
 	}
 	oldPrompt := rt.StreamRunner.SystemPrompt
 	th := newThreadState("thread-1", []providers.ChatMessage{{Role: "system", Content: oldPrompt}}, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	th.state = testRuntimeState(t, rt)
 	th.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, SystemPrompt: oldPrompt}}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	srv.threads[th.ID] = th
 
 	req := `{"id":"1","method":"config/general/update","params":{"git_attribution_enabled":false,"mcp_enabled_toggles":{"docs":false,"search":true},"ptc":{"enabled":true}}}`
@@ -2386,8 +2405,9 @@ func TestServerConfigModelUpdatePersistsPermissionMode(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/model/update","params":{"model":"fake-model","permission_mode":"unconfined"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -2440,8 +2460,9 @@ func TestServerConfigModelUpdateAppliesPermissionBoundary(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/model/update","params":{"model":"fake-model","permission_mode":"read_only"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -2456,8 +2477,12 @@ func TestServerConfigModelUpdateAppliesPermissionBoundary(t *testing.T) {
 		Name:      "write_file",
 		Arguments: `{"path":"blocked.txt","content":"nope"}`,
 	})
-	if err == nil || !strings.Contains(err.Error(), "error_kind=boundary_denied") {
+	// The selected authorization provider rejects writes before execution.
+	if err == nil || !strings.Contains(err.Error(), "error_kind=authorization_denied") {
 		t.Fatalf("expected read-only runtime boundary, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(rt.RootDir, "blocked.txt")); !os.IsNotExist(err) {
+		t.Fatalf("denied write changed the filesystem: %v", err)
 	}
 }
 
@@ -2488,8 +2513,9 @@ func TestServerConfigModelUpdateReconfiguresEditTools(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	if _, err := rt.Sessions.CreateWithMetadata("thread-1", rt.RootDir); err != nil {
 		t.Fatalf("create session: %v", err)
 	}
@@ -2585,10 +2611,11 @@ func TestServerConfigModelUpdateSwitchesProvider(t *testing.T) {
 `), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
+	oldClient := rt.StreamRunner.Client
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"codex-provider","model":"new-codex-model"}}`)); err != nil {
 		t.Fatalf("config/model/update: %v", err)
@@ -2649,6 +2676,7 @@ func TestServerConfigModelUpdateRecomputesToolLoadingForSessionProviderSelection
 }`), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	rt = newSettingsRefreshRuntime(t, rt)
 	// Model the live state left by the first-party OpenAI provider before the
 	// workspace selection changes to a compatible Anthropic endpoint.
 	rt.ToolLoadingMode = config.ToolLoadingNative
@@ -2659,8 +2687,8 @@ func TestServerConfigModelUpdateRecomputesToolLoadingForSessionProviderSelection
 	rt.StreamRunner.NativeDeferredToolDiscovery = true
 
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	target := newThreadState("target-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, time.Now().UTC())
 	target.state = testRuntimeState(t, rt)
 	srv.threads[target.ID] = target
@@ -2680,7 +2708,7 @@ func TestServerConfigModelUpdateRecomputesToolLoadingForSessionProviderSelection
 		t.Fatalf("config/model/update: %v", err)
 	}
 
-	if rt.ProviderName != "fake-provider" || rt.Model != "fake-model" || rt.ToolLoadingMode != config.ToolLoadingNative {
+	if rt.ProviderName != "fake-provider" || rt.Model != "gpt-5.4" || rt.ToolLoadingMode != config.ToolLoadingNative {
 		t.Fatalf("conversation switch changed workspace runtime: provider=%q model=%q", rt.ProviderName, rt.Model)
 	}
 	exec, err := srv.ensureThreadRuntime(target)
@@ -2720,10 +2748,11 @@ func TestServerConfigModelUpdatePersistsProviderConnection(t *testing.T) {
 `), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
+	oldClient := rt.StreamRunner.Client
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	idle := newThreadState("idle-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, false, time.Now().UTC())
 	idle.state = testRuntimeState(t, rt)
 	idle.execRuntime = &runtime.ThreadRuntime{StreamRunner: &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: rt.Model}}
@@ -2790,6 +2819,7 @@ func TestServerConfigModelUpdateSavedKeyIsUsedOverAmbientCredential(t *testing.T
 	}
 	out := &lockedBuffer{}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"fake-provider","model":"fake-model","api_key":"sk-explicit"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatalf("config/model/update: %v", err)
@@ -2824,10 +2854,11 @@ func TestServerConfigModelUpdateCreatesProvider(t *testing.T) {
 `), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
-	oldClient := rt.StreamRunner.Client
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
+	oldClient := rt.StreamRunner.Client
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"custom-1","model":"custom-model","base_url":"https://custom.example.test/v1","api_key":"new-key","create_provider":true}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -2891,8 +2922,9 @@ func TestServerConfigModelUpdateCreatesAnthropicProviderWithAuthToken(t *testing
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"anthropic-gateway","model":"claude-sonnet-4-6[1M]","base_url":"https://anthropic-gateway.example.test/","auth_token":"sk-token","type":"anthropic","create_provider":true}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -2949,8 +2981,9 @@ func TestServerConfigModelUpdateCreatesXAISubscriptionWithoutAPIKey(t *testing.T
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"xai-subscription","model":"grok-4.6","type":"xai-subscription","create_provider":true}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -3005,8 +3038,9 @@ func TestServerXAILoginStartAndPoll(t *testing.T) {
 	t.Setenv("WUU_XAI_DEVICE_CODE_URL", server.URL+"/oauth2/device/code")
 	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/oauth2/token")
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"start","method":"auth/xai/login/start"}`)); err != nil {
 		t.Fatalf("login start: %v", err)
@@ -3059,8 +3093,9 @@ func TestServerConfigModelUpdateRejectsOAuthConnectionChanges(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/model/update","params":{"provider":"codex-provider","model":"new-codex-model","base_url":"https://custom.example.test/v1","api_key":"new-key"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -3102,8 +3137,9 @@ func TestServerConfigModelUpdatePersistsEffort(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"model":"fake-model","effort":"xhigh"}}`)); err != nil {
 		t.Fatalf("config/model/update: %v", err)
@@ -3147,8 +3183,9 @@ func TestServerConfigModelUpdatePersistsVariantOptions(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"xiaomi","model":"mimo-v2.5-pro","variant":"high"}}`)); err != nil {
 		t.Fatalf("config/model/update: %v", err)
@@ -3200,8 +3237,9 @@ func TestServerConfigModelUpdateUsesCatalogFastModelRuntime(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/model/update","params":{"provider":"openai","model":"gpt-5.5-fast"}}`)); err != nil {
 		t.Fatalf("config/model/update: %v", err)
@@ -3254,7 +3292,14 @@ func TestServerConfigCodexModels(t *testing.T) {
 		  ]
 		}`))
 	}))
-	defer server.Close()
+	defer func() {
+		select {
+		case <-releaseRequest:
+		default:
+			close(releaseRequest)
+		}
+		server.Close()
+	}()
 
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{
   "agent": {
@@ -3275,8 +3320,9 @@ func TestServerConfigCodexModels(t *testing.T) {
 	}
 
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"config/codex/models"}`)); err != nil {
 		t.Fatalf("config/codex/models: %v", err)
 	}
@@ -3292,7 +3338,7 @@ func TestServerConfigCodexModels(t *testing.T) {
 		t.Fatal("model update was blocked behind Codex model discovery")
 	}
 	close(releaseRequest)
-	srv.backgroundWG.Wait()
+	waitForResponseByID(t, out, "1")
 
 	result := remarshal[ConfigCodexModelsResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"])
 	var discovered *ProviderModelSummary
@@ -3368,8 +3414,9 @@ func TestGPT61SolSubscriptionModelSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	live := []codex.ModelInfo{{Slug: "gpt-6.1-sol", DefaultReasoningLevel: "medium", SupportedReasoning: []string{"low", "medium", "high", "xhigh", "max"}}}
 	summaries := codexModelSummaries(live)
 	if len(summaries) != 2 || summaries[1].Slug != "gpt-6.1-sol-fast" {
@@ -3516,12 +3563,13 @@ func TestServerConfigProviderRemoveInactive(t *testing.T) {
 	removedTitleClient := &fakeClient{}
 	rt.TitleClient = removedTitleClient
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	store := selectedAuthFixture(t, rt)
 	if err := store.Set("drop", authstorage.Credentials{Type: "api_key", APIKey: "drop-key"}); err != nil {
 		t.Fatal(err)
 	}
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"drop"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -3616,8 +3664,9 @@ func TestServerConfigProviderRemoveActiveSwapsDefault(t *testing.T) {
 	rt.ProviderName = "drop"
 	rt.Model = "drop-model"
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	store, err := authstorage.ForHome(os.Getenv("HOME"))
 	if err != nil {
@@ -3722,8 +3771,9 @@ func TestServerConfigProviderRemoveRejectsProviderUsedByRunningTurn(t *testing.T
 	rt.Model = "drop-model"
 	rt.StreamRunner.Model = "drop-model"
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	running.state = testRuntimeState(t, rt)
@@ -3799,8 +3849,9 @@ func TestServerConfigProviderRemoveAllowsProviderPinnedByIdleArchivedSession(t *
 	}
 	rt.ProviderName, rt.Model = "keep", "keep-model"
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"drop"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -3844,8 +3895,9 @@ func TestServerConfigProviderRemoveAllowsUnusedProviderWithRunningThread(t *test
 	rt.Model = "keep-model"
 	rt.StreamRunner.Model = "keep-model"
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 	now := time.Now().UTC()
 	running := newThreadState("running-thread", nil, rt.ProviderName, rt.Model, rt.RootDir, true, now)
 	running.state = testRuntimeState(t, rt)
@@ -3893,8 +3945,9 @@ func TestServerConfigProviderRemoveRejectsOAuth(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"codex"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -3932,8 +3985,9 @@ func TestServerConfigProviderRemoveRejectsLastProvider(t *testing.T) {
 		t.Fatalf("write config: %v", err)
 	}
 	out := &lockedBuffer{}
-	bindConfigSourceForTest(t, rt)
+	rt = newSettingsRefreshRuntime(t, rt)
 	srv := New(rt, out)
+	t.Cleanup(srv.Close)
 
 	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"only"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
@@ -4237,6 +4291,7 @@ func TestServerThreadResumeSchedulesProviderPrewarm(t *testing.T) {
 		prewarmed:  make(chan string, 4),
 	}
 	rt.StreamRunner.Client = prewarmer
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	defer srv.Close()
@@ -5253,6 +5308,7 @@ func TestServerTurnStartForwardsStreamingUsage(t *testing.T) {
 		{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 4}},
 		{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 4}},
 	}}
+	attachTestModelGeneration(t, rt)
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
 		t.Fatalf("tools.New: %v", err)
@@ -5311,6 +5367,7 @@ func TestServerTurnStartForwardsRuntimeContextWindow(t *testing.T) {
 		{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 2}},
 		{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 2}},
 	}}
+	attachTestModelGeneration(t, rt)
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
 		t.Fatalf("tools.New: %v", err)
@@ -5357,6 +5414,7 @@ func TestServerTurnStartUsesInputLimitAsDisplayedContextWindow(t *testing.T) {
 		{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 2}},
 		{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 2}},
 	}}
+	attachTestModelGeneration(t, rt)
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
 		t.Fatalf("tools.New: %v", err)
@@ -5403,6 +5461,7 @@ func TestServerTurnStartUsesInputLimitWhenContextWindowUnknown(t *testing.T) {
 		{Type: providers.EventUsage, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 2}},
 		{Type: providers.EventDone, Usage: &providers.TokenUsage{InputTokens: 8, OutputTokens: 2}},
 	}}
+	attachTestModelGeneration(t, rt)
 	kit, err := tools.New(rt.RootDir)
 	if err != nil {
 		t.Fatalf("tools.New: %v", err)
@@ -5457,6 +5516,7 @@ func TestServerQueuesUserTurnWhileThreadIsRunning(t *testing.T) {
 	client := newBlockingStreamClient("done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -5525,6 +5585,7 @@ func TestServerInterruptHoldsPendingUserWorkInOrderAndReleasesOne(t *testing.T) 
 	client := newBlockingStreamClient("done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -5650,6 +5711,7 @@ func TestServerInterruptPersistsPartialTurnMessages(t *testing.T) {
 	rt := newTestRuntime(t, client)
 	blockingTool := newBlockingToolExecutor()
 	rt.StreamRunner.Tools = blockingTool
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -5726,6 +5788,7 @@ func TestServerSteerWaitsForOrdinaryToolSafeBoundary(t *testing.T) {
 	rt := newTestRuntime(t, client)
 	blockingTool := newBlockingToolExecutor()
 	rt.StreamRunner.Tools = blockingTool
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -5786,7 +5849,7 @@ func TestServerSteerWaitsForOrdinaryToolSafeBoundary(t *testing.T) {
 	}
 	var foundSteerInSecondRequest bool
 	for _, msg := range requests[1].Messages {
-		if msg.Role == "user" && msg.Content == "steer now" && msg.ClientID == "steer-1" && msg.Steered {
+		if msg.Role == "user" && msg.Content == "steer now" {
 			foundSteerInSecondRequest = true
 			break
 		}
@@ -5837,6 +5900,7 @@ func TestServerSteerReleasesDetachableToolWait(t *testing.T) {
 	rt := newTestRuntime(t, client)
 	detachableTool := newDetachableWaitToolExecutor()
 	rt.StreamRunner.Tools = detachableTool
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -5865,7 +5929,7 @@ func TestServerSteerReleasesDetachableToolWait(t *testing.T) {
 	}
 	var foundSteer, foundBackgroundedResult bool
 	for _, msg := range requests[1].Messages {
-		if msg.Role == "user" && msg.Content == "steer now" && msg.ClientID == "steer-1" && msg.Steered {
+		if msg.Role == "user" && msg.Content == "steer now" {
 			foundSteer = true
 		}
 		if msg.Role == "tool" && msg.ToolCallID == "call_1" && strings.Contains(msg.Content, `"backgrounded":true`) {
@@ -5875,6 +5939,20 @@ func TestServerSteerReleasesDetachableToolWait(t *testing.T) {
 	if !foundSteer || !foundBackgroundedResult {
 		t.Fatalf("second provider request missing steer or backgrounded tool result: %+v", requests[1].Messages)
 	}
+	persisted, err := loadChatMessages(rt.Sessions, threadID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundPersisted bool
+	for _, msg := range persisted {
+		if msg.Role == "user" && msg.Content == "steer now" && msg.ClientID == "steer-1" && msg.Steered {
+			foundPersisted = true
+		}
+	}
+	if !foundPersisted {
+		t.Fatal("persisted history missing steered input identity")
+	}
+
 }
 
 func TestServerGeneratesThreadTitle(t *testing.T) {
@@ -8314,6 +8392,7 @@ func TestServerInterruptedPartialTurnReloadsInterrupted(t *testing.T) {
 	client := newPartialBlockingStreamClient("partial answer")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 
@@ -9795,6 +9874,7 @@ func TestServerQueuesAgentCompletionWhileRootTurnIsRunning(t *testing.T) {
 	mainClient := newBlockingStreamClient("root turn done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = mainClient
+	attachTestModelGeneration(t, rt)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
 		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
@@ -9932,6 +10012,7 @@ func TestServerSkipsAutoResumeWhenAwaitAgentsAlreadyReturnedResult(t *testing.T)
 	mainClient := newBlockingStreamClient("root turn done")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = mainClient
+	attachTestModelGeneration(t, rt)
 	workerClient := &fakeClient{response: providers.ChatResponse{Content: "agent done"}}
 	coord, err := agentcontrol.New(agentcontrol.Config{
 		AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
@@ -10054,6 +10135,7 @@ func registerTestWuuEngine(t *testing.T, rt *runtime.Session) {
 		t.Fatal(err)
 	}
 	rt.SetEnginesForTest(registry)
+	attachTestModelGeneration(t, rt)
 }
 
 func retryingTempDir(t *testing.T) string {

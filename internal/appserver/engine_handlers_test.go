@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -52,6 +53,7 @@ func TestUnavailableSelectedEngineRejectsNewThreads(t *testing.T) {
 			if id == "wuu" {
 				rt.SetEnginesForTest(agentengine.NewRegistry())
 			}
+			bindConfigSourceForTest(t, rt)
 			if err := rt.RefreshEngineSettings(); err != nil {
 				t.Fatal(err)
 			}
@@ -781,10 +783,21 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 			t.Setenv("WUU_TEST_CODEX_HISTORY_CONTROL", control)
 			blocked := &nativeBoundaryDocuments{entered: make(chan struct{}), release: make(chan struct{}), progress: make(chan struct{})}
 			storeDir := filepath.Join(t.TempDir(), "documents")
-			factory := runtime.NativeProviderFactory{ID: persistence.SQLiteModule, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
-				return &nativeBoundaryProvider{Service: persistence.NewService(persistence.SQLiteModule, storeDir, "sqlite"), gate: blocked}, nil
+			var selectedDocuments *nativeBoundaryProvider
+			factory := runtime.NativeProviderFactory{ID: "fixture.boundary-documents", DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+				selectedDocuments = &nativeBoundaryProvider{Service: persistence.NewService("fixture.boundary-documents", storeDir, "sqlite"), gate: blocked}
+				return selectedDocuments, nil
 			}}
-			rt := newEngineAdminRuntimeAt(t, t.TempDir(), config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}}, factory)
+			rt := newEngineAdminRuntimeAt(t, t.TempDir(), config.Config{Engines: &config.EnginesConfig{Codex: &config.EngineBinaryConfig{BinaryPath: binary}}, Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{persistence.SQLiteModule: false, factory.ID: true}}}}}, factory)
+			// Observe the selected fixture's committed snapshot without waiting for
+			// the intentionally stalled authority writer. Runtime operations still
+			// use the selected authority; the observer cannot commit mutations.
+			observer := session.NewStore(context.Background(), persistence.NewClient(func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, error) {
+				if method != "read" {
+					return nil, fmt.Errorf("fixture observer cannot %s", method)
+				}
+				return selectedDocuments.Service.InvokeService(ctx, pluginhost.ServiceInvokeParams{Service: "state.documents", Method: method, Params: params})
+			}))
 			if scenario.noPrompt {
 				rt.StreamRunner.SystemPrompt = ""
 			}
@@ -853,12 +866,12 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 			}
 			th.mu.Unlock()
 			if scenario.reset {
-				before, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+				before, err := observer.LoadHistoryRecords(threadID, true)
 				if err != nil {
 					t.Fatal(err)
 				}
 				srv.resetThreadRuntimesForGeneralSettings("updated runtime system prompt")
-				after, err := rt.Sessions.LoadHistoryRecords(threadID, true)
+				after, err := observer.LoadHistoryRecords(threadID, true)
 				if err != nil {
 					t.Fatal(err)
 				}

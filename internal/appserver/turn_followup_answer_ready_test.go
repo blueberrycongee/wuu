@@ -8,63 +8,32 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/hooks"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-type answerReadyBlockingStreamClient struct {
+// A completed answer may still own Stop-hook cleanup. Keep that actual loop
+// boundary open instead of injecting an internal message through a model stream.
+type answerReadyCleanupClient struct {
 	started chan struct{}
 	release chan struct{}
-	content string
 	once    sync.Once
 }
 
-func newAnswerReadyBlockingStreamClient(content string) *answerReadyBlockingStreamClient {
-	return &answerReadyBlockingStreamClient{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-		content: content,
-	}
-}
-
-func (c *answerReadyBlockingStreamClient) Chat(ctx context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
-	<-c.started
+func (c *answerReadyCleanupClient) Chat(ctx context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
+	c.once.Do(func() { close(c.started) })
 	select {
 	case <-c.release:
+		return providers.ChatResponse{Content: `{"ok":true}`}, nil
 	case <-ctx.Done():
 		return providers.ChatResponse{}, ctx.Err()
 	}
-	return providers.ChatResponse{Content: c.content}, nil
-}
-
-func (c *answerReadyBlockingStreamClient) StreamChat(ctx context.Context, _ providers.ChatRequest) (<-chan providers.StreamEvent, error) {
-	ch := make(chan providers.StreamEvent, 4)
-	go func() {
-		defer close(ch)
-		ch <- providers.StreamEvent{
-			Type: providers.EventMessage,
-			Message: &providers.ChatMessage{
-				Role:    "assistant",
-				Content: c.content,
-				Phase:   providers.MessagePhaseFinalAnswer,
-			},
-		}
-		c.once.Do(func() { close(c.started) })
-		select {
-		case <-c.release:
-			ch <- providers.StreamEvent{Type: providers.EventDone}
-		case <-ctx.Done():
-			ch <- providers.StreamEvent{Type: providers.EventError, Error: ctx.Err()}
-		}
-	}()
-	return ch, nil
 }
 
 func TestServerStartsFollowUpAfterFinalAnswerWithoutBusyReject(t *testing.T) {
-	client := newAnswerReadyBlockingStreamClient("done")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = client
-	out := &lockedBuffer{}
-	srv := New(rt, out)
+	client := &answerReadyCleanupClient{started: make(chan struct{}), release: make(chan struct{})}
+	_, srv, hookOut, threadID := newTurnHookFixture(t, hooks.Stop, client, true, true)
+	out := &hookOut.lockedBuffer
 	t.Cleanup(func() {
 		select {
 		case <-client.release:
@@ -73,11 +42,6 @@ func TestServerStartsFollowUpAfterFinalAnswerWithoutBusyReject(t *testing.T) {
 		}
 		srv.Close()
 	})
-
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"1","method":"thread/start"}`)); err != nil {
-		t.Fatalf("thread/start: %v", err)
-	}
-	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "1")["result"]).Thread.ID
 
 	startReq := fmt.Sprintf(`{"id":"2","method":"turn/start","params":{"thread_id":%q,"prompt":"first"}}`, threadID)
 	if err := srv.handleLine(context.Background(), []byte(startReq)); err != nil {
@@ -138,6 +102,7 @@ func TestServerStillRejectsTurnStartBeforeAnswerIsReady(t *testing.T) {
 	client := newBlockingStreamClient("still thinking")
 	rt := newTestRuntime(t, &fakeClient{})
 	rt.StreamRunner.Client = client
+	attachTestModelGeneration(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() {

@@ -693,6 +693,7 @@ func TestProcessCompletionsJoinActiveTurn(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	provider := newGatedProvider(8)
 	rt.StreamRunner.Client = providers.AdaptStreamClient(provider)
+	attachTestModelGeneration(t, rt)
 	manager, err := process.NewManager(rt.RootDir, filepath.Join(rt.RootDir, "process-runtime"))
 	if err != nil {
 		t.Fatal(err)
@@ -895,8 +896,25 @@ await:
 		t.Fatalf("requests=%d output=%s", len(requests), out.String())
 	}
 
+	// Model transport deliberately strips private receipt and steering metadata.
+	// Check the public transcript and durable identities independently.
+	for _, originalMessage := range original {
+		count := 0
+		for _, message := range requests[0].Messages {
+			if message.Role == originalMessage.Role && message.Content == originalMessage.Content {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("public transcript contains %d copies of prior %s message, want 1", count, originalMessage.Role)
+		}
+	}
+	persisted, err := loadChatMessages(rt.Sessions, id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var injected, receipts, completionMessages int
-	for _, msg := range requests[0].Messages {
+	for _, msg := range persisted {
 		if msg.Role == "assistant" && msg.ClientID == processCompletionAnswerClientIDPrefix+p.ID {
 			receipts++
 		}

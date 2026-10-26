@@ -1190,3 +1190,17 @@ describe("useComposerPendingState", () => {
     expect(document.querySelector('[role="alert"]')).toBeNull();
   });
 });
+
+it.each(["item/completed", "turn/dequeued", "turn/held"])("resolves only the matching conversation's unknown delivery on %s", async method => {
+  installWuuStub({});
+  const hook = await renderComposerPendingState();
+  const notify = (method: string, params: Record<string, unknown>) => hook.get().syncPendingComposerMessagesFromServerEvent({ kind: "notification", message: { method, params } } as ServerEvent);
+  await act(async () => {
+    for (const id of ["thread-a", "thread-b"]) notify("turn/held", { thread_id: id, messages: [{ id: "same-id", origin: "queue", prompt: id, delivery_unconfirmed: true }] });
+  });
+  expect(hook.get().pendingComposerMessagesByThread["thread-a"].queued[0].deliveryUnconfirmed).toBe(true);
+  await act(async () => notify(method, { thread_id: "thread-a", queue_id: "same-id", messages: [], item: { id: "materialized", type: "user_message", text: "thread-a", source_id: "same-id" } }));
+  expect(hook.get().pendingComposerMessagesByThread["thread-a"]?.queued ?? []).toHaveLength(0);
+  expect(hook.get().pendingComposerMessagesByThread["thread-b"].queued).toEqual([expect.objectContaining({ id: "same-id", text: "thread-b", deliveryUnconfirmed: true })]);
+  expect(hook.sendComposerMessageToThread).not.toHaveBeenCalled();
+});

@@ -133,3 +133,18 @@ describe("production app shell guards", () => {
     ]);
   });
 });
+
+describe("native recovery entry", () => {
+  it.each(["darwin", "win32", "linux"])("keeps recovery reachable with and without updater on %s", platform => {
+    const click = vi.fn();
+    const recovery = { id: "wuu-recovery", label: "Recovery", click };
+    for (const update of [undefined, { id: "updates", label: "Updates" }]) {
+      const menu = productionApplicationMenuTemplate(platform, update, recovery);
+      const items = menu.flatMap(item => Array.isArray(item.submenu) ? item.submenu : []);
+      const action = items.find(item => item.id === recovery.id);
+      expect(action).toBe(recovery);
+      (action!.click as () => void)();
+    }
+    expect(click).toHaveBeenCalledTimes(2);
+  });
+});

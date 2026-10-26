@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -111,10 +110,11 @@ func TestExtensionPackageBatchPublishesDependencyCompletePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePluginPackageFile(t, rt.ConfigPath, string(raw))
-	if err := rt.RefreshExtensions(cfg); err != nil {
+	rt = newConfigRefreshRuntime(t, rt)
+	raw, err = os.ReadFile(rt.ConfigPath)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _, _ = rt.Cleanup() })
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -276,10 +276,11 @@ func TestExtensionPackageExplicitEnableRejectsUnavailablePackageDependency(t *te
 				t.Fatal(err)
 			}
 			writePluginPackageFile(t, rt.ConfigPath, string(raw))
-			if err := rt.RefreshExtensions(cfg); err != nil {
+			rt = newConfigRefreshRuntime(t, rt)
+			raw, err = os.ReadFile(rt.ConfigPath)
+			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _, _ = rt.Cleanup() })
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			t.Cleanup(srv.Close)
@@ -378,22 +379,9 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 	rt.Plugins = []pluginpkg.Plugin{item}
 
 	preparePluginRuntimePathsForTest(t, rt)
-	source := config.NewService(config.Module, filepath.Join(wuuHome, "config.json"), rt.RootDir)
-	credentials := credentialstore.NewService("test.package-credentials", func() (credentialstore.Store, error) {
-		return nativeCredentialFixture(t, home), nil
-	})
-	consumer := &configSourceConsumer{}
-	host := pluginhost.New(source, credentials, consumer)
-	registry, conflicts := pluginhost.BuildServiceRegistry(source, credentials, consumer)
-	if len(conflicts) != 0 {
-		t.Fatal(conflicts)
-	}
-	host.AttachServiceRegistry(registry, conflicts)
-	if err := host.Activate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rt.PluginHost = host
-	t.Cleanup(func() { _ = host.Close(context.Background()) })
+	projectConfigPath := rt.ConfigPath
+	rt.ConfigPath = filepath.Join(wuuHome, "config.json")
+	rt = newConfigRefreshRuntime(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
@@ -440,7 +428,7 @@ func TestExtensionPackageUpdateGrantsExactFingerprintAndDisablesImmediately(t *t
 	if persisted["extensions"] == nil {
 		t.Fatalf("grant was not persisted in user-owned config: %s", data)
 	}
-	projectData, err := os.ReadFile(rt.ConfigPath)
+	projectData, err := os.ReadFile(projectConfigPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,6 +480,7 @@ func TestExtensionCatalogRefreshRediscoversPackages(t *testing.T) {
 	}
 
 	preparePluginRuntimePathsForTest(t, rt)
+	rt = newConfigRefreshRuntime(t, rt)
 	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)

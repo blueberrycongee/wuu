@@ -46,6 +46,15 @@ export interface EngineSteerParams extends EngineSessionParams {
  readonly message: DriverMessage;
 }
 
+/** Only return unsupported/rejected when the input was definitely NOT accepted.
+ * Throw/transport loss remains unconfirmed and must not cause automatic replay.
+ * Omitted disposition retains compatibility with accepted turn_id responses.
+ */
+export interface EngineSteerResult {
+ readonly turn_id?: string;
+ readonly disposition?: "accepted" | "unsupported" | "rejected";
+}
+
 export interface EngineResultV1 {
  readonly version: 1;
  readonly content?: string;

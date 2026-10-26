@@ -134,17 +134,15 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 }
 
 func (s *Server) steerDeliveryModeLocked(th *threadState) string {
-	if s.rt.Engines() == nil {
-		return "queued"
-	}
-	if factory, ok := s.rt.Engines().Lookup(agentengine.NormalizeEngineID(th.EngineID)); ok {
-		if descriptor, err := factory.Descriptor(context.Background()); err == nil {
-			if slices.Contains(descriptor.Capabilities, "host-managed-steering") {
-				return "active_turn"
-			}
-			if th.PersistHistory && !th.nativeSteerUnsupported && slices.Contains(descriptor.Capabilities, "active-turn-steering") {
-				return "active_turn"
-			}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	descriptor, err := s.engineDescriptorForState(ctx, th.state, agentengine.NormalizeEngineID(th.EngineID))
+	if err == nil {
+		if slices.Contains(descriptor.Capabilities, "host-managed-steering") {
+			return "active_turn"
+		}
+		if th.PersistHistory && !th.nativeSteerUnsupported && slices.Contains(descriptor.Capabilities, "active-turn-steering") {
+			return "active_turn"
 		}
 	}
 	return "queued"

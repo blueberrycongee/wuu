@@ -151,12 +151,7 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 		t.Fatal(err)
 	}
 	writePluginPackageFile(t, rt.ConfigPath, string(raw))
-	if _, _, err := rt.LoadEffectiveConfig(); err != nil {
-		t.Fatal(err)
-	}
-	if err := rt.RefreshExtensions(cfg); err != nil {
-		t.Fatal(err)
-	}
+	rt = newConfigRefreshRuntime(t, rt)
 	t.Cleanup(func() { _, _ = rt.Cleanup() })
 	oldHost := rt.PluginHost
 	pinned := rt.RetainPluginGeneration()
@@ -244,7 +239,7 @@ func preparePluginRuntimePathsForTest(t *testing.T, rt *runtime.Session) {
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	if rt.PluginHost == nil && rt.StreamRunner != nil {
+	if rt.StreamRunner != nil && (rt.PluginHost == nil || rt.PluginHost.ServiceRegistry() == nil || !rt.PluginHost.ServiceRegistry().HasProvider(config.ServiceName, 1)) {
 		cfg, _, err := config.LoadPath(rt.ConfigPath)
 		if err != nil {
 			t.Fatal(err)
@@ -266,7 +261,6 @@ func preparePluginRuntimePathsForTest(t *testing.T, rt *runtime.Session) {
 func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, description string) {
 	t.Helper()
 	preparePluginRuntimePathsForTest(t, rt)
-	modelClient, titleClient, workerClient := rt.StreamRunner.Client, rt.TitleClient, rt.WorkerClient
 	if rt.Toolkit == nil {
 		kit, err := tools.New(rt.RootDir)
 		if err != nil {
@@ -290,16 +284,17 @@ func publishReloadBehaviorGeneration(t *testing.T, rt *runtime.Session, marker, 
 		t.Fatal(err)
 	}
 	rt.Plugins = []pluginpkg.Plugin{item}
-	candidate, err := rt.PreflightExtensionPolicy(config.Config{})
+	cfg, _, err := rt.LoadEffectiveConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := rt.PreflightExtensionPolicy(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
-	// Publication rebuilds configured clients; these lifecycle tests keep their
-	// explicitly injected model fixture for both old and subsequent turns.
-	rt.StreamRunner.Client, rt.TitleClient, rt.WorkerClient = modelClient, titleClient, workerClient
 	if len(rt.PluginHost.ToolDefinitions()) != 1 {
 		t.Fatalf("fixture did not register its tool: %+v", rt.PluginHost.Statuses())
 	}
@@ -319,6 +314,7 @@ func TestPluginReloadAdoptsNextIdleTurnWithoutLosingConversation(t *testing.T) {
 				}
 			}}
 			rt := newTestRuntime(t, client)
+			rt = newReloadBehaviorRuntime(t, rt, client)
 			publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
 			t.Cleanup(func() { _, _ = rt.Cleanup() })
 			toolName := rt.PluginHost.ToolDefinitions()[0].Name
@@ -420,6 +416,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			client := &fakeClient{response: providers.ChatResponse{Content: "handled worker result"}}
 			rt := newTestRuntime(t, client)
 			rt.WuuHome = t.TempDir()
+			rt = newReloadBehaviorRuntime(t, rt, client)
 			publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
 			t.Cleanup(func() { _, _ = rt.Cleanup() })
 			oldHost := rt.PluginHost
@@ -432,6 +429,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			unblock := func() { once.Do(func() { close(worker.release) }) }
 			t.Cleanup(unblock)
 			control, err := agentcontrol.New(agentcontrol.Config{
+				Documents:         rt.Documents,
 				AcquireLoopDriver: loopdriver.AcquireLocal(agent.DefaultDriver{}),
 
 				Client: worker, DefaultModel: "fake-model", ParentRepo: rt.RootDir,
@@ -579,7 +577,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			if !strings.Contains(requestMessagesText(requests[0].Messages), "history before reload") || !strings.Contains(requestMessagesText(requests[0].Messages), "worker finished") {
 				t.Fatalf("completion lost retained history or worker result: %+v", requests[0].Messages)
 			}
-			pending, err := control.PendingRootAgentCompletions()
+			pending, err := current.execRuntime.AgentControl.PendingRootAgentCompletions()
 			if err != nil || len(pending) != 0 {
 				t.Fatalf("completion acknowledgement missing: %+v %v", pending, err)
 			}
@@ -611,6 +609,7 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	client := &fakeClient{response: providers.ChatResponse{Content: "saved answer"}}
 	rt := newTestRuntime(t, client)
 	rt.WuuHome = t.TempDir()
+	rt = newReloadBehaviorRuntime(t, rt, client)
 	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read the fixture")
 	t.Cleanup(func() { _, _ = rt.Cleanup() })
 	oldHost := rt.PluginHost
@@ -670,6 +669,11 @@ func TestPluginReloadRetiresIdleGenerationOnMutationCommit(t *testing.T) {
 	if current != nil {
 		t.Fatal("superseded idle runtime survived the completed mutation")
 	}
+	select {
+	case <-oldHost.ShutdownDone():
+	case <-time.After(3 * time.Second):
+		t.Fatal("retired idle generation did not finish host cleanup")
+	}
 	if len(oldHost.Statuses()) != 0 || len(oldHost.ToolDefinitions()) != 0 {
 		t.Fatal("old host retained a process or callable tools after idle retirement")
 	}
@@ -700,6 +704,7 @@ func TestPluginInstallActivationFailurePublishesCommittedInventory(t *testing.T)
 	}
 	writePluginPackageFile(t, configPath, `{"default_provider":"fake-provider","providers":{"fake-provider":{"type":"openai-compatible","base_url":"https://example.test/v1","model":"fake-model"}}}`)
 	rt.ConfigPath = configPath
+	rt = newConfigRefreshRuntime(t, rt)
 	bindConfigSourceForTest(t, rt)
 	root := t.TempDir()
 	manifest := pluginpkg.Manifest{SchemaVersion: 1, ID: "activate-failure", Runtime: &pluginpkg.RuntimeSpec{Protocol: pluginhost.ProtocolName, Command: os.Args[0], Args: []string{"-test.run=^TestPluginReloadBehaviorProcess$"}, Env: map[string]string{"WUU_RELOAD_TEST_MARKER": "failed", "WUU_RELOAD_TEST_DESCRIPTION": "read fixture", "WUU_RELOAD_TEST_ACTIVATE_ERROR": "activation refused", "WUU_RELOAD_TEST_SHUTDOWN": filepath.Join(t.TempDir(), "shutdown")}}}
@@ -753,15 +758,16 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 		t.Run(fmt.Sprintf("admission=%v/recovery=%v", admission, recovery), func(t *testing.T) {
 			client := &fakeClient{response: providers.ChatResponse{Content: "done"}}
 			rt := newTestRuntime(t, client)
+			rt = newReloadBehaviorRuntime(t, rt, client)
+			fixtureHome := rt.WuuHome
 			// Start without a watcher; drive the exact refresh boundary deterministically.
 			rt.WuuHome = ""
 			rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
-			writeTargetedUpdateConfig(t, rt)
 			bindConfigSourceForTest(t, rt)
 			out := &lockedBuffer{}
 			srv := New(rt, out)
 			defer srv.Close()
-			rt.WuuHome = filepath.Dir(rt.SessionDir)
+			rt.WuuHome = fixtureHome
 			preparePluginRuntimePathsForTest(t, rt)
 			callPluginPackageRPC(t, srv, "thread", MethodThreadStart, ThreadStartParams{})
 			threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "thread")["result"]).Thread.ID
@@ -871,8 +877,10 @@ func requireActiveRuntime(t *testing.T, host *pluginhost.Host, id string) {
 // A finalizer can release the execution lease before the background release
 // loop observes quiescence. That interleaving must still retire the old host.
 func TestPluginReloadRetiresAfterLeaseReleasedBeforePoll(t *testing.T) {
-	rt := newTestRuntime(t, &fakeClient{})
+	client := &fakeClient{}
+	rt := newTestRuntime(t, client)
 	rt.WuuHome = t.TempDir()
+	rt = newReloadBehaviorRuntime(t, rt, client)
 	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
 	t.Cleanup(func() { _, _ = rt.Cleanup() })
 	shutdownPath := rt.Plugins[0].Runtime.Env["WUU_RELOAD_TEST_SHUTDOWN"]
@@ -920,6 +928,7 @@ func TestPluginReloadAdmitsQueuedTurnOnCurrentGeneration(t *testing.T) {
 				}
 			}}
 			rt := newTestRuntime(t, client)
+			rt = newReloadBehaviorRuntime(t, rt, client)
 			publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
 			t.Cleanup(func() { _, _ = rt.Cleanup() })
 			toolName := rt.PluginHost.ToolDefinitions()[0].Name

@@ -3077,6 +3077,34 @@ describe("Composer queue strip", () => {
     expect(rows[2]?.querySelector(".composer-queue-index")?.textContent).toBe("3");
   });
 
+  it("keeps uncertain delivery compact while preserving its details, copy and no-redelivery fence", async () => {
+    const onGuideQueuedMessage = vi.fn(), onRemoveQueuedMessage = vi.fn(), onEditQueuedMessage = vi.fn();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    try {
+      renderComposer({ running: false, queuedMessages: [{ id: "unknown", text: "Keep this exact draft", images: [], files: [], held: true, deliveryUnconfirmed: true }],
+        onGuideQueuedMessage, onRemoveQueuedMessage, onEditQueuedMessage });
+      const status = container.querySelector<HTMLElement>(".composer-pending-preview")!;
+      const row = container.querySelector<HTMLElement>(".composer-queue-row")!;
+      const details = row.getAttribute("aria-description");
+      expect(details).toBeTruthy();
+      expect(status.textContent).not.toBe(details);
+      expect(container.textContent).not.toContain(details);
+      expect(await hoverTooltipText(status)).toBe(details);
+      const copy = row.querySelector<HTMLButtonElement>(".message-copy-button")!;
+      expect(copy.disabled).toBe(false);
+      await act(async () => copy.click());
+      expect(writeText).toHaveBeenCalledWith("Keep this exact draft");
+      const fenced = [...row.querySelectorAll<HTMLButtonElement>("button")].filter(button => button !== copy);
+      expect(fenced).toHaveLength(2);
+      for (const button of fenced) { expect(button.disabled).toBe(true); await act(async () => button.click()); }
+      expect(onGuideQueuedMessage).not.toHaveBeenCalled();
+      expect(onRemoveQueuedMessage).not.toHaveBeenCalled();
+      expect(onEditQueuedMessage).not.toHaveBeenCalled();
+      expect(row.textContent).toContain("Keep this exact draft");
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it("shows interrupted held work in server order with per-item continue controls", () => {
     const onGuideQueuedMessage = vi.fn();
     renderComposer({

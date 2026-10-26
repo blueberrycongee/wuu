@@ -21,6 +21,7 @@ import { isThreadRunning } from "../AppState";
 import type { ContextCompositionEntry } from "../ContextCompositionCard";
 import type { InstructionFilesEntry } from "../InstructionFilesCard";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
+import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
 import { showApplicationActionError } from "../ApplicationActionError";
 import { greetingFor, useCurrentHour } from "../greetings";
 import { useI18n } from "../i18n";
@@ -49,9 +50,10 @@ export function DefaultConversationSurface({ application, slots, ...layout }: De
 }
 
 function ConversationSurface({ application, ...layout }: DefaultConversationLayout & { application: ApplicationServiceV1 }): JSX.Element {
+  const presentNavigation = usePresentedNavigation();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const { t } = useI18n(), hour = useCurrentHour();
-  const run = useCallback((result: Promise<unknown>) => { void result.catch(showApplicationActionError); }, []);
+  const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
   // Leaf renderers only read histories; edits go through named application actions.
   // Keep the frozen public values instead of serializing every loaded attachment.
   const threads = view.conversationWorkspace.threads as readonly Thread[];
@@ -154,7 +156,7 @@ function ConversationSurface({ application, ...layout }: DefaultConversationLayo
                 onKeyDown={event => handleFloatingMenuKeyDown(event, () => setWorkspaceMenu(false), workspaceTriggerRef.current)}>
                 {view.workspaces.workspaces.map(workspace => <button key={workspace.id} role="menuitem" type="button" onClick={() => {
                   setWorkspaceMenu(false); workspaceTriggerRef.current?.focus();
-                  run(application.invoke("workspace.retarget-draft", { workspaceId: workspace.id }));
+                  run(presentNavigation(() => application.invoke("workspace.retarget-draft", { workspaceId: workspace.id })));
                 }}>{workspace.name}</button>)}
               </div>
             </FloatingMenuPortal> : null}

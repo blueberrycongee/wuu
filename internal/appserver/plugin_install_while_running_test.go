@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,10 +15,13 @@ import (
 // turn retains its own host and model-facing surface.
 func TestPluginPackageInstallAllowedWhileTurnRunning(t *testing.T) {
 	stream := newBlockingStreamClient("eventually done")
-	rt := newTestRuntime(t, &fakeClient{})
-	rt.StreamRunner.Client = stream
+	client := &fakeClient{response: providers.ChatResponse{Content: "eventually done"}, onChat: func(_ int, _ providers.ChatRequest) {
+		stream.once.Do(func() { close(stream.started) })
+		<-stream.release
+	}}
+	rt := newTestRuntime(t, client)
 	rt.WuuHome = filepath.Join(t.TempDir(), ".wuu")
-	preparePluginRuntimePathsForTest(t, rt)
+	rt = newReloadBehaviorRuntime(t, rt, client)
 	bindConfigSourceForTest(t, rt)
 	activeHost := rt.PluginHost
 	out := &lockedBuffer{}

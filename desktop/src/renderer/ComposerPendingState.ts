@@ -600,7 +600,7 @@ export function createComposerPendingState({
       activeThreadIDForState(getAppState()),
     );
     if (target?.message.deliveryUnconfirmed) {
-      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
       return false;
     }
     if (!target) {
@@ -669,7 +669,7 @@ export function createComposerPendingState({
       activeThreadIDForState(getAppState()),
     );
     if (target?.message.deliveryUnconfirmed) {
-      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
       return false;
     }
     if (!target) {
@@ -792,7 +792,7 @@ export function createComposerPendingState({
     }
     const target = queuedTarget ?? guideTarget;
     if (target?.message.deliveryUnconfirmed) {
-      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
       return;
     }
     if (!target) {
@@ -862,7 +862,7 @@ export function createComposerPendingState({
     target: LocatedPendingComposerMessage,
   ): Promise<void> {
     if (target.message.deliveryUnconfirmed) {
-      showActionErrorToast(translateCurrent("composer.nativeDeliveryUnconfirmed"));
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
       return;
     }
     const { id } = target.message;

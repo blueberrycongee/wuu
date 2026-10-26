@@ -14,7 +14,7 @@ vi.mock("./DesktopPluginRuntime", () => ({ useDesktopPluginRuntime: () => fixtur
 vi.mock("./ApplicationShell", () => ({ ApplicationShellOutlet: () => <div>Working application</div> }));
 vi.mock("../Toast", () => ({ showErrorToast: fixture.notice, dismissToast: fixture.dismiss }));
 vi.mock("../i18n", () => ({ useI18n: () => ({ t: (key: string) => key }) }));
-vi.mock("../LoadingViews", () => ({ RuntimeLoading: ({ status }: {status:string}) => <div>{status}</div>, ViewSwitchLoading: () => <div data-switch="true" /> }));
+vi.mock("../LoadingViews", () => ({ RuntimeLoading: ({ status, onRecovery, onRetry }: {status:string; onRecovery?: () => void; onRetry?: () => void}) => <div>{status}{onRecovery && <button onClick={onRecovery} aria-label="recovery" />}{onRetry && <button onClick={onRetry} aria-label="retry" />}</div>, ViewSwitchLoading: () => <div data-switch="true" /> }));
 import { DesktopApplicationRoot } from "./DesktopApplicationRoot";
 afterEach(() => { fixture.current = true; fixture.pending = false; fixture.failure = undefined; fixture.notice.mockReset(); fixture.dismiss.mockReset(); });
 it("does not flash startup or technical failure text during reload, and deduplicates the final notice", async () => {
@@ -35,4 +35,27 @@ it("does not flash startup or technical failure text during reload, and deduplic
     fixture.current = true; fixture.failure = undefined; await render(); expect(container.textContent).toBe("Working application");
     expect(fixture.dismiss).toHaveBeenCalledWith(71);
   } finally { await act(async () => root.unmount()); }
+});
+
+it("opens recovery independently when application provider is unavailable", async () => {
+  const openRecovery = vi.fn(async () => {});
+  vi.stubGlobal("wuu", { openRecovery });
+  fixture.current = false; fixture.pending = false; fixture.failure = "private graph details";
+  const container = document.createElement("div"); const root = createRoot(container);
+  try {
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    const button = container.querySelector<HTMLButtonElement>('[aria-label="recovery"]');
+    expect(button).not.toBeNull();
+    expect(container.querySelector('[aria-label="retry"]')).toBeNull();
+    await act(async () => button!.click());
+    expect(openRecovery).toHaveBeenCalledTimes(1);
+    openRecovery.mockRejectedValueOnce(new Error("private filesystem details"));
+    await act(async () => button!.click());
+    expect(fixture.notice).toHaveBeenLastCalledWith("loading.recoveryUnavailable", "", "application-recovery");
+    expect(container.textContent).not.toContain("private graph");
+    vi.stubGlobal("wuu", {}); fixture.revision++;
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    expect(container.querySelector('[aria-label="recovery"]')).toBeNull();
+    expect(container.querySelector('[aria-label="retry"]')).not.toBeNull();
+  } finally { await act(async () => root.unmount()); vi.unstubAllGlobals(); }
 });

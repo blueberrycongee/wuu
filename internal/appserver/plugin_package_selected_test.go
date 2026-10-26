@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -101,8 +101,10 @@ func TestPluginPackageInstallPublishesCommittedConfigActivationFailure(t *testin
 	rt.WuuHome = retryingTempDir(t)
 	preparePluginRuntimePathsForTest(t, rt)
 	provider := &observedConfigSource{Service: config.NewService(config.Module, rt.ConfigPath, ""), outcome: "committed"}
-	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, t.TempDir()), nil })
-	attachTestModelGeneration(t, rt, provider, credentials, &configSourceConsumer{})
+	rt = newConfigRefreshRuntime(t, rt, runtime.NativeProviderFactory{
+		ID: config.Module, DefaultEnabled: true,
+		Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) { return provider, nil },
+	})
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)

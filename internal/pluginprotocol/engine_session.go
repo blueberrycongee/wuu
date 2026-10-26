@@ -44,6 +44,15 @@ type EngineSteerParams struct {
 	EngineSessionParams
 	Message DriverMessageV1 `json:"message"`
 }
+
+// EngineSteerResult carries positive non-delivery evidence in a successful RPC.
+// Transport/service errors never prove rejection, even if their text resembles
+// an unsupported response. Empty disposition preserves legacy accepted results.
+type EngineSteerResult struct {
+	TurnID      string `json:"turn_id,omitempty"`
+	Disposition string `json:"disposition,omitempty"` // accepted, unsupported, rejected
+}
+
 type EngineGatewayParams struct {
 	GatewayID string                    `json:"gateway_id"`
 	Event     *EngineEventV1            `json:"event,omitempty"`
