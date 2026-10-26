@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EngineListResult, EngineUpdateParams } from "../shared/protocol";
 import { readDraftEngineMemory, writeDraftEngineMemory } from "./DraftEngineMemory";
-import { DefaultEngineRow, EngineSettingsSection } from "./EngineSettingsSection";
+import { EngineSettingsSection } from "./EngineSettingsSection";
 
 const inventory: EngineListResult = {
   engines: [
@@ -32,16 +32,7 @@ afterEach(() => {
   container.remove();
 });
 
-function defaultPicker(): HTMLButtonElement {
-  return container.querySelector<HTMLButtonElement>('[data-testid="settings-default-engine"]')!;
-}
-
-async function openDefaultPicker(): Promise<HTMLButtonElement[]> {
-  await act(async () => defaultPicker().click());
-  return [...document.querySelectorAll<HTMLButtonElement>(".select-menu-item")];
-}
-
-// The parent owns list/detail navigation while both settings share inventory.
+// The parent owns list/detail navigation.
 function Harness({ result, onUpdate, onRefresh }: {
   result?: EngineListResult;
   onUpdate: (params: EngineUpdateParams) => Promise<EngineListResult>;
@@ -49,7 +40,6 @@ function Harness({ result, onUpdate, onRefresh }: {
 }) {
   const [selectedEngineID, setSelectedEngineID] = useState<string>();
   return <>
-    <DefaultEngineRow result={result} onUpdate={onUpdate} />
     <EngineSettingsSection result={result} onRefresh={onRefresh} onUpdate={onUpdate}
       selectedEngineID={selectedEngineID} onSelectEngine={setSelectedEngineID}
       onCloseEngine={() => setSelectedEngineID(undefined)} />
@@ -109,16 +99,13 @@ describe("EngineSettingsSection", () => {
     await act(async () => resolveSave?.(inventory));
     expect(back.disabled).toBe(false);
   });
-  it("saves defaults and disables engines discovered outside the native pair", async () => {
+  it("disables engines discovered outside the native pair", async () => {
     const live: EngineListResult = {
       engines: [{ id: "devin", display_name: "Devin", enabled: true, binary_ok: true }],
       settings: { devin: { binary_path: "/opt/devin" } },
     };
     const onUpdate = vi.fn().mockResolvedValue(live);
     render(live, onUpdate);
-    const devin = (await openDefaultPicker()).find((item) => item.dataset.value === "devin")!;
-    await act(async () => devin.click());
-    expect(onUpdate).toHaveBeenLastCalledWith({ default_engine: "devin" });
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-engine-devin-status"]')!.click());
     expect(document.querySelector<HTMLInputElement>('[data-testid="settings-engine-devin-path"]')!.value).toBe("/opt/devin");
     await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="settings-engine-devin-enabled"]')!.click());
@@ -129,7 +116,6 @@ describe("EngineSettingsSection", () => {
     const onRefresh = vi.fn();
     render(inventory, vi.fn(), onRefresh);
 
-    expect(defaultPicker().textContent).toContain("Wuu");
     expect(container.querySelector('[data-testid="settings-engine-codex-status"]')?.getAttribute("aria-label")).toContain("已就绪");
     expect(onRefresh).not.toHaveBeenCalled();
   });
@@ -148,7 +134,6 @@ describe("EngineSettingsSection", () => {
 
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(refresh.disabled).toBe(true);
-    expect(defaultPicker()).not.toBeNull();
 
     await act(async () => {
       resolveRefresh?.(inventory);
@@ -160,11 +145,10 @@ describe("EngineSettingsSection", () => {
     render(undefined);
 
     expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
-    expect(defaultPicker().disabled).toBe(true);
     expect(container.querySelector('[data-testid="settings-engine-refresh"]')).not.toBeNull();
   });
 
-  it("hides absent default-enabled catalog engines and keeps them out of the default picker", async () => {
+  it("hides absent default-enabled catalog engines", async () => {
     const missingClaude: EngineListResult = {
       engines: [
         { id: "wuu", enabled: true, binary_ok: true },
@@ -175,26 +159,7 @@ describe("EngineSettingsSection", () => {
     };
     render(missingClaude);
 
-    const options = await openDefaultPicker();
-    expect(options.map((item) => item.dataset.value)).toEqual(["wuu", "codex"]);
     expect(container.querySelector('[data-testid="settings-engine-claude-status"]')).toBeNull();
-  });
-
-  it("lists a switched-off agent in the default picker without letting it be picked", async () => {
-    const onUpdate = vi.fn();
-    render({
-      engines: [
-        { id: "wuu", enabled: true, binary_ok: true },
-        { id: "codex", enabled: false, binary_ok: true },
-      ],
-      settings: { default_engine: "wuu", codex: { enabled: false } },
-    }, onUpdate);
-
-    const codex = (await openDefaultPicker()).find((item) => item.dataset.value === "codex")!;
-    expect(codex.disabled).toBe(true);
-    expect(codex.textContent).toContain("已停用");
-    await act(async () => codex.click());
-    expect(onUpdate).not.toHaveBeenCalled();
   });
 
   it("shows a detected binary path only in the override field", async () => {

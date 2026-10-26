@@ -57,10 +57,8 @@ import {
   isChatGPTProvider,
   normalizedVariantForProviderModel,
   providerModelDisplayName,
-  providerModelVariantOptions,
-  variantLabel,
 } from "./RuntimeHelpers";
-import { SelectMenu, type SelectMenuGroup } from "./SelectMenu";
+import { SelectMenu } from "./SelectMenu";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { ThreadContextMenu } from "./ThreadContextMenu";
@@ -680,131 +678,6 @@ function ServicesOverview({
         </SettingsSection>
       ) : <SettingsSection title={t("provider.connectionModels")}><SettingsGroup><p className="settings-group-empty">{t("provider.noService")}</p></SettingsGroup></SettingsSection>}
 
-    </>
-  );
-}
-
-// The one choice most people make here: what a new conversation uses. Model
-// and effort are ordinary labeled rows; the service the model comes from is
-// the model row's description, since one model name can come from several.
-/**
- * The built-in agent's default model and reasoning effort as settings rows,
- * for the group that sets how new conversations start. Without a connected
- * service the model row points to where one is added.
- */
-export function DefaultModelRows({
-  initialized,
-  running,
-  onSave,
-  onAddService,
-}: {
-  initialized?: InitializeResult;
-  running: boolean;
-  onSave: SaveProvider;
-  onAddService: () => void;
-}): JSX.Element {
-  const { t } = useI18n();
-  const providers = initialized?.providers ?? [];
-  const displayPreferences = useSettingsConnectionDisplay();
-  const labels = new Map(providers.map(provider => [provider.name, displayPreferences.label(`provider:${provider.name}`, serviceIdentity(provider, t).label)]));
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState<{ provider: string; model: string; variant: string } | null>(null);
-  const providerName = pending?.provider ?? initialized?.provider ?? "";
-  const modelID = pending?.model ?? initialized?.model ?? "";
-  const variant = pending?.variant ?? initialized?.variant ?? initialized?.effort ?? "";
-  const provider = providers.find((item) => item.name === providerName);
-  const identity = provider ? serviceIdentity(provider, t) : undefined;
-  const effortOptions = providerModelVariantOptions(provider, modelID, variant);
-  const groups: SelectMenuGroup[] = providers.map((item) => {
-    const itemIdentity = serviceIdentity(item, t);
-    const label = labels.get(item.name) ?? itemIdentity.label;
-    return {
-      label,
-      options: displayPreferences.visibleModels(`provider:${item.name}`, providerModels(item), item.name === initialized?.provider ? [initialized.model] : [item.model]).map((model) => ({
-        value: `${item.name}\n${model.id}`,
-        label: providerModelDisplayName(model),
-        keywords: [label, item.name, model.id],
-      })),
-    };
-  });
-  const optionCount = groups.reduce((sum, group) => sum + group.options.length, 0);
-
-  async function commit(next: { provider: string; model: string; variant: string }): Promise<void> {
-    setError("");
-    setPending(next);
-    try {
-      await onSave(next.provider, next.model, undefined, undefined, next.variant);
-    } catch (saveError) {
-      setError(errorMessage(saveError, t));
-    } finally {
-      setPending(null);
-    }
-  }
-
-  if (providers.length === 0) {
-    return (
-      <SettingsRow title={t("provider.modelLabel")} description={t("provider.noService")}>
-        <button type="button" className="settings-button" data-testid="settings-providers-empty" onClick={onAddService}>
-          {t("provider.addSection")}
-        </button>
-      </SettingsRow>
-    );
-  }
-
-  return (
-    <>
-      <SettingsRow
-        title={t("provider.modelLabel")}
-        error={error || undefined}
-        description={identity ? (
-          <span className="model-default-service">
-            {labels.get(providerName) ?? identity.label}
-            {identity.attention ? (
-              <span className="model-default-attention">
-                <AlertTriangle className="icon-sm" aria-hidden="true" />
-                {identity.attention}
-              </span>
-            ) : null}
-          </span>
-        ) : undefined}
-      >
-        <SelectMenu
-          triggerClassName="settings-select-trigger"
-          ariaLabel={t("provider.chooseDefaultModel")}
-          dataTestid="settings-default-model-select"
-          value={`${providerName}\n${modelID}`}
-          placeholder={modelID || t("provider.chooseDefaultModel")}
-          groups={groups}
-          searchable={optionCount > MODEL_SEARCH_THRESHOLD}
-          searchPlaceholder={t("provider.searchModels")}
-          emptyMessage={t("provider.noModelMatches")}
-          disabled={running || pending !== null || optionCount === 0}
-          align="right"
-          flip
-          onChange={(value) => {
-            const [nextProvider = "", nextModel = ""] = value.split("\n");
-            const target = providers.find((item) => item.name === nextProvider);
-            void commit({
-              provider: nextProvider,
-              model: nextModel,
-              variant: normalizedVariantForProviderModel(variant, target, nextModel),
-            });
-          }}
-        />
-      </SettingsRow>
-      {effortOptions.length > 1 ? (
-        <SettingsRow title={t("provider.reasoningEffort")}>
-          <SelectMenu
-            triggerClassName="settings-select-trigger"
-            ariaLabel={t("provider.reasoningEffort")}
-            value={variant}
-            align="right"
-            disabled={running || pending !== null}
-            options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
-            onChange={(next) => void commit({ provider: providerName, model: modelID, variant: next })}
-          />
-        </SettingsRow>
-      ) : null}
     </>
   );
 }

@@ -652,30 +652,6 @@ describe("SettingsView model services", () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("gathers conversation defaults on General", async () => {
-    installServicesStub();
-    const onSave = vi.fn(async () => {});
-    renderSettings({ initialized: servicesInitialized(), initialPage: "general", locale: "en-US", onSave });
-    await flush();
-
-    const group = document.querySelector('[data-testid="settings-new-conversations"]');
-    expect(group?.querySelector('[data-testid="settings-default-engine"]')).not.toBeNull();
-    expect(group?.querySelector('[data-testid="settings-default-model-select"]')?.textContent).toContain("GPT-6 Astra");
-    expect(group?.textContent).toContain("ChatGPT");
-    expect(group?.querySelector('[aria-label="Default for new conversations"]')).not.toBeNull();
-  });
-
-  it("sends General to Model providers when no service is connected", async () => {
-    installServicesStub();
-    renderSettings({ initialized: baseInitialized({ provider: "", model: "", providers: [] }), initialPage: "general" });
-    await flush();
-
-    click(document.querySelector('[data-testid="settings-providers-empty"]'));
-    await flush();
-    await openProviderCatalog();
-    expect(document.querySelector('[data-testid="settings-provider-custom"]')).not.toBeNull();
-  });
-
   it("names connected services by provider identity", async () => {
     installServicesStub();
     const initialized = servicesInitialized();

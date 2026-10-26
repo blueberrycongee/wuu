@@ -431,13 +431,6 @@ const api: WuuDesktopApi = {
       ipcRenderer.removeListener("wuu:language-preference-changed", listener);
   },
   initialMessageFlowFontSize,
-  getActivityPreviewAutoShow: () => ipcRenderer.invoke("wuu:activity-preview-auto-show-get"),
-  setActivityPreviewAutoShow: (enabled) => ipcRenderer.invoke("wuu:activity-preview-auto-show-set", enabled),
-  onActivityPreviewAutoShowChange: (handler) => {
-    const listener = (_event: Electron.IpcRendererEvent, enabled: boolean) => handler(enabled);
-    ipcRenderer.on("wuu:activity-preview-auto-show-changed", listener);
-    return () => ipcRenderer.removeListener("wuu:activity-preview-auto-show-changed", listener);
-  },
   getThemePreference: () => ipcRenderer.invoke("wuu:theme-preference-get"),
   setThemePreference: (theme: ThemePreference) =>
     ipcRenderer.invoke("wuu:theme-preference-set", theme),

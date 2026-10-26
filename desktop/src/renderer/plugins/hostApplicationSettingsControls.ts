@@ -34,8 +34,6 @@ export function createApplicationSettingsControls(options: {
       permissionGuideUpdate: typeof window.wuu?.updateSystemPermissionGuide === "function",
       permissionGuideClose: typeof window.wuu?.closeSystemPermissionGuide === "function",
       themeChanges: typeof window.wuu?.onThemePreferenceChange === "function",
-      activityPreview: Boolean(window.wuu?.getActivityPreviewAutoShow && window.wuu.setActivityPreviewAutoShow),
-      activityPreviewChanges: typeof window.wuu?.onActivityPreviewAutoShowChange === "function",
       appContext: window.wuu?.platform === "darwin" && typeof window.wuu?.getAppContextState === "function",
       appContextChanges: typeof window.wuu?.onAppContextChanged === "function",
       appContextRecording: typeof window.wuu?.setAppContextShortcutRecording === "function",
@@ -185,18 +183,6 @@ export function createApplicationSettingsControls(options: {
     onThemePreferenceChange: (...args) => {
       if (typeof window.wuu?.onThemePreferenceChange !== "function") throw new Error("Settings operation unavailable: onThemePreferenceChange");
       return window.wuu.onThemePreferenceChange(...args);
-    },
-    getActivityPreviewAutoShow: async (...args) => {
-      if (typeof window.wuu?.getActivityPreviewAutoShow !== "function") throw new Error("Settings operation unavailable: getActivityPreviewAutoShow");
-      return window.wuu.getActivityPreviewAutoShow(...args);
-    },
-    setActivityPreviewAutoShow: async (...args) => {
-      if (typeof window.wuu?.setActivityPreviewAutoShow !== "function") throw new Error("Settings operation unavailable: setActivityPreviewAutoShow");
-      return window.wuu.setActivityPreviewAutoShow(...args);
-    },
-    onActivityPreviewAutoShowChange: (...args) => {
-      if (typeof window.wuu?.onActivityPreviewAutoShowChange !== "function") throw new Error("Settings operation unavailable: onActivityPreviewAutoShowChange");
-      return window.wuu.onActivityPreviewAutoShowChange(...args);
     },
     getAppContextState: async (...args) => {
       if (typeof window.wuu?.getAppContextState !== "function") throw new Error("Settings operation unavailable: getAppContextState");

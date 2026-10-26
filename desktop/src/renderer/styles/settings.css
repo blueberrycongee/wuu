@@ -480,6 +480,15 @@
   }
 }
 
+.settings-language-options {
+  flex-wrap: wrap;
+}
+
+.settings-language-options button {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+
 /* --- Section --------------------------------------------------------------
  * A section title is a quiet label above its group. The settings inside
  * carry the weight, so the eye lands on what can be changed.

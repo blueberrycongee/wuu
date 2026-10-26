@@ -12,8 +12,6 @@ export interface SettingsControlsCapabilitiesV1 {
   readonly permissionGuideUpdate: boolean;
   readonly permissionGuideClose: boolean;
   readonly themeChanges: boolean;
-  readonly activityPreview: boolean;
-  readonly activityPreviewChanges: boolean;
   readonly appContext: boolean;
   readonly appContextChanges: boolean;
   readonly appContextRecording: boolean;
@@ -123,9 +121,6 @@ export interface ApplicationSettingsControlsV1 {
   onThemePreferenceChange: (
     handler: (theme: ThemePreference) => void,
   ) => () => void;
-  getActivityPreviewAutoShow: () => Promise<boolean>;
-  setActivityPreviewAutoShow: (enabled: boolean) => Promise<void>;
-  onActivityPreviewAutoShowChange: (handler: (enabled: boolean) => void) => () => void;
   getAppContextState: () => Promise<AppContextState>;
   updateAppContextSettings: (settings: AppContextSettings) => Promise<AppContextState>;
   setAppContextShortcutRecording: (recording: boolean) => Promise<AppContextState>;

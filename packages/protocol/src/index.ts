@@ -3293,10 +3293,6 @@ export type WuuDesktopApi = {
   windowSetControls?: (state: { visible: boolean; x: number; y: number }) => Promise<void>;
   onWindowMaximizedChange?: (handler: (maximized: boolean) => void) => () => void;
   onWindowFullScreenChange?: (handler: (fullscreen: boolean) => void) => () => void;
-  // Desktop-only presentation preference. Does not enable or disable extensions.
-  getActivityPreviewAutoShow?: () => Promise<boolean>;
-  setActivityPreviewAutoShow?: (enabled: boolean) => Promise<void>;
-  onActivityPreviewAutoShowChange?: (handler: (enabled: boolean) => void) => () => void;
   // Appearance. The preference persists in desktop-settings.json; the
   // renderer resolves "system" against prefers-color-scheme and stamps
   // data-theme on <html>. `initialThemePreference` is read synchronously

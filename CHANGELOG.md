@@ -111,6 +111,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Simplify General settings by removing new-conversation defaults and the automatic activity-preview toggle. Choose the agent, model, and reasoning effort in the composer; manage the default environment beside its profiles under Built-in agent. Activity previews appear automatically and remain individually dismissible; the retired auto-show preference no longer suppresses them. Remove the corresponding desktop bridge and SDK settings controls.
+
 - Reduce the sidebar row minimum height from 36px to 28px at the default text size, preserving row spacing and automatic growth for larger text.
 
 - Use native desktop context menus for object actions such as rename, pin, move, copy, and delete, plus standard text editing. Group session actions consistently and share the web fallback with the file tree. Keep creation menus, composer commands, pickers, and panel controls rendered in the app.

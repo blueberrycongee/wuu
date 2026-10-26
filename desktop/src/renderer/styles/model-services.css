@@ -54,18 +54,6 @@
   line-height: 1;
 }
 
-/* --- Default model --------------------------------------------------------
- * Ordinary settings rows; the model row names its service underneath. */
-
-.model-default-service {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1) var(--space-3);
-}
-
-.model-default-attention,
 .model-service-card-meta[data-attention],
 [data-attention].model-service-value,
 [data-attention].model-service-status {
@@ -74,7 +62,7 @@
   gap: var(--space-1);
 }
 
-:is(.model-default-attention, .model-service-card-meta[data-attention], [data-attention].model-service-value, [data-attention].model-service-status) .icon-sm {
+:is(.model-service-card-meta[data-attention], [data-attention].model-service-value, [data-attention].model-service-status) .icon-sm {
   flex: 0 0 auto;
   color: var(--warning);
 }

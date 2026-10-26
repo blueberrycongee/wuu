@@ -17,7 +17,7 @@ import { ConnectionUsageSummary } from "./ConnectionUsageSummary";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { engineLabel } from "./EngineDisplay";
 import { useI18n } from "./i18n";
-import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
+import { SelectMenu } from "./SelectMenu";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 
@@ -45,72 +45,6 @@ function externalState(
     return { text: t("settings.engineDisabled"), selectable: false };
   }
   return { text: t("settings.engineNotInstalled"), selectable: false };
-}
-
-/**
- * The agent new conversations start with, as one labeled picker. Every
- * installed agent is listed, so a switched-off one says why it cannot be
- * picked instead of silently leaving the choice set.
- */
-export function DefaultEngineRow({
-  result,
-  onUpdate,
-}: {
-  result?: EngineListResult;
-  onUpdate: (params: EngineUpdateParams) => Promise<EngineListResult>;
-}): JSX.Element {
-  const controls = useSettingsControls();
-  const { t } = useI18n();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const binarySettings = externalSettings(result);
-  const defaultEngine = result?.settings?.default_engine ?? BUILTIN_ENGINE;
-  const engines = result?.engines ?? [];
-  const options: SelectMenuOption[] = [
-    { value: BUILTIN_ENGINE, label: engineLabel(BUILTIN_ENGINE, engines.find((e) => e.id === BUILTIN_ENGINE)), hint: t("settings.engineBuiltin") },
-    ...engines.filter((engine) => engine.id !== BUILTIN_ENGINE && engine.binary_ok).map((engine) => {
-      const state = externalState(engine, binarySettings, t);
-      return {
-        value: engine.id,
-        label: engineLabel(engine.id, engine),
-        hint: state.selectable ? undefined : state.text,
-        disabled: !state.selectable,
-      };
-    }),
-  ];
-
-  async function select(id: string): Promise<void> {
-    if (id === defaultEngine) return;
-    // The composer remembers the last agent picked there. An explicit default
-    // change here is the newer decision, so drop that memory instead of
-    // letting it mask the setting.
-    controls.clearDraftEngineMemory();
-    setBusy(true);
-    setError("");
-    try {
-      await onUpdate({ default_engine: id });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <SettingsRow title={t("settings.newConversationAgent")} error={error || undefined}>
-      <SelectMenu
-        triggerClassName="settings-select-trigger"
-        ariaLabel={t("settings.defaultEngine")}
-        dataTestid="settings-default-engine"
-        value={defaultEngine}
-        options={options}
-        // Until detection lands only the built-in agent is known.
-        disabled={busy || result === undefined}
-        flip
-        onChange={(id) => void select(id)}
-      />
-    </SettingsRow>
-  );
 }
 
 /** External runtime connections, with parent-owned list/detail navigation. */

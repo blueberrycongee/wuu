@@ -340,13 +340,6 @@ async function run() {
   assert.deepEqual(cards.filter(card => card.isDefault).map(card => card.name), ['gateway']);
   await capture(main, '06-overview-after.png');
 
-  // General gathers how new conversations start; it shows the new default.
-  await openSettingsPage(main, 'general');
-  await waitFor(main, () => document.querySelector('[data-testid="settings-default-model-select"]')?.textContent.includes('fixture-b'));
-  await capture(main, '06-general-new-conversations.png');
-  await openSettingsPage(main, 'providers');
-  await waitFor(main, () => document.querySelector('[data-provider="gateway"]'));
-
   // Every theme, text size, and width keeps controls inside the column.
   const layouts = [];
   for (const theme of ['light', 'dark']) for (const size of [14, 20]) for (const width of [1280, 760]) {

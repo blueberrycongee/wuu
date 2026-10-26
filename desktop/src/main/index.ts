@@ -185,8 +185,6 @@ import { CodexPetActivity } from "./codexPetActivity";
 import { CodexPetCommandRelay, type CodexPetCommandTarget } from "./codexPetCommands";
 import { RemoteHostManager } from "./remoteControl";
 import {
-  getActivityPreviewAutoShow,
-  setActivityPreviewAutoShow,
   getCodexPetSettings,
   getCodexPetScale,
   getCodexPetSize,
@@ -419,7 +417,6 @@ const observationCoordinator = new ObservationCoordinator(
   }),
 );
 observationCoordinator.setAppearance(resolvedThemeIsDark());
-observationCoordinator.setAutoShow(getActivityPreviewAutoShow());
 browserHostCoordinator.setRendererSink({
   surface: (snapshot) => broadcastToAll("wuu:browser-surface", snapshot),
   userInput: (payload) => {
@@ -2588,13 +2585,6 @@ app.whenReady().then(async () => {
     const zoom = event.sender.getZoomFactor();
     macWindowControls.set(win, { visible: state.visible, x: Math.round(state.x * zoom), y: Math.round(state.y * zoom) });
     applyMacWindowControls(win);
-  });
-  ipcMain.handle("wuu:activity-preview-auto-show-get", () => getActivityPreviewAutoShow());
-  ipcMain.handle("wuu:activity-preview-auto-show-set", (_event, enabled: unknown) => {
-    if (typeof enabled !== "boolean") throw new Error("Invalid activity preview preference");
-    setActivityPreviewAutoShow(enabled);
-    observationCoordinator.setAutoShow(enabled);
-    broadcastToAll("wuu:activity-preview-auto-show-changed", enabled);
   });
   ipcMain.handle("wuu:activity-preview-appearance", (event, value: unknown) => {
     // Only the main workbench supplies global presentation preferences.
