@@ -1341,6 +1341,13 @@ html[data-focus-modality="keyboard"] :is(
   justify-content: space-between;
 }
 
+/* Match the half-em label/count spacing in attention headings and let it
+ * follow the heading size when the user enlarges UI text. */
+.sidebar-recents-heading .sidebar-functional-heading-toggle {
+  gap: 0.5em;
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+}
+
 .sidebar-recents-count {
   flex: none;
   color: var(--sidebar-heading-ink);
