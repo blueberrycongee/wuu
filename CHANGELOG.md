@@ -186,6 +186,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Give the conversation composer more bottom spacing so the input and its shadow sit comfortably above the window edge, scaling with the UI font size.
+
 - Match error and retry messages to the conversation bubble frame, with distinct status colors and full-width IM alignment; keep recovery actions readable at large text sizes and narrow widths.
 
 - Keep the first sent message visible through new-conversation creation and admission, without flashing or replaying its entrance; preserve newer drafts and recover rejected sends.
