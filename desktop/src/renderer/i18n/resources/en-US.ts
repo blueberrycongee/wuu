@@ -554,6 +554,8 @@ export const enUS = {
   "ribbon.github": "View Wuu on GitHub",
   "ribbon.saveFailed": "Could not save navigation changes.",
   "ribbon.resize": "Resize navigation ribbon",
+  "ribbon.collapse": "Hide navigation ribbon",
+  "ribbon.expand": "Show navigation ribbon",
   "ribbon.removed": "{name} shortcut removed. Website data is kept.",
   "ribbon.undo": "Undo",
   "ribbon.suggestions": "Website suggestions",

@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Hide the navigation ribbon with a footer button or by dragging left past its compact width, and restore it from the upper-left corner. Preview drag collapse before release, with pull-back and Escape cancellation. Remember its visibility and previous width independently of the conversation sidebar.
+
 - Preview `run_code` source in activity rows without a description, and show program output alongside the full source when expanded.
 
 - Show a temporary conversation immediately in the sidebar's Recent section when starting a draft. Keep its title stable while typing. Hide unsent drafts when switching conversations, preserve their input, and keep submitted conversations visible.
@@ -187,6 +189,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 ### Fixed
 
 - Give the conversation composer more bottom spacing so the input and its shadow sit comfortably above the window edge, scaling with the UI font size.
+
+- Widen the conversation composer and reduce its side gutters while keeping messages and input aligned.
+
+- Use full sidebar glyphs to align the ribbon's collapse control with the account icon. Align its footer rows with the main composer and status controls across wrapped rows, larger UI fonts, and tool-rail visibility changes.
 
 - Match error and retry messages to the conversation bubble frame, with distinct status colors and full-width IM alignment; keep recovery actions readable at large text sizes and narrow widths.
 

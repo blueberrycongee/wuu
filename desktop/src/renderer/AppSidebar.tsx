@@ -1641,8 +1641,8 @@ export function AppSidebar({
             onSelect: () => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId),
           })),
         ]}
+        footerLeading={<DesktopUpdateButton navigation={navigation} />}
         footer={<>
-          <DesktopUpdateButton navigation={navigation} />
           <SidebarAccountMenu
             navigation={navigation}
             key={sidebarCollapsed ? "collapsed" : "docked"}

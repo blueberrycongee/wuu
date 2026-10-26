@@ -14,14 +14,14 @@
  */
 
 :root {
-  /* Ease toward the shared page inset as the window grows, without a
-   * breakpoint jump. Messages and the composer share both edges. */
+  /* Ease toward a compact inset as the pane grows, without a breakpoint
+   * jump. Messages and the composer share both edges. */
   --session-outer-padding-inline: max(
-    clamp(var(--space-3), 4cqi, var(--page-padding)),
+    clamp(var(--space-3), 3cqi, var(--space-6)),
     env(safe-area-inset-left, 0px),
     env(safe-area-inset-right, 0px)
   );
-  --session-composer-width: 760px;
+  --session-composer-width: 800px;
   /* IM message frames overhang the reading column on both sides. The composer
    * mirrors that inset so the sent query and the draft share one width. */
   --session-im-inline-outset: clamp(
