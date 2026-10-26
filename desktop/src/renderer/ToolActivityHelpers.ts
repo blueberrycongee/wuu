@@ -1239,6 +1239,12 @@ export function readableToolActivityName(
     const pragma = firstLine.startsWith("// @run_code:") ? parseJSONRecord(firstLine.slice("// @run_code:".length)) : undefined;
     const description = stringValue(pragma, "description") || stringValue(args, "description");
     if (description) return description;
+    if (typeof code === "string") {
+      // Preview the source, not inferred execution: branches may never run.
+      const source = firstLine.startsWith("// @run_code:") ? code.split("\n").slice(1).join("\n") : code;
+      const preview = truncateText(source.replace(/\s+/g, " ").trim(), 160);
+      if (preview) return `${toolDisplayLabel(item.display) || readableToolName(item.name)}: ${preview}`;
+    }
   }
   return toolDisplayLabel(item.display) || readableToolName(item.name);
 }

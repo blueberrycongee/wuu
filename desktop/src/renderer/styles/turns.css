@@ -3963,6 +3963,7 @@
   overflow-wrap: anywhere;
 }
 
+.program-tool-details[data-tool="run_code"] .rich-code,
 .program-tool-record[data-tool="exec"] .rich-code {
   max-height: 320px;
   overflow: auto;

@@ -67,6 +67,8 @@ For other sending failures, Wuu restores the input when that composer is still e
 
 Use Stop to interrupt a task. Stopping does not undo commands or file edits, and separately managed background work may need its own stop action. Review the [current diff and command results](workspace-tools.md#review) before continuing.
 
+Expand the activity trail to inspect tool calls. A `run_code` row shows its description, or a short source preview when no description is provided. Expand the row to read and copy the full source, program output, and any error. Long code and output scroll within their blocks.
+
 ## Quote part of a response
 
 Select displayed text in an assistant response, including while it is still streaming, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Appended output and turn completion keep the selection and comment open while the selected text remains valid; changes to that passage dismiss the menu. Selections appear as quote cards in the attachment tray above that conversation's input, including in split view. Each quote captures the displayed text at that moment. Open a card to read the passage, edit its comment, remove the selection, or open its source. You can send a selection without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
