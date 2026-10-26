@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Preview `run_code` source in activity rows without a description, and show program output alongside the full source when expanded.
+
 - Show a temporary conversation immediately in the sidebar's Recent section when starting a draft. Keep its title stable while typing. Hide unsent drafts when switching conversations, preserve their input, and keep submitted conversations visible.
 
 - Select application business state, complete agent engines, model transports, retry/scheduling policies, and shared model capacity through public provider contracts. Expose immutable graph identities, resolved dependencies, and exact authoring types; composition version 3 retains explicit legacy migration provenance.
