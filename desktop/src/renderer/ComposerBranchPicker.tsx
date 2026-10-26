@@ -6,11 +6,13 @@ import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
 import { hostSupports } from "./HostCapabilities";
 import { useI18n } from "./i18n";
 import { showErrorToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
 
 export function ComposerBranchPicker({
-  gitStatus, disabled, open, onToggle, onSelect, onCreate, onOpenWorktree, worktreeStart,
+  gitStatus, disabled, open, onToggle, onSelect, onCreate, onOpenWorktree, worktreeStart, inToolRail = false,
 }: {
   gitStatus: GitStatusResult;
+  inToolRail?: boolean;
   disabled: boolean;
   open: boolean;
   onToggle: () => void;
@@ -27,19 +29,24 @@ export function ComposerBranchPicker({
   const branch = worktreeStart?.branch || gitStatus.branch || "HEAD";
   return (
     <div className="composer-branch-control" ref={anchorRef}>
-      <button ref={triggerRef} type="button" className="hero-project-pill" aria-haspopup="menu"
-        aria-expanded={open && !disabled}
-        aria-label={t(worktreeStart ? "composer.worktreeStartBranchLabel" : "composer.switchBranch", { branch })}
-        title={branch}
-        disabled={disabled} onClick={onToggle}
-        onKeyDown={(event) => {
-          if (open ? event.key === "Escape" : menuOpeningKey(event)) onToggle();
-        }}>
-        <GitBranch className="hero-project-pill-icon" />
-        <span className="hero-project-pill-text">{branch}</span>
-      </button>
+      <Tooltip content={branch} disabled={!inToolRail}>
+        <button ref={triggerRef} type="button" className={inToolRail ? "icon-button" : "hero-project-pill"} aria-haspopup="menu"
+          aria-expanded={open && !disabled}
+          aria-label={t(worktreeStart ? "composer.worktreeStartBranchLabel" : "composer.switchBranch", { branch })}
+          title={inToolRail ? undefined : branch}
+          disabled={disabled} onClick={onToggle}
+          onKeyDown={(event) => {
+            if (open ? event.key === "Escape" : menuOpeningKey(event)) onToggle();
+          }}>
+          <GitBranch className="hero-project-pill-icon" />
+          {inToolRail ? null : <span className="hero-project-pill-text">{branch}</span>}
+        </button>
+      </Tooltip>
       {open && !disabled ? (
-        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime" placement="above" align="left" width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
+        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime"
+          placement={inToolRail ? "below" : "above"} align={inToolRail ? "right" : "left"}
+          crossAxisOffset={inToolRail ? -(anchorRef.current?.offsetWidth ?? 0) - 8 : 0}
+          flip width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
           onDismiss={onToggle}
           mobileSheet={{ label: t(worktreeStart ? "composer.worktreeStartBranch" : "git.branch"), onClose: onToggle }}>
           <ComposerBranchMenu gitStatus={gitStatus} selectedBranch={worktreeStart ? branch : gitStatus.branch}

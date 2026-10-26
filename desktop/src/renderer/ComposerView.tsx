@@ -1181,15 +1181,15 @@ export function Composer({
   const controlsInRail = Boolean(runtimeControlsTarget && !topAccessory);
   const compactControls = controlsInRail || controlsBelowInput;
   const workspaceControls = canSelectWorkspace || (mainConversation && controlsBelowInput) ? (
-    <div className="composer-workspace-bar" ref={menuRef}>
+    <div className={controlsInRail ? "composer-workspace-rail" : "composer-workspace-bar"} ref={menuRef}>
       <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
         <Tooltip
           content={workspacePillTitle}
-          disabled={workspacePillTitle === workspacePillLabel}
+          disabled={!controlsInRail && workspacePillTitle === workspacePillLabel}
         >
           <button
             ref={workspacePillRef}
-            className="hero-project-pill"
+            className={controlsInRail ? "icon-button" : "hero-project-pill"}
             type="button"
             disabled={!canSelectWorkspace}
             aria-haspopup={canSelectWorkspace ? "menu" : undefined}
@@ -1204,16 +1204,18 @@ export function Composer({
             <span className="hero-project-pill-icon" aria-hidden="true">
               <WorkspacePillIcon />
             </span>
-            <span className="hero-project-pill-text">{workspacePillLabel}</span>
+            {controlsInRail ? null : <span className="hero-project-pill-text">{workspacePillLabel}</span>}
           </button>
         </Tooltip>
         {canSelectWorkspace && menuOpen ? (
           <FloatingMenuPortal
-            anchorRef={menuRef}
+            anchorRef={workspacePillRef}
             owner="composer-runtime"
             onDismiss={onToggleMenu}
-            placement="above"
-            align="left"
+            placement={controlsInRail ? "below" : "above"}
+            align={controlsInRail ? "right" : "left"}
+            crossAxisOffset={controlsInRail ? -(workspacePillRef.current?.offsetWidth ?? 0) - 8 : 0}
+            flip
             width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
             mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
           >
@@ -1235,6 +1237,7 @@ export function Composer({
         <div className="composer-workspace-group composer-git-controls">
           <ComposerBranchPicker
             key={activeContext?.cwd}
+            inToolRail={controlsInRail}
             gitStatus={gitStatus}
             disabled={branchPickerDisabled || readOnly}
             open={branchMenuOpen}
@@ -1438,7 +1441,7 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
-          {controlsBelowInput ? null : workspaceControls}
+          {controlsBelowInput || controlsInRail ? null : workspaceControls}
           {cameraOpen && !textOnly && !readOnly ? (
             <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
           ) : null}
@@ -1544,7 +1547,7 @@ export function Composer({
                 onContextMenu={handleComposerContextMenu}
               />
               <div className="composer-input-actions">
-                {controlsInRail ? createPortal(runtimeControls, runtimeControlsTarget!) : controlsBelowInput ? null : runtimeControls}
+                {controlsInRail ? createPortal(<>{workspaceControls}{runtimeControls}</>, runtimeControlsTarget!) : controlsBelowInput ? null : runtimeControls}
                 {showContinue ? (
                   <ComposerContinueButton
                     key={`${continuation.threadID}:${continuation.turnID}`}
@@ -1583,10 +1586,10 @@ export function Composer({
           </div>
           </div>
         {controlsBelowInput ? (
-          <div className="composer-footer">
-            {workspaceControls}
+          <ComposerFooter collapsed={controlsInRail}>
+            {controlsInRail ? null : workspaceControls}
             {!controlsInRail && !topAccessory ? <div className="composer-footer-runtime">{runtimeControls}</div> : null}
-          </div>
+          </ComposerFooter>
         ) : null}
         {handoffMode && initialized && !handoffUnavailableReason ? (
           <FloatingMenuPortal
@@ -1692,6 +1695,28 @@ export function Composer({
     </footer>
   );
   return <>{attachmentPickers}{nativeComposer}</>;
+}
+
+function ComposerFooter({ collapsed, children }: { collapsed: boolean; children: ReactNode }): JSX.Element {
+  const shellRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (collapsed) return;
+    const shell = shellRef.current!;
+    const content = contentRef.current!;
+    // Keep the last measured height while controls move into the rail, so the
+    // dock releases their actual footprint smoothly, including wrapped rows.
+    const measure = () => shell.style.setProperty("--composer-footer-height", `${content.offsetHeight}px`);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [collapsed]);
+  return (
+    <div ref={shellRef} className="composer-footer-shell" data-collapsed={collapsed || undefined} inert={collapsed}>
+      <div ref={contentRef} className="composer-footer">{children}</div>
+    </div>
+  );
 }
 
 type ComposerTextareaProps = {

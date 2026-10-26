@@ -555,6 +555,17 @@
   }
 }
 
+.composer-footer-shell {
+  height: var(--composer-footer-height, auto);
+  overflow: clip;
+  overflow-clip-margin: 4px;
+  transition: height var(--motion-base) var(--ease-out);
+}
+
+.composer-footer-shell[data-collapsed] {
+  height: 0;
+}
+
 .composer-footer {
   display: flex;
   flex-wrap: wrap;
@@ -1146,11 +1157,20 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   max-width: 50cqi;
 }
 
-.workspace-composer-controls {
+.workspace-composer-controls,
+.composer-workspace-rail {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--space-1);
+}
+
+.composer-workspace-rail .composer-git-controls {
+  max-width: none;
+}
+
+.composer-workspace-rail .composer-git-controls::before {
+  content: none;
 }
 
 .workspace-composer-controls .codex-runtime-trigger.is-compact,

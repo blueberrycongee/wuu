@@ -529,7 +529,7 @@ describe("main composer focus continuity", () => {
       const { controller } = replacement;
       // An old checkout may finish after the replacement; its menu cleanup
       // must not dismiss a picker opened in the replacement shell.
-      await click(".composer-git-controls .hero-project-pill");
+      await click('.composer-git-controls button[aria-haspopup="menu"]');
       await click('.composer-branch-menu button[title="feature"]');
       expect(window.wuu.checkoutGitBranch).toHaveBeenCalledWith("feature", workspaceCwd);
       const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
@@ -554,7 +554,7 @@ describe("main composer focus continuity", () => {
       await click(".codex-runtime-trigger");
       expect(document.querySelector(".runtime-panel")).toBeNull();
       await click(".codex-runtime-trigger");
-      await click(".composer-project-control .hero-project-pill");
+      await click('.composer-project-control button[aria-haspopup="menu"]');
       expect(document.querySelector(".runtime-panel")).toBeNull();
     } finally {
       await act(async () => finishCheckout?.());
