@@ -56,10 +56,11 @@ func TestFailedPluginRecoveryPublishesRevokedConsumerState(t *testing.T) {
 	retirementCalls := 0
 	client.onClose = func() {
 		retirementCalls++
-		// Host has removed the failed client, but runtime has not restored its
-		// failed diagnostic yet. Health alone cannot identify this transition.
-		if rt.PluginGenerationNeedsRecovery() {
-			t.Error("fixture did not enter the failed-client retirement gap")
+		// Cleanup callbacks can read inventory after executable authority has
+		// detached. The original failure must remain visible throughout cleanup.
+		record := findPluginExtensionRecord(t, srv.currentExtensionInventory(), provider.ID)
+		if record.RuntimeState != ExtensionRuntimeFailed || record.LastError != "provider crashed" {
+			t.Errorf("retirement lost the original failure: %+v", record)
 		}
 		if err := srv.refreshPluginGenerationIfChanged(); !errors.Is(err, errPluginGenerationRefreshBusy) {
 			t.Errorf("retirement callback bypassed refresh admission: %v", err)
@@ -141,10 +142,12 @@ type dependencyInventoryClient struct {
 func (c *dependencyInventoryClient) ID() string { return c.id }
 func (c *dependencyInventoryClient) Status() pluginhost.Status {
 	state := pluginhost.StateActive
+	message := ""
 	if c.failed {
 		state = pluginhost.StateFailed
+		message = "provider crashed"
 	}
-	return pluginhost.Status{ID: c.id, State: state, StartedAt: time.Unix(1, 0)}
+	return pluginhost.Status{ID: c.id, State: state, Error: message, StartedAt: time.Unix(1, 0)}
 }
 func (c *dependencyInventoryClient) Close(context.Context) error {
 	if c.onClose != nil {

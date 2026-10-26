@@ -564,6 +564,18 @@ func (h *Host) CancelExecutions(cause error) {
 // RetirePlugin stops required consumers before closing their provider. Other
 // clients remain active. Cleanup retains access to providers until it returns.
 func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
+	return h.retirePluginWithFailure(ctx, pluginID, cause, nil)
+}
+
+// RetireFailedPlugin detaches executable authority while preserving the failure
+// in status inventory, including during cleanup callbacks. The replacement is
+// diagnostic only and cannot serve tools, capabilities, or service calls.
+func (h *Host) RetireFailedPlugin(ctx context.Context, status Status, cause error) (ClientShutdownOutcome, bool) {
+	status.State = StateFailed
+	return h.retirePluginWithFailure(ctx, status.ID, cause, &status)
+}
+
+func (h *Host) retirePluginWithFailure(ctx context.Context, pluginID string, cause error, failure *Status) (ClientShutdownOutcome, bool) {
 	if h == nil {
 		return ClientShutdownOutcome{}, false
 	}
@@ -577,7 +589,7 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	go func() {
 		h.lifecycleMu.Lock()
 		defer h.lifecycleMu.Unlock()
-		outcome, found := h.retirePluginAndConsumers(context.WithoutCancel(ctx), pluginID, cause)
+		outcome, found := h.retirePluginAndConsumers(context.WithoutCancel(ctx), pluginID, cause, failure)
 		done <- retirementResult{outcome, found}
 	}()
 	select {
@@ -588,7 +600,7 @@ func (h *Host) RetirePlugin(ctx context.Context, pluginID string, cause error) (
 	}
 }
 
-func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
+func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, cause error, failure *Status) (ClientShutdownOutcome, bool) {
 	pluginID = strings.TrimSpace(pluginID)
 	retiring := map[string]bool{pluginID: true}
 	dependencies := h.Dependencies()
@@ -620,11 +632,20 @@ func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, ca
 		if !retiring[id] {
 			continue
 		}
-		outcome, retired := h.retirePlugin(ctx, id, cause)
+		var diagnostic *Status
+		if id == pluginID {
+			diagnostic = failure
+		} else if failure != nil {
+			status := clients[i].Status()
+			if status.State == StateFailed {
+				diagnostic = &status
+			}
+		}
+		outcome, retired := h.retirePluginKeepingFailure(ctx, id, cause, diagnostic)
 		cleanupErr = errors.Join(cleanupErr, outcome.Err)
 		if id == pluginID {
 			result, found = outcome, retired
-		} else if retired {
+		} else if retired && diagnostic == nil {
 			h.Add(Failed(id, fmt.Errorf("plugin %q requires retired plugin %q", id, pluginID)))
 		}
 	}
@@ -633,6 +654,10 @@ func (h *Host) retirePluginAndConsumers(ctx context.Context, pluginID string, ca
 }
 
 func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (ClientShutdownOutcome, bool) {
+	return h.retirePluginKeepingFailure(ctx, pluginID, cause, nil)
+}
+
+func (h *Host) retirePluginKeepingFailure(ctx context.Context, pluginID string, cause error, failure *Status) (ClientShutdownOutcome, bool) {
 	if h == nil {
 		return ClientShutdownOutcome{}, false
 	}
@@ -649,6 +674,9 @@ func (h *Host) retirePlugin(ctx context.Context, pluginID string, cause error) (
 	for _, candidate := range h.clients {
 		if candidate.ID() == pluginID && client == nil {
 			client = candidate
+			if failure != nil {
+				keptClients = append(keptClients, FailedWithStatus(*failure))
+			}
 			continue
 		}
 		keptClients = append(keptClients, candidate)
@@ -832,7 +860,7 @@ func (h *Host) Activate(ctx context.Context) error {
 		}
 		if activateErr := h.activateClient(ctx, client, dependencies[client.ID()]); activateErr != nil {
 			err = errors.Join(err, fmt.Errorf("activate plugin %q: %w", client.ID(), activateErr))
-			outcome, _ := h.retirePluginAndConsumers(ctx, client.ID(), activateErr)
+			outcome, _ := h.retirePluginAndConsumers(ctx, client.ID(), activateErr, nil)
 			err = errors.Join(err, outcome.Err)
 			h.Add(Failed(client.ID(), activateErr))
 			h.blockFailedDependencies(ctx)

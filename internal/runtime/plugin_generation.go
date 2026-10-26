@@ -832,11 +832,16 @@ func (g *PluginGeneration) revokeMissingPlugins(activeIDs map[string]bool, clien
 		g.revokeActivities(id)
 		if g.host != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-			outcome, _ := g.host.RetirePlugin(ctx, id, &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "module was removed or disabled"})
+			cause := &pluginhost.UserQuestionError{Code: "plugin_disabled", Message: "module was removed or disabled"}
+			var outcome pluginhost.ClientShutdownOutcome
+			status, failed := failedStatuses[id]
+			if failed {
+				outcome, _ = g.host.RetireFailedPlugin(ctx, status, cause)
+			} else {
+				outcome, _ = g.host.RetirePlugin(ctx, id, cause)
+			}
 			cancel()
-			if status, failed := failedStatuses[id]; failed {
-				g.host.Add(pluginhost.FailedWithStatus(status))
-			} else if failure := dependencyFailures[id]; failure != nil {
+			if failure := dependencyFailures[id]; failure != nil && !failed {
 				g.host.Add(pluginhost.Failed(id, failure))
 			}
 			if outcome.Err != nil {
