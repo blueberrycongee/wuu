@@ -249,8 +249,10 @@ func (s *Server) holdRejectedQueuedTurn(binding *runtime.State, threadID string,
 	return nil
 }
 
-func (s *Server) acceptQueuedUserTurn(binding *runtime.State, threadID string, entry queuedTurn, hold bool) (queuedTurn, bool, error) {
+func (s *Server) acceptQueuedUserTurn(binding *runtime.State, threadID string, entry queuedTurn, hold bool, timing *rpcRequestTiming) (queuedTurn, bool, error) {
+	started := timing.now()
 	s.queuedTurnMu.Lock()
+	timing.span("queue_mutex_wait", started)
 	defer s.queuedTurnMu.Unlock()
 	if s.closed.Load() {
 		return queuedTurn{}, false, errServerClosed
@@ -258,7 +260,10 @@ func (s *Server) acceptQueuedUserTurn(binding *runtime.State, threadID string, e
 	if s.isCancelledPendingSubmissionLocked(threadID, entry.id, session.HeldUserWorkOriginQueue) {
 		return queuedTurn{}, false, errQueuedTurnCancelled
 	}
+	started = timing.now()
+	timing.mark("queue_persist_begin")
 	accepted, err := s.persistAcceptedUserTurn(binding, threadID, entry)
+	timing.span("queue_persist", started)
 	if err != nil {
 		return queuedTurn{}, false, err
 	}

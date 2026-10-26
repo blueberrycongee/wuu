@@ -657,6 +657,53 @@ necessarily a cold process start; keep those measurements separate. The fixture
 also saves `subscription-navigation.png`. The held response tests navigation
 independence, not a database lock or an account-service outage.
 
+### Core RPC phase timing
+
+Start a diagnostic core with `WUU_RPC_TIMING=1` to add `rpc_timing` JSON records
+to `WUU_HOME/log/debug.log`. Normal core startup initializes this metadata log;
+verbose logging and `WUU_DEBUG_WIRE` are not needed. Do not enable wire logging
+for latency tests: it can contain request and response text. The default timing
+path has no recorder, hashing, clock samples or diagnostic allocations. After
+changing the Go instrumentation, rebuild the core; rebuilding the renderer is
+not needed when the test already selects that core with `WUU_DESKTOP_CORE`.
+
+Records contain a core PID, a whitelisted method (`other` for unknown methods),
+hashed request/thread IDs, phase, monotonic milliseconds and a write outcome.
+They omit prompts, history, attachments, paths, credentials and error messages.
+Correlate the stdin wrapper's request ID with
+`SHA256(JSON.stringify(id)).slice(0, 16)` in hexadecimal. Thread hashes use the
+UTF-8 ID bytes instead. Group by PID and request hash; sort by `at_ms`, which is
+relative to that core's timing recorder, not the renderer or main-process clock.
+Critical-section measurements are captured in memory and written after unlock,
+so log-line order need not equal event order. Response records use a bounded
+metadata buffer, drained when a handler or owned background task returns, or at
+server close. `response_records_dropped` makes overflow explicit; such a capture
+is incomplete. Timing-enabled samples have probe
+overhead and must remain separate from uninstrumented wall-clock baselines.
+
+- `stdin_read`, `handler_start`, `response_written`, `handler_end` distinguish
+  request processing from work after the reply. `stdin_read` means the serial
+  scanner consumed a complete frame, not when bytes first reached the pipe.
+  Existing asynchronous handlers can return before their eventual response.
+- `resume_*` separates persisted-history loading, child/worktree inspection,
+  metadata/held-input reads, process recovery, cache detach and detached cleanup.
+- `queue_*` separates input preparation, permission/control checks, actual mutex
+  acquisition waits and durable acceptance. `queue_persist` includes the selected
+  storage service; it is not a separately measured SQL or filesystem duration.
+- `admission_*`, `answer_ready_handoff` and `turn_launch_committed` separate
+  previous-turn settlement, plugin refresh, execution lease, history refresh,
+  runtime preparation, hooks and the durable user append. Launch is **not** a
+  provider request: keep the local provider/HTTP wrapper's dispatch timestamps.
+- `interrupt_*` separates session control, held-input persistence, cancellation,
+  worker freeze, managed-process stop and lifecycle bookkeeping. The interrupt
+  response and the later terminal notification/UI update are distinct events.
+
+If a queue RPC's wrapper round trip is long but its handler is short, inspect
+the preceding handler's response-to-end interval before blaming a lock. A long
+aggregate stage is not proof of lock contention; only `*_mutex_wait` directly
+measures acquisition. Retain the exact core/UI hashes, fixture sizes and both
+instrumented and uninstrumented results.
+
 ### End-to-end journey diagnostics
 
 The same fixture always records startup through a restored conversation and a

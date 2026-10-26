@@ -404,23 +404,33 @@ func (s *Server) handleThreadResume(req Request) error {
 	// Reads follow an accepted execution's captured authority until it settles.
 	// A plugin publication must not turn reopening its local owner into a new
 	// admission against the replacement generation.
+	req.timing = req.timing.forThread(id)
+	phaseStarted := req.timing.now()
 	binding, _, stateErr := s.retainUserThreadExecutionState(id, true)
+	req.timing.span("resume_state", phaseStarted)
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
 	}
 	defer binding.Close()
 	if th := s.threadForState(binding, id); th != nil {
+		phaseStarted = req.timing.now()
 		th.mu.Lock()
 		restorePluginToolLabels(binding.Host, th.Turns)
 		thread := th.threadResumeSnapshotLocked(params)
 		th.mu.Unlock()
+		req.timing.span("resume_cached_snapshot", phaseStarted)
+		phaseStarted = req.timing.now()
 		thread, err = s.threadWithChildAgents(binding, thread)
+		req.timing.span("resume_children_and_worktree", phaseStarted)
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
 		return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 	}
+	phaseStarted = req.timing.now()
+	req.timing.mark("resume_persisted_load_begin")
 	th, err := s.loadPersistedThreadState(binding, id, time.Now().UTC())
+	req.timing.span("resume_persisted_load", phaseStarted)
 	if err != nil {
 		if !errors.Is(err, session.ErrSessionNotFound) {
 			return s.writeResponse(req.ID, nil, err)
@@ -452,7 +462,9 @@ func (s *Server) handleThreadResume(req Request) error {
 	th.mu.Lock()
 	thread := th.threadResumeSnapshotLocked(params)
 	th.mu.Unlock()
+	phaseStarted = req.timing.now()
 	thread, err = s.threadWithChildAgents(binding, thread)
+	req.timing.span("resume_children_and_worktree", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -460,8 +472,10 @@ func (s *Server) handleThreadResume(req Request) error {
 }
 
 func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, thread Thread, responseOnly bool) error {
+	phaseStarted := req.timing.now()
 	thread = s.threadWithPersistedMetadata(binding, thread)
 	held, err := s.loadHeldUserTurns(binding, thread.ID)
+	req.timing.span("resume_metadata_and_held", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -484,14 +498,29 @@ func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, th
 		}
 	}
 	if s.threadForState(binding, thread.ID) != nil {
+		phaseStarted = req.timing.now()
+		req.timing.mark("resume_restore_begin")
 		s.restorePendingProcessCompletionsOnThreadResume(binding, thread.ID)
+		req.timing.span("resume_restore", phaseStarted)
 	}
 	// Detach old cache entries before the next request, but do not make queued
 	// input wait for their subscription/provider cleanup after resume replied.
 	// The server owns these captured resources until cleanup joins on shutdown.
-	if cleanup := s.evictCachedThreads(thread.ID); cleanup != nil {
-		if !s.startBackground(cleanup) {
-			cleanup()
+	phaseStarted = req.timing.now()
+	cleanup := s.evictCachedThreads(thread.ID)
+	req.timing.span("resume_cache_detach", phaseStarted)
+	if cleanup != nil {
+		join := cleanup
+		if req.timing != nil {
+			join = func() {
+				started := req.timing.now()
+				req.timing.mark("resume_cleanup_begin")
+				cleanup()
+				req.timing.span("resume_cleanup", started)
+			}
+		}
+		if !s.startBackground(join) {
+			join()
 		}
 	}
 	return nil

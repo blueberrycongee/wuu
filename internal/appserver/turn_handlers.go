@@ -48,6 +48,7 @@ import (
 )
 
 type queuedTurn struct {
+	timing              *rpcRequestTiming
 	id                  string
 	msg                 providers.ChatMessage
 	followups           []providers.ChatMessage
@@ -107,6 +108,7 @@ const (
 )
 
 type turnAdmissionHooks struct {
+	timing           *rpcRequestTiming
 	acceptedUserWork *session.HeldUserWork
 	// afterLease runs without th.mu after the durable lease has been acquired
 	// and disk state refreshed. The lease remains attached to th, so helpers may
@@ -167,6 +169,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		return s.writeResponse(req.ID, nil, err)
 	}
 	params.ThreadID = strings.TrimSpace(params.ThreadID)
+	req.timing = req.timing.forThread(params.ThreadID)
 	params.Prompt = strings.TrimSpace(params.Prompt)
 	if params.ThreadID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
@@ -189,19 +192,26 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}
 	// Adopt published extensions before capturing this new request. A later
 	// publication is still fenced by durable admission, before any user append.
-	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+	phaseStarted := req.timing.now()
+	refreshErr := s.refreshPluginGenerationIfChanged()
+	req.timing.span("start_plugin_refresh", phaseStarted)
+	if err := refreshErr; err != nil {
 		if errors.Is(err, errPluginGenerationRefreshBusy) {
 			err = threadExecutionBusyError(params.ThreadID)
 		}
 		return s.writeResponse(req.ID, nil, err)
 	}
+	phaseStarted = req.timing.now()
 	binding, stateErr := s.rt.RetainState()
+	req.timing.span("start_state", phaseStarted)
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
 	}
 	defer binding.Close()
 
+	phaseStarted = req.timing.now()
 	th, err := s.ensureThreadLoaded(binding, params.ThreadID)
+	req.timing.span("start_thread_load", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -238,7 +248,9 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		}
 		return nil
 	}
+	phaseStarted = req.timing.now()
 	userMsg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	req.timing.span("start_input_prepare", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -264,7 +276,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 		snapshot,
 		true,
 		turnReadOnlyIgnore,
-		turnAdmissionHooks{afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
+		turnAdmissionHooks{timing: req.timing, afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
 			var err error
 			threadRuntime, err = s.ensureThreadRuntimeAfterAdmission(admitted)
 			if err != nil {
@@ -310,6 +322,7 @@ func (s *Server) handleTurnStartAdmission(ctx context.Context, req Request, allo
 	}
 	resumeActivities()
 	launch.Commit()
+	req.timing.mark("turn_launch_committed")
 	return nil
 }
 
@@ -563,7 +576,9 @@ func (s *Server) startThreadCompactTurn(ctx context.Context, req Request, th *th
 }
 
 func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
+	phaseStarted := req.timing.now()
 	binding, stateErr := s.rt.RetainState()
+	req.timing.span("queue_state", phaseStarted)
 	if stateErr != nil {
 		return s.writeResponse(req.ID, nil, stateErr)
 	}
@@ -574,15 +589,18 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	params.ThreadID = strings.TrimSpace(params.ThreadID)
+	req.timing = req.timing.forThread(params.ThreadID)
 	params.Prompt = strings.TrimSpace(params.Prompt)
 	if params.ThreadID == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
+	phaseStarted = req.timing.now()
 	images, err := normalizeTurnStartImages(params.Images)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	files, err := normalizeTurnStartFiles(params.Files)
+	req.timing.span("queue_attachment_normalize", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -595,11 +613,15 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 		}
 		return s.writeResponse(req.ID, nil, errors.New("compact cannot be queued; wait for the current turn to finish"))
 	}
+	phaseStarted = req.timing.now()
 	th, err := s.ensureThreadLoaded(binding, params.ThreadID)
+	req.timing.span("queue_thread_load", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	phaseStarted = req.timing.now()
 	permissions, err := s.resolveThreadTurnPermissions(th, params.PermissionMode)
+	req.timing.span("queue_permissions", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -613,17 +635,21 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	if queueID == "" {
 		queueID = session.NewID()
 	}
+	phaseStarted = req.timing.now()
 	msg, err := s.userMessageWithInputImages(ctx, params.ThreadID, params.Prompt, images, files, params.Images, params.ContentParts)
+	req.timing.span("queue_input_prepare", phaseStarted)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	msg.ClientID = queueID
 	if !params.Hold {
+		phaseStarted = req.timing.now()
 		if err := s.takeSessionControlForInput(binding, params.ThreadID); err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
+		req.timing.span("queue_session_control", phaseStarted)
 	}
-	entry := queuedTurn{id: queueID, msg: msg, snapshot: turnRuntimeSnapshot{}.withPermissions(permissions), origin: session.HeldUserWorkOriginQueue}
+	entry := queuedTurn{timing: req.timing, id: queueID, msg: msg, snapshot: turnRuntimeSnapshot{}.withPermissions(permissions), origin: session.HeldUserWorkOriginQueue}
 	if !params.Hold {
 		entry.resumeActivities, err = s.rt.ActivityRegistry.PrepareRun(params.ThreadID)
 		if err != nil {
@@ -633,7 +659,11 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	entry.snapshot.PermissionExplicit = params.PermissionMode != nil
 	entry.snapshot.ForceCompact = isManualCompactPrompt(params.Prompt)
 	entry.snapshot.ActiveDocument = cloneActiveDocument(params.ActiveDocument)
+	criticalTiming := req.timing.buffered()
+	defer criticalTiming.flush()
+	phaseStarted = req.timing.now()
 	th.mu.Lock()
+	criticalTiming.span("queue_thread_mutex_wait", phaseStarted)
 	for _, pendingSteer := range th.pendingSteers {
 		if strings.TrimSpace(pendingSteer.ClientID) == queueID {
 			th.mu.Unlock()
@@ -643,7 +673,7 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 	hold := th.interrupting || params.Hold
 	var enqueued bool
 	if th.PersistHistory {
-		entry, enqueued, err = s.acceptQueuedUserTurn(binding, params.ThreadID, entry, hold)
+		entry, enqueued, err = s.acceptQueuedUserTurn(binding, params.ThreadID, entry, hold, criticalTiming)
 	} else if hold {
 		err = errors.New("held input requires a persistent conversation")
 	} else {
@@ -657,6 +687,7 @@ func (s *Server) handleTurnQueue(ctx context.Context, req Request) error {
 		}
 	}
 	th.mu.Unlock()
+	criticalTiming.flush()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -2111,7 +2142,8 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	err := s.interruptThreadForUser(strings.TrimSpace(params.ThreadID))
+	threadID := strings.TrimSpace(params.ThreadID)
+	err := s.interruptThreadForUser(threadID, req.timing.forThread(threadID))
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
 
@@ -2150,17 +2182,30 @@ func (s *Server) retainUserThreadExecutionState(threadID string, includeFailedSe
 	return binding, runID, nil
 }
 
-func (s *Server) interruptThreadForUser(threadID string) error {
+func (s *Server) interruptThreadForUser(threadID string, timings ...*rpcRequestTiming) error {
+	var timing *rpcRequestTiming
+	if len(timings) != 0 {
+		timing = timings[0]
+	}
+	started := timing.now()
 	binding, runID, err := s.retainUserThreadExecutionState(threadID, false)
+	timing.span("interrupt_state", started)
 	if err != nil {
 		return err
 	}
 	defer binding.Close()
-	return s.interruptThreadForUserState(binding, threadID, runID, "")
+	return s.interruptThreadForUserState(binding, threadID, runID, "", timings...)
 }
 
-func (s *Server) interruptThreadForUserState(binding *runtime.State, threadID, runID, expectedTurnID string) error {
-	if err := s.takeSessionControl(binding, threadID, session.ControlPaused); err != nil {
+func (s *Server) interruptThreadForUserState(binding *runtime.State, threadID, runID, expectedTurnID string, timings ...*rpcRequestTiming) error {
+	var timing *rpcRequestTiming
+	if len(timings) != 0 {
+		timing = timings[0]
+	}
+	started := timing.now()
+	controlErr := s.takeSessionControl(binding, threadID, session.ControlPaused)
+	timing.span("interrupt_session_control", started)
+	if err := controlErr; err != nil {
 		return err
 	}
 	if runID != "" {
@@ -2168,7 +2213,7 @@ func (s *Server) interruptThreadForUserState(binding *runtime.State, threadID, r
 		// for project capacity, including legacy members with no control fence.
 		s.setExecutionRunInterruptStatus(runID, execution.StatusInterrupted)
 	}
-	turnActive, err := s.interruptThreadExecution(binding, threadID, runID, expectedTurnID)
+	turnActive, err := s.interruptThreadExecution(binding, threadID, runID, expectedTurnID, timings...)
 	if err == nil && !turnActive && runID != "" {
 		_, err = s.failAndDetachExecutionRun(runID, execution.StatusInterrupted, "interrupted", "cancelled", context.Canceled)
 	}
@@ -2193,12 +2238,19 @@ func (s *Server) interruptOwnedThreadExecution(binding *runtime.State, threadID 
 // and run/interrupt. The bool reports whether an active Turn will perform the
 // terminal settlement; false means the caller interrupted only between-turn
 // background work.
-func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expectedRunID, expectedTurnID string) (bool, error) {
+func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expectedRunID, expectedTurnID string, timings ...*rpcRequestTiming) (bool, error) {
+	var timing *rpcRequestTiming
+	if len(timings) != 0 {
+		timing = timings[0].buffered()
+	}
+	defer timing.flush()
 	th := s.threadForState(binding, threadID)
 	if th == nil {
 		return false, fmt.Errorf("thread %q not found", threadID)
 	}
+	phaseStarted := timing.now()
 	th.mu.Lock()
+	timing.span("interrupt_thread_mutex_wait", phaseStarted)
 	cancel := th.cancel
 	threadRuntime := th.execRuntime
 	turnID := strings.TrimSpace(th.currentTurn)
@@ -2220,11 +2272,17 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 			interruptedThread = th.snapshotLocked()
 		}
 		th.mu.Unlock()
+		timing.flush()
 		s.rt.ActivityRegistry.PauseThread(threadID)
 		if hasAgentWork && threadRuntime.AgentControl != nil {
+			phaseStarted = timing.now()
 			threadRuntime.AgentControl.FreezeWorkerTree()
+			timing.span("interrupt_freeze_workers", phaseStarted)
 		}
-		if err := s.stopResumeProcessesForThread(threadID, threadRuntime); err != nil {
+		phaseStarted = timing.now()
+		stopErr := s.stopResumeProcessesForThread(threadID, threadRuntime)
+		timing.span("interrupt_stop_processes", phaseStarted)
+		if err := stopErr; err != nil {
 			return false, err
 		}
 		if hasAgentWork {
@@ -2263,7 +2321,9 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 		userQueued = append(userQueued, entry)
 	}
 	toHold := append(pendingSteers, userQueued...)
+	phaseStarted = timing.now()
 	held, err := s.appendHeldUserTurns(binding, threadID, toHold)
+	timing.span("interrupt_hold_inputs", phaseStarted)
 	if err != nil {
 		s.queuedTurnMu.Lock()
 		s.pendingQueuedTurns[threadID] = append(queued, s.pendingQueuedTurns[threadID]...)
@@ -2282,6 +2342,8 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 	// synchronous observer callback here would otherwise re-enter that ordered
 	// process and prevent the cancellation response from ever being returned.
 	cancel()
+	timing.mark("interrupt_cancel_called")
+	timing.flush()
 	observer, observerErr := s.retainThreadExecutionState(binding, threadRuntime)
 	if observerErr != nil {
 		providers.DebugLogf("retain interrupted turn observer for %q: %v", threadID, observerErr)
@@ -2298,11 +2360,19 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 	// spawns, and keep partial results as resumable state. The next
 	// user-initiated turn lifts the freeze with a whole-tree snapshot.
 	if control != nil {
+		phaseStarted = timing.now()
 		control.FreezeWorkerTree()
+		timing.span("interrupt_freeze_workers", phaseStarted)
+		timing.flush()
 	}
-	if err := s.stopResumeProcessesForThread(threadID, threadRuntime); err != nil {
+	phaseStarted = timing.now()
+	stopErr := s.stopResumeProcessesForThread(threadID, threadRuntime)
+	timing.span("interrupt_stop_processes", phaseStarted)
+	timing.flush()
+	if err := stopErr; err != nil {
 		return true, err
 	}
+	phaseStarted = timing.now()
 	for _, entry := range discardedPluginTurns {
 		s.notifyPluginTurnDiscarded(binding, threadID, entry, "queued turn was interrupted")
 	}
@@ -2311,6 +2381,7 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 	for _, entry := range queuedTurnsFromSteers(pluginSteers) {
 		s.notifyPluginTurnDiscarded(binding, threadID, entry, "steered input was interrupted")
 	}
+	timing.span("interrupt_lifecycle", phaseStarted)
 	discardedIDs := queuedTurnIDs(discardedPluginTurns)
 	s.notifyQueuedTurnsDequeued(threadID, discardedIDs)
 	s.notifyHeldUserTurns(threadID, held)
@@ -4387,6 +4458,9 @@ func (s *Server) startThreadUserTurn(ctx context.Context, th *threadState, userM
 // It acquires the cross-process lease and refreshes disk state before running
 // hooks, then keeps ownership through the user append and turn lifecycle.
 func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threadState, userMsg providers.ChatMessage, snapshot turnRuntimeSnapshot, failIfRunning bool, readOnlyPolicy turnReadOnlyPolicy, hooks turnAdmissionHooks) (startedThreadTurn, bool, error) {
+	timing := hooks.timing.buffered()
+	defer timing.flush()
+	timing.mark("admission_begin")
 	if th == nil {
 		return startedThreadTurn{}, false, errors.New("thread is required")
 	}
@@ -4401,19 +4475,27 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		return startedThreadTurn{}, false, nil
 	}
 	if failIfRunning && !resuming {
+		started := timing.now()
+		timing.mark("answer_ready_handoff_begin")
 		if err := s.waitAndHandoffAnswerReadyTurn(ctx, th); err != nil {
 			return startedThreadTurn{}, false, err
 		}
+		timing.span("answer_ready_handoff", started)
 	}
 	// Refresh before taking the target thread lock: activate may synchronously
 	// use session.send, list, or inspect. Reentrant sends use normal queue retry.
-	if err := s.refreshPluginGenerationIfChanged(); err != nil {
+	phaseStarted := timing.now()
+	refreshErr := s.refreshPluginGenerationIfChanged()
+	timing.span("admission_plugin_refresh", phaseStarted)
+	if err := refreshErr; err != nil {
 		if errors.Is(err, errPluginGenerationRefreshBusy) {
 			err = threadExecutionBusyError(th.ID)
 		}
 		return startedThreadTurn{}, false, err
 	}
+	phaseStarted = timing.now()
 	maxParallel, err := s.threadProjectAdmission(ctx, th)
+	timing.span("admission_project_policy", phaseStarted)
 	if err != nil {
 		return startedThreadTurn{}, false, err
 	}
@@ -4421,7 +4503,9 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	turnCtx, cancel := context.WithCancel(ctx)
 	now := time.Now().UTC()
 
+	phaseStarted = timing.now()
 	th.mu.Lock()
+	timing.span("admission_thread_mutex_wait", phaseStarted)
 	if s.closed.Load() {
 		th.mu.Unlock()
 		cancel()
@@ -4447,7 +4531,9 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 			return startedThreadTurn{}, false, nil
 		}
 	}
+	phaseStarted = timing.now()
 	acquired, err := s.tryAcquireThreadExecutionLeaseLocked(th, maxParallel)
+	timing.span("admission_execution_lease", phaseStarted)
 	if err != nil {
 		th.mu.Unlock()
 		cancel()
@@ -4459,7 +4545,11 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		cancel()
 		return startedThreadTurn{}, false, threadExecutionBusyError(threadID)
 	}
-	if err := s.refreshDurableThreadHistoryLocked(th); err != nil {
+	phaseStarted = timing.now()
+	timing.mark("admission_history_refresh_begin")
+	refreshErr = s.refreshDurableThreadHistoryLocked(th)
+	timing.span("admission_history_refresh", phaseStarted)
+	if err := refreshErr; err != nil {
 		th.releaseThreadExecutionLeaseLocked()
 		th.mu.Unlock()
 		cancel()
@@ -4533,7 +4623,11 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		}
 	}
 	if hooks.afterLease != nil {
-		if err := hooks.afterLease(th, &userMsg); err != nil {
+		phaseStarted = timing.now()
+		timing.mark("admission_runtime_prepare_begin")
+		err := hooks.afterLease(th, &userMsg)
+		timing.span("admission_runtime_prepare", phaseStarted)
+		if err != nil {
 			abortAdmission()
 			return startedThreadTurn{}, false, err
 		}
@@ -4548,9 +4642,12 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		return startedThreadTurn{}, false, nil
 	}
 	if !resuming {
-		if _, err := th.state.DispatchHook(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
+		phaseStarted = timing.now()
+		_, hookErr := th.state.DispatchHook(ctx, hookspkg.UserPromptSubmit, &hookspkg.Input{
 			SessionID: threadID, CWD: threadCWD, Prompt: userMsg.Content,
-		}); err != nil {
+		})
+		timing.span("admission_prompt_hook", phaseStarted)
+		if err := hookErr; err != nil {
 			abortAdmission()
 			return startedThreadTurn{}, false, fmt.Errorf("user prompt hook: %w", err)
 		}
@@ -4638,7 +4735,9 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 		userMsgSeq = seq // terminalize even if launch fails after this boundary.
 		th.historyHeadSeq = max(th.historyHeadSeq, seq)
 	} else if th.PersistHistory && !userAlreadyPersisted {
+		phaseStarted = timing.now()
 		seq, err := appendControlledChatMessage(th.state.Sessions, th.ID, userMsg, snapshot.Control, snapshot.ExecutionControlBaseline, hooks.acceptedUserWork)
+		timing.span("admission_user_persist", phaseStarted)
 		if err != nil {
 			th.releaseThreadExecutionLeaseLocked()
 			th.mu.Unlock()
@@ -4703,6 +4802,7 @@ func (s *Server) startThreadUserTurnWithAdmission(ctx context.Context, th *threa
 	if !resuming {
 		s.noticeProjectUserMessage(th.state, th, userMsg)
 	}
+	timing.mark("admission_committed")
 
 	return startedThreadTurn{
 		ctx:        turnCtx,
@@ -4767,6 +4867,7 @@ func (s *Server) startQueuedTurn(binding *runtime.State, ctx context.Context, th
 		false,
 		turnReadOnlyFail,
 		turnAdmissionHooks{
+			timing:           entry.timing,
 			acceptedUserWork: acceptedUserWork,
 			afterLease: func(admitted *threadState, _ *providers.ChatMessage) error {
 				if entry.durable {
@@ -4835,6 +4936,7 @@ func (s *Server) startQueuedTurn(binding *runtime.State, ctx context.Context, th
 		entry.resumeActivities()
 	}
 	launch.Commit()
+	entry.timing.mark("turn_launch_committed")
 	if reference := started.runtime.PluginTurn; reference != nil {
 		// Best-effort background observation. Plugin helpers are single-worker
 		// processes; a synchronous call from the drain can re-enter a helper

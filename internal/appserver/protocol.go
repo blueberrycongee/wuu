@@ -226,6 +226,7 @@ type ConfigChangedNotification struct {
 }
 
 type Request struct {
+	timing *rpcRequestTiming
 	ID     json.RawMessage `json:"id,omitempty"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params,omitempty"`

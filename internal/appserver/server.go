@@ -223,9 +223,10 @@ func (l *backgroundLaunch) Cancel() {
 }
 
 type Server struct {
-	rt      *runtime.Session
-	out     io.Writer
-	writeMu sync.Mutex
+	rpcTiming *rpcTimingRecorder
+	rt        *runtime.Session
+	out       io.Writer
+	writeMu   sync.Mutex
 
 	settingsUsageMu    sync.Mutex
 	settingsUsageCache *settingsUsageCacheEntry
@@ -358,6 +359,7 @@ type Server struct {
 func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 	nativeHistoryCtx, nativeHistoryCancel := context.WithCancel(context.Background())
 	s := &Server{
+		rpcTiming:        newRPCTimingRecorder(),
 		nativeHistoryCtx: nativeHistoryCtx, nativeHistoryCancel: nativeHistoryCancel,
 		rt:      rt,
 		out:     out,
@@ -733,6 +735,7 @@ func (s *Server) startBackground(work func()) bool {
 	s.backgroundMu.Unlock()
 	go func() {
 		defer s.backgroundWG.Done()
+		defer s.rpcTiming.flushResponses()
 		work()
 	}()
 	return true
@@ -764,6 +767,7 @@ func (s *Server) Close() {
 	if s == nil {
 		return
 	}
+	defer s.rpcTiming.flushResponses()
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		s.closeRendererClients()
@@ -1047,17 +1051,25 @@ func runStdio(ctx context.Context, rt *runtime.Session, in io.Reader, out io.Wri
 	return runStdioScanner(ctx, s, in)
 }
 
-func (s *Server) handleLine(ctx context.Context, raw []byte) error {
+func (s *Server) handleLine(ctx context.Context, raw []byte, readAt ...time.Time) error {
 	if s == nil {
 		return errors.New("app-server is required")
 	}
 	if s.startupErr != nil {
 		return s.startupErr
 	}
+	defer s.rpcTiming.flushResponses()
+	handlerStarted := s.rpcTiming.now()
 	var req Request
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return s.writeResponse(nil, nil, fmt.Errorf("parse request: %w", err))
 	}
+	var received time.Time
+	if len(readAt) != 0 {
+		received = readAt[0]
+	}
+	req.timing = s.rpcTiming.begin(req, handlerStarted, received)
+	defer req.timing.mark("handler_end")
 	// A line with an id but no method is the desktop client's Response to a
 	// server-initiated request (browser/*). Route it to the waiting caller
 	// before the method switch, otherwise it falls through to default and gets
@@ -1556,6 +1568,7 @@ func decodeParams(raw json.RawMessage, dst any) error {
 }
 
 func (s *Server) writeResponse(id json.RawMessage, result any, err error) error {
+	started := s.rpcTiming.now()
 	resp := Response{ID: id, Result: result}
 	if err != nil {
 		resp.Result = nil
@@ -1564,7 +1577,9 @@ func (s *Server) writeResponse(id json.RawMessage, result any, err error) error 
 			Message: err.Error(),
 		}
 	}
-	return s.writeJSON(resp)
+	writeErr := s.writeJSON(resp)
+	s.rpcTiming.responseWritten(id, started, writeErr)
+	return writeErr
 }
 
 func (s *Server) writeNotification(method string, params any) error {
