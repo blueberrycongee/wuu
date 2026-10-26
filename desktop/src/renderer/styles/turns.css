@@ -875,6 +875,9 @@
 }
 
 .message-actions.user-message-actions {
+  /* Compensate for the artwork's inset inside its 24-unit SVG canvas so
+   * the visible icon matches the adjacent message text. */
+  --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 1.25);
   --user-message-action-target-size: max(var(--conversation-user-action-size), var(--conversation-reading-line-height));
   position: absolute;
   top: 100%;
