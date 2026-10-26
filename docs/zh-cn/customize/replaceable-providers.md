@@ -10,6 +10,7 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 | --- | --- | --- |
 | `session.domain@1` | `wuu.session.default` | `sessionDomain`, `sessionDomainProvider`, `sessionDomainDescriptor` |
 | `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
+| `agent.tool.batch@1` | `wuu.tools.v1-batch` | `toolBatchResources`, `TOOL_BATCH_SERVICE_DESCRIPTOR` |
 | `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
 | `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
 | `agent.policy@1` | `wuu.agent.policy.default` | `agentPolicy`, `agentPolicyServiceDescriptor`, `composeAgentPolicies` |
@@ -46,6 +47,18 @@ Wuu 通过同一张带版本的服务图选择会话、工具、agent 策略、�
 `agent.compaction@1` 通过 `describe`、`compact`、`window`、`handoff`、`note-plan`、`compact-note`、`recover` 和 `note-attempt` 拥有上下文策略。使用 `compactionService(host)` 与 `COMPACTION_SERVICE_DESCRIPTOR`，在要求时携带捕获的策略 key。笔记准备、触发间隔、重试和完整推理消息由所选策略负责；宿主负责历史校验、checkpoint 提交、用量记账及已获准入的模型传输。恢复调用同一个所选服务，不隐式切换到原生替代品。handoff 的字节上限为零表示策略不设字节上限，模型和传输限制仍然有效。旧压缩 capability 是原生提供者的显式兼容行为，不是外部提供者的第二条选择路径。
 
 这些契约保留 Go 宿主和公共 SDK。作者通过普通服务声明及回调绑定的 `RuntimeHost` 实现进程插件，无须替换内核、导入私有源码或使用特权原生 API。
+
+## 完整工具批次
+
+`agent.tool.batch@1` 可在不替换循环或 `agent.tools@1` 注册表的情况下替换最终批次执行。所选提供者的 `execute` 接收不可变批次 ID、原始调用及所选串行/容量约束，自行决定调用检查、顺序、并行分发、逐调用取消与拒绝。等待所有提交的资源操作完成后，才返回 `{ completed: true }`。
+
+若同一进程同时提供批次与工具服务，需在 `concurrentServices` 中声明两个服务名，使等待中的工具回调能够重入该进程。
+
+声明 `TOOL_BATCH_SERVICE_DESCRIPTOR` 和 `requireToolBatchResources()`，在当前回调中使用 `toolBatchResources(host, request)`，通过 `tool.batch.resources@1` 调用 `resolve(index)`、`execute(index)`、`cancel(index)` 和 `settle(index, errorResult)`。索引只能指向已准入的原始调用，不能替换参数或执行者身份。重复 `execute` 等待同一次执行，不重复副作用，并返回已完成持久结算的结果和 invocation ID。`cancel` 阻止排队调用，或取消并等待正在执行的调用；`settle` 可拒绝尚未执行的调用，但不能覆盖已执行的结果。无论执行顺序如何，模型结果都按原始调用顺序返回。
+
+资源边界保留权限、hooks、所选工具路由、PTC/原生嵌套调用权限、容量互斥、结果预算、日志和持久调用账本。提供者报错或缺失完成回执时，会取消并等待已接受工作，保留已完成结果，并对未启动调用恰好结算一次；不会重试结果不明的副作用，也不会换用其他后端。回调绑定已准入的 generation，新选择不会重路由在途批次。每批限制为 1–1024 个调用，原始参数合计不超过 4 MiB。基础描述符接收**完整最终批次**。提供者可额外声明 `TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR`，实现 `stream_admit`：每个完整、只读且并发安全的前缀调用先通过 `ToolBatchStreamRequest` 请求准入，只有 `{ admit: true }` 才允许提前执行，拒绝则将其及后续前缀延迟到最终批次。该回调本身不能分发副作用；最终 `execute` 仍收到全部调用，`resources.execute(index)` 等待已准入的同一次执行，不会重复执行。错误取消流并保留既有账本重试防护。这里不使用模块 ID 特判。默认适配器实现此可选方法，保留工具与模型重叠执行；只声明基础描述符的外部提供者则缓冲到最终响应。
+
+`wuu.tools.v1-batch` 是兼容现有 `agent.tools@1` 提供者的显式适配器，使用相同公共资源，按容量并行分发安全调用，并串行执行不安全调用。产品 profile 默认包含它；自定义显式模块白名单需加入它或选择外部批次提供者。移除所选提供者会明确报不可用，不自动 fallback。[外部逆序示例](../../../examples/plugins/independent-providers/batch.ts) 与 `node scripts/tool-batch-e2e.mjs` 验证独立打包 SDK 后端，并禁用默认工具注册表及批次适配器。原生回合资源测试还会等待所选适配器启动工具后才完成模型流，并验证最终批次 join 不会重复副作用。
 
 ## 会话标题策略
 

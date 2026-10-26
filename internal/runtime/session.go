@@ -778,6 +778,7 @@ func NewSession(opts Options) (*Session, error) {
 		SystemPromptSections:        baseSystemPromptSections,
 		CompactionRegistry:          compactions,
 		SelectedPolicy:              newSelectedLoopPolicyClient(pluginHost),
+		SelectedToolBatch:           newSelectedToolBatch(pluginHost),
 		SelectedCompaction:          newSelectedCompactionClient(pluginHost),
 		MaxSteps:                    cfg.Agent.MaxSteps,
 		Temperature:                 cfg.Agent.Temperature,
@@ -1555,6 +1556,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 						host = generation.host
 					}
 					runner.SelectedPolicy = newSelectedLoopPolicyClient(host)
+					runner.SelectedToolBatch = newSelectedToolBatch(host)
 					runner.BeforeModelStep = pluginPreStepInjector(host, runner.ProviderName, runner.Model, workerID, workerRoot)
 					runner.StepPolicy = pluginStepPolicy(host, runner.ProviderName, runner.Model, workerID, workerRoot)
 					runner.BeforeRequest = pluginRequestInterceptor(host, runner.ProviderName, workerID, workerRoot)
@@ -1898,6 +1900,7 @@ func cloneStreamRunnerForThread(base *agent.StreamRunner, toolExecutor agent.Too
 		RequestContextStore:         base.RequestContextStore,
 		CompactionRegistry:          base.CompactionRegistry,
 		SelectedPolicy:              base.SelectedPolicy,
+		SelectedToolBatch:           base.SelectedToolBatch,
 		SelectedCompaction:          base.SelectedCompaction,
 		CompactionNoteStore:         base.CompactionNoteStore,
 		ArchiveHistory:              base.ArchiveHistory,

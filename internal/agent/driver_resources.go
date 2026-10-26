@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 )
 
 func (g *streamTurnGateway) ReadSettings(ctx context.Context) (pluginprotocol.DriverTurnSettings, error) {
@@ -25,7 +26,7 @@ func (g *streamTurnGateway) ReadSettings(ctx context.Context) (pluginprotocol.Dr
 	_, observationKey := r.providerConnectionSnapshot()
 	settings := pluginprotocol.DriverTurnSettings{
 		HasPolicy: r.SelectedPolicy != nil,
-		MaxSteps:  r.MaxSteps, StreamingTools: r.StreamingToolExecution && !g.serialTools, ResumeSampling: r.ResumeSampling,
+		MaxSteps:  r.MaxSteps, StreamingTools: r.StreamingToolExecution && !g.serialTools && toolbatch.SupportsStreaming(r.SelectedToolBatch), ResumeSampling: r.ResumeSampling,
 		ProviderObservationKey: observationKey, ModelVariant: r.Variant,
 		ContextTokens: r.ContextWindowOverride, InputTokens: r.MaxInputTokens,
 		OutputReserveTokens: r.OutputReserveTokens, CompactThresholdTokens: r.CompactThresholdTokens,

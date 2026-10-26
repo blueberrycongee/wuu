@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/titleservice"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
@@ -39,6 +40,7 @@ func runtimeServiceConsumers(driverProfile string) []pluginhost.Client {
 		id: toolExecutionConsumer, state: pluginhost.StatePrepared,
 		requirements: []pluginhost.ServiceRequirement{
 			{Name: toolservice.ServiceName, MajorVersion: 1, Required: true},
+			{Name: toolbatch.ServiceName, MajorVersion: 1},
 			{Name: pluginhost.SecurityAuthorizeService, MajorVersion: pluginhost.SecurityServiceMajor, Required: true},
 			{Name: pluginhost.ProcessSandboxService, MajorVersion: pluginhost.SecurityServiceMajor},
 		},

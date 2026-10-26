@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 )
 
@@ -73,13 +74,21 @@ func TestDriverTurnOperationsSeparateModelAndToolExecution(t *testing.T) {
 // joins the same effects exactly once, and a provider stays alive until even a
 // cancellation-resistant tool has physically left its execution function.
 func TestDriverTurnStreamingTools(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		executor toolbatch.Executor
+	}{{"standalone", nil}, {"selected-v1-adapter", toolbatch.V1Adapter{}}} {
+		t.Run(test.name, func(t *testing.T) { testDriverTurnStreamingTools(t, test.executor) })
+	}
+}
+func testDriverTurnStreamingTools(t *testing.T, selected toolbatch.Executor) {
 	for _, abandon := range []bool{false, true} {
 		t.Run(map[bool]string{false: "join", true: "close"}[abandon], func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			tools := &driverStreamingTools{started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
 			client := &driverStreamingModel{started: tools.started}
-			gateway := newStreamTurnGateway(ctx, &StreamRunner{Client: client, Model: "streamed", Tools: tools}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}}, nil)
+			gateway := newStreamTurnGateway(ctx, &StreamRunner{Client: client, Model: "streamed", Tools: tools, SelectedToolBatch: selected}, loopdriver.PersistedInput{Messages: []providers.ChatMessage{{Role: "user", Content: "Read evidence"}}}, nil)
 			defer func() { tools.releaseOnce(); gateway.close() }()
 			request, err := gateway.ReadTurn(ctx)
 			if err != nil {

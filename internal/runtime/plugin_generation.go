@@ -1039,6 +1039,7 @@ func (s *Session) applyPluginGeneration(generation *PluginGeneration) {
 		s.StreamRunner.CompactionRegistry = generation.compactions
 		if generation.driverGateways != nil {
 			s.StreamRunner.SelectedPolicy = newSelectedLoopPolicyClient(generation.host)
+			s.StreamRunner.SelectedToolBatch = newSelectedToolBatch(generation.host)
 			s.StreamRunner.SelectedCompaction = newSelectedCompactionClient(generation.host)
 		}
 		s.StreamRunner.InferenceJournal = s.InferenceJournalForOwner("workspace-runtime")

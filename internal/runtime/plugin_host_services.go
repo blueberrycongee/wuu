@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 )
 
 // pluginHostServices is bound to exactly one installed plugin generation. It
@@ -548,6 +549,7 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 			Descriptor: pluginhost.KernelArtifactImportDescriptor(),
 			Invoker:    &artifactImportInvoker{parent: k},
 		},
+		nativeServiceRegistration{Descriptor: toolbatch.ResourceDescriptor(), Invoker: &toolBatchResourceInvoker{parent: k}},
 		nativeServiceRegistration{
 			Descriptor: pluginhost.DriverTurnDescriptor(),
 			Invoker:    &driverTurnInvoker{parent: k},

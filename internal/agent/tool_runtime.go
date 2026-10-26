@@ -26,15 +26,17 @@ const (
 )
 
 type toolRun struct {
-	call            providers.ToolCall
-	order           int
-	finalized       bool
-	concurrencySafe bool
-	streamSafe      bool
-	streamStarted   bool
-	invocationID    string
-	parent          *toolRun
-	depth           int
+	call                   providers.ToolCall
+	order                  int
+	finalized              bool
+	concurrencySafe        bool
+	streamSafe             bool
+	streamStarted          bool
+	streamAdmissionChecked bool
+	streamAdmitted         bool
+	invocationID           string
+	parent                 *toolRun
+	depth                  int
 
 	mu             sync.Mutex
 	state          toolRunState
@@ -49,12 +51,13 @@ type toolRun struct {
 // enqueue read-only tools early, and the loop later waits for those same runs
 // while executing any remaining final tool calls.
 type TurnToolRuntime struct {
-	serial      bool
-	executor    ToolExecutor
-	ledger      *toolledger.Ledger
-	operationID string
-	runContext  context.Context
-	gate        *ToolExecutionGate
+	streamAdmission func(context.Context, providers.ToolCall) (bool, error)
+	serial          bool
+	executor        ToolExecutor
+	ledger          *toolledger.Ledger
+	operationID     string
+	runContext      context.Context
+	gate            *ToolExecutionGate
 
 	mu       sync.Mutex
 	runs     []*toolRun
@@ -72,7 +75,8 @@ type TurnToolRuntime struct {
 }
 
 type ToolRuntimeConfig struct {
-	Serial bool
+	StreamAdmission func(context.Context, providers.ToolCall) (bool, error)
+	Serial          bool
 	// Gate must be shared when multiple runtimes can have live nested work.
 	Gate        *ToolExecutionGate
 	Executor    ToolExecutor
@@ -99,14 +103,15 @@ func (r *TurnToolRuntime) SetResultCallback(callback func(providers.ToolCall, to
 
 func NewTurnToolRuntime(config ToolRuntimeConfig) *TurnToolRuntime {
 	runtime := &TurnToolRuntime{
-		serial:      config.Serial,
-		executor:    config.Executor,
-		ledger:      config.Ledger,
-		operationID: strings.TrimSpace(config.OperationID),
-		runContext:  config.RunContext,
-		gate:        config.Gate,
-		byID:        map[string]*toolRun{},
-		running:     map[*toolRun]context.CancelFunc{},
+		streamAdmission: config.StreamAdmission,
+		serial:          config.Serial,
+		executor:        config.Executor,
+		ledger:          config.Ledger,
+		operationID:     strings.TrimSpace(config.OperationID),
+		runContext:      config.RunContext,
+		gate:            config.Gate,
+		byID:            map[string]*toolRun{},
+		running:         map[*toolRun]context.CancelFunc{},
 	}
 	if runtime.gate == nil {
 		capacity := maxToolConcurrency
@@ -310,6 +315,20 @@ func (r *TurnToolRuntime) startReadyStreamPrefixLocked(ctx context.Context) {
 		}
 		if !run.streamSafe {
 			return
+		}
+		if r.streamAdmission != nil {
+			if !run.streamAdmissionChecked {
+				admitted, err := r.streamAdmission(ctx, providers.CloneToolCall(run.call))
+				run.streamAdmissionChecked = true
+				if err != nil {
+					r.ledgerErr = err
+					return
+				}
+				run.streamAdmitted = admitted
+			}
+			if !run.streamAdmitted {
+				return
+			}
 		}
 		r.startRunLocked(ctx, run, true)
 	}
@@ -884,12 +903,8 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 	if executor == nil {
 		return toolresult.Result{}, context.Canceled
 	}
-	arguments := strings.TrimSpace(call.Arguments)
-	if arguments != "" && !json.Valid([]byte(arguments)) {
-		return toolresult.Result{}, toolerrors.New(
-			toolerrors.InvalidArguments,
-			fmt.Sprintf("tool %q arguments are invalid JSON", call.Name),
-		)
+	if err := validateRuntimeToolArguments(call); err != nil {
+		return toolresult.Result{}, err
 	}
 	// A panic in a tool executor must not crash the whole process: convert it
 	// into an error result so the turn survives and the model sees the failure.
@@ -913,6 +928,16 @@ func executeToolResult(ctx context.Context, executor ToolExecutor, call provider
 		return toolresult.FromErrorText(errorJSON(validationErr)), validationErr
 	}
 	return result, err
+}
+
+func validateRuntimeToolArguments(call providers.ToolCall) error {
+	arguments := strings.TrimSpace(call.Arguments)
+	// Custom transport input is normalized to JSON {"input": ...} before
+	// reaching execution. Every canonical call retains the same JSON contract.
+	if arguments != "" && !json.Valid([]byte(arguments)) {
+		return toolerrors.New(toolerrors.InvalidArguments, fmt.Sprintf("tool %q arguments are invalid JSON", call.Name))
+	}
+	return nil
 }
 
 func (r *TurnToolRuntime) notifyResult(call providers.ToolCall, result toolresult.Result, legacy func(providers.ToolCall, string)) {

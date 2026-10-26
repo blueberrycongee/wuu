@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Select complete tool-batch execution through `agent.tool.batch@1`, independently of loop and tool providers. Preserve default streaming overlap through explicit admission, ordered durable outcomes, cancellation and in-flight bindings; reject malformed canonical calls and incompatible provider capabilities without fallback.
+
 - Read plugin configuration as immutable, revisioned snapshots with lifecycle-scoped change observation. Distinguish live, next-operation and restart-only values without rebuilding resources, and atomically validate and repair same-scope setting patches.
 - Guard plugin upgrades with retained historical SDK/package process tests, explicit lifecycle/version diagnostics, and a public compatibility, deprecation and data-preserving migration contract independent of product CalVer.
 

@@ -25,6 +25,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/titleservice"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
 
@@ -163,6 +164,10 @@ func buildPluginHost(plugins []pluginpkg.Plugin, projectRoot, workspaceID, wuuHo
 	if resolved.Includes(promptservice.NativeModule) {
 		nativeModules = append(nativeModules, promptservice.NewService())
 		required[promptservice.NativeModule] = true
+	}
+	if resolved.Includes(toolbatch.AdapterModule) {
+		nativeModules = append(nativeModules, toolbatch.NewService(registry))
+		required[toolbatch.AdapterModule] = true
 	}
 	if resolved.Includes(toolservice.DefaultModule) {
 		nativeModules = append(nativeModules, toolservice.NewService())
@@ -432,7 +437,7 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if err != nil {
 		return nil, resolved, err
 	}
-	available := []string{modelExecutionConsumer, nativeEnginesModule, engineExecutionConsumer, nativeModelModule, loopdriver.NativePolicyModule, titleservice.NativeModule, compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
+	available := []string{toolbatch.AdapterModule, modelExecutionConsumer, nativeEnginesModule, engineExecutionConsumer, nativeModelModule, loopdriver.NativePolicyModule, titleservice.NativeModule, compactionservice.NativeModule, promptservice.NativeModule, toolservice.DefaultModule, session.DefaultModule, sessionStateConsumer, kernelHostModule, loopdriver.DefaultDriverID, toolExecutionConsumer, sessionExecutionConsumer, persistence.SQLiteModule, persistence.JSONLModule}
 	available = append(available, stateServiceModules()...)
 	for _, module := range nativeRendererModules() {
 		available = append(available, module.ID)

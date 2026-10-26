@@ -340,3 +340,18 @@ func TestLegacyCapacityBindingsPreserveReplacement(t *testing.T) {
 		t.Fatalf("excluded shared resource restored: %+v %v", got, err)
 	}
 }
+
+func TestLegacyToolBatchAdapterPreservesExplicitReplacement(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		modules := []string{"wuu.tool-execution", "wuu.tools.default"}
+		resolved, err := (&Config{Version: version, Modules: &modules}).Resolve()
+		if err != nil || !resolved.Includes("wuu.tools.v1-batch") {
+			t.Fatalf("v%d legacy batch adapter: %+v %v", version, resolved, err)
+		}
+		custom := []string{"wuu.tool-execution", "external.batch"}
+		resolved, err = (&Config{Version: version, Modules: &custom, Services: []Binding{{Service: "agent.tool.batch", Major: 1, Provider: "external.batch"}}}).Resolve()
+		if err != nil || resolved.Includes("wuu.tools.v1-batch") {
+			t.Fatalf("v%d replaced batch adapter: %+v %v", version, resolved, err)
+		}
+	}
+}

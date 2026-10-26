@@ -43,6 +43,8 @@
     "dist/coordination.d.ts",
     "dist/tool-service.js",
     "dist/tool-service.d.ts",
+    "dist/tool-batch.js",
+    "dist/tool-batch.d.ts",
     "dist/session-service.js",
     "dist/session-service.d.ts",
     "dist/ui-composer.js",

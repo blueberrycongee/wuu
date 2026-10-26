@@ -16,6 +16,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 	"github.com/blueberrycongee/wuu/internal/toolservice"
 )
@@ -58,7 +59,7 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 	if err != nil {
 		t.Fatal(err)
 	}
-	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, loopdriver.NewNativePolicyService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService())
+	clients := append(testKernelStateProviders(t, dir), kernel, provider, nativeModel, loopdriver.NewNativePolicyService(), promptservice.NewService(), compactionservice.NewService(), toolservice.NewService(), toolbatch.NewService(registry))
 	clients = append(clients, runtimeServiceConsumers("evidence")...)
 	host := pluginhost.New(clients...)
 	conflicts := registry.RegisterClients(clients...)
@@ -72,7 +73,11 @@ func testDefaultDriverUsesPublicTurnResources(t *testing.T, overflow, streaming 
 	}
 	model := &workflowEvidenceModel{continueWithTools: true, overflowFirst: overflow}
 	tools := &workflowEvidenceTools{path: path}
-	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger,
+	if streaming {
+		tools.started = make(chan struct{})
+		model.waitForTool = tools.started
+	}
+	runner := &agent.StreamRunner{Client: model, Model: "controlled-evidence", Tools: tools, ToolLedger: ledger, SelectedToolBatch: newSelectedToolBatch(host),
 		LoopDriver:            resolveLoopDriver("evidence", host, kernel.driverGateways),
 		DriverCheckpointStore: sessionDriverCheckpointStore{sessions: testSessionStore(t, dir), sessionID: "default-session"},
 	}

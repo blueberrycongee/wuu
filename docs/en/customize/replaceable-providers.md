@@ -10,6 +10,7 @@ Use [product composition](plugin-system.md#services-and-executions) to select mo
 | --- | --- | --- |
 | `session.domain@1` | `wuu.session.default` | `sessionDomain`, `sessionDomainProvider`, `sessionDomainDescriptor` |
 | `agent.tools@1` | `wuu.tools.default` | `toolService`, `TOOL_SERVICE_DESCRIPTOR` |
+| `agent.tool.batch@1` | `wuu.tools.v1-batch` | `toolBatchResources`, `TOOL_BATCH_SERVICE_DESCRIPTOR` |
 | `session.title@1` | `wuu.title.default` | `titleService`, `TITLE_SERVICE_DESCRIPTOR` |
 | `agent.prompt@1` | `wuu.prompt.default` | `promptService`, `PROMPT_SERVICE_DESCRIPTOR` |
 | `agent.policy@1` | `wuu.agent.policy.default` | `agentPolicy`, `agentPolicyServiceDescriptor`, `composeAgentPolicies` |
@@ -46,6 +47,57 @@ Use `sessionDomainProvider(handlers)` to advertise implemented methods and dispa
 `agent.compaction@1` owns context policy through `describe`, `compact`, `window`, `handoff`, `note-plan`, `compact-note`, `recover` and `note-attempt`. Use `compactionService(host)` and `COMPACTION_SERVICE_DESCRIPTOR`. Carry the captured policy key when required. Note preparation, cadence, retries and complete inference messages belong to the selected policy; host code validates history, commits checkpoints, accounts usage and supplies admitted model transport. Recovery calls the same selected service, never an implicit native alternative. A handoff byte limit of zero means no policy byte cap; model and transport limits still apply. Legacy compaction capabilities are an explicit behavior of the native provider, not a second selection path for external providers.
 
 These contracts keep the Go host and public SDK. Authors implement a process plugin through the ordinary service declarations and callback-bound `RuntimeHost`; they do not need a replacement kernel, private source imports or privileged native APIs.
+
+## Complete tool batches
+
+`agent.tool.batch@1` replaces final-batch execution without replacing the loop or
+`agent.tools@1` registry. The selected provider receives `execute` with an immutable
+batch ID, raw calls, and the selected serial/capacity constraints. It owns call
+inspection, ordering, parallel dispatch, per-call cancellation and rejection.
+Return `{ completed: true }` only after joining every submitted resource operation.
+
+If one process provides both batch and tool services, include both names in
+`concurrentServices` so an awaited tool callback can enter that process.
+
+Declare `TOOL_BATCH_SERVICE_DESCRIPTOR` and `requireToolBatchResources()`. Inside
+the callback, `toolBatchResources(host, request)` exposes `resolve(index)`,
+`execute(index)`, `cancel(index)` and `settle(index, errorResult)` through
+`tool.batch.resources@1`. Indexes address only the original admitted calls; neither
+arguments nor actor identity can be substituted. `execute` joins duplicate calls,
+not duplicate effects. It returns the finalized, durable result and invocation ID.
+`cancel` prevents a queued call or cancels and joins an active call. `settle` can
+reject an unstarted call, but cannot replace an executed outcome. Results return to
+the model in its original call order regardless of execution order.
+
+The resource boundary retains permission checks, hooks, selected tool routing,
+nested PTC/native-tool authority, capacity exclusion, result budgets, logging and
+the durable invocation ledger. A provider error or missing completion receipt
+cancels and drains accepted work, preserves completed results and rejects unstarted
+calls exactly once. It never retries ambiguous effects or selects another backend.
+Batch callbacks are scoped to their admitted generation; a new selection does not
+reroute an in-flight batch. Raw arguments are limited to 4 MiB across 1–1024 calls.
+The base descriptor accepts **completed batches**. A provider can additionally
+advertise `TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR` to implement `stream_admit`.
+For each complete, read-only, concurrency-safe prefix call, that method receives
+`ToolBatchStreamRequest` and returns `{ admit: boolean }`. Only an affirmative
+reply permits early execution; a defer decision holds the remaining prefix until
+the final batch. This callback cannot dispatch effects itself. Final `execute`
+receives all original calls; `resources.execute(index)` joins already admitted
+work instead of executing it again. Errors cancel the stream and retain the
+existing ledger replay fence. No product-ID checks select streaming behavior.
+The supplied adapter supports this method and preserves early-tool/model overlap;
+providers advertising only the base descriptor buffer until the final response.
+
+`wuu.tools.v1-batch` is the explicit compatibility adapter for unchanged
+`agent.tools@1` providers. It uses these same public resources, groups safe calls
+for bounded parallel dispatch and keeps unsafe calls serial. Product profiles
+include it; custom explicit module allowlists must include it or select an external
+batch provider. Removing the selected provider fails closed. The reverse-order
+[external example](../../../examples/plugins/independent-providers/batch.ts) and
+`node scripts/tool-batch-e2e.mjs` demonstrate a separately packed SDK backend with
+the default tool registry and batch adapter disabled. The native turn-resource
+test also withholds model completion until the selected adapter starts its tool,
+then verifies that final-batch joining does not repeat the effect.
 
 ## Conversation title policy
 

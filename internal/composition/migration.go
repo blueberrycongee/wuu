@@ -23,6 +23,9 @@ func projectLegacyProviders(version int, resolved *Resolved, bindings map[string
 		resolved.ModuleSources[module] = source
 		added = true
 	}
+	if _, consumer := resolved.ModuleSources["wuu.tool-execution"]; consumer {
+		add("wuu.tools.v1-batch", "agent.tool.batch")
+	}
 	if _, consumer := resolved.ModuleSources["wuu.session-execution"]; consumer {
 		add("wuu.agent.policy.default", "agent.policy")
 	}

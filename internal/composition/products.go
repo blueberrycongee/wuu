@@ -30,6 +30,7 @@ func productCatalogVersion(version int) (map[string]Profile, map[string]Bundle) 
 	}
 	desktop := map[string]bool{"wuu.default-shell": true, "wuu.default-settings": true, "wuu.default-navigation": true, "wuu.default-conversation": true, "wuu.default-preview": true, "wuu.default-composer": true}
 	if version >= 3 {
+		base["wuu.tools.v1-batch"] = true
 		base["wuu.agent.policy.default"] = true
 		base["wuu.model.native"] = true
 		base["wuu.model-execution"] = true

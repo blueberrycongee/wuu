@@ -19,6 +19,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 )
 
@@ -54,14 +55,15 @@ const maxConsecutiveProactiveCompactFailures = 3
 // context and persistence resources. The driver owns control flow; resources
 // retain accepted effects and drain work before the execution is released.
 type StreamRunner struct {
-	SelectedPolicy *loopdriver.PolicyClient
-	ResumeSampling bool
-	Client         providers.StreamClient
-	ProviderName   string
-	Tools          ToolExecutor
-	ToolLedger     *toolledger.Ledger
-	Model          string
-	APIModel       string
+	SelectedPolicy    *loopdriver.PolicyClient
+	SelectedToolBatch toolbatch.Executor
+	ResumeSampling    bool
+	Client            providers.StreamClient
+	ProviderName      string
+	Tools             ToolExecutor
+	ToolLedger        *toolledger.Ledger
+	Model             string
+	APIModel          string
 	// ProviderObservationKey is an opaque identity for the configured provider
 	// instance and its endpoint/protocol. Runtime construction fills it so an
 	// in-place provider reconfiguration cannot reuse stale context observations.
@@ -1148,6 +1150,7 @@ type streamStep struct {
 	toolRunContext          context.Context
 	ownToolRuntime          func(*TurnToolRuntime)
 	admitStreamToolCall     func(providers.ToolCall) error
+	streamToolAdmission     func(context.Context, providers.ToolCall) (bool, error)
 }
 
 // NewStreamStep returns the shared stream-first model step used by agent loops.
@@ -1194,8 +1197,9 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 			runContext = ContextWithHistory(s.toolRunContext, req.Messages)
 		}
 		runtime := NewTurnToolRuntime(ToolRuntimeConfig{
-			Gate:     s.toolGate,
-			Executor: s.tools, Ledger: s.toolLedger, OperationID: req.Operation.ID, StepIndex: req.StepIndex,
+			StreamAdmission: s.streamToolAdmission,
+			Gate:            s.toolGate,
+			Executor:        s.tools, Ledger: s.toolLedger, OperationID: req.Operation.ID, StepIndex: req.StepIndex,
 			RunContext: runContext,
 		})
 		if s.ownToolRuntime != nil {

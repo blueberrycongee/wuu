@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -193,7 +194,8 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if err := g.prepare(ctx); err != nil {
 		return loopdriver.ModelRound{}, err
 	}
-	if g.serialTools {
+	// Prefix effects require explicit admission by the selected batch backend.
+	if g.serialTools || !toolbatch.SupportsStreaming(g.runner.SelectedToolBatch) {
 		batchID = ""
 	}
 	if len(g.streamedBatches) != 0 {
@@ -255,11 +257,17 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	g.toolCalls = make(map[string]bool)
 	step := &streamStep{toolGate: g.toolGate, policy: g.runner.SelectedPolicy, client: g.client, onEvent: g.onEvent, tools: g.runner.Tools}
 	observed := make(map[string]providers.ToolCall)
+	streamArgumentBytes := 0
 	var runtimes []*TurnToolRuntime
 	if batchID != "" {
 		g.batches[batchID] = true
 		round.ToolBatchID = batchID
 		step.tools, step.toolLedger, step.enableStreamingToolExec = g.runner.Tools, g.runner.ToolLedger, true
+		if streaming, ok := g.runner.SelectedToolBatch.(toolbatch.StreamingExecutor); ok {
+			step.streamToolAdmission = func(ctx context.Context, call providers.ToolCall) (bool, error) {
+				return streaming.AdmitStream(ctx, toolbatch.StreamRequest{BatchID: batchID, Call: call, ReadOnly: toolCanStartDuringStreaming(g.runner.Tools, call), ConcurrencySafe: toolCanRunConcurrently(g.runner.Tools, call)})
+			}
+		}
 		// A successful model RPC ends before its streamed tools. Their lifetime
 		// belongs to the execution, while model failures explicitly cancel them.
 		step.toolRunContext = g.ctx
@@ -279,6 +287,12 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 			}
 			if err := providers.ValidateAssistantToolCalls([]providers.ToolCall{call}); err != nil {
 				return err
+			}
+			if g.runner.SelectedToolBatch != nil {
+				if len(observed) >= toolbatch.MaxCalls || streamArgumentBytes+len(call.Arguments) > toolbatch.MaxArgumentBytes {
+					return errors.New("streamed tool batch exceeds the selected batch contract limits")
+				}
+				streamArgumentBytes += len(call.Arguments)
 			}
 			g.toolCalls[call.ID] = true
 			observed[call.ID] = call
@@ -453,13 +467,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	if g.runner.ToolWaitInterrupt != nil {
 		ctx = toolctx.WithWaitInterrupt(ctx, g.runner.ToolWaitInterrupt())
 	}
-	execution := loopdriver.ExecutionContextFromContext(g.ctx)
-	runtime := streamed.runtime
-	if runtime == nil {
-		runtime = NewTurnToolRuntime(ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx})
-	}
-	defer g.releaseToolRuntimes([]*TurnToolRuntime{runtime})
-	runtime.SetResultCallback(func(call providers.ToolCall, result toolresult.Result) {
+	onResult := func(call providers.ToolCall, result toolresult.Result) {
 		if g.onEvent != nil {
 			call = enrichToolCallDisplay(g.runner.Tools, call)
 			g.onEvent(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call, ToolResult: truncateLog(result.TextProjection(), 2000), ToolResultDetail: resultPointer(result)})
@@ -467,7 +475,28 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 				g.onEvent(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: update})
 			}
 		}
-	})
+	}
+	execution := loopdriver.ExecutionContextFromContext(g.ctx)
+	if g.runner.SelectedToolBatch != nil {
+		if streamed.runtime != nil {
+			defer g.releaseToolRuntimes([]*TurnToolRuntime{streamed.runtime})
+		}
+		capacity := maxToolConcurrency
+		if g.toolGate != nil {
+			capacity = g.toolGate.capacity
+		}
+		messages, segments, runErr := executeSelectedToolBatch(ctx, g.runner.SelectedToolBatch, toolbatch.Request{ID: batch.ID, Calls: batch.Calls, Serial: g.serialTools, MaxParallel: capacity}, ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx}, onResult, streamed.runtime)
+		g.postToolContext = append(g.postToolContext, segments...)
+		g.appendMessages(messages...)
+		g.contextTokens += estimateMessages(messages)
+		return providers.CloneChatMessages(messages), runErr
+	}
+	runtime := streamed.runtime
+	if runtime == nil {
+		runtime = NewTurnToolRuntime(ToolRuntimeConfig{Gate: g.toolGate, Serial: g.serialTools, Executor: g.runner.Tools, Ledger: g.runner.ToolLedger, OperationID: execution.ExecutionID + "/" + batch.ID, StepIndex: g.step, RunContext: ctx})
+	}
+	defer g.releaseToolRuntimes([]*TurnToolRuntime{runtime})
+	runtime.SetResultCallback(onResult)
 	messages, err := runtime.ExecuteFinalCalls(ctx, batch.Calls, nil, g.runner.OnToolBatchRejected)
 	g.postToolContext = append(g.postToolContext, runtime.TakeRequestContextSegments()...)
 	g.appendMessages(messages...)
