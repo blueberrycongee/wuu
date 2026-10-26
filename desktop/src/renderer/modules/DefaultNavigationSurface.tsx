@@ -111,6 +111,12 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     lastViewedTurnByThreadID={view.lastViewedTurnByThreadId}
     sidebarWorkspaces={workspaces} activeWorkspaceID={workspaceSelectionEnabled ? view.focusedWorkspaceId ?? view.selectedWorkspaceId : undefined}
     pendingConversations={view.pendingConversations.map(row => ({ ...row, context: { ...row.context }, title: row.title || t("tabs.newConversation") }))}
+    draftConversations={snapshot.tabs.items.filter(tab => tab.kind === "draft"
+      && (tab.id === snapshot.tabs.activeTabId || view.pendingConversations.some(row => row.id === tab.id))).map(tab => {
+      const pending = view.pendingConversations.find(row => row.id === tab.id);
+      // Draft input is not a session title; wait for the created thread's title.
+      return { id: tab.id, title: t("tabs.newConversation"), pending: Boolean(pending) };
+    })}
     onSelectPendingConversation={tabId => run(presentNavigation(() => application.invoke("tab.select", { tabId })))}
     pinnedThreads={rows.filter(row => row.pinned && !row.archived)} activeThreadID={snapshot.conversation.threadId}
     pendingThreadID={snapshot.tabs.pending?.kind === "thread" ? snapshot.tabs.pending.targetId : undefined}

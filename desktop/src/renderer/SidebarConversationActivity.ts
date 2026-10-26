@@ -76,14 +76,18 @@ export function useSidebarConversationActivity(
 
   // Hold membership and positions, not row data: read receipts and execution
   // indicators still update immediately. Removed/archived/pinned rows disappear.
+  // A newly created or selected conversation must remain reachable during a hold.
   const visibleThreads = useMemo(() => {
     if (!heldOrder) return ordered;
     const byID = new Map(threads.map((thread) => [thread.id, thread]));
-    return heldOrder.flatMap((thread) => {
+    const heldIDs = new Set(heldOrder.map(thread => thread.id));
+    const entering = ordered.filter(thread => !heldIDs.has(thread.id)
+      && (thread.id === activeThreadID || thread.id === pendingThreadID));
+    return [...entering, ...heldOrder.flatMap((thread) => {
       const current = byID.get(thread.id);
       return current ? [current] : [];
-    });
-  }, [heldOrder, ordered, threads]);
+    })];
+  }, [activeThreadID, heldOrder, ordered, pendingThreadID, threads]);
 
   return {
     threads: visibleThreads,

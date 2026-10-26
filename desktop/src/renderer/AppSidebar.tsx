@@ -73,6 +73,7 @@ import { SCRATCH_PSEUDO_PROJECT_ID } from "./AppState";
 import { projectDirectory } from "./ProjectSessions";
 import {
   OrganizationThreadList,
+  ThreadRowTitle,
   WorkspaceGroup,
   type PendingConversation,
 } from "./ThreadSidebar";
@@ -463,6 +464,7 @@ export function AppSidebar({
   onOpenSkillsTab,
   onToggleConversationSearch,
   pendingConversations = [],
+  draftConversations = [],
   onSelectPendingConversation,
   onSelectThread: selectNativeThread,
   onTogglePinned,
@@ -526,6 +528,7 @@ export function AppSidebar({
   // stays unchanged; sidebarWorkspaces is what the sidebar actually shows.
   sidebarWorkspaces: DesktopProject[];
   pendingConversations?: readonly PendingConversation[];
+  draftConversations?: readonly { id: string; title: string; pending: boolean }[];
   onSelectPendingConversation?: (id: string) => void;
   activeWorkspaceID?: string;
   pinnedThreads: ThreadSummary[];
@@ -2163,7 +2166,7 @@ export function AppSidebar({
                 </SortableFunctionalGroup>
               ))}
             </SortableContext>
-            {recentConversations.length > 0 ? (
+            {recentConversations.length > 0 || draftConversations.length > 0 ? (
               <div className="sidebar-conversation-activity" {...conversationInteractionProps}>
                 <section
                   className="sidebar-functional-group"
@@ -2195,7 +2198,7 @@ export function AppSidebar({
                       </span>
                       {recentsCollapsed ? (
                         <span className="sidebar-recents-count" aria-hidden="true">
-                          {recentConversations.length}
+                          {recentConversations.length + draftConversations.length}
                         </span>
                       ) : null}
                       <ChevronRight
@@ -2211,7 +2214,11 @@ export function AppSidebar({
                         aria-label={t("sidebar.newConversation")}
                         title={t("sidebar.newConversation")}
                         disabled={!hasRuntimeContext}
-                        onClick={() => activateNative(onStartNewThread)}
+                        onClick={() => {
+                          setRecentsCollapsed(false);
+                          persistSidebarRecentsCollapsed(false);
+                          activateNative(onStartNewThread);
+                        }}
                       >
                         <SquarePen className="icon" aria-hidden="true" />
                       </button>
@@ -2222,6 +2229,21 @@ export function AppSidebar({
                     expanded={!recentsCollapsed}
                   >
                     <div className="sidebar-functional-group-body">
+                      {draftConversations.map(draft => (
+                        <div key={draft.id} data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${draft.id === activeSessionTabID ? " active" : ""}`}>
+                          {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
+                          <button
+                            className="thread-row-main"
+                            type="button"
+                            aria-current={draft.id === activeSessionTabID ? "page" : undefined}
+                            aria-busy={draft.pending || undefined}
+                            aria-label={draft.title}
+                            onClick={() => activateNative(() => onSelectPendingConversation?.(draft.id))}
+                          >
+                            <ThreadRowTitle title={draft.title} />
+                          </button>
+                        </div>
+                      ))}
                       <OrganizationThreadList
                         threads={recentConversations}
                         activeID={activeThreadID}
