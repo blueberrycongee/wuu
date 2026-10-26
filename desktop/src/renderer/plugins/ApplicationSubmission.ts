@@ -241,6 +241,10 @@ export class ApplicationSubmission {
       if (this.disposed) return true;
       operation.view = { ...operation.view, messageID: acceptedID };
       this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, id: acceptedID, images, files, operationState: undefined } : candidate) }));
+      // Queue acknowledgement is the durable handoff: the pending drawer owns
+      // these inputs even while the current turn is still running. Steering
+      // instead waits for placement in the current conversation.
+      if (kind === "queue") return true;
       if (operation.view.draftPending && !this.disposed && this.resultOwnerExists(operation.view)) {
         return await new Promise<boolean>(resolve => {
           operation.settlePlacement = resolve;
@@ -649,5 +653,6 @@ export class ApplicationSubmission {
       operation.settlePlacement?.(true);
       operation.settlePlacement = undefined;
     }
+    this.publish();
   }
 }

@@ -88,6 +88,32 @@ describe("application submission ownership",()=>{
     expect(window.wuu.queueTurn).toHaveBeenCalledOnce();expect(window.wuu.startTurn).not.toHaveBeenCalled();
     expect(f.submission.submit({ownerTabId:"thread:created",mode:"queue"}).accepted).toBe(false);
   });
+  it("hands off only the source draft after switching tabs during queue acknowledgement",async()=>{
+    const queued=deferred<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>();
+    window.wuu={queueTurn:vi.fn(()=>queued.promise)} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
+    const release=vi.fn();vi.spyOn(f.resources,"retain").mockReturnValue(release);
+    f.submission.submit({ownerTabId:"thread:created",mode:"queue"});
+    await vi.waitFor(()=>expect(window.wuu.queueTurn).toHaveBeenCalledOnce());
+    const id=vi.mocked(window.wuu.queueTurn).mock.calls[0][3]!;
+    f.setState({...f.getState(),activeSessionTabID:"draft:other",sessionTabs:[...f.getState().sessionTabs,
+      {id:"draft:other",kind:"draft",context,title:"",createdAt:1,prompt:"other input",images:[],files:[]}]});
+    queued.resolve({queued:{id,thread_id:"created"}});
+    await vi.waitFor(()=>expect(release).toHaveBeenCalledOnce());
+    expect(f.submission.getSnapshot().operations[0]).toMatchObject({phase:"completed",draftPending:false});
+    expect(f.getDraft("thread:created").prompt).toBe("");
+    expect(f.getDraft("draft:other").prompt).toBe("other input");
+    expect(f.pending.pendingComposerMessagesForThread("created").queued.map(row=>row.id)).toEqual([id]);
+    expect(window.wuu.queueTurn).toHaveBeenCalledOnce();
+  });
+  it("keeps an unconfirmed queue failure recoverable without leaving a spinner or retrying",async()=>{
+    window.wuu={queueTurn:vi.fn().mockRejectedValue(new Error("rpc timeout: turn/queue")),startTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
+    f.submission.submit({ownerTabId:"thread:created",mode:"queue"});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]).toMatchObject({phase:"failed",draftPending:false}));
+    expect(f.getDraft("thread:created").prompt).toBe("hello");
+    expect(window.wuu.queueTurn).toHaveBeenCalledOnce();expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  });
   it("leaves an acknowledged queued message with the canonical queue instead of persisting a duplicate draft",async()=>{
     window.wuu={queueTurn:vi.fn().mockImplementation(async(_thread,_text,_images,id)=>({queued:{id}}))} as unknown as WuuDesktopApi;
     const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});

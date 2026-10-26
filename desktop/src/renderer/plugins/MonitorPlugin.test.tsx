@@ -14,13 +14,13 @@ function pending() { let resolve!: (value: unknown) => void, reject!: (error: un
 async function mount() {
   vi.useFakeTimers();
   const lifetime = new AbortController(), calls: Array<ReturnType<typeof pending> & { input: any; signal: AbortSignal }> = [], notices: Array<{ message: string; dispose: ReturnType<typeof vi.fn> }> = [];
-  let contribution: any;
+  let contribution: any, hostEvent: (event: unknown) => void;
   const cleanup: Array<() => void> = [];
   await activate({ react: React, signal: lifetime.signal,
     ui: { Button: (props: any) => React.createElement("button", props), ComposerDrawer: ({ children, summary, notice, expanded, onExpandedChange }: any) => React.createElement("section", null, React.createElement("button", { onClick: () => onExpandedChange(!expanded), "aria-label": "Toggle monitors" }, summary), notice, children) },
     invokeRuntime: vi.fn((_method: string, input: any, options: { signal: AbortSignal }) => { const call = { ...pending(), input, signal: options?.signal }; calls.push(call); return call.promise; }),
     showNotice: vi.fn(({ message }: any) => { const notice = { message, dispose: vi.fn() }; notices.push(notice); return notice; }),
-    registerLocale() {}, registerStyle() {}, registerCleanup(fn: () => void) { cleanup.push(fn); }, onHostEvent() {},
+    registerLocale() {}, registerStyle() {}, registerCleanup(fn: () => void) { cleanup.push(fn); }, onHostEvent(callback: (event: unknown) => void) { hostEvent = callback; },
     registerUIContribution(value: any) { contribution = value; },
   });
   const container = document.createElement("div"), root = createRoot(container);
@@ -29,7 +29,7 @@ async function mount() {
   cleanups.push(() => { act(() => root.unmount()); cleanup.forEach(fn => fn()); });
   await render("a");
   const click = async (label: string) => { await act(async () => { const button = [...container.querySelectorAll("button")].find(node => node.getAttribute("aria-label") === label || node.textContent?.includes(label)); expect(button).toBeDefined(); button!.click(); }); };
-  return { container, calls, notices, render, lifetime, click };
+  return { container, calls, notices, render, lifetime, click, event: (method: string) => hostEvent({ message: { method } }) };
 }
 it.each(["resolve", "reject"] as const)("fences stale %s across A → B → A without blocking a new request", async outcome => {
   const ui = await mount();
@@ -49,17 +49,42 @@ it("retires mounted views immediately on generation abort before delayed cleanup
   await act(async () => { vi.advanceTimersByTime(2000); });
   expect(ui.calls).toHaveLength(1);
 });
-it("keeps current errors out of an empty drawer, deduplicates notices, and recovers", async () => {
+it("keeps background failures quiet without a drawer and backs off until recovery", async () => {
   const ui = await mount();
   await act(async () => { ui.calls[0].reject(new Error("private raw transport error")); });
-  expect(ui.container.textContent).toBe(""); expect(ui.notices).toHaveLength(1);
-  expect(ui.notices[0].message).not.toContain("private raw");
+  expect(ui.container.textContent).toBe(""); expect(ui.notices).toHaveLength(0);
+  await act(async () => { vi.advanceTimersByTime(1000); }); expect(ui.calls).toHaveLength(1);
   await act(async () => { vi.advanceTimersByTime(1000); });
   await act(async () => { ui.calls[1].reject(new Error("private raw transport error")); });
-  expect(ui.notices).toHaveLength(1);
+  await act(async () => { vi.advanceTimersByTime(3000); }); expect(ui.calls).toHaveLength(2);
   await act(async () => { vi.advanceTimersByTime(1000); });
   await act(async () => { ui.calls[2].resolve({ tasks: [task] }); });
-  expect(ui.notices[0].dispose).toHaveBeenCalledOnce(); expect(ui.container.querySelector("section")).not.toBeNull();
+  expect(ui.notices).toHaveLength(0); expect(ui.container.querySelector("section")).not.toBeNull();
+  await act(async () => { vi.advanceTimersByTime(1000); }); expect(ui.calls).toHaveLength(4);
+});
+it("shows stale state only inside an existing monitor panel and clears it on repair", async () => {
+  const ui = await mount();
+  await act(async () => { ui.calls[0].resolve({ tasks: [task] }); });
+  await ui.click("Toggle monitors");
+  await act(async () => { vi.advanceTimersByTime(1000); });
+  await act(async () => { ui.calls[1].reject(new Error("private list failure")); });
+  expect(ui.notices).toHaveLength(0); expect(ui.container.textContent).toContain("monitor.stale");
+  expect(ui.container.textContent).toContain("Real monitor"); expect(ui.container.textContent).not.toContain("private");
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await act(async () => { ui.calls[2].resolve({ tasks: [task] }); });
+  expect(ui.container.textContent).not.toContain("monitor.stale");
+});
+it("keeps failed output polling local, retaining useful output until recovery", async () => {
+  const ui = await mount();
+  await act(async () => { ui.calls[0].resolve({ tasks: [task] }); });
+  await ui.click("Toggle monitors"); await ui.click("Real monitor");
+  await act(async () => { ui.calls.find(call => call.input.action === "read")!.resolve({ output: "retained output", next_offset: 15 }); });
+  await act(async () => { vi.advanceTimersByTime(1000); });
+  await act(async () => { ui.calls.filter(call => call.input.action === "read").at(-1)!.reject(new Error("private read failure")); });
+  expect(ui.notices).toHaveLength(0); expect(ui.container.textContent).toContain("monitor.outputStale"); expect(ui.container.textContent).toContain("retained output");
+  await act(async () => { vi.advanceTimersByTime(2000); });
+  await act(async () => { ui.calls.filter(call => call.input.action === "read").at(-1)!.resolve({ output: " repaired", next_offset: 24 }); });
+  expect(ui.container.textContent).not.toContain("monitor.outputStale"); expect(ui.container.textContent).toContain("retained output repaired");
 });
 it("does not show expected typed scope retirement as a failure", async () => {
   const ui = await mount();
@@ -94,7 +119,31 @@ it("retains task failure details and current output, and allows retrying a faile
   await act(async () => { ui.calls.at(-1)!.reject(new Error("transport detail")); });
   expect(ui.notices).toHaveLength(1); expect(ui.container.textContent).not.toContain("transport detail");
   await ui.click("monitor.stop: Real monitor");
+  await act(async () => { ui.calls.at(-1)!.reject(new Error("same failure")); });
+  expect(ui.notices).toHaveLength(1);
+  await ui.click("monitor.stop: Real monitor");
   await act(async () => { ui.calls.at(-1)!.resolve({}); });
   expect(ui.notices[0].dispose).toHaveBeenCalledOnce();
   expect(ui.calls.at(-1)!.input.action).toBe("list");
+});
+
+it("caps quiet retry delay and does not let unrelated host events bypass backoff", async () => {
+  const ui = await mount();
+  for (const delay of [2000, 4000, 8000, 16000, 30000, 30000]) {
+    const count = ui.calls.length;
+    await act(async () => { ui.calls.at(-1)!.reject(new Error("current transport failure")); ui.event("turn/completed"); });
+    await act(async () => { vi.advanceTimersByTime(delay - 1000); ui.event("thread/resumed"); });
+    expect(ui.calls).toHaveLength(count);
+    await act(async () => { vi.advanceTimersByTime(1000); }); expect(ui.calls).toHaveLength(count + 1);
+  }
+  expect(ui.notices).toHaveLength(0); expect(ui.container.textContent).toBe("");
+});
+it("refreshes immediately after an explicit stop even during background backoff", async () => {
+  const ui = await mount();
+  await act(async () => { ui.calls[0].resolve({ tasks: [task] }); }); await ui.click("Toggle monitors");
+  await act(async () => { vi.advanceTimersByTime(1000); });
+  await act(async () => { ui.calls[1].reject(new Error("list temporarily unavailable")); });
+  await ui.click("monitor.stop: Real monitor");
+  await act(async () => { ui.calls.at(-1)!.resolve({}); });
+  expect(ui.calls.at(-1)!.input.action).toBe("list"); expect(ui.calls).toHaveLength(4); expect(ui.notices).toHaveLength(0);
 });

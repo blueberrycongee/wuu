@@ -8,7 +8,7 @@ export async function activate(api) {
     "monitor.deadline": "Deadline", "monitor.suppressed": "{count} event batches suppressed", "monitor.tail": "Showing the retained output; earlier output was truncated.",
     "monitor.status.running": "Watching", "monitor.status.completed": "Completed", "monitor.status.failed": "Failed", "monitor.status.stopped": "Stopped",
     "monitor.status.timed_out": "Timed out", "monitor.status.overloaded": "Stopped · too much output", "monitor.status.interrupted": "Interrupted",
-    "monitor.refreshFailed": "Could not refresh monitors. Retrying automatically.", "monitor.readFailed": "Could not read monitor output. Retrying automatically.", "monitor.stopFailed": "Could not stop the monitor. Try again.",
+    "monitor.stale": "Status updates delayed", "monitor.outputStale": "Output updates delayed", "monitor.stopFailed": "Could not stop the monitor. Try again.",
     "monitor.details": "Show monitor details", "monitor.close": "Hide monitor details", "monitor.retry": "Retry", "monitor.follow": "Follow output",
   } });
   api.registerLocale({ id: "monitor-zh", locale: "zh-CN", entries: {
@@ -18,7 +18,7 @@ export async function activate(api) {
     "monitor.deadline": "截止时间", "monitor.suppressed": "已抑制 {count} 批过量事件", "monitor.tail": "当前显示保留的输出，较早的内容已截断。",
     "monitor.status.running": "监控中", "monitor.status.completed": "已完成", "monitor.status.failed": "失败", "monitor.status.stopped": "已停止",
     "monitor.status.timed_out": "已超时", "monitor.status.overloaded": "已停止 · 输出过量", "monitor.status.interrupted": "已中断",
-    "monitor.refreshFailed": "无法刷新监控，正在自动重试。", "monitor.readFailed": "无法读取监控输出，正在自动重试。", "monitor.stopFailed": "无法停止监控，请重试。",
+    "monitor.stale": "状态暂未更新", "monitor.outputStale": "输出暂未更新", "monitor.stopFailed": "无法停止监控，请重试。",
     "monitor.details": "展开监控详情", "monitor.close": "收起监控详情", "monitor.retry": "重试", "monitor.follow": "跟随输出",
   } });
   let disposed = false;
@@ -31,25 +31,36 @@ export async function activate(api) {
     if (!active(owner) || error?.code === "WUU_PLUGIN_SCOPE_RETIRED") return;
     if (!owner.notices.has(key)) owner.notices.set(key, api.showNotice({ key, message, tone: "error" }));
   }
-  function createOwner() { return { controller: new AbortController(), notices: new Map(), request: null }; }
+  function createOwner() { return { controller: new AbortController(), notices: new Map(), request: null, failures: 0, retryAt: 0 }; }
+  function backgroundFailure(owner, error) {
+    // The host records runtime failures in diagnostics. Background polling does
+    // not interrupt unrelated conversation work with a global notification.
+    if (!active(owner) || error?.code === "WUU_PLUGIN_SCOPE_RETIRED") return false;
+    owner.failures = Math.min(owner.failures + 1, 5);
+    owner.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** owner.failures);
+    return true;
+  }
+  function backgroundRecovered(owner) { owner.failures = 0; owner.retryAt = 0; }
   function retire(owner) {
     owner.controller.abort();
     for (const notice of owner.notices.values()) notice.dispose();
     owner.notices.clear();
   }
   function publish(id, state) { cache.set(id, state); for (const listener of listeners.get(id) || []) listener(); }
-  async function refresh(id) {
+  async function refresh(id, force = false) {
     const owner = owners.get(id);
-    if (!owner || !active(owner) || owner.request) return;
+    if (!owner || !active(owner) || owner.request || !force && Date.now() < owner.retryAt) return;
     const request = {};
     owner.request = request;
     try {
       const response = await api.invokeRuntime("monitor.tasks", { action: "list", thread_id: id }, { signal: owner.controller.signal });
       if (active(owner) && owners.get(id) === owner) {
-        recover(owner, `list:${id}`);
+        backgroundRecovered(owner);
         publish(id, { tasks: response.tasks });
       }
-    } catch (error) { fail(owner, `list:${id}`, error, owner.tr("monitor.refreshFailed")); }
+    } catch (error) {
+      if (backgroundFailure(owner, error) && owners.get(id) === owner) publish(id, { tasks: cache.get(id)?.tasks || [], stale: true });
+    }
     finally { if (owner.request === request) owner.request = null; }
   }
   function subscribe(id, listener, tr) {
@@ -88,23 +99,23 @@ export async function activate(api) {
     const [following, setFollowing] = React.useState(true);
     const outputRef = React.useRef(null);
     React.useEffect(() => {
-      const owner = createOwner(), key = `read:${task.thread_id}:${task.id}`;
+      const owner = createOwner();
       let polling = false, offset = 0, text = "", truncated = false;
       setState({ text, truncated });
       async function read() {
-        if (!active(owner) || polling) return;
+        if (!active(owner) || polling || Date.now() < owner.retryAt) return;
         polling = true;
         try {
           const value = await api.invokeRuntime("monitor.tasks", { action: "read", task_id: task.id, thread_id: task.thread_id, offset_bytes: offset }, { signal: owner.controller.signal });
           if (!active(owner)) return;
-          recover(owner, key);
+          backgroundRecovered(owner);
           text += value.output;
           // Keep the live viewer bounded, independently of the full process log.
           if (text.length > 131072) { text = text.slice(-131072); truncated = true; }
           truncated ||= !!value.truncated;
           offset = value.next_offset;
           setState({ text, truncated });
-        } catch (error) { fail(owner, key, error, tr("monitor.readFailed")); }
+        } catch (error) { if (backgroundFailure(owner, error)) setState({ text, truncated, stale: true }); }
         finally { polling = false; }
       }
       void read();
@@ -115,6 +126,7 @@ export async function activate(api) {
     return h("div", { className: "plugin-monitor-output" },
       h("div", { className: "plugin-monitor-output-heading" }, h("span", null, tr("monitor.output")),
         !following ? h(Button, { variant: "ghost", onClick: () => setFollowing(true) }, tr("monitor.follow")) : null),
+      state.stale ? h("p", { role: "status", className: "plugin-monitor-muted" }, tr("monitor.outputStale")) : null,
       state.truncated ? h("p", { className: "plugin-monitor-muted" }, tr("monitor.tail")) : null,
       h("pre", { ref: outputRef, className: "plugin-monitor-log", tabIndex: 0, "aria-label": tr("monitor.output"), onScroll: event => {
         const node = event.currentTarget; setFollowing(node.scrollHeight - node.scrollTop - node.clientHeight < 24);
@@ -138,7 +150,7 @@ export async function activate(api) {
         await api.invokeRuntime("monitor.tasks", { action: "stop", task_id: task.id, thread_id: task.thread_id }, { signal: owner.controller.signal });
         if (!active(owner)) return;
         recover(owner, key);
-        await refresh(task.thread_id);
+        await refresh(task.thread_id, true);
       } catch (cause) { fail(owner, key, cause, tr("monitor.stopFailed")); }
       finally { owner.request = null; if (active(owner)) setBusy(false); }
     }
@@ -169,7 +181,9 @@ export async function activate(api) {
     return h(ComposerDrawer, { className: "plugin-monitor", "aria-label": tr("monitor.title"), expanded: open, onExpandedChange: setOpen,
       toggleLabel: tr(open ? "monitor.hide" : "monitor.show"), icon: h(Icon), tone: running ? "default" : "muted",
       summary: h("span", { className: "plugin-monitor-summary" }, running ? tr("monitor.running", { count: running }) : tr("monitor.title")),
-    }, open ? h("ul", { className: "plugin-monitor-list" }, sorted.map(task => h(Row, { key: task.id, task, tr, locale, readOnly }))) : null);
+    }, open ? h(React.Fragment, null,
+      state.stale ? h("p", { role: "status", className: "plugin-monitor-stale plugin-monitor-muted" }, tr("monitor.stale")) : null,
+      h("ul", { className: "plugin-monitor-list" }, sorted.map(task => h(Row, { key: task.id, task, tr, locale, readOnly })))) : null);
   }
   api.registerUIContribution({ target: "wuu.default-composer/composer.above", id: "monitor-tasks", title: "Monitors", order: 30,
     render: ({ context: { threadId, mainConversation, readOnly }, translate, locale }) => threadId && mainConversation ? h(Controls, { key: threadId, threadId, readOnly, tr: translate, locale }) : null,
@@ -177,6 +191,7 @@ export async function activate(api) {
   api.registerStyle({ id: "monitor-tasks", css: `
     .plugin-monitor { --composer-drawer-max-height:min(55dvh,36rem); --monitor-indent:calc(7px + var(--space-2)); font-size:var(--font-ui); }
     .plugin-monitor-summary { min-width:0; overflow-wrap:anywhere; }
+    .plugin-monitor-stale { padding:0 var(--space-3) var(--space-2); }
     .plugin-monitor-list { list-style:none; margin:0; padding:0 var(--space-3) var(--space-3); display:grid; gap:var(--space-3); }
     .plugin-monitor-row { min-width:0; }
     .plugin-monitor-row-heading { display:flex; align-items:center; gap:var(--space-2); }

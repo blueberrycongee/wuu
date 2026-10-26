@@ -1148,9 +1148,11 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
     const secondID = vi.mocked(window.wuu.queueTurn).mock.calls[0][3]!;
     await act(async () => { acceptQueue({ queued: { id: secondID, thread_id: newThread().id } }); });
-    expect(mainComposer("dock").value).toBe("second");
+    expect(mainComposer("dock").value).toBe("");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-send-disabled")).toBe("false");
+    expect(container.querySelector('[data-main-conversation-composer]')?.getAttribute("data-queued")).toBe("second");
     await enterCommand(mainComposer("dock"), "third");
-    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(1);
+    expect(window.wuu.queueTurn).toHaveBeenCalledTimes(2);
     await act(async () => {
       for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: scratchCwd,
         message: { method: "turn/started", params: { thread_id: newThread().id,

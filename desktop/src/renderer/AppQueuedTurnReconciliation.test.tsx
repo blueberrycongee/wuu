@@ -555,8 +555,9 @@ describe("queued turn reconciliation", () => {
     await flushAsync();
 
     expect(queuedClientIDs).toHaveLength(1);
-    expect(composerProbe().dataset.queuedIds).toBe("");
-    expect(composerProbe().querySelector("textarea")?.value).toBe("queued follow-up");
+    expect(composerProbe().dataset.queuedIds).toBe(queuedClientIDs[0]);
+    expect(composerProbe().querySelector("textarea")?.value).toBe("");
+    expect(composerProbe().dataset.draftPending).toBe("false");
     await act(async () => {
       for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
         message: { method: "thread/resumed", params: { thread: runningThread(),
@@ -813,8 +814,9 @@ describe("queued turn reconciliation", () => {
 
     expect(queuedClientIDs).toHaveLength(1);
     const queueID = queuedClientIDs[0];
-    expect(composerProbe().dataset.queuedIds).toBe("");
-    expect(composerProbe().querySelector("textarea")?.value).toBe("queued follow-up");
+    expect(composerProbe().dataset.queuedIds).toBe(queuedClientIDs[0]);
+    expect(composerProbe().querySelector("textarea")?.value).toBe("");
+    expect(composerProbe().dataset.draftPending).toBe("false");
 
     // Simulate the live turn/started notification being missed while the
     // thread is backgrounded. A later authoritative thread snapshot already
@@ -838,7 +840,7 @@ describe("queued turn reconciliation", () => {
     expect(composerProbe().dataset.draftPending).toBe("false");
   });
 
-  it("defers a second composer submission until the queued input reaches the conversation", async () => {
+  it.each([false, true])("defers a second composer submission only until the queue acknowledgement (notification first=%s)", async notificationFirst => {
     let resolveQueue!: (value: Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>) => void;
     const queueTurn = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>((resolve) => { resolveQueue = resolve; }));
     let resolveSteer: ((value: { turn_id: string }) => void) | undefined;
@@ -885,15 +887,21 @@ describe("queued turn reconciliation", () => {
     expect(steerTurn).not.toHaveBeenCalled();
     expect(composerProbe().querySelector("textarea")?.value).toBe("guide the running turn");
     expect(composerProbe().dataset.guideIds).toBe("");
-    await act(async () => {
-      resolveQueue({ queued: { id: "queued-follow-up", thread_id: threadID } });
-    });
-    await act(async () => {
-      storedThread = runningThread("queued-follow-up");
+    const queuedID = vi.mocked(window.wuu.queueTurn).mock.calls[0][3]!;
+    const notifyQueued = () => {
       for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
-        message: { method: "thread/updated", params: { thread: storedThread } } } as ServerEvent);
+        message: { method: "turn/queued", params: { thread_id: threadID,
+          message: { id: queuedID, thread_id: threadID, origin: "queue", prompt: "queued follow-up" } } } } as ServerEvent);
+    };
+    if (notificationFirst) await act(async () => { notifyQueued(); });
+    await act(async () => {
+      resolveQueue({ queued: { id: queuedID, thread_id: threadID } });
     });
-    // Delivery must not clear the newer text typed while the first send waited.
+    if (!notificationFirst) await act(async () => { notifyQueued(); });
+    expect(composerProbe().dataset.queuedIds).toBe(queuedID);
+    expect(composerProbe().dataset.draftPending).toBe("false");
+    expect(composerProbe().dataset.running).toBe("true");
+    // Queue acknowledgement must not wait for another turn or clear newer text.
     expect(composerProbe().querySelector("textarea")?.value).toBe("guide the running turn");
     await act(async () => { steer!.click(); });
     expect(steerTurn).toHaveBeenCalledTimes(1);
@@ -902,7 +910,7 @@ describe("queued turn reconciliation", () => {
       const item = { id: "accepted-guide", type: "user_message" as const, status: "completed" as const, text: "guide the running turn", source_id: vi.mocked(window.wuu.steerTurn).mock.calls[0][4] };
       storedThread = { ...storedThread, turns: storedThread.turns.map(turn => ({ ...turn, items: [...turn.items, item] })) };
       for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace,
-        message: { method: "item/completed", params: { thread_id: threadID, turn_id: "turn-queued", item } } } as ServerEvent);
+        message: { method: "item/completed", params: { thread_id: threadID, turn_id: storedThread.turns[0].id, item } } } as ServerEvent);
     });
     expect(composerProbe().querySelector("textarea")?.value).toBe("");
   });

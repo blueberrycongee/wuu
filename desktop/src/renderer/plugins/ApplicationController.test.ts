@@ -648,6 +648,31 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().drafts.primary.text).toBe("");
   });
 
+  it.each([false, true])("hands a confirmed queue to the drawer while the current turn is active (newer draft=%s)", async newerDraft => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "running", status: "in_progress", items: [] }] } as never;
+    let acknowledge!: (value: Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>) => void;
+    window.wuu = { queueTurn: vi.fn(() => new Promise(resolve => { acknowledge = resolve; })), startTurn: vi.fn(), steerTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
+      { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "queued image", images: [{ id: "image", media_type: "image/png", data: "QQ==", previewSrc: "blob:queue" }], files: [{ id: "file", filename: "note.txt", media_type: "text/plain", data: "Qg==" }] },
+    ] });
+    const submitted = await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "queue" });
+    await vi.waitFor(() => expect(window.wuu.queueTurn).toHaveBeenCalledOnce());
+    const id = vi.mocked(window.wuu.queueTurn).mock.calls[0][3]!;
+    expect(controller.getSnapshot().submission.operations[0]).toMatchObject({ draftPending: true, phase: "sending" });
+    expect(controller.getSnapshot().drafts.primary).toMatchObject({ text: "queued image", imageIds: ["image"], fileIds: ["file"] });
+    if (newerDraft) await controller.invoke("composer.set-draft", { text: "newer input" });
+    acknowledge({ queued: { id, thread_id: "a" } });
+    expect(await settleSubmission(controller, submitted)).toMatchObject({ phase: "completed", draftPending: false });
+    expect(controller.getState().thread).toBe(thread);
+    expect(controller.getSnapshot().drafts.primary.text).toBe(newerDraft ? "newer input" : "");
+    expect(controller.getSnapshot().composerPending[0].queued).toMatchObject([{ id, text: "queued image", imageIds: ["image"], fileIds: ["file"] }]);
+    expect(controller.getSnapshot().drafts.attachments.map(attachment => attachment.id)).toEqual(expect.arrayContaining(["image", "file"]));
+    expect(window.wuu.queueTurn).toHaveBeenCalledOnce();
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    expect(window.wuu.steerTurn).not.toHaveBeenCalled();
+  });
+
   it("keeps the image preview alive while editing a queued message back into its draft", async () => {
     const originalRevoke = URL.revokeObjectURL;
     const revoke = vi.fn();
@@ -691,7 +716,7 @@ describe("shared application state", () => {
     await expect(controller.invoke("composer.remove-pending", stale)).rejects.toThrow("owner");
     await expect(controller.invoke("composer.toggle-pending-mode", stale)).rejects.toThrow("owner");
     expect(window.wuu.dequeueTurn).not.toHaveBeenCalled();
-    expect(controller.getSnapshot().drafts.primary.text).toBe("queued text");
+    expect(controller.getSnapshot().drafts.primary.text).toBe("");
     await controller.invoke("composer.checkpoint", { activeTabId: "thread:a", primary: { text: "", imageIds: [], fileIds: [], selections: [] } });
     await controller.invoke("composer.edit-pending", { ownerTabId: "thread:a", messageId: pending.queued[0].id, kind: "queue" });
     await settleSubmission(controller, submitted);
