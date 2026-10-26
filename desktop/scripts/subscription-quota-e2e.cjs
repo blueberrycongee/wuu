@@ -180,16 +180,17 @@ async function verifyDetailContentLayout(win, name, context) {
   assert.ok(layout.measured > 0, `${name} must have visible account or allowance content to measure`);
   assert.deepEqual(layout.problems, [], `${name} ${context}`);
 }
-async function capture(win, name) {
+async function capture(win, name, fullWindow = false) {
   await evaluate(win, async () => {
     await document.fonts.ready;
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
-  const bounds = await evaluate(win, () => {
+  const bounds = await evaluate(win, fullWindow => {
+    if (fullWindow) return { x: 0, y: 0, width: innerWidth, height: innerHeight };
     const page = document.querySelector('.settings-page').getBoundingClientRect();
     const x = Math.max(0, Math.floor(page.x)), y = Math.max(0, Math.floor(page.y));
     return { x, y, width: Math.min(innerWidth - x, Math.ceil(page.width)), height: Math.min(innerHeight - y, Math.ceil(page.height)) };
-  });
+  }, fullWindow);
   const zoom = win.webContents.getZoomFactor();
   const [width, height] = win.getContentSize();
   const x = Math.floor(bounds.x * zoom), y = Math.floor(bounds.y * zoom);
@@ -343,10 +344,38 @@ async function run() {
   assert.equal(await evaluate(main, selector => document.querySelector(selector).textContent.includes('12.3400 USD'), card('deepseek')), true, 'The observed balance remains visible in connection detail.');
   await openProviderDetail(main, 'personal');
   const resetTimes = await evaluate(main, selector => [...document.querySelectorAll(`${selector} time.connection-usage-reset`)].map(time => ({
-    datetime: time.dateTime, exact: time.getAttribute('aria-label'), title: time.title,
+    datetime: time.dateTime, exact: time.getAttribute('aria-label'),
+    localDate: new Intl.DateTimeFormat(document.documentElement.lang, {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+    }).format(new Date(time.dateTime)),
   })), card('personal'));
   assert.equal(resetTimes.length, 2);
-  assert.ok(resetTimes.every(time => time.exact === time.title && time.exact.includes(String(new Date().getFullYear())) && Number.isFinite(Date.parse(time.datetime))));
+  assert.deepEqual(resetTimes.map(time => time.datetime), first.windows.map(window => window.resets_at),
+    'Each reset instant must match its observed account allowance.');
+  // Reset hints use the shared tooltip, not the browser's native title. Check
+  // both the accessible exact date and what a real pointer hover reveals.
+  for (const [index, time] of resetTimes.entries()) {
+    assert.ok(time.exact?.includes(time.localDate), `Reset label must expose its full local date and timezone: ${JSON.stringify(time)}`);
+    const point = await evaluate(main, ({ selector, index }) => {
+      const node = document.querySelectorAll(`${selector} time.connection-usage-reset`)[index];
+      const rect = node.getBoundingClientRect();
+      const point = { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+      if (!rect.width || !rect.height || !node.contains(document.elementFromPoint(point.x, point.y))) throw new Error('Reset time must be visible and hit-testable.');
+      return point;
+    }, { selector: card('personal'), index });
+    main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+    await waitFor(main, exact => [...document.querySelectorAll('[role="tooltip"]')].some(tooltip => {
+      const rect = tooltip.getBoundingClientRect(), style = getComputedStyle(tooltip);
+      return tooltip.textContent === exact && rect.width > 0 && rect.height > 0
+        && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight
+        && style.visibility === 'visible' && Number(style.opacity) > 0;
+    }), time.exact);
+    // Tooltip portals may extend beyond the settings card crop while remaining
+    // fully inside the viewport; retain the whole window as visual evidence.
+    await capture(main, `01-reset-${index + 1}-tooltip.png`, true);
+    main.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
+    await waitFor(main, () => !document.querySelector('[role="tooltip"]'));
+  }
   await capture(main, '01-fresh-light.png');
   await evaluate(main, selector => document.querySelector(selector).scrollIntoView({ block: 'start' }), card('personal'));
   await capture(main, '01-accounts-light.png');
@@ -458,7 +487,7 @@ async function run() {
   fs.writeFileSync(path.join(output, 'evidence.json'), JSON.stringify({
     fresh: fresh.subscription_providers.map(provider => ({ name: provider.name, quota: provider.quota })),
     persistence: { provider: 'wuu.state.sqlite', namespace: 'subscription.quota', fresh: persistedFresh, afterSignIn: persistedAfterSignIn },
-    stale, layouts, visualCases: visualCases.map(state => state.name), requests, shots, captures, configUnchanged: true, inferenceRequests: 0,
+    resetTimes, stale, layouts, visualCases: visualCases.map(state => state.name), requests, shots, captures, configUnchanged: true, inferenceRequests: 0,
   }, null, 2));
   console.log("Subscription quota E2E passed; synthetic UI evidence saved.");
 }

@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -80,16 +81,38 @@ export function useConversationSearch({
     undefined,
   );
   const focusBeforeOpenRef = useRef<HTMLElement | null>(null);
+  const interactionVersionRef = useRef(0);
+  const openingFocusRef = useRef<{ application: ConversationSearchApplication; interactionVersion: number; origin: Element | null } | null>(null);
   const conversationSearchResults = conversationSearch.results;
 
   useEffect(() => {
+    const observeInteraction = () => { interactionVersionRef.current++; };
+    window.addEventListener("pointerdown", observeInteraction, true);
+    window.addEventListener("keydown", observeInteraction, true);
     return () => {
+      window.removeEventListener("pointerdown", observeInteraction, true);
+      window.removeEventListener("keydown", observeInteraction, true);
+      openingFocusRef.current = null;
       if (conversationSearchCloseTimerRef.current !== undefined) {
         window.clearTimeout(conversationSearchCloseTimerRef.current);
         conversationSearchCloseTimerRef.current = undefined;
       }
     };
   }, []);
+
+  useLayoutEffect(() => {
+    const request = openingFocusRef.current;
+    if (!presentation.open || !request) return;
+    openingFocusRef.current = null;
+    // A frame can run before React commits the dialog. Its committed input,
+    // not an arbitrary frame, owns this one opening focus transfer.
+    const input = conversationSearchInputRef.current;
+    if (!input || request.application !== application
+      || request.interactionVersion !== interactionVersionRef.current
+      || (document.activeElement !== request.origin && document.activeElement !== document.body)) return;
+    input.focus();
+    input.select();
+  }, [application, presentation.open]);
 
   useEffect(() => {
     if (open === undefined || open === conversationSearch.open) return;
@@ -115,6 +138,7 @@ export function useConversationSearch({
     const focused = document.activeElement;
     focusBeforeOpenRef.current =
       focused instanceof HTMLElement && focused !== document.body ? focused : null;
+    openingFocusRef.current = { application, origin: focused, interactionVersion: interactionVersionRef.current };
     queryRef.current.composing = false;
     void application.invoke("search.run", {}).catch(showErrorToast);
     setConversationSearch((current) => ({
@@ -126,17 +150,12 @@ export function useConversationSearch({
       selectedIndex: 0,
       results: [],
     }));
-    // The last query comes back selected: typing replaces it, and the
-    // arrow keys can still pick up where the previous search left off.
-    window.requestAnimationFrame(() => {
-      conversationSearchInputRef.current?.focus();
-      conversationSearchInputRef.current?.select();
-    });
   }
 
   function closeConversationSearch(
     options: CloseConversationSearchOptions = {},
   ): void {
+    openingFocusRef.current = null;
     if (!conversationSearch.open && !conversationSearch.closing) {
       return;
     }

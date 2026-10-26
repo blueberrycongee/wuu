@@ -7,7 +7,7 @@ import { LinuxWindowControls } from "../LinuxWindowControls";
 import { DesktopControlsProvider } from "../DesktopControlsContext";
 import { BrowserControlsProvider } from "../BrowserControlsContext";
 import { TerminalControlsProvider } from "../TerminalControlsContext";
-import type { ApplicationGenerationAPI, ApplicationShellRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationPresentationAPI, ApplicationShellRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import { PreviewContentProvider } from "../PreviewContentContext";
 import { App } from "../App";
 import { AppBackground } from "../background/AppBackground";
@@ -15,7 +15,7 @@ import { AppContextCaptureHost } from "../AppContextCapture";
 import { ENABLE_APP_SNAPSHOTS } from "../../shared/featureFlags";
 
 /** Shipped module uses the same registration, selection and unload path as an external shell. */
-export function activate(api: ApplicationGenerationAPI): void {
+export function activatePresentation(api: ApplicationPresentationAPI): void {
   api.registerUISlot({ id: "application.before", cardinality: "many" });
   api.registerUISlot({ id: "application.after", cardinality: "many" });
   api.registerUISlot({ id: "workbench.layers", cardinality: "many" });
@@ -53,3 +53,6 @@ export function activate(api: ApplicationGenerationAPI): void {
   }
   api.registerApplicationShell({ id: "ui.shell", render: DefaultShell });
 }
+
+// The legacy entry remains available to standalone authoring hosts.
+export const activate = activatePresentation;

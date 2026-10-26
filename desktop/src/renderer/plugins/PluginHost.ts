@@ -8,12 +8,13 @@ import { scopeApplicationEnvironment, scopeApplicationArtifacts, scopeApplicatio
 import type { PluginServiceCall } from "../../../../packages/plugin-sdk/src";
 import type {
   ApplicationActionMapV1, ApplicationGenerationAPI, ApplicationServiceV1, ApplicationProviderDefinition,
-  ApplicationShellDefinition, UISlotDefinition, UIContributionDefinition,
+  ApplicationShellDefinition, UISlotDefinition, UIContributionDefinition, ApplicationPresentationAPI,
 } from "../../../../packages/plugin-sdk/src/ui";
 import type * as React from "react";
 import type { PluginDesktopActivationParams, ExtensionInventoryRecord, ExtensionIconDescriptor, PluginVisibleHistoryRequest, PluginVisibleHistoryResult } from "../../shared/protocol";
 import { settleOnAbort } from "./activation";
 import { createPluginWebPage } from "./PluginWebPage";
+import { retainPresentationReads } from "./PresentationApplication";
 
 import type {
   CSSSnippet,
@@ -465,6 +466,8 @@ interface UIContributionRecord extends OrderedRecord { readonly definition: Regi
 
 interface GenerationState {
   readonly manifestId: string;
+  presentationOnly: boolean;
+  presentationApplication?: { binding: number; service: ApplicationServiceV1 };
   graphGeneration?: string;
   activation: number;
   registrationReported: boolean;
@@ -722,6 +725,46 @@ export class PluginHost {
     };
   }
 
+  /** Opt-in is recorded before registration, never inferred from provider identity. */
+  registerPresentation(api: PluginGenerationApi, register: (api: ApplicationPresentationAPI) => void | Promise<void>): void | Promise<void> {
+    const state = this.pendingActivations.get(api.pluginId)?.state;
+    if (!state || state.lifetime.signal !== api.signal) throw new Error("Presentation registration is no longer pending");
+    state.presentationOnly = true;
+    return register(Object.freeze({ react: api.react, manifestId: api.manifestId, signal: api.signal, contributions: api.contributions,
+      registerApplicationShell: api.registerApplicationShell, registerUISlot: api.registerUISlot,
+      registerUIContribution: api.registerUIContribution }));
+  }
+
+  canRebindPresentation(pluginId: string, generation: string): boolean {
+    const state = this.activeGenerations.get(pluginId);
+    return Boolean(state?.presentationOnly && state.generation === generation && !state.disposed && !state.renderFailed);
+  }
+
+  /** Renew graph acknowledgements without replacing presentation registrations. */
+  rebindPresentation(pluginId: string, generation: string, graphGeneration?: string): void {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state || !this.canRebindPresentation(pluginId, generation)) throw new Error("Presentation cannot be rebound");
+    state.graphGeneration = graphGeneration;
+    state.activation = (this.activationCounts.get(pluginId) ?? 0) + 1;
+    this.activationCounts.set(pluginId, state.activation);
+    state.registrationReported = false;
+    this.reportRegistration(state, "active");
+    if (state.renderedViews > 0) this.report(state, "render", state.renderFailed ? "failed" : "active");
+    this.notifyListeners();
+  }
+
+  getPresentationApplication(pluginId: string, generation: string, fallback: ApplicationServiceV1): ApplicationServiceV1 {
+    const state = this.activeGenerations.get(pluginId);
+    if (!state?.presentationOnly || state.generation !== generation) return fallback;
+    const binding = this.applicationProviders.getBindingRevision();
+    if (!state.presentationApplication || this.applicationProviders.current && state.presentationApplication.binding !== binding) {
+      const service = this.createApplicationService(state, true);
+      const lifetime = this.applicationProviders.current?.lifetime?.signal ?? state.lifetime.signal;
+      state.presentationApplication = { binding, service: retainPresentationReads(service, lifetime) };
+    }
+    return state.presentationApplication.service;
+  }
+
   disable(pluginId: string): void {
     this.unload(pluginId);
   }
@@ -802,7 +845,7 @@ export class PluginHost {
     }
   }
 
-  private createApplicationService(state: GenerationState): ApplicationServiceV1 {
+  private createApplicationService(state: GenerationState, pinProvider = false): ApplicationServiceV1 {
     let workbench: ApplicationServiceV1["workbench"] | undefined;
     let desktop: ApplicationServiceV1["desktop"] | undefined;
     let composerPresentation: ApplicationServiceV1["composerPresentation"] | undefined;
@@ -832,6 +875,12 @@ export class PluginHost {
       }
       return providerScope;
     };
+    // A presentation closure may capture only invoke and call it much later.
+    // Pin its authority now, before any read; it must never lazily bind a successor.
+    if (pinProvider && !this.application) {
+      if (this.applicationProviders.current) service();
+      else lifetime.abort(new PluginLifecycleCancellationError(new Error("No application provider is active")));
+    }
     return Object.freeze({
       contractVersion: 1 as const,
       get workbench() { return workbench ??= scopeApplicationWorkbench(() => service().workbench, lifetime.signal); },
@@ -855,8 +904,16 @@ export class PluginHost {
           if (state.active && !state.disposed && !providerLifetime?.signal.aborted) listener();
         });
         const disposable = createDisposable(unsubscribe);
+        const stop = () => {
+          lifetime.signal.removeEventListener("abort", stop);
+          disposable.dispose();
+          const index = state.teardown.indexOf(disposable);
+          if (index >= 0) state.teardown.splice(index, 1);
+        };
         state.teardown.push(disposable);
-        return () => disposable.dispose();
+        lifetime.signal.addEventListener("abort", stop, { once: true });
+        if (lifetime.signal.aborted) stop();
+        return stop;
       },
       invoke: async <Action extends keyof ApplicationActionMapV1>(
         action: Action, input: ApplicationActionMapV1[Action]["input"], options?: { readonly signal?: AbortSignal },
@@ -1819,16 +1876,16 @@ export class PluginHost {
     this.reportQueue = this.reportQueue.then(async () => {
       // A newly committed graph owns the registry. Its obsolete callbacks may
       // still finish effect cleanup, but cannot update the replacement graph.
-      if (this.inventoryGraphs && this.inventoryGraphs.get(state.pluginId) !== state.graphGeneration) return;
-      if (state.activation < (this.reportedActivations.get(state.pluginId) ?? 0)) return;
-      if (phase === "registration") this.reportedActivations.set(state.pluginId, state.activation);
+      if (this.inventoryGraphs && this.inventoryGraphs.get(params.id) !== params.graph_generation) return;
+      if (params.activation < (this.reportedActivations.get(params.id) ?? 0)) return;
+      if (phase === "registration") this.reportedActivations.set(params.id, params.activation);
       await send(params);
       if (phase === "registration" && this.reportFailures.delete(state.pluginId)) {
         this.reportFailure = [...this.reportFailures.values()].join("\n") || undefined;
         this.notifyListeners();
       }
     }).catch((error: unknown) => {
-      if (this.inventoryGraphs && this.inventoryGraphs.get(state.pluginId) !== state.graphGeneration) return;
+      if (this.inventoryGraphs && this.inventoryGraphs.get(params.id) !== params.graph_generation) return;
       const message = `Desktop activation report failed for ${state.pluginId}: ${errorMessage(error)}`;
       this.reportFailures.set(state.pluginId, message);
       this.reportFailure = [...this.reportFailures.values()].join("\n");
@@ -2166,6 +2223,7 @@ function createGenerationState(
   const cleanupComplete = new Promise<void>(resolve => { completeCleanup = resolve; });
   return {
     manifestId,
+    presentationOnly: false,
     activation: 0,
     registrationReported: false,
     renderedViews: 0,

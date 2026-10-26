@@ -34,6 +34,8 @@ export interface EnvironmentPullRequestResultV1 {
 export interface EnvironmentSnapshotV1 {
   /** Authoritative worktree occupancy; pending or unavailable reads remain busy. */
   readonly actionBusy: boolean;
+  /** True only while the current occupancy read is pending, not a settled busy result. */
+  readonly actionBusyPending?: boolean;
   readonly contextKey: string;
   readonly root?: string;
   readonly status?: EnvironmentGitStatusV1;

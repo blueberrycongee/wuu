@@ -9,6 +9,7 @@ import { SettingsControlsProvider } from "./SettingsControlsContext";
 
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -69,6 +70,7 @@ import {
 import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
 import { ConversationStatusCluster } from "./ConversationStatusCluster";
 import { useConversationSwitchReady } from "./ConversationSwitchReady";
+import { UICompositionPendingContext } from "./plugins/ApplicationShell";
 import { ConversationPresentationLoading, type ConversationPresentationRegion, useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
 import { createEnvironmentPanelActions } from "./EnvironmentActions";
 import {
@@ -106,6 +108,7 @@ import {
 import { showErrorToast, showToast } from "./Toast";
 import { TopNotice } from "./TopNotice";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { UILayerPortal } from "./ui/layers/UILayerHost";
 import { WebWorkspacePanel } from "./WebWorkspace";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
@@ -220,7 +223,7 @@ export function App({ application, slots, shellPluginId }: {
     const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
     window.addEventListener(OPEN_SETTINGS_EVENT, open);
     return () => window.removeEventListener(OPEN_SETTINGS_EVENT, open);
-  }, []);
+  }, [application]);
   const conversationActions = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationActions);
   const submissionView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().submission);
   const conversationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationWorkspace);
@@ -869,7 +872,7 @@ export function App({ application, slots, shellPluginId }: {
       pendingEnvironmentPanelHasRoomRef.current = undefined;
       setResizeState(false);
     };
-  }, []);
+  }, [application]);
 
   useEffect(() => {
     const update = (): void => {
@@ -940,6 +943,7 @@ export function App({ application, slots, shellPluginId }: {
   useEffect(() => {
     scheduleGitStatusRefresh(0);
   }, [
+    application,
     activeContext?.kind,
     environmentContext?.cwd,
     workspaceSnapshot.activeWorkspaceId,
@@ -953,7 +957,7 @@ export function App({ application, slots, shellPluginId }: {
 
     window.addEventListener("focus", handleFocus);
     return () => window.removeEventListener("focus", handleFocus);
-  }, []);
+  }, [application]);
   const showingSkillsCatalog = Boolean(
     initialized &&
     (nativeSection === "catalog" || currentSessionTab?.kind === "skills"),
@@ -1134,18 +1138,21 @@ export function App({ application, slots, shellPluginId }: {
   }, [submissionView, conversationWorkspace, tabs.activeTabId, activeThreadID, requestSubmittedQueryScroll, discardSubmittedMessage]);
   const getMessagePresentationRegions = useCallback((): ConversationPresentationRegion[] => {
     if (!conversationVisible) return [];
+    const excludeRight = Array.from(appShellRef.current?.querySelectorAll<HTMLElement>('[data-wuu-component="workspace-tool-rail"]') ?? []);
     if (splitConversation) return Object.values(splitPaneRefs.current).filter((element): element is HTMLElement => Boolean(element))
-      .map(element => ({ element }));
+      .map(element => ({ element, excludeRight }));
     const element = conversationScrollRef.current;
     if (!element) return [];
     // Empty pages extend underneath the floating dock; populated histories may
     // also share its status row. Neither belongs to the message transition.
     const excludeBelow = [dockComposerNode, conversationPaneRef.current?.querySelector<HTMLElement>(".conversation-status-cluster")]
       .filter((node): node is HTMLElement => Boolean(node));
-    return [{ element, excludeBelow }];
-  }, [conversationVisible, splitConversation, splitPaneRefs, conversationScrollRef, dockComposerNode, conversationPaneRef]);
+    return [{ element, excludeBelow, excludeRight }];
+  }, [conversationVisible, splitConversation, splitPaneRefs, conversationScrollRef, dockComposerNode, conversationPaneRef, appShellRef]);
+  const surfacesPending = useContext(UICompositionPendingContext);
   useConversationPresentationTransition({
     scopeRef: appShellRef, pending: tabs.pending, getRegions: getMessagePresentationRegions,
+    ready: !surfacesPending,
     // A browser/settings route can still initiate a workspace handoff. Capture
     // its static chrome without displaying a message overlay on that route.
     enabled: initialized && application.getSnapshot().phase !== "error",
@@ -1403,6 +1410,7 @@ export function App({ application, slots, shellPluginId }: {
     }, motionDurationMs("--environment-panel-exit-duration", 220));
     return () => window.clearTimeout(timer);
   }, [
+    application,
     environmentPanelHasRoom,
     environmentPanelMounted,
     environmentPanelVisible,
@@ -1447,7 +1455,14 @@ export function App({ application, slots, shellPluginId }: {
     setSettingsOpen(false);
   }
 
-  const scheduleGitStatusRefresh = (delayMs: number): void => application.environment.scheduleStatusRefresh(delayMs);
+  const scheduleGitStatusRefresh = (delayMs: number): void => {
+    try { application.environment.scheduleStatusRefresh(delayMs); }
+    catch (cause) {
+      // Focus may arrive during the writer gap. Do not route that old callback
+      // to a successor; the new scope's effect schedules its own refresh.
+      if (!isPluginLifecycleCancellation(cause)) throw cause;
+    }
+  };
   const {
     toggleEnvironmentPanel,
     closeEnvironmentPanel,

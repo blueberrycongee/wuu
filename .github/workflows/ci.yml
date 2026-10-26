@@ -1050,6 +1050,7 @@ jobs:
         shell: bash
         env:
           WUU_SWITCH_PRESENTATION: "1"
+          WUU_SWITCH_STABLE_PRESENTATION: "1"
           WUU_SWITCH_TURNS: "12"
           WUU_SWITCH_ROUNDS: "1"
           WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core

@@ -7,7 +7,9 @@ import { createConversationTestApplication } from "../ConversationControlsTestPr
 import { PluginHost } from "../plugins/PluginHost";
 import { ApplicationShellOutlet } from "../plugins/ApplicationShell";
 import { activate } from "./DefaultConversationSurface";
-import { activate as activatePreview } from "./DefaultPreviewSurface";
+import { activate as activatePreview, DefaultPreviewSurface } from "./DefaultPreviewSurface";
+import * as Notices from "../Toast";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { activate as activateComposer } from "./DefaultComposerSurface";
 import { ApplicationComposerPresentation } from "../plugins/ApplicationComposerPresentation";
 import { initialState, type AppState } from "../AppState";
@@ -109,4 +111,23 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   await act(async () => root!.unmount()); root = undefined;
   expect(setPreviewVisibility).toHaveBeenLastCalledWith(false, expect.any(AbortSignal));
   presentation.dispose();
+});
+
+
+it("does not report retired preview cleanup as an error when its presentation stays mounted", async () => {
+  const base = createConversationTestApplication();
+  const notice = vi.spyOn(Notices, "showErrorToast").mockImplementation(() => undefined);
+  let retired = false;
+  const previous = { ...base, invoke: async () => { if (retired) throw new PluginLifecycleCancellationError(new Error("Rebound provider")); } } as typeof base;
+  const next = { ...base, invoke: vi.fn(async () => undefined) } as unknown as typeof base;
+  const signal = new AbortController().signal;
+  const context = { layout: { open: false, present: false, globalized: false, onToggleGlobalize() {}, pane: "primary" } };
+  const slots = { Slot: () => null };
+  container = document.createElement("div"); document.body.append(container); root = createRoot(container);
+  await act(async () => root!.render(<DefaultPreviewSurface application={previous} slots={slots} context={context} signal={signal} locale="en" translate={key => key} />));
+  retired = true;
+  await act(async () => root!.render(<DefaultPreviewSurface application={next} slots={slots} context={context} signal={signal} locale="en" translate={key => key} />));
+  expect(signal.aborted).toBe(false);
+  expect(next.invoke).toHaveBeenCalledWith("preview.set-visibility", { open: false });
+  expect(notice).not.toHaveBeenCalled();
 });

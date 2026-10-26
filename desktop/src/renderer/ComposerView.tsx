@@ -89,7 +89,7 @@ import { ComposerCameraPanel } from "./ComposerCamera";
 import { WorkspaceDocumentDrawerContext } from "./WorkspaceDocumentTurnDock";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import type { PluginHost } from "./plugins/PluginHost";
-import { createUIComposition } from "./plugins/ApplicationShell";
+import { createUIComposition, UICompositionPendingContext } from "./plugins/ApplicationShell";
 import { ComposerPluginToolbar } from "./plugins/ComposerPluginToolbar";
 import {
   AccessMenu,
@@ -173,6 +173,7 @@ export function Composer({
   projects,
   gitStatus,
   branchPickerDisabled = false,
+  branchPickerPending = false,
   branchMenuOpen,
   onToggleBranchMenu,
   onSelectGitBranch,
@@ -296,6 +297,7 @@ export function Composer({
   initialized?: ComposerConfiguration;
   gitStatus?: GitStatusResult;
   branchPickerDisabled?: boolean;
+  branchPickerPending?: boolean;
   onCreateGitBranch?: (branch: string) => Promise<void>;
   onOpenGitWorktree?: (path: string) => Promise<void>;
   worktree?: ComposerWorktreeControl;
@@ -1180,8 +1182,16 @@ export function Composer({
   const controlsBelowInput = !mobileWeb && variant !== "document" && !textOnly;
   const controlsInRail = Boolean(runtimeControlsTarget && !topAccessory);
   const compactControls = controlsInRail || controlsBelowInput;
+  // Navigation temporarily fences interaction, not the displayed capability.
+  // Keep genuine readonly/running styles, without flashing every control disabled.
+  const preventPendingControl = (event: { preventDefault(): void; stopPropagation(): void }) => {
+    event.preventDefault(); event.stopPropagation();
+  };
+  const blockControls = (pending: boolean) => ({ inert: pending || undefined,
+    onClickCapture: pending ? preventPendingControl : undefined, onKeyDownCapture: pending ? preventPendingControl : undefined });
+  const pendingControlProps = blockControls(interactionDisabled);
   const workspaceControls = canSelectWorkspace || (mainConversation && controlsBelowInput) ? (
-    <div className={controlsInRail ? "composer-workspace-rail" : "composer-workspace-bar"} ref={menuRef}>
+    <div className={controlsInRail ? "composer-workspace-rail" : "composer-workspace-bar"} ref={menuRef} {...pendingControlProps}>
       <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
         <Tooltip
           content={workspacePillTitle}
@@ -1233,13 +1243,14 @@ export function Composer({
           </FloatingMenuPortal>
         ) : null}
       </div>
-      {gitStatus?.is_repo ? (
-        <div className="composer-workspace-group composer-git-controls">
+      {gitStatus?.is_repo || branchPickerPending ? (
+        <div className="composer-workspace-group composer-git-controls" {...blockControls(interactionDisabled || branchPickerPending)}>
           <ComposerBranchPicker
             key={activeContext?.cwd}
             inToolRail={controlsInRail}
             gitStatus={gitStatus}
-            disabled={branchPickerDisabled || readOnly}
+            pending={branchPickerPending}
+            disabled={branchPickerDisabled || sessionReadOnly}
             open={branchMenuOpen}
             onToggle={onToggleBranchMenu}
             onSelect={worktree?.enabled ? worktree.onSelectStartBranch : onSelectGitBranch}
@@ -1262,7 +1273,7 @@ export function Composer({
           aria-haspopup="menu"
           aria-expanded={accessMenuOpen}
           aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
-          disabled={!initialized || readOnly || running || permissionLocked}
+          disabled={!initialized || sessionReadOnly || running || permissionLocked}
           onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
           onClick={onToggleAccessMenu}
           onKeyDown={(event) => {
@@ -1301,7 +1312,7 @@ export function Composer({
       ) : null}
     </div>
   ) : null;
-  const runtimeControls = <>
+  const runtimeControls = <div style={{ display: "contents" }} {...pendingControlProps}>
     {permissionControl}
     {hideRuntimeControls ? null : (
       <>
@@ -1346,7 +1357,7 @@ export function Composer({
         ) : null}
       </>
     )}
-  </>;
+  </div>;
   const content = (
     <div
       className="composer-stack"
@@ -1697,8 +1708,21 @@ export function Composer({
 }
 
 function ComposerFooter({ collapsed, children }: { collapsed: boolean; children: ReactNode }): JSX.Element {
+  const compositionPending = useContext(UICompositionPendingContext);
+  const [motionReady, setMotionReady] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    setMotionReady(false);
+    if (compositionPending) return;
+    // A selected preview can publish its portal after the composer. Resolve
+    // that first layout, including the dock inset, before enabling rail motion.
+    const frame = requestAnimationFrame(() => {
+      shellRef.current?.getBoundingClientRect();
+      setMotionReady(true);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [compositionPending]);
   useLayoutEffect(() => {
     if (collapsed) return;
     const shell = shellRef.current!;
@@ -1712,7 +1736,8 @@ function ComposerFooter({ collapsed, children }: { collapsed: boolean; children:
     return () => observer.disconnect();
   }, [collapsed]);
   return (
-    <div ref={shellRef} className="composer-footer-shell" data-collapsed={collapsed || undefined} inert={collapsed}>
+    <div ref={shellRef} className="composer-footer-shell" data-collapsed={collapsed || undefined}
+      data-layout-pending={compositionPending || !motionReady || undefined} inert={collapsed}>
       <div ref={contentRef} className="composer-footer">{children}</div>
     </div>
   );

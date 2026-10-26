@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApplicationProviderInstanceV1, ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
-import { ApplicationProviders } from "./ApplicationProviders";
+import { ApplicationProviders, type ApplicationRetirementPreparation } from "./ApplicationProviders";
 
 function candidate(label: string, events: string[], fail = false): ApplicationProviderInstanceV1 {
   return {
@@ -10,6 +10,167 @@ function candidate(label: string, events: string[], fail = false): ApplicationPr
     dispose: async () => { events.push(`${label}:dispose`); },
   };
 }
+
+// A slow catalog can outlive the initial navigation frame. Preparation must capture
+// again while the source is current, but never hold writer retirement indefinitely.
+describe("bounded application retirement presentation", () => {
+  afterEach(() => vi.useRealTimers());
+
+  async function active() {
+    const providers = new ApplicationProviders();
+    const record = providers.register({ pluginId: "external", generation: "one", id: "ui.application" }, { id: "ui.application", prepare: () => candidate("one", []) });
+    await providers.select(record);
+    return { providers, record };
+  }
+
+  it("awaits presentation preparation before announcing retirement without stopping the source", async () => {
+    const { providers, record } = await active();
+    const binding = providers.getBindingRevision();
+    const scope = providers.createScope(new AbortController().signal) as unknown as { signal: AbortSignal };
+    let captured!: () => void;
+    const gate = new Promise<void>(resolve => { captured = resolve; });
+    const requests: ApplicationRetirementPreparation[] = [];
+    const unsubscribe = providers.subscribeRetirementPreparation(request => { requests.push(request); return gate; });
+    const pending = providers.prepareRetirement(new AbortController().signal);
+    await Promise.resolve();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].binding).toBe(binding);
+    expect(providers.current).toBe(record);
+    expect(scope.signal.aborted).toBe(false);
+    expect(providers.getRetirement()).toBeUndefined();
+    captured();
+    const finish = await pending;
+    expect(providers.getRetirement()).toEqual({ binding });
+    expect(requests[0].signal.aborted).toBe(false);
+    finish(); unsubscribe();
+    expect(providers.getRetirement()).toBeUndefined();
+    const finishUnobserved = await providers.prepareRetirement(new AbortController().signal);
+    expect(requests).toHaveLength(1);
+    finishUnobserved();
+    await providers.remove(record);
+  });
+
+  it.each(["throw", "reject", "timeout"])("continues retirement after presentation %s", async failure => {
+    vi.useFakeTimers();
+    const { providers, record } = await active();
+    let request!: ApplicationRetirementPreparation;
+    let captured!: () => void;
+    providers.subscribeRetirementPreparation(value => {
+      request = value;
+      if (failure === "throw") throw new Error("capture unavailable");
+      if (failure === "reject") return Promise.reject(new Error("decode failed"));
+      return new Promise<void>(resolve => { captured = resolve; });
+    });
+    const pending = providers.prepareRetirement(new AbortController().signal);
+    if (failure === "timeout") {
+      await vi.advanceTimersByTimeAsync(119);
+      expect(providers.getRetirement()).toBeUndefined();
+      expect(providers.current).toBe(record);
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    const finish = await pending;
+    const retirement = providers.getRetirement();
+    expect(retirement).toEqual({ binding: providers.getBindingRevision() });
+    expect(providers.failure).toBeUndefined();
+    if (failure === "timeout") {
+      expect(request.signal.aborted).toBe(true);
+      captured(); await Promise.resolve();
+      expect(providers.getRetirement()).toBe(retirement);
+    }
+    finish(); await providers.remove(record);
+  });
+
+  it.each(["abort", "supersession"])("does not let an obsolete %s capture delay or clear the newer checkpoint", async cancellation => {
+    const { providers, record } = await active();
+    const requests: ApplicationRetirementPreparation[] = [];
+    const releases: (() => void)[] = [];
+    providers.subscribeRetirementPreparation(request => {
+      requests.push(request);
+      return new Promise<void>(resolve => { releases.push(resolve); });
+    });
+    const firstSignal = new AbortController();
+    const first = providers.prepareRetirement(firstSignal.signal);
+    await Promise.resolve();
+    if (cancellation === "abort") firstSignal.abort();
+    const newer = providers.prepareRetirement(new AbortController().signal);
+    await Promise.resolve();
+    const finishFirst = await first;
+    expect(requests[0].signal.aborted).toBe(true);
+    expect(providers.getRetirement()).toBeUndefined();
+    releases[0](); await Promise.resolve();
+    expect(requests[1].signal.aborted).toBe(false);
+    expect(providers.getRetirement()).toBeUndefined();
+    releases[1]();
+    const finishNewer = await newer;
+    const retirement = providers.getRetirement();
+    finishFirst(); firstSignal.abort();
+    expect(providers.getRetirement()).toBe(retirement);
+    expect(retirement).toEqual({ binding: providers.getBindingRevision() });
+    finishNewer(); await providers.remove(record);
+  });
+
+  it("keeps a newer checkpoint started synchronously by a superseded capture's cancellation", async () => {
+    const { providers, record } = await active();
+    const requests: ApplicationRetirementPreparation[] = [];
+    const releases: (() => void)[] = [];
+    let newest!: Promise<() => void>;
+    providers.subscribeRetirementPreparation(request => {
+      requests.push(request);
+      if (requests.length === 1) request.signal.addEventListener("abort", () => {
+        newest = providers.prepareRetirement(new AbortController().signal);
+      }, { once: true });
+      return new Promise<void>(resolve => { releases.push(resolve); });
+    });
+    const first = providers.prepareRetirement(new AbortController().signal);
+    await Promise.resolve();
+    const superseded = providers.prepareRetirement(new AbortController().signal);
+    await Promise.resolve();
+    try {
+      expect(requests).toHaveLength(2);
+      expect(requests[1].signal.aborted).toBe(false);
+      (await first)(); (await superseded)();
+      expect(providers.getRetirement()).toBeUndefined();
+      releases[1]();
+      const finish = await newest;
+      expect(providers.getRetirement()).toEqual({ binding: providers.getBindingRevision() });
+      finish();
+    } finally {
+      releases.forEach(release => release());
+      (await first)(); (await superseded)(); (await newest)();
+      await providers.remove(record);
+    }
+  });
+
+  it("invalidates preparation when the same source record leaves and returns with a new binding", async () => {
+    const { providers, record } = await active();
+    let request!: ApplicationRetirementPreparation, captured!: () => void;
+    providers.subscribeRetirementPreparation(value => { request = value; return new Promise<void>(resolve => { captured = resolve; }); });
+    const pending = providers.prepareRetirement(new AbortController().signal);
+    await Promise.resolve();
+    await providers.select(undefined);
+    const finish = await pending;
+    expect(request.signal.aborted).toBe(true);
+    await providers.select(record);
+    expect(providers.getBindingRevision()).not.toBe(request.binding);
+    captured(); await Promise.resolve(); finish();
+    expect(providers.getRetirement()).toBeUndefined();
+    await providers.remove(record);
+  });
+
+  it("never invokes capture for an absent source or already aborted replacement", async () => {
+    const providers = new ApplicationProviders();
+    const listener = vi.fn();
+    providers.subscribeRetirementPreparation(listener);
+    (await providers.prepareRetirement(new AbortController().signal))();
+    const record = providers.register({ pluginId: "external", generation: "one", id: "ui.application" }, { id: "ui.application", prepare: () => candidate("one", []) });
+    await providers.select(record);
+    const controller = new AbortController(); controller.abort();
+    (await providers.prepareRetirement(controller.signal))();
+    expect(listener).not.toHaveBeenCalled();
+    expect(providers.getRetirement()).toBeUndefined();
+    await providers.remove(record);
+  });
+});
 
 describe("selected application business provider lifecycle", () => {
   it("annotates only an active source binding and isolates superseded retirement cleanup", async () => {

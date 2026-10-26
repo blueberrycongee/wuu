@@ -3,7 +3,7 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
-import { ConversationPresentationBoundary, ConversationPresentationCancellation, usePresentedNavigation, useConversationPresentationTransition } from "./ConversationPresentationTransition";
+import { ConversationPresentationBoundary, ConversationPresentationLoading, ConversationPresentationCancellation, usePresentedNavigation, useConversationPresentationTransition } from "./ConversationPresentationTransition";
 
 type Pending = { requestId: number; contentReady?: boolean };
 const cleanups: Array<() => void> = [];
@@ -25,17 +25,21 @@ function raster() {
 }
 async function mountBoundary(getRetirement?: () => { readonly binding: number } | undefined) {
   const api = raster();
+  const preparations = new Set<(request: { binding: number; signal: AbortSignal }) => void | Promise<void>>();
+  const subscribeRetirementPreparation = (listener: (request: { binding: number; signal: AbortSignal }) => void | Promise<void>) => {
+    preparations.add(listener); return () => { preparations.delete(listener); };
+  };
   const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
   let present!: ReturnType<typeof usePresentedNavigation>;
-  function Pane({ pending }: { pending?: Pending & { intentId?: string } }) {
+  function Pane({ pending, ready }: { pending?: Pending & { intentId?: string }; ready?: boolean }) {
     const ref = React.useRef<HTMLDivElement>(null);
     present = usePresentedNavigation();
-    useConversationPresentationTransition({ scopeRef: ref, pending, enabled: true });
+    useConversationPresentationTransition({ scopeRef: ref, pending, enabled: true, ready });
     return <div ref={ref}>Current conversation<textarea defaultValue="draft" /></div>;
   }
-  type State = { binding?: number; retiring?: boolean; failed?: boolean; pending?: Pending & { intentId?: string } };
-  const tree = ({ binding = 1, retiring = false, failed = false, pending }: State = {}) => <ConversationPresentationBoundary binding={binding} retiring={retiring} failed={failed} getRetirement={getRetirement}>
-    {retiring ? <div role="status">Real loading</div> : <Pane key={binding} pending={pending} />}
+  type State = { binding?: number; retiring?: boolean; failed?: boolean; ready?: boolean; pending?: Pending & { intentId?: string } };
+  const tree = ({ binding = 1, retiring = false, failed = false, pending, ready }: State = {}) => <ConversationPresentationBoundary binding={binding} retiring={retiring} failed={failed} getRetirement={getRetirement} subscribeRetirementPreparation={subscribeRetirementPreparation}>
+    {retiring ? <div role="status">Real loading</div> : <Pane key={binding} pending={pending} ready={ready} />}
   </ConversationPresentationBoundary>;
   const render = async (state: State = {}) => { await act(async () => root.render(tree(state))); };
   const navigate = async (state: State) => {
@@ -45,8 +49,124 @@ async function mountBoundary(getRetirement?: () => { readonly binding: number } 
     await result;
   };
   await render(); cleanups.push(() => { act(() => root.unmount()); container.remove(); });
-  return { ...api, container, render, navigate, action: <T,>(state: State, operation: () => Promise<T>) => present(() => { root.render(tree(state)); return operation(); }), present: <T,>(action: () => Promise<T>) => present(action) };
+  return { ...api, container, render, navigate, prepare: (binding = 1, signal = new AbortController().signal) => Promise.all([...preparations].map(listener => listener({ binding, signal }))), action: <T,>(state: State, operation: () => Promise<T>) => present(() => { root.render(tree(state)); return operation(); }), present: <T,>(action: () => Promise<T>) => present(action) };
 }
+it.each([3900, 5000])("takes a fresh bounded frame at retirement after %dms of healthy preparation", async delay => {
+  vi.useFakeTimers();
+  try {
+    const ui = await mountBoundary();
+    const action = vi.fn(async () => {});
+    let navigation!: Promise<void>;
+    await act(async () => { navigation = ui.action({ pending: { requestId: 1, intentId: "slow-prepare" } }, action); });
+    await act(async () => ui.transitions[0].callback()); await navigation;
+    await act(async () => vi.advanceTimersByTime(delay));
+    let preparation!: Promise<unknown>;
+    await act(async () => { preparation = ui.prepare(); });
+    expect(ui.start).toHaveBeenCalledTimes(2);
+    expect(ui.transitions[0].revoked).toHaveBeenCalledOnce();
+    await act(async () => ui.transitions[1].callback()); await preparation;
+    await ui.render({ retiring: true });
+    expect(ui.container.textContent).not.toContain("Real loading");
+    await act(async () => vi.advanceTimersByTime(200));
+    expect(ui.transitions[1].revoked).not.toHaveBeenCalled();
+    await ui.render({ binding: 2, pending: { requestId: 1, intentId: "slow-prepare", contentReady: true } });
+    await ui.render({ binding: 2 });
+    expect(ui.transitions[1].revoked).toHaveBeenCalledOnce();
+    expect(action).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); }
+});
+
+it("expires the fresh handoff frame at its own four-second bound without blocking later recovery", async () => {
+  vi.useFakeTimers();
+  try {
+    const ui = await mountBoundary();
+    await ui.navigate({ pending: { requestId: 1, intentId: "overlong-handoff" } });
+    await act(async () => vi.advanceTimersByTime(3900));
+    let preparation!: Promise<unknown>;
+    await act(async () => { preparation = ui.prepare(); });
+    await act(async () => ui.transitions[1].callback()); await preparation;
+    await ui.render({ retiring: true });
+    await act(async () => vi.advanceTimersByTime(3999));
+    expect(ui.transitions[1].revoked).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTime(1));
+    expect(ui.transitions[1].revoked).toHaveBeenCalledOnce();
+    expect(ui.container.textContent).toContain("Real loading");
+    await ui.render({ binding: 2, pending: { requestId: 1, intentId: "overlong-handoff", contentReady: true } });
+    await ui.render({ binding: 2 });
+    expect(ui.container.querySelector('textarea')).not.toBeNull();
+    expect((ui.container.firstElementChild as HTMLElement).inert).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+
+it("bounds a stalled fresh retirement capture and ignores its late completion", async () => {
+  vi.useFakeTimers();
+  try {
+    const ui = await mountBoundary();
+    await ui.navigate({ pending: { requestId: 1, intentId: "stall" } });
+    let settled = false;
+    await act(async () => { void ui.prepare().then(() => { settled = true; }); });
+    expect(ui.start).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTime(119)); expect(settled).toBe(false);
+    await act(async () => vi.advanceTimersByTime(1)); expect(settled).toBe(true);
+    await ui.render({ retiring: true });
+    expect(ui.container.textContent).toContain("Real loading");
+    await act(async () => ui.transitions[1].callback());
+    expect(document.querySelector('[data-wuu-presentation-frame]')).toBeNull();
+  } finally { vi.useRealTimers(); }
+});
+
+it("cancels only the obsolete retirement capture when a newer intent starts", async () => {
+  const ui = await mountBoundary();
+  await ui.navigate({ pending: { requestId: 1, intentId: "first" } });
+  const abort = new AbortController();
+  let preparation!: Promise<unknown>;
+  await act(async () => { preparation = ui.prepare(1, abort.signal); });
+  expect(ui.start).toHaveBeenCalledTimes(2);
+  await ui.navigate({ pending: { requestId: 2, intentId: "latest" } });
+  await preparation;
+  await act(async () => { abort.abort(); ui.transitions[1].callback(); });
+  expect(document.querySelector('[data-wuu-presentation-frame]')).not.toBeNull();
+  expect(ui.transitions[2].revoked).not.toHaveBeenCalled();
+});
+
+it("keeps incomplete successor composition inert behind the full frame until its chrome is ready", async () => {
+  vi.useFakeTimers();
+  const ui = await mountBoundary();
+  await ui.navigate({ pending: { requestId: 1, intentId: "late-ui" } });
+  await ui.render({ retiring: true });
+  await ui.render({ binding: 2, ready: false, pending: { requestId: 1, intentId: "late-ui", contentReady: true } });
+  expect(document.querySelector('[data-wuu-presentation-frame="full"]')).not.toBeNull();
+  expect((ui.container.firstElementChild as HTMLElement).inert).toBe(true);
+  // The successor must mount under the image so delayed contributions can finish.
+  expect(ui.container.querySelector('textarea')).not.toBeNull();
+  await ui.render({ binding: 2, ready: true, pending: { requestId: 1, intentId: "late-ui", contentReady: true } });
+  expect((ui.container.firstElementChild as HTMLElement).inert).toBe(true);
+  await act(async () => vi.advanceTimersByTime(48));
+  expect(document.querySelector('[data-wuu-presentation-frame="full"]')).toBeNull();
+  expect((ui.container.firstElementChild as HTMLElement).inert).toBe(false);
+  vi.useRealTimers();
+});
+
+it("captures a background provider retirement without inventing or replaying a navigation intent", async () => {
+  vi.useFakeTimers();
+  try {
+    const ui = await mountBoundary();
+    let preparation!: Promise<unknown>;
+    await act(async () => { preparation = ui.prepare(); });
+    expect(ui.start).toHaveBeenCalledOnce();
+    await act(async () => ui.transitions[0].callback()); await preparation;
+    await ui.render({ retiring: true });
+    expect(document.querySelector('[data-wuu-presentation-frame="full"]')).not.toBeNull();
+    await ui.render({ binding: 2, ready: false });
+    expect((ui.container.firstElementChild as HTMLElement).inert).toBe(true);
+    expect(ui.container.querySelector('textarea')).not.toBeNull();
+    await ui.render({ binding: 2, ready: true });
+    await act(async () => vi.advanceTimersByTime(48));
+    expect(document.querySelector('[data-wuu-presentation-frame]')).toBeNull();
+    expect((ui.container.firstElementChild as HTMLElement).inert).toBe(false);
+  } finally { vi.useRealTimers(); }
+});
+
 it("retains a static host frame only during retirement, then restores live successor chrome", async () => {
   const ui = await mountBoundary();
   await ui.navigate({ pending: { requestId: 5, intentId: "stable-intent" } });
@@ -343,4 +463,30 @@ it("retains only message pixels for an explicitly pending intent while its repla
   expect((ui.container.firstElementChild as HTMLElement).inert).not.toBe(true);
   expect(document.querySelector("[data-wuu-presentation-frame=full]")).toBeNull();
   await ui.render(); expect(ui.transitions[0].revoked).toHaveBeenCalledOnce();
+});
+
+
+it("excludes newly mounted chrome before the pending message overlay is painted", async () => {
+  const container = document.createElement("div"); document.body.append(container);
+  const overlay = document.createElement("div"); container.append(overlay);
+  const root = createRoot(overlay);
+  const scope = document.createElement("div"), messages = document.createElement("div"), dock = document.createElement("div");
+  container.append(scope); scope.append(messages, dock);
+  const rect = (top: number, height: number) => ({ left: 0, top, right: 600, bottom: top + height, width: 600, height }) as DOMRect;
+  scope.getBoundingClientRect = () => rect(0, 600);
+  messages.getBoundingClientRect = () => rect(100, 500);
+  dock.getBoundingClientRect = () => rect(550, 50);
+  const regions = () => [{ element: messages, excludeBelow: [dock, ...scope.querySelectorAll<HTMLElement>("[data-status]")],
+    excludeRight: [...scope.querySelectorAll<HTMLElement>("[data-tools]")] }];
+  cleanups.push(() => { act(() => root.unmount()); container.remove(); });
+  await act(async () => root.render(<ConversationPresentationLoading scopeRef={{ current: scope }} getRegions={regions} visible />));
+  expect(container.querySelector<HTMLElement>(".view-switch-loading-conversation")!.style.height).toBe("450px");
+  const status = document.createElement("div"); status.setAttribute("data-status", "");
+  status.getBoundingClientRect = () => rect(500, 40);
+  await act(async () => { scope.append(status); });
+  expect(container.querySelector<HTMLElement>(".view-switch-loading-conversation")!.style.height).toBe("400px");
+  const rail = document.createElement("div"); rail.setAttribute("data-tools", "");
+  rail.getBoundingClientRect = () => ({ ...rect(120, 220), left: 500, right: 540, width: 40 });
+  await act(async () => { scope.append(rail); });
+  expect(container.querySelector<HTMLElement>(".view-switch-loading-conversation")!.style.width).toBe("500px");
 });

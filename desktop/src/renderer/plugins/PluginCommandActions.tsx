@@ -1,5 +1,6 @@
 import { Tooltip } from "../Tooltip";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import { FloatingMenuPortal, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "../ComposerFloatingMenu";
 import { isTouchWebShell } from "../ComposerFocus";
 import { AlertCircle, Ellipsis } from "../WuuIcons";
@@ -35,23 +36,34 @@ export function PluginCommandActions({ host, context, buttonClassName = "setting
   const trigger = useRef<HTMLButtonElement | null>(null);
   const menu = useRef<HTMLDivElement | null>(null);
   const target = context.target === "view.title" ? `view:${context.viewId}` : `message:${context.threadId}:${context.turnId}:${context.item.id}`;
-  const live = useRef(true);
-  const pending = useRef(new Set<RegisteredPluginCommand>());
+  const authority = useMemo(() => ({ active: true, pending: new Set<RegisteredPluginCommand>() }), [host]);
   const [busy, setBusy] = useState<ReadonlySet<RegisteredPluginCommand>>(new Set());
   const [failures, setFailures] = useState<ReadonlyMap<RegisteredPluginCommand, { target: string; error: unknown }>>(new Map());
-  useEffect(() => { live.current = true; return () => { live.current = false; }; }, []);
+  useEffect(() => {
+    authority.active = true;
+    setBusy(new Set());
+    setFailures(new Map());
+    return () => { authority.active = false; };
+  }, [authority]);
   const invoke = (command: RegisteredPluginCommand): void => {
-    if (pending.current.has(command)) return;
-    pending.current.add(command);
-    setBusy(new Set(pending.current));
+    if (!authority.active || authority.pending.has(command)) return;
+    authority.pending.add(command);
+    setBusy(new Set(authority.pending));
     setFailures((current) => { const next = new Map(current); next.delete(command); return next; });
-    void host.executeCommandAction(command, context).catch((error: unknown) => {
-      if (!live.current || !host.getCommands().includes(command)) return;
-      host.recordCommandFailure(command, error);
-      setFailures((current) => new Map(current).set(command, { target, error }));
+    void (async () => host.executeCommandAction(command, context))().catch((error: unknown) => {
+      if (!authority.active) return;
+      try {
+        const commands = host.getCommands();
+        if (isPluginLifecycleCancellation(error) || !commands.includes(command)) return;
+        host.recordCommandFailure(command, error);
+        setFailures((current) => new Map(current).set(command, { target, error }));
+      } catch (reason) {
+        if (!isPluginLifecycleCancellation(reason)) throw reason;
+        authority.active = false;
+      }
     }).finally(() => {
-      pending.current.delete(command);
-      if (live.current) setBusy(new Set(pending.current));
+      authority.pending.delete(command);
+      if (authority.active) setBusy(new Set(authority.pending));
     });
   };
   const button = (action: PluginCommandAction, className: string): ReactNode => <CommandButton

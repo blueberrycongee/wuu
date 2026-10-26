@@ -955,7 +955,7 @@ startFixtureProvider().then(() => { startupProbe?.mark('product-main-import'); r
       harnessSha256: hash(__filename), presentationHarnessSha256: hash(path.join(__dirname, 'session-switch-presentation.cjs')),
       fixtureSeed, versions: process.versions,
     }, null, 2));
-    await require('./session-switch-presentation.cjs')({ win: main, evaluate, waitFor, output });
+    await require('./session-switch-presentation.cjs')({ win: main, evaluate, waitFor, output, getResumeCount: () => timings.filter(timing => timing.channel === 'wuu:thread-resume').length });
     clearTimeout(timeout); app.quit(); return;
   }
   if (traceEnabled) await contentTracing.startRecording({

@@ -16,7 +16,123 @@ afterEach(() => {
 });
 
 describe("DesktopPluginRuntime", () => {
-  it.each([false, true])("marks a prepared source retirement before dependent scope abort and clears it after activation (%s)", async failActivation => {
+  // Public opt-in: code owns presentation; each business binding owns actions.
+  // Cover two independent shell authors, stopped-writer gaps, late results, and disable.
+  it.each(["atlas", "lumen"])("retains %s presentation DOM while replacing only business authority", async author => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    let release!: () => void, stopped!: () => void;
+    const stoppedGate = new Promise<void>(resolve => { stopped = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    let lazyInvoke!: import("../../../../packages/plugin-sdk/src/ui").ApplicationServiceV1["invoke"];
+    const scopes: import("../../../../packages/plugin-sdk/src/ui").ApplicationServiceV1[] = [];
+    const calls: string[] = [], signals: AbortSignal[] = [];
+    let subscriptions = 0;
+    let business = 0, mounts = 0, registrations = 0, repaint!: () => void;
+    const runtime = new DesktopPluginRuntime(host, async id => id === "user:business" ? { activate(api: PluginGenerationApi) {
+      const version = ++business, snapshot = { revision: business };
+      const fileSnapshot = { ownerTabId: "draft", interactionOwnerKey: `draft:${version}`, enabled: true, canAskSide: false, comments: [] };
+      api.registerApplicationProvider({ id: "ui.application", prepare: () => ({
+        async activate() { if (version === 2) await resume; },
+        deactivate() { calls.push(`stop:${version}`); stopped(); return undefined; }, dispose() {},
+        createScope(signal: AbortSignal) { signals.push(signal); return {
+          settingsControls: { connectionDisplay: { label(key: string, fallback: string) { signal.throwIfAborted(); return `${key}:${fallback}:${version}`; } } },
+          webWorkspace: { fork() { return this; }, async dispose() {}, onReveal() { signal.throwIfAborted(); subscriptions++; return () => {}; } },
+          workbench: { renderLayers({ settingsOnly }: { settingsOnly: boolean }) { signal.throwIfAborted(); return settingsOnly ? "settings" : `rail:${version}`; } },
+          fileSelection: { getSnapshot({ ownerTabId }: { ownerTabId: string }) { signal.throwIfAborted(); if (ownerTabId !== "draft") throw new Error("Wrong draft owner"); return fileSnapshot; } },
+          contractVersion: 1, getSnapshot() { signal.throwIfAborted(); return snapshot; },
+          subscribe() { signal.throwIfAborted(); return () => {}; },
+          async invoke() { signal.throwIfAborted(); calls.push(`action:${version}`); },
+        } as unknown as import("../../../../packages/plugin-sdk/src/ui").ApplicationServiceV1; },
+      }) });
+    } } : { activatePresentation(api: import("../../../../packages/plugin-sdk/src/ui").ApplicationPresentationAPI) {
+      if (id.endsWith("-lazy")) {
+        api.registerApplicationShell({ id: "ui.shell", render: ({ application }) => { lazyInvoke = application.invoke; return null; } });
+        return;
+      }
+      registrations++;
+      expect("application" in api).toBe(false);
+      expect("invokeRuntime" in api).toBe(false);
+      api.registerApplicationShell({ id: "ui.shell", render: ({ application }) => {
+        const [paint, update] = React.useState(0); repaint = () => update(value => value + 1);
+        React.useEffect(() => { mounts++; }, []);
+        React.useEffect(() => application.webWorkspace.onReveal(() => {}), [application, paint]);
+        const snapshot = React.useSyncExternalStore(application.subscribe, application.getSnapshot);
+        if (!scopes.includes(application)) scopes.push(application);
+        const selection = application.fileSelection.getSnapshot({ ownerTabId: "draft" });
+        const rail = application.workbench.renderLayers({ settingsOnly: false });
+        const label = application.settingsControls.connectionDisplay.label("model", author);
+        return React.createElement("main", null, React.createElement("textarea", { defaultValue: "unsent" }),
+          React.createElement("button", { onClick: () => { void application.invoke("runtime.refresh", {}); } }, `${author}:${snapshot.revision}`), React.createElement("aside", null, selection.interactionOwnerKey, rail, label));
+      } });
+    } });
+    const provider = { ...dependencyPlugin("business"), graph_generation: "one" };
+    const shell = { ...dependencyPlugin(author, ["business"]), graph_generation: "one", resolved_required_dependencies: ["business"] };
+    const lazyShell = { ...shell, id: `${shell.id}-lazy`, provenance: { ...shell.provenance, plugin_id: `${author}-lazy` } };
+    await host.selectApplicationBinding({ pluginId: provider.id, generation: provider.fingerprint!, id: "ui.application" });
+    expect(await runtime.sync([provider, shell, lazyShell])).toEqual([]);
+    const element = document.createElement("div"), root = createRoot(element); document.body.append(element);
+    const render = () => root.render(React.createElement(React.Fragment, null,
+      React.createElement(ApplicationShellOutlet, { host, binding: { pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" } }),
+      React.createElement(ApplicationShellOutlet, { host, binding: { pluginId: lazyShell.id, generation: lazyShell.fingerprint!, id: "ui.shell" } })));
+    await act(async () => render());
+    const textarea = element.querySelector("textarea")!; textarea.focus(); textarea.setSelectionRange(2, 4); textarea.scrollTop = 12;
+    let releaseOldCallback!: () => void;
+    const oldCallbackGate = new Promise<void>(resolve => { releaseOldCallback = resolve; });
+    const oldInvoke = scopes[0].invoke, oldLazyInvoke = lazyInvoke;
+    const lateLazyCallback = oldCallbackGate.then(() => oldLazyInvoke("runtime.refresh", {}));
+    void lateLazyCallback.catch(() => {});
+    const lateCallback = oldCallbackGate.then(() => oldInvoke("runtime.refresh", {}));
+    void lateCallback.catch(() => {});
+    try {
+      let update!: ReturnType<typeof runtime.sync>;
+      act(() => { update = runtime.sync([{ ...provider, graph_generation: "two" }, { ...shell, graph_generation: "two" }, { ...lazyShell, graph_generation: "two" }]); });
+      await act(async () => { await stoppedGate; repaint(); render(); });
+      expect(signals[0].aborted).toBe(true);
+      await expect(scopes[0].invoke("runtime.refresh", {})).rejects.toBeDefined();
+      expect(element.querySelector("textarea")).toBe(textarea);
+      expect(element.querySelector("button")!.textContent).toBe(`${author}:1`);
+      expect(element.querySelector("aside")!.textContent).toBe(`draft:1rail:1model:${author}:1`);
+      expect(subscriptions).toBe(1);
+      await act(async () => { release(); expect(await update).toEqual([]); });
+      expect(registrations).toBe(1); expect(mounts).toBe(1);
+      expect(element.querySelector("textarea")).toBe(textarea);
+      expect(textarea.value).toBe("unsent"); expect(textarea.selectionStart).toBe(2); expect(textarea.selectionEnd).toBe(4);
+      expect(document.activeElement).toBe(textarea);
+      expect(element.querySelector("button")!.textContent).toBe(`${author}:2`);
+      await act(async () => element.querySelector("button")!.click());
+      releaseOldCallback(); await expect(lateCallback).rejects.toBeDefined();
+      await expect(lateLazyCallback).rejects.toBeDefined();
+      expect(element.querySelector("aside")!.textContent).toBe(`draft:2rail:2model:${author}:2`);
+      expect(subscriptions).toBe(2);
+      expect(calls).toEqual(["stop:1", "action:2"]);
+      await expect(scopes[0].invoke("runtime.refresh", {})).rejects.toBeDefined();
+    } finally { release(); releaseOldCallback(); act(() => root.unmount()); element.remove(); await runtime.shutdown(); }
+  });
+
+  it("reactivates a failed opted-in surface on the next graph instead of retaining its error boundary", async () => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    let broken = true, registrations = 0;
+    const runtime = new DesktopPluginRuntime(host, async () => ({ activatePresentation(api: import("../../../../packages/plugin-sdk/src/ui").ApplicationPresentationAPI) {
+      registrations++;
+      api.registerApplicationShell({ id: "ui.shell", render: () => { if (broken) throw new Error("Temporary presentation failure"); return React.createElement("main", null, "Recovered surface"); } });
+    } }));
+    const shell = { ...dependencyPlugin("repairable"), graph_generation: "one" };
+    expect(await runtime.sync([shell])).toEqual([]);
+    const element = document.createElement("div"), root = createRoot(element);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await act(async () => root.render(React.createElement(ApplicationShellOutlet, { host, binding: { pluginId: shell.id, generation: shell.fingerprint!, id: "ui.shell" } })));
+      expect(element.querySelector("main")).toBeNull();
+      broken = false;
+      await act(async () => { expect(await runtime.sync([{ ...shell, graph_generation: "two" }])).toEqual([]); });
+      expect(registrations).toBe(2);
+      expect(element.querySelector("main")?.textContent).toBe("Recovered surface");
+    } finally { errors.mockRestore(); act(() => root.unmount()); await runtime.shutdown(); }
+  });
+
+  it.each([false, true])("awaits source presentation before dependent scope abort and clears retirement after activation (%s)", async failActivation => {
     installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
     const host = new PluginHost({ react: React });
     const events: string[] = [];
@@ -46,16 +162,29 @@ describe("DesktopPluginRuntime", () => {
     await host.selectApplicationBinding({ pluginId: business.id, generation: business.fingerprint!, id: "ui.application" });
     await runtime.sync([business, shell]);
     const source = host.applicationProviders.current, binding = host.applicationProviders.getBindingRevision();
+    let captureEntered!: () => void, releaseCapture!: () => void;
+    const captureStarted = new Promise<void>(resolve => { captureEntered = resolve; });
+    const captureGate = new Promise<void>(resolve => { releaseCapture = resolve; });
+    const unsubscribe = host.applicationProviders.subscribeRetirementPreparation(request => {
+      expect(request.binding).toBe(binding);
+      expect(request.signal.aborted).toBe(false);
+      captureEntered(); return captureGate;
+    });
     replacement = true;
     const next = { ...business, fingerprint: "candidate", graph_generation: "graph-two" };
     await host.selectApplicationBinding({ pluginId: next.id, generation: next.fingerprint, id: "ui.application" });
     const pending = runtime.sync([next, shell]);
     try {
+      await captureStarted;
+      expect(abortedSource).toBeUndefined();
+      expect(host.applicationProviders.current).toBe(source);
+      expect(host.applicationProviders.getRetirement()).toBeUndefined();
+      releaseCapture();
       await cleanupStarted;
       expect(abortedSource).toEqual({ retirement: { binding }, current: source, binding });
       expect(host.applicationProviders.getRetirement()).toEqual({ binding });
       expect(events).not.toContain("business:stop");
-    } finally { releaseCleanup(); }
+    } finally { releaseCapture(); releaseCleanup(); unsubscribe(); }
     const failures = await pending;
     expect(failures.some(failure => failure.pluginId === business.id)).toBe(failActivation);
     if (!failActivation) expect(failures).toEqual([]);

@@ -5,6 +5,7 @@ import type { AppContextSettings, AppContextState } from "../shared/protocol";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 
 export function AppContextSettingsSection(): JSX.Element | null {
   const settingsControls = useSettingsControls();
@@ -22,17 +23,20 @@ export function AppContextSettingsSection(): JSX.Element | null {
     recordingAttempt.current += 1;
     setRecording(false);
     setRecordingReady(false);
-    if (settingsControls.capabilities.appContextRecording) void settingsControls.setAppContextShortcutRecording(false).catch(reason => setError((reason as Error).message));
+    if (settingsControls.capabilities.appContextRecording) void settingsControls.setAppContextShortcutRecording(false).catch(reason => {
+      if (!isPluginLifecycleCancellation(reason)) setError((reason as Error).message);
+    });
   };
 
   useEffect(() => {
+    setRecording(false); setRecordingReady(false);
     window.addEventListener("blur", stopRecording);
     return () => {
       window.removeEventListener("blur", stopRecording);
       recordingAttempt.current += 1;
       if (settingsControls.capabilities.appContextRecording) void settingsControls.setAppContextShortcutRecording(false).catch(() => undefined);
     };
-  }, []);
+  }, [settingsControls]);
 
   useEffect(() => {
     if (!supported) return;
@@ -51,7 +55,7 @@ export function AppContextSettingsSection(): JSX.Element | null {
     const unsubscribe = settingsControls.capabilities.appContextChanges ? settingsControls.onAppContextChanged(() => { void refresh(); }) : undefined;
     void refresh();
     return () => { active = false; unsubscribe?.(); };
-  }, [supported]);
+  }, [supported, settingsControls]);
 
   if (!supported) return null;
   const disabled = busy || !state?.available;

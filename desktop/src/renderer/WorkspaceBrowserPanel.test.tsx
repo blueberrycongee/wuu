@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { BrowserControlsProvider } from "./BrowserControlsContext";
+import { scopeApplicationBrowser } from "../../../packages/plugin-sdk/src/ui";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 import { ApplicationBrowser } from "./plugins/ApplicationBrowser";
 import { WorkspaceBrowserPanel } from "./WorkspaceBrowserPanel";
 import type { ActivitySession, BrowserDockTarget, BrowserCommandParams, BrowserSurfaceSnapshot } from "../shared/protocol";
@@ -386,4 +388,22 @@ it("does not report an old external-open failure in the next thread", async () =
   act(() => container.querySelector<HTMLButtonElement>(".workspace-browser-open-external")!.click());
   await act(async () => { rerender({ threadID: "thread-2" }); reject(new Error("OLD EXTERNAL ERROR")); });
   expect(container.textContent).not.toContain("OLD EXTERNAL ERROR");
+});
+
+
+it("cleans up a retired browser lease without calling it during a presentation rebind", async () => {
+  const old = new AbortController(), next = new AbortController();
+  const scoped = (signal: AbortSignal) => scopeApplicationBrowser(() => browser, signal, () => signal.throwIfAborted());
+  vi.mocked(window.wuu.browserSurface!).mockResolvedValue({ workdir: "/repo", tabID: "user:thread-1", url: "https://example.com",
+    title: "Page", loading: false, canGoBack: false, canGoForward: false });
+  root = createRoot(container);
+  const tree = (signal: AbortSignal) => <BrowserControlsProvider service={scoped(signal)}><WorkspaceBrowserPanel visible
+    threadID="thread-1" activeContext={{ kind: "no_project", cwd: "/repo" }} /></BrowserControlsProvider>;
+  await act(async () => root!.render(tree(old.signal)));
+  const input = container.querySelector("input");
+  old.abort(new PluginLifecycleCancellationError());
+  await act(async () => root!.render(tree(next.signal)));
+  expect(container.querySelector("input")).toBe(input);
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(container.querySelector<HTMLInputElement>("input")!.value).toBe("https://example.com");
 });

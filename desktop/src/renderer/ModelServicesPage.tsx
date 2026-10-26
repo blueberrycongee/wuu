@@ -1,5 +1,6 @@
 import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { ConnectionTitle } from "./ConnectionTitle";
 import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { GrokLogin } from "./GrokLogin";
@@ -303,10 +304,10 @@ export function useCatalogProviders(version: number, snapshot?: CatalogProviderS
     let active = true;
     void controls.listCatalogProviders().then(
       (result) => { if (active) setState({ providers: result.providers, failed: false }); },
-      () => { if (active) setState({ failed: true }); },
+      cause => { if (active && !isPluginLifecycleCancellation(cause)) setState({ failed: true }); },
     );
     return () => { active = false; };
-  }, [version, snapshot]);
+  }, [controls, version, snapshot]);
   return snapshot ? { providers: snapshot, failed: false } : state;
 }
 
@@ -324,6 +325,7 @@ export function ModelServicesPage({
   onProviderModelsChanged,
 }: ModelServicesPageProps): JSX.Element {
   const controls = useSettingsControls();
+  const lifetime = useAuthorizationLifetime();
   const { t } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const addButtonRef = useRef<HTMLButtonElement>(null);
@@ -340,15 +342,15 @@ export function ModelServicesPage({
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) return;
+    if (!ENABLE_SUBSCRIPTIONS || !controls.capabilities.engines) { setQuotaLoading(false); return; }
     let active = true;
     setQuotaLoading(true);
     void controls.listEngines({ include_quota: true }).then(snapshot => {
       if (active) { setQuotaSnapshot(snapshot); setQuotaFailed(false); setQuotaNow(Date.now()); }
-    }, () => { if (active) setQuotaFailed(true); })
+    }, cause => { if (active && !isPluginLifecycleCancellation(cause)) setQuotaFailed(true); })
       .finally(() => { if (active) setQuotaLoading(false); });
     return () => { active = false; };
-  }, [quotaVersion]);
+  }, [controls, quotaVersion]);
   const observedQuota = (quota: SubscriptionQuota | undefined): SubscriptionQuota | undefined =>
     quotaFailed && quota?.status === "available" ? { ...quota, status: "stale" } : quota;
   const overviewProviders = providers.map(provider => {
@@ -424,7 +426,7 @@ export function ModelServicesPage({
         selectedEngineID={selectedEngine} onSelectEngine={setSelectedEngine}
         onCloseEngine={() => { focusEngine.current = selectedEngine ?? ""; setSelectedEngine(undefined); }} /> : null}
       {adding ? <div hidden={!!selectedEngine || !!detailProvider}>
-        <ServiceConnector key={methodOrigin?.name ?? "catalog"} providers={providers} running={running} catalog={catalog}
+        <ServiceConnector key={methodOrigin?.name ?? "catalog"} workspaceRoot={initialized?.workspace_root} providers={providers} running={running} catalog={catalog}
           defaultOn={!defaultUsable} onSave={onSave} onProvidersChanged={onProvidersChanged} catalogDialog inline
           initialTarget={methodOrigin?.target}
           onCloseConfiguration={methodOrigin ? () => { setOpenService(methodOrigin.name); setAdding(false); setMethodOrigin(undefined); } : undefined}
@@ -452,7 +454,9 @@ export function ModelServicesPage({
           setOpenService(""); setAdding(true);
         }}
         onRefreshConnection={async () => {
+          const signal = lifetime.current.signal;
           const result = await controls.refreshModelCatalog();
+          signal.throwIfAborted();
           const refreshed = result.providers.find(item => item.name === detailProvider.name
             && item.type === detailProvider.type && item.base_url === detailProvider.base_url);
           if (!refreshed?.api_key_configured) throw new Error("Login is not available to this connection");
@@ -467,7 +471,12 @@ export function ModelServicesPage({
         onProvidersChanged={onProvidersChanged} onProviderModelsChanged={onProviderModelsChanged}
         label={labels.get(detailProvider.name) ?? detailProvider.name} initialized={initialized} running={running}
         inUse={runningProviderNames.has(detailProvider.name)} onBack={closeService} onSave={onSave}
-        onRemove={async options => { await onRemoveProvider(detailProvider.name, options); closeService(); }} /> : null}
+        onRemove={async options => {
+          const signal = lifetime.current.signal;
+          await onRemoveProvider(detailProvider.name, options);
+          signal.throwIfAborted();
+          closeService();
+        }} /> : null}
     </div>
   );
 }
@@ -478,6 +487,7 @@ export function ModelServicesPage({
  * the same choices, so a connection is made the same way in both places.
  */
 export function ServiceConnector({
+  workspaceRoot,
   providers,
   running,
   catalog,
@@ -493,6 +503,7 @@ export function ServiceConnector({
   initialTarget,
   onCloseConfiguration,
 }: {
+  workspaceRoot?: string;
   providers: readonly ProviderSummary[];
   running: boolean;
   catalog: CatalogState;
@@ -586,7 +597,7 @@ export function ServiceConnector({
             {t("settings.loading")}
           </p>
         }>
-          <ChatGPTConnectionDialog renderAuthMethods={disabled => <AccountMethods selected="login" disabled={disabled} onSelect={method => { if (method === "local") startConnect({ kind: "subscription", type: "openai-codex" }); }} />} inline={inline} onProvidersChanged={onProvidersChanged} providers={providers} running={running} defaultOn={defaultOn}
+          <ChatGPTConnectionDialog workspaceRoot={workspaceRoot} renderAuthMethods={disabled => <AccountMethods selected="login" disabled={disabled} onSelect={method => { if (method === "local") startConnect({ kind: "subscription", type: "openai-codex" }); }} />} inline={inline} onProvidersChanged={onProvidersChanged} providers={providers} running={running} defaultOn={defaultOn}
             onSave={onSave} onClose={closeConfiguration} onConnected={(name) => { setConnectTarget(null); onConnected(name); }} />
         </Suspense>
       ) : connectTarget ? (
@@ -748,17 +759,20 @@ function ServiceDetail({
   const disabled = running || busy || authBusy;
   const canMakeDefault = !isDefault && !attention && (!direct || liveModels.some(model => model.id === provider.model));
 
+  useEffect(() => { setBusy(false); setError(""); }, [controls]);
+
   async function run(action: () => Promise<void>): Promise<boolean> {
+    const signal = lifetime.current.signal;
     setError("");
     setBusy(true);
     try {
       await action();
-      return !lifetime.current.signal.aborted;
+      return !signal.aborted;
     } catch (saveError) {
-      if (!lifetime.current.signal.aborted) setError(errorMessage(saveError, t));
+      if (!signal.aborted && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t));
       return false;
     } finally {
-      if (!lifetime.current.signal.aborted) setBusy(false);
+      if (!signal.aborted) setBusy(false);
     }
   }
 
@@ -774,9 +788,9 @@ function ServiceDetail({
       const models = result.providers?.find(item => item.name === configuredProvider.name)?.models ?? result.models.map(item => ({ id: item.id, display_name: item.name, account_descriptor: item.account_descriptor, capabilities: item.capabilities, behavior: item.behavior }));
       setLiveModels(models);
       onProviderModelsChanged?.(configuredProvider.name, configuredProvider.chatgpt_account_id!, models);
-    }, cause => { if (active) setError(errorMessage(cause, t)); }).finally(() => { if (active) setModelsLoading(false); });
+    }, cause => { if (active && !isPluginLifecycleCancellation(cause)) setError(errorMessage(cause, t)); }).finally(() => { if (active) setModelsLoading(false); });
     return () => { active = false; };
-  }, [direct, configuredProvider.chatgpt_account_id, configuredProvider.auth_status, catalogRevision]);
+  }, [controls, direct, configuredProvider.chatgpt_account_id, configuredProvider.auth_status, catalogRevision]);
 
   // Edits keep the default where it is unless they are the default's model.
   const saveConnection = (connection: RuntimeConnectionUpdate): Promise<boolean> =>
@@ -815,17 +829,18 @@ function ServiceDetail({
           onSelect={method => {
             if (method === "local" && isCodexType(provider.type)) {
               void run(async () => {
+                const signal = lifetime.current.signal;
                 const reused = await controls.useCodexCredentials(provider.name);
-                lifetime.current.signal.throwIfAborted();
+                signal.throwIfAborted();
                 onProvidersChanged?.(reused.providers);
                 const checked = await controls.loadCodexModels(provider.name);
-                lifetime.current.signal.throwIfAborted();
+                signal.throwIfAborted();
                 onProvidersChanged?.(checked.providers);
               });
             } else onChooseMethod(method);
           }} />
         {direct || usingLocalCodex || provider.codex_credential_source ? <small className="connection-auth-source" data-auth-source={authSource}>{t(authSourceLabel[authSource])}</small> : null}
-        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const result = await controls.loadCodexModels(provider.name); lifetime.current.signal.throwIfAborted(); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
+        {isCodexType(provider.type) ? <button type="button" className="settings-button settings-button-ghost" disabled={disabled} data-testid="settings-check-codex-login" onClick={() => void run(async () => { const signal = lifetime.current.signal; const result = await controls.loadCodexModels(provider.name); signal.throwIfAborted(); onProvidersChanged?.(result.providers); })}>{t("settings.codexCheckLogin")}</button> : null}
       </> : null}
         {isGrokBuildType(provider.type) ? <GrokLogin disabled={running || busy} onBusyChange={setAuthBusy} onAuthenticated={onRefreshConnection} onReuseLocal={onRefreshConnection} /> : null}
       {!isGrokBuildType(provider.type) ? <SettingsSection title={t("provider.connectionSection")}>
@@ -958,8 +973,9 @@ function ConnectionRows({
         </SettingsRow> : null}
         {!ENABLE_SUBSCRIPTIONS ? <SettingsRow title={t("settings.codexUseLocal")}>
           <button type="button" className="settings-button" disabled={disabled} onClick={() => void onRun(async () => {
+            const signal = lifetime.current.signal;
             await controls.useCodexCredentials(provider.name);
-            lifetime.current.signal.throwIfAborted();
+            signal.throwIfAborted();
             await onSave({});
           })}>{t("settings.codexUseLocal")}</button>
         </SettingsRow> : null}
@@ -1123,6 +1139,7 @@ function XAILoginRow({
   const authorization = useAuthorizationLifetime();
   const { t } = useI18n();
   const [code, setCode] = useState("");
+  useEffect(() => { setCode(""); }, [controls]);
   return (
     <SettingsRow
       title={t("provider.xaiSubscription")}
@@ -1135,11 +1152,13 @@ function XAILoginRow({
         disabled={disabled || Boolean(code)}
         data-testid="settings-xai-login"
         onClick={() => void onRun(async () => {
+          const signal = authorization.current.signal;
           try {
-            await runXAILogin(controls, setCode, t, authorization.current.signal);
+            await runXAILogin(controls, setCode, t, signal);
           } finally {
-            if (!authorization.current.signal.aborted) setCode("");
+            if (!signal.aborted) setCode("");
           }
+          signal.throwIfAborted();
           await onSignedIn();
         })}
       >
@@ -1150,11 +1169,14 @@ function XAILoginRow({
 }
 
 function useAuthorizationLifetime(): React.MutableRefObject<AbortController> {
-  const lifetime = useRef(new AbortController());
+  const controls = useSettingsControls();
+  // Retained callbacks own this generation's ref, never the successor's signal.
+  const lifetime = useMemo(() => ({ current: new AbortController() }), [controls]);
   useEffect(() => {
-    lifetime.current = new AbortController();
-    return () => lifetime.current.abort();
-  }, []);
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, [lifetime]);
   return lifetime;
 }
 
@@ -1635,16 +1657,17 @@ function ConnectServiceDialog({
   const [pending, setPending] = useState(false);
   const [loginCode, setLoginCode] = useState("");
   const [error, setError] = useState("");
+  useEffect(() => { setPending(false); setLoginCode(""); setError(""); }, [controls]);
 
   useEffect(() => {
     if (!catalogProvider) return;
     let active = true;
     void controls.listCatalogProviders(catalogProvider.id).then(
       (result) => { if (active) setModels(result.providers[0]?.models ?? []); },
-      () => { if (active) setModels([]); },
+      cause => { if (active && !isPluginLifecycleCancellation(cause)) setModels([]); },
     );
     return () => { active = false; };
-  }, [catalogProvider]);
+  }, [controls, catalogProvider]);
 
   const nameTaken = providers.some((provider) => provider.name === name.trim() && provider.name !== existingCodex?.name);
   const needsKey = !subscriptionType;
@@ -1660,11 +1683,12 @@ function ConnectServiceDialog({
 
   async function submit(): Promise<void> {
     if (!canSubmit) return;
+    const signal = authorization.current.signal;
     setError("");
     setPending(true);
     try {
-      if (subscriptionType === "xai-subscription") await runXAILogin(controls, setLoginCode, t, authorization.current.signal);
-      authorization.current.signal.throwIfAborted();
+      if (subscriptionType === "xai-subscription") await runXAILogin(controls, setLoginCode, t, signal);
+      signal.throwIfAborted();
       const connection: RuntimeConnectionUpdate = {
         ...(existingCodex ? {} : { type: subscriptionType ?? protocol, create_provider: true }),
         keep_selection: !makeDefault,
@@ -1673,13 +1697,13 @@ function ConnectServiceDialog({
         ...(subscriptionType === "openai-codex" ? { reuse_codex_credentials: true } : {}),
       };
       if (existingCodex) await controls.useCodexCredentials(existingCodex.name);
-      authorization.current.signal.throwIfAborted();
+      signal.throwIfAborted();
       await onSave(name.trim(), model.trim(), undefined, connection);
-      if (!authorization.current.signal.aborted) onConnected(name.trim());
+      if (!signal.aborted) onConnected(name.trim());
     } catch (saveError) {
-      if (!authorization.current.signal.aborted) setError(errorMessage(saveError, t));
+      if (!signal.aborted && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t));
     } finally {
-      if (!authorization.current.signal.aborted) { setLoginCode(""); setPending(false); }
+      if (!signal.aborted) { setLoginCode(""); setPending(false); }
     }
   }
 

@@ -198,3 +198,22 @@ it("opening the credential entry never discovers methods or starts login", async
   expect(local).toHaveBeenCalledOnce();
   expect(authenticate).not.toHaveBeenCalled();
 });
+
+it("retires a same-engine discovery when its authority changes and ignores the late methods", async () => {
+  let finish!: (value: EngineAuthResult) => void;
+  const first = { ...createApplicationSettingsControls(), listEngineAuthMethods: vi.fn(() => new Promise<EngineAuthResult>(resolve => { finish = resolve; })), cancelEngineAuth: vi.fn().mockResolvedValue({ ok: true }) };
+  const second = { ...createApplicationSettingsControls(), listEngineAuthMethods: vi.fn().mockResolvedValue(methods), cancelEngineAuth: vi.fn().mockResolvedValue({ ok: true }) };
+  act(() => { root!.unmount(); root = createRoot(container); });
+  const render = (controls: typeof first | typeof second) => root!.render(<SettingsControlsProvider controls={controls}><EngineAuthentication engineID="devin" protocol="acp" onReuseLocal={() => {}} /></SettingsControlsProvider>);
+  act(() => render(first));
+  await click("engine-auth-discover");
+  act(() => render(first));
+  expect(first.cancelEngineAuth).not.toHaveBeenCalled();
+  await act(async () => render(second));
+  expect(first.cancelEngineAuth).toHaveBeenCalledExactlyOnceWith("devin");
+  await click("engine-auth-discover");
+  expect(second.listEngineAuthMethods).toHaveBeenCalledExactlyOnceWith("devin");
+  await act(async () => finish({ authenticated: false, methods: [{ id: "old", name: "Old authority" }] }));
+  expect(container.textContent).not.toContain("Old authority");
+  expect(second.cancelEngineAuth).not.toHaveBeenCalled();
+});

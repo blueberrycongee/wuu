@@ -17,13 +17,16 @@ vi.mock("../i18n", () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock("../LoadingViews", () => ({ RuntimeLoading: ({ status, onRecovery, onRetry }: {status:string; onRecovery?: () => void; onRetry?: () => void}) => <div>{status}{onRecovery && <button onClick={onRecovery} aria-label="recovery" />}{onRetry && <button onClick={onRetry} aria-label="retry" />}</div>, ViewSwitchLoading: () => <div data-switch="true" /> }));
 import { DesktopApplicationRoot } from "./DesktopApplicationRoot";
 afterEach(() => { fixture.current = true; fixture.pending = false; fixture.failure = undefined; fixture.notice.mockReset(); fixture.dismiss.mockReset(); fixture.settle.mockReset(); });
-it("does not flash startup or technical failure text during reload, and deduplicates the final notice", async () => {
+it("offers explicit recovery without an unbounded window-switch animation when no retained frame is available", async () => {
   const container = document.createElement("div"); const root = createRoot(container);
   const render = async () => { fixture.revision++; await act(async () => root.render(<DesktopApplicationRoot />)); };
   try {
     await render(); expect(container.textContent).toBe("Working application");
     fixture.current = false; fixture.pending = true; fixture.failure = "sensitive technical detail one";
-    await render(); expect(container.textContent).toBe(""); expect(container.querySelector("[data-switch]")).not.toBeNull();
+    await render(); expect(container.textContent).toBe("connecting");
+    expect(container.textContent).not.toContain("plugins.applicationUnavailable");
+    expect(container.querySelector("[data-switch]")).toBeNull();
+    expect(container.querySelector('[aria-label="retry"]')).not.toBeNull();
     expect(fixture.notice).not.toHaveBeenCalled();
     fixture.notice.mockReturnValueOnce(71);
     fixture.pending = false; await render();

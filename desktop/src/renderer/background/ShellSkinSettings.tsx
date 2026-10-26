@@ -42,7 +42,7 @@ export function ShellSkinSettings(): JSX.Element {
   useEffect(() => {
     setMode(controls.currentAppliedTheme());
     return controls.observeAppliedTheme(setMode);
-  }, []);
+  }, [controls]);
   useEffect(() => {
     if (!preferences) { setImage(""); return; }
     const controller = new AbortController();
@@ -53,7 +53,7 @@ export function ShellSkinSettings(): JSX.Element {
       url = URL.createObjectURL(blob); setImage(url);
     }).catch(() => {});
     return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
-  }, [preferences?.image, mode]);
+  }, [controls, preferences?.image, mode]);
   const choose = (key: string) => {
     try { controls.selectShellSkin(key); setError(false); } catch { setError(true); }
   };

@@ -27,6 +27,7 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
   private disposed = false;
   private busyKey?: string;
   private actionBusy = true;
+  private actionBusyPending = false;
   private busyRevision = 0;
   private busyScheduled = false;
   private timer?: ReturnType<typeof setTimeout>;
@@ -52,7 +53,7 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
     this.assertActive();
     const source = this.host.getSource();
     this.syncBusySource();
-    const value = { actionBusy: this.actionBusy, contextKey: source.contextKey, root: source.root, status: source.status, capabilities: {
+    const value = { actionBusy: this.actionBusy, actionBusyPending: this.actionBusyPending, contextKey: source.contextKey, root: source.root, status: source.status, capabilities: {
       review: typeof window.wuu.listGitChanges === "function" && typeof window.wuu.readGitFileDiff === "function"
         && hostSupports("listGitChanges") && hostSupports("readGitFileDiff"),
       checkout: hostSupports("checkoutGitBranch"), createBranch: hostSupports("createCheckoutGitBranch"),
@@ -96,6 +97,7 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
 
   private invalidateBusy(): void {
     this.actionBusy = Boolean(this.host.getSource().root);
+    this.actionBusyPending = this.actionBusy && typeof window.wuu?.gitActionBusy === "function";
     this.busyRevision++;
     if (this.busyScheduled) return;
     this.busyScheduled = true;
@@ -110,9 +112,14 @@ export class ApplicationEnvironment implements ApplicationEnvironmentV1 {
       void window.wuu.gitActionBusy(source.root).then(busy => {
         if (this.disposed || revision !== this.busyRevision || !this.isCurrent(source)) return;
         this.actionBusy = busy;
+        this.actionBusyPending = false;
         this.notifyChanged();
       }, () => {
-        // The conservative value remains true until a later successful read.
+        if (this.disposed || revision !== this.busyRevision || !this.isCurrent(source)) return;
+        // Failure is settled unavailability, not an endlessly pending read.
+        // The conservative busy value remains true until a later successful read.
+        this.actionBusyPending = false;
+        this.notifyChanged();
       });
     });
   }

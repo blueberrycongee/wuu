@@ -1,5 +1,6 @@
 import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useEffect, useRef, useState } from "react";
 import type { EngineAuthResult } from "../shared/protocol";
 import { GrokLogin } from "./GrokLogin";
@@ -32,7 +33,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
       operation.current = undefined;
       if (current?.kind === "auth") void settingsControls.cancelEngineAuth(engineID).catch(() => {});
     };
-  }, [engineID]);
+  }, [engineID, settingsControls]);
 
   async function run(method?: string): Promise<void> {
     if (disabled || operation.current) return;
@@ -56,7 +57,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
         await onAuthenticated?.();
       }
     } catch (e) {
-      if (operation.current === current && !current.cancelled) setError(e instanceof Error ? e.message : String(e));
+      if (operation.current === current && !current.cancelled && !isPluginLifecycleCancellation(e)) setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (operation.current === current) {
         operation.current = undefined;
@@ -75,7 +76,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
     try {
       await onReuseLocal();
     } catch (e) {
-      if (operation.current === current) setError(e instanceof Error ? e.message : String(e));
+      if (operation.current === current && !isPluginLifecycleCancellation(e)) setError(e instanceof Error ? e.message : String(e));
     } finally {
       if (operation.current === current) {
         operation.current = undefined;
@@ -97,7 +98,7 @@ export function EngineAuthentication({ engineID, protocol, compact = false, disa
       }
     } catch (e) {
       // A failed cancellation must not admit another request over the first.
-      if (operation.current === current) setError(e instanceof Error ? e.message : String(e));
+      if (operation.current === current && !isPluginLifecycleCancellation(e)) setError(e instanceof Error ? e.message : String(e));
     }
   }
 

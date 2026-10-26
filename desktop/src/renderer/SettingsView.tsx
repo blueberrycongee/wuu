@@ -1,5 +1,6 @@
 import { useSettingsControls, SettingsControlsProvider } from "./SettingsControlsContext";
 import { isTouchWebShell } from "./ComposerFocus";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import {
   AlertCircle,
   AlertTriangle,
@@ -416,11 +417,13 @@ function SettingsViewContent({
       if (!cancelled) {
         setDesktopBuild(info.desktop);
       }
+    }).catch((error: unknown) => {
+      if (!cancelled && !isPluginLifecycleCancellation(error)) console.error("Failed to read desktop build information", error);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [controls]);
 
   useEffect(() => {
     let cancelled = false;
@@ -446,7 +449,7 @@ function SettingsViewContent({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [controls]);
 
   const core = initialized?.core;
   useEffect(() => {
@@ -900,7 +903,7 @@ function SettingsViewContent({
               {activePluginSettingsRecord ? (
                 <>
                   <SettingsPageHeader title={activePluginSettingsRecord.name} />
-                  <PluginSettingsEditor plugin={activePluginSettingsRecord} />
+                  <PluginSettingsEditor plugin={activePluginSettingsRecord} workspaceRoot={initialized?.workspace_root} />
                 </>
               ) : activeCustomPluginPage ? (
                 <>
@@ -1419,8 +1422,16 @@ function CodexPetSection({
   onCodexPetsUpdate,
 }: CodexPetSettingsProps): JSX.Element {
   const { t } = useI18n();
+  const controls = useSettingsControls();
+  const authority = useMemo(() => ({ active: true }), [controls]);
   const [codexPetBusy, setCodexPetBusy] = useState(false);
   const [codexPetLocalError, setCodexPetLocalError] = useState("");
+  useEffect(() => {
+    authority.active = true;
+    setCodexPetBusy(false);
+    setCodexPetLocalError("");
+    return () => { authority.active = false; };
+  }, [authority]);
   const codexPetOptions = codexPets?.pets ?? [];
   const codexPetSelectedID = codexPets?.selected_id ?? "";
   const codexPetEnabled = Boolean(codexPets?.enabled);
@@ -1428,26 +1439,28 @@ function CodexPetSection({
   const codexPetsHome = codexPets?.home ?? "~/.wuu/pets";
 
   async function refreshCodexPets(): Promise<void> {
+    if (!authority.active) return;
     setCodexPetBusy(true);
     setCodexPetLocalError("");
     try {
       await onCodexPetsRefresh();
     } catch (error) {
-      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.refreshFailed"));
+      if (authority.active && !isPluginLifecycleCancellation(error)) setCodexPetLocalError(error instanceof Error ? error.message : t("settings.refreshFailed"));
     } finally {
-      setCodexPetBusy(false);
+      if (authority.active) setCodexPetBusy(false);
     }
   }
 
   async function updateCodexPets(settings: CodexPetSettingsUpdate): Promise<void> {
+    if (!authority.active) return;
     setCodexPetBusy(true);
     setCodexPetLocalError("");
     try {
       await onCodexPetsUpdate(settings);
     } catch (error) {
-      setCodexPetLocalError(error instanceof Error ? error.message : t("settings.saveFailed"));
+      if (authority.active && !isPluginLifecycleCancellation(error)) setCodexPetLocalError(error instanceof Error ? error.message : t("settings.saveFailed"));
     } finally {
-      setCodexPetBusy(false);
+      if (authority.active) setCodexPetBusy(false);
     }
   }
 
@@ -2643,9 +2656,13 @@ function SettingsRemotePageContainer(): JSX.Element {
   const [snapshot, setSnapshot] = useState<RemoteControlSnapshot | null>(null);
   const [actionError, setActionError] = useState("");
   const [busy, setBusy] = useState(false);
+  const authority = useMemo(() => ({ active: true }), [controls]);
 
   useEffect(() => {
     let cancelled = false;
+    authority.active = true;
+    setBusy(false);
+    setActionError("");
     const refresh = () => {
       controls
         .getRemoteControlSnapshot()
@@ -2661,19 +2678,23 @@ function SettingsRemotePageContainer(): JSX.Element {
     const off = controls.subscribeRemote(() => refresh());
     return () => {
       cancelled = true;
+      authority.active = false;
       off();
     };
-  }, []);
+  }, [controls, authority]);
 
   const run = (action: () => Promise<RemoteControlSnapshot>) => {
+    if (!authority.active) return;
     setBusy(true);
     setActionError("");
-    action()
-      .then(setSnapshot)
+    Promise.resolve().then(action)
+      .then((next) => { if (authority.active) setSnapshot(next); })
       .catch((err: unknown) => {
-        setActionError(err instanceof Error ? err.message : String(err));
+        if (authority.active && !isPluginLifecycleCancellation(err)) {
+          setActionError(err instanceof Error ? err.message : String(err));
+        }
       })
-      .finally(() => setBusy(false));
+      .finally(() => { if (authority.active) setBusy(false); });
   };
 
   return (

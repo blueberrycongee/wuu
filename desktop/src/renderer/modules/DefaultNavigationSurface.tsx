@@ -1,7 +1,7 @@
 import { ArchiveTip } from "../ArchiveTip";
 import { UILayerPortal } from "../ui/layers/UILayerHost";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent } from "react";
-import type { ApplicationGenerationAPI, ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationPresentationAPI, ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationNavigationViewV1 } from "../../../../packages/plugin-sdk/src/ui-navigation";
 import { AppSidebar, reconcileSidebarSectionOrder, type SidebarNavigationService } from "../AppSidebar";
 import { SCRATCH_PSEUDO_PROJECT_ID, isScratchThread, threadBelongsToWorkspace, type ThreadSummary } from "../AppState";
@@ -184,9 +184,12 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   /></>;
 }
 
-export function activate(api: ApplicationGenerationAPI): void {
+export function activatePresentation(api: ApplicationPresentationAPI): void {
   api.registerUISlot({ id: "sidebar.primary", cardinality: "many" });
   api.registerUISlot({ id: "sidebar.footer", cardinality: "many" });
   api.registerUIContribution({ id: "ui.navigation", target: "wuu.default-shell/application.navigation",
     render: ({ application, slots, context }: UISlotRenderProps) => <DefaultNavigationSurface application={application} slots={slots} {...context as DefaultNavigationLayout} /> });
 }
+
+// The legacy entry remains available to standalone authoring hosts.
+export const activate = activatePresentation;

@@ -23,7 +23,7 @@ for (const dir of [output, home, userHome, project]) fs.mkdirSync(dir, { recursi
 app.setPath('userData', path.join(fixture, 'profile'));
 Object.assign(process.env, { WUU_HOME: home, HOME: userHome, XDG_CACHE_HOME: path.join(userHome, '.cache'), CODEX_HOME: path.join(userHome, '.codex'), GROK_HOME: path.join(userHome, '.grok'), WUU_DESKTOP_CORE: process.env.WUU_DESKTOP_CORE || path.join(desktop, 'build/bin/wuu-core'), WUU_SAFE_MODE: '0', WUU_ENABLE_BROWSER: '0', WUU_ENABLE_CUA_MAC: '0', WUU_ENABLE_CUA_LINUX: '0', WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP: '1' });
 delete process.env.ELECTRON_RENDERER_URL;
-const report = { status: 'running', source: process.env.WUU_E2E_SOURCE_COMMIT, font, longNames, checks: [], samples: [], screenshots: [], input: [], clicks: [], inferenceRequests: [], sendIPC: [], errors: [], violations: [], limitations: ['Linux Electron native input, not physical macOS acceptance.', 'Synthetic local project and metadata endpoint. No message submission, model inference or real user data.'] };
+const report = { status: 'running', source: process.env.WUU_E2E_SOURCE_COMMIT, font, longNames, checks: [], samples: [], railMotion: [], screenshots: [], input: [], clicks: [], inferenceRequests: [], sendIPC: [], errors: [], violations: [], limitations: ['Linux Electron native input, not physical macOS acceptance.', 'Synthetic local project and metadata endpoint. No message submission, model inference or real user data.'] };
 const save = () => fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify(report, null, 2));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 let win;
@@ -82,6 +82,32 @@ async function typeDraft(label) {
   assert.ok(state.trusted && state.focused && !state.disabled && !state.readOnly && state.sendEnabled, `${label}: empty grey placeholder must not be confused with a disabled editor`);
   key('a', [process.platform === 'darwin' ? 'meta' : 'control']); key('Backspace');
   await until(() => evaluate(selector => document.querySelector(selector)?.value === '', composer), 'native draft clearing');
+}
+async function toggleRail(label) {
+  await evaluate(() => {
+    const footer = document.querySelector('.composer-footer-shell');
+    if (!footer) throw new Error('Main composer footer is missing');
+    window.footerRailMotion = [];
+    const record = event => {
+      if (event.target === footer && event.propertyName === 'height') window.footerRailMotion.push({
+        type: event.type, elapsedMs: event.elapsedTime * 1000,
+        height: footer.getBoundingClientRect().height,
+      });
+    };
+    footer.addEventListener('transitionrun', record);
+    footer.addEventListener('transitionend', record);
+    window.stopFooterRailMotion = () => {
+      footer.removeEventListener('transitionrun', record);
+      footer.removeEventListener('transitionend', record);
+    };
+  });
+  await click('[data-wuu-component="workspace-tool-rail-toggle"]');
+  await geometry();
+  const events = await evaluate(() => { window.stopFooterRailMotion(); return window.footerRailMotion; });
+  report.railMotion.push({ label, events });
+  assert(events.some(event => event.type === 'transitionrun')
+    && events.some(event => event.type === 'transitionend' && event.elapsedMs > 0),
+  `${label}: explicit tool-rail toggles must retain their footer-height animation`);
 }
 async function geometry() {
   return evaluate(() => new Promise((resolve, reject) => {
@@ -153,6 +179,8 @@ async function run() {
   await import(pathToFileURL(path.join(desktop, 'out/main/index.js')).href);
   await until(() => win && evaluate(selector => Boolean(document.querySelector(selector)), composer), 'production composer');
   win.setContentSize(1400, 1000); win.show(); win.focus(); win.webContents.setBackgroundThrottling(false);
+  win.webContents.debugger.attach('1.3');
+  await win.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
   await until(() => evaluate(() => Boolean(document.querySelector('.composer-branch-control'))), 'real Git branch metadata');
   // Keep the sidebar open, as in the escaped layout.
   if (await evaluate(() => document.querySelector('.app-shell').classList.contains('sidebar-collapsed'))) await click('[data-wuu-component="sidebar-toggle"]');
@@ -179,9 +207,9 @@ async function run() {
     const narrow = await geometry();
     assert.ok(narrow.shell.width <= 320 && narrow.shell.width >= 240, `fixture must reproduce the narrow pane, got ${narrow.shell.width}`);
     await capture(`${theme}-narrow-panel-open`, 'footer'); await typeDraft(`${theme}-narrow`);
-    await click('[data-wuu-component="workspace-tool-rail-toggle"]');
+    await toggleRail(`${theme}-expand`);
     await capture(`${theme}-narrow-rail-expanded`, 'rail'); await typeDraft(`${theme}-rail`);
-    await click('[data-wuu-component="workspace-tool-rail-toggle"]');
+    await toggleRail(`${theme}-collapse`);
     await capture(`${theme}-narrow-rail-recollapsed`, 'footer'); await typeDraft(`${theme}-recollapsed`);
   }
   report.clicks = await evaluate(() => window.footerNativeClicks || []);

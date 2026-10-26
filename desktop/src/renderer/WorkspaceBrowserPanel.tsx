@@ -17,6 +17,7 @@ import type { ApplicationBrowserV1, BrowserActivityV1 as ActivitySession, Browse
   BrowserSurfaceV1 as BrowserSurfaceSnapshot, BrowserSurfaceHandleV1, BrowserNavigationRequestV1 as WorkspaceBrowserNavigationRequest,
 } from "../../../packages/plugin-sdk/src/ui-browser";
 import type { ApplicationPreviewContextV1 as RuntimeContext } from "../../../packages/plugin-sdk/src/ui-preview";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useBrowserControls } from "./BrowserControlsContext";
 import { useI18n } from "./i18n";
 import { normalizeWebsiteURL } from "./NavigationRibbonPreferences";
@@ -132,6 +133,15 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
     setLease(next);
     return () => { leaseRef.current = undefined; next.dispose(); };
   }, [service, workdir, selectedTabID, threadID]);
+  const updateLeasePresentation = useCallback((current: BrowserSurfaceHandleV1, update: (lease: BrowserSurfaceHandleV1) => void) => {
+    if (current !== leaseRef.current) return;
+    try { update(current); }
+    catch (cause) {
+      // Provider retirement disposes leases before React effect cleanup. Never
+      // retry through a new lease; only this proven cancellation is expected.
+      if (!isPluginLifecycleCancellation(cause)) throw cause;
+    }
+  }, []);
   const consumedRequestIDRef = useRef<number | undefined>(undefined);
 
   const applySurface = useCallback((snapshot: BrowserSurfaceSnapshot) => {
@@ -268,7 +278,7 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
 
   useEffect(() => {
     if (!lease || lease !== leaseRef.current) return undefined;
-    const report = lease.reportBounds;
+    const report: BrowserSurfaceHandleV1["reportBounds"] = (...args) => updateLeasePresentation(lease, current => current.reportBounds(...args));
     if (!paintPage) {
       report(null);
       return undefined;
@@ -283,15 +293,15 @@ function BrowserPanel({ visible = true, threadID, activeContext, activity, dockT
       stop();
       report(null);
     };
-  }, [lease, paintPage, selectedTabID, workdir]);
+  }, [lease, paintPage, selectedTabID, workdir, updateLeasePresentation]);
 
   useEffect(() => {
     if (!lease || lease !== leaseRef.current || !paintPage) return undefined;
-    lease.suppressOverlay(overlaySuppressed);
+    updateLeasePresentation(lease, current => current.suppressOverlay(overlaySuppressed));
     return () => {
-      lease.suppressOverlay(false);
+      updateLeasePresentation(lease, current => current.suppressOverlay(false));
     };
-  }, [lease, overlaySuppressed, paintPage, selectedTabID, workdir]);
+  }, [lease, overlaySuppressed, paintPage, selectedTabID, workdir, updateLeasePresentation]);
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();

@@ -5,6 +5,7 @@ import { AlertCircle, Check, Hand, LoaderCircle, Monitor, RefreshCw } from "./Wu
 import { SettingsSection } from "./SettingsSection";
 import { translate, useI18n } from "./i18n";
 import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 
 export function SystemPermissionRow({ permission, locale, granted, pending = false, disabled = false, onEnable, rowRef }: {
   permission: SystemPermission;
@@ -72,10 +73,13 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
   const rows = useRef<Partial<Record<SystemPermission, HTMLDivElement>>>({});
   const activeGuide = useRef<ActiveGuide | undefined>(undefined);
   const mounted = useRef(false);
+  const authority = useRef(settingsControls);
+  authority.current = settingsControls;
   const refreshGeometry = useRef<() => void>(() => undefined);
 
   useEffect(() => {
     mounted.current = true;
+    setPending(undefined); setFloating(undefined); setError(undefined);
     const stopGuide = preview || !settingsControls.capabilities.permissionGuide ? undefined : settingsControls.onSystemPermissionGuideChanged(next => {
       const current = activeGuide.current;
       if (!current || next.requestId !== current.requestId) return;
@@ -96,7 +100,10 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
       const serialized = JSON.stringify(presentation);
       if (serialized === lastPresentation) return;
       lastPresentation = serialized;
-      if (settingsControls.capabilities.permissionGuideUpdate) settingsControls.updateSystemPermissionGuide(presentation);
+      if (settingsControls.capabilities.permissionGuideUpdate) {
+        try { settingsControls.updateSystemPermissionGuide(presentation); }
+        catch (cause) { if (!isPluginLifecycleCancellation(cause)) setError("request"); }
+      }
     };
     const schedule = (): void => {
       cancelAnimationFrame(frame);
@@ -124,7 +131,7 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
       activeGuide.current = undefined;
       if (current && settingsControls.capabilities.permissionGuideClose) void settingsControls.closeSystemPermissionGuide(current.requestId).catch(() => undefined);
     };
-  }, [preview]);
+  }, [preview, settingsControls]);
 
   useLayoutEffect(() => refreshGeometry.current());
 
@@ -143,7 +150,10 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
       try {
         const next = await settingsControls.getSystemPermissions!();
         if (active) { setState(next); setError(current => current === "read" ? undefined : current); }
-      } catch { if (active) setError("read"); }
+      } catch (cause) {
+        if (isPluginLifecycleCancellation(cause)) active = false;
+        else if (active) setError("read");
+      }
       finally {
         checking = false;
         if (active) timer = setTimeout(() => void refresh(), 1_500);
@@ -157,7 +167,7 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
       clearTimeout(timer);
       window.removeEventListener("focus", onFocus);
     };
-  }, [preview, attempt]);
+  }, [preview, attempt, settingsControls]);
 
   async function request(permission: SystemPermission): Promise<void> {
     if (preview) {
@@ -172,7 +182,8 @@ export function SystemPermissionsPanel({ preview = false }: { preview?: boolean 
     setPending({ requestId, permission });
     setError(undefined);
     try { await settingsControls.requestSystemPermission!(permission, presentation); }
-    catch {
+    catch (cause) {
+      if (authority.current !== settingsControls || isPluginLifecycleCancellation(cause)) return;
       if (mounted.current) setError("request");
       if (activeGuide.current?.requestId === requestId) {
         activeGuide.current = undefined;

@@ -7,8 +7,10 @@ import { ApplicationSearch } from "./plugins/ApplicationSearch";
 import { useConversationSearch } from "./ConversationSearchState";
 
 let root: Root;
+let container: HTMLDivElement;
 afterEach(() => {
   act(() => root?.unmount());
+  container?.remove();
   vi.useRealTimers();
   Reflect.deleteProperty(window, "wuu");
 });
@@ -20,7 +22,7 @@ function result(id: string): ThreadSearchResultItem {
   } };
 }
 
-function setup(controlled?: { open: boolean }) {
+function setup(controlled?: { open: boolean }, renderInput = false) {
   vi.useFakeTimers();
   const pending: { resolve: (value: ThreadSearchResult) => void; reject: (error: Error) => void }[] = [];
   const searchThreads = vi.fn(() => new Promise<ThreadSearchResult>((resolve, reject) => {
@@ -48,9 +50,12 @@ function setup(controlled?: { open: boolean }) {
   function Harness() {
     api = useConversationSearch({ application, open: controlled?.open, onOpenChange,
       onOpen: () => {}, onSelect: () => {} });
-    return null;
+    return renderInput && (api.conversationSearch.open || api.conversationSearch.closing)
+      ? createElement("input", { ref: api.conversationSearchInputRef, defaultValue: "previous query" }) : null;
   }
-  root = createRoot(document.createElement("div"));
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
   act(() => root.render(createElement(Harness)));
   if (!controlled) act(() => api.toggleConversationSearch());
   return { get api() { return api; }, pending, searchThreads, cacheThreads, onSelectThread, onOpenChange,
@@ -162,4 +167,63 @@ it("follows the selected navigation visibility and publishes keyboard dismissal"
   expect(h.onOpenChange).toHaveBeenCalledWith(false);
   h.setOpen(false);
   expect(h.api.conversationSearch.open).toBe(false);
+});
+
+it("focuses the committed search input even when a frame ran before React committed the opening", () => {
+  const h = setup({ open: false }, true);
+  const composer = document.createElement("textarea");
+  document.body.append(composer);
+  composer.focus();
+  act(() => {
+    h.api.toggleConversationSearch();
+    // Native events can yield a frame before React commits the dialog. Focus
+    // must follow its input commit, not assume the next frame contains it.
+    vi.advanceTimersByTime(16);
+  });
+  const input = container.querySelector("input")!;
+  expect(document.activeElement).toBe(input);
+  expect(input.selectionStart).toBe(0);
+  expect(input.selectionEnd).toBe(input.value.length);
+  composer.remove();
+});
+
+it("does not replace a newer focus owner while the search opening is committing", () => {
+  const h = setup({ open: false }, true);
+  const composer = document.createElement("textarea"), newer = document.createElement("button");
+  document.body.append(composer, newer);
+  composer.focus();
+  act(() => {
+    h.api.toggleConversationSearch();
+    newer.focus();
+  });
+  act(() => vi.advanceTimersByTime(16));
+  expect(document.activeElement).toBe(newer);
+  composer.remove(); newer.remove();
+});
+
+it("does not return focus to a closing search from an earlier opening frame", () => {
+  const h = setup({ open: false }, true);
+  const composer = document.createElement("textarea");
+  document.body.append(composer);
+  composer.focus();
+  act(() => h.api.toggleConversationSearch());
+  act(() => h.api.closeConversationSearch());
+  expect(document.activeElement).toBe(composer);
+  act(() => vi.advanceTimersByTime(16));
+  expect(document.activeElement).toBe(composer);
+  composer.remove();
+});
+
+it("does not focus a pending search after a newer non-focusable pointer interaction", () => {
+  const h = setup({ open: false }, true);
+  const composer = document.createElement("textarea");
+  document.body.append(composer);
+  composer.focus();
+  act(() => {
+    h.api.toggleConversationSearch();
+    document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+  });
+  act(() => vi.advanceTimersByTime(16));
+  expect(document.activeElement).toBe(composer);
+  composer.remove();
 });

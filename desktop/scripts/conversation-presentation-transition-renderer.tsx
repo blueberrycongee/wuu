@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
+import type { ApplicationRetirementPreparation } from '../src/renderer/plugins/ApplicationProviders';
 import { ConversationPresentationBoundary, useConversationPresentationTransition, usePresentedNavigation } from '../src/renderer/ConversationPresentationTransition';
 const fixture = window as unknown as Record<string, any>;
 const startTransition = document.startViewTransition.bind(document);
@@ -24,6 +25,10 @@ function Workbench({ pending, target, geometry }: { pending?: Pending; target: s
   </div>;
 }
 function Fixture() {
+  const preparations = React.useRef(new Set<(preparation: ApplicationRetirementPreparation) => void | Promise<void>>());
+  const subscribeRetirementPreparation = React.useCallback((listener: (preparation: ApplicationRetirementPreparation) => void | Promise<void>) => {
+    preparations.current.add(listener); return () => { preparations.current.delete(listener); };
+  }, []);
   const [pending, setPending] = React.useState<Pending>();
   const [target, setTarget] = React.useState('Source workspace');
   const [geometry, setGeometry] = React.useState<Geometry>({ sidebar: 220, footer: 70 });
@@ -32,6 +37,7 @@ function Fixture() {
   fixture.begin = (timing = 'delayed') => {
     const requestedAt = performance.now();
     return fixture.present(async () => {
+    fixture.dispatchedAt = performance.now();
     fixture.dispatchLatencyMs = performance.now() - requestedAt;
     const next = { requestId: fixture.requestId = (fixture.requestId || 0) + 1, intentId: `intent-${fixture.requestId}` };
     setPending(next);
@@ -40,10 +46,12 @@ function Fixture() {
     });
   };
   fixture.commit = () => flushSync(() => { setPending(value => ({ ...value!, contentReady: true })); setTarget('Target workspace'); });
+  fixture.prepareRetirement = () => Promise.all([...preparations.current].map(listener => listener({ binding, signal: new AbortController().signal })));
+  fixture.waitInitialAge = (age: number) => new Promise(resolve => setTimeout(resolve, Math.max(0, age - (performance.now() - fixture.dispatchedAt))));
   fixture.retire = () => flushSync(() => setRetiring(true));
   fixture.replace = (next?: Geometry) => flushSync(() => { if (next) setGeometry(next); setBinding(value => value + 1); setRetiring(false); setPending(value => ({ ...value!, requestId: 1, contentReady: true })); setTarget('Successor workspace'); });
   fixture.reveal = () => flushSync(() => setPending(undefined));
-  return <ConversationPresentationBoundary binding={binding} retiring={retiring} failed={false}>
+  return <ConversationPresentationBoundary binding={binding} retiring={retiring} failed={false} subscribeRetirementPreparation={subscribeRetirementPreparation}>
     {retiring ? <div>Real provider recovery</div> : <Workbench key={binding} pending={pending} target={target} geometry={geometry} />}
   </ConversationPresentationBoundary>;
 }

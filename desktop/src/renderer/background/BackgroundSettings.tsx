@@ -1,8 +1,9 @@
 import { useSettingsControls } from "../SettingsControlsContext";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { SettingsRow } from "../SettingsRow";
 import { useBackground } from "./useBackground";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 
 export function BackgroundSettings(): JSX.Element {
   const controls = useSettingsControls();
@@ -10,17 +11,28 @@ export function BackgroundSettings(): JSX.Element {
   const { preferences, error: readError, loading } = useBackground(controls);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<"image" | "save" | null>(null);
-  const importController = useRef<AbortController | null>(null);
-  useEffect(() => () => importController.current?.abort(), []);
+  const operations = useMemo(() => ({ active: true, importer: null as AbortController | null }), [controls]);
+  useEffect(() => {
+    operations.active = true;
+    setBusy(false);
+    setError(null);
+    return () => {
+      operations.active = false;
+      operations.importer?.abort();
+    };
+  }, [operations]);
   async function save(action: () => Promise<void>) {
+    if (!operations.active) return;
     setBusy(true); setError(null);
-    try { await action(); } catch { setError("save"); }
-    finally { setBusy(false); }
+    try { await action(); } catch (reason) {
+      if (operations.active && !isPluginLifecycleCancellation(reason)) setError("save");
+    } finally { if (operations.active) setBusy(false); }
   }
   async function importImage(file: File) {
-    importController.current?.abort();
+    if (!operations.active) return;
+    operations.importer?.abort();
     const controller = new AbortController();
-    importController.current = controller;
+    operations.importer = controller;
     const { signal } = controller;
     setBusy(true); setError(null);
     let stage: "image" | "save" = "image";
@@ -34,11 +46,11 @@ export function BackgroundSettings(): JSX.Element {
         return { image, imageID: crypto.randomUUID(), name: file.name };
       });
       if (!signal.aborted) controls.selectShellSkin("custom");
-    } catch {
-      if (!signal.aborted) setError(stage);
+    } catch (reason) {
+      if (!signal.aborted && !isPluginLifecycleCancellation(reason)) setError(stage);
     } finally {
-      if (importController.current === controller) {
-        importController.current = null;
+      if (operations.importer === controller) {
+        operations.importer = null;
         if (!signal.aborted) setBusy(false);
       }
     }

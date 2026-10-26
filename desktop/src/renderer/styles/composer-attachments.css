@@ -26,6 +26,10 @@
 .composer-attachment-tray-item {
   display: flex;
   flex: 0 0 auto;
+  /* One card must fit the scrollport even beside the expanded tool rail.
+     Otherwise revealing its trailing edge hides the filename and icon. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* A dismissed card leaves from where it stood while its neighbours close the

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MutableRefObject, type PointerEvent, type RefObject } from "react";
-import type { ApplicationGenerationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { InputFile, InputImage, MessageContentPart, Thread, ThreadItem, Turn, UserQuestionRequest } from "../../shared/protocol";
 import { ArtifactsProvider } from "../ArtifactsContext";
@@ -203,9 +203,12 @@ function SplitConversation({ pane, thread, application, separator, onBodyRef, on
   />{separator}</>;
 }
 
-export function activate(api: ApplicationGenerationAPI): void {
+export function activatePresentation(api: ApplicationPresentationAPI): void {
   registerConversationSlots(api);
   api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
   api.registerUIContribution({ id: "ui.conversation", target: "wuu.default-shell/application.conversation",
     render: ({ application, slots, context }: UISlotRenderProps) => <DefaultConversationSurface application={application} slots={slots} {...context as DefaultConversationLayout} /> });
 }
+
+// The legacy entry remains available to standalone authoring hosts.
+export const activate = activatePresentation;

@@ -5,10 +5,11 @@ import { useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 
 export function RuntimeLoading({
-  status, fullscreen = false, onRetry, onRecovery,
+  status, fullscreen = false, recovering = false, onRetry, onRecovery,
 }: {
   status: string;
   fullscreen?: boolean;
+  recovering?: boolean;
   onRetry?: () => void;
   onRecovery?: () => void;
 }): JSX.Element {
@@ -18,25 +19,27 @@ export function RuntimeLoading({
   const [slow, setSlow] = useState(false);
   useEffect(() => {
     setSlow(false);
-    if (!isStarting) return;
+    if (!isStarting || recovering) return;
     const timeout = window.setTimeout(() => setSlow(true), 12000);
     return () => window.clearTimeout(timeout);
-  }, [isStarting, status]);
+  }, [isStarting, status, recovering]);
   return (
     <div className={`project-empty-pane${fullscreen ? " application-recovery" : ""}`} data-wuu-component="launch-view">
       <div className="wuu-launch" role={isStarting ? "status" : "alert"}
         aria-label={t(isStarting ? "loading.starting" : "loading.failed")}
-        aria-describedby={!isStarting || slow ? descriptionId : undefined}>
-        {isStarting && <div className="wuu-launch-glass" aria-hidden="true">
+        aria-describedby={!isStarting || recovering || slow ? descriptionId : undefined}>
+        {isStarting && !recovering && <div className="wuu-launch-glass" aria-hidden="true">
             <WuuIconMascot className="wuu-launch-mascot" />
         </div>}
         <div className="wuu-launch-message">
           <p className="wuu-launch-title">{t(isStarting ? "loading.starting" : "loading.failed")}</p>
           {isStarting ? <>
-            <div className="loading-rail" aria-hidden="true" />
-            <p id={descriptionId} className="wuu-launch-description" aria-hidden={!slow}>{slow ? t("loading.slow") : "\u00a0"}</p>
+            {!recovering && <div className="loading-rail" aria-hidden="true" />}
+            <p id={descriptionId} className="wuu-launch-description" aria-hidden={!recovering && !slow}>{recovering || slow ? t("loading.slow") : "\u00a0"}</p>
           </> : <>
             <pre id={descriptionId} className="wuu-launch-error">{status}</pre>
+          </>}
+          {(!isStarting || recovering) && <>
             {onRecovery && <button type="button" className="settings-button" onClick={onRecovery}>{t("loading.openRecovery")}</button>}
             {onRetry && <button type="button" className="settings-button" onClick={onRetry}>{t("loading.reconnect")}</button>}
           </>}

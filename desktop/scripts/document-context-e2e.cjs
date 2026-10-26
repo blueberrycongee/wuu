@@ -101,10 +101,42 @@ async function focusWindow() {
   main.focus(); main.webContents.focus();
   await waitFor(() => document.hasFocus());
 }
+const splitInput = id => `.conversation-split-pane[data-thread-id="${id}"] .composer textarea`;
+async function activateSplit(id) {
+  const selector = splitInput(id);
+  await focusWindow();
+  await waitFor(selector => {
+    const element = document.querySelector(selector);
+    return element && !element.disabled && !element.readOnly && !element.closest('[inert]')
+      && element.getClientRects().length > 0;
+  }, selector);
+  const point = await evaluate(selector => {
+    const element = document.querySelector(selector);
+    element.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    const rect = element.getBoundingClientRect();
+    const point = { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+    if (!element.contains(document.elementFromPoint(point.x, point.y))) throw new Error(`Occluded ${selector}`);
+    return point;
+  }, selector);
+  main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+  await waitFor(id => {
+    const pane = document.querySelector(`.conversation-split-pane[data-thread-id="${id}"]`);
+    const input = pane?.querySelector('.composer textarea');
+    return pane?.classList.contains('active') && input && !input.disabled && !input.readOnly
+      && document.activeElement === input;
+  }, id);
+}
 async function nativeText(selector, text) {
   await focusWindow();
   await evaluate(selector => { const el = document.querySelector(selector); if (!el) throw new Error(`Missing ${selector}`); el.focus(); }, selector);
   await main.webContents.insertText(text);
+}
+async function splitDraft(id, text) {
+  await activateSplit(id);
+  await main.webContents.insertText(text);
+  await waitFor(({ id, text }) => document.querySelector(`.conversation-split-pane[data-thread-id="${id}"] .composer textarea`)?.value === text, { id, text });
 }
 async function capture(name) {
   await evaluate(() => Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime))
@@ -545,12 +577,11 @@ async function run() {
   await click('.session-message-source:not(:disabled)');
   await waitFor(() => document.querySelectorAll('.conversation-split-pane').length === 2);
   assert.deepEqual(await evaluate(() => [...document.querySelectorAll('.conversation-split-pane')].map(pane => pane.dataset.threadId)), [threadID, relatedID]);
-  await evaluate(() => document.querySelectorAll('.conversation-split-pane')[1].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
-  await waitFor(id => document.querySelector('.conversation-split-pane.active')?.dataset.threadId === id, relatedID);
-  await nativeText('.conversation-split-pane.active textarea', 'Other pane draft remains separate.');
-  await evaluate(() => document.querySelector('.conversation-split-pane').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
-  await waitFor(id => document.querySelector('.conversation-split-pane.active')?.dataset.threadId === id, threadID);
-  await nativeText('.conversation-split-pane.active textarea', 'Keep this PDF quote in this conversation.');
+  // A mounted split is not yet an editable owner. Native activation and an
+  // observed insertion distinguish a missed input from later draft loss.
+  await splitDraft(relatedID, 'Other pane draft remains separate.');
+  await splitDraft(threadID, 'Keep this PDF quote in this conversation.');
+  assert.equal(await evaluate(selector => document.querySelector(selector).value, splitInput(relatedID)), 'Other pane draft remains separate.');
   const splitTurnsBefore = (await snapshot()).turns.length;
   await evaluate(() => [...document.querySelectorAll('.conversation-split-pane.active .rich-file-link')].find(link => link.textContent === 'working PDF').click());
   if (await evaluate(() => document.querySelector('.workspace-panel-globalize')?.getAttribute('aria-pressed') === 'false')) await click('.workspace-panel-globalize');
@@ -559,17 +590,17 @@ async function run() {
   // normal pane switch must discard it without attaching or sending it anywhere.
   await click('.workspace-panel-globalize');
   await waitFor(() => !document.querySelector('.conversation-pane[inert]'));
-  await selectPages(); await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
+  await selectPages(); await waitFor(() => document.querySelector('.pdf-selection-menu__comment-toggle'));
   await click('.pdf-selection-menu__comment-toggle');
   await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
   await main.webContents.insertText('Never move this unfinished comment to another conversation.');
-  await evaluate(() => document.querySelectorAll('.conversation-split-pane')[1].dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await activateSplit(relatedID);
   await waitFor(id => document.querySelector('.conversation-split-pane.active')?.dataset.threadId === id
     && !document.querySelector('.pdf-selection-action-menu'), relatedID);
   assert.equal(await evaluate(() => document.querySelector('.conversation-split-pane.active textarea').value), 'Other pane draft remains separate.');
   assert.equal(await evaluate(() => document.querySelectorAll('.composer-file-selection-card').length), 0);
   await capture('06-stale-owner-comment-dismissed');
-  await evaluate(() => document.querySelector('.conversation-split-pane').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })));
+  await activateSplit(threadID);
   await waitFor(id => document.querySelector('.conversation-split-pane.active')?.dataset.threadId === id, threadID);
   assert.equal(await evaluate(() => document.querySelector('.conversation-split-pane.active textarea').value), 'Keep this PDF quote in this conversation.');
   assert.equal((await snapshot()).turns.length, splitTurnsBefore);

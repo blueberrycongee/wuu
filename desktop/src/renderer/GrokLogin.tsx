@@ -1,4 +1,5 @@
 import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "./i18n";
 
@@ -17,6 +18,7 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
+    setState("idle");
     return () => {
       mounted.current = false;
       if (operation.current) {
@@ -26,7 +28,7 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
         onBusyChange?.(false);
       }
     };
-  }, []);
+  }, [settingsControls]);
 
   async function start(local = false): Promise<void> {
     if (disabled || operation.current || !settingsControls.capabilities.engineLogin) return;
@@ -45,8 +47,8 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
       if (!result.authenticated) throw new Error("Login incomplete");
       await onAuthenticated();
       if (mounted.current && operation.current === current && !current.cancelled) setState("done");
-    } catch {
-      if (mounted.current && operation.current === current && !current.cancelled) setState(local ? "local-failed" : "failed");
+    } catch (cause) {
+      if (mounted.current && operation.current === current && !current.cancelled) setState(isPluginLifecycleCancellation(cause) ? "idle" : local ? "local-failed" : "failed");
     } finally {
       if (operation.current === current) {
         operation.current = undefined;
@@ -65,9 +67,9 @@ export function GrokLogin({ disabled = false, nested = false, onAuthenticated, o
         operation.current = undefined;
         setState("idle"); onBusyChange?.(false);
       }
-    } catch {
+    } catch (cause) {
       // Keep the operation locked until its original promise settles.
-      if (mounted.current) setState("failed");
+      if (mounted.current && operation.current === current && !isPluginLifecycleCancellation(cause)) setState("failed");
     }
   }
   if (!settingsControls.capabilities.engineLogin) return <span className="settings-muted-line">{t("provider.grokDesktopLogin")}</span>;

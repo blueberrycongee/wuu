@@ -133,6 +133,8 @@ async function capture(win, name) {
     .flatMap(node => node.getAnimations())
     .filter(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime))
     .map(animation => animation.finished.catch(() => {}))));
+  // Navigation can retain old compositor pixels after the live DOM is ready.
+  await waitFor(win, () => !document.querySelector('[data-wuu-compositor-frame], [data-wuu-presentation-frame]'));
   await settle(win);
   fs.writeFileSync(path.join(output, name), (await win.webContents.capturePage()).toPNG());
 }
@@ -516,8 +518,8 @@ async function run() {
   await waitForBranch(main, 'main');
   assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main');
   await click(main, branchControl);
-  await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][title="feature"]:not(:disabled)'));
-  await click(main, '.composer-branch-menu [role="menuitemradio"][title="feature"]');
+  await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][aria-label="feature"]:not(:disabled)'));
+  await click(main, '.composer-branch-menu [role="menuitemradio"][aria-label="feature"]');
   await waitForBranch(main, 'feature');
   assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature', 'Choosing a branch checks it out.');
 
@@ -529,19 +531,19 @@ async function run() {
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
   await click(main, branchControl);
-  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
-  await click(main, `.composer-branch-menu [role="menuitemradio"][title="${longBranch}"]`);
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][aria-label="${branch}"]`), longBranch);
+  await click(main, `.composer-branch-menu [role="menuitemradio"][aria-label="${longBranch}"]`);
   await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
   await waitForBranch(main, longBranch);
   await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
   // The expanded rail uses icons: their accessible names retain the full identity.
   // Exercise that native entry point before checking the text-label fallback.
   await click(main, branchControl);
-  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [title="${branch}"][aria-checked="true"]`), longBranch);
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [aria-label="${branch}"][aria-checked="true"]`), longBranch);
   const railSelection = await evaluate(main, ({ branchSelector, projectSelector }) => ({
     branch: document.querySelector(branchSelector).getAttribute('aria-label'),
     project: document.querySelector(projectSelector).getAttribute('aria-label'),
-    menuSelectedBranch: document.querySelector('.composer-branch-menu [aria-checked="true"]').title,
+    menuSelectedBranch: document.querySelector('.composer-branch-menu [aria-checked="true"]').getAttribute('aria-label'),
   }), { branchSelector: branchControl, projectSelector: projectControl });
   assert.equal(railSelection.menuSelectedBranch, longBranch);
   assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), longBranch);
@@ -578,14 +580,14 @@ async function run() {
 
   // A long project name must still leave the branch identifiable.
   await click(main, projectControl);
-  await waitFor(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`), longProjectName);
-  await click(main, `.composer-project-menu button[title="${longProjectName}"]`);
+  await waitFor(main, name => document.querySelector(`.composer-project-menu button[aria-label="${name}"]`), longProjectName);
+  await click(main, `.composer-project-menu button[aria-label="${longProjectName}"]`);
   await waitFor(main, ({ selector, name }) => document.querySelector(selector)?.getAttribute('aria-label') === `Switch workspace: ${name}`,
     { selector: projectControl, name: longProjectName });
   await waitForBranch(main, 'main');
   await click(main, branchControl);
-  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
-  await click(main, `.composer-branch-menu [role="menuitemradio"][title="${longBranch}"]`);
+  await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][aria-label="${branch}"]`), longBranch);
+  await click(main, `.composer-branch-menu [role="menuitemradio"][aria-label="${longBranch}"]`);
   await waitFor(main, () => !document.querySelector('.composer-branch-menu'));
   await waitForBranch(main, longBranch);
   await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
@@ -614,8 +616,8 @@ async function run() {
     document.documentElement.style.removeProperty('--appearance-scale');
   });
   await click(main, projectControl);
-  await waitFor(main, () => document.querySelector('.composer-project-menu button[title="plain-folder"]'));
-  await click(main, '.composer-project-menu button[title="plain-folder"]');
+  await waitFor(main, () => document.querySelector('.composer-project-menu button[aria-label="plain-folder"]'));
+  await click(main, '.composer-project-menu button[aria-label="plain-folder"]');
   await waitFor(main, selector => document.querySelector(selector)?.getAttribute('aria-label') === 'Switch workspace: plain-folder'
     && !document.querySelector('.composer-branch-control'), projectControl);
   await capture(main, '06-draft-non-git.png');

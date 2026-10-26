@@ -28,7 +28,10 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       setFontStatus("ready");
     } catch { setFontStatus("error"); }
   }
-  useEffect(() => observeAppearance(() => setPreferences(readAppearance())), []);
+  useEffect(() => {
+    setPreferences(readAppearance());
+    return observeAppearance(() => setPreferences(readAppearance()));
+  }, [observeAppearance, readAppearance]);
   function update(patch: Partial<AppearancePreferences>) {
     try {
       saveAppearance({ ...readAppearance(), ...patch });

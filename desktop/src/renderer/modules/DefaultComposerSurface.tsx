@@ -4,7 +4,7 @@ import { ImagePreviewProvider } from "../ImagePreview";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
 import { focusComposerTextarea } from "../ComposerFocus";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type Ref } from "react";
-import type { ApplicationGenerationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationPresentationAPI, ApplicationServiceV1, UICompositionV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationPendingComposerMessageV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import type { EngineInfo, MessageContentPart, ResponseSelection, RuntimeContext, UserQuestionRequest } from "../../shared/protocol";
 import { Composer, SplitPaneComposer } from "../ComposerView";
@@ -64,8 +64,29 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const presentNavigation = usePresentedNavigation();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
-  const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
-  const environment = useSyncExternalStore(application.environment.subscribe, application.environment.getSnapshot);
+  const livePresentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
+  const liveEnvironment = useSyncExternalStore(application.environment.subscribe, application.environment.getSnapshot);
+  const liveRuntime = view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId);
+  const switching = Boolean(view.tabs.pending);
+  // Only data survives the pending destination. The controls below always bind
+  // the current application/owner, and their interaction gate stays closed.
+  const settledVisual = useRef({ presentation: livePresentation, environment: liveEnvironment, runtime: liveRuntime });
+  const environmentPending = !liveEnvironment.status || Boolean(liveEnvironment.status.is_repo && liveEnvironment.actionBusyPending);
+  const sameEnvironment = settledVisual.current.environment.contextKey === liveEnvironment.contextKey
+    && settledVisual.current.environment.root === liveEnvironment.root;
+  useLayoutEffect(() => {
+    if (!switching) settledVisual.current = { presentation: livePresentation, runtime: liveRuntime,
+      environment: environmentPending ? settledVisual.current.environment : liveEnvironment };
+  }, [switching, environmentPending, livePresentation, liveEnvironment, liveRuntime]);
+  const { presentation, runtime } = switching ? settledVisual.current
+    : { presentation: livePresentation, runtime: liveRuntime };
+  // A different workspace may keep the control footprint, never the old branch
+  // as its fact. Unknown is neither a repository nor a confirmed non-repository.
+  const environment = environmentPending && sameEnvironment ? settledVisual.current.environment : liveEnvironment;
+  // Pending reads may retain existing Git chrome, but must not invent a new
+  // branch control for a known non-repository or an as-yet unknown target.
+  const branchPickerPending = environmentPending && liveEnvironment.status?.is_repo !== false && Boolean(liveEnvironment.root)
+    && Boolean(liveEnvironment.status?.is_repo || settledVisual.current.environment.status?.is_repo);
   const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls }), [application, slots, ownerTabId, presentation]);
   const [, redraw] = useReducer(value => value + 1, 0);
@@ -87,7 +108,6 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
   useEffect(() => { run(controls.refreshEngines()); }, [controls, run]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
-  const runtime = view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId);
   const tab = view.tabs.items.find(row => row.id === ownerTabId);
   const draft = view.drafts[pane];
   if (!runtime || !tab || draft.ownerTabId !== ownerTabId) return null;
@@ -106,9 +126,8 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   attachments.retainVisible(visibleResources);
   const creation = view.submission.pendingCreations.find(row => row.ownerTabId === ownerTabId);
   const stop = view.submission.stopRequests.find(row => row.threadId === presentation.threadId);
-  const switching = Boolean(view.tabs.pending);
   const editingSubmitting = Boolean(view.conversationActions.editing?.threadId === presentation.threadId && view.conversationActions.editing?.submitting);
-  const running = Boolean(creation || editingSubmitting || !presentation.readOnly && presentation.turnRunning || switching);
+  const running = Boolean(creation || editingSubmitting || !presentation.readOnly && presentation.turnRunning);
   const configuration = presentationConfiguration && { ...presentationConfiguration, provider: presentation.running ? presentationConfiguration.provider : selection.provider, model: presentation.running ? presentationConfiguration.model : selection.model,
     effort: selection.effort, variant: selection.variant, speed: selection.speed,
     permissions: { mode: selection.permissionMode, approve_for_me: selection.approveForMe } } as ComposerConfiguration;
@@ -121,6 +140,12 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     return result.accepted;
   };
   const toggle = (next: typeof menu) => setMenu(menu === next ? null : next);
+  const selectWorkspace = (workspaceId?: string) => {
+    // Picking a destination closes presentation now; provider retirement may
+    // cancel the original request after the new workspace has committed.
+    setMenu(null); setFilter("");
+    run(presentNavigation(() => application.invoke("workspace.retarget-draft", workspaceId ? { workspaceId } : {})));
+  };
   const compactReason = !presentation.threadId ? t("app.openConversationFirst") : selection.engine !== "wuu" ? t("slash.compact.externalEngineUnavailable") : undefined;
   const question = offer ? <UserQuestionCard key={offer.request_id} request={structuredClone(offer) as UserQuestionRequest}
     onAnswer={answer => application.invoke("question.answer", { requestId: offer.request_id, answer })}
@@ -143,7 +168,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       clearOnSubmit={false} draftPending={draftPending}
       submitting={editingSubmitting || view.submission.operations.some(row => (row.ownerTabId === ownerTabId || Boolean(presentation.threadId && row.threadId === presentation.threadId)) && (row.phase === "preparing" || row.phase === "sending"))}
       continuation={threadContinuationTarget(view.conversationWorkspace.threads.find(thread => thread.id === presentation.threadId), application.invoke)}
-      stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || editingSubmitting || runtime.busy || switching)}
+      stopState={stop?.phase} runtimeControlsDisabled={Boolean(creation || editingSubmitting || runtime.busy)}
       telemetryTurnID={presentation.turnId} contextUsage={presentation.contextUsage} status={presentation.status}
       readOnly={presentation.readOnly} interactionDisabled={switching} initialized={configuration}
       engines={structuredClone(runtime.engines) as EngineInfo[]} activeEngine={selection.engine === "wuu" ? "" : selection.engine}
@@ -153,7 +178,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectEngineModel={async (model, effort) => (await controls.chooseRuntime({ kind: "native-model", model, effort })).accepted}
       onSelectEngineEffort={async effort => (await controls.chooseRuntime({ kind: "native-effort", effort })).accepted}
       onSelectEngineModelOptions={async modelOptions => (await controls.chooseRuntime({ kind: "native-options", modelOptions })).accepted}
-      gitStatus={environment.status} branchPickerDisabled={switching || !environment.capabilities.checkout || Boolean(presentation.threadId && environment.actionBusy)}
+      gitStatus={environment.status} branchPickerPending={branchPickerPending} branchPickerDisabled={!environment.capabilities.checkout || Boolean(presentation.threadId && environment.actionBusy && (!environmentPending || sameEnvironment))}
       worktree={!presentation.threadId && runtime.worktree.available ? { enabled: runtime.worktree.enabled, startBranch: runtime.worktree.startBranch,
         onSelectStartBranch: branch => { run(controls.chooseWorktree(true, branch)); setMenu(null); } } : undefined}
       projects={projects} activeContext={context} inlineCompletionWorkspace={{ ...context, cwd: runtime.cwd }} activeWorkspace={projects.find(row => row.id === tab.workspaceId)}
@@ -169,9 +194,9 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectPermissionMode={(mode, approveForMe) => { run(controls.choosePermission(mode, approveForMe)); setMenu(null); }}
       onOpenSettings={() => run(application.invoke("settings.open", { pageId: "providers" }))}
       onOpenSkillsCatalog={() => run(application.invoke("catalog.select-section", { section: "skills" }).then(() => application.invoke("navigation.show-section", { section: "catalog" })))}
-      onSelectWorkspace={workspaceId => run(presentNavigation(() => application.invoke("workspace.retarget-draft", { workspaceId })))} onSelectNoProject={() => run(presentNavigation(() => application.invoke("workspace.retarget-draft", {})))}
-      onCreateWorkspace={() => run(application.invoke("workspace.create", { kind: "blank" }))} onOpenWorkspace={() => run(application.invoke("workspace.create", { kind: "folder" }))}
-      onOpenGitWorktree={async path => { await application.invoke("workspace.open-worktree", { path }); setMenu(null); }}
+      onSelectWorkspace={selectWorkspace} onSelectNoProject={() => selectWorkspace()}
+      onCreateWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "blank" })); }} onOpenWorkspace={() => { setMenu(null); run(application.invoke("workspace.create", { kind: "folder" })); }}
+      onOpenGitWorktree={async path => { setMenu(null); await application.invoke("workspace.open-worktree", { path }); }}
       onSelectGitBranch={async branch => { await application.environment.checkoutBranch(branch); setMenu(null); }} onCreateGitBranch={async branch => { await application.environment.createAndCheckoutBranch(branch); setMenu(null); }}
       onStartNewThread={() => run(presentNavigation(() => application.invoke("draft.start", {})).then(({ tabId }) => application.invoke("navigation.focus-composer", { tabId })))}
       onHandoffSession={presentation.threadId ? input => run(application.invoke("conversation.handoff", { threadId: presentation.threadId!, ...input })) : undefined}
@@ -194,9 +219,12 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   </div></FileSelectionProvider></ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 
-export function activate(api: ApplicationGenerationAPI): void {
+export function activatePresentation(api: ApplicationPresentationAPI): void {
   api.registerUISlot({ id: "composer.above", cardinality: "many" });
   api.registerUISlot({ id: "composer.toolbar", cardinality: "many" });
   api.registerUIContribution({ id: "ui.composer", target: "wuu.default-shell/application.composer", render: ({ application, slots, context }: UISlotRenderProps) =>
     <DefaultComposerSurface application={application} slots={slots} {...context as DefaultComposerLayout} /> });
 }
+
+// The legacy entry remains available to standalone authoring hosts.
+export const activate = activatePresentation;

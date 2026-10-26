@@ -1,5 +1,6 @@
 import { Tooltip } from "./Tooltip";
 import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
 import { ConnectionUsageSummary } from "./ConnectionUsageSummary";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -42,8 +43,12 @@ export function SubscriptionDashboard({
   onSelectBuiltinModel: (provider: string, model: string) => Promise<void>;
 }): JSX.Element {
   const controls = useSettingsControls();
-  const mounted = useRef(true);
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const lifetime = useMemo(() => ({ active: true }), [controls]);
+  useEffect(() => {
+    lifetime.active = true;
+    setPending(""); setAuthError(false); setError("");
+    return () => { lifetime.active = false; };
+  }, [lifetime]);
   const { t, formatDate } = useI18n();
   const displayPreferences = useSettingsConnectionDisplay();
   const scopedEngine = scope?.kind === "engine" ? inventory?.engines.find(engine => engine.id === scope.id) : undefined;
@@ -84,11 +89,11 @@ export function SubscriptionDashboard({
     setError("");
     void controls.listEngines({ include_quota: true }).then((result) => {
       if (active) { setLoadedInventory(result); snapshotCallback.current?.(result); setNow(Date.now()); }
-    }, () => {
-      if (active) setError("settings.subscriptionRefreshFailed");
+    }, cause => {
+      if (active && !isPluginLifecycleCancellation(cause)) setError("settings.subscriptionRefreshFailed");
     }).finally(() => { if (active) setRefreshing(false); });
     return () => { active = false; };
-  }, [refreshVersion, canRefresh]);
+  }, [controls, refreshVersion, canRefresh]);
   const sources = useMemo(
     () => {
       // Keep live model selections from the parent; refresh owns only the
@@ -118,7 +123,7 @@ export function SubscriptionDashboard({
       return sources.filter((source) => !scope ||
         (scope.kind === "provider" ? source.kind === "builtin" && source.id === scope.name : source.kind === "engine" && source.id === scope.id));
     },
-    [displayPreferences, loadedInventory, inventory, providers, revision, authProviders, canRefresh, now, scope?.kind, scope?.kind === "provider" ? scope.name : scope?.id],
+    [controls, displayPreferences, loadedInventory, inventory, providers, revision, authProviders, canRefresh, now, scope?.kind, scope?.kind === "provider" ? scope.name : scope?.id],
   );
 
   // Group presentation only. Every connection keeps its own account snapshot,
@@ -148,37 +153,41 @@ export function SubscriptionDashboard({
         selectSubscriptionModel(controls, source, modelID);
         setRevision((current) => current + 1);
       }
-    } catch {
-      setError("settings.subscriptionModelFailed");
+    } catch (cause) {
+      if (lifetime.active && !isPluginLifecycleCancellation(cause)) setError("settings.subscriptionModelFailed");
     } finally {
-      setPending("");
+      if (lifetime.active) setPending("");
     }
   }
 
   async function checkCodexLogin(source: SubscriptionSource, useLocal: boolean): Promise<void> {
     if (pending) return;
+    let retired = false;
     setPending(source.key);
     setAuthError(false);
     setCheckedProvider("");
     try {
       if (useLocal) {
         const result = await controls.useCodexCredentials(source.id);
-        if (!mounted.current) return;
+        if (!lifetime.active) return;
         setAuthProviders(result.providers);
         onProvidersChanged?.(result.providers);
       }
       const result = await controls.loadCodexModels(source.id);
-      if (!mounted.current) return;
+      if (!lifetime.active) return;
       setAuthProviders(result.providers);
       onProvidersChanged?.(result.providers);
       setCheckedProvider(source.id);
-    } catch {
-      if (mounted.current) setAuthError(true);
+    } catch (cause) {
+      retired = isPluginLifecycleCancellation(cause);
+      if (lifetime.active && !retired) setAuthError(true);
     } finally {
-      if (mounted.current) {
+      if (lifetime.active) {
         setPending("");
-        setLoadedInventory(undefined);
-        setRefreshVersion((value) => value + 1);
+        if (!retired) {
+          setLoadedInventory(undefined);
+          setRefreshVersion((value) => value + 1);
+        }
       }
     }
   }

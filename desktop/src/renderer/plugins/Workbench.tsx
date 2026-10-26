@@ -1,6 +1,7 @@
 import { Tooltip } from "../Tooltip";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationWorkbenchV1, WorkbenchSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import * as React from "react";
 import { createPortal } from "react-dom";
 
@@ -85,6 +86,7 @@ export class WorkbenchController {
   private readonly pendingRestoredViewIds: Set<string>;
   private nextInstance = 1;
   private appliedThemeTokens = new Set<string>();
+  private disposed = false;
   services: WorkbenchServices;
 
   constructor(
@@ -112,10 +114,13 @@ export class WorkbenchController {
   renderView = (input: Parameters<ApplicationWorkbenchV1["renderView"]>[0]): React.ReactNode => <PluginViewContent controller={this} {...input} />;
 
   updateServices(services: WorkbenchServices): void {
+    this.assertActive();
     this.services = services;
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.unsubscribeHost();
     this.themeObserver.disconnect();
     for (const token of this.appliedThemeTokens) {
@@ -125,7 +130,12 @@ export class WorkbenchController {
     this.listeners.clear();
   }
 
+  private assertActive(): void {
+    if (this.disposed) throw new PluginLifecycleCancellationError();
+  }
+
   subscribe = (listener: () => void): (() => void) => {
+    if (this.disposed) return () => {};
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
@@ -133,10 +143,12 @@ export class WorkbenchController {
   getSnapshot = (): WorkbenchSnapshot => this.snapshot;
 
   retainWebPage(viewId: string): () => void {
+    this.assertActive();
     const count = this.webPageViews.get(viewId) ?? 0;
     this.webPageViews.set(viewId, count + 1);
     if (count === 0) this.publish();
     return () => {
+      if (this.disposed) return;
       const remaining = this.webPageViews.get(viewId)! - 1;
       if (remaining > 0) this.webPageViews.set(viewId, remaining);
       else {
@@ -147,6 +159,7 @@ export class WorkbenchController {
   }
 
   setAvailablePluginIds(pluginIds: ReadonlySet<string>): void {
+    this.assertActive();
     if (this.availablePluginIds?.size === pluginIds.size
       && [...pluginIds].every(id => this.availablePluginIds!.has(id))) return;
     this.availablePluginIds = new Set(pluginIds);
@@ -166,6 +179,7 @@ export class WorkbenchController {
     options: OpenViewOptions,
     preferredPluginId?: string,
   ): string {
+    this.assertActive();
     const definition = this.findViewType(viewTypeId, preferredPluginId);
     if (!definition) {
       throw new Error(`Plugin view type is not available: ${viewTypeId}`);
@@ -198,6 +212,7 @@ export class WorkbenchController {
   }
 
   async closeView(instanceId: string): Promise<void> {
+    this.assertActive();
     const closing = this.state.views.find((view) => view.id === instanceId);
     if (!closing) return;
     const views = this.state.views.filter((view) => view.id !== instanceId);
@@ -216,6 +231,7 @@ export class WorkbenchController {
   }
 
   activateView(instanceId: string): void {
+    this.assertActive();
     const view = this.state.views.find((candidate) => candidate.id === instanceId);
     if (!view) return;
     this.services.requestRegionVisible?.(view.region);
@@ -226,6 +242,7 @@ export class WorkbenchController {
   }
 
   deactivateRegion(region: ViewPlacementRegion): void {
+    this.assertActive();
     if (this.state.activeViewByRegion[region] === HIDDEN_REGION_VIEW_ID) return;
     this.replaceState({
       ...this.state,
@@ -241,20 +258,26 @@ export class WorkbenchController {
   createViewHostAPI(view: WorkbenchViewState): ViewHostAPI {
     const activation = this.host.getGenerationActivation(view.pluginId, view.generation);
     const requireActive = (): void => {
+      this.assertActive();
       if (!activation || this.host.getGenerationActivation(view.pluginId, view.generation) !== activation) {
         throw new Error("Plugin host context is no longer active");
       }
     };
+    const invoke = async <T,>(operation: () => T | Promise<T>): Promise<T> => {
+      requireActive();
+      const result = await operation();
+      requireActive();
+      return result;
+    };
     return Object.freeze({
-      getStorage: async (key: string, scope: "user" | "workspace" = "workspace") => { requireActive(); return this.getPluginStorage(view.pluginId, view.generation, key, scope); },
-      setStorage: async (key: string, value: string, scope: "user" | "workspace" = "workspace") => { requireActive(); return this.setPluginStorage(view.pluginId, view.generation, key, value, scope); },
-      getSetting: async (key: string) => { requireActive(); return this.getPluginSetting(view.pluginId, view.generation, key); },
-      executeCommand: async (commandId: string, input?: unknown) => { requireActive(); return this.executeCommand(view.pluginId, commandId, input); },
-      openView: async (viewTypeId: string, options?: OpenViewOptions) => {
-        requireActive();
+      getStorage: (key: string, scope: "user" | "workspace" = "workspace") => invoke(() => this.getPluginStorage(view.pluginId, view.generation, key, scope)),
+      setStorage: (key: string, value: string, scope: "user" | "workspace" = "workspace") => invoke(() => this.setPluginStorage(view.pluginId, view.generation, key, value, scope)),
+      getSetting: (key: string) => invoke(() => this.getPluginSetting(view.pluginId, view.generation, key)),
+      executeCommand: (commandId: string, input?: unknown) => invoke(() => this.executeCommand(view.pluginId, commandId, input)),
+      openView: (viewTypeId: string, options?: OpenViewOptions) => invoke(() => {
         this.openResolvedView(viewTypeId, options ?? {}, view.pluginId);
-      },
-      closeView: async () => { requireActive(); this.closeView(view.id); },
+      }),
+      closeView: () => invoke(() => this.closeView(view.id)),
     });
   }
 
@@ -284,17 +307,22 @@ export class WorkbenchController {
       ...base,
       actions: advertised,
       invoke: async (action: string, input?: unknown) => {
+        this.assertActive();
         if (!activation || this.host.getGenerationActivation(pluginId, generation) !== activation) {
           throw new Error("Plugin host context is no longer active");
         }
         if (!advertised.includes(action)) throw new Error(`Presentation action is not supported: ${action}`);
         if (!dispatcher) throw new Error("Presentation action dispatcher is unavailable");
-        return dispatcher(action, input);
+        const result = await dispatcher(action, input);
+        this.assertActive();
+        if (this.host.getGenerationActivation(pluginId, generation) !== activation) throw new Error("Plugin host context is no longer active");
+        return result;
       },
     });
   }
 
   private reconcileHost(): void {
+    if (this.disposed) return;
     const definitions = new Map(
       this.host.getViewTypes().map((view) => [viewTypeKey(view.pluginId, view.id), view]),
     );
@@ -352,6 +380,7 @@ export class WorkbenchController {
   }
 
   private applyThemeTokens(): void {
+    if (this.disposed) return;
     for (const token of this.appliedThemeTokens) {
       document.documentElement.style.removeProperty(token);
     }
@@ -490,10 +519,12 @@ export function DesktopWorkbench({
   inventory,
   services = EMPTY_WORKBENCH_SERVICES,
 }: DesktopWorkbenchProps): JSX.Element {
-  const [controller] = React.useState(() => suppliedController ?? new WorkbenchController(host, services));
+  // The React tree can outlive a business provider. Only an internally owned
+  // controller is retained; a newly supplied authority replaces the old one.
+  const controller = React.useMemo(() => suppliedController ?? new WorkbenchController(host, services), [host, suppliedController]);
   const snapshot = React.useSyncExternalStore(controller.subscribe, controller.getSnapshot);
 
-  React.useEffect(() => controller.updateServices(services), [controller, services]);
+  React.useEffect(() => { if (controller.services !== services) controller.updateServices(services); }, [controller, services]);
   React.useEffect(() => () => {
     if (!suppliedController) controller.dispose();
   }, [controller, suppliedController]);

@@ -1,6 +1,6 @@
 import { TruncatedText } from "../TruncatedText";
 import * as React from "react";
-import type { ApplicationServiceV1, ApplicationGenerationAPI, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationServiceV1, ApplicationPresentationAPI, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ConversationItemSnapshotV1, HeaderSnapshotV1, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
 import { HEADER_ACTIONS, FILE_PREVIEW_ACTIONS } from "../../shared/workbench";
 import type { UIContributionRegistryV1 as PluginHost, RegisteredPresenterV1 as RegisteredPresenter } from "../../../../packages/plugin-sdk/src/ui-contributions";
@@ -57,7 +57,7 @@ function retain(host: PluginHost, identities: readonly Identity[], child: React.
 
 /** Product behavior is explicitly registered by the owning surface. The composition
  * kernel knows no slot names and cannot silently restore disabled implementations. */
-function registerView(api: ApplicationGenerationAPI, slot: string, View: React.ComponentType<ContributionViewProps>): void {
+function registerView(api: ApplicationPresentationAPI, slot: string, View: React.ComponentType<ContributionViewProps>): void {
   api.registerUIContribution({ id: `default.${slot}`, target: `${api.manifestId}/${slot}`, mode: "wrap", order: -100,
     render: ({ application, context, children }: UISlotRenderProps) => <View host={api.contributions} semanticSlot={slot}
       application={application} context={context} fallback={children}
@@ -68,17 +68,17 @@ function registerView(api: ApplicationGenerationAPI, slot: string, View: React.C
       })} />,
   });
 }
-export function registerConversationContributions(api: ApplicationGenerationAPI): void {
+export function registerConversationContributions(api: ApplicationPresentationAPI): void {
   registerView(api, "conversation.cards", Cards);
   registerView(api, "conversation.message.actions", MessageActions);
 }
-export function registerPreviewContributions(api: ApplicationGenerationAPI): void {
+export function registerPreviewContributions(api: ApplicationPresentationAPI): void {
   registerView(api, "workspace.tools", WorkspaceTools);
   registerView(api, "workspace.view", WorkspaceView);
   registerView(api, "content.preview", Presenters);
   registerView(api, "header.workspace", Presenters);
 }
-export function registerShellContributions(api: ApplicationGenerationAPI): void {
+export function registerShellContributions(api: ApplicationPresentationAPI): void {
   registerView(api, "header.workspace", Presenters);
   registerView(api, "header.conversation", Presenters);
   api.registerUIContribution({ id: "default.workbench", target: `${api.manifestId}/workbench.layers`,

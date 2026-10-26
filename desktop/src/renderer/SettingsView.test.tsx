@@ -1,4 +1,5 @@
 import * as React from "react";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 import { PluginHost } from "./plugins/PluginHost";
 import { WorkbenchController } from "./plugins/Workbench";
 import type { UIContributionRegistryV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
@@ -18,6 +19,7 @@ import type {
   EngineListResult,
   EngineUpdateParams,
   InitializeResult,
+  RemoteControlSnapshot,
   RuntimeAdvancedSettingsUpdate,
   CodexPetSettingsUpdate,
   RuntimeConnectionUpdate,
@@ -154,6 +156,7 @@ function readyEngineInventory(): EngineListResult {
 }
 
 function renderSettings(props: {
+  controls?: ReturnType<typeof createApplicationSettingsControls>;
   initialized: InitializeResult | undefined;
   running?: boolean;
   usage?: SettingsUsageResponse;
@@ -171,6 +174,7 @@ function renderSettings(props: {
   codexPets?: CodexPetsSnapshot;
   codexPetsLoading?: boolean;
   codexPetsError?: string;
+  onCodexPetsRefresh?: () => Promise<CodexPetsSnapshot>;
   onCodexPetsUpdate?: (settings: CodexPetSettingsUpdate) => Promise<CodexPetsSnapshot>;
   onSave?: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
   onRemoveProvider?: (provider: string) => Promise<void>;
@@ -191,7 +195,7 @@ function renderSettings(props: {
     window.wuu.initialSystemLocale = props.locale;
   }
   const view = (
-    <SettingsView application={{settingsControls:createApplicationSettingsControls({ host: registry, controller: workbench })}}
+    <SettingsView application={{settingsControls:props.controls ?? createApplicationSettingsControls({ host: registry, controller: workbench })}}
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
         page={props.page}
@@ -209,7 +213,7 @@ function renderSettings(props: {
         codexPets={props.codexPets ?? emptyCodexPetsSnapshot()}
         codexPetsLoading={props.codexPetsLoading ?? false}
         codexPetsError={props.codexPetsError ?? ""}
-        onCodexPetsRefresh={async () => props.codexPets ?? emptyCodexPetsSnapshot()}
+        onCodexPetsRefresh={props.onCodexPetsRefresh ?? (async () => props.codexPets ?? emptyCodexPetsSnapshot())}
         onCodexPetsUpdate={props.onCodexPetsUpdate ?? (async () => props.codexPets ?? emptyCodexPetsSnapshot())}
         sidebarWidth={320}
         sidebarMinWidth={240}
@@ -245,6 +249,42 @@ function renderSettings(props: {
 }
 
 describe("SettingsView shell", () => {
+  it("refreshes retained build, MCP and remote reads on controls replacement and ignores late retired results", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const base = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let completeOld!: (value: RemoteControlSnapshot) => void;
+    let completeOldAction!: (value: RemoteControlSnapshot) => void;
+    const off = vi.fn();
+    const previous = { ...base, capabilities: { ...base.capabilities, remote: true },
+      getBuildInfo: vi.fn(async () => ({ core: {}, desktop: {} } as BuildInfoResult)),
+      listMCPServers: vi.fn(async () => ({ servers: [] })),
+      subscribeRemote: vi.fn(() => off),
+      setRemoteHostEnabled: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOldAction = resolve; })),
+      getRemoteControlSnapshot: vi.fn(() => new Promise<RemoteControlSnapshot>(resolve => { completeOld = resolve; })),
+    };
+    const next = { ...previous, getBuildInfo: vi.fn(async () => ({ core: {}, desktop: {} } as BuildInfoResult)),
+      listMCPServers: vi.fn(async () => ({ servers: [] })), subscribeRemote: vi.fn(() => vi.fn()),
+      getRemoteControlSnapshot: vi.fn(async () => ({ status: null, pair_uri: null, host_running: true, host_enabled: true })),
+    };
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: previous }));
+    const toggle = container.querySelector<HTMLButtonElement>('[data-testid="settings-remote-page"] [role="switch"]');
+    await act(async () => toggle!.click());
+    expect(previous.setRemoteHostEnabled).toHaveBeenCalledOnce();
+    await act(async () => renderSettings({ initialized: baseInitialized(), initialPage: "remote", controls: next }));
+    expect(next.getBuildInfo).toHaveBeenCalledOnce();
+    expect(next.listMCPServers).toHaveBeenCalledOnce();
+    expect(off).toHaveBeenCalledOnce();
+    expect(next.subscribeRemote).toHaveBeenCalledOnce();
+    expect(next.getRemoteControlSnapshot).toHaveBeenCalledOnce();
+    expect(container.querySelector('[data-testid="settings-remote-page"] [role="switch"]')).toBe(toggle);
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    await act(async () => {
+      completeOld({ status: null, pair_uri: null, host_running: false, host_enabled: false });
+      completeOldAction({ status: null, pair_uri: null, host_running: false, host_enabled: false });
+    });
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+  });
+
   it.each(["agents", "subscriptions"] as const)("redirects legacy %s destinations into model connections for controlled navigation", (page) => {
     installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
     const onPageChange = vi.fn();
@@ -1328,6 +1368,32 @@ describe("SettingsView general settings", () => {
         button.textContent?.includes("保存"),
       ),
     ).toBe(false);
+  });
+
+  it("keeps retained pet actions isolated from retired completions and scope cancellation", async () => {
+    installBuildInfoStub({ core: {}, desktop: {} } as BuildInfoResult);
+    const firstControls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    const nextControls = createApplicationSettingsControls({ host: registry, controller: workbench });
+    let rejectOld!: (reason: Error) => void, finishNext!: (value: CodexPetsSnapshot) => void;
+    const oldRefresh = vi.fn(() => new Promise<CodexPetsSnapshot>((_, reject) => { rejectOld = reject; }));
+    const nextRefresh = vi.fn().mockImplementationOnce(() => new Promise<CodexPetsSnapshot>(resolve => { finishNext = resolve; }))
+      .mockRejectedValueOnce(new PluginLifecycleCancellationError()).mockRejectedValueOnce(new Error("pet folder unavailable"));
+    const props = { initialPage: "appearance" as const, initialized: baseInitialized(), codexPets: emptyCodexPetsSnapshot() };
+    await act(async () => renderSettings({ ...props, controls: firstControls, onCodexPetsRefresh: oldRefresh }));
+    const refresh = container.querySelector<HTMLButtonElement>('[data-testid="settings-pet"] button')!;
+    await act(async () => refresh.click());
+    await act(async () => renderSettings({ ...props, controls: nextControls, onCodexPetsRefresh: nextRefresh }));
+    expect(container.querySelector('[data-testid="settings-pet"] button')).toBe(refresh);
+    expect(refresh.disabled).toBe(false);
+    await act(async () => refresh.click());
+    await act(async () => rejectOld(new Error("retired pet read failed")));
+    expect(refresh.disabled).toBe(true);
+    expect(container.textContent).not.toContain("retired pet read failed");
+    await act(async () => finishNext(emptyCodexPetsSnapshot()));
+    await act(async () => refresh.click());
+    expect(container.textContent).not.toContain(new PluginLifecycleCancellationError().message);
+    await act(async () => refresh.click());
+    expect(container.textContent).toContain("pet folder unavailable");
   });
 
   it("renders Codex Pets controls and saves pet selection", async () => {

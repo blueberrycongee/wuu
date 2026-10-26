@@ -39,12 +39,14 @@ describe("ApplicationEnvironment", () => {
     const old = deferred<boolean>(), next = deferred<boolean>();
     h.api.gitActionBusy.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise);
     expect(h.service.getSnapshot().actionBusy).toBe(true);
+    expect(h.service.getSnapshot().actionBusyPending).toBe(true);
     await Promise.resolve();
     expect(h.api.gitActionBusy).toHaveBeenCalledExactlyOnceWith("/one");
     h.change({ contextKey: "project:two", root: "/two" });
     expect(h.service.getSnapshot().actionBusy).toBe(true);
     await Promise.resolve(); next.resolve(false); await Promise.resolve(); await Promise.resolve();
     expect(h.service.getSnapshot().actionBusy).toBe(false);
+    expect(h.service.getSnapshot().actionBusyPending).toBe(false);
     old.resolve(true); await Promise.resolve(); await Promise.resolve();
     expect(h.service.getSnapshot().actionBusy).toBe(false);
     for (let i = 0; i < 20; i++) h.service.receive({ kind: "notification", workdir: "/two", message: { method: "item/agentMessage/delta", params: {} } });
@@ -56,6 +58,7 @@ describe("ApplicationEnvironment", () => {
     await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     expect(h.api.gitActionBusy).toHaveBeenCalledTimes(3);
     expect(h.service.getSnapshot().actionBusy).toBe(true);
+    expect(h.service.getSnapshot().actionBusyPending).toBe(false);
     h.change({ contextKey: "", root: undefined });
     expect(h.service.getSnapshot().actionBusy).toBe(false);
     h.retire();

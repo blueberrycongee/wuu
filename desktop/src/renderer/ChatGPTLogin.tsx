@@ -1,4 +1,5 @@
 import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useEffect, useRef, useState } from "react";
 import type { ProviderSummary } from "../shared/protocol";
 import { useI18n } from "./i18n";
@@ -19,18 +20,22 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
   const [error, setError] = useState("");
   const operation = useRef<{ id?: string; timer?: number } | undefined>(undefined);
   const mounted = useRef(true);
+  const authority = useRef(settingsControls);
+  authority.current = settingsControls;
   const authenticated = useRef(onAuthenticated);
   authenticated.current = onAuthenticated;
   useEffect(() => {
     mounted.current = true;
+    setBusy(false); setError("");
     return () => {
       mounted.current = false;
       const current = operation.current;
       operation.current = undefined;
       if (current?.timer) window.clearTimeout(current.timer);
       if (current?.id) void settingsControls.cancelChatGPTLogin(current.id).catch(() => {});
+      if (current) onBusyChange?.(false);
     };
-  }, []);
+  }, [settingsControls]);
 
   function finish(): void {
     operation.current = undefined;
@@ -50,7 +55,7 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
       current.id = login.login_id;
       if (operation.current !== current) {
         await settingsControls.cancelChatGPTLogin(login.login_id);
-        if (mounted.current && !operation.current) finish();
+        if (mounted.current && authority.current === settingsControls && !operation.current) finish();
         return;
       }
       const poll = async (): Promise<void> => {
@@ -74,14 +79,14 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
           // Cancel the host operation when polling can no longer observe its result.
           void settingsControls.cancelChatGPTLogin(login.login_id).catch(() => {});
           finish();
-          setError(cause instanceof Error ? cause.message : String(cause));
+          if (!isPluginLifecycleCancellation(cause)) setError(cause instanceof Error ? cause.message : String(cause));
         }
       };
       current.timer = window.setTimeout(() => void poll(), Math.max(250, login.interval_ms));
     } catch (cause) {
-      if (!mounted.current || (operation.current && operation.current !== current)) return;
+      if (!mounted.current || authority.current !== settingsControls || (operation.current && operation.current !== current)) return;
       finish();
-      setError(cause instanceof Error ? cause.message : String(cause));
+      if (!isPluginLifecycleCancellation(cause)) setError(cause instanceof Error ? cause.message : String(cause));
     }
   }
 
@@ -92,8 +97,8 @@ export function ChatGPTLogin({ onAuthenticated, onBusyChange, disabled = false, 
     operation.current = undefined;
     if (current.id) {
       try { await settingsControls.cancelChatGPTLogin(current.id); }
-      catch (cause) { if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause)); }
-      finally { if (mounted.current) finish(); }
+      catch (cause) { if (mounted.current && authority.current === settingsControls && !isPluginLifecycleCancellation(cause)) setError(cause instanceof Error ? cause.message : String(cause)); }
+      finally { if (mounted.current && authority.current === settingsControls) finish(); }
     }
     // A start still awaiting admission cancels its returned ID before finishing.
   }

@@ -1,3 +1,4 @@
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
 import { createApplicationSettingsControls } from "../plugins/hostApplicationSettingsControls";
 import { act } from "react";
@@ -54,20 +55,21 @@ async function removeImage() {
   expect(mocks.preferences).toBeNull();
 }
 
-it("cancels an unmounted import and ignores its late result after a later removal", async () => {
+it.each(["unmount", "renewal"])("cancels an import on %s and ignores its late result after a later removal", async mode => {
   let finish!: (image: Blob) => void;
   mocks.process.mockReturnValue(new Promise<Blob>(resolve => { finish = resolve; }));
   await mount();
   await chooseImage();
   const signal = mocks.process.mock.calls[0][2] as AbortSignal | undefined;
-  await remount();
+  if (mode === "unmount") await remount();
+  else await mount();
   await removeImage();
   await act(async () => finish(new Blob(["late result"])));
   expect(mocks.preferences).toBeNull();
   expect(signal?.aborted).toBe(true);
 });
 
-it("does not write an unmounted import when its storage transaction starts late", async () => {
+it.each(["unmount", "renewal"])("does not write an import retired by %s when its storage transaction starts late", async mode => {
   let commit!: () => void;
   mocks.process.mockResolvedValue(new Blob(["processed"]));
   mocks.update.mockImplementationOnce(update => new Promise<void>(resolve => {
@@ -75,7 +77,8 @@ it("does not write an unmounted import when its storage transaction starts late"
   }));
   await mount();
   await chooseImage();
-  await remount();
+  if (mode === "unmount") await remount();
+  else await mount();
   await removeImage();
   await act(async () => commit());
   expect(mocks.preferences).toBeNull();
@@ -103,5 +106,12 @@ it.each(["processing", "storage"])("retains the saved image and allows retry aft
   expect(container.querySelector<HTMLInputElement>("input[type=file]")!.disabled).toBe(false);
   await chooseImage();
   expect(mocks.preferences?.name).toBe("replacement.png");
+  expect(container.querySelector("[role=alert]")).toBeNull();
+});
+
+it("keeps a retired-authority cancellation quiet while the retained form awaits new controls", async () => {
+  mocks.process.mockRejectedValue(new PluginLifecycleCancellationError());
+  await mount();
+  await chooseImage();
   expect(container.querySelector("[role=alert]")).toBeNull();
 });

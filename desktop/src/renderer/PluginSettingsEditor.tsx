@@ -1,6 +1,7 @@
-import { useSettingsControls } from "./SettingsControlsContext";
+import { useSettingsOperationScope } from "./SettingsOperationScope";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { isTouchWebShell } from "./ComposerFocus";
-import { useEffect, useId, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import type {
   ExtensionInventoryRecord,
   PluginContributionDiagnostic,
@@ -17,22 +18,26 @@ const EMPTY_DIAGNOSTICS: readonly PluginGenerationDiagnostic[] = Object.freeze([
 export function PluginSettingsEditor({
   plugin,
   title,
+  workspaceRoot,
 }: {
   plugin: ExtensionInventoryRecord;
   title?: string;
+  workspaceRoot?: string;
 }): JSX.Element | null {
-  const controls = useSettingsControls();
+  const scope = useSettingsOperationScope(JSON.stringify([plugin.id, plugin.fingerprint]));
+  const controls = scope.controls;
   const { t } = useI18n();
   const settings = plugin.contributions?.settings ?? [];
   const approved = plugin.approval_state === "official" || plugin.approval_state === "granted";
   const fingerprint = plugin.fingerprint;
+  const subscribe = useCallback((listener: () => void) => controls.subscribe(listener), [controls]);
   const conflicts = useSyncExternalStore(
-    (listener) => controls.subscribe(listener),
+    subscribe,
     () => controls.getConflicts(),
     () => controls.getConflicts(),
   ).filter((conflict) => conflict.candidates.some((candidate) => candidate.pluginId === plugin.id));
   const rendererDiagnostics = useSyncExternalStore(
-    (listener) => controls.subscribe(listener),
+    subscribe,
     () => fingerprint ? controls.getDiagnostics(plugin.id, fingerprint) : EMPTY_DIAGNOSTICS,
     () => EMPTY_DIAGNOSTICS,
   ).filter((diagnostic) => diagnostic.kind === "render" || diagnostic.kind === "runtime");
@@ -49,12 +54,12 @@ export function PluginSettingsEditor({
     setRuntimeDiagnostics([]);
     setRuntimeDiagnosticError("");
     void controls.getPluginDiagnostics({ id: plugin.id, fingerprint }).then((result) => {
-      if (!cancelled) setRuntimeDiagnostics(result.diagnostics);
+      if (!cancelled && scope.active) setRuntimeDiagnostics(result.diagnostics);
     }).catch((loadError: unknown) => {
-      if (!cancelled) setRuntimeDiagnosticError(errorMessage(loadError, t("skills.pluginDiagnosticsFailed")));
+      if (!cancelled && scope.active && !isPluginLifecycleCancellation(loadError)) setRuntimeDiagnosticError(errorMessage(loadError, t("skills.pluginDiagnosticsFailed")));
     });
     return () => { cancelled = true; };
-  }, [approved, fingerprint, plugin.enabled, plugin.id]);
+  }, [scope, approved, fingerprint, plugin.enabled, plugin.id]);
 
   if (!approved || plugin.enabled === false || !fingerprint || (settings.length === 0 && conflicts.length === 0 && rendererDiagnostics.length === 0 && runtimeDiagnostics.length === 0 && !runtimeDiagnosticError)) {
     return null;
@@ -85,10 +90,11 @@ export function PluginSettingsEditor({
       ))}
       {settings.map((setting) => setting.type === "secret" ? (
         <PluginSecretControl
-          key={`${fingerprint}:${setting.id}`}
+          key={setting.id}
           pluginId={plugin.id}
           fingerprint={fingerprint}
           setting={setting}
+          workspaceRoot={workspaceRoot}
         />
       ) : (
         <PluginSettingControl
@@ -96,6 +102,7 @@ export function PluginSettingsEditor({
           pluginId={plugin.id}
           fingerprint={fingerprint}
           setting={setting}
+          workspaceRoot={workspaceRoot}
         />
       ))}
       </div>
@@ -104,7 +111,8 @@ export function PluginSettingsEditor({
 }
 
 function PluginConflictControl({ conflict }: { conflict: PluginContributionConflict }): JSX.Element {
-  const controls = useSettingsControls();
+  const scope = useSettingsOperationScope(conflict.key);
+  const controls = scope.controls;
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -112,16 +120,18 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
     conflict.candidates.map((candidate) => [candidate.pluginId, candidate] as const),
   ).values());
 
+  useEffect(() => { setSaving(false); setError(""); }, [scope]);
+
   async function choose(pluginId: string): Promise<void> {
-    if (saving || pluginId === conflict.winnerPluginId) return;
+    if (!scope.active || saving || pluginId === conflict.winnerPluginId) return;
     setSaving(true);
     setError("");
     try {
       await controls.chooseConflict(conflict.key, pluginId);
     } catch (saveError) {
-      setError(errorMessage(saveError, t("skills.pluginConflictSaveFailed")));
+      if (scope.active && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t("skills.pluginConflictSaveFailed")));
     } finally {
-      setSaving(false);
+      if (scope.active) setSaving(false);
     }
   }
 
@@ -173,48 +183,54 @@ function PluginNotice({ title, detail, tone = "warning" }: { title: string; deta
   );
 }
 
-function PluginSecretControl({ pluginId, fingerprint, setting }: {
+function PluginSecretControl({ pluginId, fingerprint, setting, workspaceRoot }: {
   pluginId: string;
   fingerprint: string;
   setting: ExtensionSettingDescriptor;
+  workspaceRoot?: string;
 }): JSX.Element {
-  const controls = useSettingsControls();
+  const target = settingTarget(pluginId, setting, workspaceRoot);
+  const scope = useSettingsOperationScope(JSON.stringify([target, fingerprint]));
+  const controls = scope.controls;
   const { t } = useI18n();
   const controlId = useId();
   const [draft, setDraft] = useState("");
+  const [draftTarget, setDraftTarget] = useState(target);
+  const [loadedScope, setLoadedScope] = useState<typeof scope>();
   const [configured, setConfigured] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const params = { id: pluginId, fingerprint, key: setting.id };
 
+  useEffect(() => { setDraft(""); setDraftTarget(target); }, [target]);
   useEffect(() => {
     let cancelled = false;
-    setDraft("");
+    setConfigured(false); setSaving(false); setError(""); setLoadedScope(undefined);
     setLoading(true);
     void controls.getPluginSetting(params).then((result) => {
-      if (!cancelled) setConfigured(result.configured === true);
+      if (!cancelled && scope.active) setConfigured(result.configured === true);
     }).catch((failure: unknown) => {
-      if (!cancelled) setError(errorMessage(failure, t("skills.pluginSettingLoadFailed")));
+      if (!cancelled && scope.active && !isPluginLifecycleCancellation(failure)) setError(errorMessage(failure, t("skills.pluginSettingLoadFailed")));
     }).finally(() => {
-      if (!cancelled) setLoading(false);
+      if (!cancelled && scope.active) { setLoading(false); setLoadedScope(scope); }
     });
     return () => { cancelled = true; };
-  }, [pluginId, fingerprint, setting.id]);
+  }, [scope, pluginId, fingerprint, setting.id]);
 
   async function save(value: string): Promise<void> {
-    if (loading || saving) return;
+    if (!scope.active || loadedScope !== scope || loading || saving) return;
     setSaving(true);
     setError("");
     // Never retain a submitted token for display, retry or ordinary settings.
     setDraft("");
     try {
       const result = await controls.setPluginSetting({ ...params, value });
-      setConfigured(result.configured === true);
+      if (scope.active) setConfigured(result.configured === true);
     } catch (failure) {
-      setError(errorMessage(failure, t("skills.pluginSettingSaveFailed")));
+      if (scope.active && !isPluginLifecycleCancellation(failure)) setError(errorMessage(failure, t("skills.pluginSettingSaveFailed")));
     } finally {
-      setSaving(false);
+      if (scope.active) setSaving(false);
     }
   }
 
@@ -229,14 +245,14 @@ function PluginSecretControl({ pluginId, fingerprint, setting }: {
       </div>
       <div className="plugin-setting-control settings-row-control settings-row-control-block">
         <input id={controlId} className="settings-input" type="password" autoComplete="new-password" autoCapitalize="none" spellCheck={false} maxLength={16 * 1024}
-          value={draft} disabled={loading || saving} aria-describedby={statusId}
+          value={draftTarget === target ? draft : ""} disabled={loadedScope !== scope || loading || saving} aria-describedby={statusId}
           placeholder={configured ? t("skills.pluginSecretReplace") : t("skills.pluginSecretEnter")}
-          onChange={(event) => setDraft(event.currentTarget.value)}
+          onChange={(event) => { if (scope.active && loadedScope === scope) setDraft(event.currentTarget.value); }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && draft) { event.preventDefault(); void save(draft); }
           }} />
-        <button type="button" className="settings-button" disabled={loading || saving || !draft} onClick={() => void save(draft)}>{t("common.save")}</button>
-        <button type="button" className="settings-button settings-button-ghost" disabled={loading || saving || !configured} onClick={() => void save("")}>{t("common.remove")}</button>
+        <button type="button" className="settings-button" disabled={loadedScope !== scope || loading || saving || !draft} onClick={() => void save(draft)}>{t("common.save")}</button>
+        <button type="button" className="settings-button settings-button-ghost" disabled={loadedScope !== scope || loading || saving || !configured} onClick={() => void save("")}>{t("common.remove")}</button>
       </div>
       <div id={statusId} className={`plugin-setting-status${error ? " is-error" : ""}`} aria-live="polite">
         {error || (saving ? t("skills.pluginSettingSaving") : loading ? "" : configured ? t("skills.pluginSecretConfigured") : t("skills.pluginSecretMissing"))}
@@ -249,15 +265,22 @@ function PluginSettingControl({
   pluginId,
   fingerprint,
   setting,
+  workspaceRoot,
 }: {
   pluginId: string;
   fingerprint: string;
   setting: ExtensionSettingDescriptor;
+  workspaceRoot?: string;
 }): JSX.Element {
-  const controls = useSettingsControls();
+  const target = settingTarget(pluginId, setting, workspaceRoot);
+  const scope = useSettingsOperationScope(JSON.stringify([target, fingerprint]));
+  const controls = scope.controls;
   const { locale, t } = useI18n();
   const controlId = useId();
   const [draft, setDraft] = useState<SettingValue>(setting.default);
+  const [draftTarget, setDraftTarget] = useState(target);
+  const dirty = useRef(false);
+  const [loadedScope, setLoadedScope] = useState<typeof scope>();
   const [committed, setCommitted] = useState<SettingValue>(setting.default);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -265,7 +288,12 @@ function PluginSettingControl({
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
+    dirty.current = false;
+    setDraftTarget(target); setDraft(setting.default); setCommitted(setting.default);
+  }, [target]);
+  useEffect(() => {
     let cancelled = false;
+    setLoadedScope(undefined); setSaving(false); setSaved(false);
     void load();
     return () => {
       cancelled = true;
@@ -280,22 +308,23 @@ function PluginSettingControl({
           fingerprint,
           key: setting.id,
         });
-        if (!cancelled) {
-          setDraft(result.value);
+        if (!cancelled && scope.active) {
+          setLoadedScope(scope);
+          if (!dirty.current) setDraft(result.value);
           setCommitted(result.value);
         }
       } catch (loadError) {
-        if (!cancelled) {
+        if (!cancelled && scope.active && !isPluginLifecycleCancellation(loadError)) {
           setError(errorMessage(loadError, t("skills.pluginSettingLoadFailed")));
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && scope.active) setLoading(false);
       }
     }
-  }, [fingerprint, locale, pluginId, setting.id]);
+  }, [scope, fingerprint, locale, pluginId, setting.id]);
 
   async function save(value: SettingValue): Promise<void> {
-    if (saving || Object.is(value, committed)) return;
+    if (!scope.active || loadedScope !== scope || loading || saving || Object.is(value, committed)) return;
     setSaving(true);
     setError("");
     setSaved(false);
@@ -306,33 +335,37 @@ function PluginSettingControl({
         key: setting.id,
         value,
       });
+      if (!scope.active) return;
+      dirty.current = false;
       setDraft(result.value);
       setCommitted(result.value);
       setSaved(true);
     } catch (saveError) {
-      setError(errorMessage(saveError, t("skills.pluginSettingSaveFailed")));
+      if (scope.active && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t("skills.pluginSettingSaveFailed")));
     } finally {
-      setSaving(false);
+      if (scope.active) setSaving(false);
     }
   }
 
-  function retry(): void {
-    if (!loading && !Object.is(draft, committed)) {
-      void save(draft);
+  async function retry(): Promise<void> {
+    if (!scope.active || loading || saving) return;
+    if (loadedScope === scope && !Object.is(draft, committed)) {
+      await save(draft);
       return;
     }
     setLoading(true);
     setError("");
-    void controls
-      .getPluginSetting({ id: pluginId, fingerprint, key: setting.id })
-      .then((result) => {
-        setDraft(result.value);
-        setCommitted(result.value);
-      })
-      .catch((retryError: unknown) => {
-        setError(errorMessage(retryError, t("skills.pluginSettingLoadFailed")));
-      })
-      .finally(() => setLoading(false));
+    try {
+      const result = await controls.getPluginSetting({ id: pluginId, fingerprint, key: setting.id });
+      if (!scope.active) return;
+      setLoadedScope(scope);
+      if (!dirty.current) setDraft(result.value);
+      setCommitted(result.value);
+    } catch (retryError) {
+      if (scope.active && !isPluginLifecycleCancellation(retryError)) setError(errorMessage(retryError, t("skills.pluginSettingLoadFailed")));
+    } finally {
+      if (scope.active) setLoading(false);
+    }
   }
 
   const descriptionId = `${controlId}-description`;
@@ -364,11 +397,13 @@ function PluginSettingControl({
             className="plugin-setting-switch"
             type="checkbox"
             role="switch"
-            checked={Boolean(draft)}
-            disabled={loading || saving}
+            checked={Boolean(draftTarget === target ? draft : setting.default)}
+            disabled={loadedScope !== scope || loading || saving}
             aria-describedby={describedBy}
             onChange={(event) => {
+              if (!scope.active || loadedScope !== scope) return;
               const value = event.currentTarget.checked;
+              dirty.current = true;
               setDraft(value);
               void save(value);
             }}
@@ -377,12 +412,14 @@ function PluginSettingControl({
           <SelectMenu
             id={controlId}
             triggerClassName="settings-select-trigger"
-            value={String(draft)}
-            disabled={loading || saving}
+            value={String(draftTarget === target ? draft : setting.default)}
+            disabled={loadedScope !== scope || loading || saving}
             ariaLabel={setting.title}
             align="right"
             options={(setting.enum ?? []).map((option) => ({ value: option, label: option }))}
             onChange={(value) => {
+              if (!scope.active || loadedScope !== scope) return;
+              dirty.current = true;
               setDraft(value);
               void save(value);
             }}
@@ -392,11 +429,13 @@ function PluginSettingControl({
             id={controlId}
             className={setting.type === "number" ? "settings-input settings-input-num" : "settings-input"}
             type={setting.type === "number" ? "number" : "text"}
-            value={String(draft)}
-            disabled={loading || saving}
+            value={String(draftTarget === target ? draft : setting.default)}
+            disabled={loadedScope !== scope || loading || saving}
             aria-describedby={describedBy}
             onChange={(event) => {
+              if (!scope.active || loadedScope !== scope) return;
               const raw = event.currentTarget.value;
+              dirty.current = true;
               setDraft(setting.type === "number" ? Number(raw) : raw);
               setSaved(false);
             }}
@@ -411,7 +450,7 @@ function PluginSettingControl({
               <AlertCircle className="icon-sm" aria-hidden="true" />
               {error}
             </span>
-            <button type="button" className="settings-button settings-button-ghost" onClick={retry} disabled={loading || saving}>
+            <button type="button" className="settings-button settings-button-ghost" onClick={() => void retry()} disabled={loading || saving}>
               {t("skills.pluginSettingRetry")}
             </button>
           </>
@@ -425,4 +464,11 @@ function PluginSettingControl({
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
+// Provider generations renew authority; only a different setting meaning clears a draft.
+function settingTarget(pluginId: string, setting: ExtensionSettingDescriptor, workspaceRoot?: string): string {
+  return JSON.stringify([pluginId, setting.id, setting.type, setting.scope,
+    setting.scope === "workspace" ? workspaceRoot : undefined,
+    setting.enum, setting.credential_origins]);
 }

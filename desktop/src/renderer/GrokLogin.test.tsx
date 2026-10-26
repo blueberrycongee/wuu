@@ -97,3 +97,47 @@ it("checks existing local authentication without launching a browser login and k
   expect(reuse).toHaveBeenCalledTimes(2);
   expect(container.querySelector('[role="alert"]')).toBeNull();
 });
+
+it("rebinds login authority without canceling on callback-only renders or accepting late old results", async () => {
+  let finishOld!: (value: { authenticated: boolean; methods: never[] }) => void;
+  const oldCancel = vi.fn().mockResolvedValue(undefined);
+  const refreshed = await mount({ authenticateEngine: vi.fn(), cancelEngineAuth: oldCancel });
+  const first = { ...createApplicationSettingsControls(), authenticateEngine: vi.fn(() => new Promise<{ authenticated: boolean; methods: never[] }>(resolve => { finishOld = resolve; })), cancelEngineAuth: oldCancel };
+  const newCancel = vi.fn().mockResolvedValue(undefined);
+  const second = { ...createApplicationSettingsControls(), authenticateEngine: vi.fn(() => new Promise<never>(() => {})), cancelEngineAuth: newCancel };
+  act(() => { root!.unmount(); root = createRoot(container); });
+  const render = (controls: typeof first | typeof second) => root!.render(<SettingsControlsProvider controls={controls}><GrokLogin onAuthenticated={refreshed} onBusyChange={() => {}} /></SettingsControlsProvider>);
+  act(() => render(first));
+  const trigger = container.querySelector<HTMLButtonElement>('[data-testid="grok-login-start"]')!;
+  await act(async () => trigger.click());
+  act(() => render(first));
+  expect(oldCancel).not.toHaveBeenCalled();
+  await act(async () => render(second));
+  expect(container.querySelector('[data-testid="grok-login-start"]')).toBe(trigger);
+  expect(oldCancel).toHaveBeenCalledExactlyOnceWith("grok");
+  expect(trigger.disabled).toBe(false);
+  await act(async () => trigger.click());
+  await act(async () => finishOld({ authenticated: true, methods: [] }));
+  expect(refreshed).not.toHaveBeenCalled();
+  expect(trigger.disabled).toBe(true);
+  expect(newCancel).not.toHaveBeenCalled();
+  act(() => { root!.unmount(); root = undefined; });
+  expect(newCancel).toHaveBeenCalledExactlyOnceWith("grok");
+});
+
+it("contains proven login retirement in the old-props gap without reporting authentication", async () => {
+  const authenticate = vi.fn(() => new Promise<never>(() => {}));
+  const refreshed = await mount({ authenticateEngine: authenticate, cancelEngineAuth: vi.fn().mockResolvedValue({ ok: true }) });
+  const { scopeApplicationSettingsControls } = await import("../../../packages/plugin-sdk/src/ui");
+  const { retainPresentationReads } = await import("./plugins/PresentationApplication");
+  const { PluginLifecycleCancellationError } = await import("../shared/PluginLifecycle");
+  const lifetime = new AbortController(), source = createApplicationSettingsControls();
+  const scoped = scopeApplicationSettingsControls(() => source, lifetime.signal, () => lifetime.signal.throwIfAborted());
+  const controls = retainPresentationReads({ settingsControls: scoped } as import("../../../packages/plugin-sdk/src/ui").ApplicationServiceV1, lifetime.signal).settingsControls;
+  act(() => root!.render(<SettingsControlsProvider controls={controls}><GrokLogin onAuthenticated={refreshed} /></SettingsControlsProvider>));
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="grok-login-start"]')!.click());
+  await act(async () => lifetime.abort(new PluginLifecycleCancellationError()));
+  expect(container.querySelector('[role="alert"]')).toBeNull();
+  expect(refreshed).not.toHaveBeenCalled();
+  expect(authenticate).toHaveBeenCalledOnce();
+});

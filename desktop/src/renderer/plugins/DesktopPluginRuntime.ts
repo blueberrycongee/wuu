@@ -14,7 +14,8 @@ import { settleOnAbort } from "./activation";
 import { PluginHostService, createDesktopCompositionRoot } from "./composition";
 
 interface DesktopPluginModule {
-  activate(api: PluginGenerationApi): void | Promise<void>;
+  activate?(api: PluginGenerationApi): void | Promise<void>;
+  activatePresentation?: import("../../../../packages/plugin-sdk/src/ui").ApplicationPresentationModule["activatePresentation"];
 }
 
 type ModuleLoader = (url: string) => Promise<unknown>;
@@ -243,7 +244,9 @@ export class DesktopPluginRuntime {
         if (!loaded || loaded.id !== plugin.id || loaded.fingerprint !== plugin.fingerprint) throw new Error("Desktop plugin module identity mismatch");
         const loadedModule = await this.loadModule(loaded.url);
         api.signal.throwIfAborted();
-        await requireDesktopPluginModule(loadedModule).activate(api);
+        const module = requireDesktopPluginModule(loadedModule);
+        if (module.activatePresentation) await this.host.registerPresentation(api, module.activatePresentation);
+        else await module.activate!(api);
         api.signal.throwIfAborted();
       },
     });
@@ -268,9 +271,9 @@ export class DesktopPluginRuntime {
       }
     }
 
-    // Consumers can observe their aborted scope before the selected registry
-    // transitions. Publish the prepared replacement's exact source binding first.
-    const finishRetirement = preparedApplication && this.host.applicationProviders.beginRetirement(controller.signal);
+    // Refresh presentation while the source is still current, after potentially
+    // slow preparation and before any consumer scope can observe retirement.
+    const finishRetirement = preparedApplication && await this.host.applicationProviders.prepareRetirement(controller.signal);
     try {
       if (epoch !== this.syncEpoch) return [];
       const previousDesired = this.desiredPlugins;
@@ -281,7 +284,7 @@ export class DesktopPluginRuntime {
       const knownPluginIds = new Set([...previousOrder.reverse(), ...this.activeGenerations.keys()]);
       for (const pluginId of knownPluginIds) {
         const plugin = desired.get(pluginId);
-        if (!plugin?.desktop || dependenciesChanged(pluginId)) {
+        if (!plugin?.desktop || dependenciesChanged(pluginId) && !this.host.canRebindPresentation(pluginId, plugin.fingerprint!)) {
           const cleanup = unload(pluginId);
           if (cleanup) await cleanup;
           if (epoch !== this.syncEpoch) return [];
@@ -332,6 +335,7 @@ export class DesktopPluginRuntime {
           try {
             if (epoch !== this.syncEpoch) return false;
             if (preparedApplication?.id === plugin.id) await preparedApplication.stage.activate();
+            else if (this.host.canRebindPresentation(plugin.id, fingerprint)) this.host.rebindPresentation(plugin.id, fingerprint, plugin.graph_generation);
             else await this.host.activateGeneration(activationOptions(plugin));
             if (epoch === this.syncEpoch) {
               this.activeGenerations.set(plugin.id, desktopGeneration(plugin));
@@ -339,7 +343,7 @@ export class DesktopPluginRuntime {
               // Recovery changes availability without changing inventory. Fence
               // every affected consumer in reverse order before any can restart.
               for (const dependent of dependencyOrder(desired).reverse()) {
-                if (dependenciesChanged(dependent, true)) {
+                if (dependenciesChanged(dependent, true) && !this.host.canRebindPresentation(dependent, desired.get(dependent)!.fingerprint!)) {
                   const cleanup = unload(dependent);
                   if (cleanup) await cleanup;
                   if (epoch !== this.syncEpoch) return false;
@@ -453,14 +457,12 @@ function dependencyOrder(plugins: ReadonlyMap<string, ExtensionInventoryRecord>)
 }
 
 function requireDesktopPluginModule(value: unknown): DesktopPluginModule {
-  if (typeof value !== "object" || value === null || !("activate" in value)) {
-    throw new Error("Desktop plugin module must export activate(api)");
-  }
+  if (typeof value !== "object" || value === null) throw new Error("Desktop plugin module must export activate(api) or activatePresentation(api)");
+  const activatePresentation = Reflect.get(value, "activatePresentation");
+  if (typeof activatePresentation === "function") return { activatePresentation: api => Reflect.apply(activatePresentation, value, [api]) as void | Promise<void> };
   const activate = Reflect.get(value, "activate");
-  if (typeof activate !== "function") {
-    throw new Error("Desktop plugin module must export activate(api)");
-  }
-  return { activate: (api) => Reflect.apply(activate, value, [api]) as void | Promise<void> };
+  if (typeof activate !== "function") throw new Error("Desktop plugin module must export activate(api) or activatePresentation(api)");
+  return { activate: api => Reflect.apply(activate, value, [api]) as void | Promise<void> };
 }
 
 async function importDesktopPluginModule(url: string): Promise<unknown> {

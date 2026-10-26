@@ -553,6 +553,11 @@
   transition: height var(--motion-base) var(--ease-out);
 }
 
+.dock-composer-wrap:has(.composer-footer-shell[data-layout-pending]),
+.composer-footer-shell[data-layout-pending] {
+  transition: none;
+}
+
 .composer-footer-shell[data-collapsed] {
   height: 0;
 }

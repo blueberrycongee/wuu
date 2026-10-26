@@ -19,6 +19,15 @@ import { ApplicationCatalog } from "./ApplicationCatalog";
 import { ApplicationPreviewContent } from "./ApplicationPreviewContent";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
 import { ApplicationShellOutlet } from "./ApplicationShell";
+import { scopeApplicationSettingsControls } from "../../../../packages/plugin-sdk/src/ui";
+import { retainPresentationReads } from "./PresentationApplication";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { SettingsControlsProvider } from "../SettingsControlsContext";
+import { ContentThemeControl, ThemePreferenceControl } from "../ThemePreferenceSection";
+import { MessageFlowFontSizeControl } from "../MessageFlowFontSizeSection";
+import { AppearanceTypography } from "../AppearanceTypography";
+import { AppContextSettingsSection } from "../AppContextSettingsSection";
+import { ShellSkinSettings } from "../background/ShellSkinSettings";
 
 function fixture(options: Partial<PluginHostOptions> = {}) {
   const listeners = new Set<() => void>();
@@ -54,6 +63,82 @@ function fixture(options: Partial<PluginHostOptions> = {}) {
 // Failure cases: no implicit root fallback, stale handles after same-fingerprint
 // reload, child ownership/unload, single-slot conflicts, and recursive slots.
 describe("application shell assembly", () => {
+  it("rebinds retained settings subscriptions and window actions without replaying retired authority", async () => {
+    const base = createApplicationSettingsControls();
+    const skins = Object.freeze({ skins: [], selected: "default" });
+    const make = (mode: "light" | "dark", size: number) => {
+      const lifetime = new AbortController();
+      const source = { ...base, capabilities: { ...base.capabilities, themeChanges: true, appContext: true, appContextChanges: true, appContextRecording: true },
+        currentAppliedTheme: () => mode, getThemePreference: vi.fn(async () => mode), getMessageFlowFontSize: vi.fn(async () => size),
+        readAppearance: () => ({ ...base.appearanceDefaults, motion: mode === "dark" ? "reduce" as const : "system" as const }),
+        getShellSkins: () => skins, readBackground: async () => null,
+        observeAppliedTheme: vi.fn(() => vi.fn()), observeContentThemeSelection: vi.fn(() => vi.fn()),
+        onThemePreferenceChange: vi.fn(() => vi.fn()), observeAppearance: vi.fn(() => vi.fn()),
+        observeBackground: vi.fn(() => vi.fn()), subscribeShellSkins: vi.fn(() => vi.fn()),
+        onAppContextChanged: vi.fn(() => vi.fn()),
+        getAppContextState: vi.fn(async () => ({ available: true, settings: { enabled: true, include_text: true, shortcut: "Command+Shift+C" } })),
+        setAppContextShortcutRecording: vi.fn(async () => { lifetime.signal.throwIfAborted(); return { ok: true }; }),
+      } as unknown as ReturnType<typeof createApplicationSettingsControls> & { setAppContextShortcutRecording: ReturnType<typeof vi.fn> };
+      const scoped = scopeApplicationSettingsControls(() => source, lifetime.signal, () => lifetime.signal.throwIfAborted());
+      const controls = retainPresentationReads({ settingsControls: scoped } as ApplicationServiceV1, lifetime.signal).settingsControls;
+      return { source, controls, lifetime };
+    };
+    const old = make("light", 14), next = make("dark", 18), third = make("light", 20);
+    const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+    const render = (controls: typeof old.controls) => root.render(<SettingsControlsProvider controls={controls}>
+      <ContentThemeControl /><ThemePreferenceControl /><MessageFlowFontSizeControl />
+      <AppearanceTypography section="motion" /><AppContextSettingsSection /><ShellSkinSettings />
+    </SettingsControlsProvider>);
+    try {
+      await act(async () => render(old.controls));
+      const theme = container.querySelector('[data-testid="settings-theme-dark"]');
+      const font = container.querySelector<HTMLInputElement>('[data-testid="settings-message-flow-font-size-input"]')!;
+      old.lifetime.abort(new PluginLifecycleCancellationError());
+      await act(async () => window.dispatchEvent(new Event("blur")));
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      await act(async () => render(next.controls));
+      expect(next.source.observeAppliedTheme).toHaveBeenCalledTimes(2);
+      expect(next.source.observeContentThemeSelection).toHaveBeenCalledOnce();
+      expect(next.source.onThemePreferenceChange).toHaveBeenCalledOnce();
+      expect(next.source.observeAppearance).toHaveBeenCalledOnce();
+      expect(next.source.onAppContextChanged).toHaveBeenCalledOnce();
+      expect(next.source.getAppContextState).toHaveBeenCalledOnce();
+      expect(container.querySelector('[data-testid="settings-theme-dark"]')).toBe(theme);
+      expect(theme?.getAttribute("aria-checked")).toBe("true");
+      expect(container.querySelector('[data-testid="settings-message-flow-font-size-input"]')).toBe(font);
+      expect(font.value).toBe("18");
+      expect(container.querySelector('[data-testid="settings-motion"] [role="switch"]')?.getAttribute("aria-checked")).toBe("true");
+      next.source.setAppContextShortcutRecording.mockRejectedValueOnce(new Error("native recording failed"));
+      await act(async () => window.dispatchEvent(new Event("blur")));
+      expect(container.querySelector('[role="alert"]')?.textContent).toBe("native recording failed");
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(font, "1");
+        font.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(font.value).toBe("1");
+      await act(async () => render(third.controls));
+      expect(third.source.getMessageFlowFontSize).toHaveBeenCalledOnce();
+      expect(font.value).toBe("1");
+    } finally { act(() => root.unmount()); next.lifetime.abort(); third.lifetime.abort(); container.remove(); }
+  });
+
+  it("keeps explicit recovery usable while a successor shell registers late", async () => {
+    const { host } = fixture();
+    const container = document.createElement("div"), root = createRoot(container), retry = vi.fn();
+    document.body.append(container);
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "late-shell", generation: "next", id: "shell" }} pending
+        pendingFallback={<button onClick={retry}>Recover unavailable presentation</button>} />));
+      expect(container.textContent).toBe("Recover unavailable presentation");
+      expect(document.querySelector('.view-switch-loading')).toBeNull();
+      await act(async () => container.querySelector('button')!.click()); expect(retry).toHaveBeenCalledOnce();
+      await act(async () => host.activateGeneration({ pluginId: "late-shell", generation: "next", register: api => {
+        api.registerApplicationShell({ id: "shell", render: () => <main>Successor shell</main> });
+      } }));
+      expect(container.textContent).toBe("Successor shell");
+    } finally { act(() => root.unmount()); container.remove(); host.unload("late-shell"); }
+  });
+
   it("lays out translated contributions inside wrappers and retires mounted entries", async () => {
     const { host } = fixture();
     const released: string[] = [];

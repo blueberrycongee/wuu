@@ -1,3 +1,4 @@
+import * as React from "react";
 import type { PluginGenerationApi, ApplicationServiceV1, ApplicationShellRenderProps } from "./index.js";
 
 // Public authoring failures: host components must be JSX-compatible, event
@@ -36,4 +37,28 @@ export function invalidActionContracts(application: ApplicationServiceV1): void 
   void application.invoke("appearance.set", { theme: "opaque" });
   // @ts-expect-error Provider secrets are not part of presentation state.
   void application.getSnapshot().settings.apiKey;
+}
+
+// Two independent UI authors use presentation registrations without an ambient
+// application writer. React components receive the current scoped service.
+export const researchPresentation: import("./ui.js").ApplicationPresentationModule = {
+  activatePresentation(api) {
+    api.registerUISlot({ id: "notes", cardinality: "many" });
+    api.registerApplicationShell({ id: "ui.shell", render: ({ application, slots }) =>
+      <main><h1>{application.getSnapshot().conversation.title}</h1><slots.Slot name={`${api.manifestId}/notes`} /></main> });
+  },
+};
+export const compactPresentation: import("./ui.js").ApplicationPresentationModule = {
+  activatePresentation(api) {
+    api.registerUIContribution({ id: "ui.navigation", target: "independent-shell/navigation", render: ({ application }) =>
+      <button onClick={() => { void application.invoke("draft.start", {}); }}>New conversation</button> });
+  },
+};
+export function presentationHasNoBusinessAuthority(api: import("./ui.js").ApplicationPresentationAPI): void {
+  // @ts-expect-error Registration cannot capture a business scope across rebinds.
+  void api.application;
+  // @ts-expect-error Presentation registrations cannot install a writer.
+  api.registerApplicationProvider({});
+  // @ts-expect-error Runtime service calls require a graph-owned activation.
+  api.invokeRuntime("mutate");
 }

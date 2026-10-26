@@ -16,6 +16,42 @@ Registration methods return disposable handles and belong to the active generati
 
 `api.signal` remains live after activation and aborts when that generation is disposed. Async startup is bounded; see [desktop generation lifecycle](../customize/plugin-system.md#desktop-generations-and-composition) for timeout and supersession behavior.
 
+## Stable presentation and graph-bound business scopes
+
+A presentation-only module can export `activatePresentation(api)` using
+`ApplicationPresentationAPI`. The desktop and standalone preview hosts prefer
+this entry point over `activate`. It exposes the host React runtime, manifest
+identity, contribution discovery, a presentation-lifetime signal, and shell,
+slot and contribution registration. It deliberately exposes no application
+writer, runtime invocation, or business-provider registration.
+
+Healthy, unchanged presentation code keeps its registrations and React component identity
+when the authoritative service graph changes. Render props receive a fresh
+`application` scope after the selected business provider becomes active; its identity
+stays stable for that business lifetime. Include
+that object in effect dependencies; do not capture it in module-level state.
+Authority is pinned when the scope is created, before its first method call.
+Previously captured actions, subscriptions and handles remain bound to the
+retired provider and never retarget a successor. Retired observer registrations
+are empty; they cannot attach a listener to either the old or new provider. During the writer gap the host
+may display already-read synchronous presentation values, but cannot execute old
+business operations. Preparation/activation failure still exposes recovery; it
+does not choose another provider or keep the previous writer alive.
+
+A code change, disable, missing required dependency, or connection replacement
+still retires presentation. An intentional selected-surface change can replace
+its rendered tree. Modules exporting only
+`activate(api)` keep their existing conservative graph-owned lifecycle. Opt in
+only when registrations are independent of business authority; use a separate
+normal module for runtime work.
+
+Environment snapshots may expose `actionBusyPending` to distinguish a pending
+occupancy read from a settled busy/unavailable result. Retained Git status belongs
+to its exact context and worktree root. A different target with unknown status
+may retain an existing Git control as inert and neutral, never the previous
+workspace's branch name. Pending status alone does not add Git chrome when no
+Git control was already visible; a confirmed repository can add it once.
+
 ## Application-owned workbench and contribution discovery
 
 `api.contributions` is the public `UIContributionRegistryV1`: stable immutable

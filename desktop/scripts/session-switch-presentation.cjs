@@ -4,10 +4,19 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
-module.exports = async ({ win, evaluate, waitFor, output }) => {
+module.exports = async ({ win, evaluate, waitFor, output, getResumeCount }) => {
   const viewport = await evaluate(win, () => ({ width: innerWidth, height: innerHeight, scale: devicePixelRatio }));
   const narrow = process.env.WUU_SWITCH_VARIANT === 'narrow';
   assert((narrow ? viewport.width >= 800 && viewport.width < 1000 : viewport.width >= 1300) && viewport.height >= 800, 'Presentation acceptance requires its declared wide/narrow product window');
+  const stablePresentation = process.env.WUU_SWITCH_STABLE_PRESENTATION !== '0';
+  const exceptions = [];
+  win.webContents.debugger.on('message', (_event, method, params) => {
+    if (method !== 'Runtime.exceptionThrown') return;
+    exceptions.push(params.exceptionDetails);
+    fs.writeFileSync(path.join(output, 'renderer-exceptions.json'), JSON.stringify(exceptions, null, 2));
+    console.error('PRESENTATION_EXCEPTION', JSON.stringify(params.exceptionDetails));
+  });
+  await win.webContents.debugger.sendCommand('Runtime.enable');
   const results = [];
   const nativeFrames = [];
   const inputTargets = [];
@@ -25,15 +34,18 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
   });
   await evaluate(win, () => {
     window.__presentationCompositorProfile = [];
+    window.__presentationCaptureReleases = [];
+    window.__presentationCaptureCompletions = [];
     const start = document.startViewTransition.bind(document);
     document.startViewTransition = update => {
       const record = { started: performance.now() }; window.__presentationCompositorProfile.push(record);
       const invoke = () => { record.callback = performance.now(); return update(); };
       const transition = start(() => window.__presentationCaptureBlocked
-        ? new Promise(resolve => { window.__releasePresentationCapture = () => { invoke(); resolve(); }; }) : invoke());
+        ? new Promise(resolve => { window.__presentationCaptureReleases.push(() => { invoke(); resolve(); }); }) : invoke());
       const skip = transition.skipTransition.bind(transition);
       transition.skipTransition = () => { record.released = performance.now(); record.releaseStack = new Error().stack; skip(); };
       transition.ready.then(() => { record.ready = performance.now(); }, () => { record.skipped = performance.now(); });
+      window.__presentationCaptureCompletions.push(Promise.all([transition.updateCallbackDone.catch(() => {}), transition.finished.catch(() => {})]).then(() => { record.finished = performance.now(); }));
       return transition;
     };
   });
@@ -89,9 +101,17 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
     }
     throw new Error('Related-session control did not become visible through native scrolling');
   }
+  const draftReady = index => waitFor(win, index => {
+    // Workspace identity remains in the visible titlebar when the responsive
+    // tool rail intentionally removes the composer's workspace footer.
+    const title = [...document.querySelectorAll('[data-wuu-component="conversation-titlebar"]')].find(node => node.getBoundingClientRect().height)?.textContent;
+    const input = [...document.querySelectorAll('.composer textarea')].find(node => node.getBoundingClientRect().height && !node.closest('[inert]'));
+    return !document.querySelector('.cached-conversation-pane[data-active="true"], .view-switch-loading-conversation, .view-switch-loading')
+      && title?.includes(`Switch project ${index}`) && input && !input.disabled && !input.readOnly;
+  }, index);
   const draft = async index => {
     await click('.project-row-new-thread', `Switch project ${index}`);
-    await waitFor(win, index => !document.querySelector('.cached-conversation-pane[data-active="true"]') && document.querySelector('.composer-workspace-bar')?.textContent.includes(`Switch project ${index}`), index);
+    await draftReady(index);
   };
   const ready = async () => {
     try {
@@ -125,11 +145,15 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
       await Promise.all(document.getAnimations().filter(animation => animation.playState !== 'paused' && Number.isFinite(animation.effect.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
       const probe = window.__presentationProbe = { name, frames: [], trusted: [], active: true, started: performance.now() };
       const instances = new WeakMap(); let nextInstance = 0;
-      const selectors = { shell: '.app-shell', sidebar: '.sidebar', titlebar: '.conversation-pane > .titlebar', composer: '[data-main-conversation-composer="dock"]', splitPrimaryComposer: '.conversation-split-pane:first-of-type .composer', splitSecondaryComposer: '.conversation-split-pane:last-of-type .composer', status: '.conversation-status-cluster' };
+      const selectors = { shell: '.app-shell', sidebar: '.sidebar', titlebar: '.conversation-pane > .titlebar', composer: '[data-main-conversation-composer="dock"]', composerFooter: '[data-main-conversation-composer="dock"] .composer-footer-shell', splitPrimaryComposer: '.conversation-split-pane:first-of-type .composer', splitSecondaryComposer: '.conversation-split-pane:last-of-type .composer', status: '.conversation-status-cluster', toolRail: '[data-wuu-component="workspace-tool-rail"]' };
       const bounds = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; };
       const tick = () => {
         if (!probe.active) return;
         const nodes = Object.fromEntries(Object.entries(selectors).map(([key, selector]) => [key, document.querySelector(selector)]));
+        const identities = Object.fromEntries(Object.entries(nodes).filter(([, node]) => node).map(([key, node]) => {
+          if (!instances.has(node)) instances.set(node, ++nextInstance);
+          return [key, instances.get(node)];
+        }));
         const chrome = Object.fromEntries(Object.entries(nodes).filter(([, node]) => node && node.getBoundingClientRect().width && node.getBoundingClientRect().height).map(([key, node]) => {
           const style = getComputedStyle(node);
           if (!instances.has(node)) instances.set(node, ++nextInstance);
@@ -142,7 +166,7 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
         const animations = document.getAnimations().filter(animation => {
           if (animation.playState === 'paused' || animation.playState !== 'running' && !animation.pending) return false;
           const target = animation.effect?.target;
-          return target instanceof Element && Object.values(nodes).some(node => node && (node === target || target.contains(node)));
+          return target instanceof Element && Object.values(nodes).some(node => node && (node === target || target.contains(node) || node === nodes.toolRail && node.contains(target)));
         }).map(animation => ({ target: animation.effect.target.className, name: animation.animationName || animation.transitionProperty || 'waapi' }));
         const rasterChrome = [];
         if (imageStyle?.clipPath.startsWith('path(')) {
@@ -154,7 +178,14 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
             for (const [dx, dy] of [[.05, .05], [.5, .5], [.95, .95]]) if (context.isPointInPath(clip, rect.x + rect.width * dx, rect.y + rect.height * dy)) rasterChrome.push(key);
           }
         }
-        probe.frames.push({ at: performance.now() - probe.started, chrome, loading, animations, rasterChrome,
+        const railControls = [...(nodes.toolRail?.querySelectorAll('button') || [])].map(node => {
+          const style = getComputedStyle(node);
+          return { className: node.className, label: node.getAttribute('aria-label'), disabled: node.disabled, ariaDisabled: node.getAttribute('aria-disabled'),
+            opacity: style.opacity, color: style.color, background: style.backgroundColor };
+        });
+        const layout = document.querySelector('.app-shell[data-web-workspace-open]') ? 'browser'
+          : document.querySelector('.conversation-split') ? 'split' : 'conversation';
+        probe.frames.push({ at: performance.now() - probe.started, layout, identities, chrome, railControls, loading, animations, rasterChrome,
           frame: native ? document.documentElement.getAttribute('data-wuu-compositor-frame') : image?.getAttribute('data-wuu-presentation-frame'), rootInert: !!document.querySelector('.app-shell')?.closest('[inert]'),
           imageAnimations: image?.getAnimations().length || 0, imageOpacity: imageStyle?.opacity, imageTransform: imageStyle?.transform, imageWidth: imageStyle?.width, imageHeight: imageStyle?.height,
           fullscreenLoading: !!document.querySelector('.view-switch-loading'), recovery: !!document.querySelector('[data-wuu-component="launch-view"]') });
@@ -177,7 +208,7 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
         fontSize: getComputedStyle(composer.querySelector('textarea')).fontSize };
     });
     results.push(result);
-    fs.writeFileSync(path.join(output, 'presentation-results.json'), JSON.stringify({ viewport, nativeFrames, compositorProfile: await evaluate(win, () => window.__presentationCompositorProfile), scope: 'Real selected product shell/preload/core, native input, per-rAF geometry/animation samples and compositor PNG frames. Synthetic local data; not physical-display proof.', results }, null, 2));
+    fs.writeFileSync(path.join(output, 'presentation-results.json'), JSON.stringify({ viewport, stablePresentation, nativeFrames, compositorProfile: await evaluate(win, () => window.__presentationCompositorProfile), scope: 'Real selected product shell/preload/core, native input, per-rAF geometry/animation samples and compositor PNG frames. Synthetic local data; not physical-display proof.', results }, null, 2));
     fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
     assert(result.frames.length >= 2, `${name}: no frame observations`);
     assert(result.footer, `${name}: current product footer is missing`);
@@ -189,18 +220,45 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
         && control.y >= b.y - 1 && control.y + control.height <= b.y + b.height + 1, `${name}: footer control escaped composer bounds`);
     }
     assert(result.trusted.length && result.trusted.every(Boolean), `${name}: requires native input`);
+    if (stablePresentation) {
+      const stableKeys = ['shell', 'sidebar'];
+      // Split and browser routes intentionally change their composer topology.
+      if (/(?:^|-)session-[01]$|sidebar-new-draft|empty-composer-workspace|capture-timeout/.test(name)) stableKeys.push('composer', 'composerFooter', 'toolRail');
+      for (const key of stableKeys) {
+        assert(result.frames.every(frame => frame.identities[key]), `${name}: ${key} disappeared during a business rebind`);
+        assert.equal(new Set(result.frames.map(frame => frame.identities[key])).size, 1, `${name}: ${key} remounted during a business rebind`);
+        // Expanded rails deliberately collapse, rather than remove, their footer.
+        // Preserve that initial visibility too; a transient hide is still a bug.
+        const visible = Boolean(result.frames[0].chrome[key]);
+        assert(result.frames.every(frame => Boolean(frame.chrome[key]) === visible), `${name}: ${key} visibility changed during a business rebind`);
+      }
+      if (/(?:^|-)session-[01]$/.test(name)) {
+        const visual = frame => frame.railControls.map(({ label, className, ...appearance }) => appearance);
+        assert.deepEqual(visual(result.frames.at(-1)), visual(result.frames[0]), `${name}: fixture runtime controls must share configuration`);
+        for (const frame of result.frames) assert.deepEqual(visual(frame), visual(result.frames[0]), `${name}: tool rail controls flashed at ${frame.at}ms`);
+      }
+      assert(result.frames.every(frame => frame.frame !== 'full' && !frame.recovery && !frame.fullscreenLoading), `${name}: stable presentation used whole-window replacement`);
+    }
     const geometry = {};
     for (const frame of result.frames) {
-      for (const [key, rect] of Object.entries(frame.chrome)) {
-        // A successor may legitimately use a taller footer or wider sidebar;
-        // its own controls must settle without an entrance/morph animation.
-        const identity = `${key}:${rect.instance}`; geometry[identity] ||= rect;
+      // A full retained frame covers a genuinely inert successor while its
+      // selected surfaces finish their first layout. Track chrome only from
+      // its first live frame; an unmasked or interactive owner gets no grace.
+      const liveChrome = frame.frame !== 'full' || !frame.rootInert;
+      for (const [key, rect] of Object.entries(liveChrome ? frame.chrome : {})) {
+        // A successor may legitimately use different chrome geometry, but
+        // it must stay fixed from the first frame in which it is live.
+        // Split/browser routes intentionally add or remove composer-owned rail
+        // controls. Geometry remains fixed within each declared layout, not each
+        // arbitrary control mutation. Ordinary session cases get no such change.
+        const layout = key === 'toolRail' && /-split-session$|-browser-via-conversations-workspace$/.test(name) ? frame.layout : '';
+        const identity = `${key}:${rect.instance}:${layout}`; geometry[identity] ||= rect;
         for (const axis of ['x', 'y', 'width', 'height']) assert(Math.abs(rect[axis] - geometry[identity][axis]) <= 1,
           `${name}: ${key} ${axis} shifted within its live owner (${geometry[identity][axis]} → ${rect[axis]})`);
         assert.equal(rect.opacity, '1', `${name}: ${key} faded`);
         assert.equal(rect.transform, 'none', `${name}: ${key} transformed`);
       }
-      assert.deepEqual(frame.animations, [], `${name}: shell chrome animated at ${frame.at}ms`);
+      if (liveChrome) assert.deepEqual(frame.animations, [], `${name}: shell chrome animated at ${frame.at}ms`);
       assert.deepEqual(frame.rasterChrome, [], `${name}: message raster includes live chrome`);
       if (!allowRecovery && frame.frame !== 'full') assert.equal(frame.fullscreenLoading || frame.recovery, false, `${name}: ordinary navigation replaced the whole window with loading`);
       if (frame.frame === 'full') {
@@ -243,10 +301,17 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
     const carriedDraft = 'Preserved workspace note\nSecond line stays editable\nThird line retains the taller footer';
     await click('.composer textarea'); await win.webContents.insertText(carriedDraft);
     await waitFor(win, value => document.querySelector('.composer textarea')?.value === value, carriedDraft);
-    await click('.hero-project-pill');
+    // Exercise the actual composer project menu. Its controls move to the
+    // tool rail when expanded; collapse that rail through native input first.
+    if (await evaluate(win, () => document.querySelector('.workspace-tool-rail-toggle')?.getAttribute('aria-expanded') === 'true')) {
+      await click('.workspace-tool-rail-toggle');
+      await waitFor(win, () => document.querySelector('.workspace-tool-rail-toggle')?.getAttribute('aria-expanded') === 'false'
+        && document.querySelector('[data-main-conversation-composer="dock"] .composer-project-control button[aria-haspopup="menu"]')?.getBoundingClientRect().height);
+    }
+    await click('[data-main-conversation-composer="dock"] .composer-project-control button[aria-haspopup="menu"]');
     const empty = `${motion}-empty-composer-workspace`; await begin(empty);
-    await click('.composer-project-menu button[title="Switch project 1"]');
-    await waitFor(win, () => document.querySelector('.composer-workspace-bar')?.textContent.includes('Switch project 1')); await end(empty, false, carriedDraft);
+    await click('.composer-project-menu button[role="menuitemradio"][aria-label="Switch project 1"]');
+    await draftReady(1); await end(empty, false, carriedDraft);
     await click('.sidebar-ribbon-add');
     await waitFor(win, () => !!document.querySelector('.web-workspace-stage:not([hidden])'));
     const browser = `${motion}-browser-via-conversations-workspace`; await begin(browser);
@@ -262,17 +327,33 @@ module.exports = async ({ win, evaluate, waitFor, output }) => {
   const timeout = 'capture-timeout-recovery';
   await evaluate(win, () => { window.__presentationCaptureBlocked = true; });
   const offset = await evaluate(win, () => window.__presentationCompositorProfile.length);
-  await begin(timeout); await thread(1);
-  await waitFor(win, () => document.querySelector('.cached-conversation-pane[data-active="true"]')?.getAttribute('data-thread-id') === 'switch-thread-1');
-  const bounded = await evaluate(win, () => window.__presentationCompositorProfile.at(-1));
-  assert.equal(bounded.callback, undefined, 'Business navigation waited for the stalled capture callback');
-  assert(Number.isFinite(bounded.released), 'The stalled capture was not released before navigation completed');
+  const resumeOffset = getResumeCount();
+  await begin(timeout); await thread(1); await ready();
+  const stalled = await evaluate(win, offset => window.__presentationCompositorProfile.slice(offset), offset);
+  // Stable presentation needs only the message action capture. Legacy baseline
+  // comparison explicitly keeps its separate pre-retirement whole-window capture.
+  assert.equal(stalled.length, stablePresentation ? 1 : 2,
+    stablePresentation ? 'Stable presentation must not capture retired whole-window chrome' : 'Expected action and fresh retirement capture attempts');
+  for (const capture of stalled) {
+    assert.equal(capture.callback, undefined, 'Business navigation waited for a stalled capture callback');
+    assert(Number.isFinite(capture.released), 'A stalled capture remained held after navigation completed');
+  }
+  const resumeCalls = getResumeCount() - resumeOffset;
+  assert(resumeCalls <= 1, 'Capture recovery replayed the business thread resume');
   fs.writeFileSync(path.join(output, 'capture-timeout.json'), JSON.stringify({
-    configuredCaptureBudgetMs: 120, observedReleaseMs: bounded.released - bounded.started,
-    targetReadyWhileCaptureBlocked: true, timingScope: 'Timer observation includes host scheduling; the deterministic boundary test enforces the exact 120 ms action deadline.',
+    configuredCaptureBudgetMs: 120, observedReleaseMs: stalled.map(capture => capture.released - capture.started),
+    targetReadyWhileCaptureBlocked: true, resumeCalls,
+    timingScope: 'Timer observation includes host scheduling; deterministic boundary and lifecycle tests enforce the exact 120 ms deadlines.',
   }, null, 2));
-  await evaluate(win, () => { if (typeof window.__releasePresentationCapture !== 'function') throw new Error('Capture fault did not start'); window.__presentationCaptureBlocked = false; window.__releasePresentationCapture(); });
-  await end(timeout, true);
-  assert.equal(await evaluate(win, () => window.__presentationCompositorProfile.length) - offset, 1, 'Late capture replayed navigation');
+  await evaluate(win, async offset => {
+    if (!window.__presentationCaptureReleases.length) throw new Error('Capture fault did not start');
+    window.__presentationCaptureBlocked = false;
+    for (const release of window.__presentationCaptureReleases.splice(0)) release();
+    await Promise.all(window.__presentationCaptureCompletions.slice(offset));
+  }, offset);
+  await end(timeout, !stablePresentation);
+  assert.equal(await evaluate(win, () => window.__presentationCompositorProfile.length) - offset, stalled.length, 'Late capture started another navigation capture');
+  assert.equal(getResumeCount() - resumeOffset, resumeCalls, 'Late capture replayed the business thread resume');
+  assert.deepEqual(exceptions, [], 'Navigation raised an uncaught renderer exception');
   console.log('PRESENTATION_ACCEPTANCE', JSON.stringify({ status: 'passed', scenarios: results.length, output }));
 };

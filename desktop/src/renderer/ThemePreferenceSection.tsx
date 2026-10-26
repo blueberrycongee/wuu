@@ -15,11 +15,11 @@ export function ContentThemeControl({ inventory }: { inventory?: readonly Extens
   useEffect(() => {
     setMode(currentAppliedTheme());
     return observeAppliedTheme(setMode);
-  }, []);
+  }, [currentAppliedTheme, observeAppliedTheme]);
   useEffect(() => {
     const changed = () => refresh(value => value + 1);
     return settingsControls.observeContentThemeSelection(changed);
-  }, []);
+  }, [settingsControls]);
   const themes = availableExtensionThemes(inventory).filter(theme => theme.base === mode);
   if (themes.length === 0) return null;
   const saved = selectedExtensionThemeKey(mode);
@@ -78,7 +78,7 @@ export function ThemePreferenceControl(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [settingsControls]);
 
   // Reflect switches made in other windows: the preference is app-global,
   // so the segmented control must follow the main-process broadcast too.
@@ -87,7 +87,7 @@ export function ThemePreferenceControl(): JSX.Element {
       settingsControls.capabilities.themeChanges ? settingsControls.onThemePreferenceChange((theme) => {
         setPreference(theme);
       }) : undefined,
-    [],
+    [settingsControls],
   );
 
   function choose(next: ThemePreference): void {

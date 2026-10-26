@@ -2,7 +2,7 @@ import * as composerMessages from "./ComposerMessages";
 import * as React from "react";
 import { act, useEffect, useState, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   DesktopProject,
   EngineListResult,
@@ -495,6 +495,70 @@ describe("main composer focus continuity", () => {
     Reflect.deleteProperty(globalThis, "ResizeObserver");
     delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
     vi.restoreAllMocks();
+  });
+
+  it("rebinds global focus, settings and resize listeners without replacing the shell", async () => {
+    installWuuApi();
+    const controller = new applicationState.ApplicationController();
+    vi.spyOn(applicationState, "getDesktopApplication").mockReturnValue(controller);
+    const host = createDefaultTestHost(controller);
+    await registerDefaultTestSurfaces(host);
+    onTestFinished(() => {
+      for (const pluginId of ["rebind-shell", ...Object.values(defaultSurfaceBindings).map(binding => binding.pluginId)]) host.unload(pluginId);
+    });
+    const lifetime = new AbortController();
+    const writes = vi.fn();
+    const first = { refresh: vi.fn(() => { lifetime.signal.throwIfAborted(); writes("first"); }), invoke: vi.fn(async () => ({})), resize: vi.fn(() => vi.fn()) };
+    const second = { refresh: vi.fn(), invoke: vi.fn(async () => ({})), resize: vi.fn(() => vi.fn()) };
+    type Service = import("../../../packages/plugin-sdk/src/ui").ApplicationServiceV1;
+    let rebind!: () => void;
+    await host.activateGeneration({ pluginId: "rebind-shell", generation: "fixture", register: api => {
+      activateDefaultShell({ ...api, registerApplicationShell(definition) {
+        const Render = definition.render;
+        function Rebindable(props: import("../../../packages/plugin-sdk/src/ui").ApplicationShellRenderProps) {
+          const facade = (scope: typeof first): Service => new Proxy({} as Service, { get(_source, key) {
+            const source = props.application;
+            if (key === "environment") return new Proxy({}, { get(_target, field) {
+              return field === "scheduleStatusRefresh" ? scope.refresh : Reflect.get(source.environment, field);
+            } });
+            if (key === "desktop") return new Proxy({}, { get(_target, field) {
+              return field === "onResizeState" ? scope.resize : Reflect.get(source.desktop, field);
+            } });
+            if (key === "invoke") return scope.invoke;
+            return Reflect.get(source, key);
+          } });
+          const [application, setApplication] = useState(() => facade(first));
+          rebind = () => setApplication(facade(second));
+          return <Render {...props} application={application} />;
+        }
+        return api.registerApplicationShell({ ...definition, render: Rebindable });
+      } });
+    } });
+    await act(async () => { root = createRoot(container); root.render(<ApplicationShellOutlet host={host}
+      surfaceBindings={defaultSurfaceBindings} binding={{ pluginId: "rebind-shell", generation: "fixture", id: "ui.shell" }} />); });
+    await flushAsync();
+    const shell = container.querySelector(".app-shell");
+    first.refresh.mockClear(); first.invoke.mockClear(); writes.mockClear();
+    const { PluginLifecycleCancellationError } = await import("../shared/PluginLifecycle");
+    lifetime.abort(new PluginLifecycleCancellationError());
+    // A native window focus can arrive before React receives successor props.
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(first.refresh).toHaveBeenCalledTimes(1);
+    expect(writes).not.toHaveBeenCalled();
+    expect(second.refresh).not.toHaveBeenCalled();
+    await act(async () => rebind());
+    first.refresh.mockClear(); second.refresh.mockClear();
+    await act(async () => window.dispatchEvent(new Event("focus")));
+    expect(first.refresh).not.toHaveBeenCalled();
+    expect(second.refresh).toHaveBeenCalledWith(0);
+    expect(first.resize).toHaveBeenCalledTimes(1);
+    expect(first.resize.mock.results[0].value).toHaveBeenCalledTimes(1);
+    expect(second.resize).toHaveBeenCalledTimes(1);
+    const { OPEN_SETTINGS_EVENT } = await import("./TurnNotice");
+    await act(async () => window.dispatchEvent(new CustomEvent(OPEN_SETTINGS_EVENT, { detail: { page: "providers" } })));
+    expect(first.invoke).not.toHaveBeenCalledWith("settings.open", expect.anything());
+    expect(second.invoke).toHaveBeenCalledWith("settings.open", { pageId: "providers" });
+    expect(container.querySelector(".app-shell")).toBe(shell);
   });
 
   it.each(["bridge", "register"] as const)("keeps an opened runtime picker usable through a held %s shell replacement", async (stage) => {
@@ -1105,17 +1169,16 @@ describe("main composer focus continuity", () => {
     expect(window.wuu.startTurn).toHaveBeenCalled();
   });
 
-  it("shows the first query while thread creation is still pending", async () => {
+  it("retains the waiting draft without displaying a sent message before admission", async () => {
     await renderApp(false, { deferThreadStart: true });
     const dock = mainComposer("dock");
 
     await enterCommand(dock, "first query before thread start");
 
-    expect(container.textContent).toContain("first query before thread start");
-    expect(container.querySelector(".turn-process-title")?.textContent).toBe(
-      "正在处理",
-    );
-    expect(mainComposer("dock")).not.toBeNull();
+    expect(mainComposer("dock")).toBe(dock);
+    expect(dock.value).toBe("first query before thread start");
+    expect(container.querySelector("[data-user-message-id]")).toBeNull();
+    expect(container.querySelector(".turn-process-title")).toBeNull();
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
 
     if (!releaseThreadStart) {

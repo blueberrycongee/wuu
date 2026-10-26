@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import type { ApplicationGenerationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import type { ApplicationPresentationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationSettingsLayoutV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { EngineListResult, InitializeResult } from "../../shared/protocol";
 import { SettingsShellRenderer } from "../ConversationShellRenderers";
 import { useArchiveDeletion } from "../useArchiveDeletion";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import { useSettingsRuntimeState } from "../SettingsRuntimeState";
 import type { SettingsPage } from "../SettingsView";
 import { showErrorToast } from "../Toast";
@@ -16,10 +17,11 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
   application: ApplicationServiceV1;
 }): JSX.Element | null {
   const settings = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings);
-  const archiveDeletion = useArchiveDeletion({
+  const archiveSource = useMemo(() => ({
     list: () => application.invoke("settings.list-archived", {}),
-    remove: threadId => application.invoke("settings.delete-archived", { threadId }),
-  });
+    remove: (threadId: string) => application.invoke("settings.delete-archived", { threadId }),
+  }), [application]);
+  const archiveDeletion = useArchiveDeletion(archiveSource);
   const runtime = useSettingsRuntimeState({ settingsOpen: settings.open, application });
   // Existing controls edit local drafts; copy the public immutable view at this boundary.
   const initialized = useMemo(() => structuredClone(settings.configuration) as InitializeResult | undefined, [settings.configuration]);
@@ -31,8 +33,12 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
     layout.onNoticeVisibilityChange?.(Boolean(catalogNotice));
     return () => layout.onNoticeVisibilityChange?.(false);
   }, [catalogNotice, layout.onNoticeVisibilityChange]);
-  const active = useRef(true);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const lifetime = useMemo(() => ({ active: true }), [application]);
+  useEffect(() => {
+    lifetime.active = true;
+    setCatalogNotice(undefined);
+    return () => { lifetime.active = false; };
+  }, [lifetime]);
   useEffect(() => {
     if (!settings.open) return;
     const lifetime = new AbortController();
@@ -40,12 +46,13 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
     return () => lifetime.abort();
   }, [application, settings.open, initialized?.workspace_root]);
   async function refreshModelCatalog(): Promise<void> {
+    if (!lifetime.active) return;
     setCatalogNotice(undefined);
     try {
       const result = await application.invoke("settings.refresh-model-catalog", {});
-      if (active.current) setCatalogNotice({ message: t("settings.modelCatalogUpdated", { count: result.modelCount }), isError: false });
-    } catch {
-      if (active.current) setCatalogNotice({ message: t("settings.modelCatalogUpdateFailed"), isError: true });
+      if (lifetime.active) setCatalogNotice({ message: t("settings.modelCatalogUpdated", { count: result.modelCount }), isError: false });
+    } catch (error) {
+      if (lifetime.active && !isPluginLifecycleCancellation(error)) setCatalogNotice({ message: t("settings.modelCatalogUpdateFailed"), isError: true });
     }
   }
   return <>
@@ -81,9 +88,12 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
 }
 
 /** Settings owns its domain reads and mutations; the slot supplies only presentation geometry. */
-export function activate(api: ApplicationGenerationAPI): void {
+export function activatePresentation(api: ApplicationPresentationAPI): void {
   function SettingsContribution({ application, context }: UISlotRenderProps): JSX.Element {
     return <DefaultSettingsSurface {...context.layout as ApplicationSettingsLayoutV1} application={application} />;
   }
   api.registerUIContribution({ id: "ui.settings", target: "wuu.default-shell/application.settings", render: SettingsContribution });
 }
+
+// The legacy entry remains available to standalone authoring hosts.
+export const activate = activatePresentation;

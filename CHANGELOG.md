@@ -198,7 +198,11 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Focus conversation search after its input mounts, without overriding a newer interaction or refocusing a closing dialog.
+
 - Keep running conversations and their history readable after installing, disabling, or removing a plugin. Reads retain the accepted execution’s provider ownership without releasing cross-process execution locks or losing queued input.
+
+- Keep opted-in desktop presentation mounted across service-graph renewals while replacing business scopes. Preserve sidebar, tool-rail, composer DOM and draft selection; fence delayed old actions, rebind subscriptions, close chosen workspace pickers explicitly, and retain conservative teardown for legacy extensions.
 
 - Keep the application, sidebar, and unsent drafts available when a conversation cannot be restored after a plugin change. Report that conversation failure locally and allow an explicit retry without replaying messages or changing selected providers.
 

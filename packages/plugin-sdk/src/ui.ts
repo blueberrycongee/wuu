@@ -288,6 +288,22 @@ export interface ApplicationShellDefinition {
   readonly id: string;
   readonly render: ComponentType<ApplicationShellRenderProps>;
 }
+/** Opt-in module entry point: export activatePresentation(api). Registrations live
+ * across graph renewals; render props receive a NEW graph-bound application
+ * scope on business rebind. Never retain that scope in module state. Captured actions
+ * and subscriptions retire with their original binding, not with presentation.
+ * The host may retain already-read, synchronous presentation values while no writer
+ * is active. This is not permission to run old business operations during a handoff.
+ * Modules exporting only activate(api) keep the original graph-owned lifecycle. */
+export interface ApplicationPresentationAPI extends Pick<ApplicationGenerationAPI,
+  "manifestId" | "contributions" | "registerApplicationShell" | "registerUISlot" | "registerUIContribution"> {
+  readonly signal: AbortSignal;
+  readonly react: typeof import("react");
+}
+export interface ApplicationPresentationModule {
+  activatePresentation(api: ApplicationPresentationAPI): void | Promise<void>;
+}
+
 export interface ApplicationGenerationAPI {
   readonly contributions: UIContributionRegistryV1;
   /** Central, generation-owned notice; key deduplicates repeated background failures. */

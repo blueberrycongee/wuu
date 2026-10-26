@@ -718,7 +718,7 @@ presentation or a claim of 120 Hz. Wall-clock timings remain informational.
 
 ### Message-only navigation presentation
 
-Set `WUU_SWITCH_PRESENTATION=1`, `WUU_SWITCH_TURNS=12` and
+Set `WUU_SWITCH_PRESENTATION=1`, `WUU_SWITCH_STABLE_PRESENTATION=1`, `WUU_SWITCH_TURNS=12` and
 `WUU_SWITCH_ROUNDS=1` on the session-switch fixture for a separate product
 regression journey. It drives the shipped sidebar and composer with native
 input through ordinary sessions, split panes, new drafts and browser-to-workspace
@@ -732,11 +732,18 @@ checks an 820px dark window with the saved 20px UI preference.
 The gate checks each observed frame for shell animation, input/status overlap,
 retired-frame leakage into live chrome, and unexpected full-window recovery.
 It verifies native composer input after every transition and injects a stalled
-capture to verify bounded dispatch, recovery and no late replay. Evidence includes
+capture to verify bounded dispatch and no late replay. Stable mode (the default and
+CI/npm gate) requires one message action capture, no whole-window raster or recovery,
+and unchanged shell/sidebar/composer/footer/tool-rail DOM during ordinary same-surface
+business rebinds. Split and browser routes may intentionally replace their composer.
+`WUU_SWITCH_STABLE_PRESENTATION=0` is only for old-build baseline comparisons, which
+require the legacy second retirement capture; it is not the current product gate.
+Evidence includes
 `presentation-results.json`, compositor PNG frames, final screenshots and logs.
 These are synthetic Chromium compositor observations, not physical-display proof.
-Presentation capture retains pixels only, never retired provider DOM or services;
-unsupported or failed capture remains optional and preserves genuine recovery.
+Presentation capture retains pixels only, never retired provider services. Opted-in
+UI registrations and DOM survive business rebinds with newly scoped actions; legacy
+modules and intentional code/surface replacement still use bounded capture/recovery.
 
 ### Fresh-process startup diagnostics
 

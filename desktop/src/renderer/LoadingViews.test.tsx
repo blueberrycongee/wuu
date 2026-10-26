@@ -19,3 +19,16 @@ it("exposes independent recovery only on failure, without requiring a plugin sur
     expect(container.querySelector("button")).toBeNull();
   } finally { await act(async () => root.unmount()); }
 });
+
+it("offers non-error recovery without an endless switching animation while activation is still pending", async () => {
+  const container = document.createElement("div"), root = createRoot(container), recover = vi.fn();
+  try {
+    await act(async () => root.render(<RuntimeLoading status="connecting" recovering onRecovery={recover} />));
+    expect(container.querySelector('[role="status"]')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.textContent).not.toContain('loading.failed');
+    expect(container.querySelector('.loading-rail')).toBeNull();
+    await act(async () => container.querySelector('button')!.click());
+    expect(recover).toHaveBeenCalledOnce();
+  } finally { await act(async () => root.unmount()); }
+});

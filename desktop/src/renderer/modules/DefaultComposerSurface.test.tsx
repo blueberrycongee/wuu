@@ -63,6 +63,26 @@ function setup() {
   return { render, calls, application, update: async (change: (view: ApplicationSnapshotV1) => ApplicationSnapshotV1) => { await act(async () => { state = change(state); publish(); }); } };
 }
 describe("selected public composer continuity", () => {
+  it("closes the workspace picker before a provider-rebinding navigation settles", async () => {
+    const fixture = setup();
+    const presentation = { ...fixture.application.composerPresentation.getSnapshot("draft-one"), threadId: undefined };
+    vi.spyOn(fixture.application.composerPresentation, "getSnapshot").mockReturnValue(presentation);
+    await fixture.update(view => ({ ...view, workspaces: { workspaces: [{ id: "second", name: "Second workspace", root: "/second", available: true }] } }));
+    let reject!: (error: unknown) => void;
+    const original = fixture.application.invoke;
+    vi.spyOn(fixture.application, "invoke").mockImplementation((action, input, options) => action === "workspace.retarget-draft"
+      ? new Promise((_resolve, rejectRequest) => { reject = rejectRequest; }) : original(action, input, options));
+    await fixture.render();
+    const editor = container.querySelector("textarea")!;
+    await act(async () => container.querySelector<HTMLButtonElement>('.composer-project-control button[aria-haspopup="menu"]')!.click());
+    expect(document.querySelector(".composer-project-menu")).not.toBeNull();
+    await act(async () => document.querySelector<HTMLButtonElement>('.composer-project-menu button[role="menuitemradio"][aria-label="Second workspace"]')!.click());
+    expect(document.querySelector(".composer-project-menu")).toBeNull();
+    expect(container.querySelector("textarea")).toBe(editor);
+    await act(async () => reject(new PluginLifecycleCancellationError(new Error("Provider replaced"))));
+    expect(document.querySelector(".composer-project-menu")).toBeNull();
+  });
+
   it("keeps secondary split input source-bound without adding runtime controls", async () => {
     const fixture = setup();
     await fixture.update(view => ({ ...view,
@@ -181,6 +201,90 @@ it("does not toast a retired composer refresh after switching to the replacement
   await act(async () => reject(new PluginLifecycleCancellationError(new DOMException("signal is aborted without reason", "AbortError"))));
   expect(container.querySelector("textarea")?.value).toBe("Replacement draft");
   expect(notice).not.toHaveBeenCalled();
+});
+
+it("waits for a confirmed repository before adding new Git chrome without blocking composer input", async () => {
+  const fixture = setup();
+  const initial = fixture.application.environment.getSnapshot();
+  let environment = { ...initial, root: "/unknown", contextKey: "unknown", actionBusyPending: true,
+    capabilities: { ...initial.capabilities, checkout: true }, status: undefined as typeof initial.status };
+  vi.spyOn(fixture.application.environment, "getSnapshot").mockImplementation(() => environment);
+  await fixture.render();
+  expect(container.querySelector(".composer-git-controls")).toBeNull();
+  expect(container.querySelector("textarea")!.disabled).toBe(false);
+  environment = { ...environment, status: { is_repo: true, branch: "discovered", dirty_count: 0 } };
+  await fixture.update(view => ({ ...view }));
+  const branch = container.querySelector<HTMLButtonElement>(".composer-git-controls button");
+  expect(branch).not.toBeNull();
+  expect(branch!.closest("[inert]")).not.toBeNull();
+  environment = { ...environment, actionBusyPending: false, status: { is_repo: false, dirty_count: 0 } };
+  await fixture.update(view => ({ ...view }));
+  expect(container.querySelector(".composer-git-controls")).toBeNull();
+});
+
+it.each([false, true])("keeps non-Git rail topology while status renews (different target=%s)", async differentTarget => {
+  const fixture = setup();
+  const initial = fixture.application.environment.getSnapshot();
+  let environment = { ...initial, root: "/source-non-git", contextKey: "source-non-git", actionBusyPending: false,
+    status: { is_repo: false, dirty_count: 0 } as typeof initial.status };
+  vi.spyOn(fixture.application.environment, "getSnapshot").mockImplementation(() => environment);
+  const rail = document.createElement("nav");
+  await fixture.render({ runtimeControlsTarget: rail });
+  container.append(rail);
+  const controls = [...rail.querySelectorAll("button")];
+  const editor = container.querySelector("textarea")!;
+  expect(controls.length).toBeGreaterThan(0);
+  expect(rail.querySelector(".composer-git-controls")).toBeNull();
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: { kind: "tab", targetId: "next" } } }));
+  environment = { ...environment, ...(differentTarget ? { root: "/destination-non-git", contextKey: "destination-non-git" } : {}),
+    actionBusyPending: true, status: undefined };
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: undefined } }));
+  expect([...rail.querySelectorAll("button")]).toEqual(controls);
+  expect(rail.querySelector(".composer-git-controls")).toBeNull();
+  expect(container.querySelector("textarea")).toBe(editor);
+  expect(editor.disabled).toBe(false);
+  environment = { ...environment, actionBusyPending: false, status: { is_repo: false, dirty_count: 0 } };
+  await fixture.update(view => ({ ...view }));
+  expect([...rail.querySelectorAll("button")]).toEqual(controls);
+  expect(rail.querySelector(".composer-git-controls")).toBeNull();
+});
+
+it("keeps runtime control appearance while blocking interactions during navigation", async () => {
+  const fixture = setup();
+  const initialEnvironment = fixture.application.environment.getSnapshot();
+  let environment = { ...initialEnvironment, contextKey: "source", root: "/source", actionBusyPending: false, capabilities: { ...initialEnvironment.capabilities, checkout: true },
+    status: { is_repo: true, branch: "main", branches: ["main"], dirty_count: 0 } as typeof initialEnvironment.status };
+  vi.spyOn(fixture.application.environment, "getSnapshot").mockImplementation(() => environment);
+  const rail = document.createElement("nav"); container.append(rail);
+  await fixture.render({ runtimeControlsTarget: rail });
+  // The test portal is independent from the root's composer container.
+  container.append(rail);
+  const model = rail.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!;
+  const permission = rail.querySelector<HTMLButtonElement>(".permission-rail-button")!;
+  expect(model.disabled).toBe(false); expect(permission.disabled).toBe(false);
+  const branch = rail.querySelector<HTMLButtonElement>(".composer-git-controls button")!;
+  expect(branch.disabled).toBe(false);
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: { kind: "tab", targetId: "next" } }, composerRuntime: { owners: view.composerRuntime.owners.map(owner => ({ ...owner, busy: true })) } }));
+  expect(rail.querySelector(".codex-runtime-trigger")).toBe(model);
+  expect(model.disabled).toBe(false); expect(permission.disabled).toBe(false);
+  expect(model.closest("[inert]")).not.toBeNull();
+  await act(async () => { model.click(); permission.click(); });
+  expect(document.querySelector("[data-floating-menu-owner=codex-runtime]")).toBeNull();
+  expect(document.querySelector("[data-floating-menu-owner=composer-access]")).toBeNull();
+  environment = { ...environment, contextKey: "destination", root: "/destination", actionBusyPending: true, status: undefined };
+  await fixture.update(view => ({ ...view, tabs: { ...view.tabs, pending: undefined }, composerRuntime: { owners: view.composerRuntime.owners.map(owner => ({ ...owner, busy: false })) } }));
+  expect(model.closest("[inert]")).toBeNull();
+  expect(rail.querySelector(".composer-git-controls button")).toBe(branch);
+  expect(branch.disabled).toBe(false); expect(branch.closest("[inert]")).not.toBeNull();
+  expect(branch.getAttribute("aria-label")).not.toContain("main");
+  await act(async () => branch.click());
+  expect(document.querySelector("[data-floating-menu-owner=composer-branch]")).toBeNull();
+  environment = { ...environment, actionBusyPending: false, status: { is_repo: true, branch: "destination", branches: ["destination"], dirty_count: 0 } };
+  await fixture.update(view => ({ ...view }));
+  expect(branch.closest("[inert]")).toBeNull();
+  expect(branch.getAttribute("aria-label")).toContain("destination");
+  await act(async () => model.click());
+  expect(document.querySelector("[data-floating-menu-owner=codex-runtime]")).not.toBeNull();
 });
 
 it.each([false, true])("locks navigation without changing the session's readonly semantics (split=%s)", async split => {

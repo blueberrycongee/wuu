@@ -99,6 +99,31 @@ try {
     writeFileSync(join(output, 'results.json'), JSON.stringify(results, null, 2));
   }
   rmSync(join(output, 'failure.json'), { force: true });
+  for (const motion of ['no-preference', 'reduce']) for (const age of [3900, 5000]) {
+    const label = `${motion}-retirement-after-${age}ms`;
+    await window.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: motion }] });
+    await window.loadFile(join(fixture, 'index.html')); await frames();
+    await run('document.querySelector(".history").scrollTop=2000'); await frames();
+    messageBounds = await run('(() => { const r=document.querySelector(".history").getBoundingClientRect();return {x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)};})()');
+    const source = await capture(`${label}-source`);
+    await run('window.begin()'); await run('window.transitionReady');
+    await run(`window.waitInitialAge(${age})`);
+    const initialHeld = await run('document.documentElement.hasAttribute("data-wuu-compositor-frame")');
+    assert.equal(initialHeld, age < 4000, `${label}: exercise the intended original lease boundary`);
+    await run('window.prepareRetirement()'); await run('window.transitionReady');
+    await run('window.retire()'); await frames();
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(await run('document.querySelector("main")===null'), true, `${label}: old provider DOM must be removed`);
+    assert.equal(await run('document.documentElement.dataset.wuuCompositorFrame'), 'full', `${label}: fresh frame must outlive the original lease`);
+    const retired = await capture(`${label}-retired`);
+    assert.equal(retired, source, `${label}: the fresh retained message pixels must survive actual retirement`);
+    await run('window.replace()'); await frames();
+    await run('window.reveal();window.transitionFinished'); await frames();
+    const target = await capture(`${label}-successor`);
+    assert.notEqual(target, source, `${label}: successor reveals normally`);
+    results.push({ label, initialHeld, source, retired, target, oldDOMRemoved: true, freshRetirementFrame: true });
+    writeFileSync(join(output, 'results.json'), JSON.stringify(results, null, 2));
+  }
   console.log(JSON.stringify({ status: 'passed', output, results }));
 } catch (error) { writeFileSync(join(output, 'failure.json'), JSON.stringify({ error: String(error), results }, null, 2)); console.error(error); process.exitCode = 1; }
 finally { window.destroy(); app.exit(process.exitCode === 1 ? 1 : 0); }

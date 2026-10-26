@@ -95,6 +95,41 @@ describe("WorkbenchController", () => {
     controller.dispose();
   });
 
+  it.each(["view", "renderer", "presenter"] as const)("retires captured %s actions with their business controller, not just their plugin", async kind => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "owner", generation: "same", register(api) {
+      api.registerViewType({ id: "panel", title: "Panel", persistence: "durable", render: () => null });
+    } });
+    let resolveRead!: (value: string) => void;
+    const getStorage = vi.fn(() => new Promise<string>(resolve => { resolveRead = resolve; }));
+    const setStorage = vi.fn(async () => {}), dispatch = vi.fn(async () => {});
+    const controller = new WorkbenchController(host, { getStorage, setStorage });
+    const id = await controller.openView("panel");
+    const view = controller.getSnapshot().views.find(item => item.id === id)!;
+    const api = kind === "view" ? controller.createViewHostAPI(view)
+      : kind === "renderer" ? controller.createRendererHostAPI("owner", "same")
+      : controller.createPresentationHostAPI("owner", "same", ["save"], dispatch);
+    const pending = api.getStorage("draft");
+    void pending.catch(() => {});
+    let resume!: () => void;
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    const delayed = gate.then(() => api.setStorage("draft", "late"));
+    void delayed.catch(() => {});
+    try {
+      controller.dispose();
+      const saved = window.localStorage.getItem("wuu.plugin-workbench.layout.v1");
+      resolveRead("retired result"); resume();
+      await expect(pending).rejects.toThrow("no longer active");
+      await expect(delayed).rejects.toThrow("no longer active");
+      await expect(controller.closeView(id)).rejects.toThrow("no longer active");
+      expect(() => controller.activateView(id)).toThrow("no longer active");
+      expect(() => controller.updateServices({ setStorage })).toThrow("no longer active");
+      if (kind === "presenter") await expect((api as PresentationHost).invoke("save")).rejects.toThrow("no longer active");
+      expect(window.localStorage.getItem("wuu.plugin-workbench.layout.v1")).toBe(saved);
+      expect(setStorage).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
+    } finally { resolveRead("released"); resume(); controller.dispose(); }
+  });
+
   it("maps views to every semantic region and persists only durable state", async () => {
     const host = new PluginHost({ react: React });
     await host.activateGeneration({
@@ -462,6 +497,49 @@ describe("DesktopWorkbench product path", () => {
     act(() => root.unmount());
     container.remove();
     document.querySelectorAll(".plugin-workbench-status").forEach((item) => item.remove());
+  });
+
+  it("rebinds supplied business controllers without redirecting old callbacks or remounting view DOM", async () => {
+    const host = new PluginHost({ react: React });
+    let current!: ViewHostAPI;
+    await host.activateGeneration({ pluginId: "owner", generation: "same", register(api) {
+      api.registerViewType({ id: "panel", title: "Panel", persistence: "durable", render: ({ host: actions }) => {
+        current = actions;
+        return <textarea defaultValue="unsent" />;
+      } });
+      api.registerViewPlacement({ id: "panel", view: "panel", region: "navigation" });
+    } });
+    const oldServices = { setStorage: vi.fn(async () => {}) };
+    const nextServices = { setStorage: vi.fn(async () => {}) };
+    const previous = new WorkbenchController(host, oldServices);
+    let next: WorkbenchController | undefined;
+    const updateOld = vi.spyOn(previous, "updateServices");
+    let resume!: () => void;
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    try {
+      await act(async () => root.render(<DesktopWorkbench host={host} controller={previous} services={oldServices} />));
+      const textarea = container.querySelector("textarea")!;
+      textarea.focus(); textarea.setSelectionRange(2, 4);
+      const captured = current;
+      const delayed = gate.then(() => captured.setStorage("draft", "late"));
+      void delayed.catch(() => {});
+      const checkpoint = previous.getSnapshot();
+      previous.dispose(); updateOld.mockClear();
+      next = new WorkbenchController(host, nextServices, window.localStorage, checkpoint);
+      await act(async () => root.render(<DesktopWorkbench host={host} controller={next} services={nextServices} />));
+      expect(updateOld).not.toHaveBeenCalled();
+      expect(previous.services).toBe(oldServices);
+      expect(current).not.toBe(captured);
+      expect(container.querySelector("textarea")).toBe(textarea);
+      expect(textarea.value).toBe("unsent"); expect(textarea.selectionStart).toBe(2); expect(textarea.selectionEnd).toBe(4);
+      expect(document.activeElement).toBe(textarea);
+      resume(); await expect(delayed).rejects.toThrow("no longer active");
+      await current.setStorage("draft", "current");
+      expect(oldServices.setStorage).not.toHaveBeenCalled();
+      expect(nextServices.setStorage).toHaveBeenCalledExactlyOnceWith("owner", "same", "draft", "current", "workspace");
+      await act(async () => next!.closeView(checkpoint.views[0].id));
+      expect(container.querySelector("textarea")).toBeNull();
+    } finally { resume(); updateOld.mockRestore(); act(() => root.render(null)); previous.dispose(); next?.dispose(); }
   });
 
   it.each(["settings", "auxiliary"] as const)("mounts embedded %s view actions without an empty toolbar", async (region) => {

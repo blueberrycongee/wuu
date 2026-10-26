@@ -2,6 +2,11 @@ import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { settleOnAbort } from "./activation";
 import type { ApplicationCheckpointV1, ApplicationProviderDefinition, ApplicationProviderInstanceV1, ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 
+const MAX_RETIREMENT_PREPARATION_MS = 120;
+
+/** Capture only presentation for this still-current binding; never retain its business scopes. */
+export interface ApplicationRetirementPreparation { readonly binding: number; readonly signal: AbortSignal }
+
 export interface ApplicationProviderBinding { readonly pluginId: string; readonly generation: string; readonly id: string }
 export interface ApplicationProviderRecord extends ApplicationProviderBinding {
   readonly definition: ApplicationProviderDefinition;
@@ -22,13 +27,51 @@ export class ApplicationProviders {
   private listeners = new Set<() => void>();
   private revision = 0;
   private bindingRevision = 0;
+  private presentationRevision = 0;
+  private retirementPreparationListeners = new Set<(preparation: ApplicationRetirementPreparation) => void | Promise<void>>();
+  private retirementPreparation?: { cancel(): void };
   private retirement?: { readonly phase: { readonly binding: number }; readonly signal: AbortSignal };
   current?: ApplicationProviderRecord;
   failure?: string;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
+  subscribeRetirementPreparation = (listener: (preparation: ApplicationRetirementPreparation) => void | Promise<void>): (() => void) => {
+    this.retirementPreparationListeners.add(listener); return () => this.retirementPreparationListeners.delete(listener);
+  };
   getRevision = (): number => this.revision;
   getBindingRevision = (): number => this.bindingRevision;
+  /** A writer gap retires authority immediately, but is not a new presentation. */
+  getPresentationRevision = (): number => this.presentationRevision;
   getRetirement = (): { readonly binding: number } | undefined => this.retirement?.signal.aborted ? undefined : this.retirement?.phase;
+  /** Give presentation a bounded capture opportunity before the first consumer retires.
+   * Capture failure cannot block retirement. Cancellation invalidates late capture;
+   * success leaves its pixels alone. Intent identity remains the presentation owner's policy. */
+  async prepareRetirement(signal: AbortSignal): Promise<() => void> {
+    const source = this.current, binding = this.bindingRevision;
+    if (!source || source.removed || signal.aborted) return () => {};
+    const previous = this.retirementPreparation;
+    const controller = new AbortController();
+    let ready!: () => void;
+    const waiting = new Promise<void>(resolve => { ready = resolve; });
+    const preparation = { cancel: () => { controller.abort(); ready(); } };
+    this.retirementPreparation = preparation;
+    signal.addEventListener("abort", preparation.cancel, { once: true });
+    const timeout = setTimeout(preparation.cancel, MAX_RETIREMENT_PREPARATION_MS);
+    // Publish before notifying cancellation: an abort listener may start a newer capture.
+    previous?.cancel();
+    const request = { binding, signal: controller.signal };
+    // Observe all failures, including late rejections after timeout or supersession.
+    void Promise.allSettled([...this.retirementPreparationListeners].map(listener => Promise.resolve().then(() => {
+      if (!controller.signal.aborted) return listener(request);
+    }))).then(ready);
+    await waiting;
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", preparation.cancel);
+    // An old completion cannot clear a newer capture, even if the same source returns.
+    if (this.retirementPreparation !== preparation) return () => {};
+    this.retirementPreparation = undefined;
+    if (signal.aborted || source.removed || this.current !== source || this.bindingRevision !== binding) return () => {};
+    return this.beginRetirement(signal);
+  }
   /** Prepared replacement is about to drain consumers; this does not stop or retain a writer. */
   beginRetirement(signal: AbortSignal): () => void {
     if (!this.current || signal.aborted) return () => {};
@@ -44,7 +87,12 @@ export class ApplicationProviders {
     this.changed();
     return finish;
   }
-  private changed(bindingChanged = false): void { this.revision++; if (bindingChanged) this.bindingRevision++; for (const listener of this.listeners) listener(); }
+  private changed(bindingChanged = false): void {
+    this.revision++;
+    if (bindingChanged) { this.bindingRevision++; this.retirementPreparation?.cancel(); }
+    if (this.current) this.presentationRevision = this.bindingRevision;
+    for (const listener of this.listeners) listener();
+  }
   reportFailure(message: string): void {
     const effective = this.current ? `${this.current.pluginId}/${this.current.id}@${this.current.generation} (graph ${this.current.graphGeneration ?? "local"})` : "none";
     this.failure = `${message}; effective application provider: ${effective}`;
@@ -141,6 +189,7 @@ export class ApplicationProviders {
     if (record.removal) return record.removal;
     // Fence admissions immediately, then drain preparation/activation on the same transition queue.
     record.removed = true;
+    if (this.current === record) this.retirementPreparation?.cancel();
     record.preparation.abort(new Error("Selected application provider is retired"));
     record.removal = this.enqueue(async () => {
       let failure: unknown;

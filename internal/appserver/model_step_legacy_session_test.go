@@ -31,7 +31,7 @@ func TestNextStepSelectionRejectsLegacySessionProviderWithoutMutation(t *testing
 	}
 	esbuild := filepath.Join(sdk, "node_modules", "esbuild", "bin", "esbuild")
 	if _, err := os.Stat(esbuild); err != nil {
-		t.Skip("requires installed plugin SDK dependencies and npm --prefix packages/plugin-sdk run build")
+		t.Skip("requires installed plugin SDK dependencies")
 	}
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -44,7 +44,9 @@ func TestNextStepSelectionRejectsLegacySessionProviderWithoutMutation(t *testing
 	if err := os.WriteFile(wrapper, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	command := exec.Command(esbuild, wrapper, "--bundle", "--platform=node", "--format=esm", "--alias:@wuu/plugin-sdk="+filepath.Join(sdk, "dist", "index.js"), "--outfile="+entry)
+	// Bundle the public SDK source just like the provider source, so every Go
+	// test entry point works without an earlier npm build or stale dist output.
+	command := exec.Command(esbuild, wrapper, "--bundle", "--platform=node", "--format=esm", "--alias:@wuu/plugin-sdk="+filepath.Join(sdk, "src", "index.ts"), "--outfile="+entry)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("bundle unchanged independent session provider: %s: %v", output, err)
 	}

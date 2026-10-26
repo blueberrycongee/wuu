@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { CodexPetSettingsUpdate, CodexPetsSnapshot, SettingsUsageResponse } from "../shared/protocol";
 import { translateCurrent } from "./i18n";
+import { isPluginLifecycleCancellation, PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 
 export type SettingsRuntimeState = {
   settingsUsage: SettingsUsageResponse | undefined;
@@ -23,32 +24,43 @@ export function useSettingsRuntimeState({ settingsOpen, application }: {
   const [codexPets, setCodexPets] = useState<CodexPetsSnapshot>();
   const [codexPetsLoading, setCodexPetsLoading] = useState(true);
   const [codexPetsError, setCodexPetsError] = useState("");
-  const active = useRef(true);
-  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const lifetime = useMemo(() => ({ active: true, controller: new AbortController() }), [application]);
+  useEffect(() => {
+    lifetime.active = true;
+    const controller = new AbortController();
+    lifetime.controller = controller;
+    return () => { lifetime.active = false; controller.abort(new PluginLifecycleCancellationError()); };
+  }, [lifetime]);
 
   const refreshCodexPets = useCallback(async (): Promise<CodexPetsSnapshot> => {
+    if (!lifetime.active) throw new PluginLifecycleCancellationError();
+    const signal = lifetime.controller.signal;
     setCodexPetsLoading(true); setCodexPetsError("");
     try {
-      const snapshot = structuredClone(await application.invoke("settings.read-pets", {})) as CodexPetsSnapshot;
-      if (active.current) setCodexPets(snapshot);
+      const snapshot = structuredClone(await application.invoke("settings.read-pets", {}, { signal })) as CodexPetsSnapshot;
+      signal.throwIfAborted();
+      if (lifetime.active) setCodexPets(snapshot);
       return snapshot;
     } catch (error) {
-      if (active.current) setCodexPetsError(error instanceof Error ? error.message : translateCurrent("settings.pets.readFailed"));
+      if (lifetime.active && !isPluginLifecycleCancellation(error)) setCodexPetsError(error instanceof Error ? error.message : translateCurrent("settings.pets.readFailed"));
       throw error;
-    } finally { if (active.current) setCodexPetsLoading(false); }
-  }, [application]);
+    } finally { if (lifetime.active) setCodexPetsLoading(false); }
+  }, [application, lifetime]);
 
   const updateCodexPets = useCallback(async (settings: CodexPetSettingsUpdate): Promise<CodexPetsSnapshot> => {
+    if (!lifetime.active) throw new PluginLifecycleCancellationError();
+    const signal = lifetime.controller.signal;
     setCodexPetsLoading(true); setCodexPetsError("");
     try {
-      const snapshot = structuredClone(await application.invoke("settings.update-pets", settings)) as CodexPetsSnapshot;
-      if (active.current) setCodexPets(snapshot);
+      const snapshot = structuredClone(await application.invoke("settings.update-pets", settings, { signal })) as CodexPetsSnapshot;
+      signal.throwIfAborted();
+      if (lifetime.active) setCodexPets(snapshot);
       return snapshot;
     } catch (error) {
-      if (active.current) setCodexPetsError(error instanceof Error ? error.message : translateCurrent("settings.pets.saveFailed"));
+      if (lifetime.active && !isPluginLifecycleCancellation(error)) setCodexPetsError(error instanceof Error ? error.message : translateCurrent("settings.pets.saveFailed"));
       throw error;
-    } finally { if (active.current) setCodexPetsLoading(false); }
-  }, [application]);
+    } finally { if (lifetime.active) setCodexPetsLoading(false); }
+  }, [application, lifetime]);
 
   useEffect(() => {
     if (!settingsOpen) {
@@ -59,7 +71,7 @@ export function useSettingsRuntimeState({ settingsOpen, application }: {
     setSettingsUsageLoading(true); setSettingsUsageError("");
     void application.invoke("settings.read-usage", {}, { signal: lifetime.signal })
       .then(snapshot => { if (!lifetime.signal.aborted) setSettingsUsage(structuredClone(snapshot) as SettingsUsageResponse); })
-      .catch(error => { if (!lifetime.signal.aborted) { setSettingsUsage(undefined); setSettingsUsageError(error instanceof Error ? error.message : translateCurrent("settings.usageLoadFailed")); } })
+      .catch(error => { if (!lifetime.signal.aborted && !isPluginLifecycleCancellation(error)) { setSettingsUsage(undefined); setSettingsUsageError(error instanceof Error ? error.message : translateCurrent("settings.usageLoadFailed")); } })
       .finally(() => { if (!lifetime.signal.aborted) setSettingsUsageLoading(false); });
     return () => lifetime.abort();
   }, [settingsOpen, application]);
@@ -69,7 +81,7 @@ export function useSettingsRuntimeState({ settingsOpen, application }: {
     setCodexPetsLoading(true); setCodexPetsError("");
     void application.invoke("settings.read-pets", {}, { signal: lifetime.signal })
       .then(snapshot => { if (!lifetime.signal.aborted) setCodexPets(structuredClone(snapshot) as CodexPetsSnapshot); })
-      .catch(error => { if (!lifetime.signal.aborted) setCodexPetsError(error instanceof Error ? error.message : translateCurrent("settings.pets.readFailed")); })
+      .catch(error => { if (!lifetime.signal.aborted && !isPluginLifecycleCancellation(error)) setCodexPetsError(error instanceof Error ? error.message : translateCurrent("settings.pets.readFailed")); })
       .finally(() => { if (!lifetime.signal.aborted) setCodexPetsLoading(false); });
     return () => lifetime.abort();
   }, [application]);

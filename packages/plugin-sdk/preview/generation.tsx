@@ -11,6 +11,7 @@ import { createPreviewUIKit } from './ui';
 
 export interface PreviewModule {
   readonly descriptor?: { readonly id: string; readonly services?: readonly { readonly name: string; readonly version: string }[] };
+  activatePresentation?: import("../dist/ui.js").ApplicationPresentationModule["activatePresentation"];
   activate?(api: PluginGenerationApi): void | Promise<void>;
   preview?(api: PluginGenerationApi): React.ReactNode;
 }
@@ -190,7 +191,12 @@ export async function preparePreviewGeneration(modules: readonly PreviewModule[]
         if (key in target) return Reflect.get(target, key);
         return () => { throw new Error(`${String(key)} requires the Wuu desktop host and is unavailable in component preview.`); };
       } }) as unknown as PluginGenerationApi;
-      if (module.activate) await module.activate(api);
+      if (module.activatePresentation) await module.activatePresentation(Object.freeze({
+        react: api.react, manifestId: api.manifestId, signal: api.signal, contributions: api.contributions,
+        registerApplicationShell: api.registerApplicationShell, registerUISlot: api.registerUISlot,
+        registerUIContribution: api.registerUIContribution,
+      }));
+      else if (module.activate) await module.activate(api);
       if (module.preview) {
         const Preview = () => module.preview!(api);
         entries.push({ id: `${pluginId}/preview`, title: `${pluginId} component`, render: Preview });

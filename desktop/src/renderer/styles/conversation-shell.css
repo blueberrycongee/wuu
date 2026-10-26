@@ -1325,6 +1325,7 @@ button.conversation-status-capsule,
   /* Status items appear and change while this row is already mounted.
    * Replaying the jump-to-latest entrance makes the whole capsule row blink. */
   animation: none;
+  transform: none;
 }
 
 /* Navigation and status share one floating row, not two stacked anchors. */

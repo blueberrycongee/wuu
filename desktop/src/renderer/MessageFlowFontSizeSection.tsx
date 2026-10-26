@@ -1,5 +1,5 @@
 import { useSettingsControls } from "./SettingsControlsContext";
-import { type ChangeEvent, type KeyboardEvent, useEffect, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   type MessageFlowFontSize,
@@ -59,6 +59,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
     clampSize(settingsControls.initialMessageFlowFontSize),
   );
   const [draft, setDraft] = useState(() => formatSize(size));
+  const draftEdited = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,7 +71,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
         }
         const next = clampSize(stored);
         setSize(next);
-        setDraft(formatSize(next));
+        if (!draftEdited.current) setDraft(formatSize(next));
       })
       .catch(() => {
         // Keep the preload-provided initial value.
@@ -78,7 +79,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [settingsControls]);
 
   function persist(next: MessageFlowFontSize): void {
     setSize(next);
@@ -90,6 +91,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
   }
 
   function commit(raw: string): void {
+    draftEdited.current = false;
     const parsed = Number.parseFloat(raw.trim());
     const next = snapSize(Number.isFinite(parsed) ? parsed : size);
     setDraft(formatSize(next));
@@ -98,6 +100,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
 
   function onChange(event: ChangeEvent<HTMLInputElement>): void {
     const raw = event.currentTarget.value;
+    draftEdited.current = true;
     setDraft(raw);
     const parsed = Number.parseFloat(raw.trim());
     // Apply complete in-range values immediately so the native stepper

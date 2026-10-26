@@ -7,6 +7,8 @@ import type { EngineListResult, ProviderSummary, SubscriptionQuota } from "../sh
 import { clearDraftEngineMemory, readDraftEngineMemory } from "./DraftEngineMemory";
 import { SubscriptionDashboard } from "./SubscriptionDashboard";
 import { subscriptionSources } from "./SubscriptionSources";
+import type { ApplicationSettingsControlsV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -100,6 +102,27 @@ async function render(onSelectBuiltinModel = vi.fn(), parentInventory = inventor
 }
 
 describe("SubscriptionDashboard", () => {
+  it("renews retained quota reads and does not publish an old result through the successor callback", async () => {
+    let resolveOld!: (value: EngineListResult) => void;
+    const oldRead = vi.fn().mockReturnValue(new Promise<EngineListResult>(resolve => { resolveOld = resolve; }));
+    const nextResult: EngineListResult = { engines: [], subscription_providers: [{ ...providers[1], quota: quota({ windows: [{ id: "weekly", used_percent: 20 }] }) }] };
+    const nextRead = vi.fn().mockResolvedValue(nextResult);
+    const previous = { ...createApplicationSettingsControls(), listEngines: oldRead };
+    const next = { ...createApplicationSettingsControls(), listEngines: nextRead };
+    const oldChanged = vi.fn(); const nextChanged = vi.fn();
+    const renderControls = (controls: ApplicationSettingsControlsV1, onInventoryLoaded: (value: EngineListResult) => void) => act(async () => root.render(
+      <SettingsControlsProvider controls={controls}><SubscriptionDashboard inventory={inventory} providers={providers} onSelectBuiltinModel={vi.fn()} onInventoryLoaded={onInventoryLoaded} /></SettingsControlsProvider>));
+    await renderControls(previous, oldChanged);
+    const section = container.querySelector('[data-testid="settings-subscriptions"]');
+    await renderControls(next, nextChanged);
+    expect(nextRead).toHaveBeenCalledExactlyOnceWith({ include_quota: true });
+    expect(container.querySelector('[data-testid="settings-subscriptions"]')).toBe(section);
+    expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"] meter')?.getAttribute("value")).toBe("80");
+    await act(async () => resolveOld({ engines: [], subscription_providers: [{ ...providers[1], quota: quota({ windows: [{ id: "weekly", used_percent: 90 }] }) }] }));
+    expect(nextChanged).toHaveBeenCalledExactlyOnceWith(nextResult);
+    expect(oldChanged).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="subscription-builtin-xai-subscription"] meter')?.getAttribute("value")).toBe("80");
+  });
   it("lists external engines and built-in subscriptions without merging their credentials", async () => {
     await render();
     expect(container.querySelector<HTMLButtonElement>('[data-testid="subscription-engine-grok"] button[aria-haspopup="menu"]')?.disabled).toBe(false);
@@ -494,4 +517,44 @@ it("does not probe or publish after a credential result outlives the selected se
   await act(async () => reused({ providers: [provider] }));
   expect(window.wuu.loadCodexModels).not.toHaveBeenCalled();
   expect(changed).not.toHaveBeenCalled();
+});
+
+it("does not continue retired credential admission or clear a successor credential check", async () => {
+  const provider: ProviderSummary = { name: "renewed-codex", type: "openai-codex", model: "m" };
+  let resolveOld!: (result: { providers: ProviderSummary[] }) => void;
+  let resolveNext!: (result: { providers: ProviderSummary[] }) => void;
+  const previous = { ...createApplicationSettingsControls(), useCodexCredentials: vi.fn().mockReturnValue(new Promise(resolve => { resolveOld = resolve; })), loadCodexModels: vi.fn() };
+  const next = { ...createApplicationSettingsControls(), useCodexCredentials: vi.fn().mockReturnValue(new Promise(resolve => { resolveNext = resolve; })), loadCodexModels: vi.fn().mockResolvedValue({ providers: [provider], models: [] }) };
+  const changed = vi.fn();
+  const renderControls = (controls: ApplicationSettingsControlsV1) => act(async () => root.render(<SettingsControlsProvider controls={controls}><SubscriptionDashboard providers={[provider]} inventory={inventory} onProvidersChanged={changed} onSelectBuiltinModel={vi.fn()} /></SettingsControlsProvider>));
+  const begin = async () => {
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="subscription-account-actions"]')!.click());
+    await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[0]!.click());
+  };
+  await renderControls(previous);
+  await begin();
+  await renderControls(next);
+  const action = container.querySelector<HTMLButtonElement>('[data-testid="subscription-account-actions"]')!;
+  expect(action.disabled).toBe(false);
+  await begin();
+  await act(async () => resolveOld({ providers: [provider] }));
+  expect(previous.loadCodexModels).not.toHaveBeenCalled();
+  expect(next.loadCodexModels).not.toHaveBeenCalled();
+  expect(changed).not.toHaveBeenCalled();
+  expect(action.disabled).toBe(true);
+  await act(async () => resolveNext({ providers: [provider] }));
+  expect(next.loadCodexModels).toHaveBeenCalledExactlyOnceWith(provider.name);
+  expect(action.disabled).toBe(false);
+});
+
+it.each([true, false])("does not retry retired credential cancellation but still reports transport failures (retired: %s)", async retired => {
+  const cause = retired ? new PluginLifecycleCancellationError() : new Error("Credential transport failed");
+  const controls = { ...createApplicationSettingsControls(), useCodexCredentials: vi.fn().mockRejectedValue(cause), loadCodexModels: vi.fn(), listEngines: vi.fn().mockResolvedValue(inventory) };
+  await act(async () => root.render(<SettingsControlsProvider controls={controls}><SubscriptionDashboard
+    providers={[{ name: "codex", type: "openai-codex", model: "m" }]} inventory={inventory} onSelectBuiltinModel={vi.fn()} /></SettingsControlsProvider>));
+  await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="subscription-account-actions"]')!.click());
+  await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[0]!.click());
+  expect(Boolean(container.querySelector('[role="alert"]'))).toBe(!retired);
+  expect(controls.loadCodexModels).not.toHaveBeenCalled();
+  expect(controls.listEngines).toHaveBeenCalledTimes(retired ? 1 : 2);
 });

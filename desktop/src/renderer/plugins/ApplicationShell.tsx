@@ -1,4 +1,4 @@
-import { RuntimeLoading, ViewSwitchLoading } from "../LoadingViews";
+import { RuntimeLoading } from "../LoadingViews";
 import { showErrorToast } from "../Toast";
 import { useI18n, translateCurrent } from "../i18n";
 import { createPluginTranslator } from "./pluginI18n";
@@ -81,8 +81,10 @@ function Contribution({ host, contribution, slots, context, children }: {
   React.useEffect(() => host.retainGeneration(contribution.pluginId, contribution.generation), [host, contribution]);
   const { locale } = useI18n();
   const translate = React.useMemo(() => createPluginTranslator(host, locale), [host, locale]);
+  React.useSyncExternalStore(host.applicationProviders.subscribe, host.applicationProviders.getPresentationRevision);
+  const application = host.getPresentationApplication(contribution.pluginId, contribution.generation, contribution.application);
   const View = contribution.render;
-  return <View application={contribution.application} slots={slots} context={context} locale={locale} translate={translate}>{children}</View>;
+  return <View application={application} slots={slots} context={context} locale={locale} translate={translate}>{children}</View>;
 }
 
 class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; fullShell?: boolean; recover?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
@@ -104,27 +106,31 @@ class ShellBoundary extends React.Component<{ children: React.ReactNode; identit
   }
 }
 
-function SelectedShell({ host, shell }: { host: PluginHost; shell: RegisteredApplicationShell }): React.ReactNode {
+const SelectedShell = React.memo(function SelectedShell({ host, shell }: { host: PluginHost; shell: RegisteredApplicationShell }): React.ReactNode {
   const slots = React.useMemo(() => createUIComposition(host), [host]);
   React.useEffect(() => host.retainGeneration(shell.pluginId, shell.generation), [host, shell]);
+  React.useSyncExternalStore(host.applicationProviders.subscribe, host.applicationProviders.getPresentationRevision);
+  const application = host.getPresentationApplication(shell.pluginId, shell.generation, shell.application);
   const View = shell.render;
-  return <View application={shell.application} slots={slots} />;
-}
+  return <View application={application} slots={slots} />;
+});
 
 /** The selected graph binding is authoritative; absence never chooses a local default. */
-export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pending = false }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>>; pending?: boolean }): React.ReactNode {
+export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pending = false, pendingFallback }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>>; pending?: boolean; pendingFallback?: React.ReactNode }): React.ReactNode {
   const { t } = useI18n();
+  const surfaceKey = JSON.stringify(surfaceBindings);
+  const stableBindings = React.useMemo(() => surfaceBindings, [surfaceKey]);
   const shells = React.useSyncExternalStore(listener => host.subscribe(listener), host.getApplicationShells, host.getApplicationShells);
   const selected = binding && shells.find(shell => shell.pluginId === binding.pluginId
     && shell.generation === binding.generation && shell.id === binding.id);
-  if (!selected && pending) return <ViewSwitchLoading />;
-  if (!selected) return <RuntimeLoading fullscreen onRetry={() => window.location.reload()}
-    status={t("plugins.applicationUnavailable")} />;
+  if (!selected && pending && pendingFallback) return pendingFallback;
+  if (!selected) return <RuntimeLoading fullscreen recovering={pending} onRetry={() => window.location.reload()}
+    status={pending ? "connecting" : t("plugins.applicationUnavailable")} />;
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary fullShell key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>
     <UICompositionPendingContext.Provider value={pending}>
-      <SurfaceBindings.Provider value={surfaceBindings}><SelectedShell host={host} shell={selected} /></SurfaceBindings.Provider>
+      <SurfaceBindings.Provider value={stableBindings}><SelectedShell host={host} shell={selected} /></SurfaceBindings.Provider>
     </UICompositionPendingContext.Provider>
   </ShellBoundary>;
 }
