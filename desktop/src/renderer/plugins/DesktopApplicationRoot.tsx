@@ -46,6 +46,11 @@ export function DesktopApplicationRoot(): JSX.Element {
   const shell = state.initialized?.application_shell;
   const binding = shell ? { pluginId: shell.plugin_id, generation: shell.generation, id: shell.provider_id } : null;
   const pending = pluginsPending || !state.initialized && !state.error || selectionReady?.key !== selectionKey;
+  useEffect(() => {
+    if (pending || !state.initialized) return;
+    desktopBootstrap.settleRestoration(state.connectionGeneration,
+      failure ?? (!active ? "Selected application provider is unavailable" : undefined));
+  }, [pending, state.initialized, state.connectionGeneration, active, failure]);
   const wrap = (content: React.ReactNode) => <ConversationPresentationBoundary binding={desktopPluginHost.applicationProviders.getBindingRevision()} retiring={!active && pending} failed={Boolean(failure && !pending)}>{content}</ConversationPresentationBoundary>;
   if (!state.initialized || !active) {
     // A stopped writer must not remain interactive. Reuse the existing text-free

@@ -4,8 +4,8 @@ import { createRoot } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 
 const fixture = vi.hoisted(() => ({ current: true, pending: false, failure: undefined as string | undefined, revision: 1,
-  initialized: { application_surfaces: {}, extension_inventory: [] }, notice: vi.fn(), dismiss: vi.fn() }));
-vi.mock("./DesktopBootstrap", () => ({ desktopBootstrap: { subscribe: () => () => {}, getSnapshot: () => snapshot, start: () => () => {} } }));
+  initialized: { application_surfaces: {}, extension_inventory: [] }, notice: vi.fn(), dismiss: vi.fn(), settle: vi.fn() }));
+vi.mock("./DesktopBootstrap", () => ({ desktopBootstrap: { subscribe: () => () => {}, getSnapshot: () => snapshot, start: () => () => {}, settleRestoration: fixture.settle } }));
 const snapshot = { initialized: fixture.initialized, connectionGeneration: 0 };
 vi.mock("./DesktopPluginRuntime", () => ({ useDesktopPluginRuntime: () => fixture.pending,
   desktopPluginHost: { subscribe: () => () => {}, getActivationReportFailure: () => undefined,
@@ -16,7 +16,7 @@ vi.mock("../Toast", () => ({ showErrorToast: fixture.notice, dismissToast: fixtu
 vi.mock("../i18n", () => ({ useI18n: () => ({ t: (key: string) => key }) }));
 vi.mock("../LoadingViews", () => ({ RuntimeLoading: ({ status, onRecovery, onRetry }: {status:string; onRecovery?: () => void; onRetry?: () => void}) => <div>{status}{onRecovery && <button onClick={onRecovery} aria-label="recovery" />}{onRetry && <button onClick={onRetry} aria-label="retry" />}</div>, ViewSwitchLoading: () => <div data-switch="true" /> }));
 import { DesktopApplicationRoot } from "./DesktopApplicationRoot";
-afterEach(() => { fixture.current = true; fixture.pending = false; fixture.failure = undefined; fixture.notice.mockReset(); fixture.dismiss.mockReset(); });
+afterEach(() => { fixture.current = true; fixture.pending = false; fixture.failure = undefined; fixture.notice.mockReset(); fixture.dismiss.mockReset(); fixture.settle.mockReset(); });
 it("does not flash startup or technical failure text during reload, and deduplicates the final notice", async () => {
   const container = document.createElement("div"); const root = createRoot(container);
   const render = async () => { fixture.revision++; await act(async () => root.render(<DesktopApplicationRoot />)); };
@@ -58,4 +58,19 @@ it("opens recovery independently when application provider is unavailable", asyn
     expect(container.querySelector('[aria-label="recovery"]')).toBeNull();
     expect(container.querySelector('[aria-label="retry"]')).not.toBeNull();
   } finally { await act(async () => root.unmount()); vi.unstubAllGlobals(); }
+});
+
+it("acknowledges restoration only after the selected renderer generation settles", async () => {
+  const container = document.createElement("div"), root = createRoot(container);
+  fixture.pending = true; fixture.current = false;
+  try {
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    expect(fixture.settle).not.toHaveBeenCalled();
+    fixture.pending = false; fixture.current = true;
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    expect(fixture.settle).toHaveBeenLastCalledWith(0, undefined);
+    fixture.current = false; fixture.failure = "selected graph failed";
+    await act(async () => root.render(<DesktopApplicationRoot />));
+    expect(fixture.settle).toHaveBeenLastCalledWith(0, "selected graph failed");
+  } finally { await act(async () => root.unmount()); }
 });

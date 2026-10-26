@@ -1,4 +1,4 @@
-import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
+import { isPluginLifecycleCancellation, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import type { ApplicationWorkbenchV1, UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationEventEffects } from "./ApplicationEventEffects";
 import { deriveActiveSessionHints } from "../activeSessionHint";
@@ -48,7 +48,7 @@ import { applyThemePreference, currentAppliedTheme, observeAppliedTheme } from "
 import { observeAppearance, readAppearance, saveAppearance } from "../AppearancePreferences";
 import { applyMessageFlowFontSize } from "../MessageFlowFontSizeSection";
 import { createComposerMessage, awaitComposerImages, awaitComposerFiles, inputImagesFromComposer, inputFilesFromComposer, createOptimisticTurn, queuedMessagePreview, queuedMessageFullPreview, type QueuedComposerMessage } from "../ComposerMessages";
-import { createComposerPendingState } from "../ComposerPendingState";
+import { createComposerPendingState, heldComposerMessagesFromResumeResult } from "../ComposerPendingState";
 import { createSidebarThreadCache } from "../SidebarWorkspaceState";
 import { createConversationPaneActions } from "../ConversationPaneActions";
 import { createThreadMutationActions } from "../ThreadMutationActions";
@@ -325,6 +325,7 @@ export class ApplicationController implements HostApplicationService {
   private theme = window.wuu?.initialThemePreference ?? "system";
   private load?: Promise<LoadedRuntimeState>;
   private loaded?: LoadedRuntimeState;
+  private applicationRuntimeIdentity?: string;
   private pendingEvents: ServerEvent[] = [];
   private eventTimer?: ReturnType<typeof setTimeout>;
   private subscriptions: (() => void)[] = [];
@@ -454,7 +455,7 @@ export class ApplicationController implements HostApplicationService {
   }
   private streamPublication?: number;
 
-  constructor(state?: AppState, private readonly dependencies?: { readonly contributions: UIContributionRegistryV1; readonly workbench: ApplicationWorkbenchV1 }) {
+  constructor(state?: AppState, private readonly dependencies?: { readonly applicationProviderId?: string; readonly contributions: UIContributionRegistryV1; readonly workbench: ApplicationWorkbenchV1 }) {
     this.state = state ?? { ...initialState, sessionTabs: this.recoveredDrafts.tabs, lastViewedTurnByThreadID: readThreadReadState() };
     this.sidebarCache = createSidebarThreadCache(() => this.state.projects, status => { throw new Error(status); });
     this.pendingComposer = createComposerPendingState({ getAppState: () => this.state,
@@ -663,7 +664,7 @@ export class ApplicationController implements HostApplicationService {
   /** Await resource releases started by the last consumer's synchronous cleanup. */
   flushCleanup(): Promise<void> { return this.cleanup; }
 
-  initialize(signal = this.lifetime?.signal): Promise<LoadedRuntimeState> {
+  initialize(signal = this.lifetime?.signal, options: { resumeThread?: boolean } = {}): Promise<LoadedRuntimeState> {
     signal?.throwIfAborted();
     if (this.state.initialized) return Promise.resolve({ ...this.state,
       heldComposerMessages: this.loaded?.thread?.id === this.state.thread?.id ? this.loaded?.heldComposerMessages : undefined });
@@ -681,10 +682,11 @@ export class ApplicationController implements HostApplicationService {
         signal?.throwIfAborted();
         const active = this.state.sessionTabs.find(tab => tab.id === activeTabId
           && workspace.active_context && sameRecoveryContext(tab.context, workspace.active_context));
-        loaded = await loadRuntime(workspace, { resumeLatestThread: active?.kind === "thread", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
+        loaded = await loadRuntime(workspace, { resumeLatestThread: options.resumeThread !== false && active?.kind === "thread", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
       }
       signal?.throwIfAborted();
       this.loaded = loaded;
+      this.applicationRuntimeIdentity = this.selectedApplicationIdentity(loaded.initialized);
       this.updateState(state => {
         const context = loaded.activeContext;
         const sessionTabs = state.sessionTabs.filter(tab => {
@@ -843,6 +845,15 @@ export class ApplicationController implements HostApplicationService {
     return true;
   }
 
+  private selectedApplicationIdentity(initialized: InitializeResult | undefined): string | undefined {
+    const providerId = this.dependencies?.applicationProviderId;
+    const selected = initialized?.application_surfaces?.["ui.application"];
+    const plugin = initialized?.extension_inventory?.find(candidate => candidate.id === providerId);
+    if (!providerId || selected?.plugin_id !== providerId || !plugin?.graph_generation
+      || selected.generation !== plugin.fingerprint) return undefined;
+    return JSON.stringify([selected.plugin_id, selected.provider_id, selected.generation, plugin.graph_generation]);
+  }
+
   private navigationActions(signal?: AbortSignal) {
     let restoredDraft: ComposerDraftState | undefined;
     const isCurrent = (request: number) => !signal?.aborted && request === this.navigationRequest;
@@ -891,6 +902,16 @@ export class ApplicationController implements HostApplicationService {
       onError: (error: Error): never => { throw error; },
     };
     const threads = createThreadActivationActions({ ...common,
+      onThreadResumed: resumed => {
+        this.pendingComposer.seedHeldComposerMessages(resumed.thread.id, heldComposerMessagesFromResumeResult(resumed));
+      },
+      ...(this.applicationRuntimeIdentity ? { acceptRuntimeConfiguration: (loaded: Partial<AppState>) => {
+        if (this.selectedApplicationIdentity(loaded.initialized) === this.applicationRuntimeIdentity) return true;
+        // Initialization already published the new selected graph. Its provider
+        // will restore this read-only intent; the retired writer must not resume it.
+        if (signal) this.invocationAborts.get(signal)?.abort(new PluginLifecycleCancellationError(new Error("Selected application graph changed")));
+        return false;
+      } } : {}),
       getActiveThreadID: () => activeThreadIDForState(this.state),
       getSidebarThreads: () => [...this.state.threads, ...this.sidebarCache.getSnapshot().cachedScratchThreads],
       getSidebarWorkspaceThreadsByWorkspaceID: () => this.sidebarCache.getSnapshot().workspaceThreadsByWorkspaceID,

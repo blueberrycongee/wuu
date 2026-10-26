@@ -61,6 +61,23 @@ const clickRequests: string[] = [];
 const nativeInputCommands: { webContentsID: number; method: string; params: unknown }[] = [];
 const failures: string[] = [];
 const checks: { name: string; passed: boolean; detail?: string }[] = [];
+// Temporary CI-only evidence for cold hidden-host frame readiness. Remove once
+// the first-frame stall is explained; this observes only the synthetic fixture.
+const diagnosticsEnabled = process.env.WUU_BROWSER_OWNERSHIP_DIAGNOSTICS === "1";
+const captureDiagnostics: Record<string, unknown>[] = [];
+function recordCaptureDiagnostic(stage: string, detail: Record<string, unknown> = {}) {
+  if (diagnosticsEnabled) captureDiagnostics.push({ stage, at: Date.now(), uptimeMs: Math.round(process.uptime() * 1000), ...detail });
+}
+function writeCaptureDiagnostics() {
+  if (diagnosticsEnabled) writeFileSync(join(output, "hidden-capture-diagnostics.json"), JSON.stringify(captureDiagnostics, null, 2));
+}
+if (diagnosticsEnabled) {
+  recordCaptureDiagnostic("fixture-start", { electron: process.versions.electron, chrome: process.versions.chrome, platform: process.platform });
+  app.on("gpu-info-update", () => recordCaptureDiagnostic("gpu-info-update", { features: app.getGPUFeatureStatus() }));
+  app.on("child-process-gone", (_event, details) => {
+    if (details.type === "GPU") recordCaptureDiagnostic("gpu-process-gone", { reason: details.reason, exitCode: details.exitCode });
+  });
+}
 function check(name: string, condition: unknown, detail?: string) {
   checks.push({ name, passed: Boolean(condition), ...(detail ? { detail } : {}) });
   console.log(`${condition ? "PASS" : "FAIL"} ${checks.length}: ${name}`);
@@ -339,6 +356,7 @@ async function waitForPopupDocument(openerTabID: string, path: string, existingT
 }
 
 app.whenReady().then(async () => {
+  recordCaptureDiagnostic("app-ready");
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   baseURL = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   writeFileSync(join(home, "config.json"), JSON.stringify({
@@ -350,9 +368,22 @@ app.whenReady().then(async () => {
   }));
   const nativePresentations: { windowID: number; event: string }[] = [];
   const hostWindows: BrowserWindow[] = [];
+  const windowIDs = new WeakMap<BrowserWindow, number>();
+  function nativeWindowState(window: BrowserWindow) {
+    return { windowID: windowIDs.get(window), destroyed: window.isDestroyed(), ...(!window.isDestroyed() ? {
+      visible: window.isVisible(), focused: window.isFocused(), minimized: window.isMinimized(),
+    } : {}) };
+  }
   function watchPresentation(window: BrowserWindow) {
+    windowIDs.set(window, window.id);
     window.on("show", () => nativePresentations.push({ windowID: window.id, event: "show" }));
     window.on("focus", () => nativePresentations.push({ windowID: window.id, event: "focus" }));
+    if (diagnosticsEnabled) {
+      recordCaptureDiagnostic("window-created", nativeWindowState(window));
+      for (const event of ["ready-to-show", "show", "focus", "hide", "blur", "closed"] as const) {
+        window.on(event, () => recordCaptureDiagnostic(`window-${event}`, nativeWindowState(window)));
+      }
+    }
     return window;
   }
   const main = watchPresentation(new BrowserWindow({ show: false, width: 900, height: 650,
@@ -387,6 +418,53 @@ app.whenReady().then(async () => {
     },
     (options?: WebContentsViewConstructorOptions) => {
       const view = createBrowserView(options);
+      if (diagnosticsEnabled) {
+        const contents = view.webContents;
+        const contentsID = contents.id;
+        let frameWaitSerial = 0;
+        const state = () => contents.isDestroyed() ? { contentsID, destroyed: true } : ({ contentsID,
+          bounds: view.getBounds(), visible: view.getVisible(), throttled: contents.getBackgroundThrottling(),
+          loading: contents.isLoading(), loadingMainFrame: contents.isLoadingMainFrame(),
+          windows: hostWindows.map(nativeWindowState) });
+        recordCaptureDiagnostic("view-created", state());
+        for (const event of ["dom-ready", "did-finish-load", "did-stop-loading"] as const) {
+          contents.on(event, () => recordCaptureDiagnostic(`view-${event}`, state()));
+        }
+        const setVisible = view.setVisible.bind(view);
+        view.setVisible = visible => { setVisible(visible); recordCaptureDiagnostic("view-visibility", state()); };
+        const setBackgroundThrottling = contents.setBackgroundThrottling.bind(contents);
+        contents.setBackgroundThrottling = allowed => { setBackgroundThrottling(allowed); recordCaptureDiagnostic("view-throttling", state()); };
+        const prefix = "wuu-hidden-frame-diagnostic:";
+        contents.on("console-message", details => {
+          if (details.message.startsWith(prefix)) recordCaptureDiagnostic("renderer-frame", { contentsID, ...JSON.parse(details.message.slice(prefix.length)) });
+        });
+        const execute = contents.executeJavaScript.bind(contents);
+        contents.executeJavaScript = async (code, userGesture) => {
+          if (code !== "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))") return execute(code, userGesture);
+          const frameWaitID = ++frameWaitSerial;
+          recordCaptureDiagnostic("frame-wait-start", { ...state(), frameWaitID,
+            gpuProcesses: app.getAppMetrics().filter(metric => metric.type === "GPU").map(metric => ({ pid: metric.pid, creationTime: metric.creationTime })) });
+          // Keep the same two callbacks, including the second RAF timestamp
+          // passed to resolve. Never add a frame, timer, capture or visibility change.
+          return execute(`new Promise(resolve => {
+            const note = stage => console.info(${JSON.stringify(prefix)} + JSON.stringify({
+              frameStage: stage, frameWaitID: ${frameWaitID}, rendererAt: Date.now(), pageMs: performance.now(),
+              visibility: document.visibilityState, readyState: document.readyState
+            }));
+            note("requested");
+            requestAnimationFrame(() => { note("raf-1"); requestAnimationFrame(time => { note("raf-2"); resolve(time); }); });
+          })`, userGesture).finally(() => recordCaptureDiagnostic("frame-wait-settled", { contentsID, frameWaitID }));
+        };
+        const capture = contents.capturePage.bind(contents);
+        contents.capturePage = async (rect, opts) => {
+          recordCaptureDiagnostic("capture-page-start", state());
+          try {
+            const image = await capture(rect, opts);
+            recordCaptureDiagnostic("capture-page-result", { contentsID, size: image.getSize(), empty: image.isEmpty() });
+            return image;
+          } finally { recordCaptureDiagnostic("capture-page-settled", { contentsID }); }
+        };
+      }
       const send = view.webContents.debugger.sendCommand.bind(view.webContents.debugger);
       view.webContents.debugger.sendCommand = async (method, params, session) => {
         if (method.startsWith("Input.")) nativeInputCommands.push({ webContentsID: view.webContents.id, method, params });
@@ -1211,6 +1289,7 @@ app.whenReady().then(async () => {
   check("disposal invalidates input before closing views", disposeResult !== "delivered" && host.tabSurfaceMeta(workdir, disposalTab) === undefined, disposeResult);
   await finishControlled("OWNERSHIP_DISPOSE", disposal);
   writeFileSync(join(output, "results.json"), JSON.stringify({ checks, threads: { hidden, captureCancelled, popup, sibling, lifecycle, retained, foreignThread, a, b, c, d, disposal }, tabs: { hiddenTab, cancelledCaptureTab, popupTab, lifecycleTab, freshTab, retainedOpenerTab, handoffTab, retainedAgainTemporary, deliverableTab, persistentTab, finalTemporaryTab, aTab, bTab, cTab, dTab, disposalTab }, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
+  writeCaptureDiagnostics();
   await pool.shutdown();
   host.destroyAll();
   main.destroy();
@@ -1219,6 +1298,7 @@ app.whenReady().then(async () => {
   console.log(`PASS: browser task ownership and takeover; evidence ${output}`);
   app.exit(0);
 }).catch(async error => {
+  writeCaptureDiagnostics();
   writeFileSync(join(output, "failure.json"), JSON.stringify({ error: String(error), checks, calls, replies, providerRequests, popupRequests, popupAdoptions, selfCloseErrors, selfCloseNotifications, clickRequests, nativeInputCommands, events }, null, 2));
   console.error(error);
   await pool?.shutdown().catch(() => undefined);

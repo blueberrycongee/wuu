@@ -21,11 +21,14 @@ export function activate(api: PluginGenerationApi): void {
         const restored = saved?.value as Checkpoint | undefined;
         workbench = createDefaultWorkbench(api.contributions, requireController, restored?.workbench);
         controller = new ApplicationController(restored && { ...restored.state, initialized: undefined }, {
+          applicationProviderId: api.pluginId,
           contributions: api.contributions,
           get workbench() { if (!workbench) throw new Error("Application workbench is not activated"); return workbench; },
         });
         workbench.start();
-        await controller.initialize(api.signal);
+        // A pending destination performs its own selected-authority history read.
+        // Do not first resume the checkpoint tab and then resume the intent again.
+        await controller.initialize(api.signal, { resumeThread: !restored?.navigationIntent });
         if (restored) controller.restorePresentation(restored);
         if (restored?.navigationIntent) await controller.restoreNavigationIntent(restored.navigationIntent, api.signal);
         else if (restored?.presentationIntent) controller.restorePresentationIntent(restored.presentationIntent);

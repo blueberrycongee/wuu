@@ -11,6 +11,18 @@ export class DesktopBootstrap {
   private state: DesktopBootstrapSnapshot = { connectionGeneration: 0 };
   private listeners = new Set<() => void>();
   private epoch = 0;
+  private restoration?: { generation: number; resolve(): void; reject(error: Error): void };
+  /** Acknowledge only a committed renderer synchronization, never transport receipt alone. */
+  settleRestoration(generation: number, failure?: string): void {
+    const current = this.restoration;
+    if (!current || current.generation !== generation) return;
+    this.restoration = undefined;
+    if (failure) current.reject(new Error(failure)); else current.resolve();
+  }
+  private cancelRestoration(reason: string): void {
+    const current = this.restoration; this.restoration = undefined;
+    current?.reject(new Error(reason));
+  }
   getSnapshot = (): DesktopBootstrapSnapshot => this.state;
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
   private publish(state: DesktopBootstrapSnapshot): void { this.state = state; for (const listener of this.listeners) listener(); }
@@ -37,14 +49,23 @@ export class DesktopBootstrap {
     });
     const initialize = async (restore = false) => {
       const epoch = ++this.epoch, observed = observedInitialization, since = publicationSequence;
+      this.cancelRestoration("Runtime restoration superseded");
       try {
         const initialized = await window.wuu.initialize();
         if (!active || epoch !== this.epoch) return;
         // Older adapters do not expose transport observations; their own bootstrap
         // call still gets the same race-safe inventory publication merge.
         if (observedInitialization === observed) accept(initialized, since);
-        if (restore) this.publish({ ...this.state, connectionGeneration: this.state.connectionGeneration + 1 });
-      } catch (error) { if (active && epoch === this.epoch) this.publish({ ...this.state, error: String(error) }); }
+        if (restore) {
+          const generation = this.state.connectionGeneration + 1;
+          const ready = new Promise<void>((resolve, reject) => { this.restoration = { generation, resolve, reject }; });
+          this.publish({ ...this.state, connectionGeneration: generation });
+          await ready;
+        }
+      } catch (error) {
+        if (active && epoch === this.epoch) this.publish({ ...this.state, error: String(error) });
+        if (restore) throw error;
+      }
     };
     const receive = (event: ServerEvent) => {
       if (event.kind !== "notification" || event.message.method !== "plugin/inventory/changed") return;
@@ -60,7 +81,7 @@ export class DesktopBootstrap {
     const off = subscribeServerEvents(receive);
     const restoreOff = window.wuu.onRuntimeRestore?.(() => initialize(true));
     void initialize();
-    return () => { active = false; this.epoch++; off(); restoreOff?.(); initializationOff?.(); publications.clear(); };
+    return () => { active = false; this.epoch++; this.cancelRestoration("Runtime bootstrap stopped"); off(); restoreOff?.(); initializationOff?.(); publications.clear(); };
   }
 }
 export const desktopBootstrap = new DesktopBootstrap();

@@ -229,6 +229,7 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   listArchivedThreads: async () => ({ threads: [] }),
   queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
     ipcRenderer.send("test:queued-input", { threadId, text, id, hold });
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/queue", { threadId, id });
     return { queued: { id, thread_id: threadId } };
   },
   steerTurn: async (threadId, turnId, text, _images, id) => {

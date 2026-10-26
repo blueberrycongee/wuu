@@ -95,7 +95,9 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	stateConsumer := &configSourceConsumer{}
 	home := os.Getenv("HOME")
 	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
+	model := &embeddedModelStreamFixture{client: rt.StreamRunner.Client}
 	clients := []pluginhost.Client{background, native, state, sessions, consumer, mechanism, configuration, credentials, stateConsumer,
+		model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, &embeddedEngineConsumer{}, &embeddedEngineMetadata{factory: rt.WuuEngine()},
 		promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, toolservice.NewService(), &embeddedToolsConsumer{}}
 	conflicts := registry.RegisterClients(clients...)
 	if len(conflicts) != 0 {
@@ -103,6 +105,7 @@ func newProjectProviderTestServer(t *testing.T, source *runtime.Session, out io.
 	}
 	host := pluginhost.New(clients...)
 	background.host = host
+	model.host = host
 	host.AttachServiceRegistry(registry, conflicts)
 	t.Cleanup(func() { _ = host.Close(context.Background()) })
 	rt.PluginHost = host

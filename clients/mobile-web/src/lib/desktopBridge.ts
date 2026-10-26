@@ -67,6 +67,8 @@ const RECONNECT_GRACE_MS = 600;
 // catalog can take longer than the ordinary action deadline on a slow link.
 const SNAPSHOT_READ_METHODS = new Set([
   "initialize", "workspace/list", "thread/list", "thread/listAll", "thread/listArchived", "thread/resume", "user-question/list",
+  // A fresh selected graph must load its validated renderer modules before restoration can complete.
+  "plugin/desktop-module/read",
 ]);
 const SNAPSHOT_READ_TIMEOUT_MS = 90_000;
 
@@ -170,7 +172,7 @@ export class RemoteDesktopBridge {
   private readonly questionWorkdirs = new Map<string, string>();
   private connection: WebConnectionSnapshot = { phase: "connecting", revision: 0 };
   private readonly connectionListeners = new Set<() => void>();
-  private readonly restoreListeners = new Set<() => Promise<void>>();
+  private readonly restoreListeners = new Set<{ restore: () => Promise<void>; retired: Promise<void>; retire: () => void }>();
   private attachSync: Promise<void> = Promise.resolve();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private needsRestore = false;
@@ -232,7 +234,25 @@ export class RemoteDesktopBridge {
       if (!workspace.current) throw new Error("Remote host did not provide a workspace");
       this.updateWorkspaces(workspace);
       this.workspaceSnapshotFresh = true;
-      if (!first && restoreNeeded) await Promise.all([...this.restoreListeners].map((restore) => restore()));
+      if (!first && restoreNeeded) {
+        // A fresh graph may replace providers during initialize. Restoration
+        // belongs to subscription instances, not callback identity: retired
+        // work cannot fail its successor, and newly admitted owners must finish.
+        const visited = new Set<unknown>();
+        while (this.connection.revision === revision && !this.stopped) {
+          const owners = [...this.restoreListeners].filter(owner => !visited.has(owner));
+          if (!owners.length) break;
+          await Promise.all(owners.map(owner => {
+            visited.add(owner);
+            const work = Promise.resolve().then(() => {
+              if (this.restoreListeners.has(owner)) return owner.restore();
+            }).catch(error => {
+              if (this.restoreListeners.has(owner)) throw error;
+            });
+            return Promise.race([work, owner.retired]);
+          }));
+        }
+      }
       if (this.connection.revision !== revision || this.stopped) return;
       this.needsRestore = false;
       this.liveNotifications = true;
@@ -682,8 +702,11 @@ export class RemoteDesktopBridge {
       listWorkspaceFiles: (root) => this.call("desktop/file/list", {root:root || this.workdir()}),
       writeWorkspaceFile: (params,root) => this.call("desktop/file/write",{params,root:root || this.workdir()}),
       onRuntimeRestore: (listener) => {
-        this.restoreListeners.add(listener);
-        return () => this.restoreListeners.delete(listener);
+        let retire!: () => void;
+        const retired = new Promise<void>(resolve => { retire = resolve; });
+        const owner = { restore: listener, retired, retire };
+        this.restoreListeners.add(owner);
+        return () => { this.restoreListeners.delete(owner); owner.retire(); };
       },
       unsupportedMethods: unavailableWebMethods,
       platform: browserPlatform(),

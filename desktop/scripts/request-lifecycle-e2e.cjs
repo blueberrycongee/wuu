@@ -155,8 +155,8 @@ async function run() {
   }
   fs.writeFileSync(path.join(evidence, "reasoning-stopped.json"), JSON.stringify(reasoningEvidence, null, 2));
   fs.writeFileSync(path.join(evidence, "confirmed-stop.png"), (await win.webContents.capturePage()).toPNG());
-  // Each pending draft waits for authoritative placement before another send.
-  // Stop after queue delivery is confirmed by held events, not by the queue RPC.
+  // Admission acknowledgement transfers the draft to the drawer before the
+  // active turn stops; held events subsequently confirm the stopped queue.
   const stored = await evaluate(async id => (await window.wuu.resumeThread(id)).thread, threadId);
   const turns = [{ ...turn, status: "interrupted", items: [...turn.items, reasoning] }];
   const held = [];
@@ -164,6 +164,7 @@ async function run() {
   for (const [index, prompt] of followUps.entries()) {
     gates.delete("turn/start");
     gates.delete("turn/interrupt");
+    gates.delete("turn/queue");
     await submit(`Run before queued follow-up ${index + 1}`);
     const nextAdmission = await until(() => gates.get("turn/start"), "queue fixture admission");
     const nextTurn = { id: nextAdmission.params.turnId, status: "in_progress", items_view: "full", items: [
@@ -181,11 +182,17 @@ async function run() {
     assert.equal(queued[index].threadId, threadId);
     assert.equal(queued[index].hold, false, "input was delivered before Stop");
     await until(() => evaluate(value => document.querySelector(".composer textarea")?.value === value &&
-      document.querySelector('[data-wuu-state="submitting"]')?.getAttribute("aria-busy") === "true", prompt), "queue receipt retains the draft");
+      document.querySelector('[data-wuu-state="submitting"]')?.getAttribute("aria-busy") === "true", prompt), "unacknowledged queue retains the draft");
     await submit(prompt, true);
     assert.equal(queued.length, index + 1, "repeated Enter does not duplicate pending delivery");
+    const queuedAdmission = await until(() => gates.get("turn/queue"), "queue admission gate");
+    queuedAdmission.resolve();
+    await until(() => evaluate(() => document.querySelector(".composer textarea")?.value === "" &&
+      !document.querySelector('[data-wuu-state="submitting"]') && Boolean(document.querySelector(".composer-pending-drawer"))), "queue acknowledgement transfers draft to drawer");
+    await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true })));
+    assert.equal(queued.length, index + 1, "repeated Enter after acknowledgement does not replay the cleared draft");
     await evaluate(() => document.querySelector(".composer textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    const stop = await until(() => gates.get("turn/interrupt"), "Stop with a pending queued draft");
+    const stop = await until(() => gates.get("turn/interrupt"), "Stop with an acknowledged queued message");
     stop.resolve();
     await until(() => evaluate(() => Boolean(document.querySelector('[data-wuu-state="pending"]'))), "queue Stop awaits terminal confirmation");
     const stopped = { ...nextTurn, status: "interrupted" };
@@ -195,7 +202,7 @@ async function run() {
     notify("turn/held", { thread_id: threadId, messages: held });
     notify("thread/updated", { thread: { ...stored, status: "idle", turns } });
     await until(() => evaluate(() => document.querySelector(".composer textarea")?.value === "" &&
-      !document.querySelector('[data-wuu-state="submitting"], [data-wuu-state="pending"]')), "held confirmation releases the draft");
+      !document.querySelector('[data-wuu-state="submitting"], [data-wuu-state="pending"]')), "held confirmation keeps the draft released");
   }
   assert.deepEqual(queued.map(item => item.text), followUps);
   await evaluate(() => {

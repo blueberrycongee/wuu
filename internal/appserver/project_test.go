@@ -615,7 +615,7 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 		t.Fatalf("managed sessions = %+v", managed)
 	}
 	brief := calls.next(t, managed[0].ID, "Implement page-size 50")
-	if message := lastUserRequestMessage(brief.request); message.Origin != "host" || isHumanUserMessage(message) ||
+	if message := lastPersistedProjectInputForRequest(t, srv, brief.request); message.Origin != "host" || isHumanUserMessage(message) ||
 		message.Cause != "project" || message.RelatedSessionID != coordinator.ID {
 		t.Fatalf("delegation must be attributed to the host, not user authorization: %+v", message)
 	}
@@ -628,7 +628,7 @@ func TestProjectDelegatesAndReportsResultOnce(t *testing.T) {
 	if worker.SessionControl == nil || worker.SessionControl.ManagerID != coordinator.ID || worker.SessionControl.State != session.ControlActive {
 		t.Fatalf("worker control = %+v", worker.SessionControl)
 	}
-	result := lastUserRequestMessage(wake.request)
+	result := lastPersistedProjectInputForRequest(t, srv, wake.request)
 	if result.ClientID != "project-result:"+worker.ID+":"+worker.LatestCompletedTurnID || result.RelatedSessionID != worker.ID ||
 		result.Origin != "host" || result.PresentationKind != "session_message" || !strings.Contains(result.Content, "Set PageSize to 50 in search.go.") || !strings.Contains(result.Content, "search.go") {
 		t.Fatalf("delivered result = %+v", result)
@@ -792,19 +792,29 @@ func TestProjectUserMessagesSteerManagedSessions(t *testing.T) {
 	}
 	result := calls.next(t, coordinator.ID, "Plan the release note")
 	// The earlier notice can start the request before the result joins its steering queue.
-	if last := lastUserRequestMessage(result.request); last.ClientID == noticeClientID {
+	if last := lastUserRequestMessage(result.request); last.Cause == projectCauseUserMessage {
 		if last.Cause != projectCauseUserMessage || last.Content != pending[0].Content {
 			t.Fatalf("direct user notice delivered to coordinator = %+v", last)
 		}
 		result.response <- providersResponse("Waiting for the session result.")
 		result = calls.next(t, coordinator.ID, "Plan the release note")
 	}
-	if last := lastUserRequestMessage(result.request); last.ClientID != projectResultClientID(worker.ID, userTurn.Turn.ID) ||
-		last.Cause != projectCauseResult || !strings.Contains(last.Content, "The user wrote to this session") || !strings.Contains(last.Content, "Also mention the migration") {
+	if last := lastUserRequestMessage(result.request); last.Cause != projectCauseResult || !strings.Contains(last.Content, "The user wrote to this session") || !strings.Contains(last.Content, "Also mention the migration") {
 		t.Fatalf("result of a turn the user joined = %+v", last)
 	}
 	result.response <- providersResponse("Noted.")
 	waitForThread(t, srv, coordinator.ID, func(thread Thread) bool { return thread.Status == ThreadStatusIdle })
+	// Steering reaches the model before its transcript checkpoint is committed.
+	// Verify private delivery identity after settlement, without weakening the
+	// public input checks performed while the model call was held.
+	durable := lastPersistedProjectInputForRequest(t, srv, result.request)
+	if durable.ClientID != projectResultClientID(worker.ID, userTurn.Turn.ID) {
+		t.Fatalf("settled result lost its delivery identity: %+v", durable)
+	}
+	if ids := deliveredClientIDs(t, srv.rt, coordinator.ID, noticeClientID); len(ids) != 1 {
+		t.Fatalf("direct user notice delivered %d times, want 1", len(ids))
+	}
+
 	// The project still manages the session.
 	handler := srv.projectSessionHandler(coordinator.ID)
 	if _, err := handler(context.Background(), "send-issues", tools.ProjectSessionRequest{Action: "send", SessionID: worker.ID, Prompt: "Add the known issues"}); err != nil {
@@ -913,7 +923,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 		t.Fatalf("adopted conversation = %+v", adopted.Thread)
 	}
 	notice := calls.next(t, coordinator.ID, "added the conversation")
-	if last := lastUserRequestMessage(notice.request); last.Cause != projectCauseAdopted || last.RelatedSessionID != conversation.ID ||
+	if last := lastPersistedProjectInputForRequest(t, srv, notice.request); last.Cause != projectCauseAdopted || last.RelatedSessionID != conversation.ID ||
 		!strings.Contains(last.Content, "The README explains setup.") {
 		t.Fatalf("adoption notice = %+v", last)
 	}
@@ -925,7 +935,7 @@ func TestProjectAdoptsAndReleasesConversations(t *testing.T) {
 	}
 	calls.next(t, conversation.ID, "List the setup steps").response <- providersResponse("Install, then run make dev.")
 	result := calls.next(t, coordinator.ID, "added the conversation")
-	if last := lastUserRequestMessage(result.request); last.Cause != projectCauseResult || !strings.Contains(last.Content, "run make dev") {
+	if last := lastPersistedProjectInputForRequest(t, srv, result.request); last.Cause != projectCauseResult || !strings.Contains(last.Content, "run make dev") {
 		t.Fatalf("adopted conversation result = %+v", last)
 	}
 	result.response <- providersResponse("Steps listed.")
@@ -1019,13 +1029,13 @@ func TestProjectSideAndWorkersReuseOrdinarySessions(t *testing.T) {
 			if !requestToolNames(workerCall.request)["session"] {
 				t.Fatal("worker has no session communication tool")
 			}
-			if msg := lastUserRequestMessage(workerCall.request); msg.RelatedSessionID != side.ID ||
+			if msg := lastPersistedProjectInputForRequest(t, srv, workerCall.request); msg.RelatedSessionID != side.ID ||
 				msg.Origin != "host" || msg.Cause != "project" || isHumanUserMessage(msg) {
 				t.Fatalf("worker lost its delegator: %+v", msg)
 			}
 			workerCall.response <- providersResponse("Verified.")
 			sideResult := calls.next(t, side.ID, "Implement the team feature")
-			if msg := lastUserRequestMessage(sideResult.request); msg.RelatedSessionID != workerID || msg.Cause != projectCauseResult {
+			if msg := lastPersistedProjectInputForRequest(t, srv, sideResult.request); msg.RelatedSessionID != workerID || msg.Cause != projectCauseResult {
 				t.Fatalf("side did not receive worker completion: %+v", msg)
 			}
 			sideResult.response <- providersResponse("Worker verified implementation.")
@@ -1086,7 +1096,7 @@ func TestProjectPeerMessagesRespectMembershipAndStopFence(t *testing.T) {
 		t.Fatal(err)
 	}
 	reply := calls.next(t, receiver.ID, "Does total count filtered rows?")
-	msg := lastUserRequestMessage(reply.request)
+	msg := lastPersistedProjectInputForRequest(t, srv, reply.request)
 	if msg.RelatedSessionID != sender.ID || msg.Cause != "project_message" || msg.Origin != "host" {
 		t.Fatalf("peer provenance lost: %+v", msg)
 	}
@@ -1360,4 +1370,34 @@ func TestProjectSideWaitsForAdoptedWorker(t *testing.T) {
 	if !result.(projectSessionView).TimedOut {
 		t.Fatalf("expected in-flight wait timeout: %+v", result)
 	}
+}
+
+// The model wire carries conversational content and attribution, not private
+// delivery identities. Check its last input against the selected durable record
+// before inspecting ClientID, presentation, and related-session metadata.
+func lastPersistedProjectInputForRequest(t *testing.T, srv *Server, request providers.ChatRequest) providers.ChatMessage {
+	t.Helper()
+	if request.CacheHint == nil || request.CacheHint.PromptCacheKey == "" {
+		t.Fatal("request lacks thread identity")
+	}
+	history, err := loadChatMessages(srv.rt.Sessions, request.CacheHint.PromptCacheKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := lastUserRequestMessage(request)
+	var matching []providers.ChatMessage
+	for _, message := range history {
+		if message.Role == wire.Role && message.Content == wire.Content {
+			matching = append(matching, message)
+		}
+	}
+	if len(matching) != 1 {
+		t.Fatalf("model input matches %d durable records, want exactly one: wire=%+v history=%+v", len(matching), wire, history)
+	}
+	// A non-waking notice may already follow this admitted request in history.
+	durable := matching[0]
+	if wire.Role != durable.Role || wire.Content != durable.Content || wire.Name != durable.Name || wire.Origin != durable.Origin || wire.Cause != durable.Cause || wire.ReadOnly != durable.ReadOnly {
+		t.Fatalf("model input differs from admitted durable input: wire=%+v durable=%+v", wire, durable)
+	}
+	return durable
 }

@@ -44,6 +44,7 @@ jobs:
       - name: Verify browser task ownership and takeover
         env:
           WUU_BROWSER_OWNERSHIP_OUTPUT: ${{ github.workspace }}/desktop/out/e2e/browser-task-ownership
+          WUU_BROWSER_OWNERSHIP_DIAGNOSTICS: "1"
         run: |
           mkdir -p "$WUU_BROWSER_OWNERSHIP_OUTPUT"
           set -o pipefail

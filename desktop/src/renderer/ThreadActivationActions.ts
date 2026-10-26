@@ -1,5 +1,5 @@
 import type { SetStateAction } from "react";
-import type { Agent, RuntimeContext, Thread } from "../shared/protocol";
+import type { Agent, RuntimeContext, Thread, ThreadResumeResult } from "../shared/protocol";
 import {
   conversationPaneThreadsByID,
   createThreadSessionTab,
@@ -57,6 +57,10 @@ export type ThreadActivationActionsDeps = {
   finishViewSwitch: (requestID: number) => boolean;
   cancelViewSwitch: () => void;
   isCurrentViewSwitchRequest: (requestID: number) => boolean;
+  // Generation-owned applications must validate the selected configuration
+  // before a history read can enter a different runtime graph.
+  acceptRuntimeConfiguration?: (loaded: Partial<AppState>) => boolean;
+  onThreadResumed?: (resumed: ThreadResumeResult) => void;
   loadRuntimeConfiguration?: typeof defaultLoadRuntimeConfiguration;
   loadRuntimeThreadList?: typeof defaultLoadRuntimeThreadList;
   selectRuntimeContext?: typeof defaultSelectRuntimeContext;
@@ -133,10 +137,8 @@ export function createThreadActivationActions(
     const sourceContext = currentState.activeContext;
     const requestID = deps.beginViewSwitch("thread", threadID);
     try {
-      const thread = requireThread(
-        await window.wuu.resumeThread(threadID),
-        translateCurrent("thread.resumeMissing"),
-      );
+      const resumed = await window.wuu.resumeThread(threadID);
+      const thread = requireThread(resumed, translateCurrent("thread.resumeMissing"));
       if (
         !deps.prepareThreadReveal(requestID) ||
         !sameRuntimeContext(deps.getAppState().activeContext, sourceContext)
@@ -169,6 +171,7 @@ export function createThreadActivationActions(
           status: "ready",
         };
       });
+      deps.onThreadResumed?.(resumed);
     } catch (error) {
       if (
         !deps.finishViewSwitch(requestID) ||
@@ -193,10 +196,16 @@ export function createThreadActivationActions(
       if (!deps.isCurrentViewSwitchRequest(requestID)) {
         return;
       }
-      const [loadedState, resumed] = await Promise.all([
-        loadRuntimeConfiguration(workspaceState),
-        window.wuu.resumeThread(threadID),
-      ]);
+      const configuration = loadRuntimeConfiguration(workspaceState);
+      let loadedState: Partial<AppState>;
+      let resumed: ThreadResumeResult;
+      if (deps.acceptRuntimeConfiguration) {
+        loadedState = await configuration;
+        if (!deps.isCurrentViewSwitchRequest(requestID) || !deps.acceptRuntimeConfiguration(loadedState)) return;
+        resumed = await window.wuu.resumeThread(threadID);
+      } else {
+        [loadedState, resumed] = await Promise.all([configuration, window.wuu.resumeThread(threadID)]);
+      }
       const thread = requireThread(
         resumed,
         translateCurrent("thread.resumeMissing"),
@@ -241,6 +250,7 @@ export function createThreadActivationActions(
           status: "ready",
         };
       });
+      deps.onThreadResumed?.(resumed);
       // Catalogs are not needed to display or send to the resumed conversation.
       // Start them after activation so large archives cannot delay its first paint.
       if (loadedState.activeContext) {

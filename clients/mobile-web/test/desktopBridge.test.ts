@@ -142,8 +142,9 @@ async function connectBridge() {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
-  return { promise, resolve };
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
 }
 
 describe("remote desktop activation ownership", () => {
@@ -392,6 +393,64 @@ describe("connection recovery", () => {
     await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
     expect(bridge.getConnectionSnapshot().phase).toBe("restoring");
     restore.resolve();
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+  });
+
+  it("retires an old restore owner without poisoning replacement RPC readiness", async () => {
+    const bridge = await connectBridge();
+    const old = deferred<void>(), next = deferred<void>(), rendererCommit = deferred<void>();
+    bridge.api.onRuntimeRestore!(() => rendererCommit.promise);
+    const handler = vi.fn().mockImplementationOnce(() => old.promise).mockImplementationOnce(() => next.promise);
+    const unsubscribe = bridge.api.onRuntimeRestore!(handler);
+    remote.options.onDetach?.(); remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+    unsubscribe();
+    // Native provider teardown/initialization has an asynchronous registration gap.
+    await Promise.resolve(); await Promise.resolve();
+    expect(bridge.getConnectionSnapshot().phase).toBe("restoring");
+    // The same callback identity can be re-registered by a new owner.
+    bridge.api.onRuntimeRestore!(handler);
+    rendererCommit.resolve();
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(2));
+    old.reject(new DOMException("signal is aborted without reason", "AbortError"));
+    expect(bridge.getConnectionSnapshot().phase).toBe("restoring");
+    next.resolve();
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
+    await expect(bridge.api.listWorkspaceFiles()).resolves.toBeDefined();
+  });
+
+  it("preserves failure from the live replacement restore owner", async () => {
+    const bridge = await connectBridge();
+    const old = deferred<void>(), next = deferred<void>();
+    const handler = vi.fn(() => old.promise);
+    const unsubscribe = bridge.api.onRuntimeRestore!(handler);
+    remote.options.onDetach?.(); remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    unsubscribe();
+    const replacement = vi.fn(() => next.promise);
+    bridge.api.onRuntimeRestore!(replacement);
+    await vi.waitFor(() => expect(replacement).toHaveBeenCalledOnce());
+    next.reject(new Error("current snapshot unavailable"));
+    await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("error"));
+    expect(bridge.getConnectionSnapshot().error).toBe("current snapshot unavailable");
+    old.resolve();
+    await Promise.resolve();
+    expect(bridge.getConnectionSnapshot().phase).toBe("error");
+    await expect(bridge.api.listWorkspaceFiles()).rejects.toThrow(/restoring/);
+  });
+
+  it("permits fresh provider bootstrap reads while restoration still blocks ordinary actions", async () => {
+    const bridge = await connectBridge(), gate = deferred<void>();
+    const handler = vi.fn(() => gate.promise);
+    bridge.api.onRuntimeRestore!(handler);
+    remote.options.onDetach?.(); remote.options.onAttach?.({ session: "replacement", resumed: false });
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    remote.call.mockResolvedValueOnce({ id: "selected", fingerprint: "current-source", entry: "wuu-builtin:default-shell", digest: "validated" });
+    await expect(bridge.api.loadPluginDesktopModule({ id: "selected", fingerprint: "current-source" })).resolves.toMatchObject({ url: "wuu-builtin:default-shell" });
+    expect(remote.call).toHaveBeenLastCalledWith("plugin/desktop-module/read", { id: "selected", fingerprint: "current-source" }, expect.any(Number), "/paired/workspace");
+    await expect(bridge.api.requestPluginRuntime({ id: "selected", fingerprint: "current-source", graph_generation: "current-graph", method: "mutate" })).rejects.toThrow(/restoring/);
+    await expect(bridge.api.listWorkspaceFiles()).rejects.toThrow(/restoring/);
+    gate.resolve();
     await vi.waitFor(() => expect(bridge.getConnectionSnapshot().phase).toBe("connected"));
   });
 

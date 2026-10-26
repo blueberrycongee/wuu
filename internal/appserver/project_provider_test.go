@@ -285,8 +285,10 @@ func TestProjectBackgroundFinalReferenceDoesNotWaitOnItself(t *testing.T) {
 	host := pluginhost.New(observed)
 	host.AttachServiceRegistry(registry, conflicts)
 	provider.registry = registry
-	rt.PluginHost = host
-	provider.retainState = rt.RetainState
+	// Capture the fixture graph before its first State, rather than redirecting
+	// the server's already retained generation by mutating PluginHost.
+	selected := &runtime.Session{Documents: rt.Documents, Sessions: rt.Sessions, PluginHost: host}
+	provider.retainState = selected.RetainState
 	entered := make(chan *runtime.PluginGeneration, 1)
 	finish := make(chan struct{})
 	if !provider.startBackground(func(operation *ProjectCoordinationProvider) {
