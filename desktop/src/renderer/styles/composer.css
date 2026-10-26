@@ -1108,7 +1108,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-bar {
   display: grid;
   /* Reserve room for the hint before allowing long model names to consume it. */
-  grid-template-columns: auto minmax(min(calc(var(--font-ui) * 6), 30%), 1fr) minmax(0, max-content);
+  grid-template-columns: auto minmax(min(calc(var(--font-ui) * 8), 30%), 1fr) minmax(0, max-content);
   min-width: 0;
   align-items: end;
   gap: var(--space-1);
@@ -2230,8 +2230,9 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   max-width: 100%;
 }
 
-/* Keep the input usable in narrow panes without removing menu access. */
-@container composer-toolbar (max-width: 360px) {
+/* Fold labels before they squeeze a narrow capsule down to a clipped hint;
+ * the same menu buttons retain their accessible names and native hit targets. */
+@container composer-toolbar (max-width: 420px) {
   .composer-bar > textarea {
     padding-inline: var(--space-1);
   }
@@ -2262,6 +2263,34 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   .composer-bar-left,
   .composer-bar-right {
     gap: var(--space-1);
+  }
+}
+
+/* A document can remain beside an open sidebar at very narrow widths. Keep
+ * the draft readable instead of shrinking it between four native hit targets. */
+@container document-composer (max-width: 320px) {
+  .composer-bar {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .composer-bar > textarea {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  .composer-bar-left {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .composer-bar-right {
+    grid-column: 2;
+    grid-row: 2;
+    justify-content: flex-end;
+  }
+
+  .composer-bar-right:has(.composer-plugin-toolbar) {
+    grid-row: 3;
   }
 }
 

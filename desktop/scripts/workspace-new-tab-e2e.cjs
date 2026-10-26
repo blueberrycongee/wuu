@@ -414,8 +414,8 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
   });
-  // Measure the real document editor: text keeps its reading row above the
-  // toolbar at every width, while wrapped drafts and attachments retain space.
+  // Measure the shipping capsule and its narrow-document fallback: drafts and
+  // controls stay readable without overlap, and attachments retain their space.
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap textarea')));
   await waitFor(() => Boolean(document.querySelector('.document-composer-wrap .composer-context-meter'))
     && Boolean(document.querySelector('.document-composer-wrap .codex-runtime-effort')));
@@ -479,14 +479,17 @@ app.whenReady().then(async () => {
   const assertReadableEditor = (geometry, name) => {
     assert.ok(geometry.input.width >= geometry.fontSize * 8,
       name + ': input retains room to read and edit a short phrase');
-    assert.ok(geometry.toolbar.height > 0 && geometry.input.bottom <= geometry.toolbar.top + 1,
-      name + ': input has its own row above the toolbar at every width');
-    assert.ok(geometry.input.width >= geometry.frame.width * 0.8,
-      name + ': input uses the available reading width');
+    assert.ok(geometry.toolbar.height > 0 && geometry.input.top >= geometry.toolbar.top - 1
+      && geometry.input.bottom <= geometry.toolbar.bottom + 1,
+      name + ": input remains inside the capsule");
+    assert.ok(geometry.toolbarControls.every(control =>
+      control.right <= geometry.input.left + 1 || control.left >= geometry.input.right - 1
+      || control.bottom <= geometry.input.top + 1 || control.top >= geometry.input.bottom - 1),
+      name + ": input and native control targets never overlap");
     assert.ok(geometry.toolbarControls.length > 0 && geometry.toolbarControls.every(control =>
       control.top >= geometry.toolbar.top - 1 && control.bottom <= geometry.frame.bottom + 1
       && control.left >= geometry.frame.left - 1 && control.right <= geometry.frame.right + 1),
-      name + ': toolbar controls stay below the text and inside the editor');
+      name + ': toolbar controls stay inside the capsule');
     assert.ok(geometry.runtime.width > 0 && geometry.runtime.right <= geometry.send.left + 1,
       name + ': model menu and send remain available without overlap');
     if (geometry.toolbarWidth <= 560) {
