@@ -50,7 +50,7 @@ func DriverMessagesFromWire(messages []pluginprotocol.DriverMessageV1) []provide
 }
 
 func DriverRequestToWire(request providers.ChatRequest) pluginprotocol.DriverTurnReadResult {
-	return pluginprotocol.DriverTurnReadResult{LogicalModelRequestV1: RequestToWire(request), Messages: DriverMessagesToWire(request.Messages)}
+	return pluginprotocol.DriverTurnReadResult{ModelSelectionRevision: request.ModelSelectionRevision, LogicalModelRequestV1: RequestToWire(request), Messages: DriverMessagesToWire(request.Messages)}
 }
 
 // DriverRequestFromWire reads the turn's current input, which can be empty or
@@ -60,6 +60,7 @@ func DriverRequestFromWire(in pluginprotocol.DriverTurnReadResult) (providers.Ch
 		return providers.ChatRequest{}, errors.New("unsupported logical model request version")
 	}
 	request := requestFromWire(providers.ChatRequest{}, in.LogicalModelRequestV1)
+	request.ModelSelectionRevision = in.ModelSelectionRevision
 	request.Messages = DriverMessagesFromWire(in.Messages)
 	return request, nil
 }
@@ -74,6 +75,7 @@ func ApplyDriverRequest(in pluginprotocol.DriverTurnReadResult) (providers.ChatR
 	if err != nil {
 		return providers.ChatRequest{}, err
 	}
+	request.ModelSelectionRevision = in.ModelSelectionRevision
 	for index, message := range in.Messages {
 		item := &request.Messages[index]
 		item.ToolInvocationID, item.ClientID, item.Seq, item.Steered = message.ToolInvocationID, message.ClientID, message.Seq, message.Steered

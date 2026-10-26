@@ -55,7 +55,25 @@ export interface EngineSteerResult {
  readonly disposition?: "accepted" | "unsupported" | "rejected";
 }
 
+export interface ModelStepSummaryV1 {
+ readonly provider: string;
+ readonly model: string;
+ readonly api_model?: string;
+ readonly revision?: number;
+ readonly step_index: number;
+ readonly operation_id: string;
+ readonly context_window_tokens?: number;
+}
+export interface ModelStepUsageV1 extends ModelStepSummaryV1 {
+ readonly input_tokens: number;
+ readonly output_tokens: number;
+ readonly cache_creation_tokens?: number;
+ readonly cache_read_tokens?: number;
+ readonly context_tokens?: number;
+}
+
 export interface EngineResultV1 {
+ readonly model_steps?: readonly ModelStepUsageV1[];
  readonly version: 1;
  readonly content?: string;
  readonly new_messages: readonly DriverMessage[];
@@ -81,6 +99,7 @@ export interface EngineResultV1 {
 }
 
 export interface EngineEventV1 {
+ readonly model_step?: ModelStepSummaryV1;
  readonly version: 1;
  readonly type: string;
  readonly content?: string;

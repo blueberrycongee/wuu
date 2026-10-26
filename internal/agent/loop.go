@@ -95,8 +95,12 @@ func RunToolLoop(
 	// that reports ErrCompactionUnavailable defers to cfg.Compact, so
 	// experimental strategies can fall back to the default summarizer
 	// when they have no strategy for the current transcript.
+	freshContextEnabled := cfg.FreshContext != nil && cfg.ArchiveHistory != nil
+	if cfg.ReadModelStep != nil && cfg.FreshContextTokens <= 0 {
+		freshContextEnabled = false
+	}
 	effectiveCompact := resolveEffectiveCompaction(cfg)
-	if cfg.FreshContext != nil && cfg.ArchiveHistory != nil {
+	if freshContextEnabled {
 		effectiveCompact = nil
 	}
 	ctx, workflow, ownsWorkflow := providers.EnsureInferenceWorkflow(ctx, cfg.InferenceWorkloadProfile)
@@ -382,7 +386,6 @@ func RunToolLoop(
 		cfg.OnHistoryAdvanced(providers.CloneChatMessages(messages))
 	}
 
-	freshContextEnabled := cfg.FreshContext != nil && cfg.ArchiveHistory != nil
 	if cfg.ForceInitialCompact && freshContextEnabled {
 		newContextRequested = true
 	} else if cfg.ForceInitialCompact {
@@ -430,6 +433,52 @@ func RunToolLoop(
 				appendMessage(msg)
 			}
 			usage.RecordPendingMessages(injected)
+		}
+		if cfg.ReadModelStep != nil {
+			current, settings, err := cfg.ReadModelStep(ctx)
+			if err != nil {
+				return loopResultSnapshot(messages, startLen, historyRewritten, totalIn, totalOut, totalCacheCreation, totalCacheRead), err
+			}
+			if current.ModelSelectionRevision != 0 && current.ModelSelectionRevision != cfg.ModelSelectionRevision {
+				cfg.ModelSelectionRevision = current.ModelSelectionRevision
+				cfg.ProviderName, cfg.Model = current.Provider, current.Model
+				cfg.MediaInput, cfg.Effort, cfg.ProviderOptions = current.MediaInput, current.Effort, current.ProviderOptions
+				cfg.NativeDeferredToolDiscovery = current.NativeDeferredToolDiscovery
+				cfg.ProviderObservationKey, cfg.ModelVariant = settings.ProviderObservationKey, settings.ModelVariant
+				cfg.MaxContextTokens, cfg.MaxInputTokens = settings.ContextTokens, settings.InputTokens
+				cfg.OutputReserveTokens, cfg.CompactThresholdTokens = settings.OutputReserveTokens, settings.CompactThresholdTokens
+				cfg.FreshContextTokens = settings.FreshContextTokens
+				freshContextEnabled = cfg.FreshContext != nil && cfg.ArchiveHistory != nil && settings.FreshContextTokens > 0
+				effectiveCompact = resolveEffectiveCompaction(cfg)
+				if freshContextEnabled {
+					effectiveCompact = nil
+				}
+				if settings.DisableAutoCompact {
+					cfg.MaxContextTokens, cfg.CompactThresholdTokens = 0, 0
+				}
+				cfg.SystemPromptSections = nil
+				for _, section := range settings.SystemSections {
+					cfg.SystemPromptSections = append(cfg.SystemPromptSections, SystemPromptSectionInfo{Key: section.Key, Static: section.Static, Bytes: section.Bytes, Hash: section.Hash})
+				}
+				if len(current.Messages) > 0 && current.Messages[0].Role == "system" {
+					if len(messages) > 0 && messages[0].Role == "system" {
+						messages[0] = current.Messages[0]
+					} else {
+						messages = append([]providers.ChatMessage{current.Messages[0]}, messages...)
+					}
+				}
+				// Native continuation state and usage baselines cannot cross a
+				// model selection. Keep durable facts, rebuild request context.
+				providerMessages = providers.CloneChatMessages(messages)
+				sentRequestContext, retainedContext, pendingRetainedContext = nil, nil, nil
+				turnRouting = &providers.TurnRouting{}
+				usage.Reset()
+				usage.setMediaInputPolicy(cfg.MediaInput)
+				usage.SetAdjustment(UsageAdjustmentInitialHistoryEstimate)
+				usage.RecordPendingMessages(messages)
+				threshold = proactiveCompactThreshold(cfg)
+				overflowCompacted, overflowTrimmed, proactiveSuppressed = false, false, false
+			}
 		}
 		// Acknowledged human steering must reach history before a request can
 		// act on it. Archive the full unpersisted suffix to retain tool/message
@@ -680,6 +729,7 @@ func RunToolLoop(
 		operation.ParentOperationID = nextOperationParentID
 		nextOperationParentID = ""
 		req := providers.ChatRequest{
+			ModelSelectionRevision:      cfg.ModelSelectionRevision,
 			ResumeSampling:              resumeSampling,
 			TurnRouting:                 turnRouting,
 			Provider:                    cfg.ProviderName,

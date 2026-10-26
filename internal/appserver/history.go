@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/compact"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -46,6 +47,7 @@ type persistedFile struct {
 }
 
 type persistedMessage struct {
+	ModelSteps []providers.ModelStepUsage `json:"model_steps,omitempty"`
 	// Seq is the message's stable per-thread address. It is not serialized to
 	// the store's message columns because seq is the row's own key.
 	Seq                 int                                `json:"seq,omitempty"`
@@ -576,6 +578,7 @@ func historyRecordFromPersistedMessage(rec persistedMessage) sessionstore.Histor
 		CacheReadTokens:     rec.CacheReadTokens,
 		RetryCount:          rec.RetryCount,
 		MaxRetries:          rec.MaxRetries,
+		ModelSteps:          append([]providers.ModelStepUsage(nil), rec.ModelSteps...),
 		Provider:            rec.Provider,
 		Model:               rec.Model,
 	}
@@ -621,6 +624,7 @@ func persistedMessageFromHistoryRecord(rec sessionstore.HistoryRecord) (persiste
 		CacheReadTokens:     rec.CacheReadTokens,
 		RetryCount:          rec.RetryCount,
 		MaxRetries:          rec.MaxRetries,
+		ModelSteps:          append([]providers.ModelStepUsage(nil), rec.ModelSteps...),
 		Provider:            rec.Provider,
 		Model:               rec.Model,
 	}
@@ -758,4 +762,31 @@ func appendControlledChatMessage(store *sessionstore.Store, id string, msg provi
 		return store.AppendContinuationHistoryRecord(id, rec, control, *baseline)
 	}
 	return store.AppendControlledHistoryRecord(id, rec, control)
+}
+
+// Keep one aggregate row for legacy turn recovery, with exact per-operation
+// attribution alongside it. Mixed turns deliberately have no single model tag.
+func appendLoopTokenUsage(store *sessionstore.Store, id, provider, model string, result agent.LoopResult) error {
+	usage := providers.TokenUsage{InputTokens: result.InputTokens, OutputTokens: result.OutputTokens, CacheCreationTokens: result.CacheCreationTokens, CacheReadTokens: result.CacheReadTokens}
+	if len(result.ModelSteps) == 0 {
+		return appendTokenUsage(store, id, provider, model, usage, result.ContextTokens)
+	}
+	if store == nil || strings.TrimSpace(id) == "" {
+		return nil
+	}
+	provider, model = loopResultModelIdentity(result, provider, model)
+	return store.AppendHistoryRecord(id, sessionstore.HistoryRecord{Role: "meta", Content: "token_usage", At: time.Now().UTC(), Provider: provider, Model: model, InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens, CacheCreationTokens: usage.CacheCreationTokens, CacheReadTokens: usage.CacheReadTokens, ContextTokens: result.ContextTokens, ModelSteps: append([]providers.ModelStepUsage(nil), result.ModelSteps...)})
+}
+
+func loopResultModelIdentity(result agent.LoopResult, provider, model string) (string, string) {
+	if len(result.ModelSteps) == 0 {
+		return provider, model
+	}
+	first := result.ModelSteps[0]
+	for _, step := range result.ModelSteps[1:] {
+		if step.Provider != first.Provider || step.Model != first.Model {
+			return "", ""
+		}
+	}
+	return first.Provider, first.Model
 }

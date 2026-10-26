@@ -13,6 +13,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/modelbudget"
 	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -42,32 +43,33 @@ type RawEvent struct {
 }
 
 type TurnRecord struct {
-	ThreadID            string              `json:"thread_id"`
-	TurnID              string              `json:"turn_id"`
-	Status              string              `json:"status"`
-	ProviderName        string              `json:"provider_name,omitempty"`
-	Model               string              `json:"model,omitempty"`
-	APIModel            string              `json:"api_model,omitempty"`
-	ModelProfile        *ModelProfileRecord `json:"model_profile,omitempty"`
-	PermissionMode      string              `json:"permission_mode,omitempty"`
-	StartedAt           *time.Time          `json:"started_at,omitempty"`
-	CompletedAt         *time.Time          `json:"completed_at,omitempty"`
-	DurationMS          *int64              `json:"duration_ms,omitempty"`
-	InputTokens         int                 `json:"input_tokens,omitempty"`
-	OutputTokens        int                 `json:"output_tokens,omitempty"`
-	CacheCreationTokens int                 `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens     int                 `json:"cache_read_tokens,omitempty"`
-	FinishReason        string              `json:"finish_reason,omitempty"`
-	StopReason          string              `json:"stop_reason,omitempty"`
-	Truncated           bool                `json:"truncated,omitempty"`
-	HistoryRewritten    bool                `json:"history_rewritten,omitempty"`
-	DriverID            string              `json:"driver_id,omitempty"`
-	DriverVersion       string              `json:"driver_version,omitempty"`
-	DriverContract      int                 `json:"driver_contract,omitempty"`
-	DriverStatus        string              `json:"driver_status,omitempty"`
-	DriverCheckpoint    json.RawMessage     `json:"driver_checkpoint,omitempty"`
-	ReceiptDiagnostic   string              `json:"model_receipt_diagnostic,omitempty"`
-	Error               string              `json:"error,omitempty"`
+	ModelSteps          []pluginprotocol.ModelStepUsageV1 `json:"model_steps,omitempty"`
+	ThreadID            string                            `json:"thread_id"`
+	TurnID              string                            `json:"turn_id"`
+	Status              string                            `json:"status"`
+	ProviderName        string                            `json:"provider_name,omitempty"`
+	Model               string                            `json:"model,omitempty"`
+	APIModel            string                            `json:"api_model,omitempty"`
+	ModelProfile        *ModelProfileRecord               `json:"model_profile,omitempty"`
+	PermissionMode      string                            `json:"permission_mode,omitempty"`
+	StartedAt           *time.Time                        `json:"started_at,omitempty"`
+	CompletedAt         *time.Time                        `json:"completed_at,omitempty"`
+	DurationMS          *int64                            `json:"duration_ms,omitempty"`
+	InputTokens         int                               `json:"input_tokens,omitempty"`
+	OutputTokens        int                               `json:"output_tokens,omitempty"`
+	CacheCreationTokens int                               `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens     int                               `json:"cache_read_tokens,omitempty"`
+	FinishReason        string                            `json:"finish_reason,omitempty"`
+	StopReason          string                            `json:"stop_reason,omitempty"`
+	Truncated           bool                              `json:"truncated,omitempty"`
+	HistoryRewritten    bool                              `json:"history_rewritten,omitempty"`
+	DriverID            string                            `json:"driver_id,omitempty"`
+	DriverVersion       string                            `json:"driver_version,omitempty"`
+	DriverContract      int                               `json:"driver_contract,omitempty"`
+	DriverStatus        string                            `json:"driver_status,omitempty"`
+	DriverCheckpoint    json.RawMessage                   `json:"driver_checkpoint,omitempty"`
+	ReceiptDiagnostic   string                            `json:"model_receipt_diagnostic,omitempty"`
+	Error               string                            `json:"error,omitempty"`
 }
 
 type ModelProfileRecord struct {

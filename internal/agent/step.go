@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
@@ -177,6 +178,10 @@ type SystemPromptSectionInfo = providers.SystemPromptSectionSummary
 // LoopConfig bundles every knob the shared loop needs. All callbacks
 // are optional. Tools is required if the model is allowed to call any.
 type LoopConfig struct {
+	ModelSelectionRevision uint64
+	// ReadModelStep refreshes the admitted model before any request assembly.
+	// A zero revision retains the legacy whole-turn configuration.
+	ReadModelStep  func(context.Context) (providers.ChatRequest, pluginprotocol.DriverTurnSettings, error)
 	EvaluatePolicy loopdriver.PolicyEvaluator
 	ResumeSampling bool
 	// Tools is the executor used to run model-requested tool calls.
@@ -399,6 +404,7 @@ type LoopConfig struct {
 
 // LoopResult is what RunToolLoop returns on success.
 type LoopResult struct {
+	ModelSteps []providers.ModelStepUsage
 	// Content is the model's final assistant message for this run.
 	Content string
 	// NewMessages is the slice of messages produced during this run

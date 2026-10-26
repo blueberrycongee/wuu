@@ -55,6 +55,9 @@ const maxConsecutiveProactiveCompactFailures = 3
 // context and persistence resources. The driver owns control flow; resources
 // retain accepted effects and drain work before the execution is released.
 type StreamRunner struct {
+	// ResolveModelStep snapshots an authorized selection before step assembly.
+	// Nil preserves the legacy turn binding. It must not mutate active resources.
+	ResolveModelStep  func(context.Context, uint64) (*ModelStepBinding, error)
 	SelectedPolicy    *loopdriver.PolicyClient
 	SelectedToolBatch toolbatch.Executor
 	ResumeSampling    bool

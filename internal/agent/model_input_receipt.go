@@ -13,26 +13,27 @@ const ModelInputReceiptContractVersion = 1
 // ModelInputReceipt is the provider-neutral, durable reconstruction record for
 // one final request shape after context assembly and plugin transforms.
 type ModelInputReceipt struct {
-	ContractVersion  int                        `json:"contract_version"`
-	OperationID      string                     `json:"operation_id"`
-	SessionID        string                     `json:"session_id,omitempty"`
-	ExecutionID      string                     `json:"execution_id,omitempty"`
-	DriverID         string                     `json:"driver_id"`
-	DriverVersion    string                     `json:"driver_version"`
-	Provider         string                     `json:"provider,omitempty"`
-	Model            string                     `json:"model"`
-	StepIndex        int                        `json:"step_index"`
-	InputFactSeqs    []int                      `json:"input_fact_seqs,omitempty"`
-	Messages         []providers.ChatMessage    `json:"messages"`
-	Tools            []ModelInputToolDefinition `json:"tools,omitempty"`
-	ToolSurfaceHash  string                     `json:"tool_surface_hash,omitempty"`
-	SystemSections   []ModelInputSystemSection  `json:"system_sections,omitempty"`
-	PromptCacheKey   string                     `json:"prompt_cache_key,omitempty"`
-	ForceToolName    string                     `json:"force_tool_name,omitempty"`
-	Temperature      float64                    `json:"temperature,omitempty"`
-	Effort           string                     `json:"effort,omitempty"`
-	HistoryRewritten bool                       `json:"history_rewritten,omitempty"`
-	CreatedAt        time.Time                  `json:"created_at"`
+	ModelSelectionRevision uint64                     `json:"model_selection_revision,omitempty"`
+	ContractVersion        int                        `json:"contract_version"`
+	OperationID            string                     `json:"operation_id"`
+	SessionID              string                     `json:"session_id,omitempty"`
+	ExecutionID            string                     `json:"execution_id,omitempty"`
+	DriverID               string                     `json:"driver_id"`
+	DriverVersion          string                     `json:"driver_version"`
+	Provider               string                     `json:"provider,omitempty"`
+	Model                  string                     `json:"model"`
+	StepIndex              int                        `json:"step_index"`
+	InputFactSeqs          []int                      `json:"input_fact_seqs,omitempty"`
+	Messages               []providers.ChatMessage    `json:"messages"`
+	Tools                  []ModelInputToolDefinition `json:"tools,omitempty"`
+	ToolSurfaceHash        string                     `json:"tool_surface_hash,omitempty"`
+	SystemSections         []ModelInputSystemSection  `json:"system_sections,omitempty"`
+	PromptCacheKey         string                     `json:"prompt_cache_key,omitempty"`
+	ForceToolName          string                     `json:"force_tool_name,omitempty"`
+	Temperature            float64                    `json:"temperature,omitempty"`
+	Effort                 string                     `json:"effort,omitempty"`
+	HistoryRewritten       bool                       `json:"history_rewritten,omitempty"`
+	CreatedAt              time.Time                  `json:"created_at"`
 }
 
 type ModelInputToolDefinition struct {
@@ -56,25 +57,26 @@ type ModelInputReceiptStore interface {
 
 func modelInputReceipt(request providers.ChatRequest, execution loopdriver.ExecutionContext, driver loopdriver.Descriptor, sections []SystemPromptSectionInfo, rewritten bool) ModelInputReceipt {
 	receipt := ModelInputReceipt{
-		ContractVersion:  ModelInputReceiptContractVersion,
-		OperationID:      request.Operation.ID,
-		SessionID:        execution.SessionID,
-		ExecutionID:      execution.ExecutionID,
-		DriverID:         driver.ID,
-		DriverVersion:    driver.Version,
-		Provider:         request.Provider,
-		Model:            request.Model,
-		StepIndex:        request.StepIndex,
-		InputFactSeqs:    durableInputFactSeqs(request.Messages),
-		Messages:         providers.CloneChatMessages(request.Messages),
-		Tools:            modelInputTools(request.Tools),
-		ToolSurfaceHash:  hashToolsForRequestShape(request.Tools),
-		SystemSections:   modelInputSystemSections(sections),
-		ForceToolName:    request.ForceToolName,
-		Temperature:      request.Temperature,
-		Effort:           request.Effort,
-		HistoryRewritten: rewritten,
-		CreatedAt:        time.Now().UTC(),
+		ModelSelectionRevision: request.ModelSelectionRevision,
+		ContractVersion:        ModelInputReceiptContractVersion,
+		OperationID:            request.Operation.ID,
+		SessionID:              execution.SessionID,
+		ExecutionID:            execution.ExecutionID,
+		DriverID:               driver.ID,
+		DriverVersion:          driver.Version,
+		Provider:               request.Provider,
+		Model:                  request.Model,
+		StepIndex:              request.StepIndex,
+		InputFactSeqs:          durableInputFactSeqs(request.Messages),
+		Messages:               providers.CloneChatMessages(request.Messages),
+		Tools:                  modelInputTools(request.Tools),
+		ToolSurfaceHash:        hashToolsForRequestShape(request.Tools),
+		SystemSections:         modelInputSystemSections(sections),
+		ForceToolName:          request.ForceToolName,
+		Temperature:            request.Temperature,
+		Effort:                 request.Effort,
+		HistoryRewritten:       rewritten,
+		CreatedAt:              time.Now().UTC(),
 	}
 	if request.CacheHint != nil {
 		receipt.PromptCacheKey = request.CacheHint.PromptCacheKey

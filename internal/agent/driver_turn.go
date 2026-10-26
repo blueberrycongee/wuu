@@ -21,6 +21,9 @@ type streamTurnGateway struct {
 	ctx                     context.Context
 	cancel                  context.CancelFunc
 	gate                    chan struct{}
+	modelSteps              []providers.ModelStepUsage
+	modelBinding            *ModelStepBinding
+	modelBoundaryPending    bool
 	runner                  *StreamRunner
 	descriptor              loopdriver.Descriptor
 	input                   loopdriver.PersistedInput
@@ -99,6 +102,9 @@ func (g *streamTurnGateway) acquire(ctx context.Context) (context.Context, func(
 
 func (g *streamTurnGateway) prepare(ctx context.Context) error {
 	if g.ready {
+		if g.step == 0 && g.modelBoundaryPending {
+			return g.bindModelStep(ctx)
+		}
 		return nil
 	}
 	if g.runner.SelectedPolicy != nil {
@@ -136,7 +142,8 @@ func (g *streamTurnGateway) prepare(ctx context.Context) error {
 		g.frozen = freezer
 	}
 	g.ready = true
-	return nil
+	g.modelBoundaryPending = true
+	return g.bindModelStep(ctx)
 }
 
 func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest, error) {
@@ -148,7 +155,7 @@ func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest
 	if err := g.prepare(ctx); err != nil {
 		return providers.ChatRequest{}, err
 	}
-	r := g.runner
+	r := g.modelRunner()
 	model := strings.TrimSpace(r.APIModel)
 	if model == "" {
 		model = r.Model
@@ -158,7 +165,8 @@ func (g *streamTurnGateway) ReadTurn(ctx context.Context) (providers.ChatRequest
 		return providers.ChatRequest{}, err
 	}
 	return providers.ChatRequest{
-		Provider: r.ProviderName, Model: model,
+		ModelSelectionRevision: g.modelRevision(),
+		Provider:               r.ProviderName, Model: model,
 		Messages: providers.CloneChatMessages(g.activeHistory), Tools: definitions,
 		Temperature: r.Temperature, Effort: r.Effort,
 		ProviderOptions:             providers.CloneRequestObject(r.ProviderOptions),
@@ -207,8 +215,8 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	if strings.TrimSpace(request.Model) == "" {
 		return loopdriver.ModelRound{}, errors.New("model is required")
 	}
-	if request.Provider != g.runner.ProviderName {
-		return loopdriver.ModelRound{}, errors.New("model request must use the turn's bound provider")
+	if err := g.validateModelBinding(request); err != nil {
+		return loopdriver.ModelRound{}, err
 	}
 	request = cloneDriverRequest(request)
 	request.StepIndex = g.step
@@ -238,7 +246,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		return round, err
 	}
 	if g.runner.ModelInputReceiptStore != nil {
-		_, sections := g.runner.systemPromptSnapshot()
+		_, sections := g.modelRunner().systemPromptSnapshot()
 		receipt := modelInputReceipt(request, loopdriver.ExecutionContextFromContext(g.ctx), g.descriptor, sections, g.historyRewritten)
 		if err := g.runner.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {
 			return round, fmt.Errorf("persist model input receipt: %w", err)
@@ -248,6 +256,19 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	// never start model or tool work after cancellation crossed the barrier.
 	if err := ctx.Err(); err != nil {
 		return round, err
+	}
+	modelRunner := g.modelRunner()
+	selectedModel := modelRunner.Model
+	if request.Model != modelRunner.requestModel() {
+		selectedModel = request.Model
+	}
+	ceiling := modelRunner.ContextWindowOverride
+	if modelRunner.MaxInputTokens > 0 && (ceiling == 0 || modelRunner.MaxInputTokens < ceiling) {
+		ceiling = modelRunner.MaxInputTokens
+	}
+	modelStep := providers.ModelStepSummary{Provider: request.Provider, Model: selectedModel, APIModel: request.Model, Revision: g.modelRevision(), StepIndex: g.step, OperationID: request.Operation.ID, ContextWindowTokens: ceiling}
+	if g.modelBinding != nil && g.onEvent != nil {
+		g.onEvent(providers.StreamEvent{Type: providers.EventModelStep, ModelStep: &modelStep})
 	}
 	// Provider routing is execution state, shared by model rounds and owned by
 	// this resource rather than serialized or supplied by a driver.
@@ -356,6 +377,16 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 			g.releaseToolRuntimes(retired)
 		}
 	}
+	if err == nil {
+		g.modelBoundaryPending = true
+	}
+	modelUsage := providers.ModelStepUsage{ModelStepSummaryV1: modelStep}
+	if result.Usage != nil {
+		modelUsage.InputTokens, modelUsage.OutputTokens = result.Usage.InputTokens, result.Usage.OutputTokens
+		modelUsage.CacheCreationTokens, modelUsage.CacheReadTokens = result.Usage.CacheCreationTokens, result.Usage.CacheReadTokens
+		modelUsage.ContextTokens = result.Usage.TotalContextTokens()
+	}
+	g.modelSteps = append(g.modelSteps, modelUsage)
 	if result.Usage != nil {
 		g.usage.InputTokens += result.Usage.InputTokens
 		g.usage.OutputTokens += result.Usage.OutputTokens
@@ -561,6 +592,9 @@ func (g *streamTurnGateway) snapshot() LoopResult {
 		InputTokens:            g.usage.InputTokens, OutputTokens: g.usage.OutputTokens,
 		CacheCreationTokens: g.usage.CacheCreationTokens, CacheReadTokens: g.usage.CacheReadTokens,
 		ContextTokens: g.contextTokens,
+	}
+	if g.modelBinding != nil {
+		result.ModelSteps = append([]providers.ModelStepUsage(nil), g.modelSteps...)
 	}
 	if g.historyRewritten {
 		result.HistoryRewritten = true

@@ -239,6 +239,16 @@ Go 嵌入调用方也须显式选择驱动。`StreamRunner` 要求提供 `LoopDr
 
 `driver.turn` 4.0 增加默认算法所用的资源，并将调用 ID 的唯一范围设为单个模型轮次。SDK 与依赖的服务主版本须同步更新，旧主版本会被拒绝。输入接纳、请求上下文和请求变换仍是显式操作：在循环输入边界调用 `admitInput()`，执行驱动的压缩策略，组装 `requestContext()` 段，再在 `model()` 前调用 `transformRequest()`。重试已准备好的请求不会消费更多输入或重复变换。checkpoint 契约与默认驱动状态格式仍为版本 1，已有会话身份和历史保持可恢复。
 
+下一步生效的模型选择是主版本 4 内的显式可选能力。所选引擎同时声明 `host-managed-continuation` 与 `step-model-selection`；名字不授予支持能力，旧的替代引擎明确拒绝意图。API 接纳和持久化意图的消费/恢复都校验同一保留 generation 的引擎与驱动描述。驱动声明 `step_model_selection`，在**每个**模型步骤前接纳输入，再重新读取 `read()` 与 `settings()`，之后才组装提示词、工具定义、媒体策略和预算。须将 `read().model_selection_revision` 原样保留到 `transformRequest()` 和 `model()` / `modelWithTools()`；过期 revision 或不匹配的模型、提供者会在发送前被拒绝。默认驱动实现此边界；未声明能力的驱动保留整轮绑定行为，并明确拒绝下一步意图。
+
+对于正在运行且引擎、驱动具备上述能力的持久化会话，可调用 `config/model/update`，参数为 `{ "thread_id": "…", "provider": "configured-provider", "model": "configured-model", "apply_at": "next_step" }`。返回的 `model_selection` 确认持久化 revision，不代表已改变正在发送的请求。省略 `apply_at` 时仍采用原有空闲时选择行为。持久化下一步意图使用独立的可选操作 `session.domain@1.SetNextStepModelSelection(id, intent)`，而非 `SetRuntimeSelection`。根据最近一次 `Find` 的结果传入 `{ ExpectedRevision, ExpectedEngineID, Selection }`；`Selection` 包含模型字段以及未改变的 `PermissionMode` / `ApproveForMe`。提供者须原子比较已保存的 revision 和引擎，不匹配时以 `session_model_selection_changed` 拒绝，并拒绝权限修改；提交只改变模型字段、设置 `model_selection_apply_at: "next_step"`，将 revision 精确递增一次。相同 revision 的并发请求只能有一个成功。实现此操作的提供者也须在旧模型选择写入（`SetRuntimeSelection` / `SetModelSelection`）中递增同一 revision 并清空待生效边界。恢复读取持久化的成功结果。
+
+未声明此操作的旧会话提供者在任何写入前以 `method_not_found` 拒绝。消费者不得回退到 `SetRuntimeSelection`，也不得因确认失败而回滚覆盖并发变更。原有 `SetRuntimeSelection` 契约仍绑定整个 turn。新操作若返回格式错误或不一致的确认，应视为 `session_outcome_unknown`，先检查持久化状态再重试。存储确认不等于运行时授权：消费和重启都会在发送前重新校验引擎和驱动能力。
+
+已准备的步骤及其重试固定使用同一模型、提供者、提示词、媒体能力策略、选项、工具权限和用量链路。成功步骤后的下一次接纳读取最新意图，在预算检查和发送前重新组装模型输入。选择不会替换活动执行器、修改权限或执行环境，也不会采纳新插件 generation。只接受已配置、已启用且兼容保留工具面的模型；新增连接或替代 generation 须等到空闲回合边界。取消后不会启动下一步骤。重启保留意图并重新校验；所选提供者不可用时明确失败，不静默回退。启用模型输入回执时会记录选择 revision。
+
+只有显式选择下一步切换的执行才新增 `model_step` 事件与逐步元数据；普通轮次保持原有事件顺序和历史结构。`model_step` 事件报告实际发送的配置模型/API 模型、提供者、操作 ID、revision 和上下文上限。线程的 `running_model*` 字段与目标选择分开；`turn/usage` 携带当前步骤身份，计数仍为回合累计值。持久化用量和 trace 保留 `model_steps` 归属，混合模型回合不再伪标为单一模型。用量查询按操作展开且不重复计算汇总，回合恢复仍使用一条汇总记录。
+
 续接字段在主版本 4 内增量提供。`settings().resume_sampling` 表示用户明确要求在先前已完成回复之后继续采样，驱动不能直接将该回复作为新执行的终态结果返回。失败的模型轮次可携带 `completed_messages`，表示提供者已确认完整、可用于后续请求的消息项。其他部分输出仍在历史中可见，但会标记为不完整流片段，并从续接模型输入中排除。
 
 模型操作失败返回包含 `failure`、部分助手消息及已报告用量的结果。SDK 将其转换为 `DriverModelError`；原生驱动会同时收到 `FailureError` 和部分 `ModelRound`。失败证据包含来源、类别、提供者代码、HTTP 状态、重试延迟、上下文溢出分类，以及可用时的恢复执行器停止原因和尝试次数。底层原因可重试不代表获得了新的重试预算。传输、调用权限及请求格式错误仍返回服务错误。直接使用协议的消费者须检查 `failure`；回复包含部分输出不代表操作成功。失败回复中的可见文本和图片会保留在历史中，不完整的工具声明和提供者重放状态只保留在失败回复中。

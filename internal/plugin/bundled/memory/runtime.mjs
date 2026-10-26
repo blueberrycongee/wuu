@@ -348,6 +348,7 @@ var sessionDomainArity = {
   "SetHistoryEngineTurnID": [5, 0],
   "SetModelSelection": [4, 1],
   "SetProjectMembership": [4, 1],
+  "SetNextStepModelSelection": [2, 1],
   "SetRuntimeSelection": [2, 1],
   "SetSource": [2, 1],
   "SetWorkspaceID": [2, 1],

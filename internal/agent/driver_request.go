@@ -21,6 +21,9 @@ func (g *streamTurnGateway) AdmitInput(ctx context.Context) (loopdriver.InputAdm
 	if len(g.streamedBatches) != 0 {
 		return loopdriver.InputAdmission{}, errors.New("join the pending streaming tool batch before admitting input")
 	}
+	if err := g.bindModelStep(ctx); err != nil {
+		return loopdriver.InputAdmission{}, err
+	}
 	var admitted []providers.ChatMessage
 	appendInput := func(messages []providers.ChatMessage) {
 		messages = filterDurableHistory(messages)
@@ -38,9 +41,9 @@ func (g *streamTurnGateway) AdmitInput(ctx context.Context) (loopdriver.InputAdm
 			appendInput(messages)
 		}
 	}
-	if admissionErr == nil && g.runner.BeforeModelStep != nil {
+	if admissionErr == nil && g.modelRunner().BeforeModelStep != nil {
 		var messages []providers.ChatMessage
-		messages, admissionErr = g.runner.BeforeModelStep(ctx, g.step, providers.CloneChatMessages(g.activeHistory))
+		messages, admissionErr = g.modelRunner().BeforeModelStep(ctx, g.step, providers.CloneChatMessages(g.activeHistory))
 		if admissionErr == nil {
 			appendInput(messages)
 		}
@@ -64,8 +67,8 @@ func (g *streamTurnGateway) AdmitInput(ctx context.Context) (loopdriver.InputAdm
 		}
 	}
 	var decision loopdriver.StepDecision
-	if admissionErr == nil && g.runner.StepPolicy != nil {
-		decision, admissionErr = g.runner.StepPolicy(ctx, g.step, providers.CloneChatMessages(g.activeHistory))
+	if admissionErr == nil && g.modelRunner().StepPolicy != nil {
+		decision, admissionErr = g.modelRunner().StepPolicy(ctx, g.step, providers.CloneChatMessages(g.activeHistory))
 	}
 	admissionErr = errors.Join(admissionErr, ctx.Err())
 	return loopdriver.InputAdmission{Messages: providers.CloneChatMessages(admitted), Context: g.contextSnapshot(), Decision: decision}, admissionErr
@@ -105,13 +108,13 @@ func (g *streamTurnGateway) TransformRequest(ctx context.Context, request provid
 	}
 	request = cloneDriverRequest(request)
 	request.StepIndex = g.step
-	if g.runner.BeforeRequest != nil {
-		if err := g.runner.BeforeRequest(ctx, &request); err != nil {
+	if g.modelRunner().BeforeRequest != nil {
+		if err := g.modelRunner().BeforeRequest(ctx, &request); err != nil {
 			return providers.ChatRequest{}, err
 		}
 	}
-	if request.Provider != g.runner.ProviderName {
-		return providers.ChatRequest{}, errors.New("model request must use the turn's bound provider")
+	if err := g.validateModelBinding(request); err != nil {
+		return providers.ChatRequest{}, err
 	}
 	if err := validateTransformedRequest(request); err != nil {
 		return providers.ChatRequest{}, err

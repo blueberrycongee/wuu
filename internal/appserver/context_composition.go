@@ -92,6 +92,7 @@ func (s *Server) contextCompositionFromTrace(binding *runtime.State, threadID, t
 	usableInputTokens := 0
 	compactThresholdTokens := 0
 	turnID := ""
+	selectedStepBudget := false
 	if step != nil {
 		turnID = strings.TrimSpace(step.TurnID)
 		provider = strings.TrimSpace(step.Provider)
@@ -108,8 +109,23 @@ func (s *Server) contextCompositionFromTrace(binding *runtime.State, threadID, t
 			usableInputTokens = turn.ModelProfile.UsableInputTokens
 			compactThresholdTokens = turn.ModelProfile.CompactThresholdTokens
 		}
+		for index := len(turn.ModelSteps) - 1; index >= 0; index-- {
+			selected := turn.ModelSteps[index]
+			if selected.StepIndex != request.StepIndex {
+				continue
+			}
+			provider, model = selected.Provider, firstNonEmpty(selected.APIModel, selected.Model)
+			if selected.Revision != 0 {
+				// The receipt's effective ceiling belongs to this step. Do not
+				// substitute the initial turn profile or a newly edited catalog.
+				contextWindowTokens = selected.ContextWindowTokens
+				inputLimitTokens, usableInputTokens, compactThresholdTokens = 0, 0, 0
+				selectedStepBudget = true
+			}
+			break
+		}
 	}
-	if inputLimitTokens <= 0 {
+	if inputLimitTokens <= 0 && !selectedStepBudget {
 		inputLimitTokens = s.contextCompositionRuntimeInputLimit(provider, model)
 	}
 	contextCeilingTokens := effectiveContextCeilingTokens(contextWindowTokens, inputLimitTokens)

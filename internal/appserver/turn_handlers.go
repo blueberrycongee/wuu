@@ -1488,6 +1488,15 @@ func (s *Server) ensureThreadRuntime(th *threadState) (*runtime.ThreadRuntime, e
 // exists to unblock the turn. Speed survives only when the replacement model
 // supports it, just as it does when explicitly switching models.
 func (s *Server) healThreadSelectionForRemovedProvider(th *threadState) (session.RuntimeSelection, error) {
+	if th.PersistHistory {
+		selected, found, err := th.state.Sessions.Find(th.ID)
+		if err != nil {
+			return session.RuntimeSelection{}, err
+		}
+		if found && selected.ModelSelectionApplyAt == "next_step" {
+			return session.RuntimeSelection{}, fmt.Errorf("%w: explicit next-step selection %s/%s requires an available provider", runtime.ErrThreadProviderUnavailable, selected.Provider, selected.Model)
+		}
+	}
 	defaults := s.currentSessionRuntimeSelection()
 	cfg, _, err := s.rt.LoadEffectiveConfig()
 	if err != nil {
@@ -2993,9 +3002,10 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	// Resolve the real runtime context ceiling for the active provider/model
 	// so turn/usage notifications can drive a "已用 / 总数" meter in the UI.
-	// Captured once per turn: the runner is per-thread for its lifetime,
-	// so the model identity does not change between usage samples.
+	// Model-step dispatch updates these fields; totals remain turn-wide.
 	contextWindowTokens := usageContextWindowTokens(runner)
+	usageProvider := turnRuntime.ProviderName
+	var usageRevision uint64
 	usageModel := th.Model
 	if runner != nil {
 		usageModel = runner.Model
@@ -3040,20 +3050,26 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			lastUsagePushed = snapshot
 			lastContextTokensPushed = contextTokens
 		}
+		model, provider, revision, ceiling := usageModel, usageProvider, usageRevision, contextWindowTokens
+		if revision == 0 {
+			provider = ""
+		}
 		usagePushMu.Unlock()
 		if !shouldPush {
 			return
 		}
 		notify(NotificationTurnUsage, TurnUsageNotification{
-			ThreadID:            th.ID,
-			TurnID:              turnID,
-			Model:               usageModel,
-			InputTokens:         snapshot.InputTokens,
-			OutputTokens:        snapshot.OutputTokens,
-			ContextTokens:       contextTokens,
-			CacheCreationTokens: snapshot.CacheCreationTokens,
-			CacheReadTokens:     snapshot.CacheReadTokens,
-			ContextWindowTokens: contextWindowTokens,
+			ThreadID:               th.ID,
+			TurnID:                 turnID,
+			Model:                  model,
+			Provider:               provider,
+			ModelSelectionRevision: revision,
+			InputTokens:            snapshot.InputTokens,
+			OutputTokens:           snapshot.OutputTokens,
+			ContextTokens:          contextTokens,
+			CacheCreationTokens:    snapshot.CacheCreationTokens,
+			CacheReadTokens:        snapshot.CacheReadTokens,
+			ContextWindowTokens:    ceiling,
 		})
 	}
 	if runner != nil {
@@ -3288,8 +3304,36 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			th.mu.Unlock()
 			return
 		}
+		var runningSnapshot *Thread
+		if ev.Type == providers.EventModelStep && ev.ModelStep != nil {
+			step := *ev.ModelStep
+			// Legacy embedded clients may omit a named provider. They still
+			// use the admitted turn route, never the pending selection.
+			if step.Provider == "" && step.Revision == 0 {
+				step.Provider = turnRuntime.ProviderName
+			}
+			ev.ModelStep = &step
+			changed := th.runningProviderName != step.Provider || th.runningModel != step.Model || th.runningModelRevision != step.Revision
+			th.runningProviderName, th.runningModel, th.runningModelRevision = step.Provider, step.Model, step.Revision
+			if changed {
+				snapshot := th.snapshotLocked()
+				runningSnapshot = &snapshot
+			}
+		}
 		batch := th.applyStreamEventLocked(turnID, ev, time.Now().UTC())
 		th.mu.Unlock()
+		if ev.Type == providers.EventModelStep && ev.ModelStep != nil {
+			usagePushMu.Lock()
+			usageProvider, usageModel, usageRevision = ev.ModelStep.Provider, ev.ModelStep.Model, ev.ModelStep.Revision
+			if ev.ModelStep.ContextWindowTokens != 0 || ev.ModelStep.Revision != 0 {
+				contextWindowTokens = ev.ModelStep.ContextWindowTokens
+			}
+			lastUsagePushAt = time.Time{}
+			usagePushMu.Unlock()
+			if runningSnapshot != nil {
+				_ = s.notifyThreadUpdated(th.state, *runningSnapshot)
+			}
+		}
 		if ev.Type == providers.EventUsage && ev.Usage != nil {
 			usagePushMu.Lock()
 			liveUsage = *ev.Usage
@@ -3312,6 +3356,12 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// RunTurn returns the engine outcome; the built-in wuu engine's result is
 	// the native loop result the rest of the turn accounting consumes.
 	res := turnResult.Result
+	for index := range res.ModelSteps {
+		if res.ModelSteps[index].Provider == "" && res.ModelSteps[index].Revision == 0 {
+			res.ModelSteps[index].Provider = turnRuntime.ProviderName
+		}
+	}
+	recordedProvider, recordedModel := loopResultModelIdentity(res, turnRuntime.ProviderName, turnRuntime.Model)
 	th.mu.Lock()
 	title, threadCWD := th.Title, th.CWD
 	th.mu.Unlock()
@@ -3392,12 +3442,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			persistErr = s.persistFailedTurnResultLocked(th, res, true, turnRuntime.ProviderName, turnRuntime.Model, turnRuntime.HistoryBaselineSeq)
 		}
 	} else {
-		if usageErr := appendTokenUsage(binding.Sessions, th.ID, turnRuntime.ProviderName, turnRuntime.Model, providers.TokenUsage{
-			InputTokens:         res.InputTokens,
-			OutputTokens:        res.OutputTokens,
-			CacheCreationTokens: res.CacheCreationTokens,
-			CacheReadTokens:     res.CacheReadTokens,
-		}, res.ContextTokens); usageErr != nil {
+		if usageErr := appendLoopTokenUsage(binding.Sessions, th.ID, turnRuntime.ProviderName, turnRuntime.Model, res); usageErr != nil {
 			persistErr = usageErr
 		} else if th.PersistHistory {
 			persistErr = binding.Sessions.UpdateIndex(th.ID, persistableMessageCount(th.History), threadPreview(th.History))
@@ -3457,7 +3502,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	var terminalErr error
 	if shouldPersistTerminal {
-		terminalErr = s.persistTurnTerminal(th, turnID, turnKind, status, structured, now, reconnectItem, turnRuntime.ProviderName, turnRuntime.Model, providers.TokenUsage{
+		terminalErr = s.persistTurnTerminal(th, turnID, turnKind, status, structured, now, reconnectItem, recordedProvider, recordedModel, providers.TokenUsage{
 			InputTokens: res.InputTokens, OutputTokens: res.OutputTokens,
 			CacheCreationTokens: res.CacheCreationTokens, CacheReadTokens: res.CacheReadTokens,
 		})
@@ -3475,12 +3520,13 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 
 	th.mu.Lock()
 	turn := th.finishTurnLocked(turnID, status, err, now, string(res.FinishReason), res.StopReason, res.Truncated)
+	turn.ModelProvider, turn.Model = recordedProvider, recordedModel
 	applyTokenUsageToTurn(&turn, providers.TokenUsage{
 		InputTokens:         res.InputTokens,
 		OutputTokens:        res.OutputTokens,
 		CacheCreationTokens: res.CacheCreationTokens,
 		CacheReadTokens:     res.CacheReadTokens,
-	}, res.ContextTokens, turnRuntime.Model)
+	}, res.ContextTokens, recordedModel)
 	th.replaceTurnLocked(turn)
 	th.mu.Unlock()
 
@@ -3796,6 +3842,18 @@ func (s *Server) persistTurnTrace(binding *runtime.State, threadRuntime *runtime
 		model = runner.Model
 		apiModel = runner.APIModel
 	}
+	providerName, model = loopResultModelIdentity(res, providerName, model)
+	revisedModel := false
+	for _, step := range res.ModelSteps {
+		revisedModel = revisedModel || step.Revision != 0
+	}
+	if len(res.ModelSteps) > 0 {
+		if providerName == "" {
+			apiModel = ""
+		} else {
+			apiModel = res.ModelSteps[0].APIModel
+		}
+	}
 	var modelBudget modelbudget.Budget
 	if threadRuntime != nil {
 		modelBudget = threadRuntime.ModelBudget
@@ -3808,7 +3866,13 @@ func (s *Server) persistTurnTrace(binding *runtime.State, threadRuntime *runtime
 	if profile != nil && runner != nil {
 		profile.FreeformTool = modelprofile.SupportsFreeformTools(firstNonEmpty(apiModel, model), runner.ProviderOptions)
 	}
+	if revisedModel || providerName == "" && len(res.ModelSteps) > 0 {
+		// A turn-wide profile cannot describe a revised model's options or
+		// budgets. Per-step receipts retain the dispatched identity and ceiling.
+		profile = nil
+	}
 	turnRecord := sessiontrace.TurnRecord{
+		ModelSteps:          append([]providers.ModelStepUsage(nil), res.ModelSteps...),
 		ThreadID:            threadID,
 		TurnID:              turn.ID,
 		Status:              string(turn.Status),
@@ -5648,12 +5712,7 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 		}
 		th.stampDurableAgentMessageSeqsLocked(th.currentTurn, messagesToAppend, seqs)
 	}
-	if err := appendTokenUsage(th.state.Sessions, th.ID, providerName, model, providers.TokenUsage{
-		InputTokens:         res.InputTokens,
-		OutputTokens:        res.OutputTokens,
-		CacheCreationTokens: res.CacheCreationTokens,
-		CacheReadTokens:     res.CacheReadTokens,
-	}, res.ContextTokens); err != nil {
+	if err := appendLoopTokenUsage(th.state.Sessions, th.ID, providerName, model, res); err != nil {
 		return err
 	}
 	if err := th.state.Sessions.UpdateIndex(th.ID, persistableMessageCount(indexHistory), threadPreview(indexHistory)); err != nil {
@@ -5692,12 +5751,7 @@ func (s *Server) persistFailedTurnResultLocked(th *threadState, res agent.LoopRe
 	if th.PersistHistory {
 		return s.persistTurnResultLocked(th, res, rewriteHistory, providerName, model, historyBaselineSeq)
 	}
-	if err := appendTokenUsage(th.state.Sessions, th.ID, providerName, model, providers.TokenUsage{
-		InputTokens:         res.InputTokens,
-		OutputTokens:        res.OutputTokens,
-		CacheCreationTokens: res.CacheCreationTokens,
-		CacheReadTokens:     res.CacheReadTokens,
-	}, res.ContextTokens); err != nil {
+	if err := appendLoopTokenUsage(th.state.Sessions, th.ID, providerName, model, res); err != nil {
 		return err
 	}
 	s.invalidateSettingsUsage()

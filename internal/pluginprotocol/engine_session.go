@@ -66,6 +66,7 @@ type EngineGatewayParams struct {
 // EngineResultV1 preserves canonical history, compaction positions and driver
 // receipts. A partial result remains valid when EngineRunResult also has failure.
 type EngineResultV1 struct {
+	ModelSteps             []ModelStepUsageV1     `json:"model_steps,omitempty"`
 	Version                int                    `json:"version"`
 	Content                string                 `json:"content,omitempty"`
 	NewMessages            []DriverMessageV1      `json:"new_messages"`
@@ -93,6 +94,7 @@ type EngineResultV1 struct {
 // EngineEventV1 extends portable model events with session and tool observations.
 // Message uses DriverMessageV1 so durable addresses survive stream checkpoints.
 type EngineEventV1 struct {
+	ModelStep         *ModelStepSummaryV1    `json:"model_step,omitempty"`
 	Version           int                    `json:"version"`
 	Type              string                 `json:"type"`
 	Content           string                 `json:"content,omitempty"`

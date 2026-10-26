@@ -58,7 +58,42 @@ func subscriptionActivityDocuments(tx *persistence.Tx, wanted []SubscriptionActi
 		}
 		return key.EngineID == engineID
 	}
-	consider := func(terminal *HistoryRecord) {
+	var consider func(*HistoryRecord)
+	consider = func(terminal *HistoryRecord) {
+		if usage != nil && len(usage.ModelSteps) > 0 {
+			original := usage
+			grouped := make(map[string]HistoryRecord)
+			var order []string
+			for _, step := range original.ModelSteps {
+				record, exists := grouped[step.Provider]
+				if !exists {
+					record = HistoryRecord{Provider: step.Provider, Model: step.Model, At: original.At}
+					order = append(order, step.Provider)
+				} else if record.Model != step.Model {
+					record.Model = ""
+				}
+				record.InputTokens += step.InputTokens
+				record.OutputTokens += step.OutputTokens
+				record.CacheCreationTokens += step.CacheCreationTokens
+				record.CacheReadTokens += step.CacheReadTokens
+				grouped[step.Provider] = record
+			}
+			for _, provider := range order {
+				record := grouped[provider]
+				usage = &record
+				if terminal == nil {
+					consider(nil)
+				} else {
+					marker := *terminal
+					marker.Provider, marker.Model = record.Provider, record.Model
+					marker.InputTokens, marker.OutputTokens = record.InputTokens, record.OutputTokens
+					marker.CacheCreationTokens, marker.CacheReadTokens = record.CacheCreationTokens, record.CacheReadTokens
+					consider(&marker)
+				}
+			}
+			usage = original
+			return
+		}
 		if terminal == nil && usage == nil {
 			return
 		}
@@ -142,14 +177,29 @@ func subscriptionActivityDocuments(tx *persistence.Tx, wanted []SubscriptionActi
 				if record.InputTokens > 0 || record.OutputTokens > 0 || record.CacheCreationTokens > 0 || record.CacheReadTokens > 0 {
 					usage = &record
 					for _, key := range wanted {
-						if !matches(key, record.Provider) {
+						var part SubscriptionUsage
+						if len(record.ModelSteps) > 0 {
+							for _, step := range record.ModelSteps {
+								if !matches(key, step.Provider) {
+									continue
+								}
+								part.InputTokens += step.InputTokens
+								part.OutputTokens += step.OutputTokens
+								part.CacheCreationTokens += step.CacheCreationTokens
+								part.CacheReadTokens += step.CacheReadTokens
+								part.ReportedTurns = 1
+							}
+						} else if matches(key, record.Provider) {
+							part = SubscriptionUsage{InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, CacheCreationTokens: record.CacheCreationTokens, CacheReadTokens: record.CacheReadTokens, ReportedTurns: 1}
+						}
+						if part.ReportedTurns == 0 {
 							continue
 						}
 						total := totals[key]
-						total.InputTokens += record.InputTokens
-						total.OutputTokens += record.OutputTokens
-						total.CacheCreationTokens += record.CacheCreationTokens
-						total.CacheReadTokens += record.CacheReadTokens
+						total.InputTokens += part.InputTokens
+						total.OutputTokens += part.OutputTokens
+						total.CacheCreationTokens += part.CacheCreationTokens
+						total.CacheReadTokens += part.CacheReadTokens
 						total.ReportedTurns++
 						totals[key] = total
 					}
@@ -181,6 +231,12 @@ func (s *documentStore) ListTokenUsage() ([]TokenUsageRow, error) {
 		for _, row := range rows {
 			record := row.Record
 			if record.Role != "meta" || record.Content != tokenUsageContent {
+				continue
+			}
+			if len(record.ModelSteps) > 0 {
+				for _, step := range record.ModelSteps {
+					result = append(result, TokenUsageRow{SessionID: row.SessionID, At: record.At, Provider: step.Provider, Model: step.Model, InputTokens: step.InputTokens, OutputTokens: step.OutputTokens, CacheCreationTokens: step.CacheCreationTokens, CacheReadTokens: step.CacheReadTokens})
+				}
 				continue
 			}
 			result = append(result, TokenUsageRow{SessionID: row.SessionID, At: record.At, Provider: record.Provider, Model: record.Model, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, CacheCreationTokens: record.CacheCreationTokens, CacheReadTokens: record.CacheReadTokens})

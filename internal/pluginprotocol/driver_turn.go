@@ -35,6 +35,7 @@ type DriverWorkingCopiesV1 struct {
 }
 
 type DriverTurnReadResult struct {
+	ModelSelectionRevision uint64 `json:"model_selection_revision,omitempty"`
 	LogicalModelRequestV1
 	Messages []DriverMessageV1 `json:"messages"`
 }

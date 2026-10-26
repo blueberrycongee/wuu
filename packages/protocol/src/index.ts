@@ -842,6 +842,8 @@ export interface PluginClientCancelParams extends PluginIdentityParams { request
 export interface PluginClientCancelResult { cancelled: boolean; }
 
 export type ConfigModelUpdateResult = {
+  /** Accepted durable intent, not a claim that an in-flight request changed. */
+  model_selection?: { revision: number; apply_at: "next_step"; provider: string; model: string };
   provider: string;
   model: string;
   effort?: string;
@@ -2016,6 +2018,9 @@ export type SessionOrganization = {
 };
 
 export type Thread = {
+  running_model_provider?: string;
+  running_model?: string;
+  running_model_revision?: number;
   model_options?: Record<string, string>;
   speed?: string;
   session_control?: { manager_id: string; manager_name: string; state: "active" | "paused" | "taken_over"; revision: number };
@@ -2527,6 +2532,9 @@ export type TurnCompletedNotification = {
 };
 
 export type TurnUsageNotification = {
+  /** Identity is the current dispatched step; token counters remain turn aggregates. */
+  provider?: string;
+  model_selection_revision?: number;
   thread_id: string;
   turn_id: string;
   model?: string;
@@ -2589,7 +2597,9 @@ export type ProviderStatePayload = {
   delta_input_items?: number;
 };
 
+export type ModelStepSummary = { provider: string; model: string; api_model?: string; revision?: number; step_index: number; operation_id: string; context_window_tokens?: number };
 export type StreamEventPayload = {
+  model_step?: ModelStepSummary;
   type: string;
   agent_activity?: ExternalAgentActivity;
   lifecycle?: StreamLifecyclePayload;
@@ -3184,7 +3194,7 @@ export type WuuDesktopApi = {
     threadId?: string,
     speed?: string,
     targetContext?: RuntimeContext,
-    engineSelection?: { reset_model?: boolean; model_options?: Record<string, string> }
+    engineSelection?: { reset_model?: boolean; model_options?: Record<string, string>; apply_at?: "next_step" }
   ) => Promise<ConfigModelUpdateResult>;
   removeProvider: (
     provider: string,

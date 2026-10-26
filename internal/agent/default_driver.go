@@ -21,7 +21,7 @@ func (DefaultDriver) Descriptor(ctx context.Context) (loopdriver.Descriptor, err
 	if err := ctx.Err(); err != nil {
 		return loopdriver.Descriptor{}, err
 	}
-	return loopdriver.Descriptor{ID: loopdriver.DefaultDriverID, Version: loopdriver.DefaultDriverVersion, Capabilities: []string{"multi_round", "tool_use", "compaction"}}, nil
+	return loopdriver.Descriptor{ID: loopdriver.DefaultDriverID, Version: loopdriver.DefaultDriverVersion, Capabilities: []string{"multi_round", "tool_use", "compaction", "step_model_selection"}}, nil
 }
 
 func (d DefaultDriver) Create(ctx context.Context, execution loopdriver.ExecutionContext, input loopdriver.PersistedInput) (loopdriver.Instance, error) {
@@ -91,8 +91,9 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 	}
 	step := &driverResourceStep{turn: turn, definitions: request.Tools, streaming: settings.StreamingTools}
 	cfg := LoopConfig{
-		ResumeSampling: settings.ResumeSampling,
-		Model:          request.Model, ProviderName: request.Provider, Temperature: request.Temperature,
+		ModelSelectionRevision: request.ModelSelectionRevision,
+		ResumeSampling:         settings.ResumeSampling,
+		Model:                  request.Model, ProviderName: request.Provider, Temperature: request.Temperature,
 		MediaInput: request.MediaInput, Effort: request.Effort, ProviderOptions: request.ProviderOptions,
 		NativeDeferredToolDiscovery: request.NativeDeferredToolDiscovery, ForceToolFirstStep: request.ForceToolName,
 		SessionID: i.execution.SessionID, ExecutionID: i.execution.ExecutionID,
@@ -142,6 +143,14 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 		decision = admitted.Decision
 		return admitted.Messages, nil
 	}
+	cfg.ReadModelStep = func(ctx context.Context) (providers.ChatRequest, pluginprotocol.DriverTurnSettings, error) {
+		current, err := turn.ReadTurn(ctx)
+		if err != nil {
+			return current, pluginprotocol.DriverTurnSettings{}, err
+		}
+		settings, err := turn.ReadSettings(ctx)
+		return current, settings, err
+	}
 	cfg.BeforeRequestContext = func() []ContextSegment {
 		segments, err := turn.ReadRequestContext(ctx)
 		if err != nil {
@@ -185,7 +194,7 @@ func (i *defaultDriverInstance) Run(ctx context.Context, gateway loopdriver.Kern
 			return result, nil
 		}
 	}
-	if settings.FreshContextTokens > 0 && settings.CanArchive {
+	if settings.CanArchive {
 		cfg.FreshContextTokens = settings.FreshContextTokens
 		cfg.FreshContext = func(ctx context.Context, messages []providers.ChatMessage, head, fixed, target int) ([]providers.ChatMessage, error) {
 			if err := ctx.Err(); err != nil {

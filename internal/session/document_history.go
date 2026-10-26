@@ -68,7 +68,7 @@ func insertHistoryDocument(tx *persistence.Tx, id string, seq int, record Histor
 		}
 	}
 	if record.Role == "user" || record.Role == "meta" && (record.Content == tokenUsageContent || record.Content == turnTerminalContent) {
-		activity := HistoryRecord{Seq: seq, Role: record.Role, Steered: record.Steered, ClientID: record.ClientID, StopReason: record.StopReason, DisplayContent: record.DisplayContent, At: record.At, Provider: record.Provider, Model: record.Model, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, CacheCreationTokens: record.CacheCreationTokens, CacheReadTokens: record.CacheReadTokens}
+		activity := HistoryRecord{ModelSteps: record.ModelSteps, Seq: seq, Role: record.Role, Steered: record.Steered, ClientID: record.ClientID, StopReason: record.StopReason, DisplayContent: record.DisplayContent, At: record.At, Provider: record.Provider, Model: record.Model, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, CacheCreationTokens: record.CacheCreationTokens, CacheReadTokens: record.CacheReadTokens}
 		if record.Role == "meta" {
 			activity.Content = record.Content
 		}

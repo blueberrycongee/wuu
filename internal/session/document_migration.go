@@ -248,7 +248,7 @@ func (c *legacySessionConversion) table(table string, rows []map[string]any) (bo
 			value = record
 			c.heads[sessionID] = max(c.heads[sessionID], record.Seq)
 			if record.Role == "user" || record.Role == "meta" && (record.Content == tokenUsageContent || record.Content == turnTerminalContent) {
-				activity := HistoryRecord{Seq: record.Seq, Role: record.Role, Steered: record.Steered, ClientID: record.ClientID, StopReason: record.StopReason, DisplayContent: record.DisplayContent, At: record.At, Provider: record.Provider, Model: record.Model, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, CacheCreationTokens: record.CacheCreationTokens, CacheReadTokens: record.CacheReadTokens}
+				activity := HistoryRecord{ModelSteps: record.ModelSteps, Seq: record.Seq, Role: record.Role, Steered: record.Steered, ClientID: record.ClientID, StopReason: record.StopReason, DisplayContent: record.DisplayContent, At: record.At, Provider: record.Provider, Model: record.Model, InputTokens: record.InputTokens, OutputTokens: record.OutputTokens, CacheCreationTokens: record.CacheCreationTokens, CacheReadTokens: record.CacheReadTokens}
 				if record.Role == "meta" {
 					activity.Content = record.Content
 				}

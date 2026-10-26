@@ -14,6 +14,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Read plugin configuration as immutable, revisioned snapshots with lifecycle-scoped change observation. Distinguish live, next-operation and restart-only values without rebuilding resources, and atomically validate and repair same-scope setting patches.
 - Guard plugin upgrades with retained historical SDK/package process tests, explicit lifecycle/version diagnostics, and a public compatibility, deprecation and data-preserving migration contract independent of product CalVer.
+- Add opt-in durable next-step model selection for active Wuu conversations, with frozen retry bindings, actual-step events, and per-model usage attribution without changing tool permissions or plugin generation.
 
 - Hide the navigation ribbon with a footer button or by dragging left past its compact width, and restore it from the upper-left corner. Preview drag collapse before release, with pull-back and Escape cancellation. Remember its visibility and previous width independently of the conversation sidebar.
 

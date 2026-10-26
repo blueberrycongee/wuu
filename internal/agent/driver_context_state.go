@@ -18,7 +18,7 @@ func (g *streamTurnGateway) ReadContextState(ctx context.Context) (pluginprotoco
 	if err := g.prepare(ctx); err != nil {
 		return pluginprotocol.DriverContextState{}, err
 	}
-	r := g.runner
+	r := g.modelRunner()
 	r.retainedContextMu.Lock()
 	retained := retainedContextToWire(r.retainedRequestContext)
 	r.retainedContextMu.Unlock()
@@ -46,7 +46,7 @@ func (g *streamTurnGateway) SaveContextState(ctx context.Context, state pluginpr
 	if err := g.prepare(ctx); err != nil {
 		return err
 	}
-	r := g.runner
+	r := g.modelRunner()
 	retained := retainedContextFromWire(state.Retained)
 	if r.RequestContextStore != nil {
 		checkpoint := RequestContextCheckpoint{Provider: r.ProviderName, Model: r.requestModel(), DriverID: g.descriptor.ID, DriverVersion: g.descriptor.Version, State: retained}

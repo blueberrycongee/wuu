@@ -22,7 +22,7 @@ func (g *streamTurnGateway) ReadSettings(ctx context.Context) (pluginprotocol.Dr
 	if err := g.prepare(ctx); err != nil {
 		return pluginprotocol.DriverTurnSettings{}, err
 	}
-	r := g.runner
+	r := g.modelRunner()
 	_, observationKey := r.providerConnectionSnapshot()
 	settings := pluginprotocol.DriverTurnSettings{
 		HasPolicy: r.SelectedPolicy != nil,
@@ -139,7 +139,7 @@ func (g *streamTurnGateway) CompactContext(ctx context.Context, messages []provi
 	if err := validateDriverMessages(messages); err != nil {
 		return nil, err
 	}
-	r := g.runner
+	r := g.modelRunner()
 	model := strings.TrimSpace(r.APIModel)
 	if model == "" {
 		model = r.Model

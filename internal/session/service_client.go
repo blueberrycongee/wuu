@@ -94,7 +94,7 @@ var domainErrors = []struct {
 	code string
 	err  error
 }{
-	{"session_outcome_unknown", ErrOutcomeUnknown}, {"session_admission_changed", errAdmissionChanged}, {"session_not_found", ErrSessionNotFound}, {"session_not_archived", ErrSessionNotArchived},
+	{"session_outcome_unknown", ErrOutcomeUnknown}, {"session_model_selection_changed", ErrModelSelectionChanged}, {"session_admission_changed", errAdmissionChanged}, {"session_not_found", ErrSessionNotFound}, {"session_not_archived", ErrSessionNotArchived},
 	{"history_unavailable", ErrHistoryUnavailable}, {"history_snapshot_gone", ErrHistorySnapshotGone},
 	{"control_changed", ErrControlChanged}, {"held_work_settled", ErrHeldUserWorkSettled}, {"held_work_unconfirmed", ErrHeldUserWorkUnconfirmed},
 	{"context_seed_invalid", ErrContextSeedInvalid}, {"session_launch_conflict", ErrSessionLaunchConflict}, {"session_launch_not_found", ErrSessionLaunchNotFound},

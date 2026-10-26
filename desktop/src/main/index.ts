@@ -2111,7 +2111,7 @@ app.whenReady().then(async () => {
       threadID?: string,
       speed?: string,
       targetContext?: RuntimeContext,
-      engineSelection?: { reset_model?: boolean; model_options?: Record<string, string> },
+      engineSelection?: { reset_model?: boolean; model_options?: Record<string, string>; apply_at?: "next_step" },
     ) =>
       appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
         ...engineSelection,

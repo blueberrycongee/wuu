@@ -317,6 +317,7 @@ func engineUserInputOptionFromWire(in pluginprotocol.EngineUserInputOptionV1) (o
 
 func engineResultToWire(in agent.LoopResult) (out pluginprotocol.EngineResultV1) {
 	out.Version = 1
+	out.ModelSteps = append([]providers.ModelStepUsage(nil), in.ModelSteps...)
 	out.Content = in.Content
 	out.NewMessages = modelwire.DriverMessagesToWire(in.NewMessages)
 	out.DurableNewMessages = modelwire.DriverMessagesToWire(in.DurableNewMessages)
@@ -351,6 +352,7 @@ func engineResultFromWire(in pluginprotocol.EngineResultV1) (out agent.LoopResul
 	if in.Version != 1 {
 		return out, errors.New("unsupported engine result version")
 	}
+	out.ModelSteps = append([]providers.ModelStepUsage(nil), in.ModelSteps...)
 	out.Content = in.Content
 	out.NewMessages = modelwire.DriverMessagesFromWire(in.NewMessages)
 	out.DurableNewMessages = modelwire.DriverMessagesFromWire(in.DurableNewMessages)
@@ -388,6 +390,7 @@ func engineEventToWire(in providers.StreamEvent) (out pluginprotocol.EngineEvent
 		value := modelwire.InputImageToWire(*in.Image)
 		out.Image = &value
 	}
+	out.ModelStep = in.ModelStep
 	out.Type = string(in.Type)
 	out.Content = in.Content
 	out.Phase = string(in.Phase)
@@ -452,6 +455,7 @@ func engineEventFromWire(in pluginprotocol.EngineEventV1) (out providers.StreamE
 		value := modelwire.InputImageFromWire(*in.Image)
 		out.Image = &value
 	}
+	out.ModelStep = in.ModelStep
 	out.Type = providers.StreamEventType(in.Type)
 	out.Content = in.Content
 	out.Phase = providers.MessagePhase(in.Phase)

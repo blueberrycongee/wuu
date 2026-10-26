@@ -39,7 +39,7 @@ func (e *WuuEngine) Descriptor(context.Context) (agentengine.Descriptor, error) 
 		Capabilities: []string{
 			"native-tool-loop",
 			"native-session-resume",
-			"canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering",
+			"canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection",
 		},
 	}, nil
 }

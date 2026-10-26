@@ -117,6 +117,8 @@ func (store *documentStore) SetRuntimeSelection(id string, selection RuntimeSele
 		if selection.Model == "" && (current.EngineID == "" || current.EngineID == "wuu") {
 			return fmt.Errorf("model is required")
 		}
+		current.ModelSelectionRevision++
+		current.ModelSelectionApplyAt = ""
 		current.Provider, current.Model = selection.Provider, selection.Model
 		current.Variant, current.Effort = strings.TrimSpace(selection.Variant), strings.TrimSpace(selection.Effort)
 		current.Speed, current.ModelOptions = selection.Speed, selection.ModelOptions
@@ -125,6 +127,43 @@ func (store *documentStore) SetRuntimeSelection(id string, selection RuntimeSele
 		return putSessionDocument(tx, current)
 	})
 	return result, err
+}
+
+// SetNextStepModelSelection is separate from SetRuntimeSelection so older
+// providers reject an unsupported intent before any legacy selection write.
+func (store *documentStore) SetNextStepModelSelection(id string, intent NextStepModelSelection) (Session, error) {
+	selection := intent.Selection
+	selection.Provider, selection.Model = strings.TrimSpace(selection.Provider), strings.TrimSpace(selection.Model)
+	if selection.Provider == "" || selection.Model == "" {
+		return Session{}, fmt.Errorf("provider and model are required")
+	}
+	var result Session
+	err := store.transaction(func(tx *persistence.Tx) error {
+		current, err := requireSessionDocument(tx, strings.TrimSpace(id))
+		if err != nil {
+			return err
+		}
+		if current.ModelSelectionRevision != intent.ExpectedRevision || current.EngineID != intent.ExpectedEngineID {
+			return ErrModelSelectionChanged
+		}
+		if current.PermissionMode != strings.TrimSpace(selection.PermissionMode) || current.ApproveForMe != selection.ApproveForMe {
+			return fmt.Errorf("next-step model selection cannot change permissions")
+		}
+		if current.ModelSelectionRevision == ^uint64(0) {
+			return fmt.Errorf("model selection revision exhausted")
+		}
+		current.ModelSelectionRevision++
+		current.ModelSelectionApplyAt = "next_step"
+		current.Provider, current.Model = selection.Provider, selection.Model
+		current.Variant, current.Effort = strings.TrimSpace(selection.Variant), strings.TrimSpace(selection.Effort)
+		current.Speed, current.ModelOptions = selection.Speed, selection.ModelOptions
+		result = current
+		return putSessionDocument(tx, current)
+	})
+	if err != nil {
+		return Session{}, err
+	}
+	return result, nil
 }
 
 // SetEngine explicitly binds the session to a known engine. Protocol engines
@@ -160,6 +199,8 @@ func (store *documentStore) SetModelSelection(id, provider, model, variant strin
 		return Session{}, fmt.Errorf("model is required")
 	}
 	return store.updateMetadata(id, false, func(s *Session) {
+		s.ModelSelectionRevision++
+		s.ModelSelectionApplyAt = ""
 		s.Provider = provider
 		s.Model = model
 		s.Variant = strings.TrimSpace(variant)

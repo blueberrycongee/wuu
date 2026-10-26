@@ -428,6 +428,8 @@ type CacheHint struct {
 
 // ChatRequest is the normalized request payload for providers.
 type ChatRequest struct {
+	// ModelSelectionRevision fences assembled driver requests; never sent to model APIs.
+	ModelSelectionRevision uint64
 	// ResumeSampling is an explicit new sampling turn with no new user input.
 	// Adapters may add request-only compatibility guidance; it is never durable.
 	ResumeSampling bool
@@ -539,6 +541,7 @@ const (
 	EventToolUseEnd      StreamEventType = "tool_use_end"
 	EventTodoUpdate      StreamEventType = "todo_update"
 	EventAgentActivity   StreamEventType = "agent_activity"
+	EventModelStep       StreamEventType = "model_step"
 	EventRequestContext  StreamEventType = "request_context"
 	EventProviderState   StreamEventType = "provider_state"
 	EventProviderItem    StreamEventType = "provider_item"
@@ -726,7 +729,11 @@ func (u TokenUsage) TotalContextTokens() int {
 }
 
 // StreamEvent is a single event from a streaming chat response.
+type ModelStepSummary = pluginprotocol.ModelStepSummaryV1
+type ModelStepUsage = pluginprotocol.ModelStepUsageV1
+
 type StreamEvent struct {
+	ModelStep        *ModelStepSummary
 	Image            *InputImage
 	Type             StreamEventType
 	Content          string

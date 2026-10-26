@@ -476,7 +476,7 @@ func (c *nativeEngineCallbacks) binding(in pluginprotocol.EngineBinding) agenten
 type nativeWuuEngineFactory struct{}
 
 func (*nativeWuuEngineFactory) Descriptor(context.Context) (agentengine.Descriptor, error) {
-	return agentengine.Descriptor{ID: agentengine.EngineWuu, Version: "1", Capabilities: []string{"native-tool-loop", "native-session-resume", "canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering"}}, nil
+	return agentengine.Descriptor{ID: agentengine.EngineWuu, Version: "1", Capabilities: []string{"native-tool-loop", "native-session-resume", "canonical-history", "host-managed-continuation", "host-managed-steering", "active-turn-steering", "step-model-selection"}}, nil
 }
 func (*nativeWuuEngineFactory) Open(context.Context, agentengine.OpenRequest) (agentengine.Session, error) {
 	return nil, errors.New("selected loop engine requires bound execution resources")

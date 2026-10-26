@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -40,7 +41,19 @@ func attachTestModelGeneration(t *testing.T, rt *runtime.Session, additional ...
 			return toolservice.Backend{Executor: executor}, nil
 		})}
 	}
-	clients := []pluginhost.Client{promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, &embeddedEngineConsumer{}, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
+	engineConsumer := &embeddedEngineConsumer{}
+	for _, client := range additional {
+		if provider, ok := client.(interface {
+			ProvidedServices() []pluginhost.ServiceDescriptor
+		}); ok {
+			for _, service := range provider.ProvidedServices() {
+				if strings.HasPrefix(service.Name, "engine.") {
+					engineConsumer.extra = append(engineConsumer.extra, pluginhost.ServiceRequirement{Name: service.Name, MajorVersion: 1, Required: true})
+				}
+			}
+		}
+	}
+	clients := []pluginhost.Client{promptservice.NewService(), titleservice.NewService(), &embeddedCompactionFixture{compactionservice.NewService()}, &embeddedModelConsumer{}, model, &embeddedModelConfigurationConsumer{}, &embeddedCapacityFixture{leases: map[string]string{}}, toolProvider, &embeddedToolsConsumer{}, engineConsumer, &embeddedEngineMetadata{factory: rt.WuuEngine()}}
 	clients = append(clients, additional...)
 	registry, conflicts := pluginhost.BuildServiceRegistry(clients...)
 	if len(conflicts) != 0 {
@@ -201,7 +214,10 @@ func (*embeddedModelConfigurationConsumer) RequiredServices() []pluginhost.Servi
 
 // Embedded runtimes retain their explicitly supplied engine; metadata calls use
 // the same declared service boundary as production instead of an absent graph.
-type embeddedEngineConsumer struct{ embeddedModelConsumer }
+type embeddedEngineConsumer struct {
+	embeddedModelConsumer
+	extra []pluginhost.ServiceRequirement
+}
 
 func (*embeddedEngineConsumer) ID() string { return "wuu.engine-execution" }
 func (c *embeddedEngineConsumer) Status() pluginhost.Status {
@@ -209,8 +225,8 @@ func (c *embeddedEngineConsumer) Status() pluginhost.Status {
 	s.ID = c.ID()
 	return s
 }
-func (*embeddedEngineConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: "engine.wuu", MajorVersion: 1, Required: true}}
+func (c *embeddedEngineConsumer) RequiredServices() []pluginhost.ServiceRequirement {
+	return append([]pluginhost.ServiceRequirement{{Name: "engine.wuu", MajorVersion: 1, Required: true}}, c.extra...)
 }
 
 type embeddedEngineMetadata struct {

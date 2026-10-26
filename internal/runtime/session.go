@@ -349,6 +349,7 @@ type ReadinessIssue struct {
 // conversation. The desktop app can run multiple ThreadRuntimes at once; each
 // one has its own StreamRunner, Toolkit Env, usage tracker, and AgentControl.
 type ThreadRuntime struct {
+	prepareStepModel     func(context.Context, session.RuntimeSelection) (*agent.ModelStepBinding, error)
 	CompositionID        string
 	compositionBinding   productCompositionBinding
 	closeComposition     func() error
@@ -1610,6 +1611,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 	}
 
 	runner := cloneStreamRunnerForThread(s.StreamRunner, toolExecutor)
+	var modelStepPrompt promptservice.Request
 	{
 		model := runner.APIModel
 		if model == "" {
@@ -1629,6 +1631,7 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 				input.Contributions = append(input.Contributions, promptservice.Contribution{Key: "execution_environment", Static: true, Content: "Workspace tools execute in the selected " + environment.Backend() + " environment. Paths refer to that environment. Read its AGENTS.md before editing. Host integration tools retain their own scope."})
 			}
 		}
+		modelStepPrompt = input
 		assembler := s.systemPrompts
 		if generation != nil {
 			assembler = generation.systemPrompts
@@ -1697,6 +1700,37 @@ func (s *Session) newThreadRuntimeForRoot(sessionID, rootDir string) (*ThreadRun
 			Effort:         strings.TrimSpace(runner.Effort),
 			PermissionMode: config.NormalizePermissionMode(s.Permissions.Mode),
 		},
+	}
+	result.prepareStepModel = func(ctx context.Context, selected session.RuntimeSelection) (*agent.ModelStepBinding, error) {
+		var cfg config.Config
+		if generation != nil && len(generation.settings.Providers) != 0 {
+			// The model provider prepared against this generation's config.
+			// New connection/config generations are adopted only between turns.
+			cfg = generation.settings
+		} else {
+			var err error
+			cfg, _, err = s.LoadEffectiveConfig()
+			if err != nil {
+				return nil, err
+			}
+		}
+		return s.prepareStepModelBinding(ctx, cfg, runner, pluginHost, id, threadRoot, &modelStepPrompt, selected)
+	}
+	runner.ResolveModelStep = func(ctx context.Context, revision uint64) (*agent.ModelStepBinding, error) {
+		metadata, found, err := result.Sessions.Find(id)
+		if err != nil {
+			return nil, err
+		}
+		if !found || metadata.ModelSelectionApplyAt != "next_step" || metadata.ModelSelectionRevision <= revision {
+			return nil, nil
+		}
+		selected := session.RuntimeSelection{Provider: metadata.Provider, Model: metadata.Model, Variant: metadata.Variant, Effort: metadata.Effort, Speed: metadata.Speed, PermissionMode: metadata.PermissionMode, ApproveForMe: metadata.ApproveForMe}
+		binding, err := result.prepareNextStepModelBinding(ctx, selected)
+		if err != nil {
+			return nil, err
+		}
+		binding.Revision = metadata.ModelSelectionRevision
+		return binding, nil
 	}
 	result.ConfigureExecutionPermissions(s.Permissions, false, nil)
 	return result, nil

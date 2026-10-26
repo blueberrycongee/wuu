@@ -1089,6 +1089,8 @@ type PluginStorageResult struct {
 }
 
 type ConfigModelUpdateParams struct {
+	// ApplyAt opts a conversation into durable next-step model selection. Empty preserves whole-turn behavior.
+	ApplyAt          string  `json:"apply_at,omitempty"`
 	ChatGPTAccountID *string `json:"chatgpt_account_id,omitempty"`
 	// ResetModel clears all external model overrides before applying supplied fields.
 	ResetModel     bool               `json:"reset_model,omitempty"`
@@ -1170,7 +1172,15 @@ type AuthXAILoginCancelParams struct {
 	LoginID string `json:"login_id"`
 }
 
+type ModelSelectionIntentSummary struct {
+	Revision uint64 `json:"revision"`
+	ApplyAt  string `json:"apply_at"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+}
+
 type ConfigModelUpdateResult struct {
+	ModelSelection   *ModelSelectionIntentSummary `json:"model_selection,omitempty"`
 	ProjectModels    config.ProjectModelsConfig   `json:"project_models"`
 	ModelAliases     map[string]ModelAliasSummary `json:"model_aliases"`
 	Provider         string                       `json:"provider"`
@@ -2305,14 +2315,16 @@ type TurnErrorNotification struct {
 }
 
 type TurnUsageNotification struct {
-	ThreadID            string `json:"thread_id"`
-	TurnID              string `json:"turn_id"`
-	Model               string `json:"model,omitempty"`
-	InputTokens         int    `json:"input_tokens"`
-	OutputTokens        int    `json:"output_tokens"`
-	ContextTokens       int    `json:"context_tokens,omitempty"`
-	CacheCreationTokens int    `json:"cache_creation_tokens,omitempty"`
-	CacheReadTokens     int    `json:"cache_read_tokens,omitempty"`
+	Provider               string `json:"provider,omitempty"`
+	ModelSelectionRevision uint64 `json:"model_selection_revision,omitempty"`
+	ThreadID               string `json:"thread_id"`
+	TurnID                 string `json:"turn_id"`
+	Model                  string `json:"model,omitempty"`
+	InputTokens            int    `json:"input_tokens"`
+	OutputTokens           int    `json:"output_tokens"`
+	ContextTokens          int    `json:"context_tokens,omitempty"`
+	CacheCreationTokens    int    `json:"cache_creation_tokens,omitempty"`
+	CacheReadTokens        int    `json:"cache_read_tokens,omitempty"`
 	// ContextWindowTokens is the resolved runtime context ceiling for the
 	// active provider/model at the time of this usage snapshot. It may be the
 	// model window or a lower provider input cap. The renderer uses it to show
@@ -2442,11 +2454,14 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
-	ModelOptions   map[string]string     `json:"model_options,omitempty"`
-	Speed          string                `json:"speed,omitempty"`
-	SessionControl *ThreadSessionControl `json:"session_control,omitempty"`
-	ID             string                `json:"id"`
-	Source         string                `json:"source,omitempty"`
+	RunningModelProvider string                `json:"running_model_provider,omitempty"`
+	RunningModel         string                `json:"running_model,omitempty"`
+	RunningModelRevision uint64                `json:"running_model_revision,omitempty"`
+	ModelOptions         map[string]string     `json:"model_options,omitempty"`
+	Speed                string                `json:"speed,omitempty"`
+	SessionControl       *ThreadSessionControl `json:"session_control,omitempty"`
+	ID                   string                `json:"id"`
+	Source               string                `json:"source,omitempty"`
 	// ProjectID is the coordinator conversation that manages this session.
 	ProjectID   string `json:"project_id,omitempty"`
 	ProjectRole string `json:"project_role,omitempty"`
@@ -2715,6 +2730,7 @@ type ToolCallOutputNotification struct {
 }
 
 type StreamEventPayload struct {
+	ModelStep        *providers.ModelStepSummary      `json:"model_step,omitempty"`
 	Type             providers.StreamEventType        `json:"type"`
 	Content          string                           `json:"content,omitempty"`
 	Message          *providers.ChatMessage           `json:"message,omitempty"`

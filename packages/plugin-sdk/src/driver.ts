@@ -37,6 +37,8 @@ export interface DriverMessage extends ModelMessageV1 {
   readonly steered?: boolean;
 }
 export interface DriverTurnInput extends LogicalModelRequestV1 {
+  /** Preserve this fence from read() through transformRequest() and model(); refresh after admitInput(). */
+  readonly model_selection_revision?: number;
   readonly messages: readonly DriverMessage[];
 }
 export interface DriverTurnContext {
@@ -298,7 +300,7 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
       service: DRIVER_TURN_SERVICE, method, params: { ...scope, ...params },
     }) as T;
   }
-  async function callModel(method: string, request: LogicalModelRequestV1, batch_id?: string): Promise<DriverModelRound> {
+  async function callModel(method: string, request: DriverTurnInput, batch_id?: string): Promise<DriverModelRound> {
     const result = await call<DriverModelRound & { readonly failure?: DriverFailure }>(method, { request, batch_id });
     if (result.failure) throw new DriverModelError(result.failure, result);
     return result;
@@ -359,14 +361,14 @@ export function driverTurn(host: RuntimeHost, execution: DriverExecution) {
      * operation, preserving its partial result. Transport and authorization
      * failures remain host errors.
      */
-    model: (request: LogicalModelRequestV1) => callModel("model", request),
+    model: (request: DriverTurnInput) => callModel("model", request),
     /** Reserve a unique batch before dispatch and allow safe
      * tools to start while the model streams. Checkpoint intent first. Join a
      * successful tool_batch_id through tools() using exactly the returned calls.
      * Failed operations cancel and drain their tools; never reuse their batch
      * ID. Partial output and tool_work_started survive in the error.
      */
-    modelWithTools: (request: LogicalModelRequestV1, batch_id: string) =>
+    modelWithTools: (request: DriverTurnInput, batch_id: string) =>
       callModel("model_with_tools", request, batch_id),
     /** ID is unique within this execution, including failed calls. Persist
      * intent before submitting effects. An interrupted batch needs explicit

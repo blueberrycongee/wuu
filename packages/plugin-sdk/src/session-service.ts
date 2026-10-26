@@ -1,3 +1,4 @@
+import type { ModelStepUsageV1 } from "./engine.js";
 import type { RuntimeHost, ServiceDescriptor, ServiceInvokeParams, ServiceRequirement } from "./index.js";
 
 /** Complete session-domain operations. Storage and atomic domain transitions belong to the selected provider. */
@@ -127,6 +128,7 @@ export interface SessionDomainHistoryReadQuery {
 }
 
 export interface SessionDomainHistoryRecord {
+  readonly "model_steps"?: readonly ModelStepUsageV1[];
   readonly "answer_ready_at"?: (string | null);
   readonly "at"?: string;
   readonly "cache_creation_tokens"?: number;
@@ -493,7 +495,20 @@ export interface SessionDomainRuntimeSelection {
   readonly "Variant": string;
 }
 
+/** Atomic model-only intent. Revision and engine must match; permission fields
+ * in Selection are assertions, never permission changes. Missing operations
+ * reject before writing; consumers must not fall back to SetRuntimeSelection.
+ * Providers implementing this operation must advance the same revision and
+ * clear the pending boundary on legacy model-selection writes as well. */
+export interface SessionDomainNextStepModelSelection {
+  readonly "ExpectedRevision": number;
+  readonly "ExpectedEngineID": string;
+  readonly "Selection": SessionDomainRuntimeSelection;
+}
+
 export interface SessionDomainSession {
+  readonly "model_selection_revision"?: number;
+  readonly "model_selection_apply_at"?: "" | "next_step";
   readonly "approve_for_me"?: boolean;
   readonly "archive_reason"?: string;
   readonly "archived_at"?: (string | null);
@@ -783,6 +798,7 @@ export interface SessionDomainMethods {
   "SetHistoryEngineTurnID": { args: readonly [id: string, seq: number, ref: string, turnID: string, pending: boolean]; values: readonly []; };
   "SetModelSelection": { args: readonly [id: string, provider: string, model: string, variant: string]; values: readonly [SessionDomainSession]; };
   "SetProjectMembership": { args: readonly [id: string, source: string, parentID: string, instructions: string]; values: readonly [SessionDomainSession]; };
+  "SetNextStepModelSelection": { args: readonly [id: string, intent: SessionDomainNextStepModelSelection]; values: readonly [SessionDomainSession]; };
   "SetRuntimeSelection": { args: readonly [id: string, selection: SessionDomainRuntimeSelection]; values: readonly [SessionDomainSession]; };
   "SetSource": { args: readonly [id: string, source: string]; values: readonly [SessionDomainSession]; };
   "SetWorkspaceID": { args: readonly [id: string, workspaceID: string]; values: readonly [SessionDomainSession]; };
@@ -926,6 +942,7 @@ const sessionDomainArity = {
   "SetHistoryEngineTurnID": [5, 0],
   "SetModelSelection": [4, 1],
   "SetProjectMembership": [4, 1],
+  "SetNextStepModelSelection": [2, 1],
   "SetRuntimeSelection": [2, 1],
   "SetSource": [2, 1],
   "SetWorkspaceID": [2, 1],
@@ -1033,6 +1050,7 @@ export const SESSION_DOMAIN_ERRORS = [
   "session_operation_failed",
   "invalid_response",
   "session_outcome_unknown",
+  "session_model_selection_changed",
   "session_admission_changed",
   "session_not_found",
   "session_not_archived",

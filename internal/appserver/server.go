@@ -130,6 +130,8 @@ type threadState struct {
 	currentExecutionRunID string
 	currentTurnResumed    bool
 	runningProviderName   string
+	runningModelRevision  uint64
+	stepModelSelection    bool
 	runningModel          string
 	cancel                context.CancelFunc
 	// The captured runner's immutable outcome is published by closing done.
@@ -1437,6 +1439,10 @@ func sanitizeStreamEvent(ev providers.StreamEvent) StreamEventPayload {
 		Type:      ev.Type,
 		Content:   ev.Content,
 		Truncated: ev.Truncated,
+	}
+	if ev.ModelStep != nil {
+		copy := *ev.ModelStep
+		out.ModelStep = &copy
 	}
 	if ev.Message != nil && !ev.Message.Hidden {
 		out.Message = ev.Message

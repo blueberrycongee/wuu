@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 )
 
@@ -17,41 +18,44 @@ const (
 )
 
 var (
-	ErrSessionNotFound     = errors.New("session not found")
-	ErrSessionNotArchived  = errors.New("session is not archived")
-	ErrHistoryUnavailable  = errors.New("session history unavailable")
-	ErrHistorySnapshotGone = errors.New("history snapshot is no longer available")
+	ErrSessionNotFound       = errors.New("session not found")
+	ErrSessionNotArchived    = errors.New("session is not archived")
+	ErrHistoryUnavailable    = errors.New("session history unavailable")
+	ErrHistorySnapshotGone   = errors.New("history snapshot is no longer available")
+	ErrModelSelectionChanged = errors.New("session model selection changed")
 )
 
 // Session represents one conversation session.
 type Session struct {
-	ID                    string            `json:"id"`
-	CreatedAt             time.Time         `json:"created_at"`
-	UpdatedAt             time.Time         `json:"updated_at,omitempty"`
-	Title                 string            `json:"title,omitempty"`
-	TitleRevision         int64             `json:"title_revision,omitempty"`
-	Summary               string            `json:"summary,omitempty"`
-	Entries               int               `json:"entries"`
-	LatestCompletedTurnID string            `json:"latest_completed_turn_id,omitempty"`
-	CWD                   string            `json:"cwd,omitempty"`
-	Source                string            `json:"source,omitempty"`
-	Owner                 string            `json:"owner,omitempty"`
-	Visibility            string            `json:"visibility,omitempty"`
-	ParentID              string            `json:"parent_id,omitempty"`
-	ContextSource         string            `json:"context_source,omitempty"`
-	CreationRequestID     string            `json:"creation_request_id,omitempty"`
-	SeedID                string            `json:"seed_id,omitempty"`
-	Provider              string            `json:"provider,omitempty"`
-	Model                 string            `json:"model,omitempty"`
-	Variant               string            `json:"variant,omitempty"`
-	Effort                string            `json:"effort,omitempty"`
-	Speed                 string            `json:"speed,omitempty"`
-	ModelOptions          map[string]string `json:"model_options,omitempty"`
-	PermissionMode        string            `json:"permission_mode,omitempty"`
-	ApproveForMe          bool              `json:"approve_for_me,omitempty"`
-	ProjectRole           string            `json:"project_role,omitempty"`
-	Instructions          string            `json:"instructions,omitempty"`
-	ToolPolicyJSON        string            `json:"tool_policy_json,omitempty"`
+	ID                     string            `json:"id"`
+	CreatedAt              time.Time         `json:"created_at"`
+	UpdatedAt              time.Time         `json:"updated_at,omitempty"`
+	Title                  string            `json:"title,omitempty"`
+	TitleRevision          int64             `json:"title_revision,omitempty"`
+	Summary                string            `json:"summary,omitempty"`
+	Entries                int               `json:"entries"`
+	LatestCompletedTurnID  string            `json:"latest_completed_turn_id,omitempty"`
+	CWD                    string            `json:"cwd,omitempty"`
+	Source                 string            `json:"source,omitempty"`
+	Owner                  string            `json:"owner,omitempty"`
+	Visibility             string            `json:"visibility,omitempty"`
+	ParentID               string            `json:"parent_id,omitempty"`
+	ContextSource          string            `json:"context_source,omitempty"`
+	CreationRequestID      string            `json:"creation_request_id,omitempty"`
+	SeedID                 string            `json:"seed_id,omitempty"`
+	ModelSelectionRevision uint64            `json:"model_selection_revision,omitempty"`
+	ModelSelectionApplyAt  string            `json:"model_selection_apply_at,omitempty"`
+	Provider               string            `json:"provider,omitempty"`
+	Model                  string            `json:"model,omitempty"`
+	Variant                string            `json:"variant,omitempty"`
+	Effort                 string            `json:"effort,omitempty"`
+	Speed                  string            `json:"speed,omitempty"`
+	ModelOptions           map[string]string `json:"model_options,omitempty"`
+	PermissionMode         string            `json:"permission_mode,omitempty"`
+	ApproveForMe           bool              `json:"approve_for_me,omitempty"`
+	ProjectRole            string            `json:"project_role,omitempty"`
+	Instructions           string            `json:"instructions,omitempty"`
+	ToolPolicyJSON         string            `json:"tool_policy_json,omitempty"`
 	// EngineID is the agent engine the thread is bound to. Empty reads as
 	// the built-in wuu engine, which is the legacy default for sessions
 	// persisted before engine binding existed.
@@ -101,6 +105,7 @@ type ManagedMetadata struct {
 // HistoryRecord is the durable session message shape. App-server remains
 // responsible for provider-specific ChatMessage conversion.
 type HistoryRecord struct {
+	ModelSteps []pluginprotocol.ModelStepUsageV1 `json:"model_steps,omitempty"`
 	// ExpectedHeldMessage is an admission-only compare-and-swap fence for an
 	// accepted steer. It is never serialized into conversation history.
 	ExpectedHeldMessage json.RawMessage `json:"-"`
@@ -201,6 +206,15 @@ type RuntimeSelection struct {
 	ModelOptions   map[string]string
 	PermissionMode string
 	ApproveForMe   bool
+}
+
+// NextStepModelSelection is an atomic model-only intent. The expected revision
+// and engine fence concurrent selections and scope replacement. PermissionMode
+// and ApproveForMe in Selection must match stored values; they are never changed.
+type NextStepModelSelection struct {
+	ExpectedRevision uint64
+	ExpectedEngineID string
+	Selection        RuntimeSelection
 }
 
 func (s Session) WorktreeInfo() (WorktreeInfo, bool) {

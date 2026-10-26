@@ -1331,6 +1331,12 @@ func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runt
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if params.ApplyAt != "" && params.ApplyAt != "next_step" {
+		return s.writeResponse(req.ID, nil, errors.New("unsupported model selection boundary"))
+	}
+	if params.ApplyAt == "next_step" && (params.ThreadID == "" || params.PermissionMode != nil || params.ApproveForMe != nil || params.ResetModel || params.ModelOptions != nil || params.BaseURL != nil || params.APIKey != nil || params.AuthToken != nil || params.Type != nil || params.CreateProvider || params.RemoveModel != "" || params.AddModel != "" || params.ChatGPTAccountID != nil || params.ReuseCodexCredentials != nil) {
+		return s.writeResponse(req.ID, nil, errors.New("next-step selection accepts only a conversation model, variant, effort, and speed; permissions and connections remain turn-bound"))
+	}
 	providerName := strings.TrimSpace(params.Provider)
 	model := strings.TrimSpace(params.Model)
 	threadID := strings.TrimSpace(params.ThreadID)
@@ -2356,7 +2362,11 @@ func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadSt
 }
 
 func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdateParams) error {
-	th, release, err := s.beginThreadRuntimeSelectionMutation(params.ThreadID)
+	begin := s.beginThreadRuntimeSelectionMutation
+	if params.ApplyAt == "next_step" {
+		begin = s.beginNextStepModelSelection
+	}
+	th, release, err := begin(params.ThreadID)
 	if err != nil {
 		if errors.Is(err, errThreadRuntimeSelectionBusy) {
 			return s.writeRunError(req.ID, "thread_busy", err)
@@ -2386,7 +2396,7 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	if agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
+	if params.ApplyAt != "next_step" && agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
 		if params.Provider != "" && params.Provider != provider {
 			return s.writeResponse(req.ID, nil, errors.New("an external engine owns its provider selection"))
 		}
@@ -2438,9 +2448,11 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	cfg, err = s.registerDiscoveredProviderFromServices(cfg, provider, services)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if params.ApplyAt != "next_step" {
+		cfg, err = s.registerDiscoveredProviderFromServices(cfg, provider, services)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	providerCfg, resolvedName, err := cfg.ResolveProvider(provider)
 	if err != nil {
@@ -2505,15 +2517,22 @@ func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdat
 	} else if !approvefor.EnabledForMode(permission) {
 		approveForMe = false
 	}
+	if params.ApplyAt == "next_step" {
+		intent, err := s.commitNextStepModelSelection(th, session.RuntimeSelection{Provider: resolvedName, Model: model, Variant: selection.Variant, Effort: selection.LegacyEffort, Speed: speed, PermissionMode: permission, ApproveForMe: approveForMe})
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeThreadModelSelectionResponse(req, th, &intent)
+	}
 	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe, nil); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	return s.writeThreadModelSelectionResponse(req, th)
 }
 
-func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState) error {
+func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState, intents ...*session.Session) error {
 	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
-	return s.writeResponse(req.ID, ConfigModelUpdateResult{
+	result := ConfigModelUpdateResult{
 		ModelAliases: s.currentModelAliasSummaries(), ProjectModels: s.rt.ProjectModels,
 		Provider: s.rt.ProviderName, Model: s.rt.Model,
 		Effort: s.currentDisplayEffort(), Variant: s.currentVariant(),
@@ -2521,7 +2540,12 @@ func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState)
 		ExtensionTrust: s.currentExtensionTrustSummary(), ModelProfile: modelProfile,
 		ToolSurface: toolSurface, ModelRoles: s.currentModelRoleSummaries(),
 		Providers: s.providerSummaries(), AdvancedSettings: s.currentAdvancedSettingsSummary(),
-	}, nil)
+	}
+	if len(intents) != 0 {
+		intent := intents[0]
+		result.ModelSelection = &ModelSelectionIntentSummary{Revision: intent.ModelSelectionRevision, ApplyAt: intent.ModelSelectionApplyAt, Provider: intent.Provider, Model: intent.Model}
+	}
+	return s.writeResponse(req.ID, result, nil)
 }
 
 func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, speed, permissionMode string, approveForMe bool, modelOptions map[string]string) error {

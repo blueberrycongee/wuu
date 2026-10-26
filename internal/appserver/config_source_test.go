@@ -137,7 +137,7 @@ func TestSelectedConfigurationCommitOutcomesAreNotReplayed(t *testing.T) {
 
 // Hand-built protocol fixtures select their file provider explicitly, just as
 // production runtime composition does before admitting appserver requests.
-func bindConfigSourceForTest(t *testing.T, rt *runtime.Session) {
+func bindConfigSourceForTest(t *testing.T, rt *runtime.Session, additional ...pluginhost.Client) {
 	t.Helper()
 	if rt.PluginHost != nil && rt.PluginHost.ServiceRegistry() != nil && rt.PluginHost.ServiceRegistry().HasProvider(config.ServiceName, 1) {
 		return
@@ -146,7 +146,7 @@ func bindConfigSourceForTest(t *testing.T, rt *runtime.Session) {
 	consumer := &configSourceConsumer{}
 	home := os.Getenv("HOME")
 	credentials := credentialstore.NewService("test.selected-credentials", func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil })
-	attachTestModelGeneration(t, rt, provider, credentials, consumer)
+	attachTestModelGeneration(t, rt, append([]pluginhost.Client{provider, credentials, consumer}, additional...)...)
 }
 
 // A transport error cannot authorize restoring a stale credential over a
