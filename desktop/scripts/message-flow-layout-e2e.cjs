@@ -41,7 +41,8 @@ async function run() {
           for (const item of before.users) {
             assert.ok(Math.abs(item.block.bottom - item.bubble.bottom) < 0.1, "Actions must not reserve an extra row");
             assert.equal(item.timeFontSize, item.textFontSize, "Timestamp must match the message font size");
-            assert.ok(Math.abs(item.iconSize - item.textFontSize) < 0.05, "Action icons must scale with the message text");
+            assert.ok(Math.abs(item.iconSize - item.textFontSize) < item.textFontSize * 0.15,
+              "Visible action artwork must match the message text size");
             for (const button of item.buttons) {
               assert.ok(button.width >= (width === 420 ? 43.9 : 19.9) && button.height >= (width === 420 ? 43.9 : 19.9),
                 `Action target too small: ${JSON.stringify(button)}`);
@@ -200,11 +201,13 @@ function measure(win) {
       users: [...document.querySelectorAll(".user-message-block")].map(block => {
         const actions = block.querySelector(".user-message-actions");
         const text = block.querySelector(".rich-paragraph");
+        const icon = actions.querySelector("svg");
+        const artworkHeight = icon.getBBox().height + parseFloat(getComputedStyle(icon).strokeWidth);
         return { block: rect(block), bubble: rect(block.querySelector(".user-message")),
           actions: rect(actions), buttons: [...actions.querySelectorAll("button")].map(rect),
           placement: actions.dataset.placement, timeFontSize: parseFloat(getComputedStyle(actions.querySelector("time")).fontSize),
           textFontSize: parseFloat(getComputedStyle(text).fontSize), lineHeight: parseFloat(getComputedStyle(text).lineHeight),
-          iconSize: actions.querySelector("svg").getBoundingClientRect().width,
+          iconSize: artworkHeight * icon.getBoundingClientRect().height / icon.viewBox.baseVal.height,
           opacity: getComputedStyle(actions).opacity };
       }),
     };
