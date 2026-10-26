@@ -1194,6 +1194,8 @@ it("restores Held inputs by exact identity and resumes only on an explicit actio
  const receipt=receiptFixture();let state="held";
  const ui = await mount(async method => {if(method==="agents.messages.resume") {state="running";return {receipt:{...receipt,execution_state:state,revision:3}};}return {};},main,[],{open:async()=>({agent:main,session:{state:"completed"},pending_inputs:state==="held"?[{receipt,prompt:"Saved input",attachments:[{filename:"note.txt",media_type:"text/plain",sha256:"a".repeat(64)}]}]:[]})});
  expect(ui.container.textContent).toContain("Saved input");expect(ui.container.textContent).toContain("note.txt");
+ expect(ui.container.querySelector('[data-receipt-state="held"]')?.textContent).toContain("等待继续");
+ expect(ui.container.querySelector('[data-action="cancel-accepted-input"]')).toBeNull();
  expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.send"||r.method==="agents.messages.resume")).toBe(false);
  await ui.click('[data-action="resume-accepted-input"]');
  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({method:"agents.messages.resume",input:expect.objectContaining({receipt_id:receipt.receipt_id,request_id:receipt.request_id}),userInput:{requestId:receipt.request_id,prompt:"",resumeReceiptId:receipt.receipt_id}}));
@@ -1201,7 +1203,7 @@ it("restores Held inputs by exact identity and resumes only on an explicit actio
 it("keeps delivered execution failures distinct and ignores older receipt revisions", async () => {
  const receipt=receiptFixture("same",{receipt_state:"in_history",execution_state:"failed",message_seq:2,hostturn_id:"turn",revision:5,error_stage:"execution"});let older=false;
  const ui=await mount(undefined,main,undefined,{history:async()=>({records:[{seq:2,role:"user",content:"Saved",receipt:older?{...receipt,execution_state:"running",revision:3}:receipt}]})});
- expect(ui.container.querySelector('[data-receipt-state="failed"]')?.textContent).toContain("已送达");
+ expect(ui.container.querySelector('[data-receipt-state="failed"]')?.textContent).toBe("处理失败");
  older=true;await act(async()=>ui.publish());
  expect(ui.container.querySelector('[data-receipt-state="failed"]')).not.toBeNull();
  expect(ui.container.textContent).not.toContain("Seen");
@@ -1250,7 +1252,7 @@ it("publishes new history and other terminal receipts when one status lookup fai
  expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.send"||r.method==="agents.messages.resume")).toBe(false);
 });
 
-it("keeps reply Sending, unknown and Held actionable in their own discussion", async () => {
+it("keeps reply Sending, unknown and Held actionable without inline cancellation", async () => {
  let reject!: (reason: Error) => void;const pending=new Promise((_,fail)=>{reject=fail;});
  let first=true,current:any;const records:any[]=[{seq:1,role:"assistant",content:"Discussion one"},{seq:9,role:"assistant",content:"Discussion two"}];
  const ui=await mount(async(method,input)=>{
@@ -1273,9 +1275,9 @@ it("keeps reply Sending, unknown and Held actionable in their own discussion", a
  expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="held"]')).not.toBeNull();
  const sends=ui.invoke.mock.calls.filter(([r])=>r.method==="agents.send");expect((sends[1][0].input as any).request_id).toBe((sends[0][0].input as any).request_id);
  await ui.click('.mosaic-replies [data-action="resume-accepted-input"]');
- expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="queued"]')).not.toBeNull();
- await ui.click('.mosaic-replies [data-action="cancel-accepted-input"]');
- expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="cancelled"]')).not.toBeNull();
+ expect(ui.container.querySelector('.mosaic-replies [data-receipt-state="queued"]')?.textContent).toBe("已送达");
+ expect(ui.container.querySelector('.mosaic-replies [data-action="cancel-accepted-input"]')).toBeNull();
+ expect(ui.invoke.mock.calls.some(([r])=>r.method==="agents.messages.cancel")).toBe(false);
  expect(ui.invoke.mock.calls.find(([r])=>r.method==="agents.messages.resume")![0].userInput).toEqual({requestId:current.request_id,prompt:"",resumeReceiptId:current.receipt_id});
 });
 
@@ -1302,7 +1304,7 @@ it("limits task reply pending receipts to the current task revision and executio
  expect(panel.querySelector('[data-receipt-id="receipt-current"]')).not.toBeNull();
  expect(panel.querySelectorAll('[data-receipt-id]')).toHaveLength(1);
  expect(panel.querySelector('[data-action="resume-accepted-input"]')).not.toBeNull();
- expect(panel.querySelector('[data-action="cancel-accepted-input"]')).not.toBeNull();
+ expect(panel.querySelector('[data-action="cancel-accepted-input"]')).toBeNull();
 });
 
 it("does not let uncertain draft status failure suppress a peer terminal state or history", async () => {

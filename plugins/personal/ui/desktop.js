@@ -831,13 +831,13 @@ export async function activate(api) {
       if (mounted.current) setDraftVersion(value => value + 1);
       return true;
     };
-    const receiptAction = async (entry, action) => {
+    const resumeReceipt = async entry => {
       const receipt = entry.receipt;
       if (!receipt || entry.busy) return;
       entry.busy = true; setDraftVersion(value => value + 1);
       try {
         const input = { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id, receipt_id: receipt.receipt_id };
-        const result = await api.invokeRuntime(`agents.messages.${action}`, input, { ...route, ...(action === "resume" ? { userInput: { requestId: receipt.request_id, prompt: "", resumeReceiptId: receipt.receipt_id } } : {}) });
+        const result = await api.invokeRuntime("agents.messages.resume", input, { ...route, userInput: { requestId: receipt.request_id, prompt: "", resumeReceiptId: receipt.receipt_id } });
         if (result?.receipt) acceptReceipt(result.receipt);
         const status = await call("agents.messages.status", { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id });
         acceptReceipt(status.receipt);
@@ -850,9 +850,9 @@ export async function activate(api) {
       if (!entry && !receipt) return undefined;
       const r = entry?.receipt || receipt, state = r?.execution_state || entry?.state;
       const zh = locale?.startsWith("zh");
-      const labels = zh ? { sending: "发送中", unknown: "送达状态待确认", rejected: "发送失败", queued: "已送达 · 等待处理", held: "已送达 · 等待继续", running: "已送达 · 处理中", completed: "已送达", failed: "已送达 · 处理失败", interrupted: "已送达 · 处理已停止", cancelled: "已送达 · 已取消", unconfirmed: "已送达 · 处理结果待确认" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered · Waiting", held: "Delivered · Awaiting continue", running: "Delivered · Processing", completed: "Delivered", failed: "Delivered · Processing failed", interrupted: "Delivered · Processing stopped", cancelled: "Delivered · Cancelled", unconfirmed: "Delivered · Outcome unconfirmed" };
+      const labels = zh ? { sending: "发送中", unknown: "送达状态待确认", rejected: "发送失败", queued: "已送达", held: "等待继续", running: "已送达", completed: "已送达", failed: "处理失败", interrupted: "处理已停止", cancelled: "已取消", unconfirmed: "处理结果待确认" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered", held: "Awaiting continue", running: "Delivered", completed: "Delivered", failed: "Processing failed", interrupted: "Processing stopped", cancelled: "Cancelled", unconfirmed: "Outcome unconfirmed" };
       if (!labels[state]) return undefined;
-      return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-receipt-id": r?.receipt_id }, h("span", null, labels[state]), r?.receipt_state === "accepted" && ["held", "queued"].includes(state) && h(React.Fragment, null, state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => receiptAction(entry || { receipt: r }, "resume") }, zh ? "继续" : "Continue"), h(Button, { "data-action": "cancel-accepted-input", disabled: entry?.busy, onClick: () => receiptAction(entry || { receipt: r }, "cancel") }, zh ? "取消" : "Cancel")));
+      return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-receipt-id": r?.receipt_id }, h("span", null, labels[state]), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "继续" : "Continue"));
     };
     const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
     const [nameOpen, setNameOpen] = React.useState(false);

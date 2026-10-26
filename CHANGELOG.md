@@ -40,6 +40,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Changed
 
+- Simplify Personal message delivery labels and remove inline cancellation controls while retaining explicit resume for held inputs.
+
 - Render Markdown conversation attachments with the shared document reading presentation while keeping HTML and other executable text inert.
 - Give Personal a persistent renameable identity label, visible status, wider bubble flow, and compact conversation composer without changing Coding conversation presentation.
 - Present twin directly in the existing desktop navigation below Automations, with one persistent main conversation and a continuous right panel for ongoing work, recent activity and outputs. Reuse native message, file, search, composer and confirmation controls; keep Personal preferences in shared settings.

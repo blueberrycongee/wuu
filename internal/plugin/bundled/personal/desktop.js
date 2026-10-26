@@ -1881,14 +1881,14 @@ ${personalReviewStyles}
         if (mounted.current) setDraftVersion((value) => value + 1);
         return true;
       };
-      const receiptAction = async (entry, action) => {
+      const resumeReceipt = async (entry) => {
         const receipt = entry.receipt;
         if (!receipt || entry.busy) return;
         entry.busy = true;
         setDraftVersion((value) => value + 1);
         try {
           const input = { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id, receipt_id: receipt.receipt_id };
-          const result = await api.invokeRuntime(`agents.messages.${action}`, input, { ...route, ...action === "resume" ? { userInput: { requestId: receipt.request_id, prompt: "", resumeReceiptId: receipt.receipt_id } } : {} });
+          const result = await api.invokeRuntime("agents.messages.resume", input, { ...route, userInput: { requestId: receipt.request_id, prompt: "", resumeReceiptId: receipt.receipt_id } });
           if (result?.receipt) acceptReceipt(result.receipt);
           const status = await call("agents.messages.status", { agent_id: currentAgent.current.agent_id, request_id: receipt.request_id });
           acceptReceipt(status.receipt);
@@ -1906,9 +1906,9 @@ ${personalReviewStyles}
         if (!entry && !receipt) return void 0;
         const r = entry?.receipt || receipt, state = r?.execution_state || entry?.state;
         const zh = locale?.startsWith("zh");
-        const labels2 = zh ? { sending: "\u53D1\u9001\u4E2D", unknown: "\u9001\u8FBE\u72B6\u6001\u5F85\u786E\u8BA4", rejected: "\u53D1\u9001\u5931\u8D25", queued: "\u5DF2\u9001\u8FBE \xB7 \u7B49\u5F85\u5904\u7406", held: "\u5DF2\u9001\u8FBE \xB7 \u7B49\u5F85\u7EE7\u7EED", running: "\u5DF2\u9001\u8FBE \xB7 \u5904\u7406\u4E2D", completed: "\u5DF2\u9001\u8FBE", failed: "\u5DF2\u9001\u8FBE \xB7 \u5904\u7406\u5931\u8D25", interrupted: "\u5DF2\u9001\u8FBE \xB7 \u5904\u7406\u5DF2\u505C\u6B62", cancelled: "\u5DF2\u9001\u8FBE \xB7 \u5DF2\u53D6\u6D88", unconfirmed: "\u5DF2\u9001\u8FBE \xB7 \u5904\u7406\u7ED3\u679C\u5F85\u786E\u8BA4" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered \xB7 Waiting", held: "Delivered \xB7 Awaiting continue", running: "Delivered \xB7 Processing", completed: "Delivered", failed: "Delivered \xB7 Processing failed", interrupted: "Delivered \xB7 Processing stopped", cancelled: "Delivered \xB7 Cancelled", unconfirmed: "Delivered \xB7 Outcome unconfirmed" };
+        const labels2 = zh ? { sending: "\u53D1\u9001\u4E2D", unknown: "\u9001\u8FBE\u72B6\u6001\u5F85\u786E\u8BA4", rejected: "\u53D1\u9001\u5931\u8D25", queued: "\u5DF2\u9001\u8FBE", held: "\u7B49\u5F85\u7EE7\u7EED", running: "\u5DF2\u9001\u8FBE", completed: "\u5DF2\u9001\u8FBE", failed: "\u5904\u7406\u5931\u8D25", interrupted: "\u5904\u7406\u5DF2\u505C\u6B62", cancelled: "\u5DF2\u53D6\u6D88", unconfirmed: "\u5904\u7406\u7ED3\u679C\u5F85\u786E\u8BA4" } : { sending: "Sending", unknown: "Delivery unconfirmed", rejected: "Send rejected", queued: "Delivered", held: "Awaiting continue", running: "Delivered", completed: "Delivered", failed: "Processing failed", interrupted: "Processing stopped", cancelled: "Cancelled", unconfirmed: "Outcome unconfirmed" };
         if (!labels2[state]) return void 0;
-        return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-receipt-id": r?.receipt_id }, h("span", null, labels2[state]), r?.receipt_state === "accepted" && ["held", "queued"].includes(state) && h(React.Fragment, null, state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => receiptAction(entry || { receipt: r }, "resume") }, zh ? "\u7EE7\u7EED" : "Continue"), h(Button, { "data-action": "cancel-accepted-input", disabled: entry?.busy, onClick: () => receiptAction(entry || { receipt: r }, "cancel") }, zh ? "\u53D6\u6D88" : "Cancel")));
+        return h("div", { className: "mosaic-receipt", role: "status", "data-receipt-state": state, "data-receipt-id": r?.receipt_id }, h("span", null, labels2[state]), r?.receipt_state === "accepted" && state === "held" && h(Button, { "data-action": "resume-accepted-input", disabled: entry?.busy, onClick: () => resumeReceipt(entry || { receipt: r }) }, zh ? "\u7EE7\u7EED" : "Continue"));
       };
       const [busy, setBusy] = React.useState(false), [readingFiles, setReadingFiles] = React.useState(false);
       const [nameOpen, setNameOpen] = React.useState(false);
