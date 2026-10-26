@@ -20,7 +20,7 @@ function capture(scope: HTMLElement, pane: HTMLElement, changed: (held: boolean)
   const overlay = document.createElement("img");
   overlay.alt = ""; overlay.setAttribute("aria-hidden", "true"); overlay.inert = true;
   overlay.setAttribute("data-wuu-presentation-frame", "region");
-  Object.assign(overlay.style, { position: "fixed", inset: "0", width: `${width}px`, height: `${height}px`,
+  Object.assign(overlay.style, { position: "fixed", inset: "0", width: "100vw", height: "100vh",
     maxWidth: "none", maxHeight: "none", pointerEvents: "none", userSelect: "none", zIndex: "2147483646",
     clipPath: `inset(${Math.max(0, region.top)}px ${Math.max(0, width - region.right)}px ${Math.max(0, height - region.bottom)}px ${Math.max(0, region.left)}px)` });
   let released = false, url: string | undefined, timer: number | undefined;

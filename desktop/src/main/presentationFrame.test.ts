@@ -1,5 +1,7 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+const ownerWindow = vi.hoisted(() => ({ getContentSize: vi.fn(() => [800, 600]), isDestroyed: () => false }));
+vi.mock("electron", () => ({ BrowserWindow: { fromWebContents: () => ownerWindow } }));
 import { PresentationFrameCapture } from "./presentationFrame";
 
 function png(width: number, height: number): Buffer {
@@ -9,8 +11,9 @@ function png(width: number, height: number): Buffer {
   return data;
 }
 function fixture() {
+  ownerWindow.getContentSize.mockReturnValue([800, 600]);
   const image = { isEmpty: () => false, getScaleFactors: vi.fn(() => [1]), getSize: vi.fn(() => ({ width: 800, height: 600 })), toPNG: vi.fn(() => png(800, 600)) };
-  const contents = Object.assign(new EventEmitter(), { mainFrame: {}, isDestroyed: vi.fn(() => false), capturePage: vi.fn(async () => image) });
+  const contents = Object.assign(new EventEmitter(), { mainFrame: {}, getZoomFactor: vi.fn(() => 1), isDestroyed: vi.fn(() => false), capturePage: vi.fn(async () => image) });
   const registered = vi.fn(() => true);
   const capture = new PresentationFrameCapture(registered);
   const event = { sender: contents, senderFrame: contents.mainFrame } as unknown as Parameters<typeof capture.capture>[0];
@@ -39,7 +42,7 @@ describe("ephemeral own-window presentation capture", () => {
     expect(f.contents.capturePage).not.toHaveBeenCalled();
   });
 
-  it.each(["navigation", "unregister", "destroy", "replace-frame"])("discards pixels after %s while capture is pending", async kind => {
+  it.each(["navigation", "unregister", "destroy", "replace-frame", "resize", "zoom"])("discards pixels after %s while capture is pending", async kind => {
     const f = fixture();
     let finish!: (image: typeof f.image) => void;
     f.contents.capturePage.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
@@ -48,6 +51,8 @@ describe("ephemeral own-window presentation capture", () => {
     if (kind === "unregister") f.registered.mockReturnValue(false);
     if (kind === "destroy") f.contents.isDestroyed.mockReturnValue(true);
     if (kind === "replace-frame") f.contents.mainFrame = {};
+    if (kind === "resize") ownerWindow.getContentSize.mockReturnValue([900, 600]);
+    if (kind === "zoom") f.contents.getZoomFactor.mockReturnValue(1.25);
     finish(f.image);
     await expect(result).resolves.toBeUndefined();
     expect(f.image.toPNG).not.toHaveBeenCalled();
@@ -71,6 +76,14 @@ describe("ephemeral own-window presentation capture", () => {
     expect(f.image.toPNG).toHaveBeenCalledWith({ scaleFactor: 2 });
     f.image.toPNG.mockReturnValue(png(8193, 1200));
     await expect(f.capture.capture(f.event)).resolves.toBeUndefined();
+  });
+
+  it.each([1, 1.25, 1.35])("uses owning-window scale at zoom %s when native representation incorrectly reports 1x", async zoom => {
+    const f = fixture();
+    f.contents.getZoomFactor.mockReturnValue(zoom);
+    f.image.getScaleFactors.mockReturnValue([1]);
+    f.image.toPNG.mockReturnValue(png(1600, 1200));
+    await expect(f.capture.capture(f.event)).resolves.toMatchObject({ width: 1600, height: 1200, scaleFactor: 2 * zoom });
   });
 
   it("expires a stalled physical capture for every coalesced consumer without starting another", async () => {
