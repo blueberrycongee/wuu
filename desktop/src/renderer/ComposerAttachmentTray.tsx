@@ -27,7 +27,7 @@ type TrayCard =
 
 type ExitingCard = { card: TrayCard; index: number };
 type Point = { left: number; top: number };
-type Lift = { stack: Animation; frame: Animation; closing: boolean };
+type Lift = { stack: Animation; frame: Animation; footer?: Animation; closing: boolean };
 
 function trayCards(
   images: ComposerImage[],
@@ -61,9 +61,9 @@ function translateOffset(element: HTMLElement, axis: 0 | 1): number {
  * Every animation runs on the compositor (opacity, scale, translate): a paste
  * is exactly when the main thread is busy encoding, and layout-driven motion
  * would stall with it. Opening the tray changes layout once; the stack is
- * translated back by the new height and the frame counter-translated, so the
- * content above rises smoothly while the input stays put. Cards removed
- * through the tray leave in place while their neighbours glide over (FLIP);
+ * translated back by the new height and the frame and footer counter-translated,
+ * so the content above rises smoothly while the input and controls stay put.
+ * Cards removed through the tray leave in place while their neighbours glide over (FLIP);
  * anything else — sending, a draft swap — disappears at once.
  *
  * The tray must render immediately before `.composer-frame` in its
@@ -162,13 +162,15 @@ export function ComposerAttachmentTray({
     const settleLift = (): void => {
       lift.current?.stack.cancel();
       lift.current?.frame.cancel();
+      lift.current?.footer?.cancel();
       lift.current = null;
     };
-    // Moves everything above the frame by `to` while the frame holds still.
+    // Move the accessories while keeping both the input and its footer fixed.
     const liftTo = (to: number, closing: boolean, duration: number, easing: string): void => {
       const stack = tray?.closest<HTMLElement>(".composer-stack");
       const frame = tray?.nextElementSibling;
       if (!stack || !(frame instanceof HTMLElement)) return;
+      const footer = stack.querySelector<HTMLElement>(":scope > .composer-shell > .composer-footer-shell");
       const from = lift.current ? translateOffset(stack, 1) : closing ? 0 : to;
       settleLift();
       const target = closing ? to : 0;
@@ -176,6 +178,7 @@ export function ComposerAttachmentTray({
       lift.current = {
         stack: stack.animate([{ translate: `0 ${from}px` }, { translate: `0 ${target}px` }], timing),
         frame: frame.animate([{ translate: `0 ${-from}px` }, { translate: `0 ${-target}px` }], timing),
+        footer: footer?.animate([{ translate: `0 ${-from}px` }, { translate: `0 ${-target}px` }], timing),
         closing,
       };
     };
@@ -291,6 +294,7 @@ export function ComposerAttachmentTray({
   useEffect(() => () => {
     lift.current?.stack.cancel();
     lift.current?.frame.cancel();
+    lift.current?.footer?.cancel();
   }, []);
 
   useEffect(() => {
