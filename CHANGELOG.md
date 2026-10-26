@@ -200,6 +200,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Preserve typed paths in the web folder picker while directory requests finish, ignore stale replies after newer navigation or dismissal, and require the displayed path to match the loaded directory before selecting it or creating a child folder.
+
 - Keep workspace handoffs responsive while retired native terminal requests finish. Revoke the old workbench immediately, retain terminal cleanup for renderer shutdown, and preserve the web-resource ownership barrier.
 - Keep live child-agent completion status and result text from the same snapshot when awaiting results, preventing a concurrent completion from delivering an empty first result.
 

@@ -800,6 +800,17 @@ full explicit drain. Web-resource cleanup still blocks handoff because destinati
 IDs can be reused across controllers; this is not a general asynchronous-disposal
 policy and does not cancel managed agent processes.
 
+The desktop `session` CI suite runs `terminal-handoff-e2e.cjs` against its existing
+build in four isolated modes: held PTY start, held PTY stop, the web ownership
+barrier, and native shutdown while an old PTY is still pending. It uses native
+input and real IPC/PTYs, checks retained sidebar nodes and successor editability,
+and saves build hashes, event records and screenshots without sending inference.
+To repeat locally, set `WUU_HANDOFF_COMMIT`, select the existing binary with
+`WUU_DESKTOP_CORE`, and run `npm --prefix desktop run test:e2e:terminal-handoff`
+with `WUU_HANDOFF_MODE=start|stop|web|quit`. `WUU_HANDOFF_OUTPUT` selects an evidence
+directory outside the source tree; the default is under the system temporary
+directory. No test command rebuilds the product.
+
 ### Fresh-process startup diagnostics
 
 The optional `startup-e2e.cjs` driver starts its monotonic clock before spawning

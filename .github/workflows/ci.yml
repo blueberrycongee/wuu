@@ -1045,6 +1045,35 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard workspace terminal ownership handoff
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_HANDOFF_COMMIT: ${{ github.sha }}
+          WUU_HANDOFF_OUTPUT: ${{ runner.temp }}/wuu-terminal-handoff-evidence
+        run: |
+          set -o pipefail
+          mkdir -p "$WUU_HANDOFF_OUTPUT"
+          failed=0
+          for mode in start stop web quit; do
+            WUU_HANDOFF_MODE="$mode" desktop/node_modules/.bin/electron --no-sandbox --ozone-platform=headless --ozone-override-screen-size=1600,1000 desktop/scripts/terminal-handoff-e2e.cjs 2>&1 | tee "$WUU_HANDOFF_OUTPUT/$mode.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload terminal handoff evidence
+        if: ${{ matrix.suite == 'session' && (always()) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-handoff-evidence
+          path: |
+            ${{ runner.temp }}/wuu-terminal-handoff-evidence/**/*.json
+            ${{ runner.temp }}/wuu-terminal-handoff-evidence/**/*.png
+            ${{ runner.temp }}/wuu-terminal-handoff-evidence/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard message-only navigation presentation
         if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
         shell: bash

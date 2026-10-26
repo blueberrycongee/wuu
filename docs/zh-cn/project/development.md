@@ -580,6 +580,14 @@ stdin 包装器中的请求 ID 可按 `SHA256(JSON.stringify(id)).slice(0, 16)` 
 ID 可能跨 controller 复用，因此其清理仍会阻塞交接。这不是通用的异步销毁策略，
 也不会取消受管理的代理进程。
 
+desktop 的 `session` CI 复用已构建产物运行 `terminal-handoff-e2e.cjs`，覆盖四个隔离
+场景：PTY 启动挂起、PTY 停止挂起、Web 所有权屏障，以及旧 PTY 尚未完成时原生退出。
+测试使用原生输入和真实 IPC/PTY，验证侧栏节点保留、后继可编辑，并保存产物哈希、事件
+记录和截图，不发送推理请求。手动复验时设置 `WUU_HANDOFF_COMMIT`，以
+`WUU_DESKTOP_CORE` 选择现有二进制，再用 `WUU_HANDOFF_MODE=start|stop|web|quit`
+运行 `npm --prefix desktop run test:e2e:terminal-handoff`。`WUU_HANDOFF_OUTPUT`
+指定源码树外的证据目录，默认位于系统临时目录；测试命令不会重新构建产品。
+
 ### 新进程启动诊断
 
 可选的 `startup-e2e.cjs` 驱动在创建 Electron 子进程前启动单调时钟。

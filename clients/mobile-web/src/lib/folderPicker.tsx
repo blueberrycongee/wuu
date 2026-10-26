@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 type Directory = {
@@ -41,21 +41,29 @@ function Picker({
   const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const load = async (path?: string) => {
+  const [busy, setBusy] = useState(true);
+  const active = useRef(true);
+  const requestGeneration = useRef(0);
+  const pathRevision = useRef(0);
+  // Initial discovery must not replace even input typed before its effect ran.
+  const load = async (path?: string, revision = path === undefined ? 0 : pathRevision.current) => {
+    if (!active.current) return;
+    const generation = ++requestGeneration.current;
     setBusy(true);
     setError("");
     try {
       const d = await request<Directory>("desktop/projects/folders", { path, includeArchives: packageMode });
+      if (!active.current || generation !== requestGeneration.current) return;
       setDirectory(d);
-      setPath(d.path);
+      if (revision === pathRevision.current) setPath(d.path);
     } catch (e) {
-      setError(String(e));
+      if (active.current && generation === requestGeneration.current && revision === pathRevision.current) setError(String(e));
     } finally {
-      setBusy(false);
+      if (active.current && generation === requestGeneration.current) setBusy(false);
     }
   };
   useEffect(() => {
+    active.current = true;
     void load();
     const close = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -64,7 +72,11 @@ function Picker({
       }
     };
     window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
+    return () => {
+      active.current = false;
+      ++requestGeneration.current;
+      window.removeEventListener("keydown", close);
+    };
   }, []);
   return (
     <div
@@ -84,7 +96,7 @@ function Picker({
         >
           <label>
             电脑路径
-            <input value={path} onChange={(e) => setPath(e.target.value)} />
+            <input value={path} onChange={(e) => { ++pathRevision.current; setPath(e.target.value); }} />
           </label>
           <button disabled={busy}>前往</button>
         </form>
@@ -111,14 +123,23 @@ function Picker({
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              const generation = ++requestGeneration.current;
+              const revision = pathRevision.current;
               setBusy(true);
+              setError("");
               void request<{ path: string }>("desktop/projects/mkdir", {
                 path: directory?.path,
                 name,
               })
-                .then((d) => load(d.path))
-                .catch((e) => setError(String(e)))
-                .finally(() => setBusy(false));
+                .then((d) => {
+                  if (active.current && generation === requestGeneration.current) return load(d.path, revision);
+                })
+                .catch((e) => {
+                  if (active.current && generation === requestGeneration.current && revision === pathRevision.current) setError(String(e));
+                })
+                .finally(() => {
+                  if (active.current && generation === requestGeneration.current) setBusy(false);
+                });
             }}
           >
             <label>
@@ -129,13 +150,13 @@ function Picker({
                 required
               />
             </label>
-            <button disabled={busy || !directory}>创建文件夹</button>
+            <button disabled={busy || !directory || path !== directory.path}>创建文件夹</button>
           </form>
         )}
         <footer>
           <button onClick={() => finish(null)}>取消</button>
           <button
-            disabled={busy || !directory}
+            disabled={busy || !directory || path !== directory.path}
             onClick={() => finish(directory!.path)}
           >
             {packageMode ? "安装此目录" : "使用此文件夹"}
