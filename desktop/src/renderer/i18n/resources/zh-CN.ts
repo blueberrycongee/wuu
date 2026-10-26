@@ -551,6 +551,8 @@ export const zhCN = {
   "ribbon.github": "在 GitHub 上查看 Wuu",
   "ribbon.saveFailed": "无法保存导航更改。",
   "ribbon.resize": "调整导航栏宽度",
+  "ribbon.collapse": "收起导航栏",
+  "ribbon.expand": "显示导航栏",
   "ribbon.removed": "已移除{name}快捷方式，网站数据已保留。",
   "ribbon.undo": "撤销",
   "ribbon.suggestions": "常用网站",

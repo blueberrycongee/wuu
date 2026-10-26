@@ -25,15 +25,22 @@
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
   --canvas-titlebar-height: max(44px, calc(var(--control-size-toolbar) + var(--space-2) * 2));
   --workbench-top: var(--window-titlebar-height);
+  --navigation-toggle-left: var(--window-titlebar-leading-inset);
+  --ribbon-restore-space: 0px;
+}
+
+.app-shell.navigation-ribbon-layout.ribbon-collapsed {
+  --ribbon-restore-space: calc(var(--control-size-toolbar) + var(--control-toolbar-gap));
 }
 
 /* Renderer-owned macOS lights fit in the ribbon. The workbench can therefore
    use one symmetric inset instead of reserving a separate window-chrome row. */
 :root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
   --workbench-top: var(--conversation-pane-inset);
+  --navigation-toggle-left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2);
 }
 
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle {
+:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) :is(.section-sidebar-toggle, .ribbon-restore-toggle) {
   top: calc(var(--workbench-top) + (var(--canvas-titlebar-height) - var(--control-size-toolbar)) / 2);
 }
 
@@ -56,7 +63,7 @@
 }
 
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar-section-title {
-  padding-left: calc(var(--control-size-toolbar) + var(--space-2));
+  padding-left: calc(var(--control-size-toolbar) + var(--space-2) + var(--ribbon-restore-space));
 }
 
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
@@ -194,10 +201,10 @@
   display: none;
 }
 
-.navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle {
+.navigation-ribbon-layout:has(.sidebar-ribbon) :is(.section-sidebar-toggle, .ribbon-restore-toggle) {
   position: absolute;
   top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
-  left: var(--window-titlebar-leading-inset);
+  left: var(--navigation-toggle-left);
   z-index: 151;
   display: grid;
   width: var(--control-size-toolbar);
@@ -206,11 +213,12 @@
   -webkit-app-region: no-drag;
 }
 
-:root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle {
-  left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2);
+.navigation-ribbon-layout:has(.sidebar-ribbon) > .section-sidebar-toggle {
+  left: calc(var(--navigation-toggle-left) + var(--ribbon-restore-space));
 }
 
-.section-sidebar-toggle * {
+.section-sidebar-toggle *,
+.ribbon-restore-toggle * {
   -webkit-app-region: no-drag;
 }
 
@@ -258,6 +266,10 @@
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   pointer-events: auto;
   -webkit-app-region: no-drag;
+}
+
+.sidebar-ribbon[hidden] {
+  display: none;
 }
 
 /* Keep the brand on the icon axis inside the reserved header. */
@@ -738,7 +750,7 @@
 }
 /* A collapsed sidebar puts its toggle in the active content header. */
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed {
-  --content-header-inset: calc(var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2 + var(--control-size-toolbar) + var(--control-toolbar-gap));
+  --content-header-inset: calc(var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2 + var(--control-size-toolbar) + var(--control-toolbar-gap) + var(--ribbon-restore-space));
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) .titlebar,
 :root:has(.mac-window-controls) .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) .settings-embedded .settings-titlebar {
@@ -746,4 +758,9 @@
 }
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon).right-panel-globalized .workspace-panel-tabbar {
   padding-left: calc(var(--content-header-start) - var(--workspace-sheet-left) - var(--sidebar-ribbon-extra, 0px));
+}
+
+/* The restore control remains in the shell above native browser content. */
+:root:has(.mac-window-controls) .navigation-ribbon-layout.ribbon-collapsed :is(.web-workspace-stage, .conversation-pane[data-primary-plugin-web-page]) .workspace-browser-toolbar.web-workspace-toolbar {
+  padding-left: calc(var(--navigation-toggle-left) + var(--ribbon-restore-space));
 }

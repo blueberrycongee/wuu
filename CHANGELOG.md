@@ -10,6 +10,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Hide the navigation ribbon with a footer button or by dragging left past its compact width, and restore it from the upper-left corner. Preview drag collapse before release, with pull-back and Escape cancellation. Remember its visibility and previous width independently of the conversation sidebar.
+
 - Preview `run_code` source in activity rows without a description, and show program output alongside the full source when expanded.
 
 - Show a temporary conversation immediately in the sidebar's Recent section when starting a draft. Keep its title stable while typing. Hide unsent drafts when switching conversations, preserve their input, and keep submitted conversations visible.
