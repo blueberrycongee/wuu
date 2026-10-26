@@ -459,7 +459,8 @@
 }
 
 .composer-stack {
-  --composer-collapsed-min-height: 112px;
+  --composer-collapsed-min-height: 48px;
+  --session-composer-radius: max(24px, calc((var(--conversation-reading-line-height) + 24px) / 2));
   --composer-expanded-min-height: min(clamp(240px, 44vh, 420px), 60dvh);
   --composer-expanded-offset: var(--composer-input-growth, 0px);
   display: flex;
@@ -668,12 +669,12 @@
 /* The frame clips its contents, so the draft's keyboard ring would show only
  * as a line under the text. The frame's edge, drawn above the input, becomes
  * the ring instead; it stays inside the frame, clear of trays tucked behind. */
-html[data-focus-modality="keyboard"] .composer-frame:has(> .composer > textarea:focus-visible)::after {
+html[data-focus-modality="keyboard"] .composer-frame:has(> .composer > .composer-bar > textarea:focus-visible)::after {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
+html[data-focus-modality="keyboard"] .composer > .composer-bar > textarea:focus-visible {
   outline: none;
 }
 
@@ -686,21 +687,13 @@ html[data-focus-modality="keyboard"] .composer > textarea:focus-visible {
 /* The welcome grid already applies the shared cap and gutters. Fill its
    content column without subtracting the gutters a second time. */
 .hero-composer-wrap .composer-stack {
-  --composer-collapsed-min-height: 132px;
   width: 100%;
 }
 
 .composer {
-  /* Text and toolbar glyphs share the card inset used by code blocks and
-   * bubbles; the toolbar subtracts its 32px buttons' glyph offset. */
-  --composer-text-start: var(--card-padding);
-  /* Keep the first line clear of the rounded corner. The editor uses the
-   * full card inset for placeholders, the caret and typed text alike. */
-  --composer-text-padding-top: var(--card-padding);
-  --composer-control-icon-inset: calc((var(--composer-control-size) - var(--icon-size)) / 2);
-  /* Equal right/bottom insets place the action's center on the frame's corner
-   * center. Sharper theme corners cannot fit a concentric circle. */
-  --composer-corner-inset: max(0px, calc(var(--session-composer-radius) - var(--composer-control-size) / 2));
+  --composer-input-min-height: max(40px, calc(var(--conversation-reading-line-height) + 2 * var(--space-2)));
+  /* Split the minimum height's spare space equally, including small saved fonts. */
+  --composer-text-padding-block: calc((var(--composer-input-min-height) - var(--conversation-reading-line-height)) / 2);
   position: relative;
   width: 100%;
   min-height: var(--composer-collapsed-min-height);
@@ -1047,34 +1040,34 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   --placeholder-ink: var(--ink-quiet);
   display: block;
   width: 100%;
-  height: 72px;
-  min-height: 72px;
+  /* Reserve one readable line; useComposerHeight grows longer drafts. */
+  height: var(--composer-input-min-height);
+  min-height: var(--composer-input-min-height);
   max-height: calc(var(--composer-expanded-min-height) - var(--composer-chrome-height, 40px));
   overflow-y: auto;
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
-  padding: var(--composer-text-padding-top) var(--composer-text-start) var(--space-2) var(--composer-text-start);
+  min-width: 0;
+  padding: var(--composer-text-padding-block) var(--space-2);
   color: var(--ink);
   font-size: var(--font-body);
+  text-align: start;
   /* Drafts read at the message rhythm: typed text keeps its leading once
    * it is sent. */
   line-height: var(--conversation-reading-line-height);
 }
 
-/* The welcome editor reserves more writing space above its toolbar. */
-.hero-composer-wrap .composer textarea {
-  height: 92px;
-  min-height: 92px;
+/* Keep a narrow empty capsule on one line instead of clipping a wrapped hint. */
+.composer textarea::placeholder {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
 }
 
 .document-composer-wrap {
   container: document-composer / inline-size;
-}
-
-.document-composer-wrap .composer-stack {
-  --composer-collapsed-min-height: 80px;
 }
 
 .document-composer-wrap .composer-frame-shell {
@@ -1105,37 +1098,22 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   box-shadow: var(--shadow-tray);
 }
 
-/* One line of text plus the dock's top inset, so the first row keeps the
-   dock's axis and a single line never scrolls at large text sizes. */
-.document-composer-wrap .composer-stack .composer textarea {
-  --composer-document-input-height: max(
-    44px,
-    calc(var(--composer-text-padding-top) + var(--conversation-reading-line-height) + 4px)
-  );
-  height: var(--composer-document-input-height);
-  min-height: var(--composer-document-input-height);
-  padding-bottom: 4px;
-}
-
-/* Every draft keeps its text above the toolbar at every width. This gives
- * attachments, model selection and sending a stable place as the draft grows. */
 .composer textarea:disabled {
   color: var(--composer-textarea-disabled);
   cursor: default;
 }
 
-/* Align the first toolbar icon with the textarea text x-origin. The controls
-   keep 8px of internal icon padding, so the hover chrome begins 8px earlier. */
+/* One row forms the capsule. Drafts grow upward while controls keep their
+ * bottom edge, so sending never moves away from the pointer. */
 .composer-bar {
-  display: flex;
+  display: grid;
+  /* Reserve room for the hint before allowing long model names to consume it. */
+  grid-template-columns: auto minmax(min(calc(var(--font-ui) * 6), 30%), 1fr) minmax(0, max-content);
   min-width: 0;
-  align-items: flex-end;
-  gap: var(--space-2);
+  align-items: end;
+  gap: var(--space-1);
   overflow: hidden;
-  /* Explicit insets keep the action concentric without extra vertical space
-   * from a fixed row height. Its centered visual inset preserves that center. */
-  padding: 2px var(--composer-corner-inset) var(--composer-corner-inset)
-    calc(var(--composer-text-start) - var(--composer-control-icon-inset));
+  padding: max(4px, var(--space-1)) var(--space-2);
   container: composer-toolbar / inline-size;
 }
 
@@ -1149,19 +1127,22 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
    * keyboard rings (2px ring at a 2px offset). */
   overflow: clip;
   overflow-clip-margin: 4px;
+  /* Match the single-line editor's center even when the user's font grows. */
+  margin-block: calc((var(--composer-input-min-height) - var(--composer-control-size)) / 2);
 }
 
 .composer-bar-left {
   flex: 1 1 auto;
 }
 
-/* Keep plugin controls reachable when the model controls need their own row. */
+/* Extra plugin controls get their own row, leaving the input beside Plus. */
 .composer-bar:has(.composer-plugin-toolbar) {
-  flex-wrap: wrap;
+  grid-template-columns: auto minmax(0, 1fr);
 }
 
-.composer-bar-left:has(.composer-plugin-toolbar) {
-  flex-shrink: 0;
+.composer-bar-right:has(.composer-plugin-toolbar) {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
   max-width: 100%;
 }
 
@@ -1216,10 +1197,9 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 }
 
 .composer-bar-right {
-  flex: 0 1 auto;
+  width: 100%;
   align-items: flex-end;
   justify-content: flex-end;
-  margin-left: auto;
 }
 
 .composer-tool-button {
@@ -2248,6 +2228,41 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 
 .composer-branch-control .hero-project-pill {
   max-width: 100%;
+}
+
+/* Keep the input usable in narrow panes without removing menu access. */
+@container composer-toolbar (max-width: 360px) {
+  .composer-bar > textarea {
+    padding-inline: var(--space-1);
+  }
+
+  .composer-bar .permission-menu-anchor,
+  .composer-bar .codex-runtime-anchor {
+    width: var(--composer-control-size);
+    min-width: var(--composer-control-size);
+    max-width: var(--composer-control-size);
+    flex: 0 0 var(--composer-control-size);
+  }
+
+  .composer-bar .permission-chip,
+  .composer-bar .codex-runtime-trigger {
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .composer-bar .permission-chip > span,
+  .composer-bar .permission-chip > svg:last-child,
+  .composer-bar .codex-runtime-label,
+  .composer-bar .codex-runtime-effort,
+  .composer-bar .codex-runtime-trigger > svg:last-child {
+    display: none;
+  }
+
+  .composer-bar-left,
+  .composer-bar-right {
+    gap: var(--space-1);
+  }
 }
 
 @container composer-shell (max-width: 480px) {

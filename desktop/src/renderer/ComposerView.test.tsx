@@ -2326,7 +2326,7 @@ describe("Composer send control", () => {
     expect(selector?.textContent).toContain("对话");
   });
 
-  it("separates auxiliary controls from the send action for responsive collapse", () => {
+  it("keeps attachments at the leading edge and runtime controls beside send", () => {
     renderComposer({
       variant: "dock",
       prompt: "follow up",
@@ -2342,7 +2342,7 @@ describe("Composer send control", () => {
     // project/cwd control renders in the leading slot anymore.
     expect(leftGroup?.querySelector(".composer-project-control")).toBeNull();
     expect(leftGroup?.querySelector(".composer-plus-button")).not.toBeNull();
-    expect(leftGroup?.querySelector(".permission-menu-anchor")).not.toBeNull();
+    expect(rightGroup?.querySelector(".permission-menu-anchor")).not.toBeNull();
     // The token-speed gauge is temporarily hidden from the toolbar; flip this
     // back to not.toBeNull() when it is restored.
     expect(rightGroup?.querySelector(".composer-token-gauge")).toBeNull();

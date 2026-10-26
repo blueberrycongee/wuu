@@ -2,6 +2,7 @@ import { useComposerServices } from "./ComposerServicesContext";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion } from "./ComposerInlineCompletion";
 import { desktopPluginHost } from "./plugins/DesktopPluginRuntime";
 import { useComposerAttachmentFocus } from "./useComposerAttachmentFocus";
+import { useComposerHeight } from "./useComposerHeight";
 import { VideoAttachment } from "./VideoAttachment";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import * as React from "react";
@@ -275,6 +276,7 @@ export function SplitPaneComposer({
     focusComposerSoon,
     storageKey: queryHistorySessionID
   });
+  useComposerHeight(textareaRef, visiblePromptValue);
   const fileSelectionActions = useFileSelectionActions();
   const onAttachmentPickerClick = useComposerAttachmentFocus(
     textareaRef, queryHistorySessionID, fileSelectionActions?.ownerKey, readOnly,
@@ -497,37 +499,6 @@ export function SplitPaneComposer({
                     }
                   }}
                 />
-                <textarea
-                  ref={textareaRef}
-                  data-wuu-component="composer-input"
-                  value={visiblePromptValue}
-                  placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
-                  disabled={readOnly}
-                  aria-readonly={readOnly}
-                  aria-describedby={inline.text ? inline.descriptionId : undefined}
-                  onFocus={() => inline.observe()}
-                  onBlur={() => inline.observe()}
-                  onSelect={() => inline.observe()}
-                  onCompositionStart={() => { composing.current = true; inline.observe(true); }}
-                  onCompositionEnd={() => { composing.current = false; inline.observe(false); }}
-                  onChange={(event) => {
-                    updateVisiblePrompt(event.target.value);
-                    inline.observe();
-                  }}
-                  onPaste={(event) =>
-                    handleCollapsedComposerPaste(event, {
-                      readOnly,
-                      fileAttachmentsEnabled: true,
-                      onPasteAttachmentFiles,
-                      onFold: resetQueryHistoryNavigation
-                    })
-                  }
-                  onKeyDown={handleKeyDown}
-                />
-                {inline.text ? <ComposerInlineCompletionOverlay inputRef={textareaRef} value={visiblePromptValue} text={inline.text} /> : null}
-                {inline.text ? <span className="sr-only" id={inline.descriptionId} role="status">
-                  {t("composer.inlineCompletionAvailable", { text: inline.text })}
-                </span> : null}
                 <div className="composer-bar split-composer-bar">
                   <div className="composer-bar-left">
                     {mobileWeb ? (
@@ -552,6 +523,37 @@ export function SplitPaneComposer({
                       </button>
                     )}
                   </div>
+                  <textarea
+                    ref={textareaRef}
+                    data-wuu-component="composer-input"
+                    value={visiblePromptValue}
+                    placeholder={inline.text ? "" : sessionReadOnly ? t("composer.readOnly") : hasCollapsedPromptBlocks ? t("composer.followupChanges") : hasAttachments ? t("composer.addDescription") : t("composer.continueBranch")}
+                    disabled={readOnly}
+                    aria-readonly={readOnly}
+                    aria-describedby={inline.text ? inline.descriptionId : undefined}
+                    onFocus={() => inline.observe()}
+                    onBlur={() => inline.observe()}
+                    onSelect={() => inline.observe()}
+                    onCompositionStart={() => { composing.current = true; inline.observe(true); }}
+                    onCompositionEnd={() => { composing.current = false; inline.observe(false); }}
+                    onChange={(event) => {
+                      updateVisiblePrompt(event.target.value);
+                      inline.observe();
+                    }}
+                    onPaste={(event) =>
+                      handleCollapsedComposerPaste(event, {
+                        readOnly,
+                        fileAttachmentsEnabled: true,
+                        onPasteAttachmentFiles,
+                        onFold: resetQueryHistoryNavigation
+                      })
+                    }
+                    onKeyDown={handleKeyDown}
+                  />
+                  {inline.text ? <ComposerInlineCompletionOverlay inputRef={textareaRef} value={visiblePromptValue} text={inline.text} /> : null}
+                  {inline.text ? <span className="sr-only" id={inline.descriptionId} role="status">
+                    {t("composer.inlineCompletionAvailable", { text: inline.text })}
+                  </span> : null}
                   <div className="composer-bar-right">
                     {showStop ? (
                       <button

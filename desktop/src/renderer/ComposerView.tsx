@@ -1383,47 +1383,6 @@ export function Composer({
           >
             {topAccessory ? <div className="composer-cover-accessory">{topAccessory}</div> : null}
           <div className="composer" hidden={Boolean(topAccessory)}>
-            <ComposerTextarea
-              ref={textareaRef}
-              value={visiblePromptValue}
-              valueRevision={promptRevision}
-              submissionClearRevision={submissionClearRevision}
-              placeholder={composerPlaceholder}
-              disabled={readOnly}
-              pluginHost={services?.presentation ?? pluginHost}
-              inlineCompletionKind={inlineCompletionKind}
-              workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
-              workspaceRoot={inlineCompletionWorkspace?.cwd}
-              attachmentCount={files.length + images.length + selections.length}
-              queuedCount={queuedMessages.length}
-              pendingCount={guideMessages.length}
-              inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
-                && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
-              inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
-                inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
-              inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
-              inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
-              inlineCompletionActionsRef={inlineCompletionActionsRef}
-              threadId={threadId}
-              sideThreadId={sideThreadId}
-              running={running}
-              ariaControls={slashMenuOpen ? slashMenuID : undefined}
-              ariaActiveDescendant={
-                selectedSlashCommand
-                  ? `${slashMenuID}-${selectedSlashCommand.id}`
-                  : undefined
-              }
-              ariaExpanded={slashMenuOpen || undefined}
-              onValueChange={updateVisiblePrompt}
-              onPaste={handleComposerPaste}
-              onBlurValue={(value) => {
-                if (slashMenuOpen) {
-                  setSlashDismissedValue(value);
-                }
-              }}
-              onKeyDown={handleComposerKeyDown}
-              onContextMenu={handleComposerContextMenu}
-            />
             <div
               className="composer-bar"
               data-wuu-component="composer-toolbar"
@@ -1448,6 +1407,49 @@ export function Composer({
                     onSelectCommand={(command) => applySlashCommand(command, undefined)}
                   />
                 ) : null}
+              </div>
+              <ComposerTextarea
+                ref={textareaRef}
+                value={visiblePromptValue}
+                valueRevision={promptRevision}
+                submissionClearRevision={submissionClearRevision}
+                placeholder={composerPlaceholder}
+                disabled={readOnly}
+                pluginHost={services?.presentation ?? pluginHost}
+                inlineCompletionKind={inlineCompletionKind}
+                workspaceId={inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined}
+                workspaceRoot={inlineCompletionWorkspace?.cwd}
+                attachmentCount={files.length + images.length + selections.length}
+                queuedCount={queuedMessages.length}
+                pendingCount={guideMessages.length}
+                inlineCompletionEnabled={!hasCollapsedPromptBlocks && !disconnected && !topAccessory
+                  && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
+                inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
+                  inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
+                inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
+                inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
+                inlineCompletionActionsRef={inlineCompletionActionsRef}
+                threadId={threadId}
+                sideThreadId={sideThreadId}
+                running={running}
+                ariaControls={slashMenuOpen ? slashMenuID : undefined}
+                ariaActiveDescendant={
+                  selectedSlashCommand
+                    ? `${slashMenuID}-${selectedSlashCommand.id}`
+                    : undefined
+                }
+                ariaExpanded={slashMenuOpen || undefined}
+                onValueChange={updateVisiblePrompt}
+                onPaste={handleComposerPaste}
+                onBlurValue={(value) => {
+                  if (slashMenuOpen) {
+                    setSlashDismissedValue(value);
+                  }
+                }}
+                onKeyDown={handleComposerKeyDown}
+                onContextMenu={handleComposerContextMenu}
+              />
+              <div className="composer-bar-right">
                 {!textOnly ? (
                   <div className="permission-menu-anchor" ref={accessMenuRef}>
                     <button
@@ -1495,8 +1497,6 @@ export function Composer({
                   </div>
                 ) : null}
                 <slots.Slot name="wuu.default-composer/composer.toolbar" context={pluginSlotContext} layout={MemoizedComposerPluginToolbar} />
-              </div>
-              <div className="composer-bar-right">
                 {hideRuntimeControls ? null : (
                   <>
                     <ComposerRuntimeMeters
