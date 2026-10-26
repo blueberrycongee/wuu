@@ -842,6 +842,68 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard first-send bubble continuity
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for order in event-first ack-first rapid-ack rejected; do
+            export WUU_FIRST_SEND_ORDER="$order" WUU_FIRST_SEND_FAST=0 WUU_FIRST_SEND_NEWER=1
+            export WUU_FIRST_SEND_OUTPUT="${{ runner.temp }}/wuu-first-send-evidence/$order"
+            mkdir -p "$WUU_FIRST_SEND_OUTPUT"
+            if [ "$order" = ack-first ]; then
+              export WUU_FIRST_SEND_THEME=dark WUU_FIRST_SEND_FONT=20 WUU_FIRST_SEND_WIDTH=760 WUU_FIRST_SEND_ATTACHMENT=1
+            else
+              export WUU_FIRST_SEND_THEME=light WUU_FIRST_SEND_FONT=15 WUU_FIRST_SEND_WIDTH=1280 WUU_FIRST_SEND_ATTACHMENT=0
+            fi
+            if [ "$order" = rapid-ack ]; then
+              export WUU_FIRST_SEND_ORDER=ack-first WUU_FIRST_SEND_FAST=1 WUU_FIRST_SEND_NEWER=0
+            fi
+            xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/first-send-continuity-e2e.cjs 2>&1 | tee "$WUU_FIRST_SEND_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload first-send continuity evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: first-send-continuity-evidence
+          path: ${{ runner.temp }}/wuu-first-send-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Guard error message appearance and recovery
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            export WUU_ERROR_STYLE_FONT="$font"
+            export WUU_ERROR_STYLE_OUTPUT="${{ runner.temp }}/wuu-error-message-evidence/font-$font"
+            mkdir -p "$WUU_ERROR_STYLE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/error-message-style-e2e.cjs 2>&1 | tee "$WUU_ERROR_STYLE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload error message appearance evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-message-appearance-evidence
+          path: ${{ runner.temp }}/wuu-error-message-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard request lifecycle
         if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5

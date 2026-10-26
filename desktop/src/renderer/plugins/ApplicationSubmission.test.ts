@@ -2,7 +2,7 @@ import * as composerMessages from "../ComposerMessages";
 import { readComposerDraftRecovery } from "../ComposerDraftRecovery";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApplicationSubmission } from "./ApplicationSubmission";
-import { initialState, cloneSessionTabDraft, emptyComposerDraft, type AppState } from "../AppState";
+import { initialState, cloneSessionTabDraft, emptyComposerDraft, reduceServerEvent, type AppState } from "../AppState";
 import { ApplicationDraftResources } from "./ApplicationDrafts";
 import { createComposerPendingState } from "../ComposerPendingState";
 import { createSidebarThreadCache } from "../SidebarWorkspaceState";
@@ -192,7 +192,7 @@ describe("application submission ownership",()=>{
     creating.resolve({thread:{...thread(),cwd:"/worktree"}});await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledTimes(1));
     expect(vi.mocked(window.wuu.startTurn).mock.calls[0][1]).toBe("hello accepted suffix");
     expect(f.getDraft("thread:created").prompt).toBe("hello accepted suffix");
-    expect(f.getState().thread?.turns).toEqual([]);
+    expect(f.getState().thread?.turns.flatMap(turn => turn.items).map(item => item.text)).toEqual(["hello accepted suffix"]);
     expect(f.submission.submit({ownerTabId:"thread:created"}).accepted).toBe(false);
     starting.resolve({turn:{id:"first",status:"in_progress",items_view:"full",items:[]}});
     await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0].phase).toBe("completed"));
@@ -328,4 +328,37 @@ it("projects a complete immutable optimistic turn while thread creation is pendi
   expect(pending.turn.items[0].images![0]).not.toBe(image);
   f.submission.cancel(result.operationID!); creating.resolve({thread:thread()});
   await vi.waitFor(() => expect(f.submission.getSnapshot().pendingCreations).toHaveLength(0));
+});
+
+// Escaped first-send failure: binding the server thread erased the already
+// visible creation bubble before either notification or RPC admission arrived.
+it.each(["event-first", "ack-first"] as const)("retains the first message through identity binding and %s admission", async order => {
+  const creating = deferred<{thread:Thread}>();
+  const starting = deferred<{turn:Thread["turns"][number]}>();
+  window.wuu = {startThread:vi.fn(() => creating.promise),startTurn:vi.fn(() => starting.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+  const f = fixture(undefined, true);
+  const submitted = f.submission.submit({ownerTabId:"draft:a",text:"第一条消息"});
+  const pending = structuredClone(f.submission.getSnapshot().pendingCreations[0].turn) as Thread["turns"][number];
+  expect(pending.items[0].text).toBe("第一条消息");
+  expect(f.submission.submit({ownerTabId:"draft:a"}).accepted).toBe(false);
+  creating.resolve({thread:thread()});
+  await vi.waitFor(() => expect(window.wuu.startTurn).toHaveBeenCalledOnce());
+  expect(f.getState().thread?.turns).toEqual([pending]);
+  expect(f.getDraft("thread:created").prompt).toBe("第一条消息");
+  expect(f.submission.submit({ownerTabId:"thread:created"}).accepted).toBe(false);
+  f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:"Newer draft 内容"}))});
+  const accepted = {...pending,id:"accepted",items:[{...pending.items[0],id:"accepted-user",source_id:submitted.operationID}]};
+  const notify = () => {
+    f.setState(reduceServerEvent(f.getState(),{kind:"notification",workdir:context.cwd,message:{method:"turn/started",params:{thread_id:"created",turn:accepted}}}));
+    f.submission.reconcile();
+  };
+  if (order === "event-first") notify();
+  starting.resolve({turn:accepted});
+  await vi.waitFor(() => expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+  if (order === "ack-first") notify();
+  expect(f.getState().thread?.turns.flatMap(turn=>turn.items).map(item=>item.text)).toEqual(["第一条消息"]);
+  expect(f.getDraft("thread:created").prompt).toBe("Newer draft 内容");
+  expect(window.wuu.startThread).toHaveBeenCalledOnce();
+  expect(window.wuu.startTurn).toHaveBeenCalledOnce();
+  expect(window.wuu.queueTurn).not.toHaveBeenCalled();
 });

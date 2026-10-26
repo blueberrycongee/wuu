@@ -68,7 +68,7 @@ async function waitFor(fn, arg) {
     const check = (${fn.toString()});
     const deadline = performance.now() + 20000;
     function tick() {
-      try { if (check(${JSON.stringify(arg)})) return resolve(true); } catch (error) { return reject(error); }
+      try { const value = check(${JSON.stringify(arg)}); if (value) return resolve(value); } catch (error) { return reject(error); }
       if (performance.now() > deadline) return reject(new Error('Timed out waiting for onboarding state: ' + check.toString()));
       requestAnimationFrame(tick);
     }
@@ -76,11 +76,12 @@ async function waitFor(fn, arg) {
   })`);
 }
 async function click(label) {
-  await waitFor((text) => [...document.querySelectorAll('button')].some(button => (button.textContent.trim() === text || button.getAttribute('aria-label') === text) && !button.disabled), label);
   await settleOnboarding();
-  const target = await evaluate((text) => {
+  // Plugin activation may replace the setup presentation while it settles.
+  // Sample readiness and geometry together before dispatching native input once.
+  const target = await waitFor((text) => {
     const element = [...document.querySelectorAll('button')].find((button) => (button.textContent.trim() === text || button.getAttribute('aria-label') === text) && !button.disabled);
-    if (!element) throw new Error(`Missing enabled button: ${text}`);
+    if (!element) return false;
     const box = element.getBoundingClientRect();
     const point = { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
     const hit = document.elementFromPoint(point.x, point.y);

@@ -225,6 +225,52 @@ the same self-started fixture server across both themes, 1000/420px windows and
 15/20px text. Measurements and screenshots go to `desktop/out/stream-code-cursor/`
 (`WUU_CODE_CURSOR_OUTPUT` overrides this).
 
+### First-message continuity acceptance
+
+After building the desktop and core, run `npm --prefix desktop run test:e2e:first-send`.
+`WUU_DESKTOP_CORE` selects the tested core. The fixture uses a fresh temporary
+profile and a loopback scripted provider, with real Electron input, preload,
+main process and Go admission. It gates thread creation, turn admission and
+notifications separately; `WUU_FIRST_SEND_ORDER=event-first|ack-first|rejected`
+selects the delivery order or an explicit rejection. Repeated Enter must admit
+one message, and its bubble must remain visible in every sampled frame without
+restarting its entrance. Later draft edits must survive admission and failures.
+Set `WUU_FIRST_SEND_ATTACHMENT=1` for an attached file, and
+`WUU_FIRST_SEND_THEME`, `WUU_FIRST_SEND_FONT`, and `WUU_FIRST_SEND_WIDTH` for the
+visual matrix. Chinese input uses native text insertion, not OS IME candidates.
+
+Desktop session CI runs all three orders plus rapid identity adoption during the
+entrance, including dark/narrow/large-text attachment coverage, and uploads `report.json`, per-frame `frames.json`, logs,
+screenshots and core/renderer hashes. `WUU_FIRST_SEND_OUTPUT` chooses the evidence
+directory; `WUU_FIRST_SEND_DESKTOP` can select an already-built baseline for a
+repeatable RED comparison. Linux headless rendering is not physical macOS
+acceptance; use the documented disposable Electron test rig.
+
+### Error message appearance and recovery acceptance
+
+After building the desktop and core, run:
+
+```sh
+WUU_ERROR_STYLE_FONT=15 npm --prefix desktop run test:e2e:error-message-style
+WUU_ERROR_STYLE_FONT=20 npm --prefix desktop run test:e2e:error-message-style
+```
+
+`WUU_DESKTOP_CORE` selects the built core. Each run uses isolated application
+and user profiles with a loopback synthetic provider, exercising real Electron
+input, preload, main and Go. It checks light/dark themes, 1280/640px windows,
+IM/regular bubbles, readable text, clipping, native disclosure and keyboard
+focus, manual continuation after HTTP 401, and automatic recovery after HTTP 503.
+The details must preserve the core's diagnostic; raw provider error bodies may
+be normalized before reaching the renderer.
+
+Session CI runs both font sizes against its existing renderer/core builds and
+uploads synthetic screenshots, geometry, logs and build hashes. Evidence defaults
+to `desktop/out/e2e/error-message-style-15/` or `error-message-style-20/`;
+`WUU_ERROR_STYLE_OUTPUT` overrides it, and `WUU_ERROR_STYLE_DESKTOP` selects an
+already-built comparison desktop. Review the rendered frames for bubble-family
+consistency; automated checks do not pin CSS declarations or replace visual
+acceptance. Linux results are not physical macOS acceptance.
+
 ### Next-message suggestion acceptance
 
 `make test-plugins` includes the shipped next-message JSONL runtime and desktop

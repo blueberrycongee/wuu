@@ -341,3 +341,94 @@ it.each([false, true])("restores an exact pending destination before an unrelate
     await replacing;
   }
 });
+
+it.each(["activation", "graph", "paging", "hydration", "graph-cancelled", "graph-newer"] as const)("transfers only the selected search address across application replacement (%s)", async phase => {
+  const handoff = phase.startsWith("graph");
+  const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+  const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+  const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
+  let selected = source;
+  const initialization = () => ({ provider: "fixture", model: "fixture", providers: [],
+    application_surfaces: { "ui.application": { plugin_id: "business", generation: "one", provider_id: "ui.application" } },
+    extension_inventory: [{ id: "business", fingerprint: "one", graph_generation: handoff && selected.cwd === target.cwd ? "target" : "source" }],
+  });
+  const answer = { id: "addressed-answer", seq: 10, type: "agent_message" as const, text: "exact historical needle" };
+  const history = { id: "historical-turn", status: "completed" as const, items_view: "full" as const, items: [answer] };
+  const thread = { id: "search-destination", cwd: target.cwd, project_id: "b", title: "Destination", preview: "", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", history_cursor: "older-page", turns: phase === "hydration"
+    ? [{ ...history, items: [{ ...answer, text: "Preview", remote_content_ref: "content:addressed-answer" }] }]
+    : [{ id: "tail", status: "completed", items: [{ id: "latest", seq: 100, type: "agent_message", text: "Latest answer" }] }] };
+  let releaseResume!: (value: unknown) => void;
+  const retiredResume = new Promise(resolve => { releaseResume = resolve; });
+  const resume = vi.fn().mockResolvedValue({ thread });
+  if (phase === "activation") resume.mockReturnValueOnce(retiredResume);
+  let releaseOldContent!: (value: unknown) => void;
+  const oldContent = new Promise(resolve => { releaseOldContent = resolve; });
+  const content = vi.fn().mockResolvedValue(answer);
+  if (phase === "hydration") content.mockReturnValueOnce(oldContent);
+  const listeners = new Set<(event: unknown) => void>();
+  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })), resumeThread: resume,
+    searchThreads: vi.fn().mockResolvedValue({ results: [{ thread, message_seq: 10, snippet: answer.text }] }),
+    loadEarlierThreadHistory: vi.fn().mockResolvedValue(undefined), readRemoteItem: content,
+    onServerEvent: (listener: (event: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+    listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }), startThread: vi.fn(), startTurn: vi.fn(),
+  } as unknown as WuuDesktopApi;
+  vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => { selected = context as typeof selected; return { projects, active_context: selected }; });
+  vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockImplementation(async workspace => ({ activeContext: workspace.active_context, projects, initialized: initialization() as never }));
+  vi.spyOn(RuntimeLoader, "loadRuntimeThreadList").mockResolvedValue([thread as never]);
+  vi.spyOn(RuntimeLoader, "loadRuntime").mockImplementation(async (_workspace, options) => ({ activeContext: selected, projects,
+    thread: options?.resumeLatestThread !== false && options?.resumeThreadID === thread.id ? (await resume()).thread : undefined,
+    threads: [thread as never], initialized: initialization() as never }));
+  const host = new PluginHost({ react: React }); hosts.push(host);
+  const register = (api: PluginGenerationApi) => activate(api as unknown as Parameters<typeof activate>[0]);
+  await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "source", register });
+  await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+  let app!: ApplicationServiceV1;
+  await host.activateGeneration({ pluginId: "shell", generation: "one", register: api => { app = api.application; } });
+  await app.invoke("search.run", { query: "historical needle" });
+  const locating = app.invoke("search.locate", { resultId: app.getSnapshot().search.results[0].resultId }).catch(error => error);
+  const targetId = app.getSnapshot().search.target!.id;
+  if (phase === "activation") await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+  else await locating;
+  if (handoff) expect(resume).not.toHaveBeenCalled();
+  if (phase === "paging") expect(window.wuu.loadEarlierThreadHistory).toHaveBeenCalledExactlyOnceWith(thread.id, "older-page");
+  if (phase === "hydration") expect(content).toHaveBeenCalledExactlyOnceWith("content:addressed-answer");
+  let expectedThread = thread;
+  if (phase === "graph-cancelled") await app.invoke("search.cancel", { targetId });
+  if (phase === "graph-newer") {
+    expectedThread = { ...thread, id: "newer-selection", cwd: source.cwd, project_id: "a" };
+    resume.mockResolvedValue({ thread: expectedThread });
+    await app.invoke("thread.activate", { threadId: expectedThread.id, workspaceId: "a" });
+  }
+  const oldApp = app;
+  if (handoff) await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register });
+  else {
+    await host.selectApplicationBinding({ pluginId: "business", generation: "two", id: "ui.application" });
+    await host.activateGeneration({ pluginId: "business", generation: "two", register });
+  }
+  await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
+  expect(app.getSnapshot().conversation.threadId).toBe(expectedThread.id);
+  if (phase === "graph-cancelled" || phase === "graph-newer") {
+    expect(app.getSnapshot().search.target).toBeUndefined();
+    expect(window.wuu.loadEarlierThreadHistory).not.toHaveBeenCalled();
+    expect(content).not.toHaveBeenCalled();
+    expect(() => oldApp.getSnapshot()).toThrow();
+    return;
+  }
+  expect(app.getSnapshot().search.target).toMatchObject({ id: targetId, threadId: thread.id, messageSeq: 10, query: "historical needle" });
+  expect(resume).toHaveBeenCalledTimes(handoff ? 1 : 2);
+  if (phase !== "hydration") {
+    expect(window.wuu.loadEarlierThreadHistory).toHaveBeenLastCalledWith(thread.id, "older-page");
+    for (const listener of [...listeners]) listener({ kind: "notification", workdir: target.cwd, message: { method: "thread/historyLoaded", params: {
+      thread_id: thread.id, cursor: "older-page", turns: [history],
+    } } });
+  }
+  await vi.waitFor(() => expect(app.getSnapshot().search.target).toMatchObject({ id: targetId, phase: "ready", turnId: history.id, itemId: answer.id }));
+  const accepted = app.getSnapshot().conversation;
+  releaseResume({ thread }); releaseOldContent({ ...answer, text: "retired historical needle" }); await locating;
+  await Promise.resolve(); await Promise.resolve();
+  expect(app.getSnapshot().conversation).toEqual(accepted);
+  expect(() => oldApp.getSnapshot()).toThrow();
+  await app.invoke("search.complete-target", { targetId });
+  expect(app.getSnapshot().search.target).toBeUndefined();
+  expect(window.wuu.startThread).not.toHaveBeenCalled(); expect(window.wuu.startTurn).not.toHaveBeenCalled();
+});

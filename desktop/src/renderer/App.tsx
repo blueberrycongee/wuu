@@ -983,8 +983,7 @@ export function App({ application, slots, shellPluginId }: {
   const activePendingThreadCreation = submissionView.pendingCreations.find(
     (pending) => pending.ownerTabId === tabs.activeTabId,
   );
-  const activePendingNewThreadTurn = submissionView.operations.some(operation => operation.operationID === activePendingThreadCreation?.operationID && operation.draftPending)
-    ? undefined : activePendingThreadCreation?.turn;
+  const activePendingNewThreadTurn = activePendingThreadCreation?.turn;
   const turns = activeThread?.turns ?? [];
   const activeContextCompositionEntries = activeThreadID
     ? contextCompositionEntries.filter((entry) => entry.threadID === activeThreadID)
@@ -1118,7 +1117,7 @@ export function App({ application, slots, shellPluginId }: {
         placedSubmissions.current.delete(operation.operationID);
         continue;
       }
-      if (placed || operation.draftPending || operation.mode !== "send") continue;
+      if (placed || operation.mode !== "send") continue;
       if (operation.ownerTabId !== tabs.activeTabId && operation.threadId !== activeThreadID) {
         initialSubmissionIds.current.add(operation.operationID);
         continue;

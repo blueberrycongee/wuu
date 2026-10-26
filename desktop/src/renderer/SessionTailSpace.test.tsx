@@ -1212,6 +1212,21 @@ it("paints the placement over its final layout without main-thread frames", () =
   expect(scrollTop()).toBe(placed);
 });
 
+it("starts a mounted first bubble's placement and entrance before the next paint", () => {
+  naturalHeight = 220;
+  messageBottom = 100;
+  render({ id: null, messageID: "submitted" });
+  expect(animations).toHaveLength(0);
+  act(() => api.requestSubmittedQueryScroll("submitted"));
+  // The real App registers the submission in its own layout effect after this
+  // hook's layout pass. It must not paint once before the entrance is installed.
+  expect(placements).toHaveLength(1);
+  expect(animations).toHaveLength(1);
+  render({ id: null, messageID: "submitted" });
+  expect(placements).toHaveLength(1);
+  expect(animations).toHaveLength(1);
+});
+
 it("hands off optimistic motion and positioning without restarting at acknowledgement", () => {
   render({ messageID: "old" });
   act(() => api.requestSubmittedQueryScroll("submitted"));

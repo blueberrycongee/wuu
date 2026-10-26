@@ -3,6 +3,8 @@ package host_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -10,19 +12,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/appserver"
+	"github.com/blueberrycongee/wuu/internal/composition"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	wuuexec "github.com/blueberrycongee/wuu/internal/exec"
-	"github.com/blueberrycongee/wuu/internal/hooks"
-	"github.com/blueberrycongee/wuu/internal/persistence"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/remote/host"
 	"github.com/blueberrycongee/wuu/internal/remote/phone"
 	"github.com/blueberrycongee/wuu/internal/remote/relay"
 	"github.com/blueberrycongee/wuu/internal/runtime"
-	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/titleservice"
 )
 
 // gatedClient is a deterministic provider: each Chat call waits for one
@@ -64,43 +65,60 @@ func (p *recordingPusher) hints() []string {
 
 func newRemoteTestRuntime(t *testing.T, client providers.Client) *runtime.Session {
 	t.Helper()
-	root := t.TempDir()
-	t.Setenv("HOME", t.TempDir())
-	kit, err := tools.New(root)
-	if err != nil {
-		t.Fatalf("tools.New: %v", err)
-	}
-	rt := &runtime.Session{
-		ProviderName:   "fake-provider",
-		Model:          "fake-model",
-		RootDir:        root,
-		ConfigPath:     filepath.Join(root, ".wuu.json"),
-		SessionDir:     filepath.Join(root, ".wuu-state", "sessions"),
-		HookDispatcher: hooks.NewDispatcher(nil),
-		Toolkit:        kit,
-		StreamRunner: &agent.StreamRunner{
-			LoopDriver: agent.DefaultDriver{},
-
-			Client:       providers.AdaptStreamClient(client),
-			Model:        "fake-model",
-			SystemPrompt: "system prompt",
+	root, home, wuuHome := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WUU_HOME", wuuHome)
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Stream bool `json:"stream"`
+		}
+		if r.URL.Path != "/v1/chat/completions" || json.NewDecoder(r.Body).Decode(&request) != nil || !request.Stream {
+			http.Error(w, "unexpected model request", http.StatusBadRequest)
+			return
+		}
+		response, err := client.Chat(r.Context(), providers.ChatRequest{})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%q}}]}\n\n", response.Content)
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	t.Cleanup(model.Close)
+	disabled := false
+	external := &config.EngineBinaryConfig{Enabled: &disabled}
+	cfg := config.Config{
+		DefaultProvider: "fake-provider",
+		Providers: map[string]config.ProviderConfig{"fake-provider": {
+			Type: "openai-compatible", BaseURL: model.URL + "/v1", APIKey: "fixture", Model: "fake-model",
+		}},
+		Engines: &config.EnginesConfig{
+			DefaultEngine: "wuu", Codex: external, Claude: external, Cursor: external,
+			Devin: external, DSH: external, Grok: external, Hermes: external,
+			Pi: external, OpenCode: external, Antigravity: external,
 		},
+		Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{
+			credentialstore.OSModule: false, credentialstore.FileModule: true,
+			// Only the two explicitly gated turns should invoke the model.
+			titleservice.NativeModule: false,
+		}}}},
 	}
-	documents, err := persistence.Open(context.Background(), filepath.Join(rt.SessionDir, "documents"), "sqlite")
+	// Select the complete engine/model/state graph before publication. Registering
+	// a legacy engine alone does not provide captured service-call authority.
+	plugins := []pluginpkg.Plugin{}
+	rt, err := runtime.NewSession(runtime.Options{
+		RootDir: root, HomeDir: home, WuuHome: wuuHome, Config: cfg,
+		DiscoveredPlugins: &plugins, NonInteractive: true,
+	})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("runtime.NewSession: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := documents.Close(); err != nil {
+		if _, err := rt.Cleanup(); err != nil {
 			t.Error(err)
 		}
 	})
-	rt.Documents, rt.Sessions = documents, session.NewStore(context.Background(), documents)
-	registry := agentengine.NewRegistry()
-	if err := registry.Register(runtime.NewWuuEngine(rt)); err != nil {
-		t.Fatal(err)
-	}
-	rt.SetEnginesForTest(registry)
 	return rt
 }
 
@@ -159,11 +177,14 @@ func TestRemoteControlEndToEnd(t *testing.T) {
 		t.Fatalf("host.New: %v", err)
 	}
 	hostCtx, cancelHost := context.WithCancel(testCtx)
-	defer cancelHost()
 	hostDone := make(chan struct{})
 	go func() {
 		defer close(hostDone)
 		_ = h.Run(hostCtx)
+	}()
+	defer func() {
+		cancelHost()
+		<-hostDone
 	}()
 	uri := <-uriCh
 

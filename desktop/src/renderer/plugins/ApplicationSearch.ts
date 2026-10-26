@@ -1,7 +1,8 @@
 import type { SetStateAction } from "react";
 import type { ApplicationSearchActionMapV1 as Actions, ApplicationSearchResultV1, ApplicationSearchTargetV1, ApplicationSearchViewV1 } from "../../../../packages/plugin-sdk/src/ui-search";
 import type { RuntimeContext, Thread, ThreadSearchResultItem } from "../../shared/protocol";
-import { activeThreadForState, sameRuntimeContext, summarizeThreadForSidebar, updateThreadByID, updateTurnItem, type AppState } from "../AppState";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { activeThreadForState, resolveThreadRuntimeContext, sameRuntimeContext, summarizeThreadForSidebar, updateThreadByID, updateTurnItem, type AppState } from "../AppState";
 import { conversationSearchPattern } from "../ConversationSearchDisplay";
 
 const resultLimit = 100;
@@ -22,12 +23,13 @@ export interface ApplicationSearchHost {
   cacheThreads(threads: Thread[]): void;
   /** Claims the shared navigation synchronously, then waits for activation. */
   activateThread(threadId: string, signal: AbortSignal): Promise<void>;
-  getNavigation(): { revision: number; pending: boolean };
+  getNavigation(): { revision: number; pending: boolean; intentId?: string };
 }
 type TargetWork = {
   view: ApplicationSearchTargetV1;
   abort: AbortController;
   revision?: number;
+  intentId?: string;
   context?: RuntimeContext;
   activated: boolean;
   loading: boolean;
@@ -58,12 +60,27 @@ export class ApplicationSearch {
   start(): () => void {
     this.stopState?.();
     const lifetime = ++this.lifetime;
+    const state = this.host.getState(), target = state.conversationSearchTarget;
+    if (!this.work && target) {
+      const context = resolveThreadRuntimeContext(target.result.thread, state.projects);
+      if (activeThreadForState(state)?.id === target.result.thread.id
+        && sameRuntimeContext(context, state.activeContext) && context?.cwd === state.activeContext?.cwd) {
+        const navigation = this.host.getNavigation();
+        this.query = target.query;
+        this.work = { view: { id: target.id, threadId: target.result.thread.id, messageSeq: target.result.message_seq!, query: target.query, phase: "activating" },
+          abort: new AbortController(), revision: navigation.revision, intentId: navigation.intentId, context: state.activeContext, activated: true, loading: false };
+      } else this.host.updateState(current => ({ ...current, conversationSearchTarget: undefined }));
+    }
     this.stopState = this.host.subscribeState(() => this.reconcile());
     this.reconcile();
     return () => {
       if (lifetime !== this.lifetime) return;
       this.lifetime++; this.stopState?.(); this.stopState = undefined;
-      this.invalidateQuery(); this.clearTarget();
+      this.invalidateQuery();
+      // Only the data address enters the stopped checkpoint. Never carry the
+      // old writer's promises, cursor ownership, or viewport callbacks forward.
+      const work = this.work; this.work = undefined;
+      work?.abort.abort(new PluginLifecycleCancellationError());
     };
   }
   private invalidateQuery(): void {
@@ -139,7 +156,8 @@ export class ApplicationSearch {
     this.host.changed();
     try {
       const activation = this.host.activateThread(result.thread.id, work.abort.signal);
-      work.revision = this.host.getNavigation().revision;
+      const navigation = this.host.getNavigation();
+      work.revision = navigation.revision; work.intentId = navigation.intentId;
       await activation;
       if (this.work !== work || work.abort.signal.aborted) return {};
       work.context = this.host.getState().activeContext;
@@ -165,7 +183,14 @@ export class ApplicationSearch {
       }
       const work = this.work;
       if (!work) return;
-      if (work.revision !== undefined && this.host.getNavigation().revision !== work.revision) { this.clearTarget(work.view.id); return; }
+      const navigation = this.host.getNavigation();
+      if (work.revision !== undefined && navigation.revision !== work.revision) {
+        // A retained intent identifies selected-authority handoff, not newer
+        // navigation. Fence this writer while leaving its read-only address.
+        if (work.intentId && navigation.intentId === work.intentId) work.abort.abort(new PluginLifecycleCancellationError());
+        else this.clearTarget(work.view.id);
+        return;
+      }
       if (!work.activated) return;
       if (!this.owns(work)) { this.clearTarget(work.view.id); return; }
       if (this.host.getNavigation().pending || work.loading || ["ready", "not-found", "failed"].includes(work.view.phase)) return;
