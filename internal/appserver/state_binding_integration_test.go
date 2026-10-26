@@ -2,6 +2,8 @@ package appserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,6 +98,13 @@ func TestServerResumeUsesSelectedAuthorityInsteadOfCachedTranscript(t *testing.T
 	if err != nil || len(original) != 1 || original[0].Content != "original authority" {
 		t.Fatalf("original authority changed: %+v, %v", original, err)
 	}
+	if err := documents.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dispatchPayload(t, srv, "unavailable", MethodThreadResume, ThreadResumeParams{SessionID: id})
+	if response := responseByID(t, parseOutput(t, out.String()), "unavailable"); response["error"] == nil {
+		t.Fatalf("unavailable selected authority fell back to a cached transcript: %+v", response)
+	}
 }
 
 // A parked Run retains its original authority after publication. A scheduler
@@ -113,6 +122,9 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 			rt.InferenceJournalRuntime = journal
 			const id = "captured-run-thread"
 			if _, err := rt.Sessions.CreateWithMetadata(id, rt.RootDir); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := appendChatMessage(rt.Sessions, id, providers.ChatMessage{Role: "user", Content: "accepted run transcript"}); err != nil {
 				t.Fatal(err)
 			}
 			out := &lockedBuffer{}
@@ -162,6 +174,29 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 			view, err := srv.readExecutionRun(current, context.Background(), run.ID)
 			if err != nil || view.Run.ID != run.ID || !view.Attached {
 				t.Fatalf("attached run switched authority: %+v, %v", view, err)
+			}
+			dispatchPayload(t, srv, "resume", MethodThreadResume, ThreadResumeParams{SessionID: id, ConversationHistory: true})
+			resume := responseByID(t, parseOutput(t, out.String()), "resume")
+			if resume["error"] != nil {
+				t.Fatalf("read retained Run conversation: %+v", resume)
+			}
+			resumed := remarshal[ThreadResumeResult](t, resume["result"])
+			if len(resumed.Thread.Turns) != 1 {
+				t.Fatalf("retained Run transcript missing: %+v", resumed.Thread)
+			}
+			dispatchPayload(t, srv, "history", "thread/history/read", map[string]string{"thread_id": id, "cursor": "conversation:turn:" + resumed.Thread.Turns[0].ID})
+			if response := responseByID(t, parseOutput(t, out.String()), "history"); response["error"] != nil {
+				t.Fatalf("read retained Run history page: %+v", response)
+			}
+			dispatchPayload(t, srv, "text", "thread/textSnapshot", map[string]string{"thread_id": id})
+			if response := responseByID(t, parseOutput(t, out.String()), "text"); response["error"] != nil {
+				t.Fatalf("read retained Run text snapshot: %+v", response)
+			}
+			item := resumed.Thread.Turns[0].Items[0]
+			digest := sha256.Sum256(mustJSON(item))
+			dispatchPayload(t, srv, "content", "thread/content/read", map[string]any{"thread_id": id, "turn_id": resumed.Thread.Turns[0].ID, "item_id": item.ID, "index": 0, "sha256": hex.EncodeToString(digest[:])})
+			if response := responseByID(t, parseOutput(t, out.String()), "content"); response["error"] != nil {
+				t.Fatalf("read retained Run content: %+v", response)
 			}
 			params := any(TurnInterruptParams{ThreadID: id})
 			want := execution.StatusInterrupted

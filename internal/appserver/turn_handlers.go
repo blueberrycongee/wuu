@@ -2106,8 +2106,9 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 	return s.writeResponse(req.ID, OKResult{OK: err == nil}, err)
 }
 
-// User interruption follows accepted execution ownership, including a Run
-// waiting between turns after a replacement provider has been published.
+// User reads and interruption follow accepted execution ownership, including a
+// Run waiting between turns after a replacement provider has been published.
+// Idle reads and new admissions still use the explicitly selected authority.
 func (s *Server) retainUserThreadExecutionState(threadID string, includeFailedSettlement bool) (*runtime.State, string, error) {
 	runID := s.activeExecutionRunID(threadID)
 	var binding *runtime.State

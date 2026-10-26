@@ -430,8 +430,9 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.activity = activity;
     // Task cleanup and repeated snapshots must not erase a successful turn
     // completion or restart its dismissal deadline.
-    if (activity.execution_id !== previous.execution_id
-      || activity.state === "error" || activity.controller === "user") {
+    if (activity.id !== previous.id || activity.execution_id !== previous.execution_id
+      || (activity.state === "error" && previous.state !== "error")
+      || (activity.controller === "user" && previous.controller !== "user")) {
       this.setTurnCompleted(false);
     }
     this.pushActivityState();
@@ -446,7 +447,14 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.awaitingVisibility = true;
     clearTimeout(this.placeholderTimer);
     this.placeholderTimer = undefined;
-    this.setTurnCompleted(false);
+    // Rebuilding capture for the same task/target is not new activity. Keep
+    // its completion deadline (including expiry) across provider recovery.
+    if (activity.id !== this.activity.id || activity.execution_id !== this.activity.execution_id
+      || activity.workdir !== this.activity.workdir || activity.thread_id !== this.activity.thread_id
+      || activity.kind !== this.activity.kind || activity.target !== this.activity.target
+      || activity.process_id !== this.activity.process_id || activity.window_id !== this.activity.window_id) {
+      this.setTurnCompleted(false);
+    }
     this.cancelSnap();
     const bounds = this.win?.getBounds();
     // Provider switches preserve the user's exact card size and resting corner.

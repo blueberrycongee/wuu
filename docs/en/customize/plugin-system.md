@@ -295,6 +295,9 @@ Presenters receive snapshots rather than mutable host stores. An advertised acti
 
 ## Trust, recovery, and compatibility
 
+See [plugin compatibility and upgrades](plugin-compatibility.md) for the supported
+protocol/lifecycle boundaries, deprecation rules and retained-artifact gate.
+
 Plugins are trusted code running with user authority. Manifest permissions and service declarations describe contracts but do not isolate a process from the machine. Tool permission checks and filesystem process confinement protect their respective host execution paths; they do not turn arbitrary plugin code into untrusted sandboxed code.
 
 A committed disable or removal revokes that plugin across retained generations without waiting for an idle turn: native executions are canceled, owned MCP servers cannot reconnect, and future legacy hooks and transforms are removed. Already-running legacy hooks keep their caller lifetime; existing transcript content and completed external effects are not erased. Same-ID updates instead let active work finish on its original implementation. Superseded idle runtimes are released without waiting for another user message; outstanding conversation workers and managed processes can keep an older implementation alive. Plugins with activation-owned background effects must tolerate that overlap while work drains. Storage and settings normally remain, and completed external effects are not undone. Safe mode and default-UI recovery provide ways to regain control after extension failures. Wuu does not audit or certify third-party packages; see the [security model](../reference/security-model.md).

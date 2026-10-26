@@ -83,13 +83,69 @@
 }
 ```
 
-主题 token 来自[生成的主题契约](theme-surface-matrix.md)，不是任意宿主 CSS 变量。公共语义颜色为独立 UI 外壳提供可读取的默认值。在主题的 `tokens` 中声明颜色即可覆盖内置界面；未声明的颜色保留各组件的默认外观。清除或停用主题会恢复这些默认外观。设置支持 `boolean`、`string`、`number`、`enum`，作用域为 `user|workspace`，应用方式为 `live|restart`。运行时通过 `host.settings.get/list` 服务读取，桌面 View 通过 `host.getSetting` 读取。禁用或删除包默认保留设置和存储。
+主题 token 来自[生成的主题契约](theme-surface-matrix.md)，不是任意宿主 CSS 变量。公共语义颜色为独立 UI 外壳提供可读取的默认值。在主题的 `tokens` 中声明颜色即可覆盖内置界面；未声明的颜色保留各组件的默认外观。清除或停用主题会恢复这些默认外观。设置支持 `boolean`、`string`、`number`、`enum`，作用域为 `user|workspace`，应用方式为 `live|next-operation|restart`。运行时通过 `host.settings.get/list` 服务读取，桌面 View 通过 `host.getSetting` 读取。禁用或删除包默认保留设置和存储。
 
 `contributes.commands` 中的命令包含本地 ID 和 kind。`prompt_template` 引用包内有大小限制的 UTF-8 文件，提供宿主管理的输入框动作；`runtime_action` 指向桌面 generation 注册的命令，只有声明不会执行代码。`side_conversation` 引用包内提示词，打开宿主管理的附属会话界面；消息继续使用现有侧聊执行与历史机制，宿主保留当前权限边界。发送请求使用 `plugin.command` 公共 ID 标识命令；停用或移除所属插件会取消正在生成的回答，但不会删除历史。同 ID 更新从下一次回答生效，正在生成的回答保留其原有 generation。此类命令不需要桌面入口或辅助进程。
 
 首次设置在完成前中断时，会保留已经应用的插件选择。清单区分实际 `enabled` 状态与可选的 `enabled_override` 用户设置；没有 override 时使用插件默认值。
 
 manifest UI 声明使用 `contributes.presenters`、`navigation`、`workspaceTools` 或 `settingsPages`，描述放置位置和入口，实际渲染由桌面模块注册。对于已声明的 UI 区域，调用 `registerUIContribution` 并指定带所有者前缀的目标，无需 manifest 条目。旧 `contributes.slots` 和 `surfaces` 字段会被拒绝。组合规则见[桌面 UI 插件](desktop-plugins.md)。
+
+### 配置快照与生效时机
+
+修改配置不会重启插件或重建其资源。为每个非 secret 设置选择生效方式：
+
+| `apply` | 运行时读取行为 |
+| --- | --- |
+| `live` | 每次读取或刷新采用最新的、完整验证通过的候选配置。 |
+| `next-operation` | 经过宿主认证的工具、能力或服务执行首次读取快照或非 secret 设置时，固定全部操作级设置；同次执行后续读取保留这些值，新执行采用新值。 |
+| `restart` | 在 generation 准备阶段之前固定；该 generation 及其保留的在途执行都使用旧值，成功重载或宿主重启后采用已保存的新值。 |
+
+连接端点、池结构等资源配置使用 `restart`，操作参数使用 `next-operation`。
+执行级读取要使用该回调收到的 `host`；后台 host 没有所属操作。对插件自定义的
+多步骤操作，即使设置声明为 `live`，也可以只捕获一次，再把不可变快照传给每一步：
+
+```ts
+import { createPluginSettings, requireKernelService } from "@wuu/plugin-sdk";
+
+// initialize(): required_services: [requireKernelService("host.settings.list")]
+// 在 executeTool、invokeService 或 invokeCapability 中：
+const settings = createPluginSettings(host, { signal: execution.signal });
+const config = await settings.capture();
+// 整次操作使用 config.values；后续刷新不会修改已有快照。
+```
+
+`host.settings.list` 继续接受 `{}` 并返回 `entries`，同时增加不透明的 `revision`、
+已保存配置的 `scope_revisions`、以及待重启生效的本地键 `restart_required`。
+可选参数 `{scope: "user" | "workspace"}` 过滤返回值及其元数据。修订标识是内容
+令牌，只能比较相等，不能排序，也不是事件日志。每个 scope 只读取一次提供方文档，
+所有已声明值通过验证后才发布。各 scope 独立提交；组合快照**不是跨 scope 事务**，
+相互依赖的值应放在同一 scope。secret 条目始终为空字符串，修订标识不包含秘密，
+也不随秘密是否已配置而改变。
+
+读取器的 `refresh()` 只有在读取与可选的 `validate(values)` 跨字段校验成功后才
+原子替换 `current`。存储值非法、后端失败或取消会拒绝刷新，已有快照不变。
+`subscribe(callback)` 只通知新发布且修订不同的快照，返回取消订阅函数。
+可选的 `watch(intervalMs)` 默认每秒刷新，允许 100–60,000 毫秒，并合并并发刷新。
+必须等待其 Promise 或处理拒绝。订阅不会自动启动观察；轮询可能合并中间变化，
+不是持久事件流。后台观察传入 generation 生命周期 signal；中止后清除监听器，
+晚到结果不得发布。监听器异常会在**发布后**使刷新拒绝，不会回滚已发布配置。
+
+现有 `get`/`getAll` 接口和 `host.settings.get/list` 调用形态保持可用。新读取器要求
+快照元数据，面对旧宿主会明确拒绝，不把多次独立读取伪装成一致快照。
+桌面 `host.getSetting` 用于配置编辑器，返回**已保存值**，不代表运行时 restart
+设置的当前生效值。secret 读取仍不返回令牌。
+
+带 fingerprint 校验的 `plugin/setting/set` 编辑入口在现有 `key`、`value` 外，
+接受可选的 `patch`，原子修改主键所在 scope 内的其他非 secret 键。完整声明候选
+验证通过后，通过所选提供方的一次 compare-and-exchange 提交。重复键、外来键、
+跨 scope 修改以及 patch 中的 secret 都会在写入前拒绝；这也允许一次修复 schema
+变更后多个非法存储值。已移除的声明仍保留存储以兼容降级，但不暴露给当前插件。
+结果不确定的提供方写入失败不会自动重试；先重新读取，再决定是否重试。
+
+执行 `node scripts/plugin-settings-e2e.mjs`，可用打包后的 SDK 子进程验收在途读取、
+重载、资源稳定性、候选拒绝及退休。测试只用合成状态，可复查证据保存在
+`.tmp/e2e/plugin-settings/`，也可通过 `WUU_SETTINGS_EVIDENCE` 指定目录。
 
 ### 外壳皮肤
 

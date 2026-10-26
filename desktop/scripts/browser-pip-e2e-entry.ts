@@ -254,7 +254,7 @@ async function verifyBrowserExtensions(): Promise<void> {
 
 app.whenReady().then(async () => {
   mkdirSync(artifacts, { recursive: true });
-  await verifyBrowserExtensions();
+  if (process.env.WUU_BROWSER_PIP_SKIP_EXTENSIONS !== "1") await verifyBrowserExtensions();
   if (process.env.WUU_BROWSER_EXTENSION_E2E_ONLY === "1") { app.quit(); return; }
   const main = new BrowserWindow({ width: 1000, height: 720, show: false });
   await main.loadURL("data:text/html;charset=utf-8,<body style='margin:0;background:%23edf0f5;font:14px system-ui;padding:12px'>Wuu · Browser panel</body>");
@@ -348,6 +348,12 @@ app.whenReady().then(async () => {
   const completedEvent = { workdir, kind: "notification" as const, message: {
     method: "turn/completed", params: { thread_id: activity.thread_id, turn: { status: "completed" } },
   } };
+  // Completing after a user takeover must still expire. Ordinary activity
+  // snapshots keep that controller value; they are not repeated takeovers.
+  const completedActivity: ActivitySession = {
+    ...activity, state: "user_controlled", controller: "user", updated_at: new Date().toISOString(),
+  };
+  coordinator.update(completedActivity);
   const completedAt = Date.now();
   coordinator.handleServerEvent(completedEvent);
   await waitFor("completion shown", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'false'`));
@@ -366,18 +372,36 @@ app.whenReady().then(async () => {
   assert.equal(await overlay.executeJavaScript(`document.activeElement.id`), "expand");
   await overlay.executeJavaScript(`document.activeElement.blur()`);
 
-  const stoppedActivity: ActivitySession = {
-    ...activity, state: "stopped", controller: "none", updated_at: new Date().toISOString(),
-  };
-  coordinator.update(stoppedActivity);
   coordinator.setActiveThread("other-thread");
   coordinator.setActiveThread(activity.thread_id);
   coordinator.handleServerEvent(completedEvent);
   assert.equal(pip.isVisible(), true, "Completion remains visible before its deadline");
-  await waitFor("completed preview dismissed", () => !pip.isVisible(), 35_000);
+  let unrelatedRefreshes = 0;
+  const churn = setInterval(() => {
+    unrelatedRefreshes++;
+    // These are the native calls caused by renderer layout/state subscriptions,
+    // including repeated success signals and fresh objects with the same owner.
+    coordinator.update({ ...completedActivity, updated_at: new Date().toISOString() });
+    coordinator.setActiveThread(activity.thread_id);
+    coordinator.refreshBrowserPresentation();
+    coordinator.setAppearance(false);
+    const { width, height } = main.getContentBounds();
+    coordinator.setBrowserPiPHostLayout(main.webContents.id, main, { host: { x: 0, y: 0, width, height }, obstacles: [] });
+    pip.emit("ready-to-show");
+    coordinator.handleServerEvent(completedEvent);
+  }, 200);
+  try {
+    await waitFor("completed preview dismissed despite unrelated updates", () => !pip.isVisible(), 35_000);
+  } finally {
+    clearInterval(churn);
+  }
+  assert.ok(unrelatedRefreshes > 20, `Exercised ${unrelatedRefreshes} unrelated refreshes`);
   const dismissedAfterMs = Date.now() - completedAt;
   assert.ok(dismissedAfterMs >= 30_000 && dismissedAfterMs < 33_000, `Dismissed after ${dismissedAfterMs}ms`);
   assert.equal(contents.isDestroyed(), false, "Auto-dismiss retains the browser page");
+  const stoppedActivity: ActivitySession = {
+    ...activity, state: "stopped", controller: "none", updated_at: new Date().toISOString(),
+  };
   coordinator.update(stoppedActivity);
   coordinator.refreshBrowserPresentation();
   coordinator.setActiveThread("other-thread");
@@ -407,10 +431,15 @@ app.whenReady().then(async () => {
   }, 35_000);
   await capture(pip, "pip-new-task-retained.png");
   writeFileSync(join(artifacts, "completion-dismissal.json"), JSON.stringify({
-    dismissedAfterMs, retainedPage: !contents.isDestroyed(),
+    dismissedAfterMs, unrelatedRefreshes, retainedPage: !contents.isDestroyed(),
     stayedDismissedAfterRefresh: true, explicitReopen: true, newTaskSurvivedOldDeadline: true,
   }, null, 2));
 
+  // Host measurements above choose the product's compact card. The input
+  // projection checks below deliberately use the fixture's fixed 0.3 scale.
+  pip.setBounds({ x: 120, y: 120, width: 384, height: 240 });
+  coordinator.handleServerEvent(completedEvent);
+  await waitFor("completion precedes real browser input", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'false'`));
   await click();
   await waitFor("new work clears completion", () => overlay.executeJavaScript(`document.getElementById('completion').getAttribute('aria-hidden') === 'true'`));
   assert.equal(await contents.executeJavaScript("window.clicks"), 1, "PiP input reaches the page target");

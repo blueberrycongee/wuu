@@ -28,8 +28,8 @@ import (
 //
 // ## Protocol version
 //
-// Protocol version 2 adds capability negotiation and is the only production
-// Host-to-plugin extension seam. Protocol version 3 adds service
+// Protocol version 1 retains tool calls; version 2 adds capability negotiation.
+// Protocol version 3 adds service
 // provide/consume declarations routed through the generation-scoped service
 // registry.
 const (
@@ -650,9 +650,18 @@ type SettingsGetResult struct {
 	Value json.RawMessage `json:"value"`
 }
 
-// SettingsListResult is the output of host.settings.list.
+// SettingsListParams optionally narrows a snapshot to one independently committed scope.
+type SettingsListParams struct {
+	Scope string `json:"scope,omitempty"`
+}
+
+// SettingsListResult is the output of host.settings.list. Revision is an opaque
+// content token, not a sequence number. Existing entries-only readers remain valid.
 type SettingsListResult struct {
-	Entries map[string]json.RawMessage `json:"entries"`
+	Entries         map[string]json.RawMessage `json:"entries"`
+	Revision        string                     `json:"revision"`
+	ScopeRevisions  map[string]string          `json:"scope_revisions"`
+	RestartRequired []string                   `json:"restart_required"`
 }
 
 // ---------------------------------------------------------------------------
@@ -684,8 +693,8 @@ type CapabilityInitializeResult struct {
 	// diagnostic; there is no dependency solver.
 	RequiredServices []ServiceRequirement `json:"required_services,omitempty"`
 
-	// ProtocolVersion is the capability protocol version the plugin
-	// requests. The host may downgrade to v1 if v2 is unsupported.
+	// ProtocolVersion is the capability protocol version the plugin requests.
+	// Omission means v1; unsupported explicit versions fail, never downgrade.
 	ProtocolVersion int `json:"protocol_version,omitempty"`
 
 	// LifecycleVersion opts the runtime into initialize/prepare/activate semantics.
@@ -996,7 +1005,7 @@ func ValidateCapabilityNegotiation(result CapabilityInitializeResult, supported 
 		version = ProtocolVersion
 	}
 	if version < ProtocolVersion || version > CapabilityProtocolVersion {
-		return fmt.Errorf("unsupported negotiated protocol version %d", version)
+		return fmt.Errorf("unsupported negotiated protocol version %d (supported: %d-%d)", version, ProtocolVersion, CapabilityProtocolVersion)
 	}
 	if err := ValidateServiceNegotiation(result); err != nil {
 		return err

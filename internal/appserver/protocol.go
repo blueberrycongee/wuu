@@ -1031,6 +1031,8 @@ type PluginSettingSetParams struct {
 	Fingerprint string          `json:"fingerprint"`
 	Key         string          `json:"key"`
 	Value       json.RawMessage `json:"value"`
+	// Patch is an atomic set of additional non-secret keys in the primary key's scope.
+	Patch map[string]json.RawMessage `json:"patch,omitempty"`
 }
 
 type PluginSettingResult struct {

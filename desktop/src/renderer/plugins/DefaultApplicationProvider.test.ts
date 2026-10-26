@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { PluginHost, type PluginGenerationApi } from "./PluginHost";
 import { activate } from "./DefaultApplicationProvider";
 import * as RuntimeLoader from "../RuntimeLoadState";
+import * as Toast from "../Toast";
 import type { WuuDesktopApi } from "../../shared/protocol";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 
@@ -203,7 +204,7 @@ it("carries workspace presentation identity without replaying workspace or draft
   expect(app.getSnapshot().workspaces.activeRoot).toBe("/b");
 });
 
-it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected"] as const)("fences a cross-workspace history read at the selected application graph (%s)", async mode => {
+it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected", "resume-missing", "activation-rejected"] as const)("fences a cross-workspace history read at the selected application graph (%s)", async mode => {
   const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
   const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
   const projects = [source, target].map(context => ({ id: context.project_id, name: context.project_id, path: context.cwd, created_at: "", updated_at: "" }));
@@ -214,7 +215,9 @@ it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected"
   });
   const thread = { id: "destination", cwd: target.cwd, project_id: "b", title: "Destination", preview: "", status: "idle", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", turns: [] };
   const resume = vi.fn().mockResolvedValue({ thread });
-  window.wuu = { listProjects: vi.fn(async () => ({ projects, active_context: selected })), resumeThread: resume,
+  const notice = vi.spyOn(Toast, "showErrorToast");
+  const diagnostic = vi.spyOn(console, "warn").mockImplementation(() => {});
+  window.wuu = { startThread: vi.fn(), startTurn: vi.fn(), queueTurn: vi.fn(), listProjects: vi.fn(async () => ({ projects, active_context: selected })), resumeThread: resume,
     onServerEvent: () => () => {}, listUserQuestions: vi.fn().mockResolvedValue({ requests: [] }),
   } as unknown as WuuDesktopApi;
   vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockImplementation(async context => { selected = context as typeof selected; return { projects, active_context: selected }; });
@@ -267,20 +270,45 @@ it.each(["changed", "same", "missing", "rejected", "returned", "resume-rejected"
         expect(resume).toHaveBeenCalledExactlyOnceWith("origin");
         expect(app.getSnapshot().conversation.threadId).toBe("origin");
       }
-      if (mode === "changed" || mode === "resume-rejected") {
+      if (["changed", "resume-rejected", "resume-missing", "activation-rejected"].includes(mode)) {
         // The successor owns the only selected-generation history read.
         vi.mocked(RuntimeLoader.loadRuntimeConfiguration).mockResolvedValue({ activeContext: target, projects, initialized: initialization("target") as never });
-        if (mode === "resume-rejected") {
-          resume.mockRejectedValue(new Error("selected history unavailable"));
-          await expect(host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register })).rejects.toThrow("selected history unavailable");
-          expect(resume).toHaveBeenCalledExactlyOnceWith(thread.id);
+        if (mode === "activation-rejected") {
+          vi.mocked(RuntimeLoader.loadRuntimeConfiguration).mockRejectedValue(new Error("selected configuration unavailable"));
+          await expect(host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register })).rejects.toThrow("selected configuration unavailable");
+          expect(resume).not.toHaveBeenCalled();
           expect(host.applicationProviders.current).toBeUndefined();
           expect(host.applicationProviders.failure).toContain("previous writer remains stopped");
           return;
         }
+        if (mode === "resume-rejected") resume.mockRejectedValue(new Error("selected history unavailable"));
+        if (mode === "resume-missing") resume.mockResolvedValue({});
         await host.activateGeneration({ pluginId: "business", generation: "one", graphGeneration: "target", register });
         await host.activateGeneration({ pluginId: "shell", generation: "two", register: api => { app = api.application; } });
         expect(resume).toHaveBeenCalledExactlyOnceWith(thread.id);
+        if (mode === "resume-rejected" || mode === "resume-missing") {
+          expect(host.applicationProviders.current).toBeDefined();
+          expect(host.applicationProviders.failure).toBeUndefined();
+          expect(app.getSnapshot().conversation.threadId).toBeUndefined();
+          expect(app.getSnapshot().tabs.pending).toBeUndefined();
+          expect(app.getSnapshot().workspaces.activeRoot).toBe(target.cwd);
+          expect(selected).toEqual(target);
+          expect(notice).toHaveBeenCalledOnce();
+          expect(diagnostic).toHaveBeenCalledWith("Conversation restoration failed", expect.objectContaining({ threadId: thread.id }), expect.any(Error));
+          expect(app.getSnapshot().tabs.items.some(tab => tab.draftText === "keep source draft")).toBe(true);
+          await app.invoke("composer.set-draft", { text: "still editable" });
+          expect(app.getSnapshot().composer.draftText).toBe("still editable");
+          expect(window.wuu.startThread).not.toHaveBeenCalled();
+          expect(window.wuu.startTurn).not.toHaveBeenCalled();
+          expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+          // Other history works, and explicitly reselecting the failed row retries
+          // under the same selected authority rather than replaying any writes.
+          resume.mockImplementation(async id => ({ thread: { ...thread, id } }));
+          await app.invoke("thread.activate", { threadId: "healthy", workspaceId: "b" });
+          expect(app.getSnapshot().conversation.threadId).toBe("healthy");
+          await app.invoke("thread.activate", { threadId: thread.id, workspaceId: "b" });
+          expect(resume.mock.calls.map(([id]) => id)).toEqual([thread.id, "healthy", thread.id]);
+        }
         expect(app.getSnapshot().conversation.threadId).toBe(thread.id);
       }
     }

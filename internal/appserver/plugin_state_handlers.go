@@ -1,7 +1,6 @@
 package appserver
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -63,8 +62,28 @@ func (s *Server) handlePluginSettingSet(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := validatePluginSettingValue(definition, params.Value); err != nil {
+	if err := pluginpkg.ValidateSettingValue(definition, params.Value); err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	patch := make(map[string]json.RawMessage, len(params.Patch))
+	if len(params.Patch) > 255 {
+		return s.writeResponse(req.ID, nil, errors.New("plugin setting patch exceeds 255 additional keys"))
+	}
+	for patchKey, value := range params.Patch {
+		_, patchDefinition, localKey, err := s.activePluginSettingIn(services.Snapshot, params.ID, params.Fingerprint, patchKey)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if localKey == key || patch[localKey] != nil {
+			return s.writeResponse(req.ID, nil, errors.New("plugin setting patch contains a duplicate key"))
+		}
+		if patchDefinition.Scope != definition.Scope || patchDefinition.Type == pluginpkg.SettingTypeSecret || definition.Type == pluginpkg.SettingTypeSecret {
+			return s.writeResponse(req.ID, nil, errors.New("plugin setting patch must contain non-secret keys in one scope"))
+		}
+		if err := pluginpkg.ValidateSettingValue(patchDefinition, value); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		patch[localKey] = value
 	}
 	if definition.Type == pluginpkg.SettingTypeSecret {
 		var value string
@@ -74,6 +93,29 @@ func (s *Server) handlePluginSettingSet(req Request) error {
 	scope := PluginValueScope(definition.Scope)
 	document, err := services.Settings.Update(context.Background(), plugin.SubjectID, pluginsettings.Scope(scope), plugin.Fingerprint, func(values map[string]json.RawMessage) error {
 		values[key] = append(json.RawMessage(nil), params.Value...)
+		for patchKey, value := range patch {
+			values[patchKey] = append(json.RawMessage(nil), value...)
+		}
+		// Validate every declared value in this independently committed scope.
+		// Removed declarations remain stored for downgrade compatibility, but
+		// are never exposed as active settings.
+		for qualified, candidateDefinition := range plugin.Settings {
+			if candidateDefinition.Scope != definition.Scope || candidateDefinition.Type == pluginpkg.SettingTypeSecret {
+				continue
+			}
+			candidateKey := strings.TrimPrefix(qualified, plugin.ID+".")
+			candidate, exists := values[candidateKey]
+			if !exists {
+				var err error
+				candidate, err = json.Marshal(candidateDefinition.Default)
+				if err != nil {
+					return err
+				}
+			}
+			if err := pluginpkg.ValidateSettingValue(candidateDefinition, candidate); err != nil {
+				return fmt.Errorf("setting %q: %w", candidateKey, err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -343,36 +385,6 @@ func pluginStorageScope(scope PluginValueScope) (pluginsettings.Scope, error) {
 	default:
 		return "", fmt.Errorf("unsupported plugin storage scope %q", scope)
 	}
-}
-
-func validatePluginSettingValue(definition pluginpkg.SettingDefinition, raw json.RawMessage) error {
-	if len(raw) == 0 || len(raw) > 64<<10 || !json.Valid(raw) {
-		return errors.New("plugin setting value must be valid JSON within 65536 bytes")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return errors.New("plugin setting value is invalid")
-	}
-	valid := false
-	switch definition.Type {
-	case pluginpkg.SettingTypeBoolean:
-		_, valid = value.(bool)
-	case pluginpkg.SettingTypeString, pluginpkg.SettingTypeSecret:
-		_, valid = value.(string)
-	case pluginpkg.SettingTypeNumber:
-		_, valid = value.(json.Number)
-	case pluginpkg.SettingTypeEnum:
-		text, ok := value.(string)
-		for _, candidate := range definition.Enum {
-			valid = valid || (ok && text == candidate)
-		}
-	}
-	if !valid {
-		return fmt.Errorf("plugin setting value does not match declared type %q", definition.Type)
-	}
-	return nil
 }
 
 // Secret settings share the existing fingerprint-gated UI route but never enter

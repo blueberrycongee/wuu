@@ -16,6 +16,7 @@ export * from "./ui.js";
 import type { PluginDependency } from "./bundle-contract.js";
 import type { ModelAdapterDescriptor } from "./model.js";
 export * from "./process.js";
+export * from "./settings.js";
 export * from "./driver.js";
 export * from "./composition.js";
 export * from "./engine-admin.js";
@@ -420,7 +421,7 @@ export interface PluginSettingDefinition {
   default: unknown;
   enum?: string[];
   scope: "user" | "workspace";
-  apply: "live" | "restart";
+  apply: "live" | "next-operation" | "restart";
   /** Exact HTTPS origins allowed to receive this secret as a Bearer token. Required for secret settings. */
   credential_origins?: string[];
 }
@@ -1230,7 +1231,16 @@ export interface HostServiceContracts {
     result: { swapped: boolean; value: string | null };
   };
   "host.settings.get": { params: { key: string }; result: { value: unknown } };
-  "host.settings.list": { params: Record<string, never>; result: { entries: Record<string, unknown> } };
+  "host.settings.list": {
+    params: { scope?: "user" | "workspace" };
+    result: {
+      entries: Record<string, unknown>;
+      /** Present on snapshot-aware hosts; old entries-only readers remain compatible. */
+      revision?: string;
+      scope_revisions?: Record<string, string>;
+      restart_required?: string[];
+    };
+  };
   "host.session.create": {
     params: {
       request_id: string;

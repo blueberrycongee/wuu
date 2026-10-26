@@ -94,9 +94,14 @@ func newRuntimeServices(host *pluginhost.Host, home string) (*runtimeServices, e
 // The ID is attached only by the invoker; domain input cannot supply authority.
 type kernelServiceExecutionKey struct{}
 
+// Set only by the kernel lifecycle callback; registry preparation admission
+// still checks the consumer and each declared read-only method.
+type kernelServicePreparationKey struct{}
+
 func kernelServiceCall(host *pluginhost.Host, registry *pluginhost.ServiceRegistry, service string) func(context.Context, string, json.RawMessage) (json.RawMessage, error) {
 	return func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
-		if execution, ok := ctx.Value(kernelServiceExecutionKey{}).(string); ok && execution != "" {
+		execution, _ := ctx.Value(kernelServiceExecutionKey{}).(string)
+		if execution != "" || ctx.Value(kernelServicePreparationKey{}) == true {
 			result, err := registry.Call(ctx, kernelHostModule, pluginhost.ServiceCallParams{Service: service, Method: method, Params: raw, ExecutionID: execution})
 			if err != nil {
 				return nil, err

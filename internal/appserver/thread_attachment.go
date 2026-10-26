@@ -35,7 +35,7 @@ func (s *Server) handleThreadAttachmentRead(req Request) error {
 	if params.Index < 0 || params.Offset < 0 || len(params.SHA256) != 64 {
 		return s.writeResponse(req.ID, nil, errors.New("invalid attachment reference or offset"))
 	}
-	binding, err := s.rt.RetainState()
+	binding, _, err := s.retainUserThreadExecutionState(params.ThreadID, true)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}

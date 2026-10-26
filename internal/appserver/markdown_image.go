@@ -82,12 +82,6 @@ func markdownImageReferences(kind, scopeID, turnID, messageID, body string) []Th
 }
 
 func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params struct {
 		Kind      string `json:"kind"`
 		ScopeID   string `json:"scope_id"`
@@ -104,6 +98,11 @@ func (s *Server) handleMarkdownImageRead(ctx context.Context, req Request) error
 	if params.Offset < 0 || (params.SHA256 != "" && len(params.SHA256) != 64) {
 		return s.writeResponse(req.ID, nil, errors.New("invalid image offset or digest"))
 	}
+	binding, _, stateErr := s.retainUserThreadExecutionState(params.ScopeID, true)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	var body, cwd string
 	switch params.Kind {
 	case "thread":

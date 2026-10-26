@@ -10,6 +10,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Added
 
+- Read plugin configuration as immutable, revisioned snapshots with lifecycle-scoped change observation. Distinguish live, next-operation and restart-only values without rebuilding resources, and atomically validate and repair same-scope setting patches.
+- Guard plugin upgrades with retained historical SDK/package process tests, explicit lifecycle/version diagnostics, and a public compatibility, deprecation and data-preserving migration contract independent of product CalVer.
+
 - Hide the navigation ribbon with a footer button or by dragging left past its compact width, and restore it from the upper-left corner. Preview drag collapse before release, with pull-back and Escape cancellation. Remember its visibility and previous width independently of the conversation sidebar.
 
 - Preview `run_code` source in activity rows without a description, and show program output alongside the full source when expanded.
@@ -189,6 +192,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
   gutters to the reading pane.
 
 ### Fixed
+
+- Keep running conversations and their history readable after installing, disabling, or removing a plugin. Reads retain the accepted execution’s provider ownership without releasing cross-process execution locks or losing queued input.
+
+- Keep the application, sidebar, and unsent drafts available when a conversation cannot be restored after a plugin change. Report that conversation failure locally and allow an explicit retry without replaying messages or changing selected providers.
 
 - Make explicitly confirmed archival settle the retained execution after provider replacement before archiving through the selected storage. Preserve partial history and held input, reject uncertain settlement and other-process ownership truthfully, and admit one confirmation under repeated clicks without reusing retired consent.
 

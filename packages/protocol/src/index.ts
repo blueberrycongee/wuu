@@ -768,7 +768,11 @@ export interface PluginIconLoadResult extends PluginIconReadParams {
 export type PluginValueScope = "user" | "workspace";
 export interface PluginIdentityParams { id: string; fingerprint: string; }
 export interface PluginSettingGetParams extends PluginIdentityParams { key: string; }
-export interface PluginSettingSetParams extends PluginSettingGetParams { value: boolean | string | number; }
+export interface PluginSettingSetParams extends PluginSettingGetParams {
+  value: boolean | string | number;
+  /** Atomic additional non-secret keys in the primary key's scope. */
+  patch?: Record<string, boolean | string | number>;
+}
 export interface PluginSettingResult {
   /** Secret values are always blank; this only indicates presence in the OS credential store. */
   configured?: boolean;
