@@ -333,7 +333,7 @@
   --sidebar-label-size: var(--font-ui);
   --sidebar-heading-size: var(--sidebar-label-size);
   /* Comfortable rows remain distinct from the larger gaps between groups. */
-  --sidebar-row-height: max(36px, round(up, calc(var(--sidebar-label-size) * 2.25), 4px));
+  --sidebar-row-height: max(28px, round(up, calc(var(--sidebar-label-size) * 1.8), 4px));
   /* Labels keep readable ink; the filled row identifies the current location.
    * Group headings use their separate tertiary-text role. */
   --sidebar-label-ink: var(--ink);
