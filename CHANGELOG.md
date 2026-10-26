@@ -188,6 +188,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Give the conversation composer more bottom spacing so the input and its shadow sit comfortably above the window edge, scaling with the UI font size.
+
 - Widen the conversation composer and reduce its side gutters while keeping messages and input aligned.
 
 - Use full sidebar glyphs to align the ribbon's collapse control with the account icon. Align its footer rows with the main composer and status controls across wrapped rows, larger UI fonts, and tool-rail visibility changes.
