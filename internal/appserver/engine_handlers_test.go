@@ -835,7 +835,12 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 					t.Fatal("prior native turn did not settle")
 				}
 			}
-			if err := os.WriteFile(control, []byte(`{"mode":"long-turn"}`), 0600); err != nil {
+			streamGate := filepath.Join(root, "stream-ready")
+			controlData, err := json.Marshal(map[string]string{"mode": "long-turn", "gate": streamGate})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(control, controlData, 0600); err != nil {
 				t.Fatal(err)
 			}
 			blocked.armed.Store(true)
@@ -844,6 +849,12 @@ func TestCodexLongTurnProgressesDuringBoundaryPersistence(t *testing.T) {
 			case <-blocked.entered:
 			case <-ctx.Done():
 				t.Fatal("native boundary persistence was not reached")
+			}
+			// The burst must begin while the selected commit is blocked. Otherwise
+			// fast native output can finish before the boundary writer is scheduled,
+			// leaving this progress assertion waiting for output that already arrived.
+			if err := os.WriteFile(streamGate, nil, 0600); err != nil {
+				t.Fatal(err)
 			}
 			stalled := false
 			started := time.Now()

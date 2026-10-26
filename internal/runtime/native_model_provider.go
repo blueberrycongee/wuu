@@ -335,7 +335,18 @@ func (n *nativeModelProvider) InvokeCapability(ctx context.Context, p pluginhost
 		return result()
 	}
 	if !input.Stream {
-		response, err := client.Chat(ctx, request)
+		var response providers.ChatResponse
+		// Logical unary calls do not dictate the provider's wire transport.
+		// Keep this compatibility decision inside the selected provider.
+		if transport, ok := client.(interface{ RequiresStreamingChat() bool }); ok && transport.RequiresStreamingChat() {
+			var stream <-chan providers.StreamEvent
+			stream, err = client.StreamChat(ctx, request)
+			if err == nil {
+				response, err = collectNativeModelStream(ctx, stream, request.Model)
+			}
+		} else {
+			response, err = client.Chat(ctx, request)
+		}
 		if err != nil {
 			output.Error = modelErrorView(err)
 			return result()

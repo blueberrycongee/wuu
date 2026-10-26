@@ -206,7 +206,9 @@ func (k *modelRequestInvoker) InvokeService(callCtx context.Context, params plug
 	// This auxiliary request intentionally has no agent-loop callbacks, injected
 	// history or tools. Provider preparation, credentials, capacity, retry and
 	// durable accounting use the ordinary host inference path.
-	client = pluginModelPipelineClient(host, client, independentModelOrigin(scope, request))
+	// The text executor owns its strict/best-effort output-limit contract;
+	// the generic invocation pipeline must not reject its explicit opt-in.
+	client = pluginModelPipelineClient(host, client, independentModelOrigin(scope, request), false)
 	response, err := modelrequest.Execute(ctx, client, request, modelrequest.Options{AllowUnboundedOutput: input.AllowUnboundedOutput})
 	binding.Generation.recordModelCompletionError(request.Execution.JournalError())
 	if err != nil {

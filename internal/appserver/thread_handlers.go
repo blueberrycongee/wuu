@@ -17,6 +17,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentthread"
 	"github.com/blueberrycongee/wuu/internal/approvefor"
 	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/execution"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -1496,13 +1497,30 @@ func (s *Server) handleThreadArchive(req Request) error {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
 	if params.Archived && params.Force {
-		s.settleThreadExecutionForForcedArchive(binding, id)
+		if err := s.settleThreadExecutionForForcedArchive(binding, id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
 	}
 	if params.Archived {
-		if th := s.threadForState(binding, id); th != nil {
+		owner, _, err := s.retainUserThreadExecutionState(id, true)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer owner.Close()
+		if err := validateArchiveExecutionOwner(binding, owner, id); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if th := s.threadForState(owner, id); th != nil {
 			th.mu.Lock()
 			running := th.running
+			var settlementErr error
+			if th.turnCompletion.failed() {
+				settlementErr = th.turnCompletion.durabilityErr
+			}
 			th.mu.Unlock()
+			if settlementErr != nil {
+				return s.writeResponse(req.ID, nil, fmt.Errorf("cannot archive before durable turn settlement: %w", settlementErr))
+			}
 			if running {
 				return s.writeResponse(req.ID, nil, errors.New("cannot archive a running thread"))
 			}
@@ -1530,6 +1548,29 @@ func (s *Server) handleThreadArchive(req Request) error {
 	return s.writeResponse(req.ID, ThreadArchiveResult{Thread: thread}, nil)
 }
 
+func validateArchiveExecutionOwner(binding, owner *runtime.State, threadID string) error {
+	// A retained execution may outlive a provider generation. Only follow it
+	// when the selected metadata still identifies the same conversation/workspace.
+	if owner.Sessions != binding.Sessions {
+		previous, found, err := owner.Sessions.Find(threadID)
+		if err != nil {
+			return err
+		}
+		current, selected, err := binding.Sessions.Find(threadID)
+		if err != nil {
+			return err
+		}
+		sameWorkspace := previous.WorkspaceID != "" && previous.WorkspaceID == current.WorkspaceID
+		if previous.WorkspaceID == "" && current.WorkspaceID == "" {
+			sameWorkspace = sameThreadListCWD(previous.CWD, current.CWD)
+		}
+		if !found || !selected || previous.ID != current.ID || previous.CreatedAt.IsZero() || !previous.CreatedAt.Equal(current.CreatedAt) || !sameWorkspace {
+			return errors.New("selected conversation does not match the retained execution owner")
+		}
+	}
+	return nil
+}
+
 var errArchivedWhileRunning = errors.New("archived while the conversation was still running")
 
 // settleThreadExecutionForForcedArchive is the escape hatch behind
@@ -1539,36 +1580,62 @@ var errArchivedWhileRunning = errors.New("archived while the conversation was st
 // running flag; nothing ever settles the turn again, so the thread would stay
 // un-archivable forever.
 //
-// A live turn is interrupted with the usual interrupt semantics first (queued
-// work is held, the worker tree freezes, observers are notified); the
-// synchronous settlement below then clears the running state immediately, and
-// the runner's own settlement no-ops once currentTurn is cleared. A dead turn
-// is settled in place. Cross-process ownership is unaffected: a live owner in
+// A live runner is interrupted with the usual semantics (queued work is held,
+// the worker tree freezes, observers are notified) and joined so its canonical
+// partial history and terminal result are durable. A dead runner is settled
+// in place. An unresponsive live runner retains its execution lease. Cross-process ownership is unaffected: a live owner in
 // another app-server still holds the OS-level execution lock, so the mutation
 // lease acquisition that follows keeps rejecting the archive.
-func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, threadID string) {
-	th := s.threadForState(binding, threadID)
+func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, threadID string) error {
+	owner, runID, err := s.retainUserThreadExecutionState(threadID, true)
+	if err != nil {
+		return err
+	}
+	defer owner.Close()
+	th := s.threadForState(owner, threadID)
 	if th == nil {
-		return
+		return nil
+	}
+	if err := validateArchiveExecutionOwner(binding, owner, threadID); err != nil {
+		return err
 	}
 	th.mu.Lock()
+	expectedTurnID := th.currentTurn
+	ownedLease := th.executionLease
+	ownedCompletion := th.turnCompletion
+	var completion *threadTurnCompletion
+	if current := th.turnCompletion; current != nil && (current.turnID == expectedTurnID || expectedTurnID == "" && current.failed()) {
+		completion = current
+	}
 	live := th.cancel != nil
 	th.mu.Unlock()
-	if live {
-		if _, err := s.interruptThreadExecution(binding, threadID, "", ""); err != nil {
-			// The escape hatch must still work when a side-path of the full
-			// interrupt fails: cancel the turn directly so its runner exits.
-			providers.DebugLogf("interrupt thread %q for forced archive: %v", threadID, err)
-			th.mu.Lock()
-			cancel := th.cancel
-			th.mu.Unlock()
-			if cancel != nil {
-				cancel()
-			}
+	if live || runID != "" {
+		if err := s.interruptThreadForUserState(owner, threadID, runID, expectedTurnID); err != nil {
+			// Failed pause/held-input persistence is not permission to discard the
+			// queue or release an execution that still owns it.
+			return fmt.Errorf("cannot archive before interruption is confirmed: %w", err)
 		}
+	}
+
+	// Do not hold th.mu while the runner checkpoints partial output and settles.
+	if completion != nil {
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-completion.done:
+		case <-timer.C:
+			return errors.New("thread cancellation is still settling; retry archive after it stops")
+		}
+	}
+	if completion != nil && completion.durabilityErr != nil {
+		return fmt.Errorf("cannot archive before durable turn settlement: %w", completion.durabilityErr)
 	}
 	now := time.Now().UTC()
 	th.mu.Lock()
+	if th.turnCompletion != ownedCompletion || th.currentTurn != "" && th.currentTurn != expectedTurnID || th.executionLease != nil && th.executionLease != ownedLease {
+		th.mu.Unlock()
+		return errors.New("conversation execution changed while cancelling; retry archive after it stops")
+	}
 	turnID := strings.TrimSpace(th.currentTurn)
 	turnKind := th.currentTurnKind
 	providerName, model := th.runningProviderName, th.runningModel
@@ -1589,13 +1656,32 @@ func (s *Server) settleThreadExecutionForForcedArchive(binding *runtime.State, t
 		th.running = false
 	}
 	th.mu.Unlock()
-	if settledTurnID == "" {
-		return
+	var settlementErr error
+	if settledTurnID != "" {
+		diagnostic := BuildTurnError(errArchivedWhileRunning, "")
+		if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, &diagnostic, now, reconnectItem, providerName, model, providers.TokenUsage{}); err != nil {
+			settlementErr = err
+		}
 	}
-	diagnostic := BuildTurnError(errArchivedWhileRunning, "")
-	if err := s.persistTurnTerminal(th, settledTurnID, turnKind, TurnStatusInterrupted, &diagnostic, now, reconnectItem, providerName, model, providers.TokenUsage{}); err != nil {
-		providers.DebugLogf("persist forced archive settlement for thread %q: %v", threadID, err)
+	// Forced turn settlement clears currentTurn, so its late runner deliberately
+	// cannot settle the accepted Run. Persist that outcome through its retained owner.
+	if runID != "" {
+		if _, err := s.failAndDetachExecutionRun(runID, execution.StatusInterrupted, "archived", "cancelled", errArchivedWhileRunning); err != nil && !errors.Is(err, errExecutionRunChanged) {
+			settlementErr = errors.Join(settlementErr, err)
+		}
 	}
+	if settlementErr != nil {
+		// A dead runner has no completion callback to retain its failed terminal
+		// write. Keep the same retry fence without replacing a successor's outcome.
+		th.mu.Lock()
+		if th.turnCompletion == ownedCompletion && th.currentTurn == "" && th.executionLease == nil {
+			failed := &threadTurnCompletion{turnID: settledTurnID, done: make(chan struct{}), durabilityErr: settlementErr}
+			close(failed.done)
+			th.turnCompletion = failed
+		}
+		th.mu.Unlock()
+	}
+	return settlementErr
 }
 
 func (s *Server) handleThreadRename(req Request) error {

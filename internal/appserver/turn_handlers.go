@@ -2108,7 +2108,7 @@ func (s *Server) handleTurnInterrupt(req Request) error {
 
 // User interruption follows accepted execution ownership, including a Run
 // waiting between turns after a replacement provider has been published.
-func (s *Server) interruptThreadForUser(threadID string) error {
+func (s *Server) retainUserThreadExecutionState(threadID string, includeFailedSettlement bool) (*runtime.State, string, error) {
 	runID := s.activeExecutionRunID(threadID)
 	var binding *runtime.State
 	if runID != "" {
@@ -2116,14 +2116,14 @@ func (s *Server) interruptThreadForUser(threadID string) error {
 		if err == nil {
 			binding = held
 		} else if !errors.Is(err, errExecutionRunChanged) {
-			return err
+			return nil, "", err
 		}
 	}
 	if binding == nil {
 		s.mu.Lock()
 		if th := s.threads[threadID]; th != nil {
 			th.mu.Lock()
-			if cachedThreadExecutionActiveLocked(th) {
+			if cachedThreadExecutionActiveLocked(th) || includeFailedSettlement && th.turnCompletion.failed() {
 				binding = th.state.Retain()
 			}
 			th.mu.Unlock()
@@ -2134,11 +2134,22 @@ func (s *Server) interruptThreadForUser(threadID string) error {
 		var err error
 		binding, err = s.rt.RetainState()
 		if err != nil {
-			return err
+			return nil, "", err
 		}
 	}
-	defer binding.Close()
+	return binding, runID, nil
+}
 
+func (s *Server) interruptThreadForUser(threadID string) error {
+	binding, runID, err := s.retainUserThreadExecutionState(threadID, false)
+	if err != nil {
+		return err
+	}
+	defer binding.Close()
+	return s.interruptThreadForUserState(binding, threadID, runID, "")
+}
+
+func (s *Server) interruptThreadForUserState(binding *runtime.State, threadID, runID, expectedTurnID string) error {
 	if err := s.takeSessionControl(binding, threadID, session.ControlPaused); err != nil {
 		return err
 	}
@@ -2147,7 +2158,7 @@ func (s *Server) interruptThreadForUser(threadID string) error {
 		// for project capacity, including legacy members with no control fence.
 		s.setExecutionRunInterruptStatus(runID, execution.StatusInterrupted)
 	}
-	turnActive, err := s.interruptThreadExecution(binding, threadID, "", "")
+	turnActive, err := s.interruptThreadExecution(binding, threadID, runID, expectedTurnID)
 	if err == nil && !turnActive && runID != "" {
 		_, err = s.failAndDetachExecutionRun(runID, execution.StatusInterrupted, "interrupted", "cancelled", context.Canceled)
 	}
@@ -2457,11 +2468,20 @@ func frozenWorkerTreeBlock(pending []agentCompletionTurn, frozen []agentcontrol.
 }
 
 func (s *Server) runTurn(binding *runtime.State, ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage) {
+	th.mu.Lock()
+	if th.currentTurn != turnID {
+		th.mu.Unlock()
+		return
+	}
+	completion := &threadTurnCompletion{turnID: turnID, done: make(chan struct{}), durabilityErr: errors.New("turn runner exited before durable settlement")}
+	th.turnCompletion = completion
+	th.mu.Unlock()
+	defer close(completion.done)
 	stopResetWatch := s.watchThreadExecutionReset(ctx, th, turnID)
 	defer stopResetWatch()
 	requestContext := cloneContextSegments(turnRuntime.RequestContext)
 	requestContext = append(requestContext, activeDocumentRequestContext(turnRuntime.ActiveDocument)...)
-	s.runTurnWithRequestContext(binding, ctx, th, threadRuntime, turnID, turnRuntime, history, requestContext)
+	completion.durabilityErr = s.runTurnWithRequestContext(binding, ctx, th, threadRuntime, turnID, turnRuntime, history, requestContext)
 }
 
 func activeDocumentRequestContext(document *ActiveDocument) []agent.ContextSegment {
@@ -2643,7 +2663,7 @@ func usageContextWindowTokens(runner *agent.StreamRunner) int {
 	return 0
 }
 
-func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) {
+func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.Context, th *threadState, threadRuntime *runtime.ThreadRuntime, turnID string, turnRuntime turnRuntimeSnapshot, history []providers.ChatMessage, requestContext []agent.ContextSegment) (durabilityErr error) {
 	browserTurn := &browserTurnState{threadID: th.ID, turnID: turnID, executionID: rand.Text(), bridges: make(map[string]*browserBridge)}
 	ctx = context.WithValue(ctx, browserTurnContextKey{}, browserTurn)
 	ctx = s.rt.ActivityRegistry.BeginExecution(ctx, th.ID, browserTurn.executionID)
@@ -2658,7 +2678,11 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}()
 	// A refresh during this turn kept its generation leased. Release it once
 	// all turn cleanup has finished, unless background work still depends on it.
-	defer s.retireIdlePluginRuntimes()
+	defer func() {
+		if durabilityErr == nil {
+			s.retireIdlePluginRuntimes()
+		}
+	}()
 	notify := func(method string, params any) {
 		_ = s.writeNotification(method, params)
 	}
@@ -3326,7 +3350,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	th.mu.Lock()
 	if th.currentTurn != turnID {
 		th.mu.Unlock()
-		return
+		return errors.New("turn ownership changed before durable settlement")
 	}
 	var historyErr error
 	var persistErr error
@@ -3381,6 +3405,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if persistErr == nil && th.PersistHistory {
 		persistErr = persistDriverCheckpoint(binding, th.ID, res)
 	}
+	durabilityErr = errors.Join(durabilityErr, persistErr)
 	status := TurnStatusCompleted
 	if err != nil {
 		status = TurnStatusFailed
@@ -3436,6 +3461,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			CacheCreationTokens: res.CacheCreationTokens, CacheReadTokens: res.CacheReadTokens,
 		})
 	}
+	durabilityErr = errors.Join(durabilityErr, terminalErr)
 	if terminalErr != nil {
 		if err != nil {
 			err = errors.Join(err, terminalErr)
@@ -3597,6 +3623,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		}
 		settled, _, settleErr := s.settleExecutionRunTurn(runID, turnID, tracePath, turn, structured, executionRunError, awaitingAutoContinuation, now)
 		if settleErr != nil {
+			durabilityErr = errors.Join(durabilityErr, settleErr)
 			providers.DebugLogf("settle execution run %q turn %q: %v", runID, turnID, settleErr)
 		} else {
 			runUpdate = settled
@@ -3639,7 +3666,11 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		if held, loadErr := s.loadHeldUserTurns(binding, th.ID); loadErr != nil {
 			providers.DebugLogf("load held input after failed turn %q: %v", turnID, loadErr)
 		} else if len(held) > 0 {
-			s.notifyHeldUserTurnsWithError(th.ID, held, err.Error())
+			if status == TurnStatusInterrupted && durabilityErr == nil && isExpectedTurnCancellation(err) {
+				s.notifyHeldUserTurns(th.ID, held)
+			} else {
+				s.notifyHeldUserTurnsWithError(th.ID, held, err.Error())
+			}
 		}
 	}
 	if hasRunUpdate {
@@ -3689,6 +3720,11 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			s.replayPendingProcessCompletions(binding, th.ID, threadRuntime.AgentControl, threadRuntime.ProcessManager)
 		})
 	}
+	// A failed canonical checkpoint is not an admission boundary. Keep queued
+	// work held and the failed owner projection available for explicit recovery.
+	if durabilityErr != nil {
+		return
+	}
 	if err != nil {
 		s.kickAgentCompletionDrain(binding, th.ID)
 		s.kickQueuedTurnDrain(binding, th.ID)
@@ -3707,6 +3743,31 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	s.kickAgentCompletionDrain(binding, th.ID)
 	s.kickQueuedTurnDrain(binding, th.ID)
+	return
+}
+
+// Only ordinary cancellation is a successful stop. A joined provider or
+// persistence failure must remain visible even when it also wraps cancellation.
+func isExpectedTurnCancellation(err error) bool {
+	if err == context.Canceled {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		causes := joined.Unwrap()
+		if len(causes) == 0 {
+			return false
+		}
+		for _, cause := range causes {
+			if !isExpectedTurnCancellation(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return isExpectedTurnCancellation(wrapped.Unwrap())
+	}
+	return false
 }
 
 func persistDriverCheckpoint(binding *runtime.State, threadID string, res agent.LoopResult) error {

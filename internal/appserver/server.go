@@ -41,6 +41,24 @@ var (
 	errExecutionRunChanged = errors.New("thread execution belongs to a different Run")
 )
 
+type threadTurnCompletion struct {
+	turnID        string
+	done          chan struct{}
+	durabilityErr error
+}
+
+func (c *threadTurnCompletion) failed() bool {
+	if c == nil {
+		return false
+	}
+	select {
+	case <-c.done:
+		return c.durabilityErr != nil
+	default:
+		return false
+	}
+}
+
 type threadState struct {
 	ID         string
 	Source     string
@@ -114,6 +132,9 @@ type threadState struct {
 	runningProviderName   string
 	runningModel          string
 	cancel                context.CancelFunc
+	// The captured runner's immutable outcome is published by closing done.
+	turnCompletion *threadTurnCompletion
+
 	// idleWaiters are closed when this thread releases execution. Follow-up
 	// turn/start after a visible final answer waits here instead of failing busy.
 	idleWaiters []chan struct{}

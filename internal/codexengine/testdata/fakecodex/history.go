@@ -219,6 +219,16 @@ func handleHistory(req request) bool {
 			respond(req.ID, map[string]any{"turn": map[string]any{"id": id}})
 		}
 		notify("turn/started", map[string]any{"threadId": thread.ID, "turn": map[string]any{"id": id}})
+		// Admission is observable before the optional long-turn output barrier.
+		// This lets tests overlap streaming with a deliberately stalled commit.
+		if control.Mode == "long-turn" && control.Gate != "" {
+			for {
+				if _, err := os.Stat(control.Gate); err == nil {
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
 		for _, item := range items[1:] {
 			notify("item/started", map[string]any{"threadId": thread.ID, "turnId": id, "item": item})
 			notify("item/completed", map[string]any{"threadId": thread.ID, "turnId": id, "item": item})

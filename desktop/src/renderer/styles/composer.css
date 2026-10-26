@@ -2354,6 +2354,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
      both names truncate. Document composers use their own stacked layout. */
   .composer-stack:not([data-document-composer]) .composer-workspace-bar {
     display: grid;
+    flex-basis: auto;
     grid-template-columns: minmax(0, max-content) minmax(min-content, 1fr);
   }
 
@@ -2364,17 +2365,6 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   .composer-stack:not([data-document-composer]) .composer-branch-control .hero-project-pill {
     display: grid;
     grid-template-columns: auto minmax(4ch, 1fr);
-  }
-}
-
-/* A narrow pane cannot fit both a readable project name and the Git controls. */
-@container composer-shell (max-width: 320px) {
-  .composer-stack:not([data-document-composer]) .composer-workspace-bar {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .composer-stack:not([data-document-composer]) .composer-git-controls::before {
-    display: none;
   }
 }
 
