@@ -55,10 +55,10 @@ export function useWorkspaceToolState({
     }
   }, [application, rightPanelOpen, conversationSelected, workspaceActiveViewTabID]);
   useEffect(() => {
-    if (rightPanelOpen && application.getSnapshot().previewWorkspace.conversationSelected) {
+    if (rightPanelOpen && !rightPanelGlobalized && application.getSnapshot().previewWorkspace.conversationSelected) {
       const preview = application.getSnapshot().previewWorkspace;
       if (preview.tabs.length === 0) setRightPanelOpenWithMotion(false);
-      else if (!rightPanelGlobalized) void application.invoke("preview.focus-tab", { tabId: preview.activeTabId }).catch(showErrorToast);
+      else void application.invoke("preview.focus-tab", { tabId: preview.activeTabId ?? preview.tabs.at(-1)?.id }).catch(showErrorToast);
     }
   }, [application, rightPanelOpen, rightPanelGlobalized, conversationSelected, setRightPanelOpenWithMotion]);
   const focusWorkspaceConversation = useCallback(() => {
@@ -129,7 +129,7 @@ export function useWorkspaceToolState({
     setRightPanelOpenWithMotion(true);
   }
 
-  // Closing the final tool ends the workspace view, including full-panel mode.
+  // The expanded strip retains its conversation when the last resource closes.
   function closeWorkspaceViewTab(id: string): void {
     const tab = workspaceViewTabs.find((candidate) => candidate.id === id);
     if (rightPanelOpen && workspaceActiveViewTabID === id && tab?.kind === "artifact") restoreArtifactPreviewFocus(origins.current.get(id));
@@ -137,7 +137,7 @@ export function useWorkspaceToolState({
       workspaceViewTabs.length === 1 && workspaceViewTabs[0]?.id === id;
     origins.current.delete(id);
     void application.invoke("preview.close-tab", { tabId: id }).catch(showErrorToast);
-    if (willEmpty) setRightPanelOpenWithMotion(false);
+    if (willEmpty && !rightPanelGlobalized) setRightPanelOpenWithMotion(false);
   }
 
   function closeWorkspaceViewTabsWhere(
@@ -148,7 +148,7 @@ export function useWorkspaceToolState({
     const tabIds = workspaceViewTabs.filter(predicate).map(tab => tab.id);
     tabIds.forEach(id => origins.current.delete(id));
     void application.invoke("preview.close-tabs", { tabIds }).catch(showErrorToast);
-    if (willEmpty) setRightPanelOpenWithMotion(false);
+    if (willEmpty && !rightPanelGlobalized) setRightPanelOpenWithMotion(false);
   }
 
   return {

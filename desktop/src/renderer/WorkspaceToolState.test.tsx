@@ -47,6 +47,6 @@ describe("application-owned workspace tabs", () => {
     await act(async () => hook.get().closeWorkspaceViewTabsWhere(() => true));
     expect(hook.get().workspaceConversationActive).toBe(true);
     expect(application.getSnapshot().previewWorkspace.tabs).toHaveLength(0);
-    expect(hook.setOpen).toHaveBeenCalledWith(false);
+    expect(hook.setOpen).not.toHaveBeenCalled();
   });
 });

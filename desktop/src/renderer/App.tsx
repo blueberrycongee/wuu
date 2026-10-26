@@ -411,13 +411,15 @@ export function App({ application, slots, shellPluginId }: {
     const request = navigationWorkspace.regionVisibilityRequest;
     if (!request || handledRegionRequest.current === request.id) return;
     handledRegionRequest.current = request.id;
-    if (request.region === "primary" && rightPanelGlobalized) setRightPanelOpenWithMotion(false);
+    if (request.region === "primary" && rightPanelGlobalized) {
+      void application.invoke("preview.show-conversation", {}).catch(showErrorToast);
+    }
     if (request.region === "auxiliary") setRightPanelOpenWithMotion(true);
     if (request.region === "inspector") {
       setEnvironmentPanelDismissed(false);
       setEnvironmentPanelOpen(true);
     }
-  }, [navigationWorkspace.regionVisibilityRequest, rightPanelGlobalized, setRightPanelOpenWithMotion]);
+  }, [application, navigationWorkspace.regionVisibilityRequest, rightPanelGlobalized, setRightPanelOpenWithMotion]);
   const accountOpen = navigationWorkspace.accountOpen;
   const setAccountOpen = useCallback((open: boolean): void => {
     void application.invoke("navigation.show-account", { open }).catch(showErrorToast);
@@ -526,28 +528,8 @@ export function App({ application, slots, shellPluginId }: {
     void application.invoke("navigation.show-native", {}).catch(showErrorToast);
     setSettingsOpen(false);
     setNativeSection("conversations");
-    if (!rightPanelGlobalized) {
-      return;
-    }
-    setRightPanelManualGlobalized(false);
-    if (!rightPanelAutoGlobalized) {
-      return;
-    }
-    if (!workspaceRightPanelDockableWithoutSidebar) {
-      setRightPanelOpenWithMotion(false);
-      return;
-    }
-    if (!sidebarCollapsed) {
-      toggleSidebar();
-    }
-  }, [
-    rightPanelAutoGlobalized,
-    rightPanelGlobalized,
-    setRightPanelOpenWithMotion,
-    sidebarCollapsed,
-    toggleSidebar,
-    workspaceRightPanelDockableWithoutSidebar,
-  ]);
+    if (rightPanelGlobalized) focusWorkspaceConversation();
+  }, [application, focusWorkspaceConversation, rightPanelGlobalized, setActiveWebsiteID, setSettingsOpen, setNativeSection]);
   const [environmentDialog, setEnvironmentDialog] =
     useState<EnvironmentDialog | null>(null);
   const conversationDetails = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationDetails);
@@ -1209,7 +1191,8 @@ export function App({ application, slots, shellPluginId }: {
     handledPublicComposerFocus.current = request.id;
     const snapshot = application.getSnapshot();
     if (snapshot.tabs.activeTabId !== request.tabId) return;
-    setRightPanelOpenWithMotion(false);
+    if (rightPanelGlobalized) focusWorkspaceConversation();
+    else setRightPanelOpenWithMotion(false);
     if (isTouchWebShell()) return;
     const interactionVersion = userInteractionVersionRef.current;
     if (snapshot.drafts.split) {
@@ -1222,7 +1205,7 @@ export function App({ application, slots, shellPluginId }: {
     }
     requestMainComposerFocus("dock", document.activeElement, interactionVersion,
       current => current.tabs.activeTabId === request.tabId);
-  }, [application, publicComposerFocusRequest, requestMainComposerFocus, setRightPanelOpenWithMotion]);
+  }, [application, publicComposerFocusRequest, requestMainComposerFocus, rightPanelGlobalized, focusWorkspaceConversation, setRightPanelOpenWithMotion]);
 
   useLayoutEffect(() => {
     if (!mainComposerFocusRequest) {

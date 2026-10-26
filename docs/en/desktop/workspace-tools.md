@@ -4,7 +4,7 @@ Use the workspace panels to inspect what actually happened during a task. A conv
 
 The left sidebar keeps the visibility and width you choose when you resize the window or zoom the interface. Use its toggle or drag its divider to collapse it.
 
-Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Exiting the expanded layout restores the conversation and tools side by side.
+Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Choosing a conversation or starting a new one from the sidebar selects this conversation tab and keeps the expanded layout. Closing a tool returns to the most recently visited remaining tab, including the conversation; closing the last tool leaves the conversation tab open. Use the close button to close a tool tab. Exiting the expanded layout restores the conversation and tools side by side.
 
 ![The action menu shown after selecting code in the file preview, with options to add it to the conversation, annotate it, or ask in side chat.](../assets/product/files-en.jpg)
 

@@ -1007,8 +1007,8 @@ describe("collapsed sidebar hover drawer", () => {
 
     await clickSidebarSession("Session from focused workspace");
 
-    expect(appShell()?.classList.contains("right-panel-open")).toBe(false);
-    expect(appShell()?.classList.contains("right-panel-globalized")).toBe(false);
+    expect(appShell()?.classList.contains("right-panel-open")).toBe(true);
+    expect(appShell()?.classList.contains("right-panel-globalized")).toBe(true);
     // Session selection keeps the desktop drawer available until pointer exit.
     expect(appShell()?.classList.contains("sidebar-drawer-open")).toBe(true);
     expect(container.querySelector(".conversation-pane")?.hasAttribute("inert")).toBe(false);

@@ -84,6 +84,9 @@ export type WorkspaceViewTab =
   | WorkspaceArtifactViewTab
   | WorkspaceProjectViewTab;
 
+// The conversation participates in focus history without becoming a resource tab.
+export const WORKSPACE_CONVERSATION_TAB_ID = "conversation";
+
 type WorkspaceViewTabOpenOptions = { activate?: boolean; replaceActiveNewTab?: boolean };
 
 export type WorkspaceViewTabsState = {
@@ -288,7 +291,7 @@ export function closeViewTab(state: WorkspaceViewTabsState, id: string): Workspa
   while (activationHistory.length > 0) {
     const candidate = activationHistory[activationHistory.length - 1];
     activationHistory = activationHistory.slice(0, -1);
-    if (tabs.some((tab) => tab.id === candidate)) {
+    if (candidate === WORKSPACE_CONVERSATION_TAB_ID || tabs.some((tab) => tab.id === candidate)) {
       activeTabID = candidate;
       break;
     }

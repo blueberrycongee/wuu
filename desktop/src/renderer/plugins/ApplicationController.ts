@@ -1153,6 +1153,7 @@ export class ApplicationController implements HostApplicationService {
           sessionTabs: content ? state.sessionTabs.map(item => item.id === tab.id ? { ...item, ...emptyComposerDraft(), prompt: content.text } : item) : state.sessionTabs }));
         this.setSettings(false);
         await this.applicationNavigation.invoke("navigation.show-native", {}, signal);
+        await this.applicationNavigation.invoke("navigation.reveal-region", { region: "primary" }, signal);
         if (content) await this.applicationNavigation.invoke("navigation.focus-composer", { tabId: tab.id }, signal);
         return content ? { activated: true, tabId: tab.id } : { tabId: tab.id };
       }
@@ -1245,7 +1246,9 @@ export class ApplicationController implements HostApplicationService {
         const { tabId } = input as ApplicationActionMapV1["tab.select"]["input"];
         const tab = this.state.sessionTabs.find(item => item.id === tabId);
         if (!tab) throw new Error(`Unknown tab: ${tabId}`);
-        await this.selectTab(tab, signal); return;
+        await this.selectTab(tab, signal);
+        if (this.state.activeSessionTabID === tab.id) await this.applicationNavigation.invoke("navigation.reveal-region", { region: "primary" }, signal);
+        return;
       }
       case "tab.close": {
         const { tabId } = input as ApplicationActionMapV1["tab.close"]["input"];
@@ -1286,6 +1289,7 @@ export class ApplicationController implements HostApplicationService {
         await this.selectTab(tab, signal);
         if (this.state.activeSessionTabID !== tab.id) throw new Error("Draft navigation was superseded");
         if (project !== undefined) await this.invoke("draft.set-project-mode", { project }, { signal });
+        await this.applicationNavigation.invoke("navigation.reveal-region", { region: "primary" }, signal);
         return { tabId: tab.id };
       }
       case "draft.rename": {

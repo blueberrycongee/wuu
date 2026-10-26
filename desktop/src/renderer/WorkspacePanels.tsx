@@ -77,7 +77,7 @@ import { ProjectPanel } from "./ProjectPanels";
 import { confirmAction } from "./ConfirmDialog";
 import { WorkspacePanelLoading } from "./LoadingViews";
 import { WorkspacePanelEmpty } from "./WorkspacePanelEmpty";
-import type { WorkspaceFileViewTab, WorkspaceViewTab } from "./WorkspaceViewTabs";
+import { WORKSPACE_CONVERSATION_TAB_ID, type WorkspaceFileViewTab, type WorkspaceViewTab } from "./WorkspaceViewTabs";
 import { handleTabListKeyDown, useTabCloseFocusRestoration } from "./TabKeyboardNavigation";
 import { useStripEnterReady, useTabExitRetention } from "./TabMotion";
 import { translateCurrent, useI18n } from "./i18n";
@@ -191,7 +191,6 @@ const WORKSPACE_FILE_TREE_WIDTH_KEY = "wuu.desktop.fileTreeWidth";
 const WORKSPACE_FILE_TREE_SIDE_KEY = "wuu.desktop.fileTreeSide";
 const WORKSPACE_FILE_TREE_VISIBLE_KEY = "wuu.desktop.fileTreeVisible";
 const WORKSPACE_PANEL_PREWARM_TIMEOUT_MS = 2_000;
-const WORKSPACE_CONVERSATION_TAB_ID = "conversation";
 
 type WorkspaceFileTreeSide = "left" | "right";
 
@@ -875,7 +874,6 @@ function WorkspacePanelContent({
                     reorderable={visibleTabs.length > 1}
                     onSelect={() => onSelectTab(tab.id)}
                     onClose={() => void requestCloseTab(tab)}
-                    onDoubleClick={() => void requestCloseTab(tab)}
                   />
                 );
               })}
@@ -1253,7 +1251,6 @@ function SortableWorkspaceViewTab({
   reorderable,
   onSelect,
   onClose,
-  onDoubleClick
 }: {
   tab: WorkspaceViewTab;
   active: boolean;
@@ -1263,9 +1260,6 @@ function SortableWorkspaceViewTab({
   reorderable: boolean;
   onSelect: () => void;
   onClose: () => void;
-  // Parity with session tabs: double-click closes (through the dirty-file
-  // confirm guard upstream).
-  onDoubleClick: () => void;
 }): JSX.Element {
   const { t } = useI18n();
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -1308,7 +1302,6 @@ function SortableWorkspaceViewTab({
           tabIndex={active ? 0 : -1}
           disabled={!open}
           onClick={onSelect}
-          onDoubleClick={onDoubleClick}
         >
         {busy ? <LoaderCircle className="icon control-busy-icon" aria-hidden="true" /> : <WorkspaceViewTabIcon tab={tab} className="icon" />}
         <span>{label}</span>

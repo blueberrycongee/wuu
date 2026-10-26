@@ -3,9 +3,9 @@ import type { Thread } from "../../shared/protocol";
 import { validPdfSelectionReference } from "../PdfSelection";
 import { collectTurnArtifacts } from "../ArtifactOutputs";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
-import { closeViewTab, closeViewTabsWhere, focusViewTab, initialWorkspaceViewTabsState, openViewTab, reorderViewTabs,
+import { closeViewTabsWhere, focusViewTab, initialWorkspaceViewTabsState, openViewTab, reorderViewTabs,
   workspaceArtifactViewTab, workspaceDiffViewTab, workspaceFileViewTab, workspacePluginViewTab, workspaceProjectViewTab,
-  workspaceToolViewTab, type WorkspaceViewTabsState } from "../WorkspaceViewTabs";
+  workspaceToolViewTab, WORKSPACE_CONVERSATION_TAB_ID, type WorkspaceViewTabsState } from "../WorkspaceViewTabs";
 
 type PreviewTabs = Pick<ApplicationPreviewWorkspaceV1, "tabs" | "activeTabId" | "activeFileTabId" | "conversationSelected">;
 
@@ -21,19 +21,23 @@ export function isApplicationPreviewAction(action: string): action is keyof Appl
 /** Resource tabs survive selected UI replacement; geometry and DOM focus do not. */
 export class ApplicationPreview {
   private state: WorkspaceViewTabsState = initialWorkspaceViewTabsState;
-  private conversationSelected = false;
   private snapshot: PreviewTabs = Object.freeze({ tabs: Object.freeze([]), conversationSelected: false });
   constructor(private readonly host: { getThreads: () => readonly Thread[]; changed: () => void }) {}
 
   getSnapshot(): PreviewTabs { return this.snapshot; }
 
-  private update(state: WorkspaceViewTabsState, conversationSelected = false): void {
-    if (state === this.state && conversationSelected === this.conversationSelected) return;
+  private update(state: WorkspaceViewTabsState): void {
+    if (state === this.state) return;
     this.state = state;
-    this.conversationSelected = conversationSelected;
+    const conversationSelected = state.activeTabID === WORKSPACE_CONVERSATION_TAB_ID;
+    // Keep the last resource available to the dock while the expanded strip
+    // uses the same selection history for conversations and resources.
+    const activeTabId = conversationSelected
+      ? state.activationHistory.findLast(id => state.tabs.some(tab => tab.id === id))
+      : state.activeTabID;
     // Inputs are data-only; no origin WeakRef or render callbacks enter this owner.
     const snapshot: PreviewTabs = structuredClone({ tabs: state.tabs,
-      activeTabId: state.activeTabID, activeFileTabId: state.activeFileTabID, conversationSelected });
+      activeTabId, activeFileTabId: state.activeFileTabID, conversationSelected });
     const freeze = (value: unknown): void => {
       if (!value || typeof value !== "object") return;
       Object.values(value).forEach(freeze);
@@ -42,6 +46,11 @@ export class ApplicationPreview {
     freeze(snapshot);
     this.snapshot = snapshot;
     this.host.changed();
+  }
+
+  private closeTabs(tabIds: readonly string[]): void {
+    const state = closeViewTabsWhere(this.state, tab => tabIds.includes(tab.id));
+    this.update(state.activeTabID === undefined ? focusViewTab(state, WORKSPACE_CONVERSATION_TAB_ID) : state);
   }
 
   async invoke<Action extends keyof ApplicationPreviewActionMapV1>(action: Action,
@@ -83,7 +92,7 @@ export class ApplicationPreview {
       }
       case "preview.open-tool": {
         const { toolId, activate = true } = input as ApplicationPreviewActionMapV1["preview.open-tool"]["input"];
-        this.update(openViewTab(this.state, workspaceToolViewTab(toolId), { activate, replaceActiveNewTab: activate }), activate ? false : this.conversationSelected); break;
+        this.update(openViewTab(this.state, workspaceToolViewTab(toolId), { activate, replaceActiveNewTab: activate })); break;
       }
       case "preview.open-plugin": {
         const value = input as ApplicationPreviewActionMapV1["preview.open-plugin"]["input"];
@@ -97,8 +106,8 @@ export class ApplicationPreview {
       case "preview.follow-project": {
         const { project } = input as ApplicationPreviewActionMapV1["preview.follow-project"]["input"];
         const tab = this.state.tabs.find(tab => tab.kind === "project");
-        if (tab) this.update(project ? openViewTab(this.state, workspaceProjectViewTab(project.id, project.title), { activate: false })
-          : closeViewTab(this.state, tab.id), this.conversationSelected);
+        if (tab && project) this.update(openViewTab(this.state, workspaceProjectViewTab(project.id, project.title), { activate: false }));
+        else if (tab) this.closeTabs([tab.id]);
         break;
       }
       case "preview.open-side-thread": this.update(openViewTab(this.state, { kind: "side-thread", id: "side-thread" }, { replaceActiveNewTab: true })); break;
@@ -113,19 +122,17 @@ export class ApplicationPreview {
       }
       case "preview.close-tab": {
         const { tabId } = input as ApplicationPreviewActionMapV1["preview.close-tab"]["input"];
-        const state = closeViewTab(this.state, tabId);
-        this.update(state, state.tabs.length === 0 || this.conversationSelected); break;
+        this.closeTabs([tabId]); break;
       }
       case "preview.close-tabs": {
         const { tabIds } = input as ApplicationPreviewActionMapV1["preview.close-tabs"]["input"];
-        const state = closeViewTabsWhere(this.state, tab => tabIds.includes(tab.id));
-        this.update(state, state.tabs.length === 0 || this.conversationSelected); break;
+        this.closeTabs(tabIds); break;
       }
       case "preview.reorder-tab": {
         const { tabId, overTabId } = input as ApplicationPreviewActionMapV1["preview.reorder-tab"]["input"];
-        this.update(reorderViewTabs(this.state, tabId, overTabId), this.conversationSelected); break;
+        this.update(reorderViewTabs(this.state, tabId, overTabId)); break;
       }
-      case "preview.show-conversation": this.update(this.state, true); break;
+      case "preview.show-conversation": this.update(focusViewTab(this.state, WORKSPACE_CONVERSATION_TAB_ID)); break;
     }
     return result as ApplicationPreviewActionMapV1[Action]["result"];
   }
