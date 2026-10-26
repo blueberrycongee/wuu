@@ -292,6 +292,81 @@ describe("BrowserPiPSurface", () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });
   afterEach(() => { vi.useRealTimers(); });
 
+
+  it.each(["user", "error"] as const)("keeps the completion deadline through repeated %s snapshots and presentation churn", async (mode) => {
+    const { surface, win, overlay, host, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    const activity = { ...makeActivity(), ...(mode === "user" ? { controller: "user" as const } : { state: "error" as const }) };
+    surface.updateActivity(activity);
+    surface.setTurnCompleted(true);
+    const layout = { host: { x: 0, y: 0, width: 800, height: 600 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 1000, height: 800 } };
+    // Streaming/status notifications produce fresh snapshot objects, layout
+    // reports and visibility calls, without any new work or user action.
+    for (let tick = 0; tick < 29; tick++) {
+      vi.advanceTimersByTime(1_000);
+      surface.updateActivity({ ...activity, updated_at: new Date().toISOString() });
+      surface.setHostLayout({ ...layout });
+      surface.setAppearance(tick % 2 === 0);
+      surface.setVisible(true);
+      win.emit("ready-to-show");
+      surface.setTurnCompleted(true);
+      expect(win.isVisible()).toBe(true);
+    }
+    vi.advanceTimersByTime(1_500);
+    expect(win.isVisible()).toBe(false);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(1);
+    const completedPushes = overlay.executed.filter(code => code === "window.wuuPipCompleted?.(true)").length;
+    surface.updateActivity({ ...activity });
+    surface.setTurnCompleted(true);
+    surface.setVisible(true);
+    finishMotion();
+    expect(win.isVisible()).toBe(false);
+    expect(overlay.executed.filter(code => code === "window.wuuPipCompleted?.(true)")).toHaveLength(completedPushes);
+    expect(host.unmounts).toHaveLength(1);
+    surface.stop();
+  });
+
+  it("retains a completed card's deadline when the same target's content reconnects", async () => {
+    const { surface, win, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    surface.setTurnCompleted(true);
+    vi.advanceTimersByTime(20_000);
+    surface.suspendContent("Transient capture failure");
+    surface.retarget({ ...makeActivity() }, sink);
+    surface.setVisible(true);
+    surface.setTurnCompleted(true);
+    vi.advanceTimersByTime(10_500);
+    expect(win.isVisible()).toBe(false);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(1);
+    surface.stop();
+  });
+
+  it("cancels an old deadline for new activity identity and retires timers on stop", async () => {
+    const { surface, win, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    surface.setTurnCompleted(true);
+    vi.advanceTimersByTime(29_000);
+    surface.updateActivity({ ...makeActivity(), id: "replacement-activity" });
+    vi.advanceTimersByTime(2_000);
+    expect(win.isVisible()).toBe(true);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(0);
+    surface.setTurnCompleted(true);
+    surface.stop();
+    vi.advanceTimersByTime(31_000);
+    expect(win.isDestroyed()).toBe(true);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("starts with an unfocused visible host and follows host visibility without taking focus", () => {
     let visible = false;
     let minimized = false;
