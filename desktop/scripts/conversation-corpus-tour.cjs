@@ -7,7 +7,7 @@ const { validateCorpus, replayCalls } = require('./conversation-corpus.cjs');
 
 // Extends the real UI tour: production main/preload/renderer + Go persistence.
 // Only the provider and tool contents are scripted; no source command executes.
-function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppearance, audit, chunk, errors }) {
+function createCorpusTour({ output, matrix, evaluate, waitFor, setAppearance, audit, chunk, errors }) {
   const source = path.join(__dirname, 'fixtures/conversation-corpus/corpus.json');
   const bytes = fs.readFileSync(source);
   const corpus = validateCorpus(JSON.parse(bytes));
@@ -37,6 +37,22 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
   let win;
   let stepIndex = 0;
   let providerError;
+  async function click(selector, label) {
+    const point = await evaluate(win, ({ selector, label }) => {
+      const node = [...document.querySelectorAll(selector)].find(node => {
+        const name = (node.getAttribute('aria-label') || node.title || node.textContent).trim();
+        return (!label || name === label) && node.getBoundingClientRect().width > 0;
+      });
+      if (!node || node.disabled || node.closest('[inert]')) throw new Error(`Unavailable corpus control: ${selector} ${label || ''}`);
+      const rect = node.getBoundingClientRect();
+      const point = { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+      if (!node.contains(document.elementFromPoint(point.x, point.y))) throw new Error(`Covered corpus control: ${selector} ${label || ''}`);
+      return point;
+    }, { selector, label });
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point });
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...point });
+    await win.webContents.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...point });
+  }
   const marker = (text, fromStart = false) => {
     // Pick readable text, excluding Markdown delimiters, to acknowledge rendering.
     const readable = text.replace(/\]\([^)]*\)?/g, ']');
@@ -223,6 +239,7 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
   async function run(window) {
     win = window;
     win.webContents.setBackgroundThrottling(false);
+    if (!win.webContents.debugger.isAttached()) win.webContents.debugger.attach('1.3');
     // Even Markdown images/links cannot fetch real services during acceptance.
     win.webContents.session.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_details, callback) => callback({ cancel: true }));
     save();
@@ -230,8 +247,19 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
       for (const sample of samples) {
         active = sample; stepIndex = 0;
         await setAppearance(win, { theme: 'light', size: 15, width: 1280 });
-        await evaluate(win, () => [...document.querySelectorAll('button')].find(button => (button.getAttribute('aria-label') || button.title || button.textContent).trim() === '新对话')?.click());
-        await waitFor(win, () => !!document.querySelector('.composer textarea') && !document.querySelector('.cached-conversation-pane[data-active="true"] .turn'));
+        await click('button', '新对话');
+        // New conversation captures the outgoing surface before navigating. An
+        // old empty textarea can already exist during that capture; DOM setters
+        // bypass its native hit testing and can send into the outgoing draft.
+        // Wait for navigation to return focus to the selected, editable draft.
+        // Starting new may reuse an empty draft, so its ID need not change.
+        await waitFor(win, () => {
+          const input = document.querySelector('[data-main-conversation-composer] textarea');
+          return input && document.activeElement === input && !input.disabled && !input.readOnly && !input.closest('[inert]')
+            && !input.value && document.querySelector('.thread-row[data-draft-id].active .thread-row-main[aria-current="page"]')
+            && !document.querySelector('.cached-conversation-pane[data-active="true"], [data-wuu-presentation-frame], [data-wuu-compositor-frame]');
+        });
+        const draftID = await evaluate(win, () => document.querySelector('.thread-row[data-draft-id].active').getAttribute('data-draft-id'));
         await evaluate(win, () => {
           window.corpusReplies = [];
           window.stopCorpusReplies?.();
@@ -248,9 +276,15 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
             }
           });
         });
-        await draft(win, `[${sample.id}] ${sample.prompt}`);
+        const prompt = `[${sample.id}] ${sample.prompt}`;
+        await win.webContents.insertText(prompt);
+        assert.ok(await evaluate(win, ({ draftID, prompt }) => {
+          const input = document.querySelector('[data-main-conversation-composer] textarea');
+          return input === document.activeElement && input.value === prompt
+            && document.querySelector('.thread-row[data-draft-id].active')?.getAttribute('data-draft-id') === draftID;
+        }, { draftID, prompt }), `${sample.id}: native input must belong to the selected draft`);
         await waitFor(win, () => !document.querySelector('.composer-send-button')?.disabled);
-        await evaluate(win, () => document.querySelector('.composer-send-button').click());
+        await click('.composer-send-button');
         const deadline = Date.now() + 180000;
         while (Date.now() < deadline) {
           if (providerError) throw providerError;
@@ -287,7 +321,7 @@ function createCorpusTour({ output, matrix, evaluate, waitFor, draft, setAppeara
           await waitFor(win, selector => document.querySelector(selector)?.getAttribute('aria-expanded') === 'true', toggle);
           if (processIndex >= 0) await capture('history-expanded', sample.steps[processIndex].text, processIndex, persisted);
         }
-        report.samples.push({ id: sample.id, family: sample.family, model: sample.model, steps: stepIndex,
+        report.samples.push({ id: sample.id, family: sample.family, model: sample.model, draftID, steps: stepIndex,
           toolCalls: sample.steps.reduce((sum, step) => sum + step.tool_count, 0), historyRestored: true, processExpansion: hasProcess ? (processIndex >= 0 ? 'captured' : 'expanded-tools-only') : 'not-applicable' });
         console.log(`PASS corpus ${sample.id} (${sample.family}), ${stepIndex} response steps`);
         save();

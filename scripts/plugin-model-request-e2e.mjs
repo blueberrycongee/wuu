@@ -44,7 +44,7 @@ function journal() {
 }
 
 await mkdir(pkg);
-const events = new EventEmitter(), transcript = [], requests = [], providerCalls = [], closed = [];
+const events = new EventEmitter(), transcript = [], requests = [], providerCalls = [], closed = [], transportEvents = [];
 const result = { started_at: new Date().toISOString(), scratch, checks: [], status: "failed" };
 let child, stderr = "", sequence = 0;
 
@@ -102,10 +102,12 @@ const provider = createServer(async (request, response) => {
   const tag = typeof content === "string" ? content : content?.map(part => part.text ?? "").join("") ?? "missing-input";
   const call = { tag, url: request.url, wire, body: value };
   providerCalls.push(call);
+  transportEvents.push({ tag, phase: "received", at: new Date().toISOString() });
   events.emit("provider", call);
   response.on("close", () => {
     if (response.writableEnded) return;
     closed.push(tag);
+    transportEvents.push({ tag, phase: "disconnected", at: new Date().toISOString() });
     events.emit("closed", tag);
   });
   if (tag === "codex-best-effort") {
@@ -524,9 +526,47 @@ runJSONLRuntime({
     result.checks.push(`rejected ${name}`);
   }
   assert.equal(providerCalls.length, validCount, "invalid requests reached the provider");
-  const timedOut = await call("timeout", { ...input("hold-timeout"), model_alias: "grok", timeout_ms: 200 });
+  const beforeDeadline = journal();
+  const shortDeadlineMS = 200;
+  const timedOut = await call("timeout", { ...input("hold-timeout"), model_alias: "grok", timeout_ms: shortDeadlineMS });
   assert.equal(timedOut.error.code, "deadline_exceeded", JSON.stringify(timedOut));
-  await waitFor("closed", closed, tag => tag === "hold-timeout", "provider timeout disconnect");
+  const shortDeadlineReachedProvider = providerCalls.some(call => call.tag === "hold-timeout");
+  if (shortDeadlineReachedProvider) {
+    await waitFor("closed", closed, tag => tag === "hold-timeout", "short-deadline provider disconnect");
+  }
+  // Admission/configuration also consume the caller's deadline. An expired
+  // request that never reached HTTP has no provider connection to disconnect.
+  const afterDeadline = journal();
+  const shortDeadlineAccounting = {
+    operations: afterDeadline.operations.filter(record => !beforeDeadline.operations.some(previous => previous.ID === record.ID)),
+    submissions: afterDeadline.submissions.filter(record => !beforeDeadline.submissions.some(previous => previous.ID === record.ID)),
+  };
+  assert(shortDeadlineAccounting.operations.length <= 1);
+  assert(shortDeadlineAccounting.submissions.length <= 1);
+  assert(shortDeadlineAccounting.operations.every(record => record.Status === "canceled" && record.Failure?.Category === "deadline"));
+  assert(shortDeadlineAccounting.submissions.every(record => record.Outcome === "failed" && record.FailureCategory === "deadline"
+    && record.CompletedAt && !record.ReportedUsage && record.OutputBytes === 0));
+  if (shortDeadlineReachedProvider) {
+    assert.equal(shortDeadlineAccounting.operations.length, 1);
+    assert.equal(shortDeadlineAccounting.submissions.length, 1);
+    assert.equal(shortDeadlineAccounting.submissions[0].Mode, "stream");
+  }
+  result.deadlines = { short: { timeout_ms: shortDeadlineMS, reached_provider: shortDeadlineReachedProvider, ...shortDeadlineAccounting } };
+  result.checks.push(shortDeadlineReachedProvider
+    ? "short deadline cancels an admitted provider request"
+    : "short deadline expires before provider dispatch without inventing a connection");
+
+  // This separate case must actually enter streaming transport. Keep the
+  // original observation bound; a missing admission fails that precondition,
+  // not the subsequent transport-cancellation assertion.
+  const [transportCall, transportResult] = await Promise.all([
+    waitFor("provider", providerCalls, call => call.tag === "hold-transport-timeout", "transport timeout request started"),
+    call("transport-timeout", { ...input("hold-transport-timeout"), model_alias: "grok", timeout_ms: 2000 }),
+  ]);
+  assert.equal(transportCall.body.stream, true);
+  assert.equal(transportResult.error.code, "deadline_exceeded", JSON.stringify(transportResult));
+  await waitFor("closed", closed, tag => tag === "hold-transport-timeout", "provider timeout disconnect");
+  result.deadlines.transport = { timeout_ms: 2000, reached_provider: true, disconnected: true, error: transportResult.error };
   result.checks.push("deadline cancels aggregated streaming provider transport");
   const cancelled = rpcRaw("plugin/client/request", params("cancel", { ...input("hold-cancel"), model_alias: "grok" }));
   await waitFor("provider", providerCalls, call => call.tag === "hold-cancel", "cancel request started");
@@ -558,11 +598,13 @@ runJSONLRuntime({
   result.accounting = { ...journal(), sessions: persisted.length,
     messages: persisted.flatMap(thread => thread.history).length };
   const accounting = result.accounting;
-  assert.equal(accounting.operations.length, 9);
+  if (!shortDeadlineReachedProvider) assert(!providerCalls.some(call => call.tag === "hold-timeout"), "expired request reached the provider later");
+  assert.equal(accounting.operations.length, 9 + shortDeadlineAccounting.operations.length);
   assert(accounting.operations.every(operation => operation.OwnerID === "plugin:model-fixture" && operation.Kind === "auxiliary" && operation.Status !== "active"));
   assert(accounting.workflows.every(workflow => workflow.Status !== "active"));
-  assert.equal(accounting.submissions.length, 9);
-  assert.equal(accounting.submissions.filter(submission => submission.Mode === "stream").length, 4,
+  assert.equal(accounting.submissions.length, 9 + shortDeadlineAccounting.submissions.length);
+  assert.equal(accounting.submissions.filter(submission => submission.Mode === "stream").length,
+    4 + shortDeadlineAccounting.submissions.filter(submission => submission.Mode === "stream").length,
     "Grok and Codex logical unary requests must retain their physical streaming receipts");
   const reported = accounting.submissions.filter(submission => submission.ReportedUsage);
   assert.equal(reported.length, 6);
@@ -585,6 +627,7 @@ runJSONLRuntime({
   provider.closeAllConnections();
   await new Promise(resolve => provider.close(resolve));
   result.provider_calls = providerCalls.length;
+  result.transport_events = transportEvents;
   result.completed_at = new Date().toISOString();
   await writeFile(join(output, "results.json"), JSON.stringify(result, null, 2));
   for (const [name, values] of [["appserver", transcript], ["requests", requests], ["provider", providerCalls]]) {
