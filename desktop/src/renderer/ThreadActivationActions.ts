@@ -51,6 +51,7 @@ export type ThreadActivationActionsDeps = {
     kind: "thread" | "workspace" | "runtime",
     targetID: string,
     contextSwitching?: boolean,
+    targetContext?: RuntimeContext,
   ) => number;
   prepareThreadReveal: (requestID: number) => boolean;
   finishViewSwitch: (requestID: number) => boolean;
@@ -186,7 +187,7 @@ export function createThreadActivationActions(
     const currentState = deps.getAppState();
     let outgoingDraft = deps.getComposerDraftSnapshot();
     let targetDraft = sessionTabDraftForThread(persistComposerDrafts(currentState, outgoingDraft), threadID);
-    const requestID = deps.beginViewSwitch("thread", threadID, true);
+    const requestID = deps.beginViewSwitch("thread", threadID, true, targetContext);
     try {
       const workspaceState = await selectRuntimeContext(targetContext);
       if (!deps.isCurrentViewSwitchRequest(requestID)) {

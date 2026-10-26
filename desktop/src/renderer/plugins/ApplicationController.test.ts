@@ -920,6 +920,29 @@ describe("shared application state", () => {
     } finally { select.mockRestore(); configure.mockRestore(); }
   });
 
+  it("fences a checkpoint navigation when its replacement generation retires", async () => {
+    const source = { kind: "project" as const, project_id: "a", cwd: "/a" };
+    const target = { kind: "project" as const, project_id: "b", cwd: "/b" };
+    let finish!: (value: unknown) => void;
+    const resume = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    window.wuu = { resumeThread: resume } as unknown as WuuDesktopApi;
+    const select = vi.spyOn(RuntimeLoader, "selectRuntimeContext").mockResolvedValue({ projects: [], active_context: target });
+    const configure = vi.spyOn(RuntimeLoader, "loadRuntimeConfiguration").mockResolvedValue({ activeContext: target, initialized: submissionInitialized });
+    const catalog = vi.spyOn(RuntimeLoader, "loadRuntimeThreadList").mockResolvedValue([]);
+    const controller = new ApplicationController({ ...initialState, activeContext: source, initialized: submissionInitialized });
+    const generation = new AbortController();
+    try {
+      const navigation = controller.restoreNavigationIntent({ id: "handoff", threadId: "target", context: target }, generation.signal);
+      await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
+      generation.abort();
+      finish({ thread: { id: "target", cwd: "/b", turns: [] } });
+      await expect(navigation).rejects.toThrow();
+      expect(controller.getState().activeContext).toEqual(source);
+      expect(controller.getState().thread).toBeUndefined();
+      expect(select).toHaveBeenCalledOnce();
+    } finally { select.mockRestore(); configure.mockRestore(); catalog.mockRestore(); }
+  });
+
   it("reports a current draft navigation failure and retains the source draft", async () => {
     window.wuu = {} as WuuDesktopApi;
     const source = { kind: "project" as const, project_id: "a", cwd: "/a" };

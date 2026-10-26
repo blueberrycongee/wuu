@@ -1,3 +1,4 @@
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { settleOnAbort } from "./activation";
 import type { ApplicationCheckpointV1, ApplicationProviderDefinition, ApplicationProviderInstanceV1, ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 
@@ -83,7 +84,7 @@ export class ApplicationProviders {
     const previous = this.current;
     if (previous?.instance) {
       this.current = undefined;
-      previous.lifetime?.abort(new Error("Application provider is switching"));
+      previous.lifetime?.abort(new PluginLifecycleCancellationError(new Error("Application provider is switching")));
       this.changed(true);
       try { this.checkpoint = await previous.instance.deactivate(); }
       catch (error) { this.uncertainWriter = previous; throw new Error(`Previous application writer stop is uncertain: ${String(error instanceof Error ? error.message : error)}`, { cause: error }); }

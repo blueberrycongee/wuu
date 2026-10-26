@@ -1,3 +1,4 @@
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import type { ApplicationWorkbenchV1, UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationEventEffects } from "./ApplicationEventEffects";
 import { deriveActiveSessionHints } from "../activeSessionHint";
@@ -327,6 +328,9 @@ export class ApplicationController implements HostApplicationService {
   private cleanup: Promise<void> = Promise.resolve();
   private lifetime?: AbortController;
   private navigationRequest = 0;
+  private navigationIntent?: { id: string; threadId: string; context: NonNullable<AppState["activeContext"]> };
+  private restoringNavigationIntentId?: string;
+  private presentationIntent?: { id: string; kind: "workspace" | "tab"; targetId: string; context: NonNullable<AppState["activeContext"]> };
   private splitRequest = 0;
   private readonly invocationAborts = new WeakMap<AbortSignal, AbortController>();
   private cancelNavigation?: () => void;
@@ -493,8 +497,29 @@ export class ApplicationController implements HostApplicationService {
     const drafts = captureComposerDrafts(this.state, this.state.secondaryThread
       ? { primary: this.composerDraftForPane("primary"), secondary: this.composerDraftForPane("secondary") }
       : this.composerDraftForPane("primary"));
-    return { state: persistComposerDrafts(this.state, drafts), settings: { ...this.settings }, preview: this.preview };
+    return { state: persistComposerDrafts(this.state, drafts), settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent: this.presentationIntent };
   }
+  /** Fulfill only a read-only destination on the new writer; never replay submissions. */
+  async restoreNavigationIntent(intent: NonNullable<ReturnType<ApplicationController["exportCheckpoint"]>["navigationIntent"]>, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    this.restoringNavigationIntentId = intent.id;
+    try {
+      await this.navigationActions(signal).threads.selectContextThread(intent.context, intent.threadId);
+      signal?.throwIfAborted();
+    }
+    finally { this.restoringNavigationIntentId = undefined; }
+  }
+
+  /** A workspace marker acknowledges already-loaded presentation; it never replays a mutation. */
+  restorePresentationIntent(intent: NonNullable<ReturnType<ApplicationController["exportCheckpoint"]>["presentationIntent"]>): void {
+    if (!sameRuntimeContext(this.state.activeContext, intent.context)
+      || intent.kind === "tab" && this.state.activeSessionTabID !== intent.targetId) return;
+    this.presentationIntent = intent;
+    this.pendingNavigation = Object.freeze({ kind: intent.kind, targetId: intent.targetId, intentId: intent.id,
+      requestId: ++this.navigationRequest, contextSwitching: false, contentReady: true });
+    this.publish();
+  }
+
   restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"] }): void {
     this.settings = checkpoint.settings; this.preview = checkpoint.preview; this.publish();
   }
@@ -634,11 +659,12 @@ export class ApplicationController implements HostApplicationService {
   /** Await resource releases started by the last consumer's synchronous cleanup. */
   flushCleanup(): Promise<void> { return this.cleanup; }
 
-  initialize(): Promise<LoadedRuntimeState> {
+  initialize(signal = this.lifetime?.signal): Promise<LoadedRuntimeState> {
+    signal?.throwIfAborted();
     if (this.state.initialized) return Promise.resolve({ ...this.state,
       heldComposerMessages: this.loaded?.thread?.id === this.state.thread?.id ? this.loaded?.heldComposerMessages : undefined });
     if (this.load) return this.load;
-    const signal = this.lifetime?.signal;
+    const activeTabId = this.state.activeSessionTabID || this.recoveredDrafts.activeTabID;
     this.load = (async () => {
       let popOut: PopOutInitResult | undefined;
       if (window.wuu.popOutInit) popOut = window.wuu.popOutInit();
@@ -649,7 +675,7 @@ export class ApplicationController implements HostApplicationService {
         signal?.throwIfAborted();
         const workspace = listed.active_context ? listed : await window.wuu.selectNoProject(false);
         signal?.throwIfAborted();
-        const active = this.recoveredDrafts.tabs.find(tab => tab.id === this.recoveredDrafts.activeTabID
+        const active = this.state.sessionTabs.find(tab => tab.id === activeTabId
           && workspace.active_context && sameRecoveryContext(tab.context, workspace.active_context));
         loaded = await loadRuntime(workspace, { resumeLatestThread: active?.kind === "thread", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
       }
@@ -666,7 +692,7 @@ export class ApplicationController implements HostApplicationService {
           return !context || !sameRuntimeContext(tab.context, context) || sameRecoveryContext(tab.context, context);
         });
         const next = withLoadedRuntimeSessionTab({ ...state, sessionTabs }, loaded);
-        const active = sessionTabs.find(tab => tab.id === this.recoveredDrafts.activeTabID && context && sameRecoveryContext(tab.context, context));
+        const active = sessionTabs.find(tab => tab.id === activeTabId && context && sameRecoveryContext(tab.context, context));
         return !next.thread && active?.kind === "draft" ? { ...next, activeSessionTabID: active.id } : next;
       });
       if (loaded.thread && loaded.heldComposerMessages) this.pendingComposer.seedHeldComposerMessages(loaded.thread.id, loaded.heldComposerMessages);
@@ -768,23 +794,33 @@ export class ApplicationController implements HostApplicationService {
   }
 
   private beginNavigation(kind: NonNullable<ApplicationSnapshotV1["tabs"]["pending"]>["kind"], targetId: string,
-    contextSwitching: boolean, signal?: AbortSignal): number {
+    contextSwitching: boolean, signal?: AbortSignal, targetContext = this.state.activeContext): number {
     signal?.throwIfAborted();
     this.navigationAbortCleanup?.();
     const requestId = ++this.navigationRequest;
     const sourceContext = this.state.activeContext;
-    this.pendingNavigation = Object.freeze({ kind, targetId, requestId, contextSwitching });
+    const intentId = this.restoringNavigationIntentId ?? crypto.randomUUID();
+    this.navigationIntent = kind === "thread" && targetContext
+      ? { id: intentId, threadId: targetId, context: { ...targetContext } } : undefined;
+    const project = kind === "workspace" ? this.state.projects.find(project => project.id === targetId || project.path === targetId) : undefined;
+    const presentationContext = project ? { kind: "project" as const, project_id: project.id, cwd: project.path }
+      : kind === "tab" ? this.state.sessionTabs.find(tab => tab.id === targetId)?.context : undefined;
+    this.presentationIntent = (kind === "workspace" || kind === "tab") && presentationContext
+      ? { id: intentId, kind, targetId, context: { ...presentationContext } } : undefined;
+    this.pendingNavigation = Object.freeze({ kind, targetId, requestId, contextSwitching, intentId });
     const abort = () => {
       if (requestId !== this.navigationRequest) return;
       this.navigationAbortCleanup?.();
       this.navigationAbortCleanup = undefined;
       this.cancelNavigation = undefined;
       this.pendingNavigation = undefined;
+      if (!isPluginLifecycleCancellation(signal?.reason)) { this.navigationIntent = undefined; this.presentationIntent = undefined; }
       this.navigationRequest++;
       if (signal && contextSwitching && sourceContext) this.abortedNavigation = { request: this.navigationRequest, signal, context: sourceContext };
       this.publish();
     };
-    this.cancelNavigation = () => signal && this.invocationAborts.get(signal)?.abort(new Error("Navigation cancelled"));
+    const cancellation = signal && this.invocationAborts.get(signal);
+    this.cancelNavigation = cancellation ? () => cancellation.abort(new Error("Navigation cancelled")) : undefined;
     signal?.addEventListener("abort", abort, { once: true });
     this.navigationAbortCleanup = () => signal?.removeEventListener("abort", abort);
     this.publish();
@@ -796,6 +832,8 @@ export class ApplicationController implements HostApplicationService {
     this.navigationAbortCleanup?.();
     this.navigationAbortCleanup = undefined;
     this.pendingNavigation = undefined;
+    this.navigationIntent = undefined;
+    this.presentationIntent = undefined;
     this.cancelNavigation = undefined;
     this.publish();
     return true;
@@ -833,8 +871,8 @@ export class ApplicationController implements HostApplicationService {
       resetSplitComposerDrafts: () => {},
       nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => createDraftSessionTab(`draft:${crypto.randomUUID()}`, context),
       isDraftPending: (tabId: string) => Boolean(this.submissionOwner?.getPendingDraftTabIds().includes(tabId)),
-      beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetId: string, contextSwitching = false) => {
-        return this.beginNavigation(kind, targetId, contextSwitching || kind !== "thread", signal);
+      beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetId: string, contextSwitching = false, targetContext?: NonNullable<AppState["activeContext"]>) => {
+        return this.beginNavigation(kind, targetId, contextSwitching || kind !== "thread", signal, targetContext);
       },
       prepareThreadReveal: (request: number) => {
         if (!isCurrent(request)) return false;
@@ -976,7 +1014,7 @@ export class ApplicationController implements HostApplicationService {
       options?.signal?.removeEventListener("abort", relayAbort);
       this.invocationAborts.delete(signal);
       const recovery = this.abortedNavigation;
-      if (signal?.aborted && recovery?.signal === signal && recovery.request === this.navigationRequest) {
+      if (signal?.aborted && !isPluginLifecycleCancellation(signal.reason) && !this.lifetime?.signal.aborted && recovery?.signal === signal && recovery.request === this.navigationRequest) {
         this.abortedNavigation = undefined;
         try { await selectRuntimeContext(recovery.context); }
         catch (error) {
@@ -1077,7 +1115,7 @@ export class ApplicationController implements HostApplicationService {
         const { requestId } = input as ApplicationActionMapV1["navigation.cancel"]["input"];
         if (requestId !== undefined && requestId !== this.pendingNavigation?.requestId) return;
         if (this.cancelNavigation) this.cancelNavigation();
-        else { this.navigationRequest++; this.publish(); }
+        else { this.finishNavigation(this.navigationRequest); this.navigationRequest++; this.publish(); }
         return;
       }
       case "conversation.open-split": {

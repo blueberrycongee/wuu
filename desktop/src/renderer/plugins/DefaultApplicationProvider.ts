@@ -25,8 +25,10 @@ export function activate(api: PluginGenerationApi): void {
           get workbench() { if (!workbench) throw new Error("Application workbench is not activated"); return workbench; },
         });
         workbench.start();
-        await controller.initialize();
+        await controller.initialize(api.signal);
         if (restored) controller.restorePresentation(restored);
+        if (restored?.navigationIntent) await controller.restoreNavigationIntent(restored.navigationIntent, api.signal);
+        else if (restored?.presentationIntent) controller.restorePresentationIntent(restored.presentationIntent);
         stop = controller.start();
       },
       deactivate: async () => {
