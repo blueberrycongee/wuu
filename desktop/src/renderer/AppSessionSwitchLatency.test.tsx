@@ -1308,7 +1308,7 @@ describe("session tab switch latency", () => {
     }
   });
 
-  it.each(["queue", "steer"] as const)("retains a pending PDF through %s until the user message is confirmed", async (action) => {
+  it.each(["queue", "steer"] as const)("retains a pending PDF through %s preparation until admission is acknowledged", async (action) => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, runningThreadA());
     const submit = vi.fn(async (...args) => ({ queued: { id: args[action === "queue" ? 3 : 4], thread_id: threadAID }, turn_id: threadA().turns[0].id }));
@@ -1326,7 +1326,7 @@ describe("session tab switch latency", () => {
     const args = vi.mocked(action === "queue" ? window.wuu.queueTurn : window.wuu.steerTurn).mock.calls[0];
     expect(args[0]).toBe(threadAID);
     expect(args[action === "queue" ? 4 : 5]).toEqual([{ media_type: "application/pdf", filename: "A-only.pdf", data: attachment.data }]);
-    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).not.toBeNull();
+    expect(container.querySelector(`${mainComposerSelector} ${attachmentCardSelector}`)).toBeNull();
     await act(async () => { emitNotification("item/completed", {
       thread_id: threadAID, turn_id: runningThreadA().turns.at(-1)!.id,
       item: { id: "accepted-pdf", source_id: args[action === "queue" ? 3 : 4], type: "user_message", status: "completed", text: "" },

@@ -218,11 +218,11 @@ function installWindowStubs(): void {
       matches: false,
       media: query,
       onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => {},
     })),
   });
   Object.defineProperty(window, "requestAnimationFrame", {
@@ -641,7 +641,7 @@ describe("main composer focus continuity", () => {
     await renderApp(true);
     vi.mocked(window.matchMedia).mockImplementation(query => ({
       matches: query.includes("prefers-reduced-motion"),
-      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addEventListener: () => {}, removeEventListener: () => {},
     } as unknown as MediaQueryList));
     const viewport = container.querySelector<HTMLElement>(".scroll-region")!;
     const content = viewport.querySelector<HTMLElement>(".scroll-region-content")!;
