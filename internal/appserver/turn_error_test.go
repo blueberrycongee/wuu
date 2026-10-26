@@ -1,12 +1,15 @@
 package appserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
@@ -275,10 +278,15 @@ func TestBuildTurnError_OverloadedAnthropic(t *testing.T) {
 // TestBuildTurnError_Cancellation covers the user-stop path. A plain
 // "context canceled" error remains a cancellation fact.
 func TestBuildTurnError_Cancellation(t *testing.T) {
-	err := errors.New("context canceled")
-	out := BuildTurnError(err, "openai")
-	if out.Category != string("cancelled") {
-		t.Errorf("expected category=cancelled, got %q", out.Category)
+	for _, err := range []error{errors.New("context canceled"), errors.Join(context.Canceled, context.Canceled, &pluginhost.HostServiceError{Code: "request_cancelled", Message: "calling transport was cancelled"})} {
+		out := BuildTurnError(err, "openai")
+		if out.Category != "cancelled" || out.Message != err.Error() {
+			t.Fatalf("cancellation classification or diagnostic evidence lost: %+v", out)
+		}
+		out = BuildTurnError(errors.Join(err, agent.ErrModelReceiptLifecycle), "openai")
+		if out.Category != "internal" || out.Code != "model_receipt_lifecycle" {
+			t.Fatalf("required receipt failure mislabeled as ordinary stop: %+v", out)
+		}
 	}
 }
 
