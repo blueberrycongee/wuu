@@ -1178,7 +1178,7 @@ export interface PluginSettingDefinition {
   default: unknown;
   enum?: string[];
   scope: "user" | "workspace";
-  apply: "live" | "restart";
+  apply: "live" | "next-operation" | "restart";
   /** Exact HTTPS origins allowed to receive this secret as a Bearer token. Required for secret settings. */
   credential_origins?: string[];
 }

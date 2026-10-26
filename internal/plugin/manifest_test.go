@@ -169,7 +169,7 @@ func TestLoadManifestNormalizesDesktopThemeAndSettingsContributions(t *testing.T
       "enabled": {"type":"boolean","title":"Enabled","default":true,"scope":"user","apply":"live"},
       "mode": {"type":"enum","title":"Mode","default":"quiet","enum":["quiet","active"],"scope":"workspace","apply":"restart"},
       "label": {"type":"string","title":"Label","default":"work","scope":"user","apply":"live"},
-      "limit": {"type":"number","title":"Limit","default":3,"scope":"workspace","apply":"live"}
+      "limit": {"type":"number","title":"Limit","default":3,"scope":"workspace","apply":"next-operation"}
     }
   }
 }`)
@@ -187,7 +187,7 @@ func TestLoadManifestNormalizesDesktopThemeAndSettingsContributions(t *testing.T
 	if got.Themes[0].Tokens["--wuu-font-family-ui"] != "system-ui" || got.Themes[0].Syntax["--wuu-syntax-string"] != "#86efac" {
 		t.Fatalf("modern theme contract = %+v", got.Themes[0])
 	}
-	if len(got.Settings) != 4 || got.Settings["productivity.mode"].Scope != SettingScopeWorkspace {
+	if len(got.Settings) != 4 || got.Settings["productivity.mode"].Scope != SettingScopeWorkspace || got.Settings["productivity.limit"].Apply != SettingApplyNextOperation {
 		t.Fatalf("settings = %+v", got.Settings)
 	}
 }

@@ -83,13 +83,83 @@ Themes, shell skins, and settings need no desktop module. For example, merge thi
 }
 ```
 
-Theme tokens come from the [generated theme contract](theme-surface-matrix.md), not arbitrary host CSS variables. Public semantic colors have readable defaults for independent UI shells. Declare colors in the theme's `tokens` to override built-in surfaces; omitted colors retain each component's default appearance. Clearing or disabling the theme restores those defaults. Settings support `boolean`, `string`, `number`, and `enum`, with `scope=user|workspace` and `apply=live|restart`. Read settings through `host.settings.get/list` services in the runtime or `host.getSetting` in a desktop view. Disabling or removing the package preserves settings and storage by default.
+Theme tokens come from the [generated theme contract](theme-surface-matrix.md), not arbitrary host CSS variables. Public semantic colors have readable defaults for independent UI shells. Declare colors in the theme's `tokens` to override built-in surfaces; omitted colors retain each component's default appearance. Clearing or disabling the theme restores those defaults. Settings support `boolean`, `string`, `number`, and `enum`, with `scope=user|workspace` and `apply=live|next-operation|restart`. Read settings through `host.settings.get/list` services in the runtime or `host.getSetting` in a desktop view. Disabling or removing the package preserves settings and storage by default.
 
 Commands under `contributes.commands` have a local ID and a kind. `prompt_template` references a bounded UTF-8 file inside the package and supplies a host-owned composer action. `runtime_action` points to a command registered by the desktop generation; declaring it alone does not execute code. `side_conversation` references a package-owned prompt and opens the host’s attached conversation surface. Its messages use the existing side-chat execution and history; the host retains its current permission boundary. The send request identifies the public `plugin.command` ID, and disabling or removing its owning package cancels active answers without deleting history. Same-ID updates apply to the next answer; an active answer keeps its retained generation. No desktop entry or helper process is required.
 
 First-run setup preserves applied plugin choices if it is interrupted before completion. Inventory distinguishes the effective `enabled` state from an optional `enabled_override` user policy; an absent override means the package default applies.
 
 Manifest UI declarations use `contributes.presenters`, `navigation`, `workspaceTools`, or `settingsPages`. They describe placement and discovery, while the desktop module registers rendering. For declared UI regions, call `registerUIContribution` with an owner-qualified target; no manifest entry is needed. The former `contributes.slots` and `surfaces` fields are rejected. See [desktop UI plugins](desktop-plugins.md) for composition rules.
+
+### Configuration snapshots and effectiveness
+
+Configuration changes do not restart the plugin or rebuild its resources. Choose
+an application mode for each non-secret setting:
+
+| `apply` | Runtime reads |
+| --- | --- |
+| `live` | Each read or refresh sees the latest validated candidate. |
+| `next-operation` | The first snapshot or non-secret settings read in an authenticated tool, capability, or service execution captures all operation settings; subsequent reads in that execution retain them. A new execution captures newer values. |
+| `restart` | Values are captured before generation preparation and remain fixed for that generation, including retained in-flight work. A successful reload or host restart adopts saved changes. |
+
+Use `restart` for resource structure, such as pool construction or a connection
+endpoint, and `next-operation` for operation parameters. Use the callback's `host`
+for execution-scoped reads; a background host has no enclosing operation. For an
+application-defined operation, capture once and pass that immutable snapshot to
+all its steps, even when its settings are marked `live`:
+
+```ts
+import { createPluginSettings, requireKernelService } from "@wuu/plugin-sdk";
+
+// initialize(): required_services: [requireKernelService("host.settings.list")]
+// Inside executeTool, invokeService, or invokeCapability:
+const settings = createPluginSettings(host, { signal: execution.signal });
+const config = await settings.capture();
+// Keep config.values for the whole operation. Later refreshes never mutate it.
+```
+
+`host.settings.list` still accepts `{}` and returns `entries`. It additionally
+returns an opaque `revision`, configured `scope_revisions`, and local
+`restart_required` keys. Optional `{scope: "user" | "workspace"}` filters the
+returned snapshot and its metadata. Revisions are content tokens: compare for
+equality, not ordering; they are not an event log. One provider document is read
+per scope, and all declared values are validated before publication. Scopes are
+independently committed; a combined snapshot is **not** a cross-scope transaction.
+Keep coupled values in one scope. Secret entries remain empty strings and never
+contribute secret material or secret-presence changes to revisions.
+
+The reader's `refresh()` atomically replaces `current` only after a successful
+read and optional `validate(values)` cross-field check. Invalid persisted values,
+backend failures, or cancellation reject the refresh without altering previously
+captured snapshots. `subscribe(callback)` observes changed published revisions;
+its return value unsubscribes. `watch(intervalMs)` optionally refreshes every
+1 second by default (100–60,000 ms allowed), coalescing with concurrent refreshes.
+It must be awaited or have a rejection handler. Watching is not started by
+subscription; it can coalesce intermediate changes and is not a durable event
+stream. Pass the generation lifecycle signal for background watching. Aborting
+it removes listeners and prevents late responses from publishing. Listener
+failures reject refresh **after** publication and do not roll back settings.
+
+The existing `get`/`getAll` interface and `host.settings.get/list` call shapes
+remain available. The new helper requires snapshot metadata and explicitly
+rejects older hosts rather than pretending separate reads are consistent.
+Desktop `host.getSetting` is a configuration-editor read of the **saved** value,
+not the runtime-effective restart value. Secret reads still reveal no token.
+
+The fingerprint-gated `plugin/setting/set` editor route accepts an optional
+`patch` of additional non-secret keys in the primary key's scope, alongside the
+existing `key` and `value`. It validates the complete declared candidate and
+commits it in one selected-provider compare-and-exchange. Duplicate keys,
+foreign keys, cross-scope edits and secrets in a patch are rejected without a
+write. This also permits atomic repair of multiple invalid saved fields after a
+schema change. Removed declarations remain stored for downgrade compatibility
+but are not exposed to the current plugin. Uncertain provider write failures
+are not retried automatically; reread before deciding whether to retry.
+
+Run `node scripts/plugin-settings-e2e.mjs` for a packed-SDK process acceptance
+check covering in-flight reads, reload, resource stability, rejected candidates,
+and retirement. It uses synthetic state and writes repeatable evidence under
+`.tmp/e2e/plugin-settings/` (override with `WUU_SETTINGS_EVIDENCE`).
 
 ### Shell skins
 

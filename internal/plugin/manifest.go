@@ -387,8 +387,9 @@ const (
 type SettingApplyMode string
 
 const (
-	SettingApplyLive    SettingApplyMode = "live"
-	SettingApplyRestart SettingApplyMode = "restart"
+	SettingApplyLive          SettingApplyMode = "live"
+	SettingApplyNextOperation SettingApplyMode = "next-operation"
+	SettingApplyRestart       SettingApplyMode = "restart"
 )
 
 // SettingDefinition is a validated generated-control definition. Settings are
@@ -1033,8 +1034,8 @@ func normalizeSettingDefinition(field string, raw rawSettingDefinition) (Setting
 	if raw.Scope != SettingScopeUser && raw.Scope != SettingScopeWorkspace {
 		return SettingDefinition{}, fmt.Errorf("%s scope must be user or workspace", field)
 	}
-	if raw.Apply != SettingApplyLive && raw.Apply != SettingApplyRestart {
-		return SettingDefinition{}, fmt.Errorf("%s apply must be live or restart", field)
+	if raw.Apply != SettingApplyLive && raw.Apply != SettingApplyNextOperation && raw.Apply != SettingApplyRestart {
+		return SettingDefinition{}, fmt.Errorf("%s apply must be live, next-operation or restart", field)
 	}
 	defaultValue, err := decodeJSONDefault(raw.Default)
 	if err != nil {
@@ -1658,4 +1659,35 @@ func normalizeStrings(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// ValidateSettingValue applies the same primitive schema at read and write boundaries.
+func ValidateSettingValue(definition SettingDefinition, raw json.RawMessage) error {
+	if len(raw) == 0 || len(raw) > 64<<10 || !json.Valid(raw) {
+		return errors.New("plugin setting value must be valid JSON within 65536 bytes")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return errors.New("plugin setting value is invalid")
+	}
+	valid := false
+	switch definition.Type {
+	case SettingTypeBoolean:
+		_, valid = value.(bool)
+	case SettingTypeString, SettingTypeSecret:
+		_, valid = value.(string)
+	case SettingTypeNumber:
+		_, valid = value.(json.Number)
+	case SettingTypeEnum:
+		text, ok := value.(string)
+		for _, candidate := range definition.Enum {
+			valid = valid || (ok && text == candidate)
+		}
+	}
+	if !valid {
+		return fmt.Errorf("plugin setting value does not match declared type %q", definition.Type)
+	}
+	return nil
 }

@@ -110,6 +110,25 @@ jobs:
       - name: Test
         run: make test-go test-plugins
 
+      - name: Guard retained historical plugin packages against current host
+        timeout-minutes: 4
+        env:
+          WUU_COMPATIBILITY_EVIDENCE: ${{ runner.temp }}/wuu-plugin-compatibility
+        run: make test-plugin-compatibility
+
+      - name: Upload historical plugin compatibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-compatibility-evidence
+          path: |
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/report.json
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/wire.jsonl
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/go-test.jsonl
+            ${{ runner.temp }}/wuu-plugin-compatibility/**/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Build plugin model acceptance prerequisites
         run: |
           npm --prefix packages/plugin-sdk run build

@@ -57,6 +57,73 @@ func TestPluginSettingsValidateOwnershipTypeScopeAndGeneration(t *testing.T) {
 	}
 }
 
+// Reject the complete declared candidate before CAS persistence; a valid edit
+// must not publish alongside a malformed sibling value from the selected store.
+func TestPluginSettingsRejectWholeCandidateBeforeWrite(t *testing.T) {
+	srv, item, out := newPluginStateTestServer(t)
+	services, release, err := srv.rt.RetainStateServices()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	_, err = services.Settings.Update(context.Background(), item.SubjectID, pluginsettings.ScopeWorkspace, item.Fingerprint, func(values map[string]json.RawMessage) error {
+		values["enabled"] = json.RawMessage(`false`)
+		values["limit"] = json.RawMessage(`"broken"`)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callPluginPackageRPC(t, srv, "rejected", MethodPluginSettingSet, PluginSettingSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Key: "enabled", Value: json.RawMessage(`true`)})
+	if responseByID(t, parseOutput(t, out.String()), "rejected")["error"] == nil {
+		t.Fatal("invalid sibling candidate was published")
+	}
+	document, err := services.Settings.Read(context.Background(), item.SubjectID, pluginsettings.ScopeWorkspace)
+	if err != nil || string(document.Values["enabled"]) != "false" {
+		t.Fatalf("rejected candidate persisted: %+v %v", document, err)
+	}
+	// Repair is possible by replacing the invalid value itself.
+	callPluginPackageRPC(t, srv, "repair", MethodPluginSettingSet, PluginSettingSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Key: "limit", Value: json.RawMessage(`4`)})
+	if response := responseByID(t, parseOutput(t, out.String()), "repair"); response["error"] != nil {
+		t.Fatalf("repair failed: %+v", response)
+	}
+	// Two malformed stored fields cannot be repaired one at a time once full
+	// candidates are validated. The optional same-scope patch repairs both.
+	_, err = services.Settings.Update(context.Background(), item.SubjectID, pluginsettings.ScopeWorkspace, item.Fingerprint, func(values map[string]json.RawMessage) error {
+		values["enabled"] = json.RawMessage(`"broken"`)
+		values["limit"] = json.RawMessage(`"broken"`)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	callPluginPackageRPC(t, srv, "atomic-repair", MethodPluginSettingSet, map[string]any{
+		"id": item.SubjectID, "fingerprint": item.Fingerprint, "key": "enabled", "value": true, "patch": map[string]any{"limit": 5},
+	})
+	if response := responseByID(t, parseOutput(t, out.String()), "atomic-repair"); response["error"] != nil {
+		t.Fatalf("atomic repair failed: %+v", response)
+	}
+	for id, patch := range map[string]map[string]any{
+		"duplicate":       {item.ID + ".enabled": false},
+		"foreign":         {"unowned": true},
+		"scope":           {"label": "cross-scope"},
+		"secret":          {"token": "not-persisted"},
+		"invalid-sibling": {"limit": "invalid"},
+	} {
+		callPluginPackageRPC(t, srv, id, MethodPluginSettingSet, map[string]any{
+			"id": item.SubjectID, "fingerprint": item.Fingerprint, "key": "enabled", "value": false, "patch": patch,
+		})
+		if responseByID(t, parseOutput(t, out.String()), id)["error"] == nil {
+			t.Fatalf("invalid %s patch accepted", id)
+		}
+	}
+	document, err = services.Settings.Read(context.Background(), item.SubjectID, pluginsettings.ScopeWorkspace)
+	if err != nil || string(document.Values["enabled"]) != "true" || string(document.Values["limit"]) != "5" {
+		t.Fatalf("atomic repair corrupted by rejected patch: %+v %v", document, err)
+	}
+
+}
+
 func TestPluginDiagnosticsExposeIsolatedCapabilityFailures(t *testing.T) {
 	srv, item, out := newPluginStateTestServer(t, func(id string) pluginhost.Client {
 		return &isolatedFailureClient{id: id, invokeErr: errors.New("observer boom")}
@@ -275,7 +342,7 @@ func newPluginStateTestServer(t *testing.T, runtimeClients ...func(string) plugi
 	writePluginPackageFile(t, manifestPath, `{
   "id":"state-demo",
   "desktop":{"entry":"desktop.js"},
-  "contributes":{"settings":{"enabled":{"type":"boolean","title":"Enabled","default":true,"scope":"workspace","apply":"live"}}}
+  "contributes":{"settings":{"enabled":{"type":"boolean","title":"Enabled","default":true,"scope":"workspace","apply":"live"},"limit":{"type":"number","title":"Limit","default":1,"scope":"workspace","apply":"next-operation"},"label":{"type":"string","title":"Label","default":"label","scope":"user","apply":"live"},"token":{"type":"secret","title":"Token","default":"","scope":"user","apply":"live","credential_origins":["https://api.example.test"]}}}
 }`)
 	writePluginPackageFile(t, filepath.Join(filepath.Dir(manifestPath), "desktop.js"), `export const activate = () => {};`)
 	item, err := pluginpkg.LoadManifest(manifestPath, "user")

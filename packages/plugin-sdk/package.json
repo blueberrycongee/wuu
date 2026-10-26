@@ -29,6 +29,8 @@
     "dist/model.d.ts",
     "dist/process.js",
     "dist/process.d.ts",
+    "dist/settings.js",
+    "dist/settings.d.ts",
     "dist/driver.js",
     "dist/driver.d.ts",
     "dist/composition.js",

@@ -253,6 +253,8 @@ interface PluginSettingResult {
 type PluginValueScope = "user" | "workspace";
 interface PluginSettingSetParams extends PluginSettingGetParams {
   value: boolean | string | number;
+  /** Atomic additional non-secret keys in the primary key's scope. */
+  patch?: Record<string, boolean | string | number>;
 }
 interface PluginDiagnosticsResult {
   id: string;

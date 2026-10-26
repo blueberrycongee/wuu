@@ -202,7 +202,7 @@ func Start(ctx context.Context, config ProcessConfig) (*ProcessClient, error) {
 	}
 	if config.PrepareOnly && initialized.LifecycleVersion != RuntimeLifecycleVersion {
 		_ = client.stopProcess()
-		err := fmt.Errorf("runtime lifecycle version %d is required for generation preflight", RuntimeLifecycleVersion)
+		err := fmt.Errorf("runtime lifecycle version %d is required for generation preflight (received %d)", RuntimeLifecycleVersion, initialized.LifecycleVersion)
 		client.setFailure(err)
 		return nil, fmt.Errorf("initialize plugin %q: %w", config.ID, err)
 	}

@@ -25,25 +25,29 @@ import (
 // never accepts a caller-supplied plugin ID or absolute filesystem path:
 // ownership and roots are captured from the validated inventory at activation.
 type pluginHostServices struct {
-	mu                sync.RWMutex
-	active            bool
-	open              bool
-	pluginID          string
-	subjectID         string
-	fingerprint       string
-	projectRoot       string
-	wuuHome           string
-	settings          map[string]pluginpkg.SettingDefinition
-	sessions          *session.Store
-	credentials       credentialstore.Store
-	settingsClient    *pluginsettings.Client
-	turnRouter        *PluginSessionRouter
-	fileLocks         map[string]func()
-	lockContext       context.Context
-	lockCancel        context.CancelFunc
-	processMu         sync.Mutex
-	processes         map[string]*pluginProcess
-	closeCompositions func() error
+	mu                     sync.RWMutex
+	active                 bool
+	open                   bool
+	pluginID               string
+	subjectID              string
+	fingerprint            string
+	projectRoot            string
+	wuuHome                string
+	settings               map[string]pluginpkg.SettingDefinition
+	sessions               *session.Store
+	credentials            credentialstore.Store
+	settingsClient         *pluginsettings.Client
+	settingsMu             sync.Mutex
+	settingsBaseline       map[string]json.RawMessage
+	settingsOperations     map[string]map[string]json.RawMessage
+	settingsOperationStops map[string]func() bool
+	turnRouter             *PluginSessionRouter
+	fileLocks              map[string]func()
+	lockContext            context.Context
+	lockCancel             context.CancelFunc
+	processMu              sync.Mutex
+	processes              map[string]*pluginProcess
+	closeCompositions      func() error
 }
 
 func newPluginHostServices(item pluginpkg.Plugin, projectRoot, wuuHome string, turnRouter *PluginSessionRouter) *pluginHostServices {
@@ -82,6 +86,7 @@ func (s *pluginHostServices) close() {
 	for _, release := range locks {
 		release()
 	}
+	s.closeSettings()
 	s.closeProcesses()
 }
 
@@ -252,10 +257,15 @@ func (s *pluginHostServices) invoke(ctx context.Context, method pluginhost.HostS
 	case pluginhost.HostServiceSettingsGet:
 		return s.settingsGet(ctx, raw)
 	case pluginhost.HostServiceSettingsList:
-		if err := decodeServiceParams(raw, &struct{}{}); err != nil {
+		var params pluginhost.SettingsListParams
+		if err := decodeServiceParams(raw, &params); err != nil {
 			return nil, err
 		}
-		return s.settingsList(ctx)
+		view, err := s.settingsSnapshot(ctx, params.Scope)
+		if err != nil {
+			return nil, err
+		}
+		return marshalServiceResult(view)
 	case pluginhost.HostServiceStorageGet:
 		var params pluginhost.StorageGetParams
 		if err := decodeServiceParams(raw, &params); err != nil {
@@ -300,35 +310,15 @@ func (s *pluginHostServices) settingsGet(ctx context.Context, raw json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	value, err := s.settingValue(ctx, localKey, definition)
+	// Secrets never enter the ordinary settings read path.
+	if definition.Type == pluginpkg.SettingTypeSecret {
+		return marshalServiceResult(pluginhost.SettingsGetResult{Value: json.RawMessage(`""`)})
+	}
+	view, err := s.settingsSnapshot(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	return marshalServiceResult(pluginhost.SettingsGetResult{Value: value})
-}
-
-func (s *pluginHostServices) settingsList(ctx context.Context) (json.RawMessage, error) {
-	entries := make(map[string]json.RawMessage, len(s.settings))
-	keys := make([]string, 0, len(s.settings))
-	for qualified := range s.settings {
-		prefix := s.pluginID + "."
-		if strings.HasPrefix(qualified, prefix) {
-			keys = append(keys, strings.TrimPrefix(qualified, prefix))
-		}
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		_, definition, err := s.ownedSetting(key)
-		if err != nil {
-			return nil, err
-		}
-		value, err := s.settingValue(ctx, key, definition)
-		if err != nil {
-			return nil, err
-		}
-		entries[key] = value
-	}
-	return marshalServiceResult(pluginhost.SettingsListResult{Entries: entries})
+	return marshalServiceResult(pluginhost.SettingsGetResult{Value: view.Entries[localKey]})
 }
 
 func (s *pluginHostServices) ownedSetting(key string) (string, pluginpkg.SettingDefinition, error) {
@@ -341,32 +331,6 @@ func (s *pluginHostServices) ownedSetting(key string) (string, pluginpkg.Setting
 		return "", pluginpkg.SettingDefinition{}, serviceError("setting_not_owned", fmt.Sprintf("plugin does not own setting %q", key))
 	}
 	return key, definition, nil
-}
-
-func (s *pluginHostServices) settingValue(ctx context.Context, key string, definition pluginpkg.SettingDefinition) (json.RawMessage, error) {
-	if definition.Type == pluginpkg.SettingTypeSecret {
-		return json.RawMessage(`""`), nil
-	}
-	scope := pluginsettings.Scope(definition.Scope)
-	// Settings are intentionally read-only on this channel. Persisted values
-	// survive plugin upgrades, so a document fingerprint may differ from this
-	// generation's fingerprint. Reading never rewrites it; Desktop's existing
-	// fingerprint-gated direct API remains the sole settings writer.
-	document, err := s.settingsClient.Read(ctx, s.subjectID, scope)
-	if err != nil {
-		return nil, err
-	}
-	value, ok := document.Values[key]
-	if !ok {
-		value, err = json.Marshal(definition.Default)
-		if err != nil {
-			return nil, fmt.Errorf("encode setting default: %w", err)
-		}
-	}
-	if err := validateRuntimeSettingValue(definition, value); err != nil {
-		return nil, fmt.Errorf("persisted setting %q: %w", key, err)
-	}
-	return append(json.RawMessage(nil), value...), nil
 }
 
 // HandleHostService remains an internal semantic test seam; transport routing
@@ -596,6 +560,24 @@ func (k *kernelHostServices) serviceRegistrations() []nativeServiceRegistration 
 	return registrations
 }
 
+// Prepare captures structural settings before any dependent plugin preparation.
+// Failed validation rejects the candidate graph, leaving the admitted graph intact.
+func (k *kernelHostServices) Prepare(ctx context.Context) error {
+	ctx = context.WithValue(ctx, kernelServicePreparationKey{}, true)
+	k.mu.RLock()
+	services := make([]*pluginHostServices, 0, len(k.services))
+	for _, service := range k.services {
+		services = append(services, service)
+	}
+	k.mu.RUnlock()
+	for _, service := range services {
+		if err := service.prepareSettings(ctx); err != nil {
+			return fmt.Errorf("plugin %s settings: %w", service.pluginID, err)
+		}
+	}
+	return nil
+}
+
 func (k *kernelHostServices) Activate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -653,6 +635,13 @@ func (k *kernelServiceInvoker) InvokeService(ctx context.Context, params pluginh
 		return nil, serviceError("method_not_found", "kernel service method is unavailable")
 	}
 	ctx = context.WithValue(ctx, kernelServiceExecutionKey{}, params.ExecutionID)
+	if params.CallerScope != nil {
+		scope, err := params.CallerExecution(false)
+		if err != nil {
+			return nil, err
+		}
+		ctx = context.WithValue(ctx, pluginSettingsOperationKey{}, &scope)
+	}
 	ctx, releaseState := k.parent.captureInvocationState(ctx)
 	defer func() { callErr = errors.Join(callErr, releaseState()) }()
 	return services.invoke(ctx, k.method, params.Params)
@@ -941,34 +930,4 @@ func marshalServiceResult(value any) (json.RawMessage, error) {
 
 func serviceError(code, message string) error {
 	return &pluginhost.HostServiceError{Code: code, Message: message}
-}
-
-func validateRuntimeSettingValue(definition pluginpkg.SettingDefinition, raw json.RawMessage) error {
-	if len(raw) == 0 || len(raw) > 64<<10 || !json.Valid(raw) {
-		return errors.New("value must be valid JSON within 65536 bytes")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return errors.New("value is invalid")
-	}
-	valid := false
-	switch definition.Type {
-	case pluginpkg.SettingTypeBoolean:
-		_, valid = value.(bool)
-	case pluginpkg.SettingTypeString:
-		_, valid = value.(string)
-	case pluginpkg.SettingTypeNumber:
-		_, valid = value.(json.Number)
-	case pluginpkg.SettingTypeEnum:
-		text, ok := value.(string)
-		for _, candidate := range definition.Enum {
-			valid = valid || (ok && text == candidate)
-		}
-	}
-	if !valid {
-		return fmt.Errorf("value does not match declared type %q", definition.Type)
-	}
-	return nil
 }
