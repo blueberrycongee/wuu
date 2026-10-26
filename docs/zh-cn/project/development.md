@@ -208,6 +208,28 @@ open -n -W -a "$PWD/desktop/node_modules/electron/dist/Electron.app" \
 基线，复现修复前失败。Linux 无头渲染不等同于实体 macOS 验收；使用本文说明的
 独立 Electron 测试环境。
 
+### 错误消息外观与恢复验收
+
+构建桌面和核心后，分别运行：
+
+```sh
+WUU_ERROR_STYLE_FONT=15 npm --prefix desktop run test:e2e:error-message-style
+WUU_ERROR_STYLE_FONT=20 npm --prefix desktop run test:e2e:error-message-style
+```
+
+`WUU_DESKTOP_CORE` 指定已构建的核心。每次使用独立的应用与用户配置和 loopback
+合成模型服务，经过真实 Electron 输入、preload、主进程和 Go。检查浅色/深色、
+1280/640px 窗口、IM/普通气泡、字号与裁切、原生详情开合和键盘焦点、HTTP 401 后
+手动继续，以及 HTTP 503 后自动恢复。详情应保留核心输出的完整诊断；原始模型服务
+错误正文可能在到达渲染器前被归一化。
+
+session CI 使用已有渲染器/核心构建运行两种字号，并上传合成截图、布局测量、日志
+和构建哈希。证据默认位于 `desktop/out/e2e/error-message-style-15/` 或
+`error-message-style-20/`；`WUU_ERROR_STYLE_OUTPUT` 更改目录，
+`WUU_ERROR_STYLE_DESKTOP` 选择已构建的对照桌面。应目视检查实际画面的气泡风格
+一致性；自动检查不固定 CSS 声明，也不能替代视觉验收。Linux 结果不等同于实体
+macOS 验收。
+
 ### MCP 连接生命周期
 
 构建核心后，运行 loopback 生命周期验收：

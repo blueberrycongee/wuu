@@ -30,6 +30,7 @@
     "desktop/scripts/titlebar-rename-e2e.cjs": "shell",
     "desktop/scripts/subscription-quota-e2e.cjs": "shell",
     "desktop/scripts/ptc-settings-e2e.cjs": "shell",
-    "desktop/scripts/first-send-continuity-e2e.cjs": "session"
+    "desktop/scripts/first-send-continuity-e2e.cjs": "session",
+    "desktop/scripts/error-message-style-e2e.cjs": "session"
   }
 }

@@ -2804,19 +2804,21 @@
  * up. The surface spans the reading column so changing status text cannot
  * resize it. It turns to the error tint only when the turn has failed. */
 .turn-failure {
-  /* The pill tracks the reading line so it stays concentric at any type size. */
   --turn-failure-pill-height: calc(var(--conversation-process-line-height) + 6px);
-  --turn-failure-inset: 6px;
   display: flex;
   align-items: flex-start;
   width: 100%;
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
-  /* Text keeps a full gutter on both sides; only the trailing pill steps out
-   * to the inset, so its ends stay concentric with the surface. */
-  padding: var(--turn-failure-inset) var(--space-3);
-  border-radius: calc(var(--turn-failure-pill-height) / 2 + var(--turn-failure-inset));
+  /* A recovery message belongs to the same framed-message family, not a
+   * separate status pill. Only its semantic surface colour is different. */
+  padding: var(--conversation-framed-text-inset-block) var(--card-padding);
+  border: 0;
+  border-radius: var(--user-message-radius);
+  outline: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
+  outline-offset: -1px;
+  box-shadow: var(--wuu-message-user-shadow, var(--shadow-message));
   background: var(--danger-soft);
   color: var(--ink);
   font-size: var(--conversation-message-font-size);
@@ -2926,7 +2928,6 @@
   justify-content: flex-end;
   gap: var(--space-1);
   margin-inline-start: auto;
-  margin-inline-end: calc(var(--turn-failure-inset) - var(--space-3));
 }
 
 /* Countdown and actions share the same reading-line height. */
@@ -3015,9 +3016,8 @@
 .turn-failure-details > .collapsible-details-inner {
   display: grid;
   row-gap: var(--space-1);
-  /* Inline-start padding belongs to the shared fold's mascot-room offset. The
-   * bottom completes the surface's gutter below the record. */
-  padding-block: var(--space-1) calc(var(--space-3) - var(--turn-failure-inset));
+  /* Inline-start padding belongs to the shared fold's mascot-room offset. */
+  padding-block: var(--space-1) 0;
 }
 
 .turn-failure-facts {
@@ -5980,11 +5980,15 @@ button.turn-edit-summary-overview:focus-visible {
   grid-template-columns: minmax(0, 1fr);
 }
 
-:root[data-message-style="im"] :is(.user-message, .user-message-edit) {
+:root[data-message-style="im"] :is(.user-message, .user-message-edit, .turn-failure) {
   width: calc(100% + 2 * var(--session-im-inline-outset));
   max-width: none;
   margin-inline: calc(-1 * var(--session-im-inline-outset));
   box-sizing: border-box;
+}
+
+:root[data-message-style="im"] .turn-failure {
+  padding-inline: var(--session-im-inline-outset);
 }
 
 /* Only text owns the frame; attachments stay above it on the reading axis. */

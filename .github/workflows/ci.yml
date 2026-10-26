@@ -877,6 +877,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Guard error message appearance and recovery
+        if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' && steps.build-fixture-core.outcome == 'success' }}
+        timeout-minutes: 7
+        shell: bash
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -o pipefail
+          failed=0
+          for font in 15 20; do
+            export WUU_ERROR_STYLE_FONT="$font"
+            export WUU_ERROR_STYLE_OUTPUT="${{ runner.temp }}/wuu-error-message-evidence/font-$font"
+            mkdir -p "$WUU_ERROR_STYLE_OUTPUT"
+            xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/error-message-style-e2e.cjs 2>&1 | tee "$WUU_ERROR_STYLE_OUTPUT/run.log" || failed=1
+          done
+          exit "$failed"
+
+      - name: Upload error message appearance evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-message-appearance-evidence
+          path: ${{ runner.temp }}/wuu-error-message-evidence/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Guard request lifecycle
         if: ${{ matrix.suite == 'session' && !cancelled() && steps.build-renderer.outcome == 'success' }}
         timeout-minutes: 5
