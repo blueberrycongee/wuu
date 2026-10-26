@@ -248,6 +248,7 @@
   --ribbon-header-height: calc(var(--workbench-top) + var(--web-workspace-toolbar-height));
   /* Every destination shares one row gap; the footer owns the wider break. */
   --ribbon-row-gap: var(--space-4);
+  --ribbon-row-height: max(36px, calc(var(--font-ui) * 2.4));
   --ribbon-group-gap: var(--space-6);
   --ribbon-inline-inset: var(--space-2);
   --sidebar-ribbon-icon-size: var(--icon-size);
@@ -260,7 +261,7 @@
   flex-direction: column;
   align-items: center;
   /* Keep destinations below the header as the UI font grows. */
-  padding: var(--ribbon-header-height) 0 var(--ribbon-inline-inset);
+  padding: var(--ribbon-header-height) 0 max(0px, calc(var(--main-composer-status-bottom, calc(var(--ribbon-inline-inset) + var(--ribbon-row-height) / 2)) - var(--ribbon-row-height) / 2));
   background: transparent;
   overflow: hidden;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
@@ -335,6 +336,8 @@
   position: relative;
   flex-shrink: 0;
   padding-top: var(--ribbon-group-gap);
+  /* Match the input and status control axes even when the status wraps. */
+  gap: max(0px, calc(var(--main-composer-row-distance, calc(var(--ribbon-row-gap) + var(--ribbon-row-height))) - var(--ribbon-row-height)));
 }
 
 .sidebar-ribbon-tab-row {
@@ -350,7 +353,7 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: max(36px, 2.4em);
+  min-height: var(--ribbon-row-height);
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);

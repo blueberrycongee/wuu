@@ -54,11 +54,12 @@ function restoreReopenedOrder(order: readonly string[], tabs: readonly Pick<Ribb
   return order.map(id => replacements.get(id) ?? id);
 }
 
-export function NavigationRibbon({ onOpenExternal, items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footer, ribbonRef }: {
+export function NavigationRibbon({ onOpenExternal, items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footerLeading, footer, ribbonRef }: {
   onOpenExternal?: (url: string) => Promise<void>;
   items: NavigationRibbonItem[];
   activeWebsiteId?: string | null;
   onSelectWebsite?: (website: RibbonWebsite) => void;
+  footerLeading?: ReactNode;
   footer?: ReactNode;
   ribbonRef?: Ref<HTMLElement>;
 } & RibbonBrowserActions): JSX.Element {
@@ -204,6 +205,7 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
         </div>
       </DndContext>
       <div className="sidebar-ribbon-footer">
+        {footerLeading}
         {!collapsed ? <RibbonVisibilityToggle collapsed={false} nativeTooltip={Boolean(activeWebsiteId)} /> : null}
         {footer}
       </div>

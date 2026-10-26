@@ -188,6 +188,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Use full sidebar glyphs to align the ribbon's collapse control with the account icon. Align its footer rows with the main composer and status controls across wrapped rows, larger UI fonts, and tool-rail visibility changes.
+
 - Match error and retry messages to the conversation bubble frame, with distinct status colors and full-width IM alignment; keep recovery actions readable at large text sizes and narrow widths.
 
 - Keep the first sent message visible through new-conversation creation and admission, without flashing or replaying its entrance; preserve newer drafts and recover rejected sends.

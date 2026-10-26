@@ -1,5 +1,5 @@
 import { flushSync } from "react-dom";
-import { ChevronLeft, ChevronRight } from "./WuuIcons";
+import { PanelLeftClose, PanelLeftOpen } from "./WuuIcons";
 import { readNavigationRibbonPreferences, saveNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
 import { showActionErrorToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
@@ -26,7 +26,7 @@ export function RibbonVisibilityToggle({ collapsed, nativeTooltip = false }: { c
         } catch (error) { showActionErrorToast(error, t("ribbon.saveFailed")); }
       }}
     >
-      {collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronLeft aria-hidden="true" />}
+      {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
       {!collapsed ? <span className="sidebar-ribbon-label">{label}</span> : null}
     </button>
   </Tooltip>;
