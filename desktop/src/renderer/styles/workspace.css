@@ -1074,10 +1074,6 @@ html.resizing-workspace-file-split * {
   transform: none;
 }
 
-.workspace-document-composer .composer-frame {
-  box-shadow: var(--composer-frame-shadow);
-}
-
 .workspace-right-panel.document-focus .workspace-file-code-scroll,
 .workspace-right-panel.document-focus .workspace-file-editor-scroll.markdown-reading {
   scroll-padding-bottom: var(--workspace-document-composer-inset, 180px);
@@ -3426,10 +3422,6 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 .split-composer {
   flex: 0 0 auto;
   padding: 16px 0 24px;
-}
-
-.split-composer .composer-frame {
-  box-shadow: var(--composer-frame-shadow);
 }
 
 .split-composer-shell.split-composer-shell-drop-active::after {

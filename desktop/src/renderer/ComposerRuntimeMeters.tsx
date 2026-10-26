@@ -13,6 +13,8 @@ function isExternalEngine(engine?: string): boolean {
 }
 
 export function ComposerRuntimeMeters({
+  inToolRail = false,
+  compact = inToolRail,
   running,
   turnID,
   fallbackTokensPerSecond = 0,
@@ -21,6 +23,8 @@ export function ComposerRuntimeMeters({
   fallbackContextUsage,
   activeEngine,
 }: {
+  inToolRail?: boolean;
+  compact?: boolean;
   running: boolean;
   turnID?: string;
   fallbackTokensPerSecond?: number;
@@ -64,7 +68,7 @@ export function ComposerRuntimeMeters({
             sampledAt={useLiveTelemetry ? telemetry.sampledAt : fallbackSampledAt}
             source={useLiveTelemetry ? telemetry.source : fallbackSource}
           /> */}
-      <ComposerContextMeter usage={contextUsage} />
+      <ComposerContextMeter usage={contextUsage} inToolRail={inToolRail} compact={compact} />
     </>
   );
 }

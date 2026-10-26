@@ -155,7 +155,7 @@ describe("selected public composer continuity", () => {
     const fixture = setup(); await fixture.render();
     await fixture.update(view => ({ ...view, tabs: { ...view.tabs, items: view.tabs.items.map(tab => ({ ...tab, kind: "thread", threadId: "draft-one" })) }, conversationActions: { ...view.conversationActions, editing: { threadId: "draft-one", turnId: "turn", itemId: "item", draft: { text: "edited", imageIds: [], fileIds: [] }, submitting: true } } }));
     expect(container.querySelector('[data-wuu-component="composer-send"]')?.getAttribute("data-wuu-state")).toBe("submitting");
-    expect(container.querySelector<HTMLButtonElement>(".permission-chip")!.disabled).toBe(true);
+    expect(container.querySelector<HTMLButtonElement>(".permission-menu-anchor button")!.disabled).toBe(true);
     await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!.click());
     expect(fixture.calls).toContainEqual({ action: "conversation.interrupt", input: { threadId: "draft-one" } });
     await fixture.update(view => ({ ...view, conversationActions: { ...view.conversationActions, editing: undefined } }));

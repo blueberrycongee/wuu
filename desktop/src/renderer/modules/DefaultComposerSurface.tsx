@@ -26,6 +26,7 @@ export interface DefaultComposerLayout {
   ownerTabId?: string;
   visible?: boolean;
   containerRef?: Ref<HTMLElement>;
+  runtimeControlsTarget?: HTMLElement | null;
 }
 
 /** A selected composer receives geometry only; every operation retains its public draft owner. */
@@ -57,7 +58,7 @@ function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, var
   </ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
 
-function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
+function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, runtimeControlsTarget, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
   const { t } = useI18n();
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
@@ -128,6 +129,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     <Input workspaceId={tab.workspaceId} workspaceRoot={runtime.cwd} turnId={presentation.turnId}
       queuedCount={queued(pending?.queued).length} pendingCount={queued(pending?.queued).length + queued(pending?.guides).length}
       variant={variant} mainConversation containerRef={containerRef} topAccessory={question}
+      runtimeControlsTarget={visible ? runtimeControlsTarget : undefined}
       canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       placeholder={tab.project && tab.kind === "draft" ? t("projects.draftPlaceholder") : undefined}
       prompt={draft.text} promptRevision={draft.revision} setPrompt={text => run(controls.setText(text))}
@@ -149,9 +151,9 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectEngineModel={async (model, effort) => (await controls.chooseRuntime({ kind: "native-model", model, effort })).accepted}
       onSelectEngineEffort={async effort => (await controls.chooseRuntime({ kind: "native-effort", effort })).accepted}
       onSelectEngineModelOptions={async modelOptions => (await controls.chooseRuntime({ kind: "native-options", modelOptions })).accepted}
-      gitStatus={environment.status} branchPickerDisabled={switching || !environment.capabilities.checkout}
-      worktree={runtime.worktree.available ? { enabled: runtime.worktree.enabled, startBranch: runtime.worktree.startBranch,
-        onToggle: () => run(controls.chooseWorktree(!runtime.worktree.enabled)), onSelectStartBranch: branch => { run(controls.chooseWorktree(true, branch)); setMenu(null); } } : undefined}
+      gitStatus={environment.status} branchPickerDisabled={switching || !environment.capabilities.checkout || Boolean(presentation.threadId && environment.actionBusy)}
+      worktree={!presentation.threadId && runtime.worktree.available ? { enabled: runtime.worktree.enabled, startBranch: runtime.worktree.startBranch,
+        onSelectStartBranch: branch => { run(controls.chooseWorktree(true, branch)); setMenu(null); } } : undefined}
       projects={projects} activeContext={context} inlineCompletionWorkspace={{ ...context, cwd: runtime.cwd }} activeWorkspace={projects.find(row => row.id === tab.workspaceId)}
       compactDisabledReason={compactReason} handoffDisabledReason={compactReason} sideThreadDisabledReason={!presentation.threadId ? t("app.sendMessageFirst") : undefined}
       codexModels={{ loading: runtime.providerModelsLoading, error: runtime.providerModelsError, models: runtime.providerModels.map(model => ({ slug: model.id, display_name: model.label, supported_reasoning: [...model.efforts], default_reasoning_level: model.defaultEffort, supported_in_api: model.supportedInAPI })) }}

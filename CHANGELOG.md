@@ -21,7 +21,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Add native Copy Image and Save As context menu actions for desktop images, including enlarged previews and popped-out conversations.
 
-- Keep new-page, browser, terminal, and file tools available in a compact right-side rail, with content space reserved while the workspace panel is closed or open. Let users collapse the rail to widen the conversation, restore it from the header, and retain that choice across reloads.
+- Keep new-page, browser, terminal, and file tools available in a compact right-side rail, with content space reserved while the workspace panel is closed or open. Let users collapse the rail to widen the conversation, restore it from the header, and retain that choice across reloads. In the collapsed state, only permissions, context usage, and model selection move below the input, alongside project and branch controls. Show project and branch context below both new and existing conversations, retaining existing project bindings. Remove the manual worktree toggle from the composer.
 
 - Expose caller-owned temporary agent compositions through `host.composition` and the public SDK: snapshot local TypeScript or package sources, try isolated runtimes, compare-and-exchange agent selections, and undo selection. Admitted runs retain their original providers; disposal drains executions before dependency-ordered cleanup. Creating a composition preserves the host's process-wide model catalog and refresh ownership. Include a directly loadable agent tool example and complete the embedded SDK source set used by single-file plugins.
 
@@ -114,7 +114,7 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Remove the app-wide Back and Forward buttons and page-history stack, reclaiming their header space. Website navigation keeps its own Back and Forward controls.
 
-- Use a compact capsule composer with a 44px single-line height at the default text size, attachments at the leading edge and permission, model, and send controls beside the draft. Keep single-line text vertically centered at saved font sizes and grow longer drafts upward in main and split conversations.
+- Keep the compact capsule composer with attachment and send buttons inside, and move permission, model, and plugin controls to a separate toolbar below. Give drafts more horizontal space and keep longer text growing upward in main, document, and split conversations.
 
 - Simplify General settings by removing new-conversation defaults and the automatic activity-preview toggle. Choose the agent, model, and reasoning effort in the composer; manage the default environment beside its profiles under Built-in agent. Activity previews appear automatically and remain individually dismissible; the retired auto-show preference no longer suppresses them. Remove the corresponding desktop bridge and SDK settings controls.
 

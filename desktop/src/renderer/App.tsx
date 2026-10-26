@@ -165,7 +165,6 @@ function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
   );
 }
 
-
 type MainComposerFocusRequest = {
   target: ComposerVariant;
   origin: Element | null;
@@ -262,6 +261,7 @@ export function App({ application, slots, shellPluginId }: {
     void application.invoke(open ? "settings.open" : "settings.close", {}).catch(showErrorToast);
   }, [application]);
   const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
+  const [runtimeControlsTarget, setRuntimeControlsTarget] = useState<HTMLElement | null>(null);
   const savedRibbonWidth = useNavigationRibbonPreferences().width ?? SIDEBAR_RIBBON_WIDTH;
   const ribbonWidth = nativeRibbonPresent ? savedRibbonWidth : SIDEBAR_RIBBON_WIDTH;
   const embeddedSettings = !poppedOutMode && nativeRibbonPresent;
@@ -882,7 +882,6 @@ export function App({ application, slots, shellPluginId }: {
       stopObservingAppearance();
     };
   }, [environmentPanelPaneOffset]);
-
 
   useEffect(() => {
     const markUserInteraction = (): void => {
@@ -1585,7 +1584,6 @@ export function App({ application, slots, shellPluginId }: {
     </UILayerPortal>
   ) : null;
 
-
   useEffect(() => {
     const back = (event: Event): void => {
       if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
@@ -1614,7 +1612,6 @@ export function App({ application, slots, shellPluginId }: {
   if (ENABLE_ACCOUNT && accountOpen && application.desktop.account) {
     return <><AccountScreen driver={application.desktop.account} openExternal={application.settingsControls.openExternal} onBack={() => setAccountOpen(false)} />{contextCapsule}</>;
   }
-
 
   if (!onboardingComplete) {
     return (
@@ -1845,8 +1842,7 @@ export function App({ application, slots, shellPluginId }: {
           onSplitSeparatorDoubleClick: resetSplitPercent,
         }} />
 
-        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", visible: !settingsOpen, containerRef: dockComposerRef }} /> : null}
-
+        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", visible: !settingsOpen, containerRef: dockComposerRef, runtimeControlsTarget }} /> : null}
 
         <ConversationStatusCluster
           application={application}
@@ -1889,6 +1885,7 @@ export function App({ application, slots, shellPluginId }: {
         <slots.Slot name={`${shellPluginId}/application.preview`} context={{ layout: {
           covered: settingsOpen || showingWebsite,
           toolsVisible: workspaceControlsVisible,
+          runtimeControlsRef: setRuntimeControlsTarget,
           open: rightPanelOpen,
           present: rightPanelOpen || rightPanelAnimating,
           prewarm: initialized,
@@ -1904,7 +1901,6 @@ export function App({ application, slots, shellPluginId }: {
         } }} />
       )}
       </>
-
 
       {!settingsOpen && environmentDialog === "commit" ? (
         <CommitChangesDialog

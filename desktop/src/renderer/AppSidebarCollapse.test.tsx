@@ -278,21 +278,21 @@ describe("sidebar collapse-state independence", () => {
         } });
       });
       await ready;
-      const oldToggle = container.querySelector(".composer-worktree-toggle")!;
-      await click(".composer-worktree-toggle");
-      expect(oldToggle.getAttribute("aria-pressed")).toBe("true");
+      const ownerTabId = controller.getSnapshot().drafts.primary.ownerTabId!;
+      await act(async () => { await controller.invoke("composer.choose-worktree", { ownerTabId, enabled: true }); });
+      const oldBranch = container.querySelector(".composer-git-controls .hero-project-pill")!;
       await click(".composer-git-controls .hero-project-pill");
       await click('.composer-branch-menu button[title="feature"]');
       expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
       await act(async () => { release(); await pending; });
       await flushAsync();
-      expect(oldToggle.isConnected).toBe(false);
-      expect(container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed")).toBe("true");
+      expect(oldBranch.isConnected).toBe(false);
+      expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === ownerTabId)?.worktree.enabled).toBe(true);
       expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("feature");
       await click(".composer-project-control .hero-project-pill");
       await click('.composer-project-menu button[title="second"]');
       expect(controller.getState().activeContext?.cwd).toBe(projects[1].path);
-      expect(container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed")).toBe("false");
+      expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === controller.getSnapshot().drafts.primary.ownerTabId)?.worktree.enabled).toBe(false);
       expect(container.querySelector(".composer-git-controls .hero-project-pill-text")?.textContent).toBe("main");
     } finally {
       release();
@@ -331,10 +331,9 @@ describe("sidebar collapse-state independence", () => {
       await activate("first");
       await act(async () => { root = createRoot(container); render(); });
       await flushAsync();
-      const toggle = container.querySelector<HTMLButtonElement>(".composer-worktree-toggle")!;
-      expect(toggle.disabled).toBe(false);
-      await act(async () => toggle.click());
-      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      const ownerTabId = controller.getSnapshot().drafts.primary.ownerTabId!;
+      await act(async () => { await controller.invoke("composer.choose-worktree", { ownerTabId, enabled: true }); });
+      expect(controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === ownerTabId)?.worktree.enabled).toBe(true);
       await act(async () => root!.render(null));
       await act(async () => { await controller.invoke("thread.select", { threadId: thread.id }); });
       expect(controller.getState().thread?.id).toBe(thread.id);
@@ -343,7 +342,7 @@ describe("sidebar collapse-state independence", () => {
       await activate("second");
       await act(async () => render());
       await flushAsync();
-      const nextDraftPressed = container.querySelector(".composer-worktree-toggle")?.getAttribute("aria-pressed");
+      const nextDraftWorktree = controller.getSnapshot().composerRuntime.owners.find(owner => owner.ownerTabId === controller.getSnapshot().drafts.primary.ownerTabId)?.worktree.enabled;
       const textarea = container.querySelector<HTMLTextAreaElement>(".composer textarea")!;
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Next draft after navigation");
@@ -356,7 +355,7 @@ describe("sidebar collapse-state independence", () => {
       await flushAsync();
       expect(window.wuu.startThread).toHaveBeenCalledOnce();
       expect(vi.mocked(window.wuu.startThread).mock.calls[0][0]?.workspace).not.toBe("worktree");
-      expect(nextDraftPressed).toBe("false");
+      expect(nextDraftWorktree).toBe(false);
     } finally {
       act(() => { root?.unmount(); });
       root = null;

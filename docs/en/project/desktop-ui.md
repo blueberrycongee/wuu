@@ -140,14 +140,19 @@ Preview `/dev/composer-attachments/` with optional `theme=dark`, `size=20`,
 `width=420`, `hero`, `queued`, and `seed` parameters. Its buttons paste
 synthetic files through the real textarea paste handler.
 
-## Composer project and worktree controls
+## Composer project and branch controls
 
-A new conversation's project sits in one outlined group; in a Git project, the
-branch and the worktree toggle share a second group of the same height. Hover
-fills a segment edge to edge, and the toggle's on state uses the interaction
-accent like Fast mode. A folder outside Git shows only the project group.
+New and existing conversations show their project and Git branch in a borderless
+row below the input. A folder outside Git shows only the project. When the right-side tool
+rail is collapsed, permissions, context usage, and model selection occupy the
+right end of this row; the other tool shortcuts stay hidden. Narrow panes wrap
+the row and truncate long names without reducing text size. The composer has
+no manual worktree toggle.
 
-Both groups open compact menu cards. The project card lists **Conversation**
+In a new conversation, both groups open compact menu cards. Existing conversations
+keep the project label visible without offering to change its binding; their branch
+picker switches the current working tree and is disabled while that tree is busy.
+The project card lists **Conversation**
 first, as the sidebar does, then projects in sidebar order; opening a folder and
 creating a blank workspace follow a divider. The branch card needs no heading
 outside a worktree: the checked-out branch comes first with a count of its
@@ -160,9 +165,9 @@ in its own worktree, the card is headed **Start from**, choosing a branch change
 nothing in the project, and it offers no new branch.
 
 Run `npm --prefix desktop run test:e2e:composer-worktree` to start a real
-conversation in a worktree through Electron and the Go core with a disposable
-profile, Git fixture, and local provider. It checks that choosing a start branch
-leaves the project's checkout alone and captures light/dark, default/large-font,
+conversation in a worktree through the desktop API and Go core with a disposable
+profile, Git fixture, and local provider. It checks that the requested base
+revision leaves the project's checkout alone and captures light/dark, default/large-font,
 wide/narrow, and non-Git states in `artifacts/composer-worktree/`. The window is
 visible, so the pointer's position can add a hover surface to a capture.
 

@@ -71,7 +71,6 @@ export type ComposerWorktreeControl = {
   enabled: boolean;
   /** Branch the worktree starts from; empty starts from the project's HEAD. */
   startBranch: string;
-  onToggle: () => void;
   onSelectStartBranch: (branch: string) => void;
 };
 

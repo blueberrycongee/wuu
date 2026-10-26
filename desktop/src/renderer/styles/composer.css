@@ -459,7 +459,6 @@
 }
 
 .composer-stack {
-  --composer-collapsed-min-height: 44px;
   --session-composer-radius: max(22px, calc((var(--conversation-reading-line-height) + 20px) / 2));
   --composer-expanded-min-height: min(clamp(240px, 44vh, 420px), 60dvh);
   --composer-expanded-offset: var(--composer-input-growth, 0px);
@@ -556,6 +555,40 @@
   }
 }
 
+.composer-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-2) var(--space-2) 0;
+}
+
+.composer-footer:not(:has(.composer-workspace-bar, .composer-footer-runtime)) {
+  display: none;
+}
+
+.composer-footer .composer-workspace-bar {
+  --composer-context-height: var(--control-size-toolbar);
+  flex: 1 1 320px;
+  max-width: 100%;
+  margin: 0;
+}
+
+.composer-footer-runtime {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+  max-width: 100%;
+}
+
+.composer-footer-runtime .icon-button {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+}
+
 .composer-workspace-group {
   display: inline-flex;
   align-items: center;
@@ -567,14 +600,22 @@
   max-width: 100%;
 }
 
-.composer-workspace-bar .hero-project-pill,
-.composer-worktree-toggle {
+.composer-workspace-bar .hero-project-pill {
   height: var(--composer-context-height);
   gap: 6px;
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   color: var(--ink-soft);
   font-size: var(--font-sm);
+}
+
+.composer-project-control .hero-project-pill:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.composer-project-control .hero-project-pill:disabled::before {
+  background: transparent;
 }
 
 .composer-workspace-bar .hero-project-pill:hover:not(:disabled),
@@ -594,40 +635,6 @@
   content: "/" / "";
 }
 
-.composer-worktree-toggle {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  font-size: var(--font-sm);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-fast) var(--ease-out),
-    color var(--motion-fast) var(--ease-out);
-}
-
-.composer-worktree-toggle:hover:not(:disabled) {
-  background: var(--surface-2);
-}
-
-.composer-worktree-toggle[aria-pressed="false"]:hover:not(:disabled) {
-  color: var(--ink);
-}
-
-/* Keep worktree selection distinct from the composer's neutral controls. */
-.composer-worktree-toggle[aria-pressed="true"],
-.composer-worktree-toggle[aria-pressed="true"] .hero-project-pill-icon {
-  color: var(--info);
-}
-
-.composer-worktree-toggle:disabled {
-  cursor: default;
-}
-
 .composer-workspace-bar .hero-project-pill::before {
   inset: 0;
 }
@@ -644,14 +651,28 @@
 .composer-frame {
   position: relative;
   width: 100%;
+}
+
+.composer-editor,
+.composer-cover-accessory {
+  position: relative;
   border-radius: var(--session-composer-radius, var(--radius-md));
   background: var(--composer-surface-bg);
   box-shadow: var(--composer-frame-shadow);
-  contain: layout paint;
+}
+
+.composer-editor {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  align-items: end;
+  gap: var(--space-1);
+  padding: max(4px, var(--space-1)) var(--space-2);
   overflow: hidden;
 }
 
-.composer-frame::after {
+.composer-editor::after,
+.composer-cover-accessory::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -661,27 +682,19 @@
   pointer-events: none;
 }
 
-.composer-frame.composer-frame-drop-active::after {
+.composer-frame-drop-active .composer-editor::after {
   border-color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--ink-overlay-18);
 }
 
-/* The frame clips its contents, so the draft's keyboard ring would show only
- * as a line under the text. The frame's edge, drawn above the input, becomes
- * the ring instead; it stays inside the frame, clear of trays tucked behind. */
-html[data-focus-modality="keyboard"] .composer-frame:has(> .composer > .composer-bar > textarea:focus-visible)::after {
+/* Draw the draft's keyboard ring inside the editor's clipped edge. */
+html[data-focus-modality="keyboard"] .composer-editor:has(> textarea:focus-visible)::after {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }
 
-html[data-focus-modality="keyboard"] .composer > .composer-bar > textarea:focus-visible {
+html[data-focus-modality="keyboard"] .composer-editor > textarea:focus-visible {
   outline: none;
-}
-
-.hero-composer-wrap .composer-frame {
-  border-radius: var(--session-composer-radius, var(--radius-md));
-  background: var(--composer-surface-bg);
-  box-shadow: var(--composer-frame-shadow);
 }
 
 /* The welcome grid already applies the shared cap and gutters. Fill its
@@ -692,14 +705,12 @@ html[data-focus-modality="keyboard"] .composer > .composer-bar > textarea:focus-
 
 .composer {
   --composer-input-min-height: max(36px, calc(var(--conversation-reading-line-height) + 3 * var(--space-1)));
-  /* Split the minimum height's spare space equally, including small saved fonts. */
   --composer-text-padding-block: calc((var(--composer-input-min-height) - var(--conversation-reading-line-height)) / 2);
   position: relative;
+  display: flex;
   width: 100%;
-  min-height: var(--composer-collapsed-min-height);
-  border-radius: 0;
-  background: var(--composer-surface-bg);
-  overflow: visible;
+  flex-direction: column;
+  gap: var(--space-1);
 }
 
 .composer-stack .composer-frame-shell {
@@ -1059,7 +1070,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   line-height: var(--conversation-reading-line-height);
 }
 
-/* Keep a narrow empty capsule on one line instead of clipping a wrapped hint. */
+/* Keep an empty editor's hint on one line in narrow panes. */
 .composer textarea::placeholder {
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1103,21 +1114,18 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   cursor: default;
 }
 
-/* One row forms the capsule. Drafts grow upward while controls keep their
- * bottom edge, so sending never moves away from the pointer. */
+/* Extension actions can occupy a separate row above the editor. */
 .composer-bar {
-  display: grid;
-  /* Reserve room for the hint before allowing long model names to consume it. */
-  grid-template-columns: auto minmax(min(calc(var(--font-ui) * 8), 30%), 1fr) minmax(0, max-content);
+  display: flex;
   min-width: 0;
-  align-items: end;
-  gap: var(--space-1);
-  overflow: hidden;
-  padding: max(4px, var(--space-1)) var(--space-2);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
   container: composer-toolbar / inline-size;
 }
 
 .composer-bar-left,
+.composer-input-actions,
 .composer-bar-right {
   display: flex;
   min-width: 0;
@@ -1127,21 +1135,54 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
    * keyboard rings (2px ring at a 2px offset). */
   overflow: clip;
   overflow-clip-margin: 4px;
-  /* Match the single-line editor's center even when the user's font grows. */
+}
+
+.composer-bar-left,
+.composer-input-actions {
   margin-block: calc((var(--composer-input-min-height) - var(--composer-control-size)) / 2);
 }
 
-.composer-bar-left {
-  flex: 1 1 auto;
+.composer-input-actions {
+  max-width: 50cqi;
 }
 
-/* Extra plugin controls get their own row, leaving the input beside Plus. */
-.composer-bar:has(.composer-plugin-toolbar) {
-  grid-template-columns: auto minmax(0, 1fr);
+.workspace-composer-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
 }
 
+.workspace-composer-controls .codex-runtime-trigger.is-compact,
+.composer-footer-runtime .codex-runtime-trigger.is-compact {
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+.workspace-composer-controls .codex-runtime-trigger .engine-icon,
+.composer-footer-runtime .codex-runtime-trigger .engine-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.workspace-composer-controls:empty {
+  display: none;
+}
+
+.workspace-composer-controls .permission-rail-button.tone-danger,
+.composer-footer-runtime .permission-rail-button.tone-danger {
+  color: var(--danger);
+}
+
+.composer-bar:has(> .composer-bar-right:empty) {
+  display: none;
+}
+
+/* Plugin controls can wrap within the toolbar without narrowing the editor. */
 .composer-bar-right:has(.composer-plugin-toolbar) {
-  grid-column: 1 / -1;
   flex-wrap: wrap;
   max-width: 100%;
 }
@@ -1213,6 +1254,7 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
   color: var(--ink-muted);
 }
 
+.composer-editor svg,
 .composer-bar svg {
   width: var(--icon-size);
   height: var(--icon-size);
@@ -2230,33 +2272,29 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   max-width: 100%;
 }
 
-/* Fold labels before they squeeze a narrow capsule down to a clipped hint;
- * the same menu buttons retain their accessible names and native hit targets. */
-@container composer-toolbar (max-width: 420px) {
-  .composer-bar > textarea {
-    padding-inline: var(--space-1);
-  }
-
-  .composer-bar .permission-menu-anchor,
-  .composer-bar .codex-runtime-anchor {
+/* Keep toolbar menus accessible in narrow panes. */
+@container composer-shell (max-width: 480px) {
+  :is(.composer-bar, .composer-input-actions) .permission-menu-anchor,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-anchor {
     width: var(--composer-control-size);
     min-width: var(--composer-control-size);
     max-width: var(--composer-control-size);
     flex: 0 0 var(--composer-control-size);
   }
 
-  .composer-bar .permission-chip,
-  .composer-bar .codex-runtime-trigger {
+  :is(.composer-bar, .composer-input-actions) .permission-chip,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-trigger {
     justify-content: center;
     gap: 0;
     padding: 0;
   }
 
-  .composer-bar .permission-chip > span,
-  .composer-bar .permission-chip > svg:last-child,
-  .composer-bar .codex-runtime-label,
-  .composer-bar .codex-runtime-effort,
-  .composer-bar .codex-runtime-trigger > svg:last-child {
+  .composer-input-actions .composer-context-meter-label,
+  :is(.composer-bar, .composer-input-actions) .permission-chip > span,
+  :is(.composer-bar, .composer-input-actions) .permission-chip > svg:last-child,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-label,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-effort,
+  :is(.composer-bar, .composer-input-actions) .codex-runtime-trigger > svg:last-child {
     display: none;
   }
 
@@ -2296,7 +2334,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 
 @container composer-shell (max-width: 480px) {
   /* Size the controls to their content so short branches stay beside the
-     worktree toggle. The Git column keeps a readable branch prefix when
+     project name. The Git column keeps a readable branch prefix when
      both names truncate. Document composers use their own stacked layout. */
   .composer-stack:not([data-document-composer]) .composer-workspace-bar {
     display: grid;

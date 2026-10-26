@@ -103,6 +103,7 @@ export interface WorkspacePanelLayout {
   open: boolean;
   covered?: boolean;
   toolsVisible?: boolean;
+  runtimeControlsRef?: (element: HTMLDivElement | null) => void;
   present: boolean;
   prewarm?: boolean;
   globalized: boolean;
@@ -250,7 +251,7 @@ function WorkspacePanelContent({
   application, slots, open, covered = false, toolsVisible = true, present, prewarm = false,
   globalized, sheetPhase = "docked", onToggleGlobalize, canExitGlobalized = true,
   browserOverlaySuppressed = false, onDirtyFileTabsChange, conversationTabVisible = false,
-  documentComposer = false, pane,
+  documentComposer = false, pane, runtimeControlsRef,
 }: WorkspacePanelLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const { t } = useI18n();
   const [toolRailCollapsed, setToolRailCollapsed] = useState(
@@ -766,6 +767,7 @@ function WorkspacePanelContent({
             </button>
           </Tooltip>
         ))}
+        <div className="workspace-composer-controls" ref={runtimeControlsRef} />
         </> : null}
       </nav>
     ) : null}

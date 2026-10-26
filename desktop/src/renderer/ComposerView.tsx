@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { useComposerServices } from "./ComposerServicesContext";
 import type { ComposerConfiguration, ComposerWorkspace } from "./ComposerTypes";
 import { ComposerInlineCompletionOverlay, useComposerInlineCompletion, type ComposerInlineCompletionActions, type ComposerInlineSource } from "./ComposerInlineCompletion";
@@ -11,7 +12,6 @@ import {
   MessageSquare,
   ArrowUp,
   ShieldCheck,
-  Split,
 } from "./WuuIcons";
 import {
   type CSSProperties,
@@ -145,6 +145,7 @@ export function Composer({
   inlineSelection,
   permissionLocked = false,
   containerRef,
+  runtimeControlsTarget,
   prompt: committedPrompt,
   promptRevision = 0,
   setPrompt: commitPrompt,
@@ -264,6 +265,7 @@ export function Composer({
   // The conversation's permission mode cannot change, as for a project coordinator.
   permissionLocked?: boolean;
   containerRef?: Ref<HTMLElement>;
+  runtimeControlsTarget?: HTMLElement | null;
   prompt: string;
   // Changes only for programmatic clear/restore operations. This lets the
   // editor accept an external empty string even if App's delayed snapshot was
@@ -1175,6 +1177,173 @@ export function Composer({
     });
   }
 
+  const controlsBelowInput = !mobileWeb && variant !== "document" && !textOnly;
+  const controlsInRail = Boolean(runtimeControlsTarget && !topAccessory);
+  const compactControls = controlsInRail || controlsBelowInput;
+  const workspaceControls = canSelectWorkspace || (mainConversation && controlsBelowInput) ? (
+    <div className="composer-workspace-bar" ref={menuRef}>
+      <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
+        <Tooltip
+          content={workspacePillTitle}
+          disabled={workspacePillTitle === workspacePillLabel}
+        >
+          <button
+            ref={workspacePillRef}
+            className="hero-project-pill"
+            type="button"
+            disabled={!canSelectWorkspace}
+            aria-haspopup={canSelectWorkspace ? "menu" : undefined}
+            aria-expanded={canSelectWorkspace ? menuOpen : undefined}
+            aria-label={canSelectWorkspace ? t("composer.switchWorkspace", { workspace: workspacePillLabel }) : workspacePillLabel}
+            onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
+            onClick={onToggleMenu}
+            onKeyDown={(event) => {
+              if (!menuOpen && menuOpeningKey(event)) onToggleMenu();
+            }}
+          >
+            <span className="hero-project-pill-icon" aria-hidden="true">
+              <WorkspacePillIcon />
+            </span>
+            <span className="hero-project-pill-text">{workspacePillLabel}</span>
+          </button>
+        </Tooltip>
+        {canSelectWorkspace && menuOpen ? (
+          <FloatingMenuPortal
+            anchorRef={menuRef}
+            owner="composer-runtime"
+            onDismiss={onToggleMenu}
+            placement="above"
+            align="left"
+            width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
+            mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
+          >
+            <WorkspacePickerMenu
+              projects={projects}
+              activeContext={activeContext}
+              query={workspaceFilter}
+              setQuery={setWorkspaceFilter}
+              onSelectWorkspace={onSelectWorkspace}
+              onSelectNoProject={onSelectNoProject}
+              onCreateWorkspace={onCreateWorkspace}
+              onOpenWorkspace={onOpenWorkspace}
+              onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, menuTriggerRef?.current ?? workspacePillRef.current)}
+            />
+          </FloatingMenuPortal>
+        ) : null}
+      </div>
+      {gitStatus?.is_repo ? (
+        <div className="composer-workspace-group composer-git-controls">
+          <ComposerBranchPicker
+            key={activeContext?.cwd}
+            gitStatus={gitStatus}
+            disabled={branchPickerDisabled || readOnly}
+            open={branchMenuOpen}
+            onToggle={onToggleBranchMenu}
+            onSelect={worktree?.enabled ? worktree.onSelectStartBranch : onSelectGitBranch}
+            onCreate={worktree?.enabled ? undefined : onCreateGitBranch}
+            onOpenWorktree={onOpenGitWorktree}
+            worktreeStart={worktree?.enabled ? { branch: worktree.startBranch } : undefined}
+          />
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const permissionControl = !textOnly ? (
+    <div className="permission-menu-anchor" ref={accessMenuRef}>
+      <Tooltip content={compactControls ? t("composer.permissionMode", { mode: permissionChipLabel }) : undefined}>
+        <button
+          ref={permissionChipRef}
+          className={`${compactControls ? "icon-button permission-rail-button" : "permission-chip"} tone-${permissionOption.tone}`}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={accessMenuOpen}
+          aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
+          disabled={!initialized || readOnly || running || permissionLocked}
+          onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
+          onClick={onToggleAccessMenu}
+          onKeyDown={(event) => {
+            if (!accessMenuOpen && menuOpeningKey(event)) onToggleAccessMenu();
+          }}
+        >
+          <PermissionChipIcon aria-hidden="true" />
+          {compactControls ? null : <><span>{permissionChipLabel}</span><ChevronDown aria-hidden="true" /></>}
+        </button>
+      </Tooltip>
+      {accessMenuOpen ? (
+        <FloatingMenuPortal
+          anchorRef={accessMenuRef}
+          owner="composer-access"
+          onDismiss={onToggleAccessMenu}
+          placement={controlsInRail ? "below" : "above"}
+          align={controlsInRail ? "right" : "left"}
+          crossAxisOffset={controlsInRail ? -(accessMenuRef.current?.offsetWidth ?? 0) - 8 : 0}
+          flip
+          offset={6}
+          width={composerMenuWidth(PERMISSION_MENU_WIDTH)}
+          mobileSheet={{ label: t("composer.permissionMode", { mode: permissionChipLabel }), onClose: onToggleAccessMenu }}
+        >
+          <AccessMenu
+            permissions={initialized?.permissions}
+            engine={activeEngine}
+            permissionModes={enginePermissionModes}
+            disabled={!initialized || readOnly || running}
+            onSelect={(mode, approveForMe) => {
+              permissionChipRef.current?.focus();
+              onSelectPermissionMode(mode, approveForMe);
+            }}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleAccessMenu, permissionChipRef.current)}
+          />
+        </FloatingMenuPortal>
+      ) : null}
+    </div>
+  ) : null;
+  const runtimeControls = <>
+    {permissionControl}
+    {hideRuntimeControls ? null : (
+      <>
+        <ComposerRuntimeMeters
+          inToolRail={controlsInRail}
+          compact={compactControls}
+          running={running}
+          turnID={telemetryTurnID}
+          fallbackTokensPerSecond={tokensPerSecond}
+          fallbackSampledAt={tokenSpeedSampledAt}
+          fallbackSource={tokenSpeedSource}
+          fallbackContextUsage={contextUsage}
+          activeEngine={activeEngine}
+        />
+        {/* Until the runtime reports, there is no model to name. */}
+        {initialized ? (
+          <RuntimePicker
+            inToolRail={controlsInRail}
+            compact={compactControls}
+            initialized={initialized}
+            state={codexModels}
+            openMenu={codexRuntimeMenu}
+            anchorRef={codexRuntimeRef}
+            running={effectiveRuntimeControlsDisabled}
+            engines={engines}
+            activeEngine={activeEngine}
+            engineLocked={engineLocked}
+            engineModel={engineModel}
+            engineEffort={engineEffort}
+            engineSpeed={engineSpeed}
+            engineModelOptions={engineModelOptions}
+            onSelectSpeed={onSelectSpeed}
+            onSelectEngine={onSelectEngine}
+            onSelectEngineModel={onSelectEngineModel}
+            onSelectEngineEffort={onSelectEngineEffort}
+            onSelectEngineModelOptions={onSelectEngineModelOptions}
+            onToggleMenu={onToggleCodexRuntimeMenu}
+            onSelectModel={onSelectRuntimeModel}
+            onSelectEffort={onSelectRuntimeEffort}
+
+          />
+        ) : null}
+      </>
+    )}
+  </>;
   const content = (
     <div
       className="composer-stack"
@@ -1269,87 +1438,7 @@ export function Composer({
           onEditQueuedMessage={onEditQueuedMessage}
         />
         <div className="composer-frame-shell">
-          {canSelectWorkspace ? (
-            <div className="composer-workspace-bar" ref={menuRef}>
-              <div className="hero-project-pill-anchor composer-project-control composer-workspace-group">
-                <Tooltip
-                  content={workspacePillTitle}
-                  disabled={workspacePillTitle === workspacePillLabel}
-                >
-                  <button
-                    ref={workspacePillRef}
-                    className="hero-project-pill"
-                    type="button"
-                    aria-haspopup="menu"
-                    aria-expanded={menuOpen}
-                    aria-label={t("composer.switchWorkspace", { workspace: workspacePillLabel })}
-                    onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
-                    onClick={onToggleMenu}
-                    onKeyDown={(event) => {
-                      if (!menuOpen && menuOpeningKey(event)) onToggleMenu();
-                    }}
-                  >
-                    <span className="hero-project-pill-icon" aria-hidden="true">
-                      <WorkspacePillIcon />
-                    </span>
-                    <span className="hero-project-pill-text">{workspacePillLabel}</span>
-                  </button>
-                </Tooltip>
-                {menuOpen ? (
-                  <FloatingMenuPortal
-                    anchorRef={menuRef}
-                    owner="composer-runtime"
-                    onDismiss={onToggleMenu}
-                    placement="above"
-                    align="left"
-                    width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
-                    mobileSheet={{ label: t("composer.switchWorkspace", { workspace: workspacePillLabel }), onClose: onToggleMenu }}
-                  >
-                    <WorkspacePickerMenu
-                      projects={projects}
-                      activeContext={activeContext}
-                      query={workspaceFilter}
-                      setQuery={setWorkspaceFilter}
-                      onSelectWorkspace={onSelectWorkspace}
-                      onSelectNoProject={onSelectNoProject}
-                      onCreateWorkspace={onCreateWorkspace}
-                      onOpenWorkspace={onOpenWorkspace}
-                      onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleMenu, menuTriggerRef?.current ?? workspacePillRef.current)}
-                    />
-                  </FloatingMenuPortal>
-                ) : null}
-              </div>
-              {gitStatus?.is_repo ? (
-                <div className="composer-workspace-group composer-git-controls">
-                  <ComposerBranchPicker
-                    key={activeContext?.cwd}
-                    gitStatus={gitStatus}
-                    disabled={branchPickerDisabled || readOnly}
-                    open={branchMenuOpen}
-                    onToggle={onToggleBranchMenu}
-                    onSelect={worktree?.enabled ? worktree.onSelectStartBranch : onSelectGitBranch}
-                    onCreate={worktree?.enabled ? undefined : onCreateGitBranch}
-                    onOpenWorktree={onOpenGitWorktree}
-                    worktreeStart={worktree?.enabled ? { branch: worktree.startBranch } : undefined}
-                  />
-                  {worktree ? (
-                    <Tooltip content={t("composer.worktreeHint")}>
-                      <button
-                        className="composer-worktree-toggle"
-                        type="button"
-                        aria-pressed={worktree.enabled}
-                        disabled={branchPickerDisabled || readOnly}
-                        onClick={worktree.onToggle}
-                      >
-                        <Split className="hero-project-pill-icon" aria-hidden="true" />
-                        <span>{t("composer.worktree")}</span>
-                      </button>
-                    </Tooltip>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+          {controlsBelowInput ? null : workspaceControls}
           {cameraOpen && !textOnly && !readOnly ? (
             <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
           ) : null}
@@ -1387,6 +1476,11 @@ export function Composer({
               className="composer-bar"
               data-wuu-component="composer-toolbar"
             >
+              <div className="composer-bar-right">
+                <slots.Slot name="wuu.default-composer/composer.toolbar" context={pluginSlotContext} layout={MemoizedComposerPluginToolbar} />
+              </div>
+            </div>
+            <div className="composer-editor">
               <div className="composer-bar-left">
                 {!textOnly ? (
                   <ComposerPlusButton
@@ -1449,93 +1543,8 @@ export function Composer({
                 onKeyDown={handleComposerKeyDown}
                 onContextMenu={handleComposerContextMenu}
               />
-              <div className="composer-bar-right">
-                {!textOnly ? (
-                  <div className="permission-menu-anchor" ref={accessMenuRef}>
-                    <button
-                      ref={permissionChipRef}
-                      className={`permission-chip tone-${permissionOption.tone}`}
-                      type="button"
-                      aria-haspopup="menu"
-                      aria-expanded={accessMenuOpen}
-                      aria-label={t("composer.permissionMode", { mode: permissionChipLabel })}
-                      disabled={!initialized || readOnly || running || permissionLocked}
-                      onPointerDown={(event) => { if (mobileWeb) event.preventDefault(); }}
-                      onClick={onToggleAccessMenu}
-                      onKeyDown={(event) => {
-                        if (!accessMenuOpen && menuOpeningKey(event)) onToggleAccessMenu();
-                      }}
-                    >
-                      <PermissionChipIcon aria-hidden="true" />
-                      <span>{permissionChipLabel}</span>
-                      <ChevronDown aria-hidden="true" />
-                    </button>
-                    {accessMenuOpen ? (
-                      <FloatingMenuPortal
-                        anchorRef={accessMenuRef}
-                        owner="composer-access"
-                        onDismiss={onToggleAccessMenu}
-                        placement="above"
-                        align="left"
-                        offset={6}
-                        width={composerMenuWidth(PERMISSION_MENU_WIDTH)}
-                        mobileSheet={{ label: t("composer.permissionMode", { mode: permissionChipLabel }), onClose: onToggleAccessMenu }}
-                      >
-                        <AccessMenu
-                          permissions={initialized?.permissions}
-                          engine={activeEngine}
-                          permissionModes={enginePermissionModes}
-                          disabled={!initialized || readOnly || running}
-                          onSelect={(mode, approveForMe) => {
-                            permissionChipRef.current?.focus();
-                            onSelectPermissionMode(mode, approveForMe);
-                          }}
-                          onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggleAccessMenu, permissionChipRef.current)}
-                        />
-                      </FloatingMenuPortal>
-                    ) : null}
-                  </div>
-                ) : null}
-                <slots.Slot name="wuu.default-composer/composer.toolbar" context={pluginSlotContext} layout={MemoizedComposerPluginToolbar} />
-                {hideRuntimeControls ? null : (
-                  <>
-                    <ComposerRuntimeMeters
-                      running={running}
-                      turnID={telemetryTurnID}
-                      fallbackTokensPerSecond={tokensPerSecond}
-                      fallbackSampledAt={tokenSpeedSampledAt}
-                      fallbackSource={tokenSpeedSource}
-                      fallbackContextUsage={contextUsage}
-                      activeEngine={activeEngine}
-                    />
-                    {/* Until the runtime reports, there is no model to name. */}
-                    {initialized ? (
-                      <RuntimePicker
-                        initialized={initialized}
-                        state={codexModels}
-                        openMenu={codexRuntimeMenu}
-                        anchorRef={codexRuntimeRef}
-                        running={effectiveRuntimeControlsDisabled}
-                        engines={engines}
-                        activeEngine={activeEngine}
-                        engineLocked={engineLocked}
-                        engineModel={engineModel}
-                        engineEffort={engineEffort}
-                        engineSpeed={engineSpeed}
-                        engineModelOptions={engineModelOptions}
-                        onSelectSpeed={onSelectSpeed}
-                        onSelectEngine={onSelectEngine}
-                        onSelectEngineModel={onSelectEngineModel}
-                        onSelectEngineEffort={onSelectEngineEffort}
-                        onSelectEngineModelOptions={onSelectEngineModelOptions}
-                        onToggleMenu={onToggleCodexRuntimeMenu}
-                        onSelectModel={onSelectRuntimeModel}
-                        onSelectEffort={onSelectRuntimeEffort}
-
-                      />
-                    ) : null}
-                  </>
-                )}
+              <div className="composer-input-actions">
+                {controlsInRail ? createPortal(runtimeControls, runtimeControlsTarget!) : controlsBelowInput ? null : runtimeControls}
                 {showContinue ? (
                   <ComposerContinueButton
                     key={`${continuation.threadID}:${continuation.turnID}`}
@@ -1573,6 +1582,12 @@ export function Composer({
           </div>
           </div>
           </div>
+        {controlsBelowInput ? (
+          <div className="composer-footer">
+            {workspaceControls}
+            {!controlsInRail && !topAccessory ? <div className="composer-footer-runtime">{runtimeControls}</div> : null}
+          </div>
+        ) : null}
         {handoffMode && initialized && !handoffUnavailableReason ? (
           <FloatingMenuPortal
             anchorRef={composerFrameRef}

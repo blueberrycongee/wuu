@@ -40,14 +40,11 @@ Use the arrow keys and Enter, or click a result. Addressable user and assistant 
 
 ## Choose where a new conversation works
 
-Above a new conversation's input, the project control shows the workspace it belongs to. In a Git project, a second control holds the branch and a **Worktree** toggle:
+Below the input, new and existing conversations show their project and current Git branch. You can choose a project before starting a conversation; an existing conversation keeps its project binding. Choosing another branch checks it out in the current working tree; your editor, terminal, and other conversations using that working tree see the change. Branch switching is unavailable while a task is running there.
 
-| Worktree | Choosing a branch |
-|---|---|
-| Off | Checks the branch out in the project. Your editor, terminal, and other conversations in the project see the change. |
-| On | Only sets the branch the new worktree starts from. The project stays on its current branch. |
+Ask the agent to create and use a worktree when a task needs an isolated checkout. The composer has no manual worktree switch.
 
-With **Worktree** on, the first message creates a separate directory from the chosen branch's committed content, and the conversation works there. Uncommitted changes in the project are not carried over. The worktree starts without a branch of its own (detached `HEAD`), so a pull request from it needs a named branch first. The toggle applies to one new conversation; the next draft starts in the project again.
+When the right-side tool rail is collapsed, permissions, context usage, and model selection appear below the input. Browser, terminal, file, and new-page shortcuts stay hidden until you expand the rail again.
 
 ## While a task is running
 

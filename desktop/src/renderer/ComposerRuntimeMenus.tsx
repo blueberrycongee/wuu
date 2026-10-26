@@ -518,6 +518,8 @@ export type HandoffRuntimePicker = {
 };
 
 export function RuntimePicker({
+  inToolRail = false,
+  compact = inToolRail,
   initialized,
   state,
   openMenu,
@@ -561,6 +563,8 @@ export function RuntimePicker({
   onSelectModel: (provider: string, model: string, variant?: string) => void | Promise<boolean>;
   onSelectEffort: (variant: string) => void | Promise<boolean>;
   handoff?: HandoffRuntimePicker;
+  inToolRail?: boolean;
+  compact?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const display = useComposerConnectionDisplay();
@@ -578,10 +582,7 @@ export function RuntimePicker({
   // whichever column holds the level instead of letting "" shadow a real
   // effort.
   const currentVariant = targetVariant;
-  // Empty sessions still dock the composer at the bottom of the pane. Opening
-  // the model card below that trigger leaves it in the greeting once a phone
-  // keyboard has lifted the input, so keep it attached above the selector.
-  const placement: FloatingMenuPlacement = "above";
+  const placement: FloatingMenuPlacement = inToolRail ? "below" : "above";
   const externalEngine = handoff ? "" : activeEngine && activeEngine !== "wuu" ? activeEngine : "";
   const engineOptions = handoff
     ? [{ id: "wuu", label: engineLabel("wuu") }]
@@ -638,10 +639,10 @@ export function RuntimePicker({
 
   return (
     <div className="codex-runtime-anchor" ref={anchorRef}>
-      <Tooltip content={running ? t("runtime.modelSwitchWhileRunning") : undefined}>
+      <Tooltip content={compact ? [triggerAccessibleName, running ? t("runtime.modelSwitchWhileRunning") : ""].filter(Boolean).join(" · ") : running ? t("runtime.modelSwitchWhileRunning") : undefined}>
         <button
           ref={triggerRef}
-          className="codex-runtime-trigger"
+          className={`codex-runtime-trigger${compact ? " icon-button is-compact" : ""}`}
           type="button"
           disabled={running}
           aria-haspopup="menu"
@@ -657,14 +658,14 @@ export function RuntimePicker({
           }}
         >
           <EngineIcon engine={selectedEngine} />
-          <span
+          {compact ? null : <><span
             key={labelKey}
             className={`codex-runtime-label${labelKey === initialLabelKey.current ? "" : " is-changed"}`}
           >
             <span className="codex-runtime-model">{triggerLabel}</span>
             {effortLabelText ? <span className="codex-runtime-effort">{effortLabelText}</span> : null}
           </span>
-          <ChevronDown className="icon" />
+          <ChevronDown className="icon" /></>}
         </button>
       </Tooltip>
       {open ? (
@@ -674,6 +675,7 @@ export function RuntimePicker({
           onDismiss={() => onToggleMenu("model")}
           placement={placement}
           align="right"
+          crossAxisOffset={inToolRail ? -(anchorRef.current?.offsetWidth ?? 0) - 8 : 0}
           width={panelWidth}
           flip
           mobileSheet={{ label: t("runtime.selectModel"), onClose: () => onToggleMenu("model") }}

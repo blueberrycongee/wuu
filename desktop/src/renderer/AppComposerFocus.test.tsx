@@ -601,7 +601,7 @@ describe("main composer focus continuity", () => {
       await flushAsync();
     };
     const selectPermission = async () => {
-      await click(".permission-chip");
+      await click(".permission-menu-anchor button");
       const option = Array.from(document.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]'))
         .find(button => button.textContent?.includes(permissionModeOption(mode).label))!;
       await act(async () => option.click());
@@ -614,11 +614,11 @@ describe("main composer focus continuity", () => {
         .find(button => button.textContent?.includes("Engine fixture model"))!;
       await act(async () => model.click());
       await selectPermission();
-      expect(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption(mode).label);
+      expect(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption(mode).label);
       const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
       await replacement.commit();
       expect(oldTrigger.isConnected).toBe(false);
-      expect.soft(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption(mode).label);
+      expect.soft(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption(mode).label);
       await enterCommand(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer] textarea')!, "preserve this permission");
       expect.soft(window.wuu.startThread).toHaveBeenCalledWith(expect.objectContaining({
         engine: "codex", model: "engine-model", permission_mode: mode,
@@ -626,12 +626,12 @@ describe("main composer focus continuity", () => {
       expect.soft(vi.mocked(window.wuu.startTurn).mock.calls[0]?.[4]).toBe(mode);
       // Entering a new draft after a real thread still uses the existing default.
       await click("button.session-tab-new");
-      expect(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption("unconfined").label);
+      expect(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption("unconfined").label);
       await selectPermission();
       await selectEngine("Wuu");
       await click(".codex-runtime-trigger");
       await selectEngine("Codex");
-      expect(container.querySelector(".permission-chip")?.textContent).toBe(permissionModeOption("unconfined").label);
+      expect(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption("unconfined").label);
     } finally {
       await replacement.dispose();
     }

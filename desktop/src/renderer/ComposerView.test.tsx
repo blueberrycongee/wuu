@@ -2008,7 +2008,7 @@ describe("Composer send control", () => {
     const picker = document.body.querySelector<HTMLElement>('[data-floating-menu-owner="composer-handoff"]')!;
     expect(container.contains(picker)).toBe(false);
     expect(window.innerHeight - Number.parseFloat(picker.style.bottom)).toBeLessThan(500);
-    expect(container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")?.textContent).toContain("Grok 4.6");
+    expect(container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")?.getAttribute("aria-label")).toContain("Grok 4.6");
     measure.mockRestore();
     expect(container.querySelector<HTMLTextAreaElement>('[data-wuu-component="composer-input"]')?.value).toBe("/handoff");
     expect(container.querySelector<HTMLButtonElement>(".composer-send-button")?.disabled).toBe(true);
@@ -2221,7 +2221,7 @@ describe("Composer send control", () => {
     expect(slashLayer!.style.left).toBe(`${frame.getBoundingClientRect().left}px`);
   });
 
-  it("shows the hero project selector above the input card", () => {
+  it("shows the hero project selector outside the input card", () => {
     renderComposer({
       variant: "hero",
     });
@@ -2326,14 +2326,14 @@ describe("Composer send control", () => {
     expect(selector?.textContent).toContain("对话");
   });
 
-  it("keeps attachments at the leading edge and runtime controls beside send", () => {
+  it("keeps attachment and send actions in the editor with runtime controls below", () => {
     renderComposer({
       variant: "dock",
       prompt: "follow up",
     });
 
     const leftGroup = container.querySelector(".composer-bar-left");
-    const rightGroup = container.querySelector(".composer-bar-right");
+    const rightGroup = container.querySelector(".composer-input-actions");
     const sendButton = container.querySelector("button[aria-label=\"发送\"]");
 
     expect(leftGroup).not.toBeNull();
@@ -2342,11 +2342,12 @@ describe("Composer send control", () => {
     // project/cwd control renders in the leading slot anymore.
     expect(leftGroup?.querySelector(".composer-project-control")).toBeNull();
     expect(leftGroup?.querySelector(".composer-plus-button")).not.toBeNull();
-    expect(rightGroup?.querySelector(".permission-menu-anchor")).not.toBeNull();
+    expect(container.querySelector(".composer-footer .permission-menu-anchor")).not.toBeNull();
     // The token-speed gauge is temporarily hidden from the toolbar; flip this
     // back to not.toBeNull() when it is restored.
     expect(rightGroup?.querySelector(".composer-token-gauge")).toBeNull();
-    expect(rightGroup?.querySelector(".codex-runtime-anchor")).not.toBeNull();
+    expect(container.querySelector(".composer-footer .codex-runtime-anchor")).not.toBeNull();
+    expect(container.querySelector(".composer-editor")?.contains(sendButton)).toBe(true);
     expect(rightGroup?.contains(sendButton)).toBe(true);
   });
 
@@ -2485,7 +2486,7 @@ describe("Composer send control", () => {
     });
 
     const runtimeButton = container.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
-    expect(runtimeButton?.textContent).toContain("model-a");
+    expect(runtimeButton?.getAttribute("aria-label")).toContain("model-a");
     expect(runtimeButton?.disabled).toBe(true);
   });
 
@@ -2505,7 +2506,7 @@ describe("Composer send control", () => {
     });
 
     const runtimeButton = container.querySelector<HTMLButtonElement>(".codex-runtime-trigger");
-    expect(runtimeButton?.textContent).toContain("model-b");
+    expect(runtimeButton?.getAttribute("aria-label")).toContain("model-b");
     expect(runtimeButton?.disabled).toBe(false);
   });
 
@@ -3342,18 +3343,17 @@ describe("Composer permission menu", () => {
     { mode: "standard", approve_for_me: true },
     { mode: "read_only" },
     { mode: "unconfined" },
-  ])("names the current mode with the same words on the chip and in the menu: %j", (permissions) => {
+  ])("names the current mode on the permission control and in the menu: %j", (permissions) => {
     renderComposer({ accessMenuOpen: true, permissions });
 
-    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    const chip = container.querySelector<HTMLButtonElement>(".permission-menu-anchor button")!;
     expect(chip.disabled).toBe(false);
     const rows = accessRows();
     expect(rows).toHaveLength(4);
     expect(new Set(rows.map(rowLabel)).size).toBe(4);
     const checked = rows.filter((row) => row.getAttribute("aria-checked") === "true");
     expect(checked).toHaveLength(1);
-    expect(chip.textContent).toBe(rowLabel(checked[0]));
-    expect(chip.getAttribute("aria-label")).toContain(chip.textContent);
+    expect(chip.getAttribute("aria-label")).toContain(rowLabel(checked[0]));
     // Each mode explains itself in one secondary line rather than a longer name.
     for (const row of rows) {
       expect(row.querySelector(".select-menu-item-hint")?.textContent).toBeTruthy();
@@ -3665,7 +3665,7 @@ describe("Composer menu keyboard", () => {
 
   it("starts the permission menu on the current mode and closes it with Escape", async () => {
     renderMenuComposer();
-    const chip = container.querySelector<HTMLButtonElement>(".permission-chip")!;
+    const chip = container.querySelector<HTMLButtonElement>(".permission-menu-anchor button")!;
     await openFrom(chip);
 
     const items = menuItems("composer-access");

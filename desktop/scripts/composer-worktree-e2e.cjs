@@ -1,5 +1,6 @@
 // Real Electron/main/preload/Go coverage for starting a conversation in its own
-// Git worktree from the composer. Build core and desktop first;
+// Git worktree through the public desktop API, with composer branch controls.
+// Build core and desktop first;
 // WUU_WORKTREE_CORE can override the binary. A local HTTP provider answers the
 // turn, so no account or paid inference is used. Screenshots and the evidence
 // record are written to artifacts/composer-worktree/ for visual review.
@@ -169,10 +170,8 @@ async function waitForSkillRow(win) {
 }
 const gitControls = win => evaluate(win, () => {
   const group = document.querySelector('.composer-git-controls');
-  const toggle = group?.querySelector('.composer-worktree-toggle');
   return group ? {
     branch: group.querySelector('.hero-project-pill-text')?.textContent,
-    worktree: toggle?.getAttribute('aria-pressed'),
   } : null;
 });
 const workspaceRow = win => evaluate(win, () => {
@@ -180,7 +179,7 @@ const workspaceRow = win => evaluate(win, () => {
   const bar = barNode.getBoundingClientRect();
   const groups = [...document.querySelectorAll('.composer-workspace-group')].map(group => group.getBoundingClientRect());
   const measure = document.createElement('canvas').getContext('2d');
-  const text = [...document.querySelectorAll('.composer-workspace-bar .hero-project-pill-text, .composer-worktree-toggle span')]
+  const text = [...document.querySelectorAll('.composer-workspace-bar .hero-project-pill-text')]
     .map(node => {
       const style = getComputedStyle(node);
       measure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
@@ -225,24 +224,9 @@ async function run() {
   main.setSize(1280, 820);
   await waitFor(main, () => document.querySelector('.composer textarea') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main');
 
-  // Off by default: branch choice keeps its checkout meaning.
-  assert.deepEqual(await gitControls(main), { branch: 'main', worktree: 'false' });
+  // Branch choice keeps its checkout meaning; isolation is requested through the API.
+  assert.deepEqual(await gitControls(main), { branch: 'main' });
   await capture(main, '01-draft-light-default.png');
-
-  // On: the branch segment becomes the start point, and choosing a branch
-  // checks nothing out in the shared project.
-  await click(main, '.composer-worktree-toggle');
-  await waitFor(main, () => document.querySelector('.composer-worktree-toggle')?.getAttribute('aria-pressed') === 'true');
-  await click(main, '.composer-git-controls .hero-project-pill');
-  await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][title="feature"]'));
-  assert.equal(await evaluate(main, () => Boolean(document.querySelector('.composer-branch-menu form, .composer-branch-menu button[role="menuitem"]'))), false,
-    'Creating and checking out a branch is not offered for a worktree start point.');
-  await capture(main, '02-worktree-start-menu.png');
-  await click(main, '.composer-branch-menu [role="menuitemradio"][title="feature"]');
-  await waitFor(main, () => !document.querySelector('.composer-branch-menu') && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'feature');
-  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'main', 'Choosing a start point must not check out the shared project.');
-  assert.deepEqual(await gitControls(main), { branch: 'feature', worktree: 'true' });
-  await capture(main, '03-worktree-on-feature.png');
 
   // Select before the new checkout exists; browsing must not create a worktree.
   const worktreeCount = () => git(project, 'worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length;
@@ -263,7 +247,14 @@ async function run() {
   assert.deepEqual(JSON.parse(initialSkillDraft.split('\n')[0].slice('/skill '.length)), { name: 'compact', source: 'project', project: projectIdentity });
   assert.equal(worktreeCount(), 1, 'Choosing a skill must not materialize the selected checkout.');
   await capture(main, '03b-initial-skill-draft.png');
-  await sendDraft(main);
+  await evaluate(main, async ({ draft, cwd }) => {
+    const { thread } = await window.wuu.startThread({ cwd, workspace_id: 'repo', workspace: 'worktree', base_revision: 'feature' });
+    await window.wuu.renameThread(thread.id, 'Worktree API fixture');
+    await window.wuu.startTurn(thread.id, draft);
+    window.dispatchEvent(new Event('focus'));
+  }, { draft: initialSkillDraft, cwd: project });
+  await waitFor(main, () => [...document.querySelectorAll('.thread-row-main')].some(button => button.getAttribute('aria-label')?.includes('Worktree API fixture')));
+  await evaluate(main, () => [...document.querySelectorAll('.thread-row-main')].find(button => button.getAttribute('aria-label')?.includes('Worktree API fixture')).click());
   await waitFor(main, () => [...document.querySelectorAll('[data-thread-id] .session-flow')]
     .some(flow => flow.textContent.includes('Worktree fixture answer.')), undefined, 60000);
   const thread = await evaluate(main, async () => {
@@ -474,27 +465,24 @@ async function run() {
     document.documentElement.style.removeProperty('--appearance-scale');
   });
 
-  // The next draft starts shared again, and with worktree off a branch choice
-  // is a checkout of the shared project.
+  // The next draft starts shared again; branch choice checks out the project.
   await click(main, '.session-tab-new');
   // Git status refreshes for the draft's project after leaving the worktree.
   await waitFor(main, () => document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main');
-  assert.deepEqual(await gitControls(main), { branch: 'main', worktree: 'false' });
+  assert.deepEqual(await gitControls(main), { branch: 'main' });
   await click(main, '.composer-git-controls .hero-project-pill');
   await waitFor(main, () => document.querySelector('.composer-branch-menu [role="menuitemradio"][title="feature"]:not(:disabled)'));
   await click(main, '.composer-branch-menu [role="menuitemradio"][title="feature"]');
   await waitFor(main, () => document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'feature');
-  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature', 'With worktree off, choosing a branch checks it out.');
+  assert.equal(git(project, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feature', 'Choosing a branch checks it out.');
 
-  // Dark, large text, narrow window with worktree on.
-  await click(main, '.composer-worktree-toggle');
+  // Dark, large text, narrow window with a long branch name.
   main.setSize(narrowWidth, 820);
   await evaluate(main, () => {
     document.documentElement.setAttribute('data-theme', 'dark');
     document.documentElement.style.setProperty('--conversation-message-font-size', '20px');
     document.documentElement.style.setProperty('--appearance-scale', String(20 / 14));
   });
-  await waitFor(main, () => document.querySelector('.composer-worktree-toggle')?.getAttribute('aria-pressed') === 'true');
   await click(main, '.composer-git-controls .hero-project-pill');
   await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
   await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
@@ -507,29 +495,26 @@ async function run() {
   assert.ok(Math.abs(narrow.groups[0].height - narrow.groups[1].height) < 0.5, 'Both groups share one height.');
   assert(narrow.text.slice(0, 2).every(item => item.width >= item.prefixWidth),
     `Both names retain space for an identifiable prefix and ellipsis. Layout: ${JSON.stringify(narrow)}`);
-  assert(narrow.text[1].clipped && !narrow.text[2].clipped,
-    `The long branch truncates while the worktree toggle stays whole. Layout: ${JSON.stringify(narrow)}`);
+  assert(narrow.text[1].clipped,
+    `The long branch truncates within its available width. Layout: ${JSON.stringify(narrow)}`);
 
   await evaluate(main, () => document.documentElement.style.setProperty('--appearance-scale', String(15 / 14)));
   await setAppearance(main, { theme: 'dark', fontSize: 15, width: narrowWidth });
   await capture(main, '05b-draft-dark-default-narrow.png');
   const defaultNarrow = await workspaceRow(main);
   assert.deepEqual(defaultNarrow.text.filter(item => item.clipped).map(item => item.text), [longBranch],
-    `At the default text size, the project and toggle labels stay whole. Layout: ${JSON.stringify(defaultNarrow)}`);
+    `At the default text size, the project label stays whole. Layout: ${JSON.stringify(defaultNarrow)}`);
   assert(defaultNarrow.text[1].width >= defaultNarrow.text[1].prefixWidth,
     `The default-size branch retains its readable prefix. Layout: ${JSON.stringify(defaultNarrow)}`);
   await evaluate(main, () => document.documentElement.style.setProperty('--appearance-scale', String(20 / 14)));
   await setAppearance(main, { theme: 'dark', fontSize: 20, width: narrowWidth });
 
-  // A genuinely long project must still leave the branch identifiable and
-  // the worktree toggle accessible.
+  // A long project name must still leave the branch identifiable.
   await click(main, '.composer-project-control .hero-project-pill');
   await waitFor(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`), longProjectName);
   await evaluate(main, name => document.querySelector(`.composer-project-menu button[title="${name}"]`).click(), longProjectName);
   await waitFor(main, name => document.querySelector('.composer-project-control .hero-project-pill-text')?.textContent === name
     && document.querySelector('.composer-git-controls .hero-project-pill-text')?.textContent === 'main', longProjectName);
-  await click(main, '.composer-worktree-toggle');
-  await waitFor(main, () => document.querySelector('.composer-worktree-toggle')?.getAttribute('aria-pressed') === 'true');
   await click(main, '.composer-git-controls .hero-project-pill');
   await waitFor(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`), longBranch);
   await evaluate(main, branch => document.querySelector(`.composer-branch-menu [role="menuitemradio"][title="${branch}"]`).click(), longBranch);
@@ -541,11 +526,11 @@ async function run() {
   assert.ok(longProjectNarrow.groups.every(rect => rect.right <= longProjectNarrow.barRight + 0.5),
     `Long project controls stay inside the bar. Layout: ${JSON.stringify(longProjectNarrow)}`);
   assert.deepEqual(longProjectNarrow.text.filter(item => item.clipped).map(item => item.text), [longProjectName, longBranch],
-    `Long names truncate without clipping the worktree toggle. Layout: ${JSON.stringify(longProjectNarrow)}`);
+    `Long names truncate within the workspace row. Layout: ${JSON.stringify(longProjectNarrow)}`);
   assert(longProjectNarrow.text.slice(0, 2).every(item => item.width >= item.prefixWidth),
     `Both long names retain readable prefixes. Layout: ${JSON.stringify(longProjectNarrow)}`);
   for (const row of [narrow, defaultNarrow, longProjectNarrow]) {
-    assert.equal(row.buttons.length, 3);
+    assert.equal(row.buttons.length, 2);
     assert(row.buttons.every((button, index) => button.left >= row.barLeft - 0.5
       && button.right <= row.barRight + 0.5 && button.hittable
       && row.buttons.slice(0, index).every(previous => button.left >= previous.right
