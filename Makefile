@@ -119,6 +119,7 @@ build-plugins:
 check-plugins:
 	npm --prefix plugins run typecheck
 	npm --prefix plugins run build:check
+	go test -count=1 -run '^TestPluginPackageMutationKeepsRunningConversationReadable/disable_deleted_source$$' ./internal/appserver
 
 build-go: build-plugins
 	go build -ldflags "$(LDFLAGS)" -o bin/wuu ./cmd/wuu

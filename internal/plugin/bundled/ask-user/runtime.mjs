@@ -208,6 +208,22 @@ var TOOL_SERVICE_DESCRIPTOR = {
   }))
 };
 
+// packages/plugin-sdk/src/tool-batch.ts
+var TOOL_BATCH_SERVICE = "agent.tool.batch";
+var TOOL_BATCH_SERVICE_DESCRIPTOR = {
+  name: TOOL_BATCH_SERVICE,
+  version: "1.0.0",
+  methods: [{ name: "execute", input_schema: `${TOOL_BATCH_SERVICE}.execute.input.v1`, output_schema: `${TOOL_BATCH_SERVICE}.execute.output.v1` }]
+};
+var TOOL_BATCH_STREAMING_SERVICE_DESCRIPTOR = {
+  ...TOOL_BATCH_SERVICE_DESCRIPTOR,
+  methods: [...TOOL_BATCH_SERVICE_DESCRIPTOR.methods, {
+    name: "stream_admit",
+    input_schema: `${TOOL_BATCH_SERVICE}.stream.admit.input.v1`,
+    output_schema: `${TOOL_BATCH_SERVICE}.stream.admit.output.v1`
+  }]
+};
+
 // packages/plugin-sdk/src/session-service.ts
 var sessionDomainArity = {
   "AcceptHeldUserWork": [2, 1],
