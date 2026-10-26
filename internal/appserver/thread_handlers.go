@@ -381,12 +381,6 @@ func (s *Server) startThreadPrewarm(th *threadState) {
 }
 
 func (s *Server) handleThreadResume(req Request) error {
-	binding, stateErr := s.rt.RetainState()
-	if stateErr != nil {
-		return s.writeResponse(req.ID, nil, stateErr)
-	}
-	defer binding.Close()
-
 	var params ThreadResumeParams
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -394,7 +388,12 @@ func (s *Server) handleThreadResume(req Request) error {
 	id := strings.TrimSpace(params.SessionID)
 	var err error
 	if id == "" {
-		id, err = s.mostRecentVisibleThreadID(binding)
+		current, stateErr := s.rt.RetainState()
+		if stateErr != nil {
+			return s.writeResponse(req.ID, nil, stateErr)
+		}
+		id, err = s.mostRecentVisibleThreadID(current)
+		_ = current.Close()
 		if err != nil {
 			return s.writeResponse(req.ID, nil, err)
 		}
@@ -402,6 +401,14 @@ func (s *Server) handleThreadResume(req Request) error {
 			return s.writeResponse(req.ID, nil, errors.New("no sessions found"))
 		}
 	}
+	// Reads follow an accepted execution's captured authority until it settles.
+	// A plugin publication must not turn reopening its local owner into a new
+	// admission against the replacement generation.
+	binding, _, stateErr := s.retainUserThreadExecutionState(id, true)
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	if th := s.threadForState(binding, id); th != nil {
 		th.mu.Lock()
 		restorePluginToolLabels(binding.Host, th.Turns)
@@ -432,11 +439,16 @@ func (s *Server) handleThreadResume(req Request) error {
 		}
 		return s.writeThreadResumeResult(binding, req, thread, params.ResponseOnly || params.HistoryPage || params.ConversationHistory)
 	}
-	th, err = s.addLoadedThread(th)
-	if err != nil {
+	// An execution can become locally owned after the read capture. Serve the
+	// read-only snapshot rather than replacing that owner or reporting a lease
+	// conflict. Execution and mutation entry points still require admission.
+	loaded, err := s.addLoadedThread(th)
+	if err != nil && !errors.Is(err, errThreadExecutionBusy) {
 		return s.writeResponse(req.ID, nil, err)
 	}
-
+	if err == nil {
+		th = loaded
+	}
 	th.mu.Lock()
 	thread := th.threadResumeSnapshotLocked(params)
 	th.mu.Unlock()

@@ -188,6 +188,10 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Keep running conversations and their history readable after installing, disabling, or removing a plugin. Reads retain the accepted execution’s provider ownership without releasing cross-process execution locks or losing queued input.
+
+- Keep the application, sidebar, and unsent drafts available when a conversation cannot be restored after a plugin change. Report that conversation failure locally and allow an explicit retry without replaying messages or changing selected providers.
+
 - Make explicitly confirmed archival settle the retained execution after provider replacement before archiving through the selected storage. Preserve partial history and held input, reject uncertain settlement and other-process ownership truthfully, and admit one confirmation under repeated clicks without reusing retired consent.
 
 - Keep session and workspace switch presentation inside message regions. Preserve static pixels during provider handoff without animating or blocking live sidebar, titlebar, or composer controls; add native product regression coverage for normal/reduced motion and 1×/2× displays.

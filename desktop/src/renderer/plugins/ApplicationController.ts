@@ -1,3 +1,4 @@
+import { showErrorToast } from "../Toast";
 import { isPluginLifecycleCancellation, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import type { ApplicationWorkbenchV1, UIContributionRegistryV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
 import { ApplicationEventEffects } from "./ApplicationEventEffects";
@@ -523,8 +524,16 @@ export class ApplicationController implements HostApplicationService {
     try {
       await this.navigationActions(signal).threads.selectContextThread(intent.context, intent.threadId);
       signal?.throwIfAborted();
-    }
-    finally { this.restoringNavigationIntentId = undefined; }
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (isPluginLifecycleCancellation(error)) throw error;
+      // Configuration already activated this selected provider. A failed
+      // destination is a navigation failure, not a failed application writer.
+      // The navigation owner has restored its source and cleared the intent;
+      // keep its drafts usable and let an explicit selection retry the read.
+      console.warn("Conversation restoration failed", { threadId: intent.threadId, context: intent.context }, error);
+      showErrorToast(translateCurrent("thread.loadFailed"), "", `thread-restore:${intent.id}`);
+    } finally { this.restoringNavigationIntentId = undefined; }
   }
 
   /** Restore only local presentation/draft data after the selected target loads; never replay selection. */
