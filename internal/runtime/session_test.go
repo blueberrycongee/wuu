@@ -692,8 +692,9 @@ func TestOwnedThreadRestoresQueueAndTerminalRecovery(t *testing.T) {
 	}
 	client := &sessionQueueBlockingClient{started: make(chan struct{}, 2), release: make(chan struct{})}
 	rt.WorkerClient = client
+	releaseWorker := sync.OnceFunc(func() { close(client.release) })
 	t.Cleanup(func() {
-		close(client.release)
+		releaseWorker()
 		_, _ = rt.Cleanup()
 	})
 
@@ -783,6 +784,30 @@ func TestOwnedThreadRestoresQueueAndTerminalRecovery(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("terminal intent was not acknowledged: %v", statErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Shutdown may yield a cancelled queued worker's durable terminal intent.
+	// Finish this fixture's restored worker while recovery is still admitted
+	// rather than relying on engine.Close to acknowledge that handoff.
+	releaseWorker()
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	worker, err := control.Wait(ctx, queuedWorkerID)
+	if err != nil || worker.Status != subagent.StatusCompleted {
+		t.Fatalf("restored queued worker completion = %+v, %v", worker, err)
+	}
+	for {
+		active, err := agentcontrol.WorkerExecutionActive(harnessDir, queuedWorkerID)
+		if err != nil {
+			t.Fatalf("inspect restored queued worker ownership: %v", err)
+		}
+		if !active {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("restored queued worker terminal ownership did not settle")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

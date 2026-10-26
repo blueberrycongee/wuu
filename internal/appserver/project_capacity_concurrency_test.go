@@ -188,10 +188,27 @@ func TestProjectInboxForeignWorkspaceDoesNotPoll(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv.drainSessionInbox(foreign)
+	// Startup recovery can begin another scan after the explicit drain returns.
+	// Join only that in-flight pass; a retained retry timer must still fail.
+	lifetime := projectFixtureProvider(srv).lifetime
+	lifetime.projectInboxMu.Lock()
+	var passDone <-chan struct{}
+	if pass := lifetime.projectInboxDrains[foreign]; pass != nil && pass.running {
+		passDone = pass.done
+	}
+	n := len(lifetime.projectInboxDrains)
+	lifetime.projectInboxMu.Unlock()
+	if passDone != nil {
+		select {
+		case <-passDone:
+		case <-time.After(gatedProviderTimeout):
+			t.Fatal("foreign workspace recovery pass did not finish")
+		}
+		lifetime.projectInboxMu.Lock()
+		n = len(lifetime.projectInboxDrains)
+		lifetime.projectInboxMu.Unlock()
+	}
 	calls.assertIdle(t)
-	projectFixtureProvider(srv).lifetime.projectInboxMu.Lock()
-	n := len(projectFixtureProvider(srv).lifetime.projectInboxDrains)
-	projectFixtureProvider(srv).lifetime.projectInboxMu.Unlock()
 	if n != 0 {
 		t.Fatalf("ineligible foreign workspace retained %d project retry loops", n)
 	}
@@ -268,13 +285,14 @@ func TestProjectInboxCloseDuringTimerLaunch(t *testing.T) {
 	if fire == nil {
 		t.Fatal("missing capacity timer")
 	}
-	// Block only background registration, leaving the timer free to publish its
-	// running pass and Close free to close admission, a real shutdown interleave.
-	srv.backgroundMu.Lock()
+	// Block the provider's background registration, leaving the timer free to
+	// publish its running pass and Server.Close free to close admission.
+	lifetime := projectFixtureProvider(srv).lifetime
+	lifetime.backgroundMu.Lock()
 	unlocked := false
 	defer func() {
 		if !unlocked {
-			srv.backgroundMu.Unlock()
+			lifetime.backgroundMu.Unlock()
 		}
 	}()
 	fired := make(chan struct{})
@@ -309,7 +327,7 @@ func TestProjectInboxCloseDuringTimerLaunch(t *testing.T) {
 	closed := make(chan struct{})
 	go func() { srv.Close(); close(closed) }()
 	waitFor(func() bool { return srv.closed.Load() })
-	srv.backgroundMu.Unlock()
+	lifetime.backgroundMu.Unlock()
 	unlocked = true
 	select {
 	case <-fired:
