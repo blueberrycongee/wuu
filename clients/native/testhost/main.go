@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"image/png"
 	"math/rand"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -36,13 +37,42 @@ import (
 
 type provider struct{ release chan struct{} }
 
-func (p *provider) Chat(ctx context.Context, _ providers.ChatRequest) (providers.ChatResponse, error) {
-	select {
-	case <-p.release:
-		return providers.ChatResponse{Content: "native transport verified"}, nil
-	case <-ctx.Done():
-		return providers.ChatResponse{}, ctx.Err()
+func (p *provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+		http.NotFound(w, r)
+		return
 	}
+	if r.Header.Get("Authorization") != "Bearer native-fixture-only" {
+		http.Error(w, "synthetic fixture credential required", http.StatusUnauthorized)
+		return
+	}
+	var request struct {
+		Model  string `json:"model"`
+		Stream bool   `json:"stream"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch request.Model {
+	case "native-fixture-title":
+	case "native-test", "alternate":
+		select {
+		case <-p.release:
+		case <-r.Context().Done():
+			return
+		}
+	default:
+		http.Error(w, "unexpected fixture model", http.StatusBadRequest)
+		return
+	}
+	if !request.Stream {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"native-fixture","choices":[{"index":0,"message":{"role":"assistant","content":"native transport verified"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	fmt.Fprint(w, "data: {\"id\":\"native-fixture\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"native transport verified\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"native-fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5}}\n\ndata: [DONE]\n\n")
 }
 
 func must(err error) {
@@ -71,7 +101,9 @@ func main() {
 	must(store.AddDevice(phone.Public(), "Native test phone", time.Now()))
 	must(registry.AddDevice(b64(store.Identity().Public()), b64(phone.Public()), "Native test phone", time.Now()))
 	gate := &provider{release: make(chan struct{}, 8)}
-	must(testsupport.WriteConfig(filepath.Join(root, "config.json"), "native-test"))
+	modelServer := httptest.NewServer(gate)
+	defer modelServer.Close()
+	must(testsupport.WriteLoopbackConfig(filepath.Join(root, "config.json"), "native-test", modelServer.URL+"/v1"))
 	cfg, _, err := config.LoadPath(filepath.Join(root, "config.json"))
 	must(err)
 	bindings := appserver.NewRuntimeBindings()
@@ -83,8 +115,6 @@ func main() {
 	rt, err := runtime.NewSession(runtime.Options{RootDir: root, HomeDir: root, ConfigPath: filepath.Join(root, "config.json"), ConfigLoadMode: runtime.ConfigLoadFile, Config: cfg, NativeProviders: factories})
 	must(err)
 	defer rt.Cleanup()
-	rt.StreamRunner.Client = providers.AdaptStreamClient(gate)
-	rt.TitleClient = nil
 
 	ready := make(chan struct{}, 1)
 	// Persisted history uses the same reconstruction and paging as an old conversation.

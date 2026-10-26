@@ -11,12 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentcontrol"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
 
@@ -122,7 +124,11 @@ func TestCompositionNativeWorkerKeepsAdmittedModelRoles(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal(ctx.Err())
 	}
-	// A persisted binding must also fence a later engine change at admission.
+	// A persisted composition remains selected when a different engine is admitted.
+	// Set an explicit title so this check isolates execution from title inference.
+	if _, err := rt.Sessions.UpdateTitle(sessionID, "Composition fixture"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := rt.Sessions.SetEngine(sessionID, "codex"); err != nil {
 		t.Fatal(err)
 	}
@@ -138,20 +144,28 @@ func TestCompositionNativeWorkerKeepsAdmittedModelRoles(t *testing.T) {
 	if response := responseByID(t, parseOutput(t, out.String()), "resume-external"); response["error"] != nil {
 		t.Fatalf("resume: %+v", response)
 	}
-	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"external-turn","method":"turn/start","params":{"thread_id":%q,"prompt":"must not dispatch"}}`, sessionID))); err != nil {
+	if err := srv.handleLine(ctx, []byte(fmt.Sprintf(`{"id":"external-turn","method":"turn/start","params":{"thread_id":%q,"prompt":"use the selected external engine"}}`, sessionID))); err != nil {
 		t.Fatal(err)
 	}
 	response := responseByID(t, parseOutput(t, out.String()), "external-turn")
-	if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "native Wuu engine") {
-		t.Fatalf("external composition admission was not rejected: %+v", response)
+	if response["error"] != nil {
+		t.Fatalf("external composition admission failed: %+v", response)
 	}
-	if engine.calls.Load() != 0 {
-		t.Fatalf("rejected composition dispatched engine %d times", engine.calls.Load())
+	waitForTurnCompletedForThread(t, out, sessionID)
+	if engine.calls.Load() != 1 || !strings.Contains(out.String(), "external composition verified") {
+		t.Fatalf("external composition did not execute exactly once: calls=%d output=%s", engine.calls.Load(), out.String())
 	}
 	select {
 	case model := <-requests:
-		t.Fatalf("rejected composition dispatched model %q", model)
+		t.Fatalf("external engine unexpectedly dispatched host inference %q", model)
 	default:
+	}
+	var retained pluginhost.CompositionSessionView
+	if err := json.Unmarshal(invoke("inspectSession", map[string]string{"session": sessionID}), &retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained.ID != scope.ID || retained.State != "active" {
+		t.Fatalf("engine change lost admitted composition: %+v", retained)
 	}
 	expected = scope.ID
 	invoke("bind", pluginhost.CompositionBind{Session: sessionID, ID: "", Expected: &expected})
@@ -165,9 +179,26 @@ type compositionAdmissionEngine struct {
 
 func (e *compositionAdmissionEngine) Open(ctx context.Context, input agentengine.OpenRequest) (agentengine.Session, error) {
 	e.calls.Add(1)
-	return e.stubProtocolEngine.Open(ctx, input)
+	return compositionAdmissionSession{}, nil
 }
 func (e *compositionAdmissionEngine) Resume(ctx context.Context, input agentengine.ResumeRequest) (agentengine.Session, error) {
 	e.calls.Add(1)
-	return e.stubProtocolEngine.Resume(ctx, input)
+	return compositionAdmissionSession{}, nil
+}
+
+type compositionAdmissionSession struct{}
+
+func (compositionAdmissionSession) RunTurn(ctx context.Context, _ agentengine.TurnInput, sink agentengine.EventSink) (agentengine.TurnResult, error) {
+	if sink != nil {
+		sink(providers.StreamEvent{Type: providers.EventContentDelta, Content: "external composition verified"})
+		sink(providers.StreamEvent{Type: providers.EventDone})
+	}
+	return agentengine.TurnResult{Result: agent.LoopResult{Content: "external composition verified", NewMessages: []providers.ChatMessage{{Role: "assistant", Content: "external composition verified"}}}}, ctx.Err()
+}
+func (compositionAdmissionSession) Interrupt(context.Context, string) error { return nil }
+func (compositionAdmissionSession) Close(context.Context) error             { return nil }
+
+func (e *compositionAdmissionEngine) SessionForThread(context.Context, agentengine.ThreadBinding) (agentengine.Session, error) {
+	e.calls.Add(1)
+	return compositionAdmissionSession{}, nil
 }
