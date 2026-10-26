@@ -1,3 +1,5 @@
+import * as Toast from "../Toast";
+import { translateCurrent } from "../i18n";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -286,6 +288,7 @@ describe("provider-owned contributions in declared public slots", () => {
       captured = application; React.useEffect(() => cleanup, []); return <span>Inspector content</span>;
     }
     const silence = vi.spyOn(console, "error").mockImplementation(() => {});
+    const notice = vi.spyOn(Toast, "showErrorToast").mockReturnValue(undefined);
     try {
       await register(api => {
         const target = "custom-shell/inspector.sections";
@@ -298,7 +301,9 @@ describe("provider-owned contributions in declared public slots", () => {
       mount();
       expect(Array.from(element.querySelectorAll("h2"), node => node.textContent)).toEqual(["Earlier", "Later"]);
       expect(element.textContent).toContain("Inspector content"); expect(element.textContent).not.toContain("Hidden content");
-      expect(element.querySelector('[role="alert"]')).not.toBeNull();
+      expect(element.querySelector('[role="alert"]')).toBeNull();
+      expect(element.textContent).not.toContain("inspector failed");
+      expect(notice).toHaveBeenCalledWith(translateCurrent("plugins.surfaceUnavailable"), "", "plugin-surface:extension:same");
       expect(host.getGenerationDiagnostics("extension", "same")).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "render", message: expect.stringContaining("inspector failed") })]));
       await captured.invoke("settings.open", {});
       const old = captured;

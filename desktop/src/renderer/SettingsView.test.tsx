@@ -1,3 +1,7 @@
+import * as React from "react";
+import { PluginHost } from "./plugins/PluginHost";
+import { WorkbenchController } from "./plugins/Workbench";
+import type { UIContributionRegistryV1 } from "../../../packages/plugin-sdk/src/ui-contributions";
 import { createApplicationSettingsControls } from "./plugins/hostApplicationSettingsControls";
 import { isSettingsPageAvailable } from "./SettingsPageAvailability";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,21 +32,29 @@ type GlobalWindow = typeof window & { wuu: WuuDesktopApi };
 
 let container: HTMLDivElement;
 let root: Root | null = null;
+let host: PluginHost;
+let registry: UIContributionRegistryV1;
+let workbench: WorkbenchController;
 
 function noopResizeStart(): void {}
 function noopResizeKey(): void {}
 
-beforeEach(() => {
+beforeEach(async () => {
+  host = new PluginHost({ react: React });
+  await host.activateGeneration({ pluginId: "settings-fixture", generation: "one", register: api => { registry = api.contributions; } });
+  workbench = new WorkbenchController(registry);
   container = document.createElement("div");
   document.body.appendChild(container);
 });
 
-afterEach(() => {
+afterEach(async () => {
   unhoverTooltip();
   act(() => {
     root?.unmount();
   });
   root = null;
+  workbench.dispose();
+  await host.unloadAndWait("settings-fixture");
   container.remove();
   // Drop the stub so each test installs its own.
   delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
@@ -179,7 +191,7 @@ function renderSettings(props: {
     window.wuu.initialSystemLocale = props.locale;
   }
   const view = (
-    <SettingsView application={{settingsControls:createApplicationSettingsControls()}}
+    <SettingsView application={{settingsControls:createApplicationSettingsControls({ host: registry, controller: workbench })}}
         initialized={props.initialized}
         initialPage={props.initialPage ?? "general"}
         page={props.page}

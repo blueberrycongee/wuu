@@ -5,11 +5,13 @@ import type { WuuDesktopApi } from "../shared/protocol";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
+let disposeFixture: (() => Promise<void>) | undefined;
 const originalHost = window.wuu;
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root?.unmount());
   root = undefined;
+  await disposeFixture?.(); disposeFixture = undefined;
   container?.remove();
   window.wuu = originalHost;
   vi.unstubAllEnvs();
@@ -67,7 +69,17 @@ describe.each([undefined, "true"])("production phone access (build override: %s)
     const pets = { home: "", enabled: false, selected_id: "", pets: [], errors: [] };
     const engines = { engines: [] };
     const { createApplicationSettingsControls } = await import("./plugins/hostApplicationSettingsControls");
-    const application = { settingsControls: createApplicationSettingsControls() };
+    const [{ PluginHost }, { WorkbenchController }, react] = await Promise.all([
+      import("./plugins/PluginHost"), import("./plugins/Workbench"), import("react"),
+    ]);
+    const host = new PluginHost({ react });
+    let settingsControls!: ReturnType<typeof createApplicationSettingsControls>;
+    await host.activateGeneration({ pluginId: "phone-settings-fixture", generation: "one", register: api => {
+      const workbench = new WorkbenchController(api.contributions);
+      settingsControls = createApplicationSettingsControls({ host: api.contributions, controller: workbench });
+      disposeFixture = async () => { workbench.dispose(); await host.unloadAndWait("phone-settings-fixture"); };
+    } });
+    const application = { settingsControls };
     await act(async () => root!.render(
       <SettingsView
         application={application}

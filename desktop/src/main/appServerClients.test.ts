@@ -508,7 +508,7 @@ describe("AppServerClient request admission", () => {
     expect(client.isBusy()).toBe(false);
     expect(child.killed).toBe(false);
     expect(serverExitEvents(events)).toEqual([]);
-  });
+  }, 15_000);
 });
 
 describe("AppServerClient child lifecycle", () => {

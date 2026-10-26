@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import { createScopedTestApplication } from "../test-support/ScopedApplication";
-import { ApplicationController } from "../plugins/ApplicationController";
+import { ApplicationController } from "../plugins/ApplicationController.test-support";
 import type { ApplicationAttachmentV1 } from "../../../../packages/plugin-sdk/src/ui-composer";
 import { awaitComposerFiles, revokeComposerImagePreview, type ComposerFile, type ComposerImage } from "../ComposerMessages";
 import { createApplicationComposerAttachments } from "./ApplicationComposerAttachments";

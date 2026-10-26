@@ -1,3 +1,5 @@
+import * as Toast from "../Toast";
+import { translateCurrent } from "../i18n";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -81,6 +83,7 @@ describe("UI contribution lifecycle", () => {
 
   it("isolates one contribution render failure and records it in generation diagnostics", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const notice = vi.spyOn(Toast, "showErrorToast").mockReturnValue(undefined);
     try {
       await host.activateGeneration({
         pluginId: "broken-view",
@@ -104,7 +107,9 @@ describe("UI contribution lifecycle", () => {
       act(() => root.render(<slots.Slot name="fixture/conversation.header" />));
 
       expect(container.querySelector("span")?.textContent).toBe("Still available");
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain("view failed");
+      expect(container.querySelector('[role="alert"]')).toBeNull();
+      expect(container.textContent).not.toContain("view failed");
+      expect(notice).toHaveBeenCalledWith(translateCurrent("plugins.surfaceUnavailable"), "", "plugin-surface:broken-view:one");
       expect(host.getGenerationDiagnostics("broken-view", "one")).toEqual([
         expect.objectContaining({
           kind: "render",
@@ -113,6 +118,7 @@ describe("UI contribution lifecycle", () => {
       ]);
     } finally {
       consoleError.mockRestore();
+      notice.mockRestore();
     }
   });
 
