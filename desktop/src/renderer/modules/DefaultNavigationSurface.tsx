@@ -59,7 +59,8 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
       await invoke("navigation.focus-composer", { tabId });
     }
   };
-  const [archiveTip, setArchiveTip] = useState<{ thread: ThreadSummary; error?: string; forceRetryable?: boolean }>();
+  const archiveTipID = useRef(0);
+  const [archiveTip, setArchiveTip] = useState<{ id: number; thread: ThreadSummary; error?: string; forceRetryable?: boolean }>();
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
   const [unreadViewOpen, setUnreadViewOpen] = useState(false);
@@ -101,10 +102,10 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   const archiveThread = async (thread: ThreadSummary, force = false) => {
     try {
       const result = await invoke("navigation.archive-thread", { threadId: thread.id, force });
-      setArchiveTip({ thread, ...(!result.ok ? { error: result.error, forceRetryable: result.forceRetryable } : {}) });
-    } catch (error) { setArchiveTip({ thread, error: error instanceof Error ? error.message : String(error), forceRetryable: thread.status === "in_progress" }); }
+      setArchiveTip({ id: ++archiveTipID.current, thread, ...(!result.ok ? { error: result.error, forceRetryable: result.forceRetryable } : {}) });
+    } catch (error) { setArchiveTip({ id: ++archiveTipID.current, thread, error: error instanceof Error ? error.message : String(error), forceRetryable: thread.status === "in_progress" }); }
   };
-  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip threadTitle={archiveTip.thread.title?.trim() || t("app.thisConversation")} errorMessage={archiveTip.error}
+  return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={archiveTip.thread.title?.trim() || t("app.thisConversation")} errorMessage={archiveTip.error}
     onDismiss={() => setArchiveTip(undefined)} onViewArchive={() => { setArchiveTip(undefined); run(application.invoke("settings.open", { pageId: "archive" })); }}
     onForceArchive={archiveTip.forceRetryable ? () => run(archiveThread(archiveTip.thread, true)) : undefined} /></UILayerPortal>}<AppSidebar {...layout} navigation={navigation} initialized={view.initialized}
     activeContextKind={view.activeContextKind} activeSessionTabID={snapshot.tabs.activeTabId} selectedWorkspaceID={view.selectedWorkspaceId}

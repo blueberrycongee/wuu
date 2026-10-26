@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { motionDurationMs } from "./motion";
 import type { IconComponent } from "./WuuIcons";
 import { X } from "./WuuIcons";
@@ -34,18 +34,21 @@ export function TopNotice({
   persistent = false,
 }: TopNoticeProps): JSX.Element {
   const [leaving, setLeaving] = useState(false);
+  const onDismissRef = useRef(onDismiss);
+  useLayoutEffect(() => { onDismissRef.current = onDismiss; }, [onDismiss]);
 
+  // Parent updates must not restart the notice's lifetime.
   useEffect(() => {
     if (persistent) return;
     const timer = window.setTimeout(() => {
       setLeaving(true);
     }, TOP_NOTICE_AUTO_DISMISS_MS - 400);
-    const finalize = window.setTimeout(onDismiss, TOP_NOTICE_AUTO_DISMISS_MS);
+    const finalize = window.setTimeout(() => onDismissRef.current(), TOP_NOTICE_AUTO_DISMISS_MS);
     return () => {
       window.clearTimeout(timer);
       window.clearTimeout(finalize);
     };
-  }, [onDismiss, persistent]);
+  }, [persistent]);
 
   return (
     <div
