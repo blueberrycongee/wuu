@@ -84,7 +84,10 @@ func TestServerThreadListReconcilesTerminalWorkerSnapshot(t *testing.T) {
 	if status := result.Threads[0].ChildAgents[0].Status; status != string(agentthread.StatusCancelled) {
 		t.Fatalf("child status = %q, want cancelled", status)
 	}
-	threads, err := store.ListThreads()
+	// Reconciliation migrates legacy snapshots into the selected document store;
+	// the retired file store is not the write authority.
+	selected := agentthread.NewDocumentStore(testRuntimeState(t, rt).Documents, rootID, store.Dir())
+	threads, err := selected.ListThreads()
 	if err != nil {
 		t.Fatalf("list reconciled thread store: %v", err)
 	}

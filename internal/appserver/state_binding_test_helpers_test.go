@@ -270,7 +270,7 @@ func (c *embeddedModelStreamFixture) InvokeCapability(ctx context.Context, p plu
 	if c.client == nil {
 		return pluginhost.CapabilityInvokeResult{}, errors.New("fixture model is unavailable")
 	}
-	if in.Operation == "chat" {
+	if !in.Stream {
 		response, err := c.client.Chat(ctx, req)
 		if err != nil {
 			return pluginhost.CapabilityInvokeResult{}, err
@@ -396,4 +396,31 @@ func embeddedModelEvent(in providers.StreamEvent) pluginhost.ModelStreamEventV1 
 		out.Error = &pluginprotocol.ModelErrorV1{Code: "inference_failed", Message: in.Error.Error(), Failure: &pluginprotocol.ModelFailureV1{Origin: string(failure.Origin), Category: string(failure.Category), ProviderFamily: failure.ProviderFamily, ProviderCode: failure.ProviderCode, HTTPStatus: failure.HTTPStatus, RetryAfterMS: failure.RetryAfter.Milliseconds(), ContextOverflow: failure.ContextOverflow, AuthRefreshable: failure.AuthRefreshable, Confidence: string(failure.ClassificationConfidence), SuggestedRecovery: string(failure.SuggestedRecovery)}}
 	}
 	return out
+}
+
+func TestEmbeddedModelFixtureCompletesNonStreamingRequests(t *testing.T) {
+	for _, operation := range []string{"", "complete"} {
+		t.Run("operation="+operation, func(t *testing.T) {
+			client := &fakeClient{response: providers.ChatResponse{Content: "complete response"}}
+			fixture := &embeddedModelStreamFixture{client: providers.AdaptStreamClient(client), host: pluginhost.New()}
+			input, err := json.Marshal(pluginprotocol.ModelAdapterInput{Operation: operation, Stream: false, Request: modelwire.RequestToWire(providers.ChatRequest{Model: "fixture-model", Messages: []providers.ChatMessage{{Role: "user", Content: "complete"}}})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := fixture.InvokeCapability(context.Background(), pluginhost.CapabilityInvokeParams{Input: input})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output pluginprotocol.ModelAdapterOutput
+			if err := json.Unmarshal(result.Output, &output); err != nil {
+				t.Fatal(err)
+			}
+			if output.Response == nil || output.Response.Content != "complete response" {
+				t.Fatalf("non-streaming model response = %+v", output.Response)
+			}
+			if len(client.requests) != 1 {
+				t.Fatalf("model calls=%d, want 1", len(client.requests))
+			}
+		})
+	}
 }

@@ -23,6 +23,7 @@ vi.mock("./ComposerView", async (importOriginal) => {
         data-testid="composer-probe"
         data-running={props.running}
         data-draft-pending={props.draftPending}
+        data-unconfirmed-ids={[...props.queuedMessages, ...props.guideMessages].filter(message => message.deliveryUnconfirmed).map(message => message.id).join(",")}
         data-stop-state={props.stopState}
         data-queued-ids={props.queuedMessages
           .map((message) => message.id)
@@ -913,6 +914,43 @@ describe("queued turn reconciliation", () => {
         message: { method: "item/completed", params: { thread_id: threadID, turn_id: storedThread.turns[0].id, item } } } as ServerEvent);
     });
     expect(composerProbe().querySelector("textarea")?.value).toBe("");
+  });
+
+  it.each([false, true])("hands off a guide before materialization and preserves a later unknown-delivery barrier (notification first=%s)", async notificationFirst => {
+    let acknowledge!: (value: Awaited<ReturnType<WuuDesktopApi["steerTurn"]>>) => void;
+    const steerTurn = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["steerTurn"]>>>(resolve => { acknowledge = resolve; }));
+    installWuuApi({ steerTurn });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadID)); });
+    await flushAsync();
+    const textarea = composerProbe().querySelector("textarea")!;
+    const setText = (text: string) => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, text);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { setText("guide now"); });
+    await act(async () => { composerProbe().querySelector<HTMLButtonElement>('[aria-label="steer"]')!.click(); });
+    expect(steerTurn).toHaveBeenCalledOnce();
+    const id = vi.mocked(window.wuu.steerTurn).mock.calls[0][4]!;
+    expect(composerProbe().dataset.draftPending).toBe("true");
+    await act(async () => { setText("newer draft"); });
+    const notify = (method: string, params: Record<string, unknown>) => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: workspace, message: { method, params } } as ServerEvent);
+    };
+    const message = { id, thread_id: threadID, origin: "steer", prompt: "guide now" };
+    if (notificationFirst) await act(async () => { notify("turn/steered", { message }); });
+    await act(async () => { acknowledge({ turn_id: "turn-current", delivery: "active_turn" }); });
+    if (!notificationFirst) await act(async () => { notify("turn/steered", { message }); });
+    expect(composerProbe().dataset.draftPending).toBe("false");
+    expect(composerProbe().dataset.guideIds).toBe(id);
+    expect(composerProbe().dataset.running).toBe("true");
+    expect(textarea.value).toBe("newer draft");
+    await act(async () => { notify("turn/held", { thread_id: threadID, messages: [{ ...message, delivery_unconfirmed: true }] }); });
+    expect(composerProbe().dataset.guideIds).toBe(id);
+    expect(composerProbe().dataset.unconfirmedIds).toBe(id);
+    expect(composerProbe().dataset.draftPending).toBe("false");
+    expect(textarea.value).toBe("newer draft");
+    expect(steerTurn).toHaveBeenCalledOnce();
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
   });
 
   it("rolls back an optimistic steer and restores the draft on IPC failure", async () => {

@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -14,15 +17,13 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
-	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
 	"github.com/blueberrycongee/wuu/internal/extensions"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
-	"github.com/blueberrycongee/wuu/internal/pluginsettings"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -563,6 +564,8 @@ func TestSideThreadSendRejectsConcurrentServers(t *testing.T) {
 func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	client := &sideThreadTestClient{partial: "partial progress", started: make(chan struct{}), release: make(chan struct{})}
 	s, rt, out := newSideThreadServer(t, client)
+	rt = newReloadingSideThreadRuntime(t, rt, client)
+	s.rt = rt
 	createSideThreadMain(t, s, "main_interrupt")
 	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), "main_interrupt", "status?"); err != nil {
 		t.Fatalf("send: %v", err)
@@ -584,8 +587,10 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	}
 
 	// Disabling the owning extension interrupts a running answer without erasing it.
-	modules := []string{persistence.SQLiteModule, "wuu.session-state", "side", "kernel", loopdriver.DefaultDriverID, "wuu.session-execution", credentialstore.FileModule, config.Module, pluginsettings.Module, runtime.ArtifactModule, "wuu.session.default", "wuu.prompt.default", "wuu.compaction.default"}
-	policy := config.Config{Composition: &composition.Config{Version: composition.Version, Modules: &modules}}
+	policy, _, err := config.LoadPath(rt.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	candidate, err := rt.PreflightExtensionPolicy(policy)
 	if err != nil {
 		t.Fatal(err)
@@ -624,13 +629,6 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	}
 	settings := &extensions.Settings{}
 	settings.SetEnabled(rt.Plugins[0].SubjectID, false)
-	disabledModules := make([]string, 0, len(modules))
-	for _, id := range modules {
-		if id != "side" {
-			disabledModules = append(disabledModules, id)
-		}
-	}
-	policy.Composition = &composition.Config{Version: composition.Version, Modules: &disabledModules}
 	policy.Extensions = settings
 	candidate, err = rt.PreflightExtensionPolicy(policy)
 	if err != nil {
@@ -643,7 +641,6 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 		t.Fatal("disabled side command accepted a send")
 	}
 	settings.SetEnabled(rt.Plugins[0].SubjectID, true)
-	policy.Composition = &composition.Config{Version: composition.Version, Modules: &modules}
 	policy.Extensions = settings
 	candidate, err = rt.PreflightExtensionPolicy(policy)
 	if err != nil {
@@ -1026,6 +1023,7 @@ func requestMessagesText(messages []providers.ChatMessage) string {
 func TestNewSideThreadRunnerInheritsThreadModel(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	writeSelectionTestConfig(t, rt.ConfigPath)
+	rt = newSettingsRefreshRuntime(t, rt)
 
 	base, err := rt.NewSideThreadRunner("side-default", rt.RootDir, runtime.ThreadModelSelection{}, "Test side policy")
 	if err != nil {
@@ -1107,4 +1105,56 @@ func (d *sideThreadFaultDocuments) Read(ctx context.Context, q persistence.Query
 		return persistence.View{}, errors.New("selected side-thread storage unavailable")
 	}
 	return d.Documents.Read(ctx, q)
+}
+
+// Keep the model transport synthetic while exercising real successor graphs.
+func newReloadingSideThreadRuntime(t *testing.T, previous *runtime.Session, client providers.StreamClient) *runtime.Session {
+	t.Helper()
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stream, err := client.StreamChat(r.Context(), providers.ChatRequest{Model: "test-model"})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for event := range stream {
+			if event.Type == providers.EventContentDelta {
+				raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]string{"content": event.Content}}}})
+				if _, err := fmt.Fprintf(w, "data: %s\n\n", raw); err != nil {
+					return
+				}
+				w.(http.Flusher).Flush()
+			}
+			if event.Type == providers.EventError {
+				return
+			}
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(endpoint.Close)
+	cfg := config.Default()
+	cfg.DefaultProvider = "test-provider"
+	cfg.Providers = map[string]config.ProviderConfig{"test-provider": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", APIKey: "fixture-only", Model: "test-model"}}
+	path := filepath.Join(previous.RootDir, "config.json")
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	home := t.TempDir()
+	credentials := runtime.NativeProviderFactory{ID: credentialstore.OSModule, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+		return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil }), nil
+	}}
+	selected, err := runtime.NewSession(runtime.Options{RootDir: previous.RootDir, HomeDir: home, WuuHome: previous.WuuHome, ConfigPath: path, Config: cfg, ConfigLoadMode: runtime.ConfigLoadFile, NonInteractive: true, DiscoveredPlugins: &previous.Plugins, NativeProviders: []runtime.NativeProviderFactory{credentials}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := selected.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	return selected
 }

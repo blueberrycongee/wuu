@@ -106,6 +106,24 @@ describe("application submission ownership",()=>{
     expect(f.pending.pendingComposerMessagesForThread("created").queued.map(row=>row.id)).toEqual([id]);
     expect(window.wuu.queueTurn).toHaveBeenCalledOnce();
   });
+  it.each([false, true])("fences guide acknowledgement after tab switch or disposal (disposed=%s)",async(disposed)=>{
+    const accepted=deferred<Awaited<ReturnType<WuuDesktopApi["steerTurn"]>>>();
+    window.wuu={steerTurn:vi.fn(()=>accepted.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
+    const release=vi.fn();vi.spyOn(f.resources,"retain").mockReturnValue(release);
+    f.submission.submit({ownerTabId:"thread:created",mode:"steer"});
+    await vi.waitFor(()=>expect(window.wuu.steerTurn).toHaveBeenCalledOnce());
+    f.setState({...f.getState(),activeSessionTabID:"draft:other",sessionTabs:[...f.getState().sessionTabs,
+      {id:"draft:other",kind:"draft",context,title:"",createdAt:1,prompt:"other input",images:[],files:[]}]});
+    if(disposed) f.submission.dispose();
+    const checkpoint=f.getState();const pending=JSON.stringify(f.pending.pendingComposerMessagesByThread);
+    accepted.resolve({turn_id:"running",delivery:"active_turn"});
+    await vi.waitFor(()=>expect(release).toHaveBeenCalledOnce());
+    if(disposed){expect(f.getState()).toBe(checkpoint);expect(JSON.stringify(f.pending.pendingComposerMessagesByThread)).toBe(pending);}
+    else {expect(f.getDraft("thread:created").prompt).toBe("");expect(f.submission.getSnapshot().operations[0]).toMatchObject({phase:"completed",draftPending:false});}
+    expect(f.getDraft("draft:other").prompt).toBe("other input");
+    expect(window.wuu.steerTurn).toHaveBeenCalledOnce();expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+  });
   it("keeps an unconfirmed queue failure recoverable without leaving a spinner or retrying",async()=>{
     window.wuu={queueTurn:vi.fn().mockRejectedValue(new Error("rpc timeout: turn/queue")),startTurn:vi.fn()} as unknown as WuuDesktopApi;
     const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});

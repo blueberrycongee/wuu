@@ -81,6 +81,7 @@ func writeSelectionTestConfig(t *testing.T, path string) {
 func TestEnsureThreadRuntimeRebuildsWhenThreadSelectionChanged(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	writeSelectionTestConfig(t, rt.ConfigPath)
+	bindConfigSourceForTest(t, rt)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 

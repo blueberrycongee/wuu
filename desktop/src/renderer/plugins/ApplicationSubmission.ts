@@ -49,7 +49,6 @@ type Operation = {
   clickedAtMs: number;
   retainResult: boolean;
   draft?: ComposerDraftState;
-  settlePlacement?: (accepted: boolean) => void;
 };
 
 /** One submission owner for all shells, sharing the controller's drafts and queues. */
@@ -241,16 +240,9 @@ export class ApplicationSubmission {
       if (this.disposed) return true;
       operation.view = { ...operation.view, messageID: acceptedID };
       this.options.pending.updateThreadPendingComposerMessages(thread.id, previous => ({ ...previous, [list]: previous[list].map(candidate => candidate.id === message.id ? { ...candidate, id: acceptedID, images, files, operationState: undefined } : candidate) }));
-      // Queue acknowledgement is the durable handoff: the pending drawer owns
-      // these inputs even while the current turn is still running. Steering
-      // instead waits for placement in the current conversation.
-      if (kind === "queue") return true;
-      if (operation.view.draftPending && !this.disposed && this.resultOwnerExists(operation.view)) {
-        return await new Promise<boolean>(resolve => {
-          operation.settlePlacement = resolve;
-          this.reconcile();
-        });
-      }
+      // Successful admission transfers ownership to the server's pending input,
+      // not necessarily to model history. Keep it visible in the drawer while
+      // execution waits for a safe boundary or native delivery confirmation.
       return true;
     } catch (error) {
       if (this.disposed) return false;
@@ -438,7 +430,7 @@ export class ApplicationSubmission {
       this.stopRequests.set(threadID, { ...request, phase: "retry", delivery: undefined }); this.publish(); this.report(error);
     }
   }
-  reconcile(removedMessageID?: string): void {
+  reconcile(): void {
     if (this.disposed) return;
     const beforeStops = this.stopRequests.size; const beforeFailures = this.failedDrafts.size; const beforeResults = this.results.size;
     const state = this.options.getState();
@@ -457,22 +449,10 @@ export class ApplicationSubmission {
       }
       if (operation.view.draftPending && operation.thread) {
         const accepted = thread?.turns.some(turn => !turn.id.startsWith(OPTIMISTIC_TURN_ID_PREFIX) && turn.items.some(item => item.type === "user_message" && item.source_id === operation.view.messageID));
-        const pending = this.options.pending.pendingComposerMessagesForThread(operation.thread.id);
-        const message = [...pending.queued, ...pending.guides].find(row => row.id === operation.view.messageID);
-        if (accepted || operation.settlePlacement && (message?.held || message?.deliveryUnconfirmed)) {
-          this.releaseDraft(operation);
-          operation.settlePlacement?.(true);
-          operation.settlePlacement = undefined;
-        } else if (operation.settlePlacement && operation.view.messageID === removedMessageID && !message) {
-          operation.stopped = true;
-          operation.settlePlacement(false);
-          operation.settlePlacement = undefined;
-        }
+        if (accepted) this.releaseDraft(operation);
       }
       if (this.resultOwnerExists(operation.view)) continue;
       operation.retainResult = false;
-      operation.settlePlacement?.(true);
-      operation.settlePlacement = undefined;
       // Background thread requests still have a real thread owner. Only a
       // removed draft's not-yet-admitted creation must be cancelled here.
       if (!operation.thread && !operation.sent) this.cancel(operation.view.operationID);
@@ -630,8 +610,6 @@ export class ApplicationSubmission {
     if (this.disposed) return;
     const recovery: SessionTab[] = [];
     for (const operation of this.operations.values()) {
-      // An acknowledged queue is already durable; do not manufacture a second draft.
-      if (operation.settlePlacement) { this.releaseDraft(operation); operation.view = { ...operation.view, phase: "completed" }; continue; }
       if (!["preparing", "sending"].includes(operation.view.phase) || !this.resultOwnerExists(operation.view)) continue;
       const owner = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;
       if (this.ownsDraft(operation, owner) && operation.draft?.prompt === operation.message.text) continue;
@@ -650,8 +628,6 @@ export class ApplicationSubmission {
     this.unadmitted.clear();
     for (const operation of this.operations.values()) {
       if (!operation.sent) this.cancel(operation.view.operationID);
-      operation.settlePlacement?.(true);
-      operation.settlePlacement = undefined;
     }
     this.publish();
   }

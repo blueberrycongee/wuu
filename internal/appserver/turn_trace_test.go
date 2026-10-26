@@ -51,7 +51,7 @@ func TestPersistTurnTraceUsesCapturedIndex(t *testing.T) {
 	completedAt := time.Now().UTC()
 	duration := int64(1000)
 	provider := &turnTraceIndexProvider{}
-	srv, binding := newTurnTraceIndexFixture(t, provider)
+	srv, binding := newTurnTraceIndexFixture(t, provider, &fakeClient{})
 	// A successor without this provider must not redirect the admitted turn.
 	srv.rt = newTestRuntime(t, &fakeClient{})
 	runner := &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Model: "gpt-test", APIModel: "gpt-test-api"}
@@ -128,7 +128,7 @@ func TestPersistTurnTraceUsesCapturedIndex(t *testing.T) {
 // caller must report it once and must never write a competing local trace.
 func TestPersistTurnTraceDoesNotReplayUncertainAppend(t *testing.T) {
 	provider := &turnTraceIndexProvider{err: errors.New("response lost after append")}
-	srv, binding := newTurnTraceIndexFixture(t, provider)
+	srv, binding := newTurnTraceIndexFixture(t, provider, &fakeClient{})
 	kit, err := tools.New(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -148,8 +148,7 @@ func TestPersistTurnTraceDoesNotReplayUncertainAppend(t *testing.T) {
 // but the public completion must expose that unconfirmed secondary outcome.
 func TestTurnCompletionReportsUnconfirmedIndexWrite(t *testing.T) {
 	provider := &turnTraceIndexProvider{err: errors.New("private-index-payload-secret")}
-	fixture, _ := newTurnTraceIndexFixture(t, provider)
-	fixture.rt.StreamRunner.Client = providers.AdaptStreamClient(&fakeClient{response: providers.ChatResponse{Content: "answer"}})
+	fixture, _ := newTurnTraceIndexFixture(t, provider, &fakeClient{response: providers.ChatResponse{Content: "answer"}})
 	out := &lockedBuffer{}
 	srv := New(fixture.rt, out)
 	defer srv.Close()
@@ -229,9 +228,9 @@ func (*turnTraceIndexConsumer) RequiredServices() []pluginhost.ServiceRequiremen
 }
 func (*turnTraceIndexConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
 
-func newTurnTraceIndexFixture(t *testing.T, provider *turnTraceIndexProvider) (*Server, *runtime.State) {
+func newTurnTraceIndexFixture(t *testing.T, provider *turnTraceIndexProvider, client *fakeClient) (*Server, *runtime.State) {
 	t.Helper()
-	rt := newTestRuntime(t, &fakeClient{})
+	rt := newTestRuntime(t, client)
 	consumer := &turnTraceIndexConsumer{}
 	attachTestModelGeneration(t, rt, provider, consumer)
 	return &Server{rt: rt}, testRuntimeState(t, rt)

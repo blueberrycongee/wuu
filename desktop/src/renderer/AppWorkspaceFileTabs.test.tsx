@@ -859,8 +859,10 @@ describe("workspace file tabs", () => {
       expect(call[action === "start" ? 3 : action === "queue" ? 4 : 5]).toEqual(files.map(({ filename, media_type, data }) => ({ filename, media_type, data })));
     }
     if (action !== "start") {
-      expect(composer.querySelector("textarea")!.value).toBe(prompt);
-      expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(3);
+      // Successful admission transfers input to pending ownership even before
+      // the running turn reaches the boundary that materializes the message.
+      expect(composer.querySelector("textarea")!.value).toBe("");
+      expect(composer.querySelectorAll(".composer-attachment-card")).toHaveLength(0);
       await act(async () => {
         for (const handler of serverEventHandlers) handler({
           kind: "notification", workdir: workspace,

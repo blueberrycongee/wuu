@@ -3038,7 +3038,8 @@ func TestServerXAILoginStartAndPoll(t *testing.T) {
 	t.Setenv("WUU_XAI_DEVICE_CODE_URL", server.URL+"/oauth2/device/code")
 	t.Setenv("WUU_XAI_TOKEN_URL", server.URL+"/oauth2/token")
 	out := &lockedBuffer{}
-	rt = newSettingsRefreshRuntime(t, rt)
+	writeSelectionTestConfig(t, rt.ConfigPath)
+	rt = newConfigRefreshRuntime(t, rt)
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
@@ -7492,12 +7493,8 @@ func TestServerTurnStartAcceptsPDFOnlyPrompt(t *testing.T) {
 	if messages[1].Files[0].MediaType != "application/pdf" || messages[1].Files[0].Data != "JVBERi0xLjQ=" || messages[1].Files[0].Filename != "brief.pdf" {
 		t.Fatalf("unexpected provider file: %+v", messages[1].Files[0])
 	}
-	path := messages[1].Files[0].LocalPath
-	if path == "" || !strings.Contains(messages[1].Content, path) {
-		t.Fatal("native PDF input must also deliver a working-copy reference")
-	}
-	if data, err := os.ReadFile(path); err != nil || string(data) != "%PDF-1.4" {
-		t.Fatalf("native PDF working copy changed bytes: %v", err)
+	if messages[1].Files[0].LocalPath != "" {
+		t.Fatal("model wire must not expose server-owned working-copy metadata")
 	}
 	if started.Turn.Items[0].Text != "" || started.Turn.Items[0].InputText != "" {
 		t.Fatal("PDF-only input must not expose its generated path as authored text")
@@ -7510,6 +7507,13 @@ func TestServerTurnStartAcceptsPDFOnlyPrompt(t *testing.T) {
 	visiblePersisted := visibleMessagesForTest(persisted)
 	if len(visiblePersisted) != 2 || len(visiblePersisted[0].Files) != 1 {
 		t.Fatalf("unexpected persisted history: %+v", persisted)
+	}
+	path := visiblePersisted[0].Files[0].LocalPath
+	if path == "" || !strings.Contains(messages[1].Content, path) {
+		t.Fatal("native PDF input must also deliver a working-copy reference")
+	}
+	if data, err := os.ReadFile(path); err != nil || string(data) != "%PDF-1.4" {
+		t.Fatalf("native PDF working copy changed bytes: %v", err)
 	}
 	sessions, err := rt.Sessions.List(1)
 	if err != nil {

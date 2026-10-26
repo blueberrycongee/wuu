@@ -309,7 +309,11 @@ export class ApplicationController implements HostApplicationService {
   private snapshot: ApplicationSnapshotV1;
   private draft = "";
   private readonly draftRevisions = new Map<string, number>();
-  private readonly draftResources = new ApplicationDraftResources(() => this.publish());
+  private readonly draftResources = new ApplicationDraftResources(() => {
+    // Checkpointed preparations may outlive this owner and finish for its replacement.
+    // Keep their bytes available without recreating retired projection services.
+    if (!this.lifetime?.signal.aborted) this.publish();
+  });
   private readonly applicationSettings: ApplicationSettings;
   private readonly sidebarCache: ReturnType<typeof createSidebarThreadCache>;
   private readonly pendingComposer: ReturnType<typeof createComposerPendingState>;
@@ -1251,7 +1255,7 @@ export class ApplicationController implements HostApplicationService {
         this.pendingComposerMessage(target);
         const { messageId, kind } = target;
         const removed = await (kind === "queue" ? this.pendingComposer.removeQueuedMessage(messageId) : this.pendingComposer.removeGuideMessage(messageId));
-        if (removed) this.submissionOwner?.reconcile(messageId);
+        if (removed) this.submissionOwner?.reconcile();
         return removed;
       }
       case "composer.edit-pending": {
@@ -1261,7 +1265,7 @@ export class ApplicationController implements HostApplicationService {
         const release = this.draftResources.retain([...message.images, ...message.files].map(item => item.id));
         try {
           await (kind === "queue" ? this.pendingComposer.editQueuedMessage(messageId) : this.pendingComposer.editGuideMessage(messageId));
-          this.submissionOwner?.reconcile(messageId);
+          this.submissionOwner?.reconcile();
           return;
         }
         finally { release(); }

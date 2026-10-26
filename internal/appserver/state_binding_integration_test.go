@@ -64,9 +64,12 @@ func TestServerResumeUsesSelectedAuthorityInsteadOfCachedTranscript(t *testing.T
 	if _, err := appendChatMessage(selected, id, providers.ChatMessage{Role: "user", Content: "selected authority"}); err != nil {
 		t.Fatal(err)
 	}
-	// This embedded runtime publishes an explicit replacement; production uses
-	// the same State capture through its generation publication lock.
-	rt.Documents, rt.Sessions = documents, selected
+	// Publish a successor runtime with its own captured graph. Mutating the old
+	// runtime fields must not redirect its already retained generation.
+	successor := newTestRuntime(t, &fakeClient{})
+	successor.RootDir, successor.SessionDir = rt.RootDir, rt.SessionDir
+	successor.Documents, successor.Sessions = documents, selected
+	srv.rt = successor
 	if err := srv.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"after","method":"thread/resume","params":{"session_id":%q}}`, id))); err != nil {
 		t.Fatal(err)
 	}
@@ -147,8 +150,12 @@ func TestAttachedRunKeepsCapturedStoreAfterRequestCloseAndReplacement(t *testing
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = replacement.Close() })
-			rt.Documents, rt.Sessions = replacement, session.NewStore(context.Background(), replacement)
-			current := testRuntimeState(t, rt)
+			successor := newTestRuntime(t, &fakeClient{})
+			successor.RootDir, successor.SessionDir = rt.RootDir, rt.SessionDir
+			successor.ActivityRegistry = rt.ActivityRegistry
+			successor.Documents, successor.Sessions = replacement, session.NewStore(context.Background(), replacement)
+			srv.rt = successor
+			current := testRuntimeState(t, successor)
 			if pending, full := srv.drainExecutionSchemaRetries(current, "same-project", false); pending || full {
 				t.Fatalf("replacement scheduler observed original Run: pending=%v capacity=%v", pending, full)
 			}
@@ -444,9 +451,7 @@ func newTurnHookFixture(t *testing.T, event hooks.Event, client providers.Client
 		ownedJournal := rt.InferenceJournalRuntime
 		t.Cleanup(func() { _ = ownedJournal.Close() })
 	}
-	if generation {
-		attachTestModelGeneration(t, rt)
-	}
+	attachTestModelGeneration(t, rt)
 	t.Cleanup(func() { _, _ = rt.Cleanup() })
 	out := &turnHookOutput{terminal: make(chan struct{})}
 	srv := New(rt, out)
@@ -459,6 +464,22 @@ func newTurnHookFixture(t *testing.T, event hooks.Event, client providers.Client
 		t.Fatal(err)
 	}
 	id := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "hook-thread")["result"]).Thread.ID
+	if !generation {
+		// Retain a deliberately generationless authority, rather than merely
+		// omitting a helper call that now installs a model graph by default.
+		unbound := &runtime.Session{Documents: rt.Documents, Sessions: rt.Sessions,
+			StreamRunner: rt.StreamRunner, HookDispatcher: rt.HookDispatcher,
+			InferenceJournalRuntime: rt.InferenceJournalRuntime}
+		binding := testRuntimeState(t, unbound)
+		th := srv.thread(id)
+		if _, err := srv.ensureThreadRuntime(th); err != nil {
+			t.Fatal(err)
+		}
+		if err := th.state.Close(); err != nil {
+			t.Fatal(err)
+		}
+		th.state = binding.Retain()
+	}
 	return rt, srv, out, id
 }
 
@@ -546,16 +567,55 @@ func TestTurnHooksKeepCapturedDispatcherAndJournal(t *testing.T) {
 	}
 }
 
+// A generationless state cannot reach Stop in an admitted turn. Exercise its
+// hook receipt boundary directly and require rejection before any user history.
+func TestTurnAdmissionRejectsGenerationlessHookAuthority(t *testing.T) {
+	for _, event := range []hooks.Event{hooks.UserPromptSubmit, hooks.Stop} {
+		t.Run(string(event), func(t *testing.T) {
+			client := &turnHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{})}
+			close(client.release)
+			_, srv, out, id := newTurnHookFixture(t, event, client, false, true)
+			_, err := srv.thread(id).state.DispatchHook(context.Background(), event, &hooks.Input{SessionID: id})
+			if !errors.Is(err, agent.ErrModelReceiptLifecycle) {
+				t.Fatalf("generationless hook did not reject receipt ownership: %v", err)
+			}
+			raw := fmt.Sprintf(`{"id":"hook-turn","method":"turn/start","params":{"thread_id":%q,"prompt":"must not succeed"}}`, id)
+			if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
+				t.Fatal(err)
+			}
+			response := responseByID(t, parseOutput(t, out.String()), "hook-turn")
+			if response["error"] == nil {
+				t.Fatalf("generationless authority admitted a turn: %+v", response)
+			}
+			messages, err := loadChatMessages(srv.thread(id).state.Sessions, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, message := range messages {
+				if message.Role == "user" {
+					t.Fatalf("failed admission appended user history: %+v", messages)
+				}
+			}
+			select {
+			case <-client.started:
+				t.Fatal("missing receipt authority admitted a model call")
+			default:
+			}
+		})
+	}
+}
+
 func TestTurnHookReceiptFailuresPreventDelivery(t *testing.T) {
 	for _, event := range []hooks.Event{hooks.UserPromptSubmit, hooks.Stop} {
-		for _, failure := range []string{"missing-generation", "missing-journal", "completion"} {
+		for _, failure := range []string{"missing-journal", "completion"} {
 			t.Run(string(event)+"/"+failure, func(t *testing.T) {
 				client := &turnHookReceiptClient{started: make(chan providers.ChatRequest, 1), release: make(chan struct{}), done: make(chan struct{})}
 				close(client.release)
 				if failure == "completion" {
 					client.completionErr = errors.New("required hook receipt failed")
 				}
-				_, srv, out, id := newTurnHookFixture(t, event, client, failure != "missing-generation", failure != "missing-journal")
+				_, srv, out, id := newTurnHookFixture(t, event, client, true, failure != "missing-journal")
+
 				raw := fmt.Sprintf(`{"id":"hook-turn","method":"turn/start","params":{"thread_id":%q,"prompt":"must not succeed"}}`, id)
 				if err := srv.handleLine(context.Background(), []byte(raw)); err != nil {
 					t.Fatal(err)
@@ -563,7 +623,7 @@ func TestTurnHookReceiptFailuresPreventDelivery(t *testing.T) {
 				response := responseByID(t, parseOutput(t, out.String()), "hook-turn")
 				if event == hooks.UserPromptSubmit {
 					if response["error"] == nil {
-						t.Fatalf("prompt hook failure admitted a turn: %+v", response)
+						t.Fatalf("missing hook receipt authority admitted a turn: %+v", response)
 					}
 					messages, err := loadChatMessages(srv.thread(id).state.Sessions, id)
 					if err != nil {

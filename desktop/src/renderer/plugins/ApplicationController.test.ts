@@ -673,6 +673,30 @@ describe("shared application state", () => {
     expect(window.wuu.steerTurn).not.toHaveBeenCalled();
   });
 
+  it.each(["active_turn", "queued"] as const)("hands an acknowledged guide to pending ownership before tool completion (delivery=%s)", async delivery => {
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const thread = { id: "a", cwd: context.cwd, preview: "", status: "in_progress", model_provider: "", turns: [{ id: "running", status: "in_progress", items: [] }] } as never;
+    let acknowledge!: (value: Awaited<ReturnType<WuuDesktopApi["steerTurn"]>>) => void;
+    window.wuu = { steerTurn: vi.fn(() => new Promise(resolve => { acknowledge = resolve; })), startTurn: vi.fn(), queueTurn: vi.fn() } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, activeSessionTabID: "thread:a", sessionTabs: [
+      { id: "thread:a", kind: "thread", threadID: "a", context, title: "A", prompt: "guide image", images: [{ id: "image", media_type: "image/png", data: "QQ==", previewSrc: "blob:queue" }], files: [{ id: "file", filename: "note.txt", media_type: "text/plain", data: "Qg==" }] },
+    ] });
+    const submitted = await controller.invoke("composer.submit", { ownerTabId: "thread:a", mode: "steer" });
+    await vi.waitFor(() => expect(window.wuu.steerTurn).toHaveBeenCalledOnce());
+    const id = vi.mocked(window.wuu.steerTurn).mock.calls[0][4]!;
+    expect(controller.getSnapshot().submission.operations[0]).toMatchObject({ draftPending: true, phase: "sending" });
+    expect(controller.getSnapshot().drafts.primary).toMatchObject({ text: "guide image", imageIds: ["image"], fileIds: ["file"] });
+    acknowledge({ turn_id: "running", delivery });
+    expect(await settleSubmission(controller, submitted)).toMatchObject({ phase: "completed", draftPending: false });
+    expect(controller.getState().thread).toBe(thread);
+    expect(controller.getSnapshot().drafts.primary.text).toBe("");
+    expect(controller.getSnapshot().composerPending[0].guides).toMatchObject([{ id, text: "guide image", imageIds: ["image"], fileIds: ["file"] }]);
+    expect(controller.getSnapshot().drafts.attachments.map(attachment => attachment.id)).toEqual(expect.arrayContaining(["image", "file"]));
+    expect(window.wuu.steerTurn).toHaveBeenCalledOnce();
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    expect(window.wuu.queueTurn).not.toHaveBeenCalled();
+  });
+
   it("keeps the image preview alive while editing a queued message back into its draft", async () => {
     const originalRevoke = URL.revokeObjectURL;
     const revoke = vi.fn();

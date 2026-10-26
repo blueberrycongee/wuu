@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
-	"github.com/blueberrycongee/wuu/internal/promptservice"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -23,14 +22,7 @@ func TestSessionMessageQueuedDeliveryAndReplay(t *testing.T) {
 	}}
 	rt := newTestRuntime(t, client)
 	owner := &pluginTurnLifecycleClient{id: "messenger", calls: make(chan pluginhost.AgentTurnLifecycleInput, 8)}
-	promptProvider := promptservice.NewService()
-	consumer := &messagePromptConsumer{}
-	rt.PluginHost = pluginhost.New(owner, promptProvider, consumer)
-	registry := pluginhost.NewServiceRegistry()
-	rt.PluginHost.AttachServiceRegistry(registry, registry.RegisterClients(promptProvider, consumer))
-	if err := rt.PluginHost.Activate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	attachTestModelGeneration(t, rt, owner)
 	out := &lockedBuffer{}
 	srv := New(rt, out)
 	t.Cleanup(func() { once.Do(func() { close(release) }); srv.Close() })
@@ -107,17 +99,4 @@ func TestSessionMessageQueuedDeliveryAndReplay(t *testing.T) {
 			t.Fatal("queued message did not finish")
 		}
 	}
-}
-
-// The message fixture owns a real selected prompt binding for thread creation.
-type messagePromptConsumer struct{}
-
-func (*messagePromptConsumer) ID() string { return "wuu.session-execution" }
-func (c *messagePromptConsumer) Status() pluginhost.Status {
-	return pluginhost.Status{ID: c.ID(), State: pluginhost.StateActive}
-}
-func (*messagePromptConsumer) Close(context.Context) error                      { return nil }
-func (*messagePromptConsumer) ProvidedServices() []pluginhost.ServiceDescriptor { return nil }
-func (*messagePromptConsumer) RequiredServices() []pluginhost.ServiceRequirement {
-	return []pluginhost.ServiceRequirement{{Name: promptservice.ServiceName, MajorVersion: 1, Required: true}}
 }
