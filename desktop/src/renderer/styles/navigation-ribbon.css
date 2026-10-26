@@ -260,8 +260,8 @@
   min-height: 0;
   flex-direction: column;
   align-items: center;
-  /* Keep destinations below the header as the UI font grows. */
-  padding: var(--ribbon-header-height) 0 max(0px, calc(var(--main-composer-status-bottom, calc(var(--ribbon-inline-inset) + var(--ribbon-row-height) / 2)) - var(--ribbon-row-height) / 2));
+  /* Keep navigation anchored to the window when composer controls move or wrap. */
+  padding: var(--ribbon-header-height) 0 max(var(--ribbon-inline-inset), env(safe-area-inset-bottom, 0px));
   background: transparent;
   overflow: hidden;
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
@@ -336,8 +336,7 @@
   position: relative;
   flex-shrink: 0;
   padding-top: var(--ribbon-group-gap);
-  /* Match the input and status control axes even when the status wraps. */
-  gap: max(0px, calc(var(--main-composer-row-distance, calc(var(--ribbon-row-gap) + var(--ribbon-row-height))) - var(--ribbon-row-height)));
+  gap: var(--ribbon-row-gap);
 }
 
 .sidebar-ribbon-tab-row {
