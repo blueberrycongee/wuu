@@ -36,8 +36,9 @@ var errLockHeld = errors.New("store lock is held by another owner")
 // Lock owns an exclusive operating-system advisory lock. The sidecar remains
 // in place after release so every contender continues locking the same inode.
 type Lock struct {
-	mu   sync.Mutex
-	file *os.File
+	mu      sync.Mutex
+	file    *os.File
+	waiters *lockWaiters
 }
 
 // Acquire blocks until it exclusively owns the durable store rooted at dir,
@@ -69,20 +70,34 @@ func acquire(ctx context.Context, dir string, timeout time.Duration) (*Lock, err
 	if dir == "" {
 		return nil, errors.New("store directory is required")
 	}
-	path := filepath.Join(dir, FileName)
+	path, err := filepath.Abs(filepath.Join(dir, FileName))
+	if err != nil {
+		return nil, err
+	}
 	file, err := securefs.OpenFile(path, os.O_CREATE|os.O_RDWR, securefs.FileMode)
 	if err != nil {
 		return nil, fmt.Errorf("open store lock: %w", err)
 	}
+	waiters := retainLockWaiters(path)
+	acquired := false
+	defer func() {
+		if !acquired {
+			waiters.release(false)
+		}
+	}()
 	deadline := time.Now().Add(timeout)
 	for {
 		if err := ctx.Err(); err != nil {
 			_ = file.Close()
 			return nil, err
 		}
+		// Subscribe before attempting the OS lock so a release between a failed
+		// attempt and the wait cannot be lost.
+		released := waiters.nextRelease()
 		err := tryLockFile(file)
 		if err == nil {
-			return &Lock{file: file}, nil
+			acquired = true
+			return &Lock{file: file, waiters: waiters}, nil
 		}
 		if !errors.Is(err, errLockHeld) {
 			_ = file.Close()
@@ -98,6 +113,8 @@ func acquire(ctx context.Context, dir string, timeout time.Duration) (*Lock, err
 			timer.Stop()
 			_ = file.Close()
 			return nil, ctx.Err()
+		case <-released:
+			timer.Stop()
 		case <-timer.C:
 		}
 	}
@@ -115,5 +132,7 @@ func (l *Lock) Release() error {
 	}
 	file := l.file
 	l.file = nil
-	return errors.Join(unlockFile(file), file.Close())
+	err := errors.Join(unlockFile(file), file.Close())
+	l.waiters.release(true)
+	return err
 }

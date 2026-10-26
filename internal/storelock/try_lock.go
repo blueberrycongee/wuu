@@ -14,16 +14,22 @@ func TryAcquire(dir string) (*Lock, bool, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, false, errors.New("store directory is required")
 	}
-	file, err := securefs.OpenFile(filepath.Join(dir, FileName), os.O_CREATE|os.O_RDWR, securefs.FileMode)
+	path, err := filepath.Abs(filepath.Join(dir, FileName))
 	if err != nil {
 		return nil, false, err
 	}
+	file, err := securefs.OpenFile(path, os.O_CREATE|os.O_RDWR, securefs.FileMode)
+	if err != nil {
+		return nil, false, err
+	}
+	waiters := retainLockWaiters(path)
 	if err := tryLockFile(file); err != nil {
 		file.Close()
+		waiters.release(false)
 		if errors.Is(err, errLockHeld) {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
-	return &Lock{file: file}, true, nil
+	return &Lock{file: file, waiters: waiters}, true, nil
 }

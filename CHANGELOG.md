@@ -208,6 +208,8 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 - Focus conversation search after its input mounts, without overriding a newer interaction or refocusing a closing dialog.
 
+- Reduce message submission and response startup delays under concurrent session activity by waking local storage-lock waiters immediately when the lock is released, while preserving operating-system locking and cancellation.
+
 - Keep running conversations and their history readable after installing, disabling, or removing a plugin. Reads retain the accepted execution’s provider ownership without releasing cross-process execution locks or losing queued input.
 
 - Keep opted-in desktop presentation mounted across service-graph renewals while replacing business scopes. Preserve sidebar, tool-rail, composer DOM and draft selection; fence delayed old actions, rebind subscriptions, close chosen workspace pickers explicitly, and retain conservative teardown for legacy extensions.
