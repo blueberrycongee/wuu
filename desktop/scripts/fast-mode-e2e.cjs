@@ -250,9 +250,23 @@ async function run() {
   await turn('fast-mode-fast', 'priority');
   async function openPanel(fastSupported = true) {
     if (!await evaluate(main, () => Boolean(document.querySelector('.runtime-panel')))) {
-      // Workspace switching keeps the trigger disabled until its runtime is ready.
-      await waitFor(main, () => document.querySelector('.codex-runtime-trigger:not(:disabled)'));
-      await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+      // Retiring provider chrome can remain visible with an enabled button
+      // inside an inert owner. Only the live destination can receive a click.
+      await waitFor(main, () => {
+        const trigger = document.querySelector('.codex-runtime-trigger:not(:disabled)');
+        return trigger && !trigger.closest('[inert]');
+      });
+      const target = await evaluate(main, () => {
+        const trigger = document.querySelector('.codex-runtime-trigger:not(:disabled)');
+        const rect = trigger.getBoundingClientRect();
+        const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+        return { x, y, reachable: !trigger.closest('[inert]') && trigger.contains(document.elementFromPoint(x, y)) };
+      });
+      assert(target.reachable, 'The live runtime trigger must receive the pointer, not retiring chrome.');
+      const position = { x: Math.round(target.x * main.webContents.getZoomFactor()), y: Math.round(target.y * main.webContents.getZoomFactor()) };
+      main.webContents.sendInputEvent({ type: 'mouseMove', ...position });
+      main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...position });
+      main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...position });
     }
     await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
     if (fastSupported) await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));

@@ -1022,11 +1022,13 @@ describe("session tab switch latency", () => {
     const { threadsByID, startTurn } = installWuuApi();
     threadsByID.clear();
     window.wuu.deleteThread = vi.fn().mockResolvedValue(undefined);
-    startTurn.mockImplementation(async (threadID: string, text: string, _images, _files, _document, _contexts, _parts, _settings, clientID: string) => ({
-      turn: { id: `turn-${threadID}`, items_view: "full", status: "in_progress", items: [
+    const admissionA = deferred<void>();
+    startTurn.mockImplementation(async (threadID: string, text: string, _images, _files, _document, _contexts, _parts, _settings, clientID: string) => {
+      if (threadID === threadAID) await admissionA.promise;
+      return { turn: { id: `turn-${threadID}`, items_view: "full", status: "in_progress", items: [
         { id: `user-${threadID}`, source_id: clientID, type: "user_message", text, status: "completed" },
-      ] },
-    }));
+      ] } };
+    });
     const first = deferred<{ thread: Thread }>();
     const second = deferred<{ thread: Thread }>();
     const rename = deferred<{ thread: Thread }>();
@@ -1072,10 +1074,10 @@ describe("session tab switch latency", () => {
     }
     expect(threadRowButton("Named conversation A")).toBeDefined();
     expect(activeSessionTabLabel()).toBe("Named conversation A");
-    // The submitted bubble stays visible through identity binding and naming;
-    // the other pending conversation must not replace or duplicate it.
-    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
-    expect(activeThreadProbe()?.dataset.turnCount).toBe("1");
+    // Naming and identity binding are not send admission. A stays in its own
+    // waiting draft; B's accepted turn must not appear in this conversation.
+    expect(activeThreadProbe()?.dataset.latestUserText).toBeUndefined();
+    expect(activeThreadProbe()?.dataset.turnCount ?? "0").toBe("0");
     expect(mainComposerTextarea().value).toBe("pending A");
     expect(startTurn).toHaveBeenCalledTimes(1);
     if (entry === "workspace") {
@@ -1104,11 +1106,11 @@ describe("session tab switch latency", () => {
       expect(new Set(Array.from(rows, row => row.getAttribute("aria-label"))).size).toBe(2);
     }
     if (entry === "workspace") {
-      // Identity is already real when Stop arrives. Retain one interrupted
-      // placeholder and recover input without admitting or replaying the send.
-      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
-      expect(activeThreadProbe()?.dataset.turnCount).toBe("1");
-      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe("interrupted");
+      // Stop precedes admission. Only a newer draft needs a separate recovery
+      // record for the original input; it is interrupted, never an admitted send.
+      expect(activeThreadProbe()?.dataset.turnCount ?? "0").toBe(newerDraft ? "1" : "0");
+      expect(activeThreadProbe()?.dataset.latestUserText).toBe(newerDraft ? "pending A" : undefined);
+      expect(activeThreadProbe()?.dataset.latestTurnStatus).toBe(newerDraft ? "interrupted" : undefined);
       expect(activeThreadProbe()?.dataset.latestTurnError).toBeUndefined();
       expect(mainComposerTextarea().value).toBe(newerDraft ? "newer A draft" : "pending A");
       expect(mainComposerSendButton().getAttribute("data-wuu-state")).not.toBe("submitting");
@@ -1118,10 +1120,18 @@ describe("session tab switch latency", () => {
       expect(saved?.kind === "thread" ? saved.prompt : undefined).toBe(newerDraft ? "newer A draft" : "pending A");
       if (newerDraft) expect(readComposerDraftRecovery().tabs.some(tab => tab.kind === "draft" && tab.prompt === "pending A")).toBe(true);
     } else {
-      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
       expect(threadRowButton("Newer conversation name")).toBeDefined();
+      // Calling startTurn is still only a request. The authoritative ACK moves
+      // this draft into sent history exactly once and releases only its input.
+      expect(activeThreadProbe()?.dataset.turnCount ?? "0").toBe("0");
+      expect(mainComposerTextarea().value).toBe("pending A");
+      await act(async () => admissionA.resolve());
+      expect(activeThreadProbe()?.dataset.threadId).toBe(threadAID);
+      expect(activeThreadProbe()?.dataset.turnCount).toBe("1");
+      expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
+      expect(mainComposerTextarea().value).toBe("");
+      expect(startTurn.mock.calls.map(call => call[0])).toEqual([threadBID, threadAID]);
     }
-    expect(activeThreadProbe()?.dataset.latestUserText).toBe("pending A");
   });
 
   it("keeps sidebar row titles and click targets after A-B-A switching and a delayed project list", async () => {

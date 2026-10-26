@@ -747,6 +747,7 @@ export class ApplicationController implements HostApplicationService {
     if (activities !== this.activitySessions) { this.activitySessions = activities; this.publish(); }
     this.sidebarCache.syncSidebarServerEvent(event);
     this.pendingComposer.syncPendingComposerMessagesFromServerEvent(event);
+    this.submissionOwner?.receive(event);
     if (!serverEventTargetsActiveContext(event, this.state)) return;
     const handling = handleStreamingNotification(event, this.state);
     if (handling === "stream" || handling === "background-stream") {

@@ -92,7 +92,7 @@ async function run() {
 
   win.setContentSize(1024, 820);
   await settledGeometry(win, 1024);
-  await evaluate(win, () => document.querySelector('[aria-label="打开关联会话"]').click());
+  await evaluate(win, () => document.querySelector('button[aria-label="Open related session"], button[aria-label="打开关联会话"]').click());
   await waitFor(win, () => document.querySelectorAll(".conversation-split-pane").length === 2);
   for (const width of [1024, 800]) {
     win.setContentSize(width, 820);

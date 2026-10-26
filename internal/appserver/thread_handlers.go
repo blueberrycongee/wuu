@@ -486,7 +486,14 @@ func (s *Server) writeThreadResumeResult(binding *runtime.State, req Request, th
 	if s.threadForState(binding, thread.ID) != nil {
 		s.restorePendingProcessCompletionsOnThreadResume(binding, thread.ID)
 	}
-	s.pruneCachedThreads(thread.ID)
+	// Detach old cache entries before the next request, but do not make queued
+	// input wait for their subscription/provider cleanup after resume replied.
+	// The server owns these captured resources until cleanup joins on shutdown.
+	if cleanup := s.evictCachedThreads(thread.ID); cleanup != nil {
+		if !s.startBackground(cleanup) {
+			cleanup()
+		}
+	}
 	return nil
 }
 

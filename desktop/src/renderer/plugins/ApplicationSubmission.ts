@@ -1,5 +1,5 @@
 import type { ApplicationSubmissionInputV1, ApplicationSubmissionResultV1, ApplicationSubmissionSnapshotV1, ApplicationSubmissionOperationV1 } from "../../../../packages/plugin-sdk/src/ui-submission";
-import type { MessageContentPart, ResponseSelection, RuntimeContext, Thread, ThreadStartParams, Turn } from "../../shared/protocol";
+import type { MessageContentPart, ResponseSelection, RuntimeContext, ServerEvent, Thread, ThreadStartParams, Turn } from "../../shared/protocol";
 import { activeThreadIDForState, activeTurnIDForThread, activeTurnIsAnswerReady, bindActiveSessionTabToThread, cloneComposerDraft, composerDraftHasContent, createDraftSessionTab, createThreadSessionTab, emptyComposerDraft, isThreadRunning, resolveComposerRunningAction, resolveThreadRuntimeContext, sameRuntimeContext, setThreadForPane, threadForTab, threadSessionTabID, updateThreadByID, upsertThread, upsertTurn, type AppState, type ComposerDraftState, type SessionTab } from "../AppState";
 import { awaitComposerFiles, awaitComposerImages, composerContextFromMessage, createComposerMessage, createOptimisticTurn, dropOptimisticTurn, inputFilesFromComposer, inputImagesFromComposer, interruptOptimisticTurn, isOptimisticTurnInterrupted, OPTIMISTIC_TURN_ID_PREFIX, replaceOptimisticTurn, threadHasAcceptedComposerMessage, type QueuedComposerMessage } from "../ComposerMessages";
 import type { ComposerPendingStateController } from "../ComposerPendingState";
@@ -14,6 +14,7 @@ import { forgetLocalTurnTiming } from "../LocalTurnTiming";
 import { rememberCollapsedPromptParts, readCollapsedPromptParts } from "../ComposerCollapsedPrompt";
 import { writeComposerDraftRecovery } from "../ComposerDraftRecovery";
 import { hasAuthenticatedProvider } from "../RuntimeHelpers";
+import { isRecord, recordValue, stringValue } from "../ToolActivity";
 
 export interface ApplicationSubmissionOptions {
   getState(): AppState;
@@ -44,6 +45,7 @@ type Operation = {
   cancelPreparation(): void;
   stopped: boolean;
   sent: boolean;
+  acceptQueue?: () => void;
   creationCancelled: boolean;
   implicitFileID?: string;
   clickedAtMs: number;
@@ -189,6 +191,19 @@ export class ApplicationSubmission {
     this.publish(); return true;
   }
 
+  receive(event: ServerEvent): void {
+    if (this.disposed || event.kind !== "notification" || event.replayed || event.message.method !== "turn/queued") return;
+    const message = recordValue(isRecord(event.message.params) ? event.message.params : undefined, "message");
+    if (!message || stringValue(message, "origin") !== "queue") return;
+    const id = stringValue(message, "id");
+    const operation = id ? this.operations.get(id) : undefined;
+    if (!operation || operation.view.mode !== "queue" || operation.view.phase !== "sending"
+      || operation.thread?.id !== stringValue(message, "thread_id") || operation.context.cwd !== event.workdir) return;
+    // This receipt follows queue admission, not execution. A delayed bridge RPC
+    // must not keep already-owned input in the draft or revive it after timeout.
+    operation.acceptQueue?.();
+  }
+
   private async queue(operation: Operation, admission?: Operation): Promise<boolean> {
     const key = operation.thread?.id ?? operation.source.id;
     forgetLocalTurnTiming(operation.optimistic.id);
@@ -234,8 +249,16 @@ export class ApplicationSubmission {
       this.phase(operation, "sending"); operation.sent = true;
       let acceptedID = message.id;
       if (kind === "queue") {
-        const result = await window.wuu.queueTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), thread.permission_mode, message.activeDocument, message.contentParts, operation.context, shouldHold());
-        acceptedID = result.queued.id || message.id;
+        const accepted = new Promise<{ queued: { id: string } }>(resolve => {
+          operation.acceptQueue = () => resolve({ queued: { id: message.id } });
+        });
+        try {
+          const result = await Promise.race([
+            window.wuu.queueTurn(thread.id, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), thread.permission_mode, message.activeDocument, message.contentParts, operation.context, shouldHold()),
+            accepted,
+          ]);
+          acceptedID = result.queued.id || message.id;
+        } finally { operation.acceptQueue = undefined; }
       } else await window.wuu.steerTurn(thread.id, activeTurnIDForThread(thread)!, message.text.trim(), inputImagesFromComposer(images), message.id, inputFilesFromComposer(files), message.activeDocument, message.contentParts, operation.context);
       if (this.disposed) return true;
       operation.view = { ...operation.view, messageID: acceptedID };

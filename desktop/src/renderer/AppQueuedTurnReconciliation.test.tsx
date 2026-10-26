@@ -841,6 +841,105 @@ describe("queued turn reconciliation", () => {
     expect(composerProbe().dataset.draftPending).toBe("false");
   });
 
+  it.each([
+    { newerDraft: false, rejectReply: false },
+    { newerDraft: false, rejectReply: true },
+    { newerDraft: true, rejectReply: false },
+    { newerDraft: true, rejectReply: true },
+  ])("shows server-accepted queue input before a delayed RPC settles ($newerDraft, $rejectReply)", async ({ newerDraft, rejectReply }) => {
+    let resolveQueue!: (value: Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>) => void;
+    let rejectQueue!: (error: Error) => void;
+    const queueTurn = vi.fn<WuuDesktopApi["queueTurn"]>(() => new Promise<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>((resolve, reject) => {
+      resolveQueue = resolve; rejectQueue = reject;
+    }));
+    installWuuApi({ queueTurn });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadID)); });
+    await flushAsync();
+    const setText = (text: string) => {
+      const textarea = composerProbe().querySelector("textarea")!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(textarea, text);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    await act(async () => { setText("accepted follow-up"); });
+    await act(async () => { composerProbe().querySelector<HTMLButtonElement>("button")!.click(); });
+    expect(queueTurn).toHaveBeenCalledOnce();
+    const id = queueTurn.mock.calls[0][3]!;
+    expect(composerProbe().dataset.draftPending).toBe("true");
+    expect(composerProbe().dataset.queuedIds).toBe("");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("accepted follow-up");
+    await act(async () => { composerProbe().querySelector<HTMLButtonElement>("button")!.click(); });
+    expect(queueTurn).toHaveBeenCalledOnce();
+    const notify = (workdir = workspace, messageID = id, owner = threadID) => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir,
+        message: { method: "turn/queued", params: {
+          message: { id: messageID, thread_id: owner, origin: "queue", prompt: "accepted follow-up" },
+        } } });
+    };
+    // A different source, conversation, or correlation ID cannot acknowledge this draft.
+    await act(async () => { notify("/unrelated-runtime"); notify(workspace, id, "another-thread"); notify(workspace, "another-input"); });
+    expect(composerProbe().dataset.draftPending).toBe("true");
+    expect(composerProbe().querySelector("textarea")?.value).toBe("accepted follow-up");
+    if (newerDraft) await act(async () => { setText("newer input"); });
+    await act(async () => { notify(); notify(); });
+    // The receipt is authoritative; the RPC remains unresolved throughout these assertions.
+    expect(composerProbe().dataset.draftPending).toBe("false");
+    expect(composerProbe().dataset.queuedIds?.split(",").filter(value => value === id)).toEqual([id]);
+    expect(composerProbe().dataset.running).toBe("true");
+    expect(composerProbe().querySelector("textarea")?.value).toBe(newerDraft ? "newer input" : "");
+    const snapshot = getDesktopApplication().getSnapshot();
+    expect(snapshot.submission.operations.find(operation => operation.messageID === id)?.phase).toBe("completed");
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+    await act(async () => {
+      if (rejectReply) rejectQueue(new Error("rpc timeout: turn/queue"));
+      else resolveQueue({ queued: { id, thread_id: threadID } });
+    });
+    expect(composerProbe().dataset.draftPending).toBe("false");
+    expect(composerProbe().dataset.queuedIds?.split(",").filter(value => value === id)).toEqual([id]);
+    expect(composerProbe().querySelector("textarea")?.value).toBe(newerDraft ? "newer input" : "");
+    expect(getDesktopApplication().getSnapshot().submission.failedDraftTabIds).toEqual([]);
+    expect(queueTurn).toHaveBeenCalledOnce();
+  });
+
+  it("acknowledges only the source draft after switching runtime contexts while the queue RPC is pending", async () => {
+    let rejectQueue!: (error: Error) => void;
+    const queueTurn = vi.fn<WuuDesktopApi["queueTurn"]>(() => new Promise((_resolve, reject) => { rejectQueue = reject; }));
+    installWuuApi({ queueTurn });
+    await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadID)); });
+    await flushAsync();
+    const application = getDesktopApplication();
+    await act(async () => {
+      await application.invoke("composer.set-draft", { text: "source input" });
+      await application.invoke("composer.submit", { ownerTabId: `thread:${threadID}`, mode: "queue" });
+    });
+    expect(queueTurn).toHaveBeenCalledOnce();
+    const id = queueTurn.mock.calls[0][3]!;
+    const other = { ...runningThread(), id: "other-thread", cwd: "/tmp/other-runtime", status: "idle" as const, turns: [] };
+    const context = { kind: "no_project" as const, cwd: other.cwd };
+    await act(async () => {
+      application.updateState(state => ({ ...state, activeContext: context, activeSessionTabID: `thread:${other.id}`,
+        thread: other, threads: [...state.threads, other], sessionTabs: [...state.sessionTabs, {
+          id: `thread:${other.id}`, kind: "thread", threadID: other.id, context, title: "Other", prompt: "other draft", images: [], files: [],
+        }] }));
+    });
+    const notify = (workdir: string) => {
+      for (const handler of serverEventHandlers) handler({ kind: "notification", workdir,
+        message: { method: "turn/queued", params: {
+          message: { id, thread_id: threadID, origin: "queue", prompt: "source input" },
+        } } });
+    };
+    await act(async () => { notify(other.cwd); });
+    expect(application.getSnapshot().submission.operations[0].draftPending).toBe(true);
+    await act(async () => { notify(workspace); });
+    expect(application.getSnapshot().submission.operations[0]).toMatchObject({ phase: "completed", draftPending: false });
+    expect(application.getSnapshot().drafts.primary).toMatchObject({ ownerTabId: `thread:${other.id}`, text: "other draft" });
+    expect(application.getSnapshot().tabs.items.find(tab => tab.id === `thread:${threadID}`)?.draftText).toBe("");
+    await act(async () => { rejectQueue(new Error("rpc timeout: turn/queue")); });
+    expect(application.getSnapshot().drafts.primary.text).toBe("other draft");
+    expect(application.getSnapshot().submission.failedDraftTabIds).toEqual([]);
+    expect(queueTurn).toHaveBeenCalledOnce();
+    expect(window.wuu.startTurn).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])("defers a second composer submission only until the queue acknowledgement (notification first=%s)", async notificationFirst => {
     let resolveQueue!: (value: Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>) => void;
     const queueTurn = vi.fn(() => new Promise<Awaited<ReturnType<WuuDesktopApi["queueTurn"]>>>((resolve) => { resolveQueue = resolve; }));

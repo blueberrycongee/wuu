@@ -198,6 +198,9 @@ Versioning rules are documented in [the release guide](docs/en/project/release.m
 
 ### Fixed
 
+- Hand queued input from the composer to the pending drawer as soon as its matching server admission receipt arrives, without waiting for a delayed RPC reply or restoring a duplicate draft after a late timeout.
+- Keep queued-message acceptance responsive after reopening a conversation by moving detached old-runtime cleanup off the serial request loop, while preserving ordered cache eviction, durable queue acknowledgement and shutdown ownership.
+
 - Focus conversation search after its input mounts, without overriding a newer interaction or refocusing a closing dialog.
 
 - Keep running conversations and their history readable after installing, disabling, or removing a plugin. Reads retain the accepted execution’s provider ownership without releasing cross-process execution locks or losing queued input.
