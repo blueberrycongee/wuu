@@ -48,6 +48,15 @@ func isMiniMaxM31(id string) bool {
 	return strings.Contains(id, "minimax-m3.1") || strings.Contains(id, "minimax-m3-1")
 }
 
+func isKimiK31(id string) bool {
+	id = strings.ToLower(strings.TrimSpace(id))
+	if index := strings.LastIndex(id, "/"); index >= 0 {
+		id = id[index+1:]
+	}
+	id = strings.TrimPrefix(id, "kimi-")
+	return id == "k3.1-pro" || id == "k3.1-pro-highspeed"
+}
+
 func compatWidelySupportedEfforts() []string {
 	return []string{"low", "medium", "high"}
 }

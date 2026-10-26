@@ -45,6 +45,12 @@ GPT-6 Sol 和 Luna 支持 `none` 至 `max` 推理档位，默认 `medium`。Fast
 
 Claude Opus 5.5 和 Fable 5.1 始终使用自适应思考。Wuu 将已保存的 `none` 选择映射为 `low`，两者默认档位分别为 `medium` 和 `high`。Wuu 请求可读的思考摘要，并允许 API 丢弃因上下文变更而失效的思考块，同时保留有效的签名块。这两个模型不接受强制工具选择，因此 Wuu 通过指令表达收尾工具调用要求，使用自动工具选择；这不保证模型一定调用工具。详见官方 [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) 和 [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) 迁移指南。
 
+## Kimi K3.1 Pro
+
+Kimi 按量付费 API 使用 `kimi-k3.1-pro` 或 `kimi-k3.1-pro-highspeed`，地址为 `https://api.moonshot.cn/v1` 或 `https://api.moonshot.ai/v1`。Kimi Code 订阅使用 `k3.1-pro` 或 `k3.1-pro-highspeed`，地址为 `https://api.kimi.com/coding/v1` 或 `https://api.kimi.ai/coding/v1`。
+
+两者都支持图片、视频和最多 1,048,576 token 上下文，必须开启思考，可选 `low`、`high`、`max`。Wuu 对 API 默认使用 `max`，对 Kimi Code 按其模型配置指南默认使用 `high`；已保存的 `none` 选择会映射为 `low`。Kimi Code 的模型权限和完整上下文取决于会员等级，高速版约消耗两倍订阅额度。从旧版 Kimi 切换时建议新建对话。详见官方 [API 指南](https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart)和 [Kimi Code 模型配置（英文）](https://www.kimi.com/code/docs/en/kimi-code/models.html)。
+
 ## DeepSeek 模型
 
 使用 `deepseek-flash` 调用 DeepSeek V4.1 Flash 1017，或使用 `deepseek-v4-pro` 调用 V4 Pro。官方基础地址为 `https://api.deepseek.com`，Wuu 默认使用 Responses；Anthropic 兼容连接使用 `https://api.deepseek.com/anthropic`。两者均支持 1M 上下文、最多 393,216 token 输出，以及 `none`、`low`、`high`（默认）、`max` 思考档位。Flash 还支持图片输入。

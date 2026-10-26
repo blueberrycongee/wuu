@@ -47,6 +47,12 @@ GPT-6 Sol and Luna support reasoning levels from `none` through `max`, defaultin
 
 Claude Opus 5.5 and Fable 5.1 always use adaptive thinking. Wuu maps a saved `none` selection to `low`; their defaults are `medium` and `high`, respectively. Wuu requests readable thinking summaries and lets the API drop thinking blocks invalidated by context changes while retaining valid signed blocks. These models reject forced tool choice, so Wuu expresses a required closing tool call as an instruction with automatic tool selection; this does not guarantee that the model calls it. See the official [Opus 5.5](https://platform.claude.com/docs/en/models/opus-5-5/migration-guide) and [Fable 5.1](https://platform.claude.com/docs/en/models/fable-5-1/migration-guide) migration guides.
 
+## Kimi K3.1 Pro
+
+Choose `kimi-k3.1-pro` or `kimi-k3.1-pro-highspeed` on Kimi's pay-as-you-go API (`https://api.moonshot.ai/v1` or `https://api.moonshot.cn/v1`). Kimi Code subscriptions use `k3.1-pro` or `k3.1-pro-highspeed` instead, at `https://api.kimi.com/coding/v1` or `https://api.kimi.ai/coding/v1`.
+
+Both models accept images and video, support up to 1,048,576 context tokens, and require thinking with `low`, `high`, or `max` effort. Wuu defaults to `max` for the API and `high` for Kimi Code, following its model configuration guide; a saved `none` selection becomes `low`. Kimi Code access and the full context window depend on your membership tier. Highspeed uses about twice the subscription quota. Start a new conversation when switching from an older Kimi model. See the official [API guide](https://platform.kimi.ai/docs/guide/kimi-k3-1-pro-quickstart) and [Kimi Code model configuration](https://www.kimi.com/code/docs/en/kimi-code/models.html).
+
 ## DeepSeek models
 
 Use `deepseek-flash` for DeepSeek V4.1 Flash 1017, or `deepseek-v4-pro` for V4 Pro. The official base URL is `https://api.deepseek.com`; Wuu defaults these models to Responses. Anthropic-compatible connections use `https://api.deepseek.com/anthropic`. Both models have a 1M context window, a maximum output of 393,216 tokens, and reasoning levels `none`, `low`, `high` (default), and `max`. Flash also accepts images.

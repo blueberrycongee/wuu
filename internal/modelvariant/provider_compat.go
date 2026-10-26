@@ -61,6 +61,22 @@ func BaseOptionsForProvider(providerName string, provider config.ProviderConfig,
 	}
 
 	applyCompatSamplingDefaults(result, desc)
+	if isKimiK31(desc.APIID) {
+		// K3.1 always reasons; Chat uses reasoning_effort without the K2
+		// thinking switch. Anthropic-compatible calls retain adaptive thinking.
+		result["temperatureSupported"] = false
+		delete(result, "thinking")
+		delete(result, "force_adaptive_thinking")
+		delete(result, "forceAdaptiveThinking")
+		if desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic {
+			result["thinking"] = map[string]any{"type": "adaptive"}
+			setOptionDefault(result, "allow_empty_signature", true)
+			setOptionDefault(result, "thinking_replay", "full")
+			setOptionDefault(result, "anthropic_default_betas", false)
+		} else {
+			delete(result, "anthropic_default_betas")
+		}
+	}
 	if (desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic) && AnthropicRequiresBoundThinking(desc.APIID) {
 		result["temperatureSupported"] = false
 		setOptionDefault(result, "thinking", map[string]any{"type": "adaptive", "display": "summarized"})
@@ -226,6 +242,24 @@ func inferredOptionsForProvider(providerName string, provider config.ProviderCon
 	}
 	id := desc.ModelID
 	apiID := desc.APIID
+	if isKimiK31(apiID) {
+		efforts := modelReasoningEfforts(provider.Models[model])
+		if len(efforts) == 0 {
+			efforts = []string{"low", "high", "max"}
+		}
+		switch desc.APINPM {
+		case compatNPMAnthropic, compatNPMVertexAnthropic:
+			return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
+				return map[string]any{"effort": effort}
+			})
+		case compatNPMOpenRouter:
+			return compatVariantsFromEfforts(efforts, func(effort string) map[string]any {
+				return map[string]any{"reasoning": map[string]any{"effort": effort}}
+			})
+		default:
+			return compatReasoningEffortVariants(efforts)
+		}
+	}
 	adaptiveEfforts := compatAnthropicAdaptiveEfforts(apiID)
 	if forceAdaptiveThinking(provider.Models[model].Options) &&
 		(desc.APINPM == compatNPMAnthropic || desc.APINPM == compatNPMVertexAnthropic || desc.APINPM == compatNPMOpenAICompatible) {
